@@ -4533,6 +4533,48 @@
         scene.rotation.x += (e.clientY-prevY)*0.005;
         prevX=e.clientX; prevY=e.clientY;
       });
+      
+
+// ===============================
+// iOS Single-Finger Drag Rotation
+// ===============================
+
+      let touchDragging = false;
+      let touchPrevX = 0;
+      let touchPrevY = 0;
+      
+      window.addEventListener("touchstart", (e) => {  
+        if (e.touches.length === 1) {
+          touchDragging = true;
+          touchPrevX = e.touches[0].clientX;
+          touchPrevY = e.touches[0].clientY;
+          selectedCityIndex = null;
+          isFocused = false;
+        }  
+      }, {passive: false });
+
+      window.addEventListener("touchmove", (e) => {
+        if (!touchDragging || e.touches.length !== 1) return; 
+        e.preventDefault();
+
+        const touchX = e.touches[0].clientX;
+        const touchY = e.touches[0].clientY;
+
+        scene.rotation.y += (touchX - touchPrevX) * 0.005;
+        scene.rotation.x += (touchY - touchPrevY) * 0.005;
+
+        scene.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, scene.rotation.x));
+
+        touchPrevX = touchX;
+        touchPrevY = touchY;
+
+      }, { passive: false });
+
+      window.addEventListener("touchend", () => {
+        touchDragging = false;
+      });  
+
+
 
       /* ===============================
          Zoom controls: wheel, trackpad pinch, iOS pinch
