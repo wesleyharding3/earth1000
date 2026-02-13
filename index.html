@@ -4497,6 +4497,40 @@
         }
       });
 
+/* ===============================
+   iOS TOUCH CITY SELECTION
+=============================== */
+
+      window.addEventListener("touchstart", (event) => { 
+        if (event.touches.length !== 1) return;
+
+        const touch = event.touches[0];
+
+        mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+        raycaster.setFromCamera(mouse, camera);
+
+        const intersects = raycaster.intersectObject(cityPoints);
+
+        if (intersects.length > 0) {
+          const index = intersects[0].index;  
+          const cityPos = new THREE.Vector3();
+
+          cityPos.fromBufferAttribute(
+            cityPoints.geometry.attributes.position,
+            index
+          );
+
+          cityPos.applyMatrix4(cityPoints.matrixWorld);
+
+          if (isCityVisible(cityPos, camera)) {
+            openCityPanel(cities[index]);
+          }
+        }
+      }, { passive: true });
+        
+
       function openCityPanel(city){
         const panel=document.getElementById("infoPanel");
         panel.innerHTML=`
