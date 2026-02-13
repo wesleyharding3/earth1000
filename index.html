@@ -3877,6 +3877,16 @@
       const cityPoints=new THREE.Points(cityGeo,cityMat);
       scene.add(cityPoints);
 
+      /* >>>>> INSERTED: GEO BOUNDARY LOADER START */
+
+      const boundaryLayer = new GeoBoundaryLayer(scene, radius);
+
+      fetch("countries.geojson")
+        .then(res => res.json())
+        .then(data => {
+          boundaryLayer.loadGeoJSON(data);
+        });
+
       // ------------------------------
       // Utility: check if city is facing the camera
       // ------------------------------
@@ -4206,7 +4216,87 @@
 
       animate();
     }
-    
+
+    class GeoBoundaryLayer {
+
+      constructor(scene, radius) {
+        this.scene = scene;
+        this.radius = radius;
+        this.group = new THREE.Group();
+        this.scene.add(this.group);
+      }
+
+      latLonToVector3(lat, lon, altitude = 0.002) {
+
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+
+        const r = this.radius + altitude;
+
+        const x = -r * Math.sin(phi) * Math.cos(theta);
+        const z =  r * Math.sin(phi) * Math.sin(theta);
+        const y =  r * Math.cos(phi);
+
+        return new THREE.Vector3(x, y, z);
+      }
+
+      loadGeoJSON(geojson) {
+
+        geojson.features.forEach(feature => {
+
+          const geometry = feature.geometry;
+
+          if (geometry.type === "Polygon") {
+            this.drawPolygon(geometry.coordinates);
+          }
+
+          if (geometry.type === "MultiPolygon") {
+            geometry.coordinates.forEach(polygon => {
+              this.drawPolygon(polygon);
+            });
+          }
+
+        });
+      }
+
+    drawPolygon(polygon) {
+
+      polygon.forEach(ring => {
+
+        const points = [];
+
+        ring.forEach(coord => {
+          const [lon, lat] = coord;
+          points.push(this.latLonToVector3(lat, lon));
+        });
+
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+        const material = new THREE.LineBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.6
+        });
+
+        const line = new THREE.Line(geometry, material);
+        this.group.add(line);
+
+      });
+    }
+
+
+    setVisible(value) {
+      this.group.visible = value;
+    }
+
+    setColor(color) {
+      this.group.children.forEach(child => {
+        child.material.color.set(color);
+      });
+    }
+
+  }
+
 
     window.addEventListener("resize",()=>{
       camera.aspect=window.innerWidth/window.innerHeight;
