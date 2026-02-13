@@ -3930,11 +3930,11 @@
           cityPos.applyMatrix4(cityPoints.matrixWorld);
           cityPos.normalize();
 
-          let dot = cameraDir.dot(cityPos);
+          let dot = -cameraDir.dot(cityPos);
+          let normalized = (dot + 1) / 2;
+          const minGlow = 0.15;
+          const glow = minGlow + (1 - minGlow) * Math.pow(normalized, 2.5);
 
-          dot = Math.max(0, dot);
-
-          const glow = Math.pow(dot, 4);
 
           colors.setXYZ(
             i,
