@@ -4226,7 +4226,7 @@
         this.scene.add(this.group);
       }
 
-      latLonToVector3(lat, lon, altitude = 0.002) {
+      latLonToVector3(lat, lon, altitude = 0.01) {
 
         const phi = (90 - lat) * (Math.PI / 180);
         const theta = (lon + 180) * (Math.PI / 180);
@@ -4274,8 +4274,7 @@
 
         const material = new THREE.LineBasicMaterial({
           color: 0xffffff,
-          transparent: true,
-          opacity: 0.6
+          transparent: false,
         });
 
         const line = new THREE.Line(geometry, material);
