@@ -3902,7 +3902,16 @@
         const positionsAttr = cityPoints.geometry.attributes.position;
         const count = positionsAttr.count;
 
-        let maxAlignment = 0;
+        if (!cityPoints.geometry.attributes.color) {
+          const colors = new Float32Array(count * 3);
+          cityPoints.geometry.setAttribute(
+            "color",
+            new THREE.BufferAttribute(colors, 3)
+          );
+          cityMat.vertexColors = true;
+        }
+
+        const colors = cityPoints.geometry.attributes.color;
 
         for (let i = 0; i < count; i++) {
 
@@ -3911,16 +3920,22 @@
           cityPos.applyMatrix4(cityPoints.matrixWorld);
           cityPos.normalize();
 
-          const dot = cameraDir.dot(cityPos);
+          let dot = cameraDir.dot(cityPos);
 
-          if (dot > maxAlignment) maxAlignment = dot;
+          dot = Math.max(0, dot);
+
+          const glow = Math.pow(dot, 4);
+
+          colors.setXYZ(
+            i,
+            glow,
+            glow * 0.6,
+            glow * 0.25
+          );
         }
 
-        const glow = Math.pow(Math.max(0, maxAlignment), 3);
-        cityMat.opacity = 0.25 + glow * 0.9;
-        cityMat.size = citySize * (0.6 + glow * 1.4);
-        }
-      
+        colors.needsUpdate = true;
+      }
 
 
 
