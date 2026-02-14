@@ -4536,7 +4536,7 @@
         panel.innerHTML=`
           <button class="closePanel">✕</button>
           <h2>${city.name}</h2>
-          <h3>${city.country}</h3>
+          <h4>${city.country}</h4>
           <p>News Source: <a href="${city.news.site}" target="_blank">${city.news.name}</a></p>
           <p>RSS Feed: <a href="${city.news.rss}" target="_blank">${city.news.rss}</a></p>
         `;
@@ -4730,7 +4730,10 @@
           }
         }
 
-        if(!dragging) scene.rotation.y += 0.0002;
+        if (!dragging && !targetQuaternion) {
+          scene.rotateY(0.0002);
+        }
+
 
         camera.position.z += (targetZoom-camera.position.z)*0.1;
         updateCityGlow(); 
@@ -4796,10 +4799,42 @@
 
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
-        const material = new THREE.LineBasicMaterial({
-          color: 0xffffff,
+        const material = new THREE.ShaderMaterial({
           transparent: true,
-          opacity: 0.85
+          uniforms: {
+            color: { value: new THREE.Color(0xffffff) },
+            opacity: { value: 0.85 }
+          },
+          vertexShader: `
+            varying float vDot;
+
+            void main() {
+
+              vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+              vec3 normal = normalize(worldPosition.xyz);
+
+              vec3 cameraDir = normalize(cameraPosition - worldPosition.xyz);
+
+              vDot = dot(normal, cameraDir);
+
+              gl_Position = projectionMatrix * viewMatrix * worldPosition;
+            }
+          `,
+          fragmentShader: `
+            uniform vec3 color;
+            uniform float opacity;
+            varying float vDot;
+
+            void main() {
+
+              float shade = clamp(vDot, 0.0, 1.0);
+
+              float shadowStrength = 0.6;
+              float finalShade = mix(1.0 - shadowStrength, 1.0, shade);
+
+              gl_FragColor = vec4(color * finalShade, opacity * finalShade);
+            }
+          `
         });
 
         const line = new THREE.Line(geometry, material);
@@ -4815,7 +4850,7 @@
 
     setColor(color) {
       this.group.children.forEach(child => {
-        child.material.color.set(color);
+        child.material.uniforms.color.value.set(color);
       });
     }
 
