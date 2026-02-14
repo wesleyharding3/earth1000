@@ -174,7 +174,40 @@
       const earthGeo = new THREE.BufferGeometry();
       earthGeo.setAttribute("position", new THREE.Float32BufferAttribute(earthPositions,3));
       earthGeo.setAttribute("color", new THREE.Float32BufferAttribute(earthColors,3));
-      const earthMat = new THREE.PointsMaterial({ size:0.006, vertexColors:true, transparent:true, depthWrite:false });
+      const earthMat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        vertexColors: true,
+        uniforms: {
+          time: { value: 0.0 }
+        },
+        vertexShader: `
+          varying vec3 vColor;
+          varying vec3 vPosition;
+
+          void main() {
+            vColor = color;
+            vPosition = position;
+
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = 3.0;
+
+          }
+        `,
+        fragmentShader: `
+          uniform float time;
+          varying vec3 vColor;
+          varying vec3 vPosition;
+          
+          void main() {
+            float noise = sin(dot(vPosition.xyz , vec3(12.9898,78.233,45.164)) + time * 2.0);
+
+            float twinkle = 0.95 + 0.05 * noise;
+
+            gl_FragColor = vec4(vColor * twinkle, 1.0);
+          }
+        `    
+      });
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
 
