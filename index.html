@@ -144,6 +144,7 @@
       const earthPointCount = 10000;
       const earthPositions = [];
       const earthColors = [];
+      const earthTwinkleOffsets = [];
 
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
@@ -168,7 +169,6 @@
         const r=imageData[idx], g=imageData[idx+1], b=imageData[idx+2];
         const bright = (r+g+b)/3;
         const c = bright>120 ? 1 : 0.35;
-        const earthTwinkleOffsets = [];
         earthColors.push(c,c,c);
         earthTwinkleOffsets.push(Math.random() * Math.PI * 2);
       }
@@ -5168,7 +5168,7 @@
         updateHoverLabels();
 
         earthMat.uniforms.time.value += 0.01;
-        
+
         renderer.render(scene,camera);
         }
 
