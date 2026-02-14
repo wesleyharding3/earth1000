@@ -1244,7 +1244,7 @@
         },
 
         {
-          name: "Ngerulmud",
+          name: "Palau",
           lat: 7.5000,
           lon: 134.6242,
           country: "Palau",
@@ -1256,7 +1256,7 @@
         },
 
         {
-          name: "Yaren",
+          name: "Nauru",
           lat: -0.5477,
           lon: 166.9209,
           country: "Nauru",
@@ -4536,7 +4536,8 @@
         panel.innerHTML=`
           <button class="closePanel">✕</button>
           <h2>${city.name}</h2>
-          <h4>${city.country}</h4>
+          ${city.country ? `<h3>${city.country}</h3>` : ""}
+
           <p>News Source: <a href="${city.news.site}" target="_blank">${city.news.name}</a></p>
           <p>RSS Feed: <a href="${city.news.rss}" target="_blank">${city.news.rss}</a></p>
         `;
@@ -4663,7 +4664,8 @@
 
           const div = document.createElement("div");
           div.className = "searchItem";
-          div.textContent = `${city.name}, ${city.country}`;
+          div.textContent = country ? `${name}, ${country}` : name;
+
 
           div.addEventListener("click", () => {
 
