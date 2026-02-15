@@ -4866,7 +4866,9 @@
         const y= radius*Math.cos(phi);
         positions.push(x,y,z);
         const li=document.createElement("li");
-        li.textContent=`${name}, ${country}`;
+        li.textContent = (country && name !== country)
+          ? `${name}, ${country}`
+          : name;
         listElement.appendChild(li);
       });
 
@@ -5304,7 +5306,9 @@
 
           const div = document.createElement("div");
           div.className = "searchItem";
-          div.textContent = country ? `${name}, ${country}` : name;
+          div.textContent = (city.country && city.name !== city.country)
+            ? `${city.name}, ${city.country}`
+            : city.name;
 
 
           div.addEventListener("click", () => {
