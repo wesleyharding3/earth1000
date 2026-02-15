@@ -124,6 +124,24 @@
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
+    
+          // ===============================
+      // Window Resize Handling
+      // ===============================
+
+      window.addEventListener("resize", () => {
+
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+
+      });
+
 
     const radius = 1;
 
@@ -2226,6 +2244,42 @@
             name: "Diario de Xalapa",
             site: "https://www.diariodexalapa.com.mx/",
             rss: "https://www.diariodexalapa.com.mx/rss.xml"
+          }
+        },
+
+        {
+          name: "Acapulco",
+          lat: 16.8531,
+          lon: -99.8237,
+          country: "Mexico",
+          news: {
+            name: "El Sur de Acapulco",
+            site: "https://suracapulco.mx/",
+            rss: "https://suracapulco.mx/feed/"
+          }
+        },
+
+        {
+          name: "Cayman Islands",
+          lat: 19.2866,
+          lon: -81.3744,
+          country: "Cayman Islands",
+          news: {
+            name: "Cayman Compass",
+            site: "https://www.caymancompass.com/",
+            rss: "https://www.caymancompass.com/feed/"
+          }
+        },
+
+        {
+          name: "Barbados",
+          lat: 13.0975,
+          lon: -59.6167,
+          country: "Barbados",
+          news: {
+            name: "Nation News",
+            site: "https://www.nationnews.com/",
+            rss: "https://www.nationnews.com/feed/"
           }
         },
 
