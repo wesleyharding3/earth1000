@@ -163,6 +163,7 @@
       const earthPointCount = 10000;
       const earthPositions = [];
       const earthColors = [];
+      const earthBaseBrightness = [];
 
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
@@ -188,6 +189,7 @@
         const bright = (r+g+b)/3;
         const c = bright>120 ? 1 : 0.35;
         earthColors.push(c,c,c);
+        earthBaseBrightness.push(c);
       }
 
       const earthGeo = new THREE.BufferGeometry();
@@ -196,6 +198,17 @@
       const earthMat = new THREE.PointsMaterial({ size:0.006, vertexColors:true, transparent:true, depthWrite:false });
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
+
+            // ------------------------------
+      // Earth Twinkle System
+      // ------------------------------
+
+      const earthTwinkleChance = 0.0025;
+      const earthTwinkleDuration = 0.06;
+      const earthTwinkleIntensity = 0.2;
+
+      const earthTwinkleTimers = new Array(earthPointCount).fill(0);
+
 
       /* ===============================
          FULL CITY LIST GOES HERE
@@ -5471,6 +5484,38 @@
           }
 
         }        
+        // ------------------------------
+        // Earth Twinkle Update (Smooth)
+        // ------------------------------
+
+        const earthColorAttr = earthPoints.geometry.attributes.color;
+
+        for (let i = 0; i < earthTwinkleTimers.length; i++) {
+
+          if (earthTwinkleTimers[i] <= 0 && Math.random() < earthTwinkleChance) {
+            earthTwinkleTimers[i] = earthTwinkleDuration;
+          }
+
+          let brightness = earthBaseBrightness[i];
+
+          if (earthTwinkleTimers[i] > 0) {
+
+            const t = earthTwinkleTimers[i] / earthTwinkleDuration;
+
+            // smooth fade in/out curve
+            const fade = Math.sin(t * Math.PI);
+
+            brightness *= (1 - earthTwinkleIntensity * fade);
+
+            earthTwinkleTimers[i] -= 0.016;
+          }
+
+          earthColorAttr.setXYZ(i, brightness, brightness, brightness);
+        }
+
+        earthColorAttr.needsUpdate = true;
+
+
 
         renderer.render(scene,camera);
         }
