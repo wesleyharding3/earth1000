@@ -5063,7 +5063,13 @@
           cityPos.applyMatrix4(cityPoints.matrixWorld);
         
           if (isCityVisible(cityPos, camera)) {
+
+            selectedCityIndex = index;
+            isFocused = true;
+
+            focusCity(cities[index]);
             openCityPanel(cities[index]);
+
           } else {
             console.log("City is on the far side, cannot select.");
           }
@@ -5098,7 +5104,13 @@
           cityPos.applyMatrix4(cityPoints.matrixWorld);
 
           if (isCityVisible(cityPos, camera)) {
+
+            selectedCityIndex = index;
+            isFocused = true;
+
+            focusCity(cities[index]);
             openCityPanel(cities[index]);
+
           }
         }
       }, { passive: true });
@@ -5305,7 +5317,7 @@
           }
         }
 
-        if (!dragging && !targetQuaternion) {
+        if (!dragging && !targetQuaternion && !isFocused) {
           scene.rotateY(0.0002);
         }
 
@@ -5432,11 +5444,7 @@
   }
 
 
-    window.addEventListener("resize",()=>{
-      camera.aspect=window.innerWidth/window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth,window.innerHeight);
-    });
+
   </script>
 </body>
 </html>
