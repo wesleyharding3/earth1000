@@ -5202,21 +5202,58 @@
           <h2>${city.name}</h2>
           ${showCountry ? `<h3>${city.country}</h3>` : ""}
 
+          <p id="localTime" style="margin-top:8px;font-size:14px;opacity:0.85;"></p>
+
           <p>News Source: <a href="${city.news.site}" target="_blank">${city.news.name}</a></p>
           <p>RSS Feed: <a href="${city.news.rss}" target="_blank">${city.news.rss}</a></p>
         `;
 
+
         panel.classList.add("active");
+
+        // ------------------------------
+        // Local Time Calculation
+        // ------------------------------
+
+        const timeElement = document.getElementById("localTime");
+
+        function updateLocalTime() {
+
+          const nowUTC = new Date();
+
+          // longitude → hours offset (15° per hour)
+          const offsetHours = city.lon / 15;
+
+          const localTime = new Date(
+            nowUTC.getTime() + offsetHours * 60 * 60 * 1000
+          );
+
+          const formatted = localTime.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+          });
+
+          timeElement.textContent = `Local Time: ${formatted}`;
+        }
+
+        updateLocalTime();
+        const timeInterval = setInterval(updateLocalTime, 1000);
+
 
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
+          clearInterval(timeInterval);
         });
       }
 
 
       window.addEventListener("keydown",(e)=>{
-        if(e.key==="Escape") document.getElementById("infoPanel").classList.remove("active");
+        if(e.key==="Escape") {
+          document.getElementById("infoPanel").classList.remove("active");
+          clearInterval(timeInterval);
+        }  
       });
 
       // Drag rotation
