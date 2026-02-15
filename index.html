@@ -4852,7 +4852,10 @@
 
       // City points
       const citySize = 0.03;
+      const ringBurstDelay = 0.18;
+      const ringSpeed = 0.04; 
       const positions = [];
+      const ringMultiplierMax = 3;
       const listElement = document.getElementById("list");
       cities.forEach(city=>{
         const {name,lat,lon,country}=city;
@@ -4896,6 +4899,48 @@
       });
       const cityPoints=new THREE.Points(cityGeo,cityMat);
       scene.add(cityPoints);
+
+            // ===============================
+      // Selection Ring Burst
+      // ===============================
+
+
+      const ringGroup = new THREE.Group();
+      scene.add(ringGroup);
+
+      const ringCount = 3;
+      const ringMeshes = [];
+      const ringStates = [];
+
+      for (let i = 0; i < ringCount; i++) {
+
+        const ringGeo = new THREE.RingGeometry(
+          citySize * 0.9,
+          citySize * 1.1,
+          64
+        );
+
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0xffaa55,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+          depthWrite: false
+        });
+
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+
+        ringGroup.add(ring);
+        ringMeshes.push(ring);
+
+        ringStates.push({
+          progress: 0,
+          delay: i * ringBurstDelay,
+          active: false
+        });
+      }
+     
 
       /* >>>>> INSERTED: GEO BOUNDARY LOADER START */
 
@@ -5301,6 +5346,13 @@
           .setFromUnitVectors(cityVector, target);
 
         targetZoom = 2; // auto zoom slightly closer
+
+        ringStates.forEach((state, i) => {
+          state.progress = 0;
+          state.delay = i * ringBurstDelay;
+          state.active = true;
+        });        
+
       }
 
 
@@ -5325,6 +5377,47 @@
         camera.position.z += (targetZoom-camera.position.z)*0.1;
         updateCityGlow(); 
         updateHoverLabels();
+
+        // ------------------------------
+        // Ring Burst Animation
+        // ------------------------------
+
+        if (isFocused && selectedCityIndex !== null) {
+
+          ringStates.forEach((state, i) => {
+
+            if (!state.active) return;
+
+            if (state.delay > 0) {
+              state.delay -= ringSpeed;
+              return;
+            }
+
+            state.progress += ringSpeed;
+
+            const maxScale = ringMultiplierMax;
+            const scale = 1 + state.progress * (maxScale - 1);
+
+            ringMeshes[i].scale.set(scale, scale, scale);
+
+            const opacity = Math.pow(1 - state.progress, 3);
+            ringMeshes[i].material.opacity = opacity;
+
+            if (state.progress >= 1) {
+              ringMeshes[i].material.opacity = 0;
+              state.active = false;
+            }
+
+          });
+
+        } else {
+
+          ringMeshes.forEach(ring => {
+            ring.material.opacity = 0;
+          });
+
+        }
+
         renderer.render(scene,camera);
         }
 
