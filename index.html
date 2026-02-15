@@ -4853,7 +4853,7 @@
       // City points
       const citySize = 0.03;
       const ringBurstDelay = 0.18;
-      const ringSpeed = 0.04; 
+      const ringSpeed = 0.015; 
       const positions = [];
       const ringMultiplierMax = 3;
       const listElement = document.getElementById("list");
@@ -4915,18 +4915,20 @@
       for (let i = 0; i < ringCount; i++) {
 
         const ringGeo = new THREE.RingGeometry(
-          citySize * 0.9,
-          citySize * 1.1,
+          citySize * 0.98,
+          citySize * 1.02,
           64
         );
 
         const ringMat = new THREE.MeshBasicMaterial({
-          color: 0xffaa55,
+          color: 0xffffff,          // pure white
           transparent: true,
           opacity: 0,
           side: THREE.DoubleSide,
-          depthWrite: false
+          depthWrite: false,
+          blending: THREE.NormalBlending
         });
+
 
         const ring = new THREE.Mesh(ringGeo, ringMat);
         ring.rotation.x = Math.PI / 2;
@@ -5345,13 +5347,7 @@
         targetQuaternion = new THREE.Quaternion()
           .setFromUnitVectors(cityVector, target);
 
-        targetZoom = 2; // auto zoom slightly closer
-
-        ringStates.forEach((state, i) => {
-          state.progress = 0;
-          state.delay = i * ringBurstDelay;
-          state.active = true;
-        });        
+        targetZoom = 2; // auto zoom slightly closer    
 
       }
 
@@ -5366,6 +5362,12 @@
           if (scene.quaternion.angleTo(targetQuaternion) < 0.001) {
             scene.quaternion.copy(targetQuaternion);
             targetQuaternion = null;
+
+            ringStates.forEach((state, i) => {
+              state.progress = 0;
+              state.delay = i * ringBurstDelay;
+              state.active = true;
+            });
           }
         }
 
@@ -5400,7 +5402,7 @@
 
             ringMeshes[i].scale.set(scale, scale, scale);
 
-            const opacity = Math.pow(1 - state.progress, 3);
+            const opacity = Math.pow(1 - state.progress, 1.8);
             ringMeshes[i].material.opacity = opacity;
 
             if (state.progress >= 1) {
