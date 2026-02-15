@@ -5174,15 +5174,21 @@
         
 
       function openCityPanel(city){
-        const panel=document.getElementById("infoPanel");
-        panel.innerHTML=`
+        const panel = document.getElementById("infoPanel");
+
+        const showCountry =
+          city.country &&
+          city.name.toLowerCase() !== city.country.toLowerCase();
+
+        panel.innerHTML = `
           <button class="closePanel">✕</button>
           <h2>${city.name}</h2>
-          ${city.country ? `<h3>${city.country}</h3>` : ""}
+          ${showCountry ? `<h3>${city.country}</h3>` : ""}
 
           <p>News Source: <a href="${city.news.site}" target="_blank">${city.news.name}</a></p>
           <p>RSS Feed: <a href="${city.news.rss}" target="_blank">${city.news.rss}</a></p>
         `;
+
         panel.classList.add("active");
 
         const closeBtn = panel.querySelector(".closePanel");
@@ -5190,6 +5196,7 @@
           panel.classList.remove("active");
         });
       }
+
 
       window.addEventListener("keydown",(e)=>{
         if(e.key==="Escape") document.getElementById("infoPanel").classList.remove("active");
