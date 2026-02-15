@@ -4931,7 +4931,7 @@
 
 
         const ring = new THREE.Mesh(ringGeo, ringMat);
-        ring.rotation.x = Math.PI / 2;
+
 
         ringGroup.add(ring);
         ringMeshes.push(ring);
@@ -5000,7 +5000,12 @@
           let dot = -cameraDir.dot(cityPos);
           let normalized = (dot + 1) / 2;
           const minGlow = 0.15;
-          const glow = minGlow + (1 - minGlow) * Math.pow(normalized, 2.5);
+          let glow = minGlow + (1 - minGlow) * Math.pow(normalized, 2.5);
+
+          if (glowPulseActive && i === selectedCityIndex) {
+            const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
+            glow *= pulse;
+          }  
 
 
           colors.setXYZ(
@@ -5035,6 +5040,9 @@
       let hoveredIndex = null;
       let selectedCityIndex = null;
       let isFocused = false;
+
+      let glowPulseTime = 0;
+      let glowPulseActive = false;
 
       window.addEventListener("mousemove", (event) => {
           hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -5349,6 +5357,16 @@
 
         targetZoom = 2; // auto zoom slightly closer    
 
+        const ringAltitude = 0.03;
+
+        const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
+        const ringZ =  (radius + ringAltitude) * Math.sin(phi) * Math.sin(theta);
+        const ringY =  (radius + ringAltitude) * Math.cos(phi);
+
+        ringGroup.position.set(ringX, ringY, ringZ);
+        ringGroup.lookAt(0, 0, 0);
+
+
       }
 
 
@@ -5367,7 +5385,14 @@
               state.progress = 0;
               state.delay = i * ringBurstDelay;
               state.active = true;
+
+              ringMeshes[i].scale.set(1, 1, 1);   
+              ringMeshes[i].material.opacity = 0;
             });
+
+            glowPulseTime = 0;
+            glowPulseActive = true;
+
           }
         }
 
@@ -5419,6 +5444,16 @@
           });
 
         }
+
+        if (glowPulseActive) {
+
+          glowPulseTime += 0.03;
+
+          if (glowPulseTime >= 1) {
+            glowPulseActive = false;
+          }
+
+        }        
 
         renderer.render(scene,camera);
         }
