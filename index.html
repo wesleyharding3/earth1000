@@ -5369,6 +5369,15 @@
 
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
+        ringStates.forEach((state, i) => {
+          state.progress = 0;
+          state.delay = i * ringBurstDelay;
+          state.active = true;
+
+          ringMeshes[i].scale.set(1, 1, 1);
+          ringMeshes[i].material.opacity = 0;
+        });
+
 
 
       }
@@ -5385,14 +5394,7 @@
             scene.quaternion.copy(targetQuaternion);
             targetQuaternion = null;
 
-            ringStates.forEach((state, i) => {
-              state.progress = 0;
-              state.delay = i * ringBurstDelay;
-              state.active = true;
 
-              ringMeshes[i].scale.set(1, 1, 1);   
-              ringMeshes[i].material.opacity = 0;
-            });
 
             glowPulseTime = 0;
             glowPulseActive = true;
