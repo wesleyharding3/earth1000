@@ -163,21 +163,32 @@
     }
 
     .cityBubble.hovered .bubbleContent {
-      animation: bubblePulse 4s ease-in-out infinite;
-      border-color: rgba(255,255,255,0.35);
+      animation: bubblePulse 7s ease-in-out infinite;
     }
 
-    @keyframes bubblePulse {
+    @keyframes electricPulse {
       0% {
-        box-shadow: 0 0 8px rgba(255,255,255,0.08);
+        box-shadow:
+          0 0 6px rgba(255,255,255,0.08),
+          0 0 0px rgba(0,150,255,0);
       }
-      50% {
-        box-shadow: 0 0 18px rgba(255,255,255,0.25);
+      35% {
+        box-shadow:
+          0 0 18px rgba(255,255,255,0.35),
+          0 0 28px rgba(0,150,255,0.6);
+      }
+      70% {
+        box-shadow:
+          0 0 10px rgba(255,255,255,0.2),
+          0 0 14px rgba(0,150,255,0.3);
       }
       100% {
-        box-shadow: 0 0 8px rgba(255,255,255,0.08);
+        box-shadow:
+          0 0 6px rgba(255,255,255,0.08),
+          0 0 0px rgba(0,150,255,0);
       }
     }
+
 
 /* ===============================
    Compass
@@ -5452,7 +5463,7 @@
         title.classList.add("typing");
 
         let charIndex = 0;
-        const typingSpeed = 30; // ms per character (~0.4–0.6s total)
+        const typingSpeed = 65; // ms per character (~0.4–0.6s total)
 
         function type() {
 
@@ -5473,6 +5484,71 @@
         type();
 
       }
+
+            function triggerBubbleTyping(index) {
+
+        const bubble = cityLabels[index];
+        if (!bubble) return;
+
+        const title = bubble.querySelector(".bubbleTitle");
+        if (!title) return;
+
+        const fullText = cities[index].name;
+
+        title.textContent = "";
+        title.classList.add("typing");
+
+        let charIndex = 0;
+        const typingSpeed = 65;
+
+        function type() {
+
+          if (charIndex < fullText.length) {
+
+            title.textContent += fullText.charAt(charIndex);
+            charIndex++;
+            setTimeout(type, typingSpeed);
+
+          } else {
+
+            title.classList.remove("typing");
+
+          }
+
+        }
+
+        type();
+
+      }
+
+
+      // ------------------------------
+      // Electric Bubble Timer
+      // ------------------------------
+
+      function triggerElectricPulse() {
+
+        cityLabels.forEach(label => {
+
+          if (label.style.opacity === "1") {
+
+            label.classList.remove("electric");
+            void label.offsetWidth;
+            label.classList.add("electric");
+
+          }
+
+        });
+
+      }
+
+
+      setInterval(() => {
+
+        triggerElectricPulse();
+
+      }, 3000);
+
 
 
 
