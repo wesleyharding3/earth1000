@@ -5595,6 +5595,26 @@
         updateHoverLabels();
 
         // ------------------------------
+        // Leader Line Projection
+        // ------------------------------
+
+        if (hoveredCityPosition) {
+
+          const vector = hoveredCityPosition.clone();
+          vector.project(camera);
+
+          const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+          const y = (-vector.y * 0.5 + 0.5) * window.innerHeight;
+
+          updateHoverLine(x, y);
+
+        } else {
+
+          hideHoverLine();
+
+        }        
+
+        // ------------------------------
         // Ring Burst Animation
         // ------------------------------
 
