@@ -5144,6 +5144,8 @@
       let hoveredIndex = null;
       let selectedCityIndex = null;
       let isFocused = false;
+      let hoveredCityPosition = null;
+
 
       let glowPulseTime = 0;
       let glowPulseActive = false;
@@ -5159,6 +5161,7 @@
         const intersects = raycaster.intersectObject(cityPoints);
 
         hoveredIndex = null;
+        hoveredCityPosition = null;
 
         if (intersects.length > 0) {
 
@@ -5173,8 +5176,12 @@
 
           if (isCityVisible(cityPos, camera)) {
             hoveredIndex = index;
+            hoveredCityPosition = cityPos.clone();
           }
         }
+
+          
+        
 
         cities.forEach((city, i) => {
 
