@@ -5178,6 +5178,10 @@
 
           const index = intersects[0].index;
 
+          if (panelOpen && index === selectedCityIndex) {
+            return;
+          }
+
           const cityPos = new THREE.Vector3();
           cityPos.fromBufferAttribute(
             cityPoints.geometry.attributes.position,
