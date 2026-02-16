@@ -234,6 +234,8 @@
 
     // Smooth zoom target
     let targetZoom = camera.position.z;
+    let zoomVelocity = 0;
+    const zoomFriction = 0.92;
 
 
     /* ===============================
@@ -5614,27 +5616,48 @@
       /* ===============================
          Zoom controls: wheel, trackpad pinch, iOS pinch
       =============================== */
-      window.addEventListener("wheel",e=>{
+
+      window.addEventListener("wheel", e => {
         e.preventDefault();
-        targetZoom += e.deltaY*0.003;
-        targetZoom=Math.max(1.5,Math.min(5,targetZoom));
-      }, {passive:false});
+        zoomVelocity += e.deltaY * 0.0006;
+      }, { passive: false });
 
-      let initialPinchDistance=null;
-      function getDistance(touches){return Math.sqrt((touches[0].clientX-touches[1].clientX)**2+(touches[0].clientY-touches[1].clientY)**2);}
-      window.addEventListener("touchstart",e=>{if(e.touches.length===2) initialPinchDistance=getDistance(e.touches);},{passive:false});
-      window.addEventListener("touchmove",e=>{
-        if(e.touches.length===2 && initialPinchDistance){
-          e.preventDefault();
-          const currentDistance=getDistance(e.touches);
-          const delta=initialPinchDistance-currentDistance;
-          targetZoom += delta*0.01;
-          targetZoom=Math.max(1.5,Math.min(5,targetZoom));
-          initialPinchDistance=currentDistance;
+
+      let initialPinchDistance = null;
+
+      function getDistance(touches) {
+        return Math.sqrt(
+          (touches[0].clientX - touches[1].clientX) ** 2 +
+          (touches[0].clientY - touches[1].clientY) ** 2
+        );
+      }
+
+      window.addEventListener("touchstart", e => {
+        if (e.touches.length === 2) {
+          initialPinchDistance = getDistance(e.touches);
         }
-      },{passive:false});
-      window.addEventListener("touchend",e=>{if(e.touches.length<2) initialPinchDistance=null;});
+      }, { passive: false });
 
+      window.addEventListener("touchmove", e => {
+        if (e.touches.length === 2 && initialPinchDistance !== null) {
+
+          e.preventDefault();
+
+          const currentDistance = getDistance(e.touches);
+          const delta = initialPinchDistance - currentDistance;
+
+          // Add inertia instead of direct zoom
+          zoomVelocity += delta * 0.0008;
+
+          initialPinchDistance = currentDistance;
+        }
+      }, { passive: false });
+
+      window.addEventListener("touchend", e => {
+        if (e.touches.length < 2) {
+          initialPinchDistance = null;
+        }
+      });
 
 
       /* ===============================
@@ -5763,8 +5786,18 @@
           scene.rotateY(0.0002);
         }
 
+        zoomVelocity *= zoomFriction;
+        targetZoom += zoomVelocity;
+        targetZoom = Math.max(1.5, Math.min(5, targetZoom));
 
-        camera.position.z += (targetZoom-camera.position.z)*0.1;
+        const zoomDelta = targetZoom - camera.position.z;
+
+        const easingStrength = 0.08;
+        const dynamicEasing = easingStrength * Math.min(Math.abs(zoomDelta) * 2, 1);
+
+        camera.position.z += zoomDelta * dynamicEasing;
+
+
         updateCityGlow(); 
         updateHoverLabels();
 
