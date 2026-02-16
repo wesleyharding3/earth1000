@@ -179,6 +179,89 @@
       }
     }
 
+/* ===============================
+   Apple-Style Compass
+=============================== */
+
+#compass {
+  
+  position: absolute;
+  top: 20px;
+  right: 20px;
+
+  width: 64px;
+  height: 64px;
+
+  border-radius: 50%;
+
+  backdrop-filter: blur(12px);
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  cursor: grab;
+  user-select: none;
+
+  z-index: 30;
+
+  transition: transform 0.2s ease;
+}
+
+#compass:hover {
+
+  transform: scale(1.05);
+
+}
+
+
+.compass-ring {
+
+  width: 80%;
+  height: 80%;
+
+  border-radius: 50%;
+
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  transition: transform 0.1s ease;
+
+}
+
+
+.compass-arrow {
+
+  position: relative;
+
+  width: 2px;
+  height: 20px;
+
+  background: white;
+
+}
+
+
+.compass-arrow::before {
+
+  content: "";
+
+  position: absolute;
+  top: -8px;
+  left: -4px;
+
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid red;
+
+}
+    
+
 
 
   </style>
@@ -199,6 +282,20 @@
     <input type="text" id="citySearch" placeholder="Search city..." />
     <div id="searchResults"></div>
   </div>
+  <div id="compass">
+    <div class="compass-inner">
+      N
+    </div>
+  </div>
+
+  <!-- Compass Widget -->
+<div id="compass">
+  <div class="compass-ring">
+    <div class="compass-arrow"></div>
+  </div>
+</div>
+
+
 
 
   <script type="module">
@@ -5194,6 +5291,9 @@
       let glowPulseTime = 0;
       let glowPulseActive = false;
 
+      const compassRing = document.querySelector(".compass-ring");
+      const compass = document.getElementById("compass");
+
       window.addEventListener("mousemove", (event) => {
           hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
           hoverMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -5908,6 +6008,12 @@
 
         earthColorAttr.needsUpdate = true;
 
+        
+        const compassRing = document.querySelector(".compass-ring");
+
+        if (compassRing) {
+          compassRing.style.transform = `rotate(${-scene.rotation.y}rad)`;
+        }
 
 
         renderer.render(scene,camera);
