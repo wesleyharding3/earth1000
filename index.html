@@ -5414,6 +5414,10 @@
 
             label.style.opacity = 0;
             label.style.transform = "translate(-50%, -140%) scale(0.95)";
+            const title = label.querySelector(".bubbleTitle");
+            if (title) {
+              title.dataset.typed = "false";
+            }
 
           }
 
@@ -5461,6 +5465,8 @@
 
         const title = bubble.querySelector(".bubbleTitle");
         if (!title) return;
+
+        if (title.dataset.typed === "true") return;
 
         const fullText = cities[index].name;
 
