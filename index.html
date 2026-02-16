@@ -134,13 +134,32 @@
       align-items: center;
     }
 
-    .bubbleArrow {
-      width: 0;
-      height: 0;
-      margin: 0 auto;
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-top: 8px solid rgba(0, 0, 0, 0.88);
+    .bubbleWrapper {
+      position: relative;
+      display: inline-block;
+    }
+
+    .bubbleOutline {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+
+    .bubbleRect {
+      fill: rgba(0, 0, 0, 0.88);
+      stroke: rgba(255, 255, 255, 0.4);
+      stroke-width: 1.2;
+    }
+
+    .bubbleContent {
+      position: relative;
+      padding: 6px 12px;
+      border-radius: 12px;
+      color: #fff;
+      white-space: nowrap;
     }
 
     .cityBubble.hovered .bubbleContent {
@@ -5126,14 +5145,28 @@
         const div = document.createElement("div");
 
         div.innerHTML = `
-          <div class="bubbleContent">
-            <div class="bubbleTitle">${city.name}</div>
-            <div class="bubbleMeta">
-              <span class="storyCount">0 stories</span>
+          <div class="bubbleWrapper">
+
+            <svg class="bubbleOutline">
+              <rect class="bubbleRect"
+                    x="0"
+                    y="0"
+                    rx="12"
+                    ry="12"
+                    width="100%"
+                    height="100%" />
+            </svg>
+
+            <div class="bubbleContent">
+              <div class="bubbleTitle">${city.name}</div>
+              <div class="bubbleMeta">
+                <span class="storyCount">0 stories</span>
+              </div>
             </div>
+
           </div>
-          <div class="bubbleArrow"></div>
         `;
+
 
         div.className = "cityBubble";
         div.style.position = "absolute";
@@ -5152,6 +5185,8 @@
       let selectedCityIndex = null;
       let isFocused = false;
       let hoveredCityPosition = null;
+      let timeInterval = null;
+
 
 
       let glowPulseTime = 0;
@@ -5257,6 +5292,76 @@
         });
 
       }
+
+            // ------------------------------
+      // Bubble Perimeter Trace
+      // ------------------------------
+
+      function triggerBubbleTrace(index, onComplete) {
+
+        const bubble = cityLabels[index];
+        if (!bubble) return;
+
+        const content = bubble.querySelector(".bubbleContent");
+        if (!content) return;
+
+        content.classList.remove("trace");
+        void content.offsetWidth; // restart animation
+        content.classList.add("trace");
+
+        // wait for animation to finish (~0.5s)
+        setTimeout(() => {
+
+          if (onComplete) {
+            onComplete();
+          }
+
+        }, 500);
+
+      }
+
+      }
+
+            // ------------------------------
+      // Bubble Typing Animation
+      // ------------------------------
+
+      function triggerBubbleTyping(index) {
+
+        const bubble = cityLabels[index];
+        if (!bubble) return;
+
+        const title = bubble.querySelector(".bubbleTitle");
+        if (!title) return;
+
+        const fullText = cities[index].name;
+
+        title.textContent = "";
+        title.classList.add("typing");
+
+        let charIndex = 0;
+        const typingSpeed = 20; // ms per character (~0.4–0.6s total)
+
+        function type() {
+
+          if (charIndex < fullText.length) {
+
+            title.textContent += fullText.charAt(charIndex);
+            charIndex++;
+            setTimeout(type, typingSpeed);
+
+          } else {
+
+            title.classList.remove("typing");
+
+          }
+
+        }
+
+        type();
+
+      }
+
 
 
       // Raycaster for city clicks
@@ -5396,11 +5501,10 @@
 
         panel.classList.add("active");
 
-        // ------------------------------
-        // Local Time Calculation
-        // ------------------------------
-
+    
         const timeElement = document.getElementById("localTime");
+
+        
 
         function updateLocalTime() {
 
@@ -5423,13 +5527,15 @@
         }
 
         updateLocalTime();
-        const timeInterval = setInterval(updateLocalTime, 1000);
+        if (timeInterval) clearInterval(timeInterval);
+          timeInterval = setInterval(updateLocalTime, 1000);
 
 
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
           clearInterval(timeInterval);
+          timeInterval = null;
         });
       }
 
@@ -5438,6 +5544,7 @@
         if(e.key==="Escape") {
           document.getElementById("infoPanel").classList.remove("active");
           clearInterval(timeInterval);
+          timeInterval = null;
         }  
       });
 
