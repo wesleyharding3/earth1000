@@ -5769,8 +5769,13 @@
         // ------------------------------
         const panelOpen = document.getElementById("infoPanel")
           .classList.contains("active");
+         
+        const hoveringDifferentCity =
+          hoveredIndex !== null &&
+          hoveredIndex !== selectedCityIndex;  
 
-        if (!panelOpen && hoveredCityPosition) {
+        if (hoveredCityPosition && (!panelOpen || hoveringDifferentCity)) {
+
 
           const vector = hoveredCityPosition.clone();
           vector.project(camera);
