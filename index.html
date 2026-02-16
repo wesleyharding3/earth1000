@@ -5322,14 +5322,24 @@
       // Leader Line Helpers
       // ------------------------------
 
+      // ------------------------------
+      // Leader Line Helpers
+      // ------------------------------
+
       function updateHoverLine(x, y) {
 
         const line = document.getElementById("hoverLine");
-        const panel = document.querySelector(".cityBubble.hovered");
+        if (!line) return;
 
-        if (!line || !panel) return;
+        if (hoveredIndex === null) {
+          line.style.opacity = "0";
+          return;
+        }
 
-        const rect = panel.getBoundingClientRect();
+        const bubble = cityLabels[hoveredIndex];
+        if (!bubble) return;
+
+        const rect = bubble.getBoundingClientRect();
 
         const bubbleX = rect.left + rect.width / 2;
         const bubbleY = rect.top + rect.height / 2;
@@ -5343,9 +5353,14 @@
       }
 
       function hideHoverLine() {
+
         const line = document.getElementById("hoverLine");
-        if (line) line.style.opacity = "0";
+        if (line) {
+          line.style.opacity = "0";
+        }
+
       }
+
 
         
 
