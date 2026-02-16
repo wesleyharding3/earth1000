@@ -5406,6 +5406,10 @@
             label.style.opacity = 1;
             label.style.transform = "translate(-50%, -160%) scale(1)";
 
+            if (isHovered || isSelected) {
+              triggerBubbleTyping(i);
+            }            
+
           } else {
 
             label.style.opacity = 0;
@@ -5464,7 +5468,7 @@
         title.classList.add("typing");
 
         let charIndex = 0;
-        const typingSpeed = 65; // ms per character (~0.4–0.6s total)
+        const typingSpeed = 45; // ms per character (~0.4–0.6s total)
 
         function type() {
 
@@ -5486,41 +5490,6 @@
 
       }
 
-            function triggerBubbleTyping(index) {
-
-        const bubble = cityLabels[index];
-        if (!bubble) return;
-
-        const title = bubble.querySelector(".bubbleTitle");
-        if (!title) return;
-
-        const fullText = cities[index].name;
-
-        title.textContent = "";
-        title.classList.add("typing");
-
-        let charIndex = 0;
-        const typingSpeed = 65;
-
-        function type() {
-
-          if (charIndex < fullText.length) {
-
-            title.textContent += fullText.charAt(charIndex);
-            charIndex++;
-            setTimeout(type, typingSpeed);
-
-          } else {
-
-            title.classList.remove("typing");
-
-          }
-
-        }
-
-        type();
-
-      }
 
 
       // ------------------------------
