@@ -180,29 +180,29 @@
     }
 
 /* ===============================
-   Apple-Style Compass
+   Compass
 =============================== */
 
 #compass {
-  
+
   position: absolute;
   top: 20px;
   right: 20px;
 
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
 
   border-radius: 50%;
 
   backdrop-filter: blur(12px);
   background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255,255,255,0.25);
 
   display: flex;
   align-items: center;
   justify-content: center;
 
-  cursor: grab;
+  cursor: pointer;
   user-select: none;
 
   z-index: 30;
@@ -211,56 +211,45 @@
 }
 
 #compass:hover {
-
-  transform: scale(1.05);
-
+  transform: scale(1.08);
 }
 
-
-.compass-ring {
-
-  width: 80%;
-  height: 80%;
-
-  border-radius: 50%;
-
-  border: 1.5px solid rgba(255, 255, 255, 0.5);
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  transition: transform 0.1s ease;
-
+.compass-svg {
+  width: 100%;
+  height: 100%;
 }
 
-
-.compass-arrow {
-
-  position: relative;
-
-  width: 2px;
-  height: 20px;
-
-  background: white;
-
+.compass-circle {
+  fill: none;
+  stroke: rgba(255,255,255,0.5);
+  stroke-width: 2;
 }
 
-
-.compass-arrow::before {
-
-  content: "";
-
-  position: absolute;
-  top: -8px;
-  left: -4px;
-
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-bottom: 8px solid red;
-
+.compass-letter {
+  fill: white;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.9;
 }
-    
+
+.compass-arrow-line {
+  stroke: white;
+  stroke-width: 2;
+}
+
+.compass-arrow-head {
+  fill: red;
+}
+
+.compass-tick {
+  stroke: rgba(255,255,255,0.6);
+  stroke-width: 1;
+}
+
+.compass-tick.major {
+  stroke-width: 2;
+}
+
 
 
 
@@ -282,17 +271,28 @@
     <input type="text" id="citySearch" placeholder="Search city..." />
     <div id="searchResults"></div>
   </div>
-  <div id="compass">
-    <div class="compass-inner">
-      N
-    </div>
-  </div>
 
-  <!-- Compass Widget -->
+<!-- Compass Widget -->
 <div id="compass">
-  <div class="compass-ring">
-    <div class="compass-arrow"></div>
-  </div>
+  <svg class="compass-svg" viewBox="0 0 100 100">
+    
+    <!-- Outer Ring -->
+    <circle cx="50" cy="50" r="46" class="compass-circle" />
+
+    <!-- Tick Marks -->
+    <g class="compass-ticks"></g>
+
+    <!-- Cardinal Letters -->
+    <text x="50" y="18" text-anchor="middle" class="compass-letter">N</text>
+    <text x="50" y="92" text-anchor="middle" class="compass-letter">S</text>
+    <text x="8" y="54" text-anchor="middle" class="compass-letter">W</text>
+    <text x="92" y="54" text-anchor="middle" class="compass-letter">E</text>
+
+    <!-- Arrow -->
+    <line x1="50" y1="50" x2="50" y2="25" class="compass-arrow-line"/>
+    <polygon points="50,15 45,25 55,25" class="compass-arrow-head"/>
+
+  </svg>
 </div>
 
 
@@ -5768,6 +5768,48 @@
           initialPinchDistance = null;
         }
       });
+
+      /* ===============================
+   Generate Compass Ticks (16 divisions)
+=============================== */
+
+const tickGroup = document.querySelector(".compass-ticks");
+
+if (tickGroup) {
+
+  for (let i = 0; i < 16; i++) {
+
+    const angle = (i / 16) * Math.PI * 2;
+
+    const innerRadius = i % 4 === 0 ? 30 : 36; // major every 4
+    const outerRadius = 44;
+
+    const x1 = 50 + innerRadius * Math.cos(angle);
+    const y1 = 50 + innerRadius * Math.sin(angle);
+
+    const x2 = 50 + outerRadius * Math.cos(angle);
+    const y2 = 50 + outerRadius * Math.sin(angle);
+
+    const line = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "line"
+    );
+
+    line.setAttribute("x1", x1);
+    line.setAttribute("y1", y1);
+    line.setAttribute("x2", x2);
+    line.setAttribute("y2", y2);
+
+    line.setAttribute(
+      "class",
+      i % 4 === 0 ? "compass-tick major" : "compass-tick"
+    );
+
+    tickGroup.appendChild(line);
+  }
+
+}
+
 
 
       /* ===============================
