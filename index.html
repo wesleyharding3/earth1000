@@ -5170,6 +5170,10 @@
         hoveredIndex = null;
         hoveredCityPosition = null;
 
+        const infoPanel = document.getElementById("infoPanel");
+        const panelOpen = infoPanel.classList.contains("active");
+
+
         if (intersects.length > 0) {
 
           const index = intersects[0].index;
@@ -5211,7 +5215,8 @@
 
           const isHovered  = (i === hoveredIndex);
           const isSelected = (i === selectedCityIndex);
-          const shouldShow = isHovered || isSelected;
+          const shouldShow = !panelOpen && (isHovered || isSelected);
+
 
           if (isSelected) {
             label.classList.add("focused");
@@ -5340,7 +5345,7 @@
         if (!bubble) return;
 
         const rect = bubble.getBoundingClientRect();
-        
+
         const bubbleX = rect.left + rect.width / 2;
         const bubbleY = rect.bottom;
 
@@ -5649,8 +5654,10 @@
         // ------------------------------
         // Leader Line Projection
         // ------------------------------
+        const panelOpen = document.getElementById("infoPanel")
+          .classList.contains("active");
 
-        if (hoveredCityPosition) {
+        if (!panelOpen && hoveredCityPosition) {
 
           const vector = hoveredCityPosition.clone();
           vector.project(camera);
