@@ -5293,6 +5293,16 @@
 
       const compassRing = document.querySelector(".compass-ring");
       const compass = document.getElementById("compass");
+      compass.addEventListener("click", () => {
+
+        const currentX = scene.rotation.x;
+
+        const targetEuler = new THREE.Euler(currentX, 0, 0);
+        targetQuaternion = new THREE.Quaternion().setFromEuler(targetEuler);
+
+       isFocused = false;
+
+      });
 
       window.addEventListener("mousemove", (event) => {
           hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
