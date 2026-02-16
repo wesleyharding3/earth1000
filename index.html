@@ -101,6 +101,67 @@
        background: #666;
     }
 
+    .cityBubble {
+      position: absolute;
+      pointer-events: none;
+      transform: translate(-50%, -140%);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+      font-size: 11px;
+      color: #fff;
+      white-space: nowrap;
+    }
+
+    .bubbleContent {
+      background: rgba(0, 0, 0, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      padding: 6px 10px;
+      border-radius: 10px;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 0 12px rgba(0, 0, 0, 0.5);
+    }
+
+    .bubbleTitle {
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+
+    .bubbleMeta {
+      font-size: 10px;
+      opacity: 0.7;
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .bubbleArrow {
+      width: 0;
+      height: 0;
+      margin: 0 auto;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid rgba(0, 0, 0, 0.88);
+    }
+
+    .cityBubble.hovered .bubbleContent {
+      animation: bubblePulse 2.2s ease-in-out infinite;
+      border-color: rgba(255,255,255,0.35);
+    }
+
+    @keyframes bubblePulse {
+      0% {
+        box-shadow: 0 0 8px rgba(255,255,255,0.08);
+      }
+      50% {
+        box-shadow: 0 0 18px rgba(255,255,255,0.25);
+      }
+      100% {
+        box-shadow: 0 0 8px rgba(255,255,255,0.08);
+      }
+    }
+
+
+
   </style>
 </head>
 
@@ -5042,18 +5103,30 @@
 
       const cityLabelsContainer = document.getElementById("cityLabels");
       const cityLabels = cities.map(city => {
-          const div = document.createElement("div");
-          div.textContent = city.name;
-          div.style.position = "absolute";
-          div.style.pointerEvents = "none";
-          div.style.color = "#ffffff";
-          div.style.fontSize = "9px";
-          div.style.fontWeight = "bold";
-          div.style.opacity = 0;
-          div.style.transition = "opacity 0.2s";
-          cityLabelsContainer.appendChild(div);
-          return div;
+
+        const div = document.createElement("div");
+
+        div.innerHTML = `
+          <div class="bubbleContent">
+            <div class="bubbleTitle">${city.name}</div>
+            <div class="bubbleMeta">
+              <span class="storyCount">0 stories</span>
+            </div>
+          </div>
+          <div class="bubbleArrow"></div>
+        `;
+
+        div.className = "cityBubble";
+        div.style.position = "absolute";
+        div.style.pointerEvents = "none";
+        div.style.opacity = 0;
+        div.style.transition = "opacity 0.2s";
+
+        cityLabelsContainer.appendChild(div);
+
+        return div;
       });
+
 
       const hoverMouse = new THREE.Vector2();
       let hoveredIndex = null;
@@ -5074,9 +5147,9 @@
         const intersects = raycaster.intersectObject(cityPoints);
 
         hoveredIndex = null;
-        
 
         if (intersects.length > 0) {
+
           const index = intersects[0].index;
 
           const cityPos = new THREE.Vector3();
@@ -5091,32 +5164,62 @@
           }
         }
 
-      cities.forEach((city, i) => {
-        const label = cityLabels[i];
+        cities.forEach((city, i) => {
 
-        const pos = new THREE.Vector3(
-          positions[i*3],
-          positions[i*3+1],
-          positions[i*3+2]
-        );
-        pos.applyMatrix4(cityPoints.matrixWorld);
+          const label = cityLabels[i];
 
-        const projected = pos.clone().project(camera);
-        const x = (projected.x + 1)/2 * window.innerWidth;
-        const y = (-projected.y + 1)/2 * window.innerHeight;
+          const pos = new THREE.Vector3(
+            positions[i * 3],
+            positions[i * 3 + 1],
+            positions[i * 3 + 2]
+          );
 
-        label.style.left = `${x}px`;
-        label.style.top = `${y}px`;
-        const shouldShow = (i === hoveredIndex) || (i === selectedCityIndex);
-        if (shouldShow) {
-          label.style.opacity = 1;
-          label.style.transform = "translate(-50%, -150%) scale(1)";
-        } else {
-          label.style.opacity = 0;
-          label.style.transform = "translate(-50%, -130%) scale(0.95)";
-        }
-      });
-    }
+          pos.applyMatrix4(cityPoints.matrixWorld);
+
+          const projected = pos.clone().project(camera);
+          const x = (projected.x + 1) / 2 * window.innerWidth;
+          const y = (-projected.y + 1) / 2 * window.innerHeight;
+
+          label.style.left = `${x}px`;
+          label.style.top  = `${y}px`;
+
+          const isHovered  = (i === hoveredIndex);
+          const isSelected = (i === selectedCityIndex);
+          const shouldShow = isHovered || isSelected;
+
+          if (isSelected) {
+            label.classList.add("focused");
+          } else {
+            label.classList.remove("focused");
+          }
+
+          if (isHovered) {
+            label.classList.add("hovered");
+          } else {
+            label.classList.remove("hovered");
+          }
+
+          if (shouldShow) {
+
+            const storyCountEl = label.querySelector(".storyCount");
+
+            if (storyCountEl) {
+              storyCountEl.textContent = `${city.storyCount || 0} stories`;
+            }
+
+            label.style.opacity = 1;
+            label.style.transform = "translate(-50%, -160%) scale(1)";
+
+          } else {
+
+            label.style.opacity = 0;
+            label.style.transform = "translate(-50%, -140%) scale(0.95)";
+
+          }
+
+        });
+
+      }
 
 
       // Raycaster for city clicks
