@@ -5296,13 +5296,14 @@
       let isFocused = false;
       let hoveredCityPosition = null;
       let timeInterval = null;
+      const compassSVG = document.querySelector(".compass-svg");
 
 
 
       let glowPulseTime = 0;
       let glowPulseActive = false;
 
-      const compassRing = document.querySelector(".compass-ring");
+      const compassRing = document.querySelector(".compass-svg");
       const compass = document.getElementById("compass");
       compass.addEventListener("click", () => {
 
@@ -6136,11 +6137,12 @@ if (tickGroup) {
 
         earthColorAttr.needsUpdate = true;
 
-        
-        const compassRing = document.querySelector(".compass-ring");
+        if (compassSVG) {
 
-        if (compassRing) {
-          compassRing.style.transform = `rotate(${-scene.rotation.y}rad)`;
+          const euler = new THREE.Euler().setFromQuaternion(scene.quaternion);
+
+          compassSVG.style.transform = `rotate(${-euler.y}rad)`;
+
         }
 
 
