@@ -9,17 +9,14 @@ const parser = new Parser();
  * Extract image URL from RSS item (if present)
  */
 function extractImage(item) {
-  // 1. Standard enclosure
   if (item.enclosure && item.enclosure.url) {
     return item.enclosure.url;
   }
 
-  // 2. media:content (some feeds use this)
   if (item.media && item.media.content && item.media.content.url) {
     return item.media.content.url;
   }
 
-  // 3. Extract first <img> from HTML content
   if (item.content) {
     const match = item.content.match(/<img[^>]+src="([^">]+)"/);
     if (match) {
@@ -37,23 +34,26 @@ async function fetchFeeds() {
   try {
     console.log("Starting RSS fetch...");
 
-    // Get all feed URLs from database
-    const feedResult = await pool.query("SELECT * FROM news_sources");
+    const feedResult = await pool.query(`
+      SELECT id, rss_url, primary_city_id
+      FROM news_sources
+      WHERE is_active = true
+    `);
+
     const feeds = feedResult.rows;
 
     for (const feed of feeds) {
       try {
-        console.log(`Fetching: ${feed.url}`);
+        console.log(`Fetching: ${feed.rss_url}`);
 
-        const parsed = await parser.parseURL(feed.url);
+        const parsed = await parser.parseURL(feed.rss_url);
 
         for (const item of parsed.items) {
-          const imageUrl = extractImage(item);
-
           await pool.query(
             `
             INSERT INTO news_articles (
               source_id,
+              primary_city_id,
               title,
               url,
               summary,
@@ -62,11 +62,12 @@ async function fetchFeeds() {
               ingested_at,
               raw_json
             )
-            VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
             ON CONFLICT (url) DO NOTHING
             `,
             [
               feed.id,
+              feed.primary_city_id,
               item.title || null,
               item.link || null,
               item.contentSnippet || item.description || null,
@@ -77,10 +78,9 @@ async function fetchFeeds() {
           );
         }
 
-
-        console.log(`Finished: ${feed.url}`);
+        console.log(`Finished: ${feed.rss_url}`);
       } catch (err) {
-        console.error(`Error fetching ${feed.url}:`, err.message);
+        console.error(`Error fetching ${feed.rss_url}:`, err.message);
       }
     }
 
