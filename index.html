@@ -1006,10 +1006,23 @@
 
         panel.innerHTML = `
           <button class="closePanel">✕</button>
-          <h2>${city.name}</h2>
-          ${showCountry ? `<h4>${city.country}</h4>` : ""}
+          <div style="
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            margin-top:4px;
+          ">
+            <div>
+              <h2 style="margin:0;">${city.name}</h2>
+              ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
+            </div>
 
-          <p id="localTime" style="margin-top:8px;font-size:14px;opacity:0.85;"></p>
+            <div id="localTime" style="
+              font-size:14px;
+              opacity:0.85;
+              white-space:nowrap;
+            "></div>
+          </div>
 
           <div id="articlesContainer" style="margin-top:12px;font-size:13px;">
             Loading articles...
