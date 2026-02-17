@@ -35,7 +35,7 @@ async function fetchFeeds() {
     console.log("Starting RSS fetch...");
 
     const feedResult = await pool.query(`
-      SELECT id, rss_url, primary_city_id
+      SELECT id, rss_url, city_id
       FROM news_sources
       WHERE is_active = true
     `);
