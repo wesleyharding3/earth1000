@@ -54,6 +54,7 @@ async function fetchFeeds() {
             INSERT INTO news_articles (
               source_id,
               city_id,
+              country_id,
               title,
               url,
               summary,
