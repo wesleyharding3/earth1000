@@ -659,14 +659,26 @@
 
       compass.addEventListener("click", () => {
 
-        // Snap fully back to world north
-        targetQuaternion = new THREE.Quaternion();
-        targetQuaternion.identity(); // same as (0, 0, 0)
+        const currentEuler = new THREE.Euler()
+          .setFromQuaternion(scene.quaternion, "XYZ");
+
+        const targetEuler = new THREE.Euler(
+          0,                 // remove tilt
+          currentEuler.y,    // preserve longitude
+          0,
+          "XYZ"
+        );
+
+        targetQuaternion = new THREE.Quaternion()
+          .setFromEuler(targetEuler);
 
         isFocused = false;
         selectedCityIndex = null;
 
       });
+
+
+
 
       window.addEventListener("mousemove", (event) => {
           hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -1131,12 +1143,25 @@
         isFocused = false; 
       });
       window.addEventListener("mouseup",()=>dragging=false);
-      window.addEventListener("mousemove",e=>{
+      window.addEventListener("mousemove", e=>{
         if(!dragging) return;
-        scene.rotation.y += (e.clientX-prevX)*0.005;
-        scene.rotation.x += (e.clientY-prevY)*0.005;
-        prevX=e.clientX; prevY=e.clientY;
+
+        const deltaX = (e.clientX - prevX) * 0.005;
+        const deltaY = (e.clientY - prevY) * 0.005;
+
+        const qx = new THREE.Quaternion()
+          .setFromAxisAngle(new THREE.Vector3(1,0,0), deltaY);
+
+        const qy = new THREE.Quaternion()
+          .setFromAxisAngle(new THREE.Vector3(0,1,0), deltaX);
+
+        scene.quaternion.multiplyQuaternions(qy, scene.quaternion);
+        scene.quaternion.multiplyQuaternions(scene.quaternion, qx);
+
+        prevX = e.clientX;
+        prevY = e.clientY;
       });
+
       
 
 // ===============================
@@ -1158,16 +1183,23 @@
       }, {passive: false });
 
       window.addEventListener("touchmove", (e) => {
-        if (!touchDragging || e.touches.length !== 1) return; 
+        if (!touchDragging || e.touches.length !== 1) return;
         e.preventDefault();
 
         const touchX = e.touches[0].clientX;
         const touchY = e.touches[0].clientY;
 
-        scene.rotation.y += (touchX - touchPrevX) * 0.005;
-        scene.rotation.x += (touchY - touchPrevY) * 0.005;
+        const deltaX = (touchX - touchPrevX) * 0.005;
+        const deltaY = (touchY - touchPrevY) * 0.005;
 
-        scene.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, scene.rotation.x));
+        const qx = new THREE.Quaternion()
+          .setFromAxisAngle(new THREE.Vector3(1,0,0), deltaY);
+
+        const qy = new THREE.Quaternion()
+          .setFromAxisAngle(new THREE.Vector3(0,1,0), deltaX);
+
+        scene.quaternion.multiplyQuaternions(qy, scene.quaternion);
+        scene.quaternion.multiplyQuaternions(scene.quaternion, qx);
 
         touchPrevX = touchX;
         touchPrevY = touchY;
@@ -1176,7 +1208,7 @@
 
       window.addEventListener("touchend", () => {
         touchDragging = false;
-      });  
+      });
 
 
 
