@@ -17,7 +17,7 @@ app.use(express.json());
 app.get("/api/cities", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, name, lat, lon, country
+      SELECT id, name, latitude, longitude, country
       FROM cities
       ORDER BY name ASC
     `);
