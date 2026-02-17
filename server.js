@@ -25,7 +25,7 @@ app.get("/api/cities", async (req, res) => {
     res.json(result.rows);
 
   } catch (err) {
-    console.error("Cities error:", err.message);
+    console.error("Cities FULL error:", err);
     res.status(500).json({ error: "Failed to fetch cities" });
   }
 });
