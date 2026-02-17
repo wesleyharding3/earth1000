@@ -1,6 +1,21 @@
+const express = require("express");
+const cors = require("cors");
+const pool = require("./db");   // your db.js
+
+const app = express();
+
+// ===============================
+// Middleware
+// ===============================
+
+app.use(cors());
+app.use(express.json());
+
+
 // ===============================
 // GET NEWS BY CITY
 // ===============================
+
 app.get("/api/news/city/:cityId", async (req, res) => {
   try {
     const { cityId } = req.params;
@@ -30,4 +45,24 @@ app.get("/api/news/city/:cityId", async (req, res) => {
     console.error("City news error:", err.message);
     res.status(500).json({ error: "Failed to fetch city news" });
   }
+});
+
+
+// ===============================
+// Health Check (VERY useful on Render)
+// ===============================
+
+app.get("/", (req, res) => {
+  res.send("API is running");
+});
+
+
+// ===============================
+// Start Server (IMPORTANT)
+// ===============================
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
