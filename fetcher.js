@@ -86,7 +86,7 @@ async function fetchFeeds() {
 
     console.log("RSS fetch complete.");
   } catch (err) {
-    console.error("Fatal fetch error:", err.message);
+    console.error("Fatal fetch error:", err);
   }
 }
 
