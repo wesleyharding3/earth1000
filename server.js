@@ -11,6 +11,26 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// ===============================
+// GET ALL CITIES
+// ===============================
+app.get("/api/cities", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, name, lat, lon, country
+      FROM cities
+      ORDER BY name ASC
+    `);
+
+    res.json(result.rows);
+
+  } catch (err) {
+    console.error("Cities error:", err.message);
+    res.status(500).json({ error: "Failed to fetch cities" });
+  }
+});
+
+
 
 // ===============================
 // GET NEWS BY CITY (with Pagination)
