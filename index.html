@@ -320,6 +320,10 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
+    let yaw = 0;
+    let pitch = 0;
+    const maxTilt = Math.PI / 2.2;
+
           // ===============================
       // Window Resize Handling
       // ===============================
@@ -1149,18 +1153,21 @@
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
 
-        const qx = new THREE.Quaternion()
-          .setFromAxisAngle(new THREE.Vector3(1,0,0), deltaY);
+        yaw   += deltaX;
+        pitch += deltaY;
 
-        const qy = new THREE.Quaternion()
-          .setFromAxisAngle(new THREE.Vector3(0,1,0), deltaX);
+        // Clamp tilt so globe never flips
+        pitch = Math.max(-maxTilt, Math.min(maxTilt, pitch));
 
-        scene.quaternion.multiplyQuaternions(qy, scene.quaternion);
-        scene.quaternion.multiplyQuaternions(scene.quaternion, qx);
+        const quaternion = new THREE.Quaternion()
+          .setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
+
+        scene.quaternion.copy(quaternion);
 
         prevX = e.clientX;
         prevY = e.clientY;
       });
+
 
       
 
@@ -1192,19 +1199,21 @@
         const deltaX = (touchX - touchPrevX) * 0.005;
         const deltaY = (touchY - touchPrevY) * 0.005;
 
-        const qx = new THREE.Quaternion()
-          .setFromAxisAngle(new THREE.Vector3(1,0,0), deltaY);
+        yaw   += deltaX;
+        pitch += deltaY;
 
-        const qy = new THREE.Quaternion()
-          .setFromAxisAngle(new THREE.Vector3(0,1,0), deltaX);
+        pitch = Math.max(-maxTilt, Math.min(maxTilt, pitch));
 
-        scene.quaternion.multiplyQuaternions(qy, scene.quaternion);
-        scene.quaternion.multiplyQuaternions(scene.quaternion, qx);
+        const quaternion = new THREE.Quaternion()
+          .setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
+
+        scene.quaternion.copy(quaternion);
 
         touchPrevX = touchX;
         touchPrevY = touchY;
 
       }, { passive: false });
+
 
       window.addEventListener("touchend", () => {
         touchDragging = false;
@@ -1430,16 +1439,7 @@ if (tickGroup) {
 
           scene.quaternion.multiplyQuaternions(autoSpin, scene.quaternion);
 
-          // --- Google Earth style north stabilization ---
-          const currentEuler = new THREE.Euler()
-            .setFromQuaternion(scene.quaternion, "XYZ");
 
-          const stabilizeStrength = 0.05; // adjust 0.03–0.08
-
-          currentEuler.x *= (1 - stabilizeStrength);
-          currentEuler.z *= (1 - stabilizeStrength);
-
-          scene.quaternion.setFromEuler(currentEuler);
         }
 
 
