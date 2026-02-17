@@ -38,7 +38,7 @@ async function fetchFeeds() {
     console.log("Starting RSS fetch...");
 
     // Get all feed URLs from database
-    const feedResult = await pool.query("SELECT * FROM feeds");
+    const feedResult = await pool.query("SELECT * FROM news_sources");
     const feeds = feedResult.rows;
 
     for (const feed of feeds) {
@@ -52,27 +52,31 @@ async function fetchFeeds() {
 
           await pool.query(
             `
-            INSERT INTO articles (
-              feed_id,
+            INSERT INTO news_articles (
+              source_id,
               title,
-              link,
-              pub_date,
-              description,
-              image_url
+              url,
+              summary,
+              content,
+              published_at,
+              ingested_at,
+              raw_json
             )
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (link) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+            ON CONFLICT (url) DO NOTHING
             `,
             [
               feed.id,
               item.title || null,
               item.link || null,
-              item.pubDate ? new Date(item.pubDate) : null,
               item.contentSnippet || item.description || null,
-              imageUrl
+              item.content || null,
+              item.pubDate ? new Date(item.pubDate) : null,
+              JSON.stringify(item)
             ]
           );
         }
+
 
         console.log(`Finished: ${feed.url}`);
       } catch (err) {
