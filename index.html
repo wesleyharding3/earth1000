@@ -655,16 +655,16 @@
       let glowPulseTime = 0;
       let glowPulseActive = false;
 
-      const compassRing = document.querySelector(".compass-svg");
       const compass = document.getElementById("compass");
+
       compass.addEventListener("click", () => {
 
-        const currentX = scene.rotation.x;
+        // Snap fully back to world north
+        targetQuaternion = new THREE.Quaternion();
+        targetQuaternion.identity(); // same as (0, 0, 0)
 
-        const targetEuler = new THREE.Euler(currentX, 0, 0);
-        targetQuaternion = new THREE.Quaternion().setFromEuler(targetEuler);
-
-       isFocused = false;
+        isFocused = false;
+        selectedCityIndex = null;
 
       });
 
