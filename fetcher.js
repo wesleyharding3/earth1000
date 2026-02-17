@@ -63,7 +63,10 @@ async function fetchFeeds() {
               raw_json
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8)
-            ON CONFLICT (url) DO NOTHING
+            ON CONFLICT (url) DO UPDATE
+            SET
+              source_id = EXCLUDED.source_id,
+              city_id = EXCLUDED.city_id
             `,
             [
               feed.id,
