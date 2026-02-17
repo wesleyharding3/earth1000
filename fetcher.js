@@ -53,7 +53,7 @@ async function fetchFeeds() {
             `
             INSERT INTO news_articles (
               source_id,
-              primary_city_id,
+              city_id,
               title,
               url,
               summary,
@@ -67,7 +67,7 @@ async function fetchFeeds() {
             `,
             [
               feed.id,
-              feed.primary_city_id,
+              feed.city_id,
               item.title || null,
               item.link || null,
               item.contentSnippet || item.description || null,
