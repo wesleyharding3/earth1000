@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const pool = require("./db");   // your db.js
+const pool = require("./db");
 
 const app = express();
 
@@ -13,12 +13,20 @@ app.use(express.json());
 
 
 // ===============================
-// GET NEWS BY CITY
+// GET NEWS BY CITY (with Pagination)
 // ===============================
 
 app.get("/api/news/city/:cityId", async (req, res) => {
   try {
     const { cityId } = req.params;
+
+    // Read pagination query params
+    let limit = parseInt(req.query.limit) || 10;
+    let offset = parseInt(req.query.offset) || 0;
+
+    // Safety limits (prevents abuse)
+    if (limit > 50) limit = 50;
+    if (offset < 0) offset = 0;
 
     const result = await pool.query(
       `
@@ -34,9 +42,10 @@ app.get("/api/news/city/:cityId", async (req, res) => {
       JOIN news_sources s ON a.source_id = s.id
       WHERE a.primary_city_id = $1
       ORDER BY a.published_at DESC
-      LIMIT 20
+      LIMIT $2
+      OFFSET $3
       `,
-      [cityId]
+      [cityId, limit, offset]
     );
 
     res.json(result.rows);
@@ -49,7 +58,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 
 
 // ===============================
-// Health Check (VERY useful on Render)
+// Health Check
 // ===============================
 
 app.get("/", (req, res) => {
@@ -58,7 +67,7 @@ app.get("/", (req, res) => {
 
 
 // ===============================
-// Start Server (IMPORTANT)
+// Start Server
 // ===============================
 
 const PORT = process.env.PORT || 3000;
