@@ -67,7 +67,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
         s.site_url
       FROM news_articles a
       JOIN news_sources s ON a.source_id = s.id
-      WHERE a.primary_city_id = $1
+      WHERE a.city_id = $1
       ORDER BY a.published_at DESC
       LIMIT $2
       OFFSET $3
