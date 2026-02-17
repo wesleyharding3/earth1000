@@ -1422,10 +1422,26 @@ if (tickGroup) {
 
           }
         }
-
         if (!dragging && !targetQuaternion && !isFocused) {
-          scene.rotateY(0.0002);
+
+          // Gentle eastward auto-rotation
+          const autoSpin = new THREE.Quaternion()
+            .setFromAxisAngle(new THREE.Vector3(0,1,0), 0.0002);
+
+          scene.quaternion.multiplyQuaternions(autoSpin, scene.quaternion);
+
+          // --- Google Earth style north stabilization ---
+          const currentEuler = new THREE.Euler()
+            .setFromQuaternion(scene.quaternion, "XYZ");
+
+          const stabilizeStrength = 0.05; // adjust 0.03–0.08
+
+          currentEuler.x *= (1 - stabilizeStrength);
+          currentEuler.z *= (1 - stabilizeStrength);
+
+          scene.quaternion.setFromEuler(currentEuler);
         }
+
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
