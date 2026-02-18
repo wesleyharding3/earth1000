@@ -699,7 +699,6 @@
         const infoPanel = document.getElementById("infoPanel");
         const panelOpen = infoPanel.classList.contains("active");
 
-
         if (intersects.length > 0) {
 
           const index = intersects[0].index;
@@ -720,9 +719,6 @@
             hoveredCityPosition = cityPos.clone();
           }
         }
-
-          
-        
 
         cities.forEach((city, i) => {
 
@@ -749,7 +745,6 @@
             (isHovered) ||
             (!panelOpen && isSelected);
 
-
           if (isSelected) {
             label.classList.add("focused");
           } else {
@@ -775,7 +770,7 @@
 
             if (isHovered || isSelected) {
               triggerBubbleTyping(i);
-            }            
+            }
 
           } else {
 
@@ -785,7 +780,9 @@
             const title = label.querySelector(".bubbleTitle");
             if (title) {
 
-              // Cancel any active typing timer
+              // Stop typing cleanly
+              title._typingActive = false;
+
               if (title._typingTimer) {
                 clearTimeout(title._typingTimer);
                 title._typingTimer = null;
@@ -793,15 +790,14 @@
 
               // Restore full text cleanly
               title.textContent = cities[i].name;
-              title.dataset.typed = "false";
             }
 
           }
 
         });
 
-
       }
+
 
             // ------------------------------
       // Bubble Perimeter Trace
@@ -832,56 +828,61 @@
 
       
 
-            // ------------------------------
-      // Bubble Typing Animation
-      // ------------------------------
+// ------------------------------
+// Bubble Typing Animation
+// ------------------------------
 
-      function triggerBubbleTyping(index) {
+function triggerBubbleTyping(index) {
 
-        const bubble = cityLabels[index];
-        if (!bubble) return;
+  const bubble = cityLabels[index];
+  if (!bubble) return;
 
-        const title = bubble.querySelector(".bubbleTitle");
-        if (!title) return;
+  const title = bubble.querySelector(".bubbleTitle");
+  if (!title) return;
 
-        // Cancel any existing typing timer
-        if (title._typingTimer) {
-          clearTimeout(title._typingTimer);
-          title._typingTimer = null;
-        }
+  const fullText = cities[index].name;
 
-        if (title.dataset.typed === "true") return;
+  // If already fully typed, do nothing
+  if (title.textContent === fullText) return;
 
-        const fullText = cities[index].name;
+  // If currently typing, don't restart
+  if (title._typingActive) return;
 
-        title.textContent = "";
-        title.dataset.typed = "true";
-        title.classList.add("typing");
+  // Cancel any existing timer cleanly
+  if (title._typingTimer) {
+    clearTimeout(title._typingTimer);
+    title._typingTimer = null;
+  }
 
-        let charIndex = 0;
-        const typingSpeed = 22.5; // ms per character (~0.4–0.6s total)
+  title.textContent = "";
+  title._typingActive = true;
+  title.classList.add("typing");
 
-        function type() {
+  let charIndex = 0;
+  const typingSpeed = 22.5;
 
-          if (charIndex < fullText.length) {
+  function type() {
 
-            title.textContent += fullText.charAt(charIndex);
-            charIndex++;
+    if (charIndex < fullText.length) {
 
-            title._typingTimer = setTimeout(type, typingSpeed);
+      title.textContent += fullText.charAt(charIndex);
+      charIndex++;
 
-          } else {
+      title._typingTimer = setTimeout(type, typingSpeed);
 
-            title.classList.remove("typing");
-            title._typingTimer = null;
+    } else {
 
-          }
+      title._typingActive = false;
+      title._typingTimer = null;
+      title.classList.remove("typing");
 
-        }
+    }
 
-        type();
+  }
 
-      }
+  type();
+}
+
 
 
       // ------------------------------
