@@ -81,7 +81,7 @@
       bottom: -300px;
       left: 0;
       width: 100%;
-      height: 260px;
+      height: 420px;
 
       background: rgba(0,0,0,0.95);
       color: white;
@@ -91,16 +91,108 @@
 
       transition: bottom 0.4s ease;
 
-      overflow-y: auto;
-      overflow-x: hidden;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
 
       border-top: 2px solid rgba(255,255,255,0.1);
 
       scroll-behavior: smooth;
 
-      /* glass effect */
       backdrop-filter: blur(16px);
     }
+
+     .panelHeader {
+      position: sticky;
+      top: 0;
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      padding-bottom: 10px;
+      margin-bottom: 8px;
+
+      background: rgba(0,0,0,0.95);
+      backdrop-filter: blur(16px);
+
+      z-index: 5;
+    }
+
+    .panelHeader h2 {
+      margin: 0;
+    }
+
+    .panelHeader h4 {
+      margin: 2px 0 0 0;
+      opacity: 0.7;
+    }
+
+    .paginationBar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .dots {
+      display: flex;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(120,120,120,0.6);
+      transition: all 0.25s ease;
+      cursor: pointer;
+    }
+
+    .dot.active {
+      background: rgba(255,180,80,1);
+      box-shadow: 0 0 8px rgba(255,150,40,0.7);
+    }
+
+    .pageJump {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      opacity: 0.7;
+    }
+
+    .pageJump input {
+      width: 45px;
+      background: rgba(50,50,50,0.8);
+      border: none;
+      color: white;
+      padding: 4px;
+      border-radius: 6px;
+      text-align: center;
+    }
+
+    .articlesViewport {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .articlesTrack {
+      display: flex;
+      height: 100%;
+      transition: transform 0.35s ease;
+    }
+
+    .articlePage {
+      min-width: 100%;
+      padding-right: 10px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }      
+
+   
+
 
     #infoPanel.active { bottom: 0; }
     #infoPanel a { color: #4da6ff; text-decoration: none; display: block; margin-bottom: 8px; }
@@ -1441,54 +1533,140 @@
 
       function openCityPanel(city){
 
-        const panel = document.getElementById("infoPanel");
+        const panel =
+          document.getElementById("infoPanel");
 
         const showCountry =
           city.country &&
-          city.name.toLowerCase() !== city.country.toLowerCase();
+          city.name.toLowerCase() !==
+          city.country.toLowerCase();
 
         panel.innerHTML = `
-          <button class="closePanel">✕</button>
+          <div class="panelHeader" style="
+            position:sticky;
+            top:0;
+            z-index:5;
+            background:rgba(0,0,0,0.95);
+            backdrop-filter:blur(16px);
+            padding-bottom:10px;
+          ">
+
+            <button class="closePanel"
+              style="
+                position:absolute;
+                top:6px;
+                right:0;
+              ">
+              ✕
+            </button>
+
+            <div style="
+              display:flex;
+              justify-content:space-between;
+              align-items:center;
+              margin-top:4px;
+              padding-right:40px;
+            ">
+
+              <div>
+                <h2 style="margin:0;">
+                  ${city.name}
+                </h2>
+
+                ${showCountry
+                  ? `<h4 style="
+                      margin:2px 0 0 0;
+                      opacity:0.7;
+                    ">
+                      ${city.country}
+                    </h4>`
+                  : ""
+                }
+
+              </div>
+
+              <div id="localTime" style="
+                font-size:14px;
+                opacity:0.85;
+                white-space:nowrap;
+              "></div>
+
+            </div>
+
+          </div>
 
           <div style="
             display:flex;
             justify-content:space-between;
             align-items:center;
-            margin-top:4px;
+            margin-top:8px;
+            margin-bottom:8px;
           ">
 
-            <div>
-              <h2 style="margin:0;">${city.name}</h2>
-              ${showCountry
-                ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">
-                    ${city.country}
-                   </h4>`
-                : ""
-              }
+            <div id="dotsContainer"
+              style="display:flex;gap:8px;">
             </div>
 
-            <div id="localTime" style="
-              font-size:14px;
-              opacity:0.85;
-              white-space:nowrap;
-            "></div>
+            <div style="
+              display:flex;
+              align-items:center;
+              gap:6px;
+              font-size:12px;
+              opacity:0.7;
+            ">
+
+              <span>…</span>
+
+              <input
+                id="pageInput"
+                type="number"
+                min="1"
+                value="1"
+                style="
+                  width:45px;
+                  background:rgba(50,50,50,0.8);
+                  border:none;
+                  color:white;
+                  padding:4px;
+                  border-radius:6px;
+                  text-align:center;
+                "
+              />
+
+              <span id="maxPages"></span>
+
+            </div>
 
           </div>
 
-          <div id="articlesContainer"
-               style="margin-top:12px;font-size:13px;">
-            Loading articles...
+          <div id="articlesViewport"
+               style="
+                 position:relative;
+                 overflow:hidden;
+                 flex:1;
+               ">
+
+            <div id="articlesTrack"
+                 style="
+                   display:flex;
+                   transition:transform 0.35s ease;
+                   height:100%;
+                 ">
+              Loading articles...
+            </div>
+
           </div>
         `;
 
         panel.classList.add("active");
 
         setTimeout(() => {
-          targetZoom = Math.max(2.4, camera.position.z - 0.6);
+          targetZoom =
+            Math.max(2.4, camera.position.z - 0.6);
         }, 250);
 
         // ------------------------------
-        // FETCH CITY ARTICLES ONLY
+        // FETCH ARTICLES
         // ------------------------------
 
         const endpoint =
@@ -1498,53 +1676,162 @@
           .then(res => res.json())
           .then(articles => {
 
-            const container =
-              document.getElementById("articlesContainer");
+            const track =
+              panel.querySelector("#articlesTrack");
+
+            const dotsContainer =
+              panel.querySelector("#dotsContainer");
+
+            const input =
+              panel.querySelector("#pageInput");
+
+            const maxPagesEl =
+              panel.querySelector("#maxPages");
 
             if (!articles.length) {
-              container.innerHTML =
-                "<p>No recent articles.</p>";
+
+              track.innerHTML =
+                "<div style='padding:10px;'>No recent articles.</div>";
+
               return;
+
             }
 
-            container.innerHTML =
-              articles.map(article => `
-                <div style="
-                  margin-bottom:14px;
-                  border-bottom:1px solid rgba(255,255,255,0.1);
-                  padding-bottom:8px;
-                ">
+            const articlesPerPage = 5;
 
-                  <a href="${article.url}"
-                     target="_blank"
-                     style="color:#4da6ff;">
-                    <strong>${article.title}</strong>
-                  </a>
+            const totalPages =
+              Math.ceil(
+                articles.length /
+                articlesPerPage
+              );
 
-                  <div style="
-                    font-size:11px;
-                    opacity:0.6;
-                    margin-top:4px;
-                  ">
-                    ${article.source_name} • 
-                    ${new Date(article.published_at)
-                      .toLocaleDateString()}
-                  </div>
+            maxPagesEl.textContent =
+              `/ ${totalPages}`;
 
-                  <p style="margin-top:6px;">
-                    ${article.summary || ""}
-                  </p>
+            input.max = totalPages;
 
-                </div>
-              `).join("");
+            track.innerHTML = "";
+            dotsContainer.innerHTML = "";
+
+            let currentPage = 1;
+
+            for (let i = 0; i < totalPages; i++) {
+
+              const page =
+                document.createElement("div");
+
+              page.className = "articlePage";
+
+              const start =
+                i * articlesPerPage;
+
+              const end =
+                start + articlesPerPage;
+
+              page.innerHTML =
+                articles
+                  .slice(start, end)
+                  .map(article => `
+                    <div style="
+                      margin-bottom:14px;
+                      border-bottom:1px solid rgba(255,255,255,0.1);
+                      padding-bottom:8px;
+                    ">
+                      <a href="${article.url}"
+                         target="_blank"
+                         style="color:#4da6ff;">
+                        <strong>
+                          ${article.title}
+                        </strong>
+                      </a>
+
+                      <div style="
+                        font-size:11px;
+                        opacity:0.6;
+                        margin-top:4px;
+                      ">
+                        ${article.source_name} • 
+                        ${new Date(article.published_at)
+                          .toLocaleDateString()}
+                      </div>
+
+                      <p style="margin-top:6px;">
+                        ${article.summary || ""}
+                      </p>
+                    </div>
+                  `).join("");
+
+              track.appendChild(page);
+
+            }
+
+            const visibleDots =
+              Math.min(5, totalPages);
+
+            for (let i = 1; i <= visibleDots; i++) {
+
+              const dot =
+                document.createElement("div");
+
+              dot.className = "dot";
+
+              if (i === 1)
+                dot.classList.add("active");
+
+              dot.addEventListener("click", () => {
+                goToPage(i);
+              });
+
+              dotsContainer.appendChild(dot);
+
+            }
+
+            function goToPage(page) {
+
+              if (page < 1 ||
+                  page > totalPages) return;
+
+              currentPage = page;
+
+              track.style.transform =
+                `translateX(-${(page - 1) * 100}%)`;
+
+              const dots =
+                dotsContainer.children;
+
+              for (let i = 0; i < dots.length; i++) {
+
+                dots[i].classList.toggle(
+                  "active",
+                  i === page - 1
+                );
+
+              }
+
+              input.value = page;
+
+            }
+
+            input.addEventListener("change", () => {
+
+              const page =
+                parseInt(input.value);
+
+              goToPage(page);
+
+            });
 
           })
           .catch(err => {
 
-            console.error("Article load error:", err);
+            console.error(
+              "City article load error:",
+              err
+            );
 
-            document.getElementById("articlesContainer").innerHTML =
-              "<p>Failed to load articles.</p>";
+            panel.querySelector("#articlesTrack")
+              .innerHTML =
+                "<p style='padding:10px;'>Failed to load articles.</p>";
 
           });
 
@@ -1559,28 +1846,28 @@
 
           const nowUTC = new Date();
 
-          const offsetHours = city.lon / 15;
+          const offsetHours =
+            city.lon / 15;
 
-          const localTime = new Date(
-            nowUTC.getTime() +
-            offsetHours * 60 * 60 * 1000
-          );
+          const localTime =
+            new Date(
+              nowUTC.getTime() +
+              offsetHours *
+              60 * 60 * 1000
+            );
 
-          const formatted =
+          timeElement.textContent =
             localTime.toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
               second: "2-digit"
             });
 
-          timeElement.textContent =
-            ` ${formatted}`;
-
         }
 
         updateLocalTime();
 
-        if(timeInterval)
+        if (timeInterval)
           clearInterval(timeInterval);
 
         timeInterval =
@@ -1600,29 +1887,111 @@
 
       }
 
+
       function openCountryPanel(country){
 
         const panel = document.getElementById("infoPanel");
 
         panel.innerHTML = `
-          <button class="closePanel">✕</button>
+          <div class="panelHeader" style="
+            position:sticky;
+            top:0;
+            z-index:5;
+            background:rgba(0,0,0,0.95);
+            backdrop-filter:blur(16px);
+            padding-bottom:10px;
+          ">
+
+            <button class="closePanel"
+              style="
+                position:absolute;
+                top:6px;
+                right:0;
+              ">
+              ✕
+            </button>
+
+            <div style="
+              display:flex;
+              justify-content:space-between;
+              align-items:center;
+              margin-top:4px;
+              padding-right:40px;
+            ">
+
+              <div>
+                <h2 style="margin:0;">
+                  ${country.name}
+                </h2>
+              </div>
+
+            </div>
+
+          </div>
 
           <div style="
             display:flex;
             justify-content:space-between;
             align-items:center;
-            margin-top:4px;
+            margin-top:8px;
+            margin-bottom:8px;
           ">
 
-            <div>
-              <h2 style="margin:0;">${country.name}</h2>
+            <div id="dotsContainer"
+              style="
+                display:flex;
+                gap:8px;
+              ">
+            </div>
+
+            <div style="
+              display:flex;
+              align-items:center;
+              gap:6px;
+              font-size:12px;
+              opacity:0.7;
+            ">
+
+              <span>…</span>
+
+              <input
+                id="pageInput"
+                type="number"
+                min="1"
+                value="1"
+                style="
+                  width:45px;
+                  background:rgba(50,50,50,0.8);
+                  border:none;
+                  color:white;
+                  padding:4px;
+                  border-radius:6px;
+                  text-align:center;
+                "
+              />
+
+              <span id="maxPages"></span>
+
             </div>
 
           </div>
 
-          <div id="articlesContainer"
-               style="margin-top:12px;font-size:13px;">
-            Loading articles...
+          <div id="articlesViewport"
+               style="
+                 position:relative;
+                 overflow:hidden;
+                 flex:1;
+               ">
+
+            <div id="articlesTrack"
+                 style="
+                   display:flex;
+                   transition:transform 0.35s ease;
+                   height:100%;
+                 ">
+              Loading articles...
+            </div>
+
           </div>
         `;
 
@@ -1639,51 +2008,157 @@
           .then(res => res.json())
           .then(articles => {
 
-            const container =
-              document.getElementById("articlesContainer");
+            const track =
+              panel.querySelector("#articlesTrack");
+
+            const dotsContainer =
+              panel.querySelector("#dotsContainer");
+
+            const input =
+              panel.querySelector("#pageInput");
+
+            const maxPagesEl =
+              panel.querySelector("#maxPages");
 
             if (!articles.length) {
-              container.innerHTML =
-                "<p>No recent articles.</p>";
+
+              track.innerHTML =
+                "<div style='padding:10px;'>No recent articles.</div>";
+
               return;
             }
 
-            container.innerHTML =
-              articles.map(article => `
-                <div style="
-                  margin-bottom:14px;
-                  border-bottom:1px solid rgba(255,255,255,0.1);
-                  padding-bottom:8px;
-                ">
-                  <a href="${article.url}"
-                     target="_blank"
-                     style="color:#4da6ff;">
-                    <strong>${article.title}</strong>
-                  </a>
+            const articlesPerPage = 5;
 
-                  <div style="
-                    font-size:11px;
-                    opacity:0.6;
-                    margin-top:4px;
-                  ">
-                    ${article.source_name} • 
-                    ${new Date(article.published_at)
-                      .toLocaleDateString()}
-                  </div>
+            const totalPages =
+              Math.ceil(articles.length / articlesPerPage);
 
-                  <p style="margin-top:6px;">
-                    ${article.summary || ""}
-                  </p>
-                </div>
-              `).join("");
+            maxPagesEl.textContent =
+              `/ ${totalPages}`;
+
+            input.max = totalPages;
+
+            track.innerHTML = "";
+            dotsContainer.innerHTML = "";
+
+            let currentPage = 1;
+
+            for (let i = 0; i < totalPages; i++) {
+
+              const page =
+                document.createElement("div");
+
+              page.className = "articlePage";
+
+              const start =
+                i * articlesPerPage;
+
+              const end =
+                start + articlesPerPage;
+
+              page.innerHTML =
+                articles
+                  .slice(start, end)
+                  .map(article => `
+                    <div style="
+                      margin-bottom:14px;
+                      border-bottom:1px solid rgba(255,255,255,0.1);
+                      padding-bottom:8px;
+                    ">
+                      <a href="${article.url}"
+                         target="_blank"
+                         style="color:#4da6ff;">
+                        <strong>
+                          ${article.title}
+                        </strong>
+                      </a>
+
+                      <div style="
+                        font-size:11px;
+                        opacity:0.6;
+                        margin-top:4px;
+                      ">
+                        ${article.source_name} • 
+                        ${new Date(article.published_at)
+                          .toLocaleDateString()}
+                      </div>
+
+                      <p style="margin-top:6px;">
+                        ${article.summary || ""}
+                      </p>
+                    </div>
+                  `).join("");
+
+              track.appendChild(page);
+            }
+
+            const visibleDots =
+              Math.min(5, totalPages);
+
+            for (let i = 1; i <= visibleDots; i++) {
+
+              const dot =
+                document.createElement("div");
+
+              dot.className = "dot";
+
+              if (i === 1)
+                dot.classList.add("active");
+
+              dot.addEventListener("click", () => {
+                goToPage(i);
+              });
+
+              dotsContainer.appendChild(dot);
+            }
+
+            function goToPage(page) {
+
+              if (page < 1 ||
+                  page > totalPages) return;
+
+              currentPage = page;
+
+              track.style.transform =
+                `translateX(-${(page - 1) * 100}%)`;
+
+              const dots =
+                dotsContainer.children;
+
+              for (let i = 0; i < dots.length; i++) {
+
+                dots[i].classList.toggle(
+                  "active",
+                  i === page - 1
+                );
+              }
+
+              input.value = page;
+            }
+
+            input.addEventListener("change", () => {
+
+              const page =
+                parseInt(input.value);
+
+              goToPage(page);
+            });
 
           })
           .catch(err => {
 
-            console.error("Country article load error:", err);
+            console.error(
+              "Country article load error:",
+              err
+            );
 
-            document.getElementById("articlesContainer").innerHTML =
-              "<p>Failed to load articles.</p>";
+            const track =
+              panel.querySelector("#articlesTrack");
+
+            if (track) {
+              track.innerHTML =
+                "<p style='padding:10px;'>Failed to load articles.</p>";
+            }
 
           });
 
@@ -1691,7 +2166,9 @@
           panel.querySelector(".closePanel");
 
         closeBtn.addEventListener("click", () => {
+
           panel.classList.remove("active");
+
         });
 
       }
