@@ -1404,7 +1404,7 @@
         panel.classList.add("active");
 
         setTimeout(() => {
-          targetZoom = 1.7;
+          targetZoom = Math.max(2.4, camera.position.z - 0.6);
         }, 250);
 
         // ------------------------------
@@ -1549,7 +1549,7 @@
         panel.classList.add("active");
 
         setTimeout(() => {
-          targetZoom = 1.7;
+          targetZoom = Math.max(2.4, camera.position.z - 0.6);
         }, 250);
 
         const endpoint =
@@ -1747,7 +1747,48 @@
 
       window.addEventListener("wheel", e => {
         e.preventDefault();
-        zoomVelocity += e.deltaY * 0.0006;
+
+        const isPinchZoom = e.ctrlKey;
+
+        // ===============================
+        // Trackpad Pinch = Zoom
+        // ===============================
+        if (isPinchZoom) {
+          zoomVelocity += e.deltaY * 0.0006;
+          return;
+        }
+
+        // ===============================
+        // Two-Finger Trackpad Drag = Rotate
+        // ===============================
+        const rotateSpeed = 0.0025;
+
+        const deltaX = e.deltaX * rotateSpeed;
+        const deltaY = e.deltaY * rotateSpeed;
+
+        // Horizontal rotation (around world north axis)
+        scene.quaternion.premultiply(
+          new THREE.Quaternion().setFromAxisAngle(upAxis, deltaX)
+        );
+
+        // Vertical tilt (around current right axis)
+        const rightAxis = new THREE.Vector3(1, 0, 0)
+          .applyQuaternion(scene.quaternion)
+          .normalize();
+
+        scene.quaternion.premultiply(
+          new THREE.Quaternion().setFromAxisAngle(rightAxis, deltaY)
+        );
+
+        // Clamp tilt to prevent pole flip
+        const euler = new THREE.Euler()
+          .setFromQuaternion(scene.quaternion, "YXZ");
+
+        const maxTilt = Math.PI / 2.3;
+        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
+
+        scene.quaternion.setFromEuler(euler);
+
       }, { passive: false });
 
 
@@ -1759,6 +1800,7 @@
           (touches[0].clientY - touches[1].clientY) ** 2
         );
       }
+
 
       window.addEventListener("touchstart", e => {
         if (e.touches.length === 2) {
@@ -1909,7 +1951,8 @@ if (tickGroup) {
         targetQuaternion = new THREE.Quaternion()
           .setFromUnitVectors(cityVector, target);
 
-        targetZoom = 2; // auto zoom slightly closer    
+        targetZoom = Math.max(2.4, camera.position.z - 0.6);
+; // auto zoom slightly closer    
 
         const ringAltitude = 0.03;
 
@@ -1958,7 +2001,8 @@ if (tickGroup) {
           new THREE.Quaternion()
             .setFromUnitVectors(countryVector, target);
 
-        targetZoom = 2;
+        targetZoom = Math.max(2.4, camera.position.z - 0.6);
+;
 
         // Ring placement
         const ringAltitude = 0.03;
@@ -2029,7 +2073,7 @@ if (tickGroup) {
 
         const zoomDelta = targetZoom - camera.position.z;
 
-        const easingStrength = 0.08;
+        const easingStrength = 0.05;
         const dynamicEasing = easingStrength * Math.min(Math.abs(zoomDelta) * 2, 1);
 
         camera.position.z += zoomDelta * dynamicEasing;
