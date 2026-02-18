@@ -2,7 +2,7 @@
 // fetcher.js
 // ===============================
 
-const fetch = require("node-fetch"); // Only needed if Node < 18
+
 const Parser = require("rss-parser");
 const pool = require("./db");
 
