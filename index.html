@@ -261,6 +261,53 @@
   stroke-width: 2;
 }
 
+#modeWidget {
+  position: absolute;
+  top: 90px;
+  right: 20px;
+  width: 140px;
+  border-radius: 16px;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.2);
+  color: white;
+  z-index: 30;
+  overflow: hidden;
+  transition: height 0.3s ease, width 0.3s ease;
+}
+
+#modeWidget.minimized {
+  height: 40px;
+  width: 70px;
+}
+
+#modeHeader {
+  padding: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#modeOptions {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  gap: 6px;
+}
+
+#modeOptions button {
+  background: rgba(255,255,255,0.08);
+  border: none;
+  color: white;
+  padding: 6px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+#modeOptions button.active {
+  background: rgba(255,255,255,0.25);
+}
+
+
 
 
 
@@ -305,6 +352,15 @@
 
   </svg>
 </div>
+
+<div id="modeWidget" class="expanded">
+  <div id="modeHeader">View</div>
+  <div id="modeOptions">
+    <button id="cityModeBtn">City</button>
+    <button id="countryModeBtn" class="active">Country</button>
+  </div>
+</div>
+
 
 
 
@@ -357,20 +413,25 @@
       "https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg",
       () => {
 
-        fetch("https://earth-wjr6.onrender.com/api/cities")
-          .then(res => res.json())
-          .then(data => {
-            init(data);
+        Promise.all([
+          fetch("https://earth-wjr6.onrender.com/api/cities")
+            .then(res => res.json()),
+          fetch("https://earth-wjr6.onrender.com/api/countries")
+            .then(res => res.json())
+        ])
+          .then(([cities, countries]) => {
+            init(cities, countries);
           })
           .catch(err => {
-            console.error("Failed to load cities:", err);
+            console.error("Failed to load initial data:", err);
           });
 
       }
     );
 
 
-    function init(cities) {
+
+    function init(cities, countries) {
       // Earth points
       const earthPointCount = 10000;
       const earthPositions = [];
@@ -483,6 +544,46 @@
       scene.add(cityPoints);
 
             // ===============================
+      // Country Points
+      // ===============================
+
+      const countryPositions = [];
+
+      countries.forEach(country => {
+
+        const { lat, lon } = country;
+
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+
+        const x = -radius * Math.sin(phi) * Math.cos(theta);
+        const z =  radius * Math.sin(phi) * Math.sin(theta);
+        const y =  radius * Math.cos(phi);
+
+        countryPositions.push(x, y, z);
+      });
+
+      const countryGeo = new THREE.BufferGeometry();
+      countryGeo.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(countryPositions, 3)
+      );
+
+      const countryMat = new THREE.PointsMaterial({
+        size: citySize * 1.6,
+        sizeAttenuation: true,
+        map: glowTexture,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        opacity: 1
+      });
+
+      const countryPoints = new THREE.Points(countryGeo, countryMat);
+      scene.add(countryPoints);
+
+
+            // ===============================
       // Selection Ring Burst
       // ===============================
 
@@ -554,42 +655,62 @@
       }
 
 
-      function updateCityGlow() {
+      function updateNodeGlow() {
+
+        const activePoints = currentViewMode === "country"
+          ? countryPoints
+          : cityPoints;
+
+        const activeMaterial = currentViewMode === "country"
+          ? countryMat
+          : cityMat;
 
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
 
-        const positionsAttr = cityPoints.geometry.attributes.position;
+        const positionsAttr =
+          activePoints.geometry.attributes.position;
+
         const count = positionsAttr.count;
 
-        if (!cityPoints.geometry.attributes.color) {
+        if (!activePoints.geometry.attributes.color) {
+
           const colors = new Float32Array(count * 3);
-          cityPoints.geometry.setAttribute(
+
+          activePoints.geometry.setAttribute(
             "color",
             new THREE.BufferAttribute(colors, 3)
           );
-          cityMat.vertexColors = true;
+
+          activeMaterial.vertexColors = true;
+
         }
 
-        const colors = cityPoints.geometry.attributes.color;
+        const colors =
+          activePoints.geometry.attributes.color;
 
         for (let i = 0; i < count; i++) {
 
-          const cityPos = new THREE.Vector3();
-          cityPos.fromBufferAttribute(positionsAttr, i);
-          cityPos.applyMatrix4(cityPoints.matrixWorld);
-          cityPos.normalize();
+          const nodePos = new THREE.Vector3();
 
-          let dot = -cameraDir.dot(cityPos);
+          nodePos.fromBufferAttribute(positionsAttr, i);
+          nodePos.applyMatrix4(activePoints.matrixWorld);
+          nodePos.normalize();
+
+          let dot = -cameraDir.dot(nodePos);
           let normalized = (dot + 1) / 2;
+
           const minGlow = 0.15;
-          let glow = minGlow + (1 - minGlow) * Math.pow(normalized, 2.5);
 
-          if (glowPulseActive && i === selectedCityIndex) {
-            const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
+          let glow =
+            minGlow +
+            (1 - minGlow) * Math.pow(normalized, 2.5);
+
+          if (glowPulseActive && i === selectedNodeIndex) {
+            const pulse =
+              1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
             glow *= pulse;
-          }  
-
+          }
 
           colors.setXYZ(
             i,
@@ -597,9 +718,11 @@
             glow * 0.6,
             glow * 0.25
           );
+
         }
 
         colors.needsUpdate = true;
+
       }
 
 
@@ -644,14 +767,112 @@
         return div;
       });
 
+      
+      const countryLabels = countries.map(country => {
+
+        const div = document.createElement("div");
+
+        div.innerHTML = `
+          <div class="bubbleWrapper">
+
+            <svg class="bubbleOutline">
+              <rect class="bubbleRect"
+                    x="0"
+                    y="0"
+                    rx="12"
+                    ry="12"
+                    width="100%"
+                    height="100%" />
+            </svg>
+
+            <div class="bubbleContent">
+              <div class="bubbleTitle">${country.name}</div>
+              <div class="bubbleMeta">
+                <span class="storyCount">0 stories</span>
+              </div>
+            </div>
+
+          </div>
+        `;
+
+        div.className = "cityBubble";
+        div.style.position = "absolute";
+        div.style.pointerEvents = "none";
+        div.style.opacity = 0;
+        div.style.transition = "opacity 0.2s";
+
+        cityLabelsContainer.appendChild(div);
+
+        return div;
+
+      });
+
+      
+
+      
 
       const hoverMouse = new THREE.Vector2();
       let hoveredIndex = null;
-      let selectedCityIndex = null;
+      let selectedNodeIndex = null;
       let isFocused = false;
       let hoveredCityPosition = null;
       let timeInterval = null;
       const compassSVG = document.querySelector(".compass-svg");
+
+      // ===============================
+      // VIEW MODE TOGGLE
+      // ===============================
+
+      let currentViewMode = "country";
+      setActiveMode("country");
+
+      cityMat.opacity = 0.15;
+      countryMat.opacity = 1.0;
+
+
+      
+
+      const widget = document.getElementById("modeWidget");
+      const header = document.getElementById("modeHeader");
+
+      header.addEventListener("click", () => {
+        widget.classList.toggle("minimized");
+      });
+
+      document.getElementById("cityModeBtn").addEventListener("click", () => {
+
+        currentViewMode = "city";
+        setActiveMode("city");
+
+        targetCityOpacity = 1.0;
+        targetCountryOpacity = 0.15;
+
+      });
+
+      document.getElementById("countryModeBtn").addEventListener("click", () => {
+
+        currentViewMode = "country";
+        setActiveMode("country");
+
+        targetCityOpacity = 0.15;
+        targetCountryOpacity = 1.0;
+
+      });
+
+      function setActiveMode(mode) {
+
+        document.getElementById("cityModeBtn").classList.remove("active");
+        document.getElementById("countryModeBtn").classList.remove("active");
+
+        if (mode === "city") {
+          document.getElementById("cityModeBtn").classList.add("active");
+        } else {
+          document.getElementById("countryModeBtn").classList.add("active");
+        }
+
+      }      
+
+      
 
 
 
@@ -676,7 +897,7 @@
           .setFromEuler(targetEuler);
 
         isFocused = false;
-        selectedCityIndex = null;
+        selectedNodeIndex = null;
 
       });
 
@@ -691,7 +912,24 @@
       function updateHoverLabels() {
 
         raycaster.setFromCamera(hoverMouse, camera);
-        const intersects = raycaster.intersectObject(cityPoints);
+
+        const activePoints = currentViewMode === "country"
+          ? countryPoints
+          : cityPoints;
+
+        const activeData = currentViewMode === "country"
+          ? countries
+          : cities;
+
+        const activeLabels = currentViewMode === "country"
+          ? countryLabels
+          : cityLabels;
+
+        const activePositions = currentViewMode === "country"
+          ? countryPositions
+          : positions;
+
+        const intersects = raycaster.intersectObject(activePoints);
 
         hoveredIndex = null;
         hoveredCityPosition = null;
@@ -699,40 +937,55 @@
         const infoPanel = document.getElementById("infoPanel");
         const panelOpen = infoPanel.classList.contains("active");
 
+        // ------------------------------
+        // Hover Detection
+        // ------------------------------
+
         if (intersects.length > 0) {
 
           const index = intersects[0].index;
 
-          if (panelOpen && index === selectedCityIndex) {
+          if (panelOpen && index === selectedNodeIndex) {
             return;
           }
 
-          const cityPos = new THREE.Vector3();
-          cityPos.fromBufferAttribute(
-            cityPoints.geometry.attributes.position,
+          const nodePos = new THREE.Vector3();
+
+          nodePos.fromBufferAttribute(
+            activePoints.geometry.attributes.position,
             index
           );
-          cityPos.applyMatrix4(cityPoints.matrixWorld);
 
-          if (isCityVisible(cityPos, camera)) {
+          nodePos.applyMatrix4(activePoints.matrixWorld);
+
+          if (isCityVisible(nodePos, camera)) {
+
             hoveredIndex = index;
-            hoveredCityPosition = cityPos.clone();
+            hoveredCityPosition = nodePos.clone();
+
           }
+
         }
 
-        cities.forEach((city, i) => {
+        // ------------------------------
+        // Label Rendering
+        // ------------------------------
 
-          const label = cityLabels[i];
+        activeData.forEach((item, i) => {
+
+          const label = activeLabels[i];
+          if (!label) return;
 
           const pos = new THREE.Vector3(
-            positions[i * 3],
-            positions[i * 3 + 1],
-            positions[i * 3 + 2]
+            activePositions[i * 3],
+            activePositions[i * 3 + 1],
+            activePositions[i * 3 + 2]
           );
 
-          pos.applyMatrix4(cityPoints.matrixWorld);
+          pos.applyMatrix4(activePoints.matrixWorld);
 
           const projected = pos.clone().project(camera);
+
           const x = (projected.x + 1) / 2 * window.innerWidth;
           const y = (-projected.y + 1) / 2 * window.innerHeight;
 
@@ -740,7 +993,8 @@
           label.style.top  = `${y}px`;
 
           const isHovered  = (i === hoveredIndex);
-          const isSelected = (i === selectedCityIndex);
+          const isSelected = (i === selectedNodeIndex);
+
           const shouldShow =
             (isHovered) ||
             (!panelOpen && isSelected);
@@ -762,11 +1016,13 @@
             const storyCountEl = label.querySelector(".storyCount");
 
             if (storyCountEl) {
-              storyCountEl.textContent = `${city.storyCount || 0} stories`;
+              storyCountEl.textContent =
+                `${item.storyCount || 0} stories`;
             }
 
             label.style.opacity = 1;
-            label.style.transform = "translate(-50%, -160%) scale(1)";
+            label.style.transform =
+              "translate(-50%, -160%) scale(1)";
 
             if (isHovered || isSelected) {
               triggerBubbleTyping(i);
@@ -775,12 +1031,13 @@
           } else {
 
             label.style.opacity = 0;
-            label.style.transform = "translate(-50%, -140%) scale(0.95)";
+            label.style.transform =
+              "translate(-50%, -140%) scale(0.95)";
 
             const title = label.querySelector(".bubbleTitle");
+
             if (title) {
 
-              // Stop typing cleanly
               title._typingActive = false;
 
               if (title._typingTimer) {
@@ -788,8 +1045,7 @@
                 title._typingTimer = null;
               }
 
-              // Restore full text cleanly
-              title.textContent = cities[i].name;
+              title.textContent = item.name;
             }
 
           }
@@ -805,17 +1061,20 @@
 
       function triggerBubbleTrace(index, onComplete) {
 
-        const bubble = cityLabels[index];
+        const activeLabels = currentViewMode === "country"
+          ? countryLabels
+          : cityLabels;
+
+        const bubble = activeLabels[index];
         if (!bubble) return;
 
         const content = bubble.querySelector(".bubbleContent");
         if (!content) return;
 
         content.classList.remove("trace");
-        void content.offsetWidth; // restart animation
+        void content.offsetWidth; // force reflow to restart animation
         content.classList.add("trace");
 
-        // wait for animation to finish (~0.5s)
         setTimeout(() => {
 
           if (onComplete) {
@@ -826,62 +1085,64 @@
 
       }
 
+
       
 
-// ------------------------------
-// Bubble Typing Animation
-// ------------------------------
+      function triggerBubbleTyping(index) {
 
-function triggerBubbleTyping(index) {
+        const activeData = currentViewMode === "country"
+          ? countries
+          : cities;
 
-  const bubble = cityLabels[index];
-  if (!bubble) return;
+        const activeLabels = currentViewMode === "country"
+          ? countryLabels
+          : cityLabels;
 
-  const title = bubble.querySelector(".bubbleTitle");
-  if (!title) return;
+        const bubble = activeLabels[index];
+        if (!bubble) return;
 
-  const fullText = cities[index].name;
+        const title = bubble.querySelector(".bubbleTitle");
+        if (!title) return;
 
-  // If already fully typed, do nothing
-  if (title.textContent === fullText) return;
+        const fullText = activeData[index].name;
 
-  // If currently typing, don't restart
-  if (title._typingActive) return;
+        if (title.textContent === fullText) return;
+        if (title._typingActive) return;
 
-  // Cancel any existing timer cleanly
-  if (title._typingTimer) {
-    clearTimeout(title._typingTimer);
-    title._typingTimer = null;
-  }
+        if (title._typingTimer) {
+          clearTimeout(title._typingTimer);
+          title._typingTimer = null;
+        }
 
-  title.textContent = "";
-  title._typingActive = true;
-  title.classList.add("typing");
+        title.textContent = "";
+        title._typingActive = true;
+        title.classList.add("typing");
 
-  let charIndex = 0;
-  const typingSpeed = 22.5;
+        let charIndex = 0;
+        const typingSpeed = 22.5;
 
-  function type() {
+        function type() {
 
-    if (charIndex < fullText.length) {
+          if (charIndex < fullText.length) {
 
-      title.textContent += fullText.charAt(charIndex);
-      charIndex++;
+            title.textContent += fullText.charAt(charIndex);
+            charIndex++;
 
-      title._typingTimer = setTimeout(type, typingSpeed);
+            title._typingTimer = setTimeout(type, typingSpeed);
 
-    } else {
+          } else {
 
-      title._typingActive = false;
-      title._typingTimer = null;
-      title.classList.remove("typing");
+            title._typingActive = false;
+            title._typingTimer = null;
+            title.classList.remove("typing");
 
-    }
+          }
 
-  }
+        }
 
-  type();
-}
+        type();
+
+      }
 
 
 
@@ -891,7 +1152,11 @@ function triggerBubbleTyping(index) {
 
       function triggerElectricPulse() {
 
-        cityLabels.forEach(label => {
+        const activeLabels = currentViewMode === "country"
+          ? countryLabels
+          : cityLabels;
+
+        activeLabels.forEach(label => {
 
           if (label.style.opacity === "1") {
 
@@ -915,42 +1180,72 @@ function triggerBubbleTyping(index) {
 
 
 
-      // Raycaster for city clicks
+      // Raycaster for node clicks
 
       const raycaster=new THREE.Raycaster();
       raycaster.params.Points.threshold=0.02;
       const mouse=new THREE.Vector2();
 
       window.addEventListener("click",event=>{
+
         mouse.x=(event.clientX/window.innerWidth)*2-1;
         mouse.y=-(event.clientY/window.innerHeight)*2+1;
-        raycaster.setFromCamera(mouse,camera);
-        const intersects=raycaster.intersectObject(cityPoints);
-        if(intersects.length>0){
-          const index=intersects[0].index;
-          const cityPos = new THREE.Vector3();
-          cityPos.fromBufferAttribute(cityPoints.geometry.attributes.position, index);
-          cityPos.applyMatrix4(cityPoints.matrixWorld);
-        
-          if (isCityVisible(cityPos, camera)) {
 
-            selectedCityIndex = index;
+        raycaster.setFromCamera(mouse,camera);
+
+        const activePoints = currentViewMode === "country"
+          ? countryPoints
+          : cityPoints;
+
+        const activeData = currentViewMode === "country"
+          ? countries
+          : cities;
+
+        const intersects=raycaster.intersectObject(activePoints);
+
+        if(intersects.length>0){
+
+          const index=intersects[0].index;
+
+          const nodePos = new THREE.Vector3();
+          nodePos.fromBufferAttribute(
+            activePoints.geometry.attributes.position,
+            index
+          );
+          nodePos.applyMatrix4(activePoints.matrixWorld);
+
+          if (isCityVisible(nodePos, camera)) {
+
+            selectedNodeIndex = index;
             isFocused = true;
 
-            focusCity(cities[index]);
-            openCityPanel(cities[index]);
+            if (currentViewMode === "country") {
 
-          } else {
-            console.log("City is on the far side, cannot select.");
+              focusCountry(activeData[index]);
+              openCountryPanel(activeData[index]);
+
+            } else {
+
+              focusCity(activeData[index]);
+              openCityPanel(activeData[index]);
+
+            }
+
           }
+
         }
+
       });
 
-/* ===============================
-   iOS TOUCH CITY SELECTION
-=============================== */
+      
 
-      window.addEventListener("touchstart", (event) => { 
+
+      /* ===============================
+         iOS TOUCH NODE SELECTION
+      =============================== */
+
+      window.addEventListener("touchstart", (event) => {
+
         if (event.touches.length !== 1) return;
 
         const touch = event.touches[0];
@@ -960,30 +1255,50 @@ function triggerBubbleTyping(index) {
 
         raycaster.setFromCamera(mouse, camera);
 
-        const intersects = raycaster.intersectObject(cityPoints);
+        const activePoints = currentViewMode === "country"
+          ? countryPoints
+          : cityPoints;
+
+        const activeData = currentViewMode === "country"
+          ? countries
+          : cities;
+
+        const intersects = raycaster.intersectObject(activePoints);
 
         if (intersects.length > 0) {
-          const index = intersects[0].index;  
-          const cityPos = new THREE.Vector3();
 
-          cityPos.fromBufferAttribute(
-            cityPoints.geometry.attributes.position,
+          const index = intersects[0].index;
+
+          const nodePos = new THREE.Vector3();
+          nodePos.fromBufferAttribute(
+            activePoints.geometry.attributes.position,
             index
           );
+          nodePos.applyMatrix4(activePoints.matrixWorld);
 
-          cityPos.applyMatrix4(cityPoints.matrixWorld);
+          if (isCityVisible(nodePos, camera)) {
 
-          if (isCityVisible(cityPos, camera)) {
-
-            selectedCityIndex = index;
+            selectedNodeIndex = index;
             isFocused = true;
 
-            focusCity(cities[index]);
-            openCityPanel(cities[index]);
+            if (currentViewMode === "country") {
+
+              focusCountry(activeData[index]);
+              openCountryPanel(activeData[index]);
+
+            } else {
+
+              focusCity(activeData[index]);
+              openCityPanel(activeData[index]);
+
+            }
 
           }
+
         }
+
       }, { passive: true });
+
 
             // ------------------------------
       // Leader Line Helpers
@@ -999,12 +1314,25 @@ function triggerBubbleTyping(index) {
         if (!line) return;
 
         if (hoveredIndex === null) {
+
           line.style.opacity = "0";
           return;
+
         }
 
-        const bubble = cityLabels[hoveredIndex];
-        if (!bubble) return;
+        const activeLabels = currentViewMode === "country"
+          ? countryLabels
+          : cityLabels;
+
+        const bubble = activeLabels[hoveredIndex];
+
+        if (!bubble) {
+
+          line.style.opacity = "0";
+          return;
+
+        }
+
 
         const rect = bubble.getBoundingClientRect();
 
@@ -1032,6 +1360,7 @@ function triggerBubbleTyping(index) {
         
 
       function openCityPanel(city){
+
         const panel = document.getElementById("infoPanel");
 
         const showCountry =
@@ -1040,15 +1369,22 @@ function triggerBubbleTyping(index) {
 
         panel.innerHTML = `
           <button class="closePanel">✕</button>
+
           <div style="
             display:flex;
             justify-content:space-between;
             align-items:center;
             margin-top:4px;
           ">
+
             <div>
               <h2 style="margin:0;">${city.name}</h2>
-              ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
+              ${showCountry
+                ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">
+                    ${city.country}
+                   </h4>`
+                : ""
+              }
             </div>
 
             <div id="localTime" style="
@@ -1056,9 +1392,11 @@ function triggerBubbleTyping(index) {
               opacity:0.85;
               white-space:nowrap;
             "></div>
+
           </div>
 
-          <div id="articlesContainer" style="margin-top:12px;font-size:13px;">
+          <div id="articlesContainer"
+               style="margin-top:12px;font-size:13px;">
             Loading articles...
           </div>
         `;
@@ -1066,51 +1404,76 @@ function triggerBubbleTyping(index) {
         panel.classList.add("active");
 
         setTimeout(() => {
-          targetZoom = 1.7;  // slightly closer than focusCity zoom
+          targetZoom = 1.7;
         }, 250);
 
         // ------------------------------
-        // FETCH ARTICLES FOR CITY
+        // FETCH CITY ARTICLES ONLY
         // ------------------------------
 
-        fetch(`https://earth-wjr6.onrender.com/api/news/city/${city.id}`)
+        const endpoint =
+          `/api/news/city/${city.id}`;
+
+        fetch(`https://earth-wjr6.onrender.com${endpoint}`)
           .then(res => res.json())
           .then(articles => {
 
-            const container = document.getElementById("articlesContainer");
+            const container =
+              document.getElementById("articlesContainer");
 
             if (!articles.length) {
-              container.innerHTML = "<p>No recent articles.</p>";
+              container.innerHTML =
+                "<p>No recent articles.</p>";
               return;
             }
 
-            container.innerHTML = articles.map(article => `
-              <div style="margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;">
-                <a href="${article.url}" target="_blank" style="color:#4da6ff;">
-                  <strong>${article.title}</strong>
-                </a>
-                <div style="font-size:11px;opacity:0.6;margin-top:4px;">
-                  ${article.source_name} • 
-                  ${new Date(article.published_at).toLocaleDateString()}
+            container.innerHTML =
+              articles.map(article => `
+                <div style="
+                  margin-bottom:14px;
+                  border-bottom:1px solid rgba(255,255,255,0.1);
+                  padding-bottom:8px;
+                ">
+
+                  <a href="${article.url}"
+                     target="_blank"
+                     style="color:#4da6ff;">
+                    <strong>${article.title}</strong>
+                  </a>
+
+                  <div style="
+                    font-size:11px;
+                    opacity:0.6;
+                    margin-top:4px;
+                  ">
+                    ${article.source_name} • 
+                    ${new Date(article.published_at)
+                      .toLocaleDateString()}
+                  </div>
+
+                  <p style="margin-top:6px;">
+                    ${article.summary || ""}
+                  </p>
+
                 </div>
-                <p style="margin-top:6px;">
-                  ${article.summary || ""}
-                </p>
-              </div>
-            `).join("");
+              `).join("");
 
           })
           .catch(err => {
+
             console.error("Article load error:", err);
+
             document.getElementById("articlesContainer").innerHTML =
               "<p>Failed to load articles.</p>";
+
           });
 
         // ------------------------------
         // LOCAL TIME
         // ------------------------------
 
-        const timeElement = document.getElementById("localTime");
+        const timeElement =
+          document.getElementById("localTime");
 
         function updateLocalTime(){
 
@@ -1119,28 +1482,136 @@ function triggerBubbleTyping(index) {
           const offsetHours = city.lon / 15;
 
           const localTime = new Date(
-            nowUTC.getTime() + offsetHours * 60 * 60 * 1000
+            nowUTC.getTime() +
+            offsetHours * 60 * 60 * 1000
           );
 
-          const formatted = localTime.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
-          });
+          const formatted =
+            localTime.toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit"
+            });
 
-          timeElement.textContent = ` ${formatted}`;
+          timeElement.textContent =
+            ` ${formatted}`;
+
         }
 
         updateLocalTime();
 
-        if(timeInterval) clearInterval(timeInterval);
-        timeInterval = setInterval(updateLocalTime, 1000);
+        if(timeInterval)
+          clearInterval(timeInterval);
 
-        const closeBtn = panel.querySelector(".closePanel");
+        timeInterval =
+          setInterval(updateLocalTime, 1000);
+
+        const closeBtn =
+          panel.querySelector(".closePanel");
+
         closeBtn.addEventListener("click", () => {
+
           panel.classList.remove("active");
+
           clearInterval(timeInterval);
           timeInterval = null;
+
+        });
+
+      }
+
+      function openCountryPanel(country){
+
+        const panel = document.getElementById("infoPanel");
+
+        panel.innerHTML = `
+          <button class="closePanel">✕</button>
+
+          <div style="
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            margin-top:4px;
+          ">
+
+            <div>
+              <h2 style="margin:0;">${country.name}</h2>
+            </div>
+
+          </div>
+
+          <div id="articlesContainer"
+               style="margin-top:12px;font-size:13px;">
+            Loading articles...
+          </div>
+        `;
+
+        panel.classList.add("active");
+
+        setTimeout(() => {
+          targetZoom = 1.7;
+        }, 250);
+
+        const endpoint =
+          `/api/news/country/${country.id}`;
+
+        fetch(`https://earth-wjr6.onrender.com${endpoint}`)
+          .then(res => res.json())
+          .then(articles => {
+
+            const container =
+              document.getElementById("articlesContainer");
+
+            if (!articles.length) {
+              container.innerHTML =
+                "<p>No recent articles.</p>";
+              return;
+            }
+
+            container.innerHTML =
+              articles.map(article => `
+                <div style="
+                  margin-bottom:14px;
+                  border-bottom:1px solid rgba(255,255,255,0.1);
+                  padding-bottom:8px;
+                ">
+                  <a href="${article.url}"
+                     target="_blank"
+                     style="color:#4da6ff;">
+                    <strong>${article.title}</strong>
+                  </a>
+
+                  <div style="
+                    font-size:11px;
+                    opacity:0.6;
+                    margin-top:4px;
+                  ">
+                    ${article.source_name} • 
+                    ${new Date(article.published_at)
+                      .toLocaleDateString()}
+                  </div>
+
+                  <p style="margin-top:6px;">
+                    ${article.summary || ""}
+                  </p>
+                </div>
+              `).join("");
+
+          })
+          .catch(err => {
+
+            console.error("Country article load error:", err);
+
+            document.getElementById("articlesContainer").innerHTML =
+              "<p>Failed to load articles.</p>";
+
+          });
+
+        const closeBtn =
+          panel.querySelector(".closePanel");
+
+        closeBtn.addEventListener("click", () => {
+          panel.classList.remove("active");
         });
 
       }
@@ -1163,7 +1634,7 @@ function triggerBubbleTyping(index) {
         dragging=true; 
         prevX=e.clientX; 
         prevY=e.clientY;
-        selectedCityIndex = null;
+        selectedNodeIndex = null;
         isFocused = false; 
       });
 
@@ -1218,7 +1689,7 @@ function triggerBubbleTyping(index) {
           touchDragging = true;
           touchPrevX = e.touches[0].clientX;
           touchPrevY = e.touches[0].clientY;
-          selectedCityIndex = null;
+          selectedNodeIndex = null;
           isFocused = false;
         }  
       }, {passive: false });
@@ -1420,7 +1891,7 @@ if (tickGroup) {
       function focusCity(city) {
 
         const index = cities.findIndex(c => c.name === city.name);
-        selectedCityIndex = index;
+        selectedNodeIndex = index;
 
         const phi = (90 - city.lat) * (Math.PI / 180);
         const theta = (city.lon + 180) * (Math.PI / 180);
@@ -1460,6 +1931,63 @@ if (tickGroup) {
 
 
       }
+
+      function focusCountry(country) {
+
+        const index = countries.findIndex(
+          c => c.name === country.name
+        );
+
+        selectedNodeIndex = index;
+
+        const phi = (90 - country.lat) * (Math.PI / 180);
+        const theta = (country.lon + 180) * (Math.PI / 180);
+
+        const altitude = 0.02;
+
+        const x = -(radius + altitude) * Math.sin(phi) * Math.cos(theta);
+        const z =  (radius + altitude) * Math.sin(phi) * Math.sin(theta);
+        const y =  (radius + altitude) * Math.cos(phi);
+
+        const countryVector =
+          new THREE.Vector3(x, y, z).normalize();
+
+        const target = new THREE.Vector3(0, 0, 1);
+
+        targetQuaternion =
+          new THREE.Quaternion()
+            .setFromUnitVectors(countryVector, target);
+
+        targetZoom = 2;
+
+        // Ring placement
+        const ringAltitude = 0.03;
+
+        const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
+        const ringZ =  (radius + ringAltitude) * Math.sin(phi) * Math.sin(theta);
+        const ringY =  (radius + ringAltitude) * Math.cos(phi);
+
+        ringGroup.position.set(ringX, ringY, ringZ);
+        ringGroup.lookAt(0, 0, 0);
+
+        ringStates.forEach((state, i) => {
+
+          state.progress = 0;
+          state.delay = i * ringBurstDelay;
+          state.active = true;
+
+          ringMeshes[i].scale.set(1, 1, 1);
+          ringMeshes[i].material.opacity = 0;
+
+        });
+
+      }
+
+
+
+      let targetCityOpacity = 0.15;
+      let targetCountryOpacity = 1.0;
+
 
 
       // Animation loop
@@ -1507,7 +2035,7 @@ if (tickGroup) {
         camera.position.z += zoomDelta * dynamicEasing;
 
 
-        updateCityGlow(); 
+        updateNodeGlow(); 
         updateHoverLabels();
 
         // ------------------------------
@@ -1518,7 +2046,7 @@ if (tickGroup) {
          
         const hoveringDifferentCity =
           hoveredIndex !== null &&
-          hoveredIndex !== selectedCityIndex;  
+          hoveredIndex !== selectedNodeIndex;  
 
         if (hoveredCityPosition && (!panelOpen || hoveringDifferentCity)) {
 
@@ -1541,7 +2069,7 @@ if (tickGroup) {
         // Ring Burst Animation
         // ------------------------------
 
-        if (isFocused && selectedCityIndex !== null) {
+        if (isFocused && selectedNodeIndex !== null) {
 
           ringStates.forEach((state, i) => {
 
@@ -1624,6 +2152,10 @@ if (tickGroup) {
           compassSVG.style.transform = `rotate(${-euler.y}rad)`;
 
         }
+
+        cityMat.opacity += (targetCityOpacity - cityMat.opacity) * 0.08;
+        countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.08;
+
 
 
         renderer.render(scene,camera);
