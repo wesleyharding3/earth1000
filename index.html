@@ -320,8 +320,7 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    let yaw = 0;
-    let pitch = 0;
+
     const maxTilt = Math.PI / 2.2;
 
           // ===============================
@@ -1137,8 +1136,10 @@
       });
 
 
-      // Drag rotation
+      // Drag rotation (stable north-oriented, no pole flip)
       let dragging=false, prevX=0, prevY=0;
+      const upAxis = new THREE.Vector3(0,1,0);
+
       window.addEventListener("mousedown",e=>{
         dragging=true; 
         prevX=e.clientX; 
@@ -1146,30 +1147,44 @@
         selectedCityIndex = null;
         isFocused = false; 
       });
+
       window.addEventListener("mouseup",()=>dragging=false);
+
       window.addEventListener("mousemove", e=>{
         if(!dragging) return;
 
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
 
-        yaw   += deltaX;
-        pitch += deltaY;
+        // --- Horizontal rotation (always around world north axis) ---
+        const qY = new THREE.Quaternion()
+          .setFromAxisAngle(upAxis, deltaX);
 
-        // Clamp tilt so globe never flips
-        pitch = Math.max(-maxTilt, Math.min(maxTilt, pitch));
+        scene.quaternion.premultiply(qY);
 
-        const quaternion = new THREE.Quaternion()
-          .setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
+        // --- Vertical rotation (around current right vector) ---
+        const rightAxis = new THREE.Vector3(1,0,0)
+          .applyQuaternion(scene.quaternion)
+          .normalize();
 
-        scene.quaternion.copy(quaternion);
+        const qX = new THREE.Quaternion()
+          .setFromAxisAngle(rightAxis, deltaY);
+
+        scene.quaternion.premultiply(qX);
+
+        // --- Clamp tilt to prevent pole flip ---
+        const euler = new THREE.Euler()
+          .setFromQuaternion(scene.quaternion, "YXZ");
+
+        const maxTilt = Math.PI / 2.3;
+        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
+
+        scene.quaternion.setFromEuler(euler);
 
         prevX = e.clientX;
         prevY = e.clientY;
       });
 
-
-      
 
 // ===============================
 // iOS Single-Finger Drag Rotation
@@ -1199,15 +1214,30 @@
         const deltaX = (touchX - touchPrevX) * 0.005;
         const deltaY = (touchY - touchPrevY) * 0.005;
 
-        yaw   += deltaX;
-        pitch += deltaY;
+        // Horizontal rotation (around world north axis)
+        scene.quaternion.premultiply(
+          new THREE.Quaternion().setFromAxisAngle(upAxis, deltaX)
+        );
 
-        pitch = Math.max(-maxTilt, Math.min(maxTilt, pitch));
+        // Vertical rotation (around current right axis)
+        const rightAxis = new THREE.Vector3(1,0,0)
+          .applyQuaternion(scene.quaternion)
+          .normalize();
 
-        const quaternion = new THREE.Quaternion()
-          .setFromEuler(new THREE.Euler(pitch, yaw, 0, "YXZ"));
+        scene.quaternion.premultiply(
+          new THREE.Quaternion().setFromAxisAngle(rightAxis, deltaY)
+        );
 
-        scene.quaternion.copy(quaternion);
+        // Clamp tilt to prevent pole flip
+        const euler = new THREE.Euler()
+          .setFromQuaternion(scene.quaternion, "YXZ");
+
+        const maxTilt = Math.PI / 2.3;
+        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
+
+        scene.quaternion.setFromEuler(euler);
+
+
 
         touchPrevX = touchX;
         touchPrevY = touchY;
@@ -1428,8 +1458,7 @@ if (tickGroup) {
           const syncedEuler = new THREE.Euler()
             .setFromQuaternion(scene.quaternion, "YXZ");
 
-          pitch = syncedEuler.x;
-          yaw   = syncedEuler.y;
+
 
           glowPulseTime = 0;
           glowPulseActive = true;
