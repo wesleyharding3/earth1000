@@ -1723,12 +1723,6 @@
             const dotsContainer =
               panel.querySelector("#dotsContainer");
 
-            const input =
-              panel.querySelector("#pageInput");
-
-            const maxPagesEl =
-              panel.querySelector("#maxPages");
-
             if (!articles.length) {
 
               track.innerHTML =
@@ -1745,11 +1739,6 @@
                 articles.length /
                 articlesPerPage
               );
-
-            maxPagesEl.textContent =
-              `/ ${totalPages}`;
-
-            input.max = totalPages;
 
             track.innerHTML = "";
             dotsContainer.innerHTML = "";
@@ -1849,11 +1838,7 @@
 
               }
 
-
-
             }
-
-
 
           })
           .catch(err => {
@@ -1923,231 +1908,8 @@
 
         });
 
-
       }
 
-
-      function openCountryPanel(country){
-
-        const panel = document.getElementById("infoPanel");
-
-        panel.innerHTML = `
-
-          <div class="panelHeader" style="
-            position:sticky;
-            top:0;
-            z-index:5;
-            background:rgba(0,0,0,0.95);
-            backdrop-filter:blur(16px);
-            padding-bottom:10px;
-          ">
-
-            <button class="closePanel"
-              style="
-                position:absolute;
-                top:6px;
-                right:0;
-              ">
-              ✕
-            </button>
-
-            <div style="
-              display:flex;
-              justify-content:space-between;
-              align-items:center;
-              margin-top:4px;
-              padding-right:40px;
-            ">
-
-              <div>
-                <h2 style="margin:0;">
-                  ${country.name}
-                </h2>
-              </div>
-
-            </div>
-
-          </div>
-
-          <div style="
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-            margin-top:8px;
-            margin-bottom:8px;
-          ">
-
-            <div id="dotsContainer"
-              style="display:flex;gap:8px;">
-            </div>
-
-            <div style="width:40px;"></div>
-
-          </div>
-
-          <div id="articlesViewport"
-               style="
-                 position:relative;
-                 overflow:hidden;
-                 flex:1;
-               ">
-
-            <div id="articlesTrack"
-                 style="
-                   display:flex;
-                   transition:transform 0.35s ease;
-                   height:100%;
-                 ">
-              Loading articles...
-            </div>
-
-          </div>
-
-        `;
-
-        panel.classList.add("active");
-
-        setTimeout(() => {
-          targetZoom =
-            Math.max(2.4, camera.position.z - 0.6);
-        }, 250);
-
-        const endpoint =
-          `/api/news/country/${country.id}`;
-
-        fetch(`https://earth-wjr6.onrender.com${endpoint}`)
-          .then(res => res.json())
-          .then(articles => {
-
-            const track =
-              panel.querySelector("#articlesTrack");
-
-            const dotsContainer =
-              panel.querySelector("#dotsContainer");
-
-            if (!articles.length) {
-
-              track.innerHTML =
-                "<div style='padding:10px;'>No recent articles.</div>";
-
-              return;
-
-            }
-
-            const articlesPerPage = 5;
-            const totalPages =
-              Math.ceil(articles.length / articlesPerPage);
-
-            track.innerHTML = "";
-            dotsContainer.innerHTML = "";
-
-            for (let i = 0; i < totalPages; i++) {
-
-              const page =
-                document.createElement("div");
-
-              page.className = "articlePage";
-
-              const start =
-                i * articlesPerPage;
-
-              const end =
-                start + articlesPerPage;
-
-              page.innerHTML =
-                articles
-                  .slice(start, end)
-                  .map(article => `
-                    <div style="
-                      margin-bottom:14px;
-                      border-bottom:1px solid rgba(255,255,255,0.1);
-                      padding-bottom:8px;
-                    ">
-                      <a href="${article.url}"
-                         target="_blank"
-                         style="color:#4da6ff;">
-                        <strong>
-                          ${article.title}
-                        </strong>
-                      </a>
-
-                      <div style="
-                        font-size:11px;
-                        opacity:0.6;
-                        margin-top:4px;
-                      ">
-                        ${article.source_name} • 
-                        ${new Date(article.published_at)
-                          .toLocaleDateString()}
-                      </div>
-
-                      <p style="margin-top:6px;">
-                        ${article.summary || ""}
-                      </p>
-                    </div>
-                  `).join("");
-
-              track.appendChild(page);
-
-            }
-
-            const visibleDots =
-              Math.min(5, totalPages);
-
-            for (let i = 1; i <= visibleDots; i++) {
-
-              const dot =
-                document.createElement("div");
-
-              dot.className = "dot";
-
-              if (i === 1)
-                dot.classList.add("active");
-
-              dot.addEventListener("click", () => {
-                goToPage(i);
-              });
-
-              dotsContainer.appendChild(dot);
-
-            }
-
-            function goToPage(page){
-
-              if (page < 1 ||
-                  page > totalPages) return;
-
-              track.style.transform =
-                `translateX(-${(page - 1) * 100}%)`;
-
-              const dots =
-                dotsContainer.children;
-
-              for (let i = 0; i < dots.length; i++) {
-                dots[i].classList.toggle(
-                  "active",
-                  i === page - 1
-                );
-              }
-
-            }
-
-          });
-
-        const closeBtn =
-          panel.querySelector(".closePanel");
-
-        closeBtn.addEventListener("click", () => {
-
-          panel.classList.remove("active");
-
-          focusQuaternion = null;
-          isFocused = false;
-          selectedNodeIndex = null;
-
-        });
-
-      }
 
 
       // ===============================
