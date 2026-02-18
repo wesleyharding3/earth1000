@@ -1716,19 +1716,24 @@ if (tickGroup) {
 
               float shade = clamp(vDot, 0.0, 1.0);
 
-              // Stronger contrast curve
-              float contrast = pow(shade, 2.0);
+              // Softer edge falloff
+              float contrast = pow(shade, 1.3);
 
-              // Darkness level for far side (0 = black)
+              // Darkness level for far side (unchanged)
               float darkness = 0.12;
 
+              // Lift brightness slightly near the globe edge
+              float edgeLift = smoothstep(0.0, 0.25, shade) * 0.15;
+
               float finalShade = mix(darkness, 1.0, contrast);
+              finalShade += edgeLift;
 
               gl_FragColor = vec4(color * finalShade, opacity * finalShade);
             }
 
           `
         });
+
 
         const line = new THREE.Line(geometry, material);
         this.group.add(line);
