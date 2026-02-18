@@ -1642,7 +1642,7 @@ if (tickGroup) {
         const material = new THREE.ShaderMaterial({
           transparent: true,
           uniforms: {
-            color: { value: new THREE.Color(0xffffff) },
+            color: { value: new THREE.Color(1.5, 1.5, 1.5) },
             opacity: { value: 0.99 }
           },
           vertexShader: `
@@ -1669,13 +1669,17 @@ if (tickGroup) {
 
               float shade = clamp(vDot, 0.0, 1.0);
 
-              float shadowStrength = 0.6;
-              float finalShade = mix(1.0 - shadowStrength, 1.0, shade);
+              // Stronger contrast curve
+              float contrast = pow(shade, 2.0);
 
-              float brightness = 2.5;
+              // Darkness level for far side (0 = black)
+              float darkness = 0.12;
+
+              float finalShade = mix(darkness, 1.0, contrast);
 
               gl_FragColor = vec4(color * finalShade, opacity * finalShade);
             }
+
           `
         });
 
