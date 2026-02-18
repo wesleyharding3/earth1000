@@ -35,7 +35,7 @@ async function fetchFeeds() {
     console.log("Starting RSS fetch...");
 
     const feedResult = await pool.query(`
-      SELECT id, rss_url, city_id
+      SELECT id, country_id, rss_url, city_id
       FROM news_sources
       WHERE is_active = true
     `);
@@ -71,9 +71,11 @@ async function fetchFeeds() {
               $5,
               $6,
               $7,
+              $8,
               NOW(),
-              $8
+              $9
             )
+
             ON CONFLICT (url) DO UPDATE
             SET
               source_id = EXCLUDED.source_id,
@@ -84,6 +86,7 @@ async function fetchFeeds() {
             [
               feed.id,
               feed.city_id,
+              feed.country_id,
               item.title || null,
               item.link || null,
               item.contentSnippet || item.description || null,
@@ -91,6 +94,7 @@ async function fetchFeeds() {
               item.pubDate ? new Date(item.pubDate) : null,
               JSON.stringify(item)
             ]
+
           );
         }
 
