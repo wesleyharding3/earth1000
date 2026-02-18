@@ -404,6 +404,9 @@
     let zoomVelocity = 0;
     const zoomFriction = 0.92;
 
+    let yawVelocity = 0;
+    let tiltVelocity = 0;  
+
 
     /* ===============================
        Load Earth texture and initialize
@@ -1723,7 +1726,9 @@
           .setFromQuaternion(scene.quaternion, "YXZ");
 
         const maxTilt = Math.PI / 2.3;
-        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
+        if (euler.x > maxTilt)  euler.x = maxTilt;
+        if (euler.x < -maxTilt) euler.x = -maxTilt;
+
 
         scene.quaternion.setFromEuler(euler);
 
@@ -1750,46 +1755,18 @@
 
         const isPinchZoom = e.ctrlKey;
 
-        // ===============================
-        // Trackpad Pinch = Zoom
-        // ===============================
         if (isPinchZoom) {
           zoomVelocity += e.deltaY * 0.0006;
           return;
         }
 
-        // ===============================
-        // Two-Finger Trackpad Drag = Rotate
-        // ===============================
-        const rotateSpeed = 0.0025;
+        const rotateSpeed = 0.003;
 
-        const deltaX = e.deltaX * rotateSpeed;
-        const deltaY = e.deltaY * rotateSpeed;
-
-        // Horizontal rotation (around world north axis)
-        scene.quaternion.premultiply(
-          new THREE.Quaternion().setFromAxisAngle(upAxis, deltaX)
-        );
-
-        // Vertical tilt (around current right axis)
-        const rightAxis = new THREE.Vector3(1, 0, 0)
-          .applyQuaternion(scene.quaternion)
-          .normalize();
-
-        scene.quaternion.premultiply(
-          new THREE.Quaternion().setFromAxisAngle(rightAxis, deltaY)
-        );
-
-        // Clamp tilt to prevent pole flip
-        const euler = new THREE.Euler()
-          .setFromQuaternion(scene.quaternion, "YXZ");
-
-        const maxTilt = Math.PI / 2.3;
-        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
-
-        scene.quaternion.setFromEuler(euler);
+        yawVelocity  += e.deltaX * rotateSpeed;
+        tiltVelocity += e.deltaY * rotateSpeed * 0.6;
 
       }, { passive: false });
+
 
 
       let initialPinchDistance = null;
@@ -1938,21 +1915,40 @@ if (tickGroup) {
         const phi = (90 - city.lat) * (Math.PI / 180);
         const theta = (city.lon + 180) * (Math.PI / 180);
 
-        const cityAltitude = 0.02; // small offset above surface
+        const cityAltitude = 0.02;
 
         const x = -(radius + cityAltitude) * Math.sin(phi) * Math.cos(theta);
         const z =  (radius + cityAltitude) * Math.sin(phi) * Math.sin(theta);
         const y =  (radius + cityAltitude) * Math.cos(phi);
 
-
         const cityVector = new THREE.Vector3(x, y, z).normalize();
         const target = new THREE.Vector3(0, 0, 1);
 
-        targetQuaternion = new THREE.Quaternion()
+        // Base rotation to bring city to front
+        const lookQuat = new THREE.Quaternion()
           .setFromUnitVectors(cityVector, target);
 
+        // Remove roll & clamp tilt (north-up orientation)
+        const euler = new THREE.Euler()
+          .setFromQuaternion(lookQuat, "YXZ");
+
+        euler.z = 0; // eliminate roll
+
+        const maxTilt = Math.PI / 4;
+        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
+
+        yawVelocity = 0;
+        tiltVelocity = 0;
+
+        targetQuaternion = new THREE.Quaternion()
+          .setFromEuler(euler);
+
+        // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
-; // auto zoom slightly closer    
+
+        // ===============================
+        // Ring Burst Placement
+        // ===============================
 
         const ringAltitude = 0.03;
 
@@ -1962,6 +1958,7 @@ if (tickGroup) {
 
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
+
         ringStates.forEach((state, i) => {
           state.progress = 0;
           state.delay = i * ringBurstDelay;
@@ -1971,9 +1968,8 @@ if (tickGroup) {
           ringMeshes[i].material.opacity = 0;
         });
 
-
-
       }
+
 
       function focusCountry(country) {
 
@@ -1997,14 +1993,32 @@ if (tickGroup) {
 
         const target = new THREE.Vector3(0, 0, 1);
 
-        targetQuaternion =
-          new THREE.Quaternion()
-            .setFromUnitVectors(countryVector, target);
+        // Base rotation to bring country to front
+        const lookQuat = new THREE.Quaternion()
+          .setFromUnitVectors(countryVector, target);
 
+        // Remove roll & clamp tilt (north-up orientation)
+        const euler = new THREE.Euler()
+          .setFromQuaternion(lookQuat, "YXZ");
+
+        euler.z = 0; // eliminate roll
+
+        const maxTilt = Math.PI / 4;
+        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
+
+        yawVelocity = 0;
+        tiltVelocity = 0;
+
+        targetQuaternion = new THREE.Quaternion()
+          .setFromEuler(euler);
+
+        // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
-;
 
-        // Ring placement
+        // ===============================
+        // Ring Burst Placement
+        // ===============================
+
         const ringAltitude = 0.03;
 
         const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
@@ -2038,35 +2052,74 @@ if (tickGroup) {
       function animate(){
         requestAnimationFrame(animate);
 
+        // --------------------------------
+        // Focus Slerp
+        // --------------------------------
         if (targetQuaternion) {
+
           scene.quaternion.slerp(targetQuaternion, 0.08);
 
-        if (scene.quaternion.angleTo(targetQuaternion) < 0.001) {
-          scene.quaternion.copy(targetQuaternion);
-          targetQuaternion = null;
+          if (scene.quaternion.angleTo(targetQuaternion) < 0.001) {
+            scene.quaternion.copy(targetQuaternion);
+            targetQuaternion = null;
 
-          // --- Sync yaw/pitch with final quaternion ---
-          const syncedEuler = new THREE.Euler()
+            glowPulseTime = 0;
+            glowPulseActive = true;
+          }
+        }
+
+        // --------------------------------
+        // Trackpad Rotation Inertia
+        // --------------------------------
+        if (Math.abs(yawVelocity) > 0.00001 ||
+            Math.abs(tiltVelocity) > 0.00001) {
+
+          scene.quaternion.premultiply(
+            new THREE.Quaternion().setFromAxisAngle(upAxis, yawVelocity)
+          );
+
+          const rightAxis = new THREE.Vector3(1, 0, 0)
+            .applyQuaternion(scene.quaternion)
+            .normalize();
+
+          scene.quaternion.premultiply(
+            new THREE.Quaternion().setFromAxisAngle(rightAxis, tiltVelocity)
+          );
+
+          const euler = new THREE.Euler()
             .setFromQuaternion(scene.quaternion, "YXZ");
 
+          const maxTilt = Math.PI / 2.3;
+
+          if (euler.x > maxTilt)  euler.x = maxTilt;
+          if (euler.x < -maxTilt) euler.x = -maxTilt;
+
+          scene.quaternion.setFromEuler(euler);
 
 
-          glowPulseTime = 0;
-          glowPulseActive = true;
+          yawVelocity  *= 0.90;
+          tiltVelocity *= 0.90;
         }
-        }
-        if (!dragging && !targetQuaternion && !isFocused && Math.abs(zoomVelocity) < 0.0001) {
 
-          // Gentle eastward auto-rotation
+        // --------------------------------
+        // Auto Spin (Idle Only)
+        // --------------------------------
+        if (!dragging &&
+            !targetQuaternion &&
+            !isFocused &&
+            Math.abs(zoomVelocity) < 0.0001 &&
+            Math.abs(yawVelocity) < 0.00001 &&
+            Math.abs(tiltVelocity) < 0.00001) {
+
           const autoSpin = new THREE.Quaternion()
             .setFromAxisAngle(new THREE.Vector3(0,1,0), 0.00015);
 
           scene.quaternion.multiplyQuaternions(autoSpin, scene.quaternion);
-
         }
 
-
-
+        // --------------------------------
+        // Zoom Physics
+        // --------------------------------
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
         targetZoom = Math.max(1.5, Math.min(5, targetZoom));
@@ -2074,46 +2127,55 @@ if (tickGroup) {
         const zoomDelta = targetZoom - camera.position.z;
 
         const easingStrength = 0.05;
-        const dynamicEasing = easingStrength * Math.min(Math.abs(zoomDelta) * 2, 1);
+        const dynamicEasing =
+          easingStrength *
+          Math.min(Math.abs(zoomDelta) * 2, 1);
 
         camera.position.z += zoomDelta * dynamicEasing;
 
-
-        updateNodeGlow(); 
+        // --------------------------------
+        // Visual Updates
+        // --------------------------------
+        updateNodeGlow();
         updateHoverLabels();
 
-        // ------------------------------
         // Leader Line Projection
-        // ------------------------------
-        const panelOpen = document.getElementById("infoPanel")
-          .classList.contains("active");
-         
+        const panelOpen =
+          document.getElementById("infoPanel")
+            .classList.contains("active");
+
         const hoveringDifferentCity =
           hoveredIndex !== null &&
-          hoveredIndex !== selectedNodeIndex;  
+          hoveredIndex !== selectedNodeIndex;
 
-        if (hoveredCityPosition && (!panelOpen || hoveringDifferentCity)) {
+        if (hoveredCityPosition &&
+            (!panelOpen || hoveringDifferentCity)) {
 
+          const vector =
+            hoveredCityPosition.clone();
 
-          const vector = hoveredCityPosition.clone();
           vector.project(camera);
 
-          const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-          const y = (-vector.y * 0.5 + 0.5) * window.innerHeight;
+          const x =
+            (vector.x * 0.5 + 0.5) *
+            window.innerWidth;
+
+          const y =
+            (-vector.y * 0.5 + 0.5) *
+            window.innerHeight;
 
           updateHoverLine(x, y);
 
         } else {
 
           hideHoverLine();
+        }
 
-        }        
-
-        // ------------------------------
+        // --------------------------------
         // Ring Burst Animation
-        // ------------------------------
-
-        if (isFocused && selectedNodeIndex !== null) {
+        // --------------------------------
+        if (isFocused &&
+            selectedNodeIndex !== null) {
 
           ringStates.forEach((state, i) => {
 
@@ -2127,12 +2189,18 @@ if (tickGroup) {
             state.progress += ringSpeed;
 
             const maxScale = ringMultiplierMax;
-            const scale = 1 + state.progress * (maxScale - 1);
+            const scale =
+              1 + state.progress * (maxScale - 1);
 
-            ringMeshes[i].scale.set(scale, scale, scale);
+            ringMeshes[i].scale.set(
+              scale, scale, scale
+            );
 
-            const opacity = Math.pow(1 - state.progress, 1.8);
-            ringMeshes[i].material.opacity = opacity;
+            const opacity =
+              Math.pow(1 - state.progress, 1.8);
+
+            ringMeshes[i].material.opacity =
+              opacity;
 
             if (state.progress >= 1) {
               ringMeshes[i].material.opacity = 0;
@@ -2146,9 +2214,11 @@ if (tickGroup) {
           ringMeshes.forEach(ring => {
             ring.material.opacity = 0;
           });
-
         }
 
+        // --------------------------------
+        // Glow Pulse Update
+        // --------------------------------
         if (glowPulseActive) {
 
           glowPulseTime += 0.03;
@@ -2156,54 +2226,83 @@ if (tickGroup) {
           if (glowPulseTime >= 1) {
             glowPulseActive = false;
           }
+        }
 
-        }        
-        // ------------------------------
-        // Earth Twinkle Update (Smooth)
-        // ------------------------------
+        // --------------------------------
+        // Earth Twinkle Update
+        // --------------------------------
+        const earthColorAttr =
+          earthPoints.geometry.attributes.color;
 
-        const earthColorAttr = earthPoints.geometry.attributes.color;
+        for (let i = 0;
+             i < earthTwinkleTimers.length;
+             i++) {
 
-        for (let i = 0; i < earthTwinkleTimers.length; i++) {
-
-          if (earthTwinkleTimers[i] <= 0 && Math.random() < earthTwinkleChance) {
-            earthTwinkleTimers[i] = earthTwinkleDuration;
+          if (earthTwinkleTimers[i] <= 0 &&
+              Math.random() < earthTwinkleChance) {
+            earthTwinkleTimers[i] =
+              earthTwinkleDuration;
           }
 
-          let brightness = earthBaseBrightness[i];
+          let brightness =
+            earthBaseBrightness[i];
 
           if (earthTwinkleTimers[i] > 0) {
 
-            const t = earthTwinkleTimers[i] / earthTwinkleDuration;
+            const t =
+              earthTwinkleTimers[i] /
+              earthTwinkleDuration;
 
-            // smooth fade in/out curve
-            const fade = Math.sin(t * Math.PI);
+            const fade =
+              Math.sin(t * Math.PI);
 
-            brightness *= (1 - earthTwinkleIntensity * fade);
+            brightness *=
+              (1 -
+               earthTwinkleIntensity *
+               fade);
 
             earthTwinkleTimers[i] -= 0.016;
           }
 
-          earthColorAttr.setXYZ(i, brightness, brightness, brightness);
+          earthColorAttr.setXYZ(
+            i,
+            brightness,
+            brightness,
+            brightness
+          );
         }
 
         earthColorAttr.needsUpdate = true;
 
+        // --------------------------------
+        // Compass Rotation
+        // --------------------------------
         if (compassSVG) {
 
-          const euler = new THREE.Euler().setFromQuaternion(scene.quaternion);
+          const euler =
+            new THREE.Euler()
+              .setFromQuaternion(
+                scene.quaternion
+              );
 
-          compassSVG.style.transform = `rotate(${-euler.y}rad)`;
-
+          compassSVG.style.transform =
+            `rotate(${-euler.y}rad)`;
         }
 
-        cityMat.opacity += (targetCityOpacity - cityMat.opacity) * 0.08;
-        countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.08;
+        // --------------------------------
+        // Opacity Blending
+        // --------------------------------
+        cityMat.opacity +=
+          (targetCityOpacity -
+           cityMat.opacity) * 0.08;
 
+        countryMat.opacity +=
+          (targetCountryOpacity -
+           countryMat.opacity) * 0.08;
 
+        renderer.render(scene, camera);
+      }
 
-        renderer.render(scene,camera);
-        }
 
       animate();
     }
