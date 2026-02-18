@@ -610,7 +610,7 @@
     let yaw = 0;
     let pitch = 0;      
 
-    let ambientSpeed = 0.00015;        // default slow rotation
+    let ambientSpeed = 0.0006;        // default slow rotation
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
@@ -2412,17 +2412,8 @@ if (tickGroup) {
         // --------------------------------
         // Ambient Equatorial Rotation
         // --------------------------------
-        if (!dragging &&
-            !focusQuaternion &&
-            !isFocused &&
-            !ambientPaused &&
-            ambientEnabled &&
-            Math.abs(zoomVelocity) < 0.0001 &&
-            Math.abs(yawVelocity) < 0.00001 &&
-            Math.abs(tiltVelocity) < 0.00001) {
-
+        if (!dragging && !focusQuaternion && !isFocused && !ambientPaused && ambientEnabled) {
           yaw += ambientSpeed;
-
         }
 
         // --------------------------------
