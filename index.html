@@ -1070,8 +1070,9 @@
           "YXZ"
         );
 
-        targetQuaternion = new THREE.Quaternion()
+        focusQuaternion = new THREE.Quaternion()
           .setFromEuler(targetEuler);
+
 
         isFocused = false;
         selectedNodeIndex = null;
@@ -2184,8 +2185,10 @@
           document.getElementById("infoPanel").classList.remove("active");
           clearInterval(timeInterval);
           timeInterval = null;
+          focusQuaternion = null;
         }
       });
+
 
       // ===============================
       // Drag Rotation (Yaw / Pitch System)
@@ -2458,8 +2461,9 @@ if (tickGroup) {
       /* ===============================
          FOCUS CITY ROTATION
       =============================== */
+      let focusQuaternion = null;
+      let baseQuaternion = new THREE.Quaternion();
 
-      let targetQuaternion = null;
 
       function focusCity(city) {
 
@@ -2482,11 +2486,10 @@ if (tickGroup) {
         const lookQuat = new THREE.Quaternion()
           .setFromUnitVectors(cityVector, target);
 
-        // Remove roll & clamp tilt (north-up orientation)
         const euler = new THREE.Euler()
           .setFromQuaternion(lookQuat, "YXZ");
 
-        euler.z = 0; // eliminate roll
+        euler.z = 0;
 
         const maxTilt = Math.PI / 2.05;
         euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
@@ -2494,8 +2497,9 @@ if (tickGroup) {
         yawVelocity = 0;
         tiltVelocity = 0;
 
-        targetQuaternion = new THREE.Quaternion()
+        focusQuaternion = new THREE.Quaternion()
           .setFromEuler(euler);
+
 
         // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
@@ -2551,11 +2555,10 @@ if (tickGroup) {
         const lookQuat = new THREE.Quaternion()
           .setFromUnitVectors(countryVector, target);
 
-        // Remove roll & clamp tilt (north-up orientation)
         const euler = new THREE.Euler()
           .setFromQuaternion(lookQuat, "YXZ");
 
-        euler.z = 0; // eliminate roll
+        euler.z = 0;
 
         const maxTilt = Math.PI / 2.05;
         euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
@@ -2563,8 +2566,9 @@ if (tickGroup) {
         yawVelocity = 0;
         tiltVelocity = 0;
 
-        targetQuaternion = new THREE.Quaternion()
+        focusQuaternion = new THREE.Quaternion()
           .setFromEuler(euler);
+
 
         // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
@@ -2649,21 +2653,8 @@ if (tickGroup) {
       function animate(){
         requestAnimationFrame(animate);
 
-        // --------------------------------
-        // Focus Slerp
-        // --------------------------------
-        if (targetQuaternion) {
 
-          scene.quaternion.slerp(targetQuaternion, 0.08);
 
-          if (scene.quaternion.angleTo(targetQuaternion) < 0.001) {
-            scene.quaternion.copy(targetQuaternion);
-            targetQuaternion = null;
-
-            glowPulseTime = 0;
-            glowPulseActive = true;
-          }
-        }
 
         // --------------------------------
         // Trackpad Rotation Inertia
@@ -2727,18 +2718,31 @@ if (tickGroup) {
 
         camera.position.z += zoomDelta * dynamicEasing;
 
-                // --------------------------------
-        // Globe Rotation (Rebuilt From Yaw / Pitch)
+        // --------------------------------
+        // Globe Rotation (Yaw / Pitch Base + Focus Overlay)
         // --------------------------------
 
-        const euler = new THREE.Euler(
+        const baseEuler = new THREE.Euler(
           pitch,
           yaw,
           0,
           "YXZ"
         );
 
-        scene.quaternion.setFromEuler(euler);
+        baseQuaternion.setFromEuler(baseEuler);
+
+        if (focusQuaternion) {
+
+          scene.quaternion
+            .copy(baseQuaternion)
+            .multiply(focusQuaternion);
+
+        } else {
+
+          scene.quaternion.copy(baseQuaternion);
+
+        }
+
 
 
         // --------------------------------
@@ -3004,24 +3008,43 @@ if (tickGroup) {
 
             void main() {
 
-              float shade = clamp(vDot, 0.0, 1.0);
+              // 1. Clamp facing value
+              //    vDot = 1.0 (fully facing camera)
+              //    vDot = 0.0 (horizon)
+              //    vDot < 0.0 (backside)
+              float facing = clamp(vDot, 0.0, 1.0);
 
-              // Softer edge falloff
-              float contrast = pow(shade, 1.3);
+              // 2. Dark backside
+              float backsideDark = 0.06;
 
-              // Darkness level for far side (unchanged)
-              float darkness = 0.12;
+              // 3. Electric front hemisphere brightness
+              //    Strong boost across entire visible side
+              float electricBoost = 1.2 + (facing * 1.8);
 
-              // Lift brightness slightly near the globe edge
-              float edgeLift = smoothstep(0.0, 0.25, shade) * 0.15;
+              // 4. Extra center intensification
+              float coreIntensity = pow(facing, 2.0) * 1.2;
 
-              float finalShade = mix(darkness, 1.0, contrast);
-              finalShade += edgeLift;
+              // 5. Soft horizon transition
+              float horizonFade = smoothstep(0.0, 0.12, facing);
 
-              gl_FragColor = vec4(color * finalShade, opacity * finalShade);
+              // 6. Combine brightness
+              float finalShade = mix(
+                backsideDark,
+                electricBoost + coreIntensity,
+                horizonFade
+              );
+
+              // 7. Subtle electric shimmer
+              float shimmer = sin(facing * 40.0) * 0.05;
+              finalShade += shimmer * horizonFade;
+
+              gl_FragColor = vec4(
+                color * finalShade,
+                opacity * horizonFade
+              );
             }
-
           `
+
         });
 
 
