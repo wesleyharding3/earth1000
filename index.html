@@ -574,7 +574,12 @@
     const zoomFriction = 0.92;
 
     let yawVelocity = 0;
-    let tiltVelocity = 0;  
+    let tiltVelocity = 0;
+    let yaw = 0;
+    let pitch = 0;      
+
+    const maxPitch = Math.PI / 2 - 0.15;
+
 
 
     /* ===============================
@@ -2182,77 +2187,78 @@
         }
       });
 
+      // ===============================
+      // Drag Rotation (Yaw / Pitch System)
+      // ===============================
 
-      // Drag rotation (stable north-oriented, no pole flip)
-      let dragging=false, prevX=0, prevY=0;
-      const upAxis = new THREE.Vector3(0,1,0);
+      let dragging = false;
+      let prevX = 0;
+      let prevY = 0;
 
-      window.addEventListener("mousedown",e=>{
-        dragging=true; 
-        prevX=e.clientX; 
-        prevY=e.clientY;
+      window.addEventListener("mousedown", e => {
+
+        dragging = true;
+        prevX = e.clientX;
+        prevY = e.clientY;
+
         selectedNodeIndex = null;
-        isFocused = false; 
+        isFocused = false;
+
       });
 
-      window.addEventListener("mouseup",()=>dragging=false);
+      window.addEventListener("mouseup", () => {
 
-      window.addEventListener("mousemove", e=>{
-        if(!dragging) return;
+        dragging = false;
+
+      });
+
+      window.addEventListener("mousemove", e => {
+
+        if (!dragging) return;
 
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
 
-        // --- Horizontal rotation (always around world north axis) ---
-        const qY = new THREE.Quaternion()
-          .setFromAxisAngle(upAxis, deltaX);
+        yaw   -= deltaX;
+        pitch -= deltaY;
 
-        scene.quaternion.premultiply(qY);
-
-        // --- Vertical rotation (around current right vector) ---
-        const rightAxis = new THREE.Vector3(1,0,0)
-          .applyQuaternion(scene.quaternion)
-          .normalize();
-
-        const qX = new THREE.Quaternion()
-          .setFromAxisAngle(rightAxis, deltaY);
-
-        scene.quaternion.premultiply(qX);
-
-        // --- Clamp tilt to prevent pole flip ---
-        const euler = new THREE.Euler()
-          .setFromQuaternion(scene.quaternion, "YXZ");
-
-        const maxTilt = Math.PI / 1.9;
-        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
-
-        scene.quaternion.setFromEuler(euler);
+        pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
 
         prevX = e.clientX;
         prevY = e.clientY;
+
       });
 
 
-// ===============================
-// iOS Single-Finger Drag Rotation
-// ===============================
+
+      // ===============================
+      // iOS Single-Finger Drag Rotation
+      // ===============================
 
       let touchDragging = false;
       let touchPrevX = 0;
       let touchPrevY = 0;
-      
-      window.addEventListener("touchstart", (e) => {  
+
+      window.addEventListener("touchstart", (e) => {
+
         if (e.touches.length === 1) {
+
           touchDragging = true;
+
           touchPrevX = e.touches[0].clientX;
           touchPrevY = e.touches[0].clientY;
+
           selectedNodeIndex = null;
           isFocused = false;
-        }  
-      }, {passive: false });
+
+        }
+
+      }, { passive: false });
 
       window.addEventListener("touchmove", (e) => {
+
         if (!touchDragging || e.touches.length !== 1) return;
+
         e.preventDefault();
 
         const touchX = e.touches[0].clientX;
@@ -2261,41 +2267,20 @@
         const deltaX = (touchX - touchPrevX) * 0.005;
         const deltaY = (touchY - touchPrevY) * 0.005;
 
-        // Horizontal rotation (around world north axis)
-        scene.quaternion.premultiply(
-          new THREE.Quaternion().setFromAxisAngle(upAxis, deltaX)
-        );
+        yaw   -= deltaX;
+        pitch -= deltaY;
 
-        // Vertical rotation (around current right axis)
-        const rightAxis = new THREE.Vector3(1,0,0)
-          .applyQuaternion(scene.quaternion)
-          .normalize();
-
-        scene.quaternion.premultiply(
-          new THREE.Quaternion().setFromAxisAngle(rightAxis, deltaY)
-        );
-
-        // Clamp tilt to prevent pole flip
-        const euler = new THREE.Euler()
-          .setFromQuaternion(scene.quaternion, "YXZ");
-
-        const maxTilt = Math.PI / 1.9;
-        if (euler.x > maxTilt)  euler.x = maxTilt;
-        if (euler.x < -maxTilt) euler.x = -maxTilt;
-
-
-        scene.quaternion.setFromEuler(euler);
-
-
+        pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
 
         touchPrevX = touchX;
         touchPrevY = touchY;
 
       }, { passive: false });
 
-
       window.addEventListener("touchend", () => {
+
         touchDragging = false;
+
       });
 
 
@@ -2686,17 +2671,17 @@ if (tickGroup) {
         if (Math.abs(yawVelocity) > 0.00001 ||
             Math.abs(tiltVelocity) > 0.00001) {
 
-          scene.quaternion.premultiply(
-            new THREE.Quaternion().setFromAxisAngle(upAxis, yawVelocity)
-          );
+          yaw   -= yawVelocity;
+          pitch -= tiltVelocity;
 
-          const rightAxis = new THREE.Vector3(1, 0, 0)
-            .applyQuaternion(scene.quaternion)
-            .normalize();
+          pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
 
-          scene.quaternion.premultiply(
-            new THREE.Quaternion().setFromAxisAngle(rightAxis, tiltVelocity)
-          );
+          yawVelocity  *= 0.90;
+          tiltVelocity *= 0.90;
+
+        }
+
+
 
           const euler = new THREE.Euler()
             .setFromQuaternion(scene.quaternion, "YXZ");
@@ -2708,9 +2693,6 @@ if (tickGroup) {
 
           scene.quaternion.setFromEuler(euler);
 
-
-          yawVelocity  *= 0.90;
-          tiltVelocity *= 0.90;
         }
 
         // --------------------------------
@@ -2744,6 +2726,25 @@ if (tickGroup) {
           Math.min(Math.abs(zoomDelta) * 2, 1);
 
         camera.position.z += zoomDelta * dynamicEasing;
+
+                // --------------------------------
+        // Globe Rotation (Rebuilt From Yaw / Pitch)
+        // --------------------------------
+
+        const euler = new THREE.Euler(
+          pitch,
+          yaw,
+          0,
+          "YXZ"
+        );
+
+        scene.quaternion.setFromEuler(euler);
+
+
+        // --------------------------------
+        // Visual Updates
+        // --------------------------------
+
 
         // --------------------------------
         // Visual Updates
