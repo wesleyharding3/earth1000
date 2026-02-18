@@ -118,7 +118,7 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
       `
       UPDATE news_sources
       SET last_error = $1,
-          last_error_at = NOW()
+          last_failed_at = NOW()
       WHERE id = $2
       `,
       [err.message?.substring(0, 1000), feed.id]
