@@ -1613,35 +1613,8 @@
               style="display:flex;gap:8px;">
             </div>
 
-            <div style="
-              display:flex;
-              align-items:center;
-              gap:6px;
-              font-size:12px;
-              opacity:0.7;
-            ">
+            <div style="width:40px;"></div>
 
-              <span>…</span>
-
-              <input
-                id="pageInput"
-                type="number"
-                min="1"
-                value="1"
-                style="
-                  width:45px;
-                  background:rgba(50,50,50,0.8);
-                  border:none;
-                  color:white;
-                  padding:4px;
-                  border-radius:6px;
-                  text-align:center;
-                "
-              />
-
-              <span id="maxPages"></span>
-
-            </div>
 
           </div>
 
@@ -1814,18 +1787,11 @@
 
               }
 
-              input.value = page;
+
 
             }
 
-            input.addEventListener("change", () => {
 
-              const page =
-                parseInt(input.value);
-
-              goToPage(page);
-
-            });
 
           })
           .catch(err => {
@@ -1889,7 +1855,12 @@
           clearInterval(timeInterval);
           timeInterval = null;
 
+          focusQuaternion = null;
+          isFocused = false;
+          selectedNodeIndex = null;
+
         });
+
 
       }
 
@@ -1899,6 +1870,7 @@
         const panel = document.getElementById("infoPanel");
 
         panel.innerHTML = `
+
           <div class="panelHeader" style="
             position:sticky;
             top:0;
@@ -1944,41 +1916,10 @@
           ">
 
             <div id="dotsContainer"
-              style="
-                display:flex;
-                gap:8px;
-              ">
+              style="display:flex;gap:8px;">
             </div>
 
-            <div style="
-              display:flex;
-              align-items:center;
-              gap:6px;
-              font-size:12px;
-              opacity:0.7;
-            ">
-
-              <span>…</span>
-
-              <input
-                id="pageInput"
-                type="number"
-                min="1"
-                value="1"
-                style="
-                  width:45px;
-                  background:rgba(50,50,50,0.8);
-                  border:none;
-                  color:white;
-                  padding:4px;
-                  border-radius:6px;
-                  text-align:center;
-                "
-              />
-
-              <span id="maxPages"></span>
-
-            </div>
+            <div style="width:40px;"></div>
 
           </div>
 
@@ -1999,12 +1940,14 @@
             </div>
 
           </div>
+
         `;
 
         panel.classList.add("active");
 
         setTimeout(() => {
-          targetZoom = Math.max(2.4, camera.position.z - 0.6);
+          targetZoom =
+            Math.max(2.4, camera.position.z - 0.6);
         }, 250);
 
         const endpoint =
@@ -2020,34 +1963,21 @@
             const dotsContainer =
               panel.querySelector("#dotsContainer");
 
-            const input =
-              panel.querySelector("#pageInput");
-
-            const maxPagesEl =
-              panel.querySelector("#maxPages");
-
             if (!articles.length) {
 
               track.innerHTML =
                 "<div style='padding:10px;'>No recent articles.</div>";
 
               return;
+
             }
 
             const articlesPerPage = 5;
-
             const totalPages =
               Math.ceil(articles.length / articlesPerPage);
 
-            maxPagesEl.textContent =
-              `/ ${totalPages}`;
-
-            input.max = totalPages;
-
             track.innerHTML = "";
             dotsContainer.innerHTML = "";
-
-            let currentPage = 1;
 
             for (let i = 0; i < totalPages; i++) {
 
@@ -2096,6 +2026,7 @@
                   `).join("");
 
               track.appendChild(page);
+
             }
 
             const visibleDots =
@@ -2116,14 +2047,13 @@
               });
 
               dotsContainer.appendChild(dot);
+
             }
 
-            function goToPage(page) {
+            function goToPage(page){
 
               if (page < 1 ||
                   page > totalPages) return;
-
-              currentPage = page;
 
               track.style.transform =
                 `translateX(-${(page - 1) * 100}%)`;
@@ -2132,38 +2062,12 @@
                 dotsContainer.children;
 
               for (let i = 0; i < dots.length; i++) {
-
                 dots[i].classList.toggle(
                   "active",
                   i === page - 1
                 );
               }
 
-              input.value = page;
-            }
-
-            input.addEventListener("change", () => {
-
-              const page =
-                parseInt(input.value);
-
-              goToPage(page);
-            });
-
-          })
-          .catch(err => {
-
-            console.error(
-              "Country article load error:",
-              err
-            );
-
-            const track =
-              panel.querySelector("#articlesTrack");
-
-            if (track) {
-              track.innerHTML =
-                "<p style='padding:10px;'>Failed to load articles.</p>";
             }
 
           });
@@ -2175,19 +2079,13 @@
 
           panel.classList.remove("active");
 
+          focusQuaternion = null;
+          isFocused = false;
+          selectedNodeIndex = null;
+
         });
 
       }
-
-
-      window.addEventListener("keydown",(e)=>{
-        if(e.key==="Escape"){
-          document.getElementById("infoPanel").classList.remove("active");
-          clearInterval(timeInterval);
-          timeInterval = null;
-          focusQuaternion = null;
-        }
-      });
 
 
       // ===============================
@@ -2206,6 +2104,7 @@
 
         selectedNodeIndex = null;
         isFocused = false;
+        focusQuaternion = null;
 
       });
 
@@ -2253,6 +2152,7 @@
 
           selectedNodeIndex = null;
           isFocused = false;
+          focusQuaternion = null;
 
         }
 
@@ -2674,17 +2574,9 @@ if (tickGroup) {
 
 
 
-          const euler = new THREE.Euler()
-            .setFromQuaternion(scene.quaternion, "YXZ");
 
-          const maxTilt = Math.PI / 1.9;
 
-          if (euler.x > maxTilt)  euler.x = maxTilt;
-          if (euler.x < -maxTilt) euler.x = -maxTilt;
 
-          scene.quaternion.setFromEuler(euler);
-
-        }
 
         // --------------------------------
         // Auto Spin (Idle Only)
