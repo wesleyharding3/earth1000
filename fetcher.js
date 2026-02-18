@@ -1,7 +1,8 @@
 // ===============================
-// fetcher.js
+// fetcher.js (Production Version)
 // ===============================
 
+require("dotenv").config();
 
 const Parser = require("rss-parser");
 const pool = require("./db");
@@ -9,14 +10,24 @@ const pool = require("./db");
 const parser = new Parser();
 
 // ===============================
-// Translation Helper (DeepL)
+// DeepL Endpoint Detection
+// ===============================
+
+const isFreeKey = process.env.DEEPL_API_KEY?.endsWith(":fx");
+
+const DEEPL_URL = isFreeKey
+  ? "https://api-free.deepl.com/v2/translate"
+  : "https://api.deepl.com/v2/translate";
+
+// ===============================
+// Translation Helper
 // ===============================
 
 async function translateText(text, target = "EN") {
   if (!text) return null;
 
   try {
-    const response = await fetch("https://api-free.deepl.com/v2/translate", {
+    const response = await fetch(DEEPL_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
@@ -28,13 +39,14 @@ async function translateText(text, target = "EN") {
       })
     });
 
-    const data = await response.json();
-
-    if (data.translations && data.translations[0]) {
-      return data.translations[0].text;
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("DeepL API error:", response.status, errorText);
+      return null;
     }
 
-    return null;
+    const data = await response.json();
+    return data.translations?.[0]?.text || null;
 
   } catch (err) {
     console.error("Translation error:", err.message);
@@ -43,19 +55,11 @@ async function translateText(text, target = "EN") {
 }
 
 // ===============================
-// Extract Image (optional)
+// Utility: Clean HTML
 // ===============================
 
-function extractImage(item) {
-  if (item.enclosure?.url) return item.enclosure.url;
-  if (item.media?.content?.url) return item.media.content.url;
-
-  if (item.content) {
-    const match = item.content.match(/<img[^>]+src="([^">]+)"/);
-    if (match) return match[1];
-  }
-
-  return null;
+function cleanText(text) {
+  return text?.replace(/<[^>]*>/g, "").trim();
 }
 
 // ===============================
@@ -63,124 +67,149 @@ function extractImage(item) {
 // ===============================
 
 async function fetchFeeds() {
-  try {
-    console.log("Starting RSS fetch...");
 
-    const feedResult = await pool.query(`
-      SELECT id, country_id, rss_url, city_id
-      FROM news_sources
-      WHERE is_active = true
-    `);
+  console.log("Starting RSS fetch...");
 
-    const feeds = feedResult.rows;
+  const feedResult = await pool.query(`
+    SELECT id, country_id, rss_url, city_id, failure_count
+    FROM news_sources
+    WHERE is_active = true
+  `);
 
-    for (const feed of feeds) {
-      try {
-        console.log(`Fetching: ${feed.rss_url}`);
+  const feeds = feedResult.rows;
 
-        const parsed = await parser.parseURL(feed.rss_url);
-        const feedLanguage = parsed.language || "unknown";
+  for (const feed of feeds) {
 
-        for (const item of parsed.items) {
+    try {
 
-          const originalTitle =
-            item.title || null;
+      if (!feed.rss_url) continue;
 
-          const originalSummary =
-            item.contentSnippet ||
-            item.description ||
-            null;
+      console.log(`Fetching: ${feed.rss_url}`);
 
-          const publishedAt =
-            item.pubDate
-              ? new Date(item.pubDate)
-              : null;
+      // Timeout protection (10s)
+      const parsed = await Promise.race([
+        parser.parseURL(feed.rss_url),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Feed timeout")), 10000)
+        )
+      ]);
 
-          // --------------------------------
-          // Only translate if NOT English
-          // --------------------------------
+      const feedLanguage = parsed.language || "unknown";
 
-          let translatedTitle = null;
-          let translatedSummary = null;
+      for (const item of parsed.items) {
 
-          if (
-            feedLanguage &&
-            feedLanguage.toLowerCase() !== "en"
-          ) {
-            translatedTitle =
-              await translateText(originalTitle);
+        const originalTitle = cleanText(item.title);
+        const originalSummary =
+          cleanText(item.contentSnippet || item.description);
 
-            translatedSummary =
-              await translateText(originalSummary);
-          }
+        const publishedAt =
+          item.pubDate ? new Date(item.pubDate) : null;
 
-          // --------------------------------
-          // Insert Article
-          // --------------------------------
+        let translatedTitle = null;
+        let translatedSummary = null;
 
-          await pool.query(
-            `
-            INSERT INTO news_articles (
-              source_id,
-              city_id,
-              country_id,
-              title,
-              translated_title,
-              url,
-              summary,
-              translated_summary,
-              content,
-              language,
-              published_at,
-              ingested_at,
-              raw_json
-            )
-            VALUES (
-              $1, $2, $3,
-              $4, $5,
-              $6,
-              $7, $8,
-              $9,
-              $10,
-              $11,
-              NOW(),
-              $12
-            )
+        // Translate only if NOT English
+        if (feedLanguage &&
+            feedLanguage.toLowerCase() !== "en") {
 
-            ON CONFLICT (url) DO NOTHING;
-            `,
-            [
-              feed.id,
-              feed.city_id,
-              feed.country_id,
-              originalTitle,
-              translatedTitle,
-              item.link || null,
-              originalSummary,
-              translatedSummary,
-              item.content || null,
-              feedLanguage,
-              publishedAt,
-              JSON.stringify(item)
-            ]
-          );
+          translatedTitle =
+            await translateText(originalTitle);
+
+          translatedSummary =
+            await translateText(originalSummary);
         }
 
-        console.log(`Finished: ${feed.rss_url}`);
-
-      } catch (err) {
-        console.error(
-          `Error fetching ${feed.rss_url}:`,
-          err.message
+        await pool.query(
+          `
+          INSERT INTO news_articles (
+            source_id,
+            city_id,
+            country_id,
+            title,
+            translated_title,
+            url,
+            summary,
+            translated_summary,
+            content,
+            language,
+            published_at,
+            ingested_at,
+            raw_json
+          )
+          VALUES (
+            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
+          )
+          ON CONFLICT (url) DO NOTHING;
+          `,
+          [
+            feed.id,
+            feed.city_id,
+            feed.country_id,
+            originalTitle,
+            translatedTitle,
+            item.link || null,
+            originalSummary,
+            translatedSummary,
+            item.content || null,
+            feedLanguage,
+            publishedAt,
+            JSON.stringify(item)
+          ]
         );
       }
+
+      // ===============================
+      // SUCCESS RESET
+      // ===============================
+
+      await pool.query(`
+        UPDATE news_sources
+        SET failure_count = 0,
+            last_success_at = NOW()
+        WHERE id = $1
+      `, [feed.id]);
+
+      console.log(`Finished: ${feed.rss_url}`);
+
+    } catch (err) {
+
+      // ===============================
+      // STRUCTURED ERROR LOG
+      // ===============================
+
+      console.error(JSON.stringify({
+        type: "RSS_FETCH_ERROR",
+        feed_id: feed.id,
+        rss_url: feed.rss_url,
+        error_message: err.message,
+        timestamp: new Date().toISOString()
+      }));
+
+      // ===============================
+      // FAILURE TRACKING
+      // ===============================
+
+      await pool.query(`
+        UPDATE news_sources
+        SET failure_count = COALESCE(failure_count,0) + 1,
+            last_failed_at = NOW()
+        WHERE id = $1
+      `, [feed.id]);
+
+      // ===============================
+      // AUTO-DISABLE AFTER 5 FAILURES
+      // ===============================
+
+      await pool.query(`
+        UPDATE news_sources
+        SET is_active = false
+        WHERE id = $1
+          AND failure_count >= 5
+      `, [feed.id]);
     }
-
-    console.log("RSS fetch complete.");
-
-  } catch (err) {
-    console.error("Fatal fetch error:", err);
   }
+
+  console.log("RSS fetch complete.");
 }
 
 module.exports = fetchFeeds;
