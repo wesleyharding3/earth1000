@@ -10,21 +10,29 @@ const pool = require("./db");
 const parser = new Parser();
 
 // ===============================
-// DeepL Endpoint Detection
+// DeepL Config
 // ===============================
 
-const isFreeKey = process.env.DEEPL_API_KEY?.endsWith(":fx");
+const DEEPL_API_KEY = process.env.DEEPL_API_KEY || null;
+
+const isFreeKey = DEEPL_API_KEY?.endsWith(":fx");
 
 const DEEPL_URL = isFreeKey
   ? "https://api-free.deepl.com/v2/translate"
   : "https://api.deepl.com/v2/translate";
+
+let deeplDisabled = !DEEPL_API_KEY;
+
+if (!DEEPL_API_KEY) {
+  console.warn("⚠️ No DeepL API key found. Translations disabled.");
+}
 
 // ===============================
 // Translation Helper
 // ===============================
 
 async function translateText(text, target = "EN") {
-  if (!text) return null;
+  if (!text || deeplDisabled) return null;
 
   try {
     const response = await fetch(DEEPL_URL, {
@@ -33,11 +41,17 @@ async function translateText(text, target = "EN") {
         "Content-Type": "application/x-www-form-urlencoded"
       },
       body: new URLSearchParams({
-        auth_key: process.env.DEEPL_API_KEY,
+        auth_key: DEEPL_API_KEY,
         text,
         target_lang: target
       })
     });
+
+    if (response.status === 403) {
+      console.error("❌ DeepL 403 Forbidden — disabling translations.");
+      deeplDisabled = true;
+      return null;
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -69,6 +83,7 @@ function cleanText(text) {
 async function fetchFeeds() {
 
   console.log("Starting RSS fetch...");
+  console.log("DeepL key exists:", !!DEEPL_API_KEY);
 
   const feedResult = await pool.query(`
     SELECT id, country_id, rss_url, city_id, failure_count
@@ -109,14 +124,12 @@ async function fetchFeeds() {
         let translatedSummary = null;
 
         // Translate only if NOT English
-        if (feedLanguage &&
-            feedLanguage.toLowerCase() !== "en") {
-
-          translatedTitle =
-            await translateText(originalTitle);
-
-          translatedSummary =
-            await translateText(originalSummary);
+        if (
+          feedLanguage &&
+          feedLanguage.toLowerCase() !== "en"
+        ) {
+          translatedTitle = await translateText(originalTitle);
+          translatedSummary = await translateText(originalSummary);
         }
 
         await pool.query(
@@ -173,10 +186,6 @@ async function fetchFeeds() {
 
     } catch (err) {
 
-      // ===============================
-      // STRUCTURED ERROR LOG
-      // ===============================
-
       console.error(JSON.stringify({
         type: "RSS_FETCH_ERROR",
         feed_id: feed.id,
@@ -185,20 +194,12 @@ async function fetchFeeds() {
         timestamp: new Date().toISOString()
       }));
 
-      // ===============================
-      // FAILURE TRACKING
-      // ===============================
-
       await pool.query(`
         UPDATE news_sources
         SET failure_count = COALESCE(failure_count,0) + 1,
             last_failed_at = NOW()
         WHERE id = $1
       `, [feed.id]);
-
-      // ===============================
-      // AUTO-DISABLE AFTER 5 FAILURES
-      // ===============================
 
       await pool.query(`
         UPDATE news_sources
