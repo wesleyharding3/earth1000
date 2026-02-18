@@ -22,7 +22,7 @@ app.get("/api/cities", async (req, res) => {
       SELECT 
         c.id,
         c.name,
-        c.country_id,          -- ← minimal required addition
+        c.country_id,
         c.latitude AS lat,
         c.longitude AS lon,
         co.name AS country
@@ -71,7 +71,7 @@ app.get("/api/countries", async (req, res) => {
 
 
 // ===============================
-// GET NEWS BY CITY (with Pagination)
+// GET NEWS BY CITY
 // ===============================
 
 app.get("/api/news/city/:cityId", async (req, res) => {
@@ -88,9 +88,9 @@ app.get("/api/news/city/:cityId", async (req, res) => {
       `
       SELECT 
         a.id,
-        a.title,
+        COALESCE(a.translated_title, a.title) AS title,
         a.url,
-        a.summary,
+        COALESCE(a.translated_summary, a.summary) AS summary,
         a.published_at,
         s.name AS source_name,
         s.site_url
@@ -114,7 +114,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 
 
 // ===============================
-// GET NEWS BY COUNTRY (with Pagination)
+// GET NEWS BY COUNTRY
 // ===============================
 
 app.get("/api/news/country/:countryId", async (req, res) => {
@@ -131,9 +131,9 @@ app.get("/api/news/country/:countryId", async (req, res) => {
       `
       SELECT 
         a.id,
-        a.title,
+        COALESCE(a.translated_title, a.title) AS title,
         a.url,
-        a.summary,
+        COALESCE(a.translated_summary, a.summary) AS summary,
         a.published_at,
         a.sentiment_score,
         a.language,
