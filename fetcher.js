@@ -77,6 +77,59 @@ function cleanText(text) {
 }
 
 // ===============================
+// Error Logger
+// ===============================
+
+async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
+  try {
+    const timestamp = new Date().toISOString();
+
+    console.error("❌ RSS ERROR:", {
+      feed_id: feed.id,
+      rss_url: feed.rss_url,
+      error_type: type,
+      message: err.message,
+      timestamp
+    });
+
+    // Insert into persistent error log table
+    await pool.query(
+      `
+      INSERT INTO rss_error_logs (
+        feed_id,
+        rss_url,
+        error_type,
+        error_message,
+        stack_trace
+      )
+      VALUES ($1,$2,$3,$4,$5)
+      `,
+      [
+        feed.id,
+        feed.rss_url,
+        type,
+        err.message?.substring(0, 1000) || null,
+        err.stack?.substring(0, 5000) || null
+      ]
+    );
+
+    // Update quick-view error fields in news_sources
+    await pool.query(
+      `
+      UPDATE news_sources
+      SET last_error = $1,
+          last_error_at = NOW()
+      WHERE id = $2
+      `,
+      [err.message?.substring(0, 1000), feed.id]
+    );
+
+  } catch (logErr) {
+    console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
+  }
+}
+
+// ===============================
 // Main Fetch Function
 // ===============================
 
@@ -101,7 +154,7 @@ async function fetchFeeds() {
 
       console.log(`Fetching: ${feed.rss_url}`);
 
-      // Timeout protection (10s)
+      // Timeout protection (10 seconds)
       const parsed = await Promise.race([
         parser.parseURL(feed.rss_url),
         new Promise((_, reject) =>
@@ -178,21 +231,16 @@ async function fetchFeeds() {
       await pool.query(`
         UPDATE news_sources
         SET failure_count = 0,
-            last_success_at = NOW()
+            last_success_at = NOW(),
+            last_error = NULL
         WHERE id = $1
       `, [feed.id]);
 
-      console.log(`Finished: ${feed.rss_url}`);
+      console.log(`Finished successfully: ${feed.rss_url}`);
 
     } catch (err) {
 
-      console.error(JSON.stringify({
-        type: "RSS_FETCH_ERROR",
-        feed_id: feed.id,
-        rss_url: feed.rss_url,
-        error_message: err.message,
-        timestamp: new Date().toISOString()
-      }));
+      await logFeedError(feed, err);
 
       await pool.query(`
         UPDATE news_sources
@@ -205,7 +253,7 @@ async function fetchFeeds() {
         UPDATE news_sources
         SET is_active = false
         WHERE id = $1
-          AND failure_count >= 5
+          AND failure_count >= 10
       `, [feed.id]);
     }
   }
