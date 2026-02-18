@@ -781,14 +781,25 @@
 
             label.style.opacity = 0;
             label.style.transform = "translate(-50%, -140%) scale(0.95)";
+
             const title = label.querySelector(".bubbleTitle");
             if (title) {
+
+              // Cancel any active typing timer
+              if (title._typingTimer) {
+                clearTimeout(title._typingTimer);
+                title._typingTimer = null;
+              }
+
+              // Restore full text cleanly
+              title.textContent = cities[i].name;
               title.dataset.typed = "false";
             }
 
           }
 
         });
+
 
       }
 
@@ -833,6 +844,12 @@
         const title = bubble.querySelector(".bubbleTitle");
         if (!title) return;
 
+        // Cancel any existing typing timer
+        if (title._typingTimer) {
+          clearTimeout(title._typingTimer);
+          title._typingTimer = null;
+        }
+
         if (title.dataset.typed === "true") return;
 
         const fullText = cities[index].name;
@@ -850,11 +867,13 @@
 
             title.textContent += fullText.charAt(charIndex);
             charIndex++;
-            setTimeout(type, typingSpeed);
+
+            title._typingTimer = setTimeout(type, typingSpeed);
 
           } else {
 
             title.classList.remove("typing");
+            title._typingTimer = null;
 
           }
 
@@ -863,7 +882,6 @@
         type();
 
       }
-
 
 
       // ------------------------------
