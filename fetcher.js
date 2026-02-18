@@ -1,35 +1,67 @@
+// ===============================
 // fetcher.js
+// ===============================
 
+const fetch = require("node-fetch"); // Only needed if Node < 18
 const Parser = require("rss-parser");
 const pool = require("./db");
 
 const parser = new Parser();
 
-/**
- * Extract image URL from RSS item (if present)
- */
-function extractImage(item) {
-  if (item.enclosure && item.enclosure.url) {
-    return item.enclosure.url;
-  }
+// ===============================
+// Translation Helper (DeepL)
+// ===============================
 
-  if (item.media && item.media.content && item.media.content.url) {
-    return item.media.content.url;
+async function translateText(text, target = "EN") {
+  if (!text) return null;
+
+  try {
+    const response = await fetch("https://api-free.deepl.com/v2/translate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({
+        auth_key: process.env.DEEPL_API_KEY,
+        text,
+        target_lang: target
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.translations && data.translations[0]) {
+      return data.translations[0].text;
+    }
+
+    return null;
+
+  } catch (err) {
+    console.error("Translation error:", err.message);
+    return null;
   }
+}
+
+// ===============================
+// Extract Image (optional)
+// ===============================
+
+function extractImage(item) {
+  if (item.enclosure?.url) return item.enclosure.url;
+  if (item.media?.content?.url) return item.media.content.url;
 
   if (item.content) {
     const match = item.content.match(/<img[^>]+src="([^">]+)"/);
-    if (match) {
-      return match[1];
-    }
+    if (match) return match[1];
   }
 
   return null;
 }
 
-/**
- * Fetch all RSS feeds and store articles in DB
- */
+// ===============================
+// Main Fetch Function
+// ===============================
+
 async function fetchFeeds() {
   try {
     console.log("Starting RSS fetch...");
@@ -47,8 +79,45 @@ async function fetchFeeds() {
         console.log(`Fetching: ${feed.rss_url}`);
 
         const parsed = await parser.parseURL(feed.rss_url);
+        const feedLanguage = parsed.language || "unknown";
 
         for (const item of parsed.items) {
+
+          const originalTitle =
+            item.title || null;
+
+          const originalSummary =
+            item.contentSnippet ||
+            item.description ||
+            null;
+
+          const publishedAt =
+            item.pubDate
+              ? new Date(item.pubDate)
+              : null;
+
+          // --------------------------------
+          // Only translate if NOT English
+          // --------------------------------
+
+          let translatedTitle = null;
+          let translatedSummary = null;
+
+          if (
+            feedLanguage &&
+            feedLanguage.toLowerCase() !== "en"
+          ) {
+            translatedTitle =
+              await translateText(originalTitle);
+
+            translatedSummary =
+              await translateText(originalSummary);
+          }
+
+          // --------------------------------
+          // Insert Article
+          // --------------------------------
+
           await pool.query(
             `
             INSERT INTO news_articles (
@@ -56,55 +125,59 @@ async function fetchFeeds() {
               city_id,
               country_id,
               title,
+              translated_title,
               url,
               summary,
+              translated_summary,
               content,
+              language,
               published_at,
               ingested_at,
               raw_json
             )
             VALUES (
-              $1,
-              $2,
-              $3,
-              $4,
-              $5,
+              $1, $2, $3,
+              $4, $5,
               $6,
-              $7,
-              $8,
+              $7, $8,
+              $9,
+              $10,
+              $11,
               NOW(),
-              $9
+              $12
             )
 
-            ON CONFLICT (url) DO UPDATE
-            SET
-              source_id = EXCLUDED.source_id,
-              city_id = EXCLUDED.city_id,
-              country_id = EXCLUDED.country_id;
-
+            ON CONFLICT (url) DO NOTHING;
             `,
             [
               feed.id,
               feed.city_id,
               feed.country_id,
-              item.title || null,
+              originalTitle,
+              translatedTitle,
               item.link || null,
-              item.contentSnippet || item.description || null,
+              originalSummary,
+              translatedSummary,
               item.content || null,
-              item.pubDate ? new Date(item.pubDate) : null,
+              feedLanguage,
+              publishedAt,
               JSON.stringify(item)
             ]
-
           );
         }
 
         console.log(`Finished: ${feed.rss_url}`);
+
       } catch (err) {
-        console.error(`Error fetching ${feed.rss_url}:`, err.message);
+        console.error(
+          `Error fetching ${feed.rss_url}:`,
+          err.message
+        );
       }
     }
 
     console.log("RSS fetch complete.");
+
   } catch (err) {
     console.error("Fatal fetch error:", err);
   }
