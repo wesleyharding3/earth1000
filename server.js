@@ -4,6 +4,8 @@ const pool = require("./db");
 
 const app = express();
 
+console.log("Node version:", process.version);
+
 // ===============================
 // Middleware
 // ===============================
