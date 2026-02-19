@@ -179,6 +179,10 @@ async function fetchFeeds() {
         // Translate only if NOT English
         if (
           feedLanguage &&
+          !feedLanguage.toLowerCase().startsWith("en")
+          
+        ) {if (
+          feedLanguage &&
           feedLanguage.toLowerCase() !== "en"
         ) {
           translatedTitle = await translateText(originalTitle);
