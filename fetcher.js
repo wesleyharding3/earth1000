@@ -205,7 +205,10 @@ async function fetchFeeds() {
           VALUES (
             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
           )
-          ON CONFLICT (url) DO NOTHING;
+          ON CONFLICT (url)
+          DO UPDATE SET
+            translated_title   = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
+            translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary);
           `,
           [
             feed.id,
