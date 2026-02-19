@@ -121,7 +121,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
   try {
     const { countryId } = req.params;
 
-    let limit = parseInt(req.query.limit) || 15;
+    let limit = parseInt(req.query.limit) || 50;
     let offset = parseInt(req.query.offset) || 0;
 
     if (limit > 50) limit = 50;
