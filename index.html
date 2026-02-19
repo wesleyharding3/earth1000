@@ -1978,25 +1978,17 @@ if (tickGroup) {
 
       // FIX #2: Compute the globeQuat that brings (lat,lon) to face the camera.
       function computeFocusQuat(lat, lon) {
-        // Step 1: yaw so the node's meridian faces the camera
-        // Rotating by -lon° around Y cancels the longitude offset,
-        // bringing that meridian to the +Z axis (facing the camera).
         const yawQ = new THREE.Quaternion().setFromAxisAngle(
           new THREE.Vector3(0, 1, 0),
           -lon * (Math.PI / 180)
         );
 
-        // Step 2: pitch so the node's latitude reaches screen centre.
-        // +lat means node is above equator; rotating +lat° around +X
-        // tilts it down into view. Clamped to avoid pole-flipping.
         const clampedLat = Math.max(-89, Math.min(89, lat));
         const pitchQ = new THREE.Quaternion().setFromAxisAngle(
           new THREE.Vector3(1, 0, 0),
-          clampedLat * (Math.PI / 180)
+          -clampedLat * (Math.PI / 180)   // ← negated: was pulling south, now pulls north
         );
 
-        // Compose: pitch applied after yaw → pitchQ × yawQ
-        // Z axis (roll) is never touched → north stays up always.
         return pitchQ.multiply(yawQ);
       }
 
