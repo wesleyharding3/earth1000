@@ -1092,8 +1092,42 @@
       let focusTargetQuat = null;   // FIX #2: target quaternion we slerp toward
       let hoveredCityPosition = null;
       let timeInterval = null;
-      let dragging = false; 
-    
+      let dragging = false;
+      let prevX = 0;
+      let prevY = 0;
+
+      // ===============================
+      // Drag Rotation (Yaw / Pitch System)
+      // ===============================
+
+      window.addEventListener("mousedown", e => {
+
+        pauseAmbientRotation();
+
+        dragging = true;
+        prevX = e.clientX;
+        prevY = e.clientY;
+
+        selectedNodeIndex = null;
+        isFocused = false;
+
+      });
+
+      window.addEventListener("mouseup", () => {
+
+        dragging = false;
+
+      });
+
+      window.addEventListener("mousemove", e => {
+        if (!dragging) return;
+        const deltaX = (e.clientX - prevX) * 0.005;
+        const deltaY = (e.clientY - prevY) * 0.005;
+        applyYaw(deltaX);
+        applyTilt(-deltaY);
+        prevX = e.clientX;
+        prevY = e.clientY;
+      });
 
 
 
@@ -1522,6 +1556,7 @@
       });
 
       
+      
 
 
       /* ===============================
@@ -1641,6 +1676,177 @@
 
       }
 
+function openCityPanel(city) {
+
+        const panel = document.getElementById("infoPanel");
+
+        const showCountry =
+          city.country &&
+          city.name.toLowerCase() !== city.country.toLowerCase();
+
+        panel.innerHTML = `
+          <div class="panelHeader" style="
+            position:sticky;
+            top:0;
+            z-index:5;
+            background:rgba(0,0,0,0.95);
+            backdrop-filter:blur(16px);
+            padding-bottom:10px;
+          ">
+            <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
+            <div style="
+              display:flex;
+              justify-content:space-between;
+              align-items:center;
+              margin-top:4px;
+              padding-right:40px;
+            ">
+              <div>
+                <h2 style="margin:0;">${city.name}</h2>
+                ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
+              </div>
+              <div id="localTime" style="font-size:14px;opacity:0.85;white-space:nowrap;"></div>
+            </div>
+          </div>
+
+          <div id="articlesViewport" style="position:relative;overflow-y:auto;flex:1;">
+            <div id="articlesTrack" style="display:flex;flex-direction:column;height:auto;">
+            </div>
+          </div>
+        `;
+
+        panel.classList.add("active");
+
+        setTimeout(() => {
+          targetZoom = Math.max(2.4, camera.position.z - 0.6);
+        }, 250);
+
+        // =====================================
+        // Infinite Scroll Pagination
+        // =====================================
+
+        let offset = 0;
+        const limit = 5;
+        let loading = false;
+        let hasMore = true;
+
+        const track = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
+
+        function loadMore() {
+
+          if (loading || !hasMore) return;
+          loading = true;
+
+          fetch(
+            `https://earth-wjr6.onrender.com/api/news/city/${city.id}?limit=${limit}&offset=${offset}`
+          )
+            .then(res => res.json())
+            .then(articles => {
+
+              if (!articles.length && offset === 0) {
+                track.innerHTML = "<div style='padding:10px;'>No recent articles.</div>";
+                hasMore = false;
+                loading = false;
+                return;
+              }
+
+              if (articles.length < limit) {
+                hasMore = false;
+              }
+
+              articles.forEach(article => {
+
+                const div = document.createElement("div");
+
+                div.innerHTML = `
+                  <div style="
+                    margin-bottom:14px;
+                    border-bottom:1px solid rgba(255,255,255,0.1);
+                    padding-bottom:8px;
+                  ">
+                    <a href="${article.url}" target="_blank" style="color:#4da6ff;">
+                      <strong>${article.title}</strong>
+                    </a>
+                    <div style="font-size:11px;opacity:0.6;margin-top:4px;">
+                      ${article.source_name} • 
+                      ${new Date(article.published_at).toLocaleDateString()}
+                    </div>
+                    <p style="margin-top:6px;">
+                      ${article.summary || ""}
+                    </p>
+                  </div>
+                `;
+
+                track.appendChild(div);
+
+              });
+
+              offset += limit;
+              loading = false;
+
+            })
+            .catch(err => {
+              console.error("City article load error:", err);
+              loading = false;
+            });
+
+        }
+
+        // Initial load
+        loadMore();
+
+        // Scroll detection
+        viewport.addEventListener("scroll", () => {
+
+          const threshold = 120;
+
+          if (
+            viewport.scrollTop + viewport.clientHeight >=
+            viewport.scrollHeight - threshold
+          ) {
+            loadMore();
+          }
+
+        });
+
+        // =====================================
+        // Local Time
+        // =====================================
+
+        const timeElement = document.getElementById("localTime");
+
+        function updateLocalTime() {
+          const nowUTC = new Date();
+          const offsetHours = city.lon / 15;
+          const localTime = new Date(nowUTC.getTime() + offsetHours * 3600000);
+          timeElement.textContent = localTime.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+          });
+        }
+
+        updateLocalTime();
+        if (timeInterval) clearInterval(timeInterval);
+        timeInterval = setInterval(updateLocalTime, 1000);
+
+        // =====================================
+        // Close Button
+        // =====================================
+
+        const closeBtn = panel.querySelector(".closePanel");
+
+        closeBtn.addEventListener("click", () => {
+          panel.classList.remove("active");
+          clearInterval(timeInterval);
+          timeInterval = null;
+          isFocused = false;
+          selectedNodeIndex = null;
+          scheduleAmbientResume();
+        });
+
+      }      
 
         
       function openCountryPanel(country) {
@@ -1793,12 +1999,58 @@
 
           isFocused = false;
           selectedNodeIndex = null;
+          scheduleAmbientResume();
 
         });
 
       }
 
 
+      window.addEventListener("touchstart", (e) => {
+
+        if (e.touches.length === 1) {
+
+          touchDragging = true;
+
+          touchPrevX = e.touches[0].clientX;
+          touchPrevY = e.touches[0].clientY;
+
+          selectedNodeIndex = null;
+          isFocused = false;
+
+        }
+
+      }, { passive: false });
+
+
+
+      window.addEventListener("touchmove", (e) => {
+
+        if (!touchDragging || e.touches.length !== 1) return;
+
+        e.preventDefault();
+
+        const deltaX =
+          (e.touches[0].clientX - touchPrevX) * 0.005;
+
+        const deltaY =
+          (e.touches[0].clientY - touchPrevY) * 0.005;
+
+        applyYaw(deltaX);
+        applyTilt(-deltaY);
+
+        touchPrevX = e.touches[0].clientX;
+        touchPrevY = e.touches[0].clientY;
+
+      }, { passive: false });
+
+
+
+      window.addEventListener("touchend", () => {
+
+        touchDragging = false;
+
+      });
 
 
       /* ===============================
