@@ -630,18 +630,31 @@
     }
 
     function pauseAmbientRotation() {
-
       ambientPaused = true;
-
       if (ambientResumeTimer) {
         clearTimeout(ambientResumeTimer);
       }
-
       // Resume after 8 seconds of inactivity
       ambientResumeTimer = setTimeout(() => {
         ambientPaused = false;
-      }, 8000);
+      }, 1000);
+    }
 
+    // Hard lock on node selection — stays frozen until panel closes
+    function lockAmbientRotation() {
+      ambientPaused = true;
+      if (ambientResumeTimer) {
+        clearTimeout(ambientResumeTimer);
+        ambientResumeTimer = null;
+      }
+    }
+
+    // Deferred resume — called when panel closes
+    function scheduleAmbientResume() {
+      if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
+      ambientResumeTimer = setTimeout(() => {
+        ambientPaused = false;
+      }, 8000);
     }
 
 
@@ -1482,7 +1495,7 @@
 
           if (isCityVisible(nodePos, camera)) {
 
-            pauseAmbientRotation();
+            lockAmbientRotation();    
 
             selectedNodeIndex = index;
             isFocused = true;
@@ -1545,7 +1558,7 @@
           nodePos.applyMatrix4(activePoints.matrixWorld);
 
           if (isCityVisible(nodePos, camera)) {
-            pauseAmbientRotation();
+            lockAmbientRotation();    
 
             selectedNodeIndex = index;
             isFocused = true;
@@ -1771,6 +1784,7 @@ function openCityPanel(city) {
           timeInterval = null;
           isFocused = false;
           selectedNodeIndex = null;
+          scheduleAmbientResume();
         });
 
       }
@@ -1896,6 +1910,7 @@ function openCityPanel(city) {
           }
           isFocused = false;
           selectedNodeIndex = null;
+          scheduleAmbientResume();
         });
 
       }
@@ -2165,25 +2180,26 @@ if (tickGroup) {
 
       // FIX #2: Compute the globeQuat that brings (lat,lon) to face the camera.
       function computeFocusQuat(lat, lon) {
-
-        const phi   = (90 - lat) * (Math.PI / 180);
-        const theta = (lon + 180) * (Math.PI / 180);
-
-        const px = -radius * Math.sin(phi) * Math.cos(theta);
-        const pz =  radius * Math.sin(phi) * Math.sin(theta);
-        const py =  radius * Math.cos(phi);
-
-        const q = new THREE.Quaternion().setFromUnitVectors(
-          new THREE.Vector3(px, py, pz).normalize(),
-          new THREE.Vector3(0, 0, 1)
+        // Step 1: yaw so the node's meridian faces the camera
+        // Rotating by -lon° around Y cancels the longitude offset,
+        // bringing that meridian to the +Z axis (facing the camera).
+        const yawQ = new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(0, 1, 0),
+          -lon * (Math.PI / 180)
         );
 
-        // Kill roll, clamp pitch so globe doesn't flip
-        const e = new THREE.Euler().setFromQuaternion(q, "YXZ");
-        e.z = 0;
-        e.x = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, e.x));
+        // Step 2: pitch so the node's latitude reaches screen centre.
+        // +lat means node is above equator; rotating +lat° around +X
+        // tilts it down into view. Clamped to avoid pole-flipping.
+        const clampedLat = Math.max(-89, Math.min(89, lat));
+        const pitchQ = new THREE.Quaternion().setFromAxisAngle(
+          new THREE.Vector3(1, 0, 0),
+          clampedLat * (Math.PI / 180)
+        );
 
-        return new THREE.Quaternion().setFromEuler(e);
+        // Compose: pitch applied after yaw → pitchQ × yawQ
+        // Z axis (roll) is never touched → north stays up always.
+        return pitchQ.multiply(yawQ);
       }
 
       function startFocus(lat, lon) {
@@ -2192,8 +2208,6 @@ if (tickGroup) {
         yawVelocity     = 0;
         tiltVelocity    = 0;
       }
-
-
 
 
       function focusCity(city) {
