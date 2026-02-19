@@ -2246,6 +2246,7 @@ if (tickGroup) {
       // FIX #2: Compute the globeQuat that brings (lat,lon) to face the camera.
       function computeFocusQuat(lat, lon) {
 
+        // Convert lat/lon to 3D unit vector
         const phi   = (90 - lat) * (Math.PI / 180);
         const theta = (lon + 180) * (Math.PI / 180);
 
@@ -2255,16 +2256,47 @@ if (tickGroup) {
 
         const cityVector = new THREE.Vector3(x, y, z).normalize();
 
-        // Camera looks down negative Z by default.
-        // So we rotate the globe so the city faces +Z.
-        const targetDirection = new THREE.Vector3(0, 0, 1);
 
-        const quat = new THREE.Quaternion()
-          .setFromUnitVectors(cityVector, targetDirection);
+        // Target direction (camera looks down -Z,
+        // so we rotate city to face +Z)
+        const forward = new THREE.Vector3(0, 0, 1);
 
-        return quat;
+
+        // First rotation: bring city to front
+        const toFront = new THREE.Quaternion()
+          .setFromUnitVectors(cityVector, forward);
+
+
+        // Compute where north pole ends up
+        const northPole = new THREE.Vector3(0, 1, 0)
+          .applyQuaternion(toFront);
+
+
+        // Project north onto screen plane (remove Z)
+        const projectedNorth = new THREE.Vector3(
+          northPole.x,
+          northPole.y,
+          0
+        ).normalize();
+
+
+        // Desired upright direction
+        const worldUp = new THREE.Vector3(0, 1, 0);
+
+
+        // Second rotation: remove roll so north is upright
+        const rollFix = new THREE.Quaternion()
+          .setFromUnitVectors(projectedNorth, worldUp);
+
+
+        // Final upright quaternion
+        const finalQuat = rollFix.multiply(toFront);
+
+
+        return finalQuat;
 
       }
+
 
 
       function startFocus(lat, lon) {
