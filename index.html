@@ -536,9 +536,11 @@
     <text x="8" y="54" text-anchor="middle" class="compass-letter">W</text>
     <text x="92" y="54" text-anchor="middle" class="compass-letter">E</text>
 
-    <!-- Arrow -->
-    <line x1="50" y1="50" x2="50" y2="25" class="compass-arrow-line"/>
-    <polygon points="50,15 45,25 55,25" class="compass-arrow-head"/>
+<!-- Arrow — wrapped in group so only needle rotates, not the N/S/E/W labels -->
+    <g class="compass-arrow-group">
+      <line x1="50" y1="50" x2="50" y2="25" class="compass-arrow-line"/>
+      <polygon points="50,15 45,25 55,25" class="compass-arrow-head"/>
+    </g>
 
   </svg>
 </div>
@@ -607,17 +609,27 @@
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
-    let yaw = 0;
-    let pitch = 0;      
-
-    let ambientSpeed = 0.001;        // default slow rotation
+    let globeQuat = new THREE.Quaternion();  // FIX #3: single quaternion replaces yaw/pitch
+    let ambientSpeed = 0.001;
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
 
-    const maxPitch = Math.PI / 2 - 0.15;
+    // FIX #3: quaternion delta helpers — no euler accumulation, no gimbal lock
+    function applyYaw(rad) {
+      globeQuat.premultiply(
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rad)
+      );
+    }
 
-        function pauseAmbientRotation() {
+    function applyTilt(rad) {
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+      globeQuat.premultiply(
+        new THREE.Quaternion().setFromAxisAngle(right, rad)
+      );
+    }
+
+    function pauseAmbientRotation() {
 
       ambientPaused = true;
 
@@ -882,6 +894,28 @@
         return dot < 0;
       }
 
+      // FIX #1: True-north compass
+      // Projects the globe's north pole into camera screen space and rotates
+      // only the needle group — N/S/E/W labels stay fixed.
+      function updateCompass() {
+
+        const arrowGroup = document.querySelector(".compass-arrow-group");
+        if (!arrowGroup) return;
+
+        const northWorld = new THREE.Vector3(0, 1, 0)
+          .applyQuaternion(scene.quaternion);
+
+        const northNDC = northWorld.clone().project(camera);
+
+        // atan2(dx, dy) = clockwise angle from screen-up to projected north
+        const angle = Math.atan2(northNDC.x, northNDC.y);
+
+        arrowGroup.setAttribute(
+          "transform",
+          `rotate(${angle * 180 / Math.PI}, 50, 50)`
+        );
+      }      
+
 
       function updateNodeGlow() {
 
@@ -1039,10 +1073,10 @@
 
       
 
-      const hoverMouse = new THREE.Vector2();
       let hoveredIndex = null;
       let selectedNodeIndex = null;
       let isFocused = false;
+      let focusTargetQuat = null;   // FIX #2: target quaternion we slerp toward
       let hoveredCityPosition = null;
       let timeInterval = null;
       const compassSVG = document.querySelector(".compass-svg");
@@ -1119,21 +1153,16 @@
 
       compass.addEventListener("click", () => {
 
+        // Extract current yaw, rebuild globeQuat with zero tilt
         const currentEuler = new THREE.Euler()
-          .setFromQuaternion(scene.quaternion, "YXZ");
+          .setFromQuaternion(globeQuat, "YXZ");
 
-        const targetEuler = new THREE.Euler(
-          0,                 // remove tilt
-          currentEuler.y,    // preserve longitude
-          0,
-          "YXZ"
+        globeQuat.setFromEuler(
+          new THREE.Euler(0, currentEuler.y, 0, "YXZ")
         );
 
-        focusQuaternion = new THREE.Quaternion()
-          .setFromEuler(targetEuler);
-
-
         isFocused = false;
+        focusTargetQuat = null;
         selectedNodeIndex = null;
 
       });
@@ -1902,7 +1931,7 @@
           clearInterval(timeInterval);
           timeInterval = null;
 
-          focusQuaternion = null;
+
           isFocused = false;
           selectedNodeIndex = null;
 
@@ -1930,7 +1959,6 @@
 
         selectedNodeIndex = null;
         isFocused = false;
-        focusQuaternion = null;
 
       });
 
@@ -1941,21 +1969,13 @@
       });
 
       window.addEventListener("mousemove", e => {
-
         if (!dragging) return;
-
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
-
-        yaw   += deltaX;
-        pitch += deltaY;
-
-
-        pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
-
+        applyYaw(deltaX);   // FIX #3
+        applyTilt(-deltaY); // FIX #3
         prevX = e.clientX;
         prevY = e.clientY;
-
       });
 
 
@@ -1979,33 +1999,22 @@
 
           selectedNodeIndex = null;
           isFocused = false;
-          focusQuaternion = null;
 
         }
 
       }, { passive: false });
 
       window.addEventListener("touchmove", (e) => {
-
         if (!touchDragging || e.touches.length !== 1) return;
-
         e.preventDefault();
-
         const touchX = e.touches[0].clientX;
         const touchY = e.touches[0].clientY;
-
         const deltaX = (touchX - touchPrevX) * 0.005;
         const deltaY = (touchY - touchPrevY) * 0.005;
-
-        yaw   += deltaX;
-        pitch += deltaY;
-
-
-        pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
-
+        applyYaw(deltaX);   // FIX #3
+        applyTilt(-deltaY); // FIX #3
         touchPrevX = touchX;
         touchPrevY = touchY;
-
       }, { passive: false });
 
       window.addEventListener("touchend", () => {
@@ -2192,8 +2201,39 @@ if (tickGroup) {
       /* ===============================
          FOCUS CITY ROTATION
       =============================== */
-      let focusQuaternion = null;
-      let baseQuaternion = new THREE.Quaternion();
+
+
+      // FIX #2: Compute the globeQuat that brings (lat,lon) to face the camera.
+      function computeFocusQuat(lat, lon) {
+
+        const phi   = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+
+        const px = -radius * Math.sin(phi) * Math.cos(theta);
+        const pz =  radius * Math.sin(phi) * Math.sin(theta);
+        const py =  radius * Math.cos(phi);
+
+        const q = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(px, py, pz).normalize(),
+          new THREE.Vector3(0, 0, 1)
+        );
+
+        // Kill roll, clamp pitch so globe doesn't flip
+        const e = new THREE.Euler().setFromQuaternion(q, "YXZ");
+        e.z = 0;
+        e.x = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, e.x));
+
+        return new THREE.Quaternion().setFromEuler(e);
+      }
+
+      function startFocus(lat, lon) {
+        focusTargetQuat = computeFocusQuat(lat, lon);
+        isFocused       = true;
+        yawVelocity     = 0;
+        tiltVelocity    = 0;
+      }
+
+
 
 
       function focusCity(city) {
@@ -2201,36 +2241,8 @@ if (tickGroup) {
         const index = cities.findIndex(c => c.name === city.name);
         selectedNodeIndex = index;
 
-        const phi = (90 - city.lat) * (Math.PI / 180);
-        const theta = (city.lon + 180) * (Math.PI / 180);
-
-        const cityAltitude = 0.02;
-
-        const x = -(radius + cityAltitude) * Math.sin(phi) * Math.cos(theta);
-        const z =  (radius + cityAltitude) * Math.sin(phi) * Math.sin(theta);
-        const y =  (radius + cityAltitude) * Math.cos(phi);
-
-        const cityVector = new THREE.Vector3(x, y, z).normalize();
-        const target = new THREE.Vector3(0, 0, 1);
-
-        // Base rotation to bring city to front
-        const lookQuat = new THREE.Quaternion()
-          .setFromUnitVectors(cityVector, target);
-
-        const euler = new THREE.Euler()
-          .setFromQuaternion(lookQuat, "YXZ");
-
-        euler.z = 0;
-
-        const maxTilt = Math.PI / 2.05;
-        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
-
-        yawVelocity = 0;
-        tiltVelocity = 0;
-
-        focusQuaternion = new THREE.Quaternion()
-          .setFromEuler(euler);
-
+        // FIX #2: delegate rotation to startFocus
+        startFocus(city.lat, city.lon);
 
         // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
@@ -2239,6 +2251,8 @@ if (tickGroup) {
         // Ring Burst Placement
         // ===============================
 
+        const phi = (90 - city.lat) * (Math.PI / 180);
+        const theta = (city.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
 
         const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
@@ -2258,7 +2272,6 @@ if (tickGroup) {
         });
 
       }
-
 
       function focusCountry(country) {
 
@@ -2268,38 +2281,8 @@ if (tickGroup) {
 
         selectedNodeIndex = index;
 
-        const phi = (90 - country.lat) * (Math.PI / 180);
-        const theta = (country.lon + 180) * (Math.PI / 180);
-
-        const altitude = 0.02;
-
-        const x = -(radius + altitude) * Math.sin(phi) * Math.cos(theta);
-        const z =  (radius + altitude) * Math.sin(phi) * Math.sin(theta);
-        const y =  (radius + altitude) * Math.cos(phi);
-
-        const countryVector =
-          new THREE.Vector3(x, y, z).normalize();
-
-        const target = new THREE.Vector3(0, 0, 1);
-
-        // Base rotation to bring country to front
-        const lookQuat = new THREE.Quaternion()
-          .setFromUnitVectors(countryVector, target);
-
-        const euler = new THREE.Euler()
-          .setFromQuaternion(lookQuat, "YXZ");
-
-        euler.z = 0;
-
-        const maxTilt = Math.PI / 2.05;
-        euler.x = Math.max(-maxTilt, Math.min(maxTilt, euler.x));
-
-        yawVelocity = 0;
-        tiltVelocity = 0;
-
-        focusQuaternion = new THREE.Quaternion()
-          .setFromEuler(euler);
-
+        // FIX #2: delegate rotation to startFocus
+        startFocus(country.lat, country.lon);
 
         // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
@@ -2308,6 +2291,8 @@ if (tickGroup) {
         // Ring Burst Placement
         // ===============================
 
+        const phi = (90 - country.lat) * (Math.PI / 180);
+        const theta = (country.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
 
         const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
@@ -2329,8 +2314,6 @@ if (tickGroup) {
         });
 
       }
-
-
 
       let targetCityOpacity = 0.15;
       let targetCountryOpacity = 1.0;
@@ -2387,34 +2370,24 @@ if (tickGroup) {
 
 
 
-        // --------------------------------
-        // Trackpad Rotation Inertia
+// --------------------------------
+        // Trackpad Rotation Inertia — FIX #3
         // --------------------------------
         if (Math.abs(yawVelocity) > 0.00001 ||
             Math.abs(tiltVelocity) > 0.00001) {
-
-          yaw   -= yawVelocity;
-          pitch -= tiltVelocity;
-
-          pitch = Math.max(-maxPitch, Math.min(maxPitch, pitch));
-
+          applyYaw(-yawVelocity);
+          applyTilt(tiltVelocity);
           yawVelocity  *= 0.90;
           tiltVelocity *= 0.90;
-
         }
 
-
-
-
-
-
-
         // --------------------------------
-        // Ambient Equatorial Rotation
+        // Ambient Equatorial Rotation — FIX #3
         // --------------------------------
-        if (!dragging && !focusQuaternion && !isFocused && !ambientPaused && ambientEnabled) {
-          yaw += ambientSpeed;
+        if (!dragging && !isFocused && !ambientPaused && ambientEnabled) {
+          applyYaw(ambientSpeed);
         }
+
 
         // --------------------------------
         // Zoom Physics
@@ -2432,36 +2405,25 @@ if (tickGroup) {
 
         camera.position.z += zoomDelta * dynamicEasing;
 
+
+
+// --------------------------------
+        // Globe Rotation — FIX #2: slerp toward focus target
         // --------------------------------
-        // Globe Rotation (Yaw / Pitch Base + Focus Overlay)
-        // --------------------------------
 
-        const baseEuler = new THREE.Euler(
-          pitch,
-          yaw,
-          0,
-          "YXZ"
-        );
+        if (isFocused && focusTargetQuat) {
 
-        baseQuaternion.setFromEuler(baseEuler);
+          globeQuat.slerp(focusTargetQuat, 0.07);
 
-        if (focusQuaternion) {
-
-          scene.quaternion
-            .copy(baseQuaternion)
-            .multiply(focusQuaternion);
-
-        } else {
-
-          scene.quaternion.copy(baseQuaternion);
+          if (globeQuat.angleTo(focusTargetQuat) < 0.0005) {
+            globeQuat.copy(focusTargetQuat);
+            focusTargetQuat = null;
+          }
 
         }
 
+        scene.quaternion.copy(globeQuat);
 
-
-        // --------------------------------
-        // Visual Updates
-        // --------------------------------
 
 
         // --------------------------------
@@ -2605,21 +2567,11 @@ if (tickGroup) {
 
         earthColorAttr.needsUpdate = true;
 
-        // --------------------------------
+
+// --------------------------------
         // Compass Rotation
         // --------------------------------
-        if (compassSVG) {
-
-          const euler =
-            new THREE.Euler()
-              .setFromQuaternion(
-                scene.quaternion
-              );
-
-          compassSVG.style.transform =
-            `rotate(${-euler.y}rad)`;
-        }
-        
+        updateCompass();
 
         // --------------------------------
         // Opacity Blending
