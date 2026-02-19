@@ -1640,155 +1640,6 @@
 
 
         
-
-function openCityPanel(city) {
-
-        const panel = document.getElementById("infoPanel");
-
-        const showCountry =
-          city.country &&
-          city.name.toLowerCase() !== city.country.toLowerCase();
-
-        panel.innerHTML = `
-          <div class="panelHeader" style="
-            position:sticky;
-            top:0;
-            z-index:5;
-            background:rgba(0,0,0,0.95);
-            backdrop-filter:blur(16px);
-            padding-bottom:10px;
-          ">
-            <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
-            <div style="
-              display:flex;
-              justify-content:space-between;
-              align-items:center;
-              margin-top:4px;
-              padding-right:40px;
-            ">
-              <div>
-                <h2 style="margin:0;">${city.name}</h2>
-                ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
-              </div>
-              <div id="localTime" style="font-size:14px;opacity:0.85;white-space:nowrap;"></div>
-            </div>
-          </div>
-
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;margin-bottom:8px;">
-            <div id="dotsContainer" style="display:flex;gap:8px;"></div>
-            <div style="width:40px;"></div>
-          </div>
-
-          <div id="articlesViewport" style="position:relative;overflow:hidden;flex:1;">
-            <div id="articlesTrack" style="display:flex;transition:transform 0.35s ease;height:100%;">
-              Loading articles...
-            </div>
-          </div>
-        `;
-
-        panel.classList.add("active");
-
-        setTimeout(() => {
-          targetZoom = Math.max(2.4, camera.position.z - 0.6);
-        }, 250);
-
-        // FETCH ARTICLES
-        fetch(`https://earth-wjr6.onrender.com/api/news/city/${city.id}`)
-          .then(res => res.json())
-          .then(articles => {
-
-            const track = panel.querySelector("#articlesTrack");
-            const dotsContainer = panel.querySelector("#dotsContainer");
-
-            if (!articles.length) {
-              track.innerHTML = "<div style='padding:10px;'>No recent articles.</div>";
-              return;
-            }
-
-            const articlesPerPage = 5;
-            const totalPages = Math.ceil(articles.length / articlesPerPage);
-
-            track.innerHTML = "";
-            dotsContainer.innerHTML = "";
-
-            let currentPage = 1;
-
-            for (let i = 0; i < totalPages; i++) {
-              const page = document.createElement("div");
-              page.className = "articlePage";
-              const start = i * articlesPerPage;
-              const end = start + articlesPerPage;
-              page.innerHTML = articles.slice(start, end).map(article => `
-                <div style="margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;">
-                  <a href="${article.url}" target="_blank" style="color:#4da6ff;">
-                    <strong>${article.title}</strong>
-                  </a>
-                  <div style="font-size:11px;opacity:0.6;margin-top:4px;">
-                    ${article.source_name} • ${new Date(article.published_at).toLocaleDateString()}
-                  </div>
-                  <p style="margin-top:6px;">${article.summary || ""}</p>
-                </div>
-              `).join("");
-              track.appendChild(page);
-            }
-
-            const visibleDots = Math.min(5, totalPages);
-            for (let i = 1; i <= visibleDots; i++) {
-              const dot = document.createElement("div");
-              dot.className = "dot";
-              if (i === 1) dot.classList.add("active");
-              dot.addEventListener("click", () => goToPage(i));
-              dotsContainer.appendChild(dot);
-            }
-
-            function goToPage(page) {
-              if (page < 1 || page > totalPages) return;
-              currentPage = page;
-              track.style.transform = `translateX(-${(page - 1) * 100}%)`;
-              const dots = dotsContainer.children;
-              for (let i = 0; i < dots.length; i++) {
-                dots[i].classList.toggle("active", i === page - 1);
-              }
-            }
-
-          })
-          .catch(err => {
-            console.error("City article load error:", err);
-            panel.querySelector("#articlesTrack").innerHTML =
-              "<p style='padding:10px;'>Failed to load articles.</p>";
-          });
-
-        // LOCAL TIME
-        const timeElement = document.getElementById("localTime");
-
-        function updateLocalTime() {
-          const nowUTC = new Date();
-          const offsetHours = city.lon / 15;
-          const localTime = new Date(nowUTC.getTime() + offsetHours * 60 * 60 * 1000);
-          timeElement.textContent = localTime.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
-          });
-        }
-
-        updateLocalTime();
-        if (timeInterval) clearInterval(timeInterval);
-        timeInterval = setInterval(updateLocalTime, 1000);
-
-        // CLOSE BUTTON
-        const closeBtn = panel.querySelector(".closePanel");
-        closeBtn.addEventListener("click", () => {
-          panel.classList.remove("active");
-          clearInterval(timeInterval);
-          timeInterval = null;
-          isFocused = false;
-          selectedNodeIndex = null;
-          scheduleAmbientResume();
-        });
-
-      }
-
       function openCountryPanel(country) {
 
         const panel = document.getElementById("infoPanel");
@@ -1816,14 +1667,8 @@ function openCityPanel(city) {
             </div>
           </div>
 
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;margin-bottom:8px;">
-            <div id="dotsContainer" style="display:flex;gap:8px;"></div>
-            <div style="width:40px;"></div>
-          </div>
-
-          <div id="articlesViewport" style="position:relative;overflow:hidden;flex:1;">
-            <div id="articlesTrack" style="display:flex;transition:transform 0.35s ease;height:100%;">
-              Loading articles...
+          <div id="articlesViewport" style="position:relative;overflow-y:auto;flex:1;">
+            <div id="articlesTrack" style="display:flex;flex-direction:column;height:auto;">
             </div>
           </div>
         `;
@@ -1834,169 +1679,122 @@ function openCityPanel(city) {
           targetZoom = Math.max(2.4, camera.position.z - 0.6);
         }, 250);
 
-        // FETCH ARTICLES
-        fetch(`https://earth-wjr6.onrender.com/api/news/country/${country.id}`)
-          .then(res => res.json())
-          .then(articles => {
 
-            const track = panel.querySelector("#articlesTrack");
-            const dotsContainer = panel.querySelector("#dotsContainer");
+        // =====================================
+        // Infinite Scroll Pagination
+        // =====================================
 
-            if (!articles.length) {
-              track.innerHTML = "<div style='padding:10px;'>No recent articles.</div>";
-              return;
-            }
+        let offset = 0;
+        const limit = 5;
+        let loading = false;
+        let hasMore = true;
 
-            const articlesPerPage = 5;
-            const totalPages = Math.ceil(articles.length / articlesPerPage);
+        const track = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
 
-            track.innerHTML = "";
-            dotsContainer.innerHTML = "";
+        function loadMore() {
 
-            let currentPage = 1;
+          if (loading || !hasMore) return;
 
-            for (let i = 0; i < totalPages; i++) {
-              const page = document.createElement("div");
-              page.className = "articlePage";
-              const start = i * articlesPerPage;
-              const end = start + articlesPerPage;
-              page.innerHTML = articles.slice(start, end).map(article => `
-                <div style="margin-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:8px;">
-                  <a href="${article.url}" target="_blank" style="color:#4da6ff;">
-                    <strong>${article.title}</strong>
-                  </a>
-                  <div style="font-size:11px;opacity:0.6;margin-top:4px;">
-                    ${article.source_name} • ${new Date(article.published_at).toLocaleDateString()}
-                  </div>
-                  <p style="margin-top:6px;">${article.summary || ""}</p>
-                </div>
-              `).join("");
-              track.appendChild(page);
-            }
+          loading = true;
 
-            const visibleDots = Math.min(5, totalPages);
-            for (let i = 1; i <= visibleDots; i++) {
-              const dot = document.createElement("div");
-              dot.className = "dot";
-              if (i === 1) dot.classList.add("active");
-              dot.addEventListener("click", () => goToPage(i));
-              dotsContainer.appendChild(dot);
-            }
+          fetch(
+            `https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}`
+          )
+            .then(res => res.json())
+            .then(articles => {
 
-            function goToPage(page) {
-              if (page < 1 || page > totalPages) return;
-              currentPage = page;
-              track.style.transform = `translateX(-${(page - 1) * 100}%)`;
-              const dots = dotsContainer.children;
-              for (let i = 0; i < dots.length; i++) {
-                dots[i].classList.toggle("active", i === page - 1);
+              if (!articles.length && offset === 0) {
+                track.innerHTML = "<div style='padding:10px;'>No recent articles.</div>";
+                hasMore = false;
+                loading = false;
+                return;
               }
-            }
 
-          })
-          .catch(err => {
-            console.error("Country article load error:", err);
-            panel.querySelector("#articlesTrack").innerHTML =
-              "<p style='padding:10px;'>Failed to load articles.</p>";
-          });
+              if (articles.length < limit) {
+                hasMore = false;
+              }
 
+              articles.forEach(article => {
+
+                const div = document.createElement("div");
+
+                div.innerHTML = `
+                  <div style="
+                    margin-bottom:14px;
+                    border-bottom:1px solid rgba(255,255,255,0.1);
+                    padding-bottom:8px;
+                  ">
+                    <a href="${article.url}" target="_blank" style="color:#4da6ff;">
+                      <strong>${article.title}</strong>
+                    </a>
+                    <div style="font-size:11px;opacity:0.6;margin-top:4px;">
+                      ${article.source_name} • 
+                      ${new Date(article.published_at).toLocaleDateString()}
+                    </div>
+                    <p style="margin-top:6px;">
+                      ${article.summary || ""}
+                    </p>
+                  </div>
+                `;
+
+                track.appendChild(div);
+
+              });
+
+              offset += limit;
+              loading = false;
+
+            })
+            .catch(err => {
+
+              console.error("Country article load error:", err);
+              loading = false;
+
+            });
+
+        }
+
+        // Initial load
+        loadMore();
+
+        // Scroll detection
+        viewport.addEventListener("scroll", () => {
+
+          const threshold = 120;
+
+          if (
+            viewport.scrollTop + viewport.clientHeight >=
+            viewport.scrollHeight - threshold
+          ) {
+            loadMore();
+          }
+
+        });
+
+
+        // =====================================
         // CLOSE BUTTON
+        // =====================================
+
         const closeBtn = panel.querySelector(".closePanel");
+
         closeBtn.addEventListener("click", () => {
+
           panel.classList.remove("active");
+
           if (timeInterval) {
             clearInterval(timeInterval);
             timeInterval = null;
           }
+
           isFocused = false;
           selectedNodeIndex = null;
-          scheduleAmbientResume();
+
         });
 
       }
 
-
-      // ===============================
-      // Drag Rotation (Yaw / Pitch System)
-      // ===============================
-
-      let dragging = false;
-      let prevX = 0;
-      let prevY = 0;
-
-      window.addEventListener("mousedown", e => {
-
-        pauseAmbientRotation();
-
-        dragging = true;
-        prevX = e.clientX;
-        prevY = e.clientY;
-
-        selectedNodeIndex = null;
-        isFocused = false;
-
-      });
-
-      window.addEventListener("mouseup", () => {
-
-        dragging = false;
-
-      });
-
-      window.addEventListener("mousemove", e => {
-        if (!dragging) return;
-        const deltaX = (e.clientX - prevX) * 0.005;
-        const deltaY = (e.clientY - prevY) * 0.005;
-        applyYaw(deltaX);   // FIX #3
-        applyTilt(-deltaY); // FIX #3
-        prevX = e.clientX;
-        prevY = e.clientY;
-      });
-
-
-
-      // ===============================
-      // iOS Single-Finger Drag Rotation
-      // ===============================
-
-      let touchDragging = false;
-      let touchPrevX = 0;
-      let touchPrevY = 0;
-
-      window.addEventListener("touchstart", (e) => {
-
-        if (e.touches.length === 1) {
-
-          touchDragging = true;
-
-          touchPrevX = e.touches[0].clientX;
-          touchPrevY = e.touches[0].clientY;
-
-          selectedNodeIndex = null;
-          isFocused = false;
-
-        }
-
-      }, { passive: false });
-
-      window.addEventListener("touchmove", (e) => {
-        if (!touchDragging || e.touches.length !== 1) return;
-        e.preventDefault();
-        const touchX = e.touches[0].clientX;
-        const touchY = e.touches[0].clientY;
-        const deltaX = (touchX - touchPrevX) * 0.005;
-        const deltaY = (touchY - touchPrevY) * 0.005;
-        applyYaw(deltaX);   // FIX #3
-        applyTilt(-deltaY); // FIX #3
-        touchPrevX = touchX;
-        touchPrevY = touchY;
-      }, { passive: false });
-
-      window.addEventListener("touchend", () => {
-
-        touchDragging = false;
-
-      });
 
 
 
