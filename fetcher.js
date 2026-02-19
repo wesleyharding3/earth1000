@@ -13,19 +13,19 @@ const parser = new Parser();
 // DeepL Config
 // ===============================
 
-const DEEPL_API_KEY = process.env.DEEPL_API_KEY || null;
-
-const isFreeKey = DEEPL_API_KEY?.endsWith(":fx");
-
+const DEEPL_API_KEY = process.env.DEEPL_API_KEY?.trim() || null;
+const isFreeKey = DEEPL_API_KEY?.endsWith(":fx") === true;
 const DEEPL_URL = isFreeKey
   ? "https://api-free.deepl.com/v2/translate"
   : "https://api.deepl.com/v2/translate";
-
 let deeplDisabled = !DEEPL_API_KEY;
 
-if (!DEEPL_API_KEY) {
-  console.warn("⚠️ No DeepL API key found. Translations disabled.");
-}
+// Add this right after so you can see exactly what's happening in Render logs
+console.log("=== DeepL Config ===");
+console.log("Key present:", !!DEEPL_API_KEY);
+console.log("Key last 5 chars:", DEEPL_API_KEY?.slice(-5));
+console.log("Is free key:", isFreeKey);
+console.log("URL:", DEEPL_URL);
 
 // ===============================
 // Translation Helper
