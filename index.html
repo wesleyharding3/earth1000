@@ -2307,10 +2307,10 @@ window.addEventListener("mousedown", e => {
         );
 
         compassSnapActive = true;
-
         isFocused = false;
         focusTargetQuat = null;
         selectedNodeIndex = null;
+        ambientPaused = true;
 
       });
 
@@ -3943,8 +3943,8 @@ if (tickGroup) {
 // --------------------------------
         // Compass North Snap — slow manual slerp
         // --------------------------------
-if (compassSnapActive && compassSnapTarget) {
-          globeQuat.slerp(compassSnapTarget, 0.015);   // 0.015 = slow drift
+        if (compassSnapActive && compassSnapTarget) {
+          globeQuat.slerp(compassSnapTarget, 0.06);   // 0.015 = slow drift
           if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
 // WHAT: Short 1.5s resume delay after snap completes
             // WHY:  Matches the feel of node selection — gives the user
@@ -3952,12 +3952,12 @@ if (compassSnapActive && compassSnapTarget) {
             globeQuat.copy(compassSnapTarget);
             compassSnapActive = false;
             compassSnapTarget = null;
+            isFocused = false;
+            focusTargetQuat = null;
             if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
             ambientResumeTimer = setTimeout(() => {
               ambientPaused = false;
-            }, 1500);
-            // Release the globe so ambient rotation can resume freely
-            scheduleAmbientResume();
+            }, 400);
           }
         }
 
