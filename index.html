@@ -19,7 +19,14 @@
     }
 
     canvas { display: block; }
-
+    #searchContainer {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 340px;
+      z-index: 10;
+    }
 
     #citySearch {
       width: 100%;
@@ -855,7 +862,7 @@
       <!-- Same id="ambientSlider" as before so existing JS still works -->
       <input class="settingsSlider" type="range"
              id="ambientSlider"
-             min="0" max="0.0015" step="0.00005" value="0.00015" />
+             min="0" max="0.0020" step="0.00005" value="0.0010" />
     </div>
   </div>
 
@@ -921,7 +928,7 @@
     let yawVelocity = 0;
     let tiltVelocity = 0;
     let globeQuat = new THREE.Quaternion();  // FIX #3: single quaternion replaces yaw/pitch
-    let ambientSpeed = 0.001;
+    let ambientSpeed = 0.0010;
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
