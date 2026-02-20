@@ -156,10 +156,20 @@
       text-align: center;
     }
 
-    .articlesViewport {
+    .panelSlidesTrack {
+      display: flex;
       flex: 1;
-      overflow: hidden;
+      min-height: 0;
+      transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
+    }    
+
+    .articlesViewport {
+      display:flex;
+      flex: 1;
+      overflow-y: auto;
       position: relative;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
     }
 
     .articlesTrack {
@@ -698,17 +708,13 @@
     }
 
 
-
     .panelSlide {
       min-width: 100%;
       height: 100%;
-      overflow-y: auto;
-      overflow-x: hidden;
-      -webkit-overflow-scrolling: touch;
-      overscroll-behavior: contain;
+      overflow: hidden;
       box-sizing: border-box;
       flex-shrink: 0;
-    }
+    }  
 
     .panelSlide::-webkit-scrollbar { width: 5px; }
     .panelSlide::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
