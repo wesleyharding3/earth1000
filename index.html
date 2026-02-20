@@ -836,6 +836,99 @@
 }
 
 /* ===============================
+   Swipeable Panel Tabs
+=============================== */
+
+.panelTabsWrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.panelDots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 0 6px;
+  flex-shrink: 0;
+}
+
+.panelDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.20);
+  cursor: pointer;
+  transition: background 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+  flex-shrink: 0;
+}
+
+.panelDot.active {
+  background: rgba(255,180,80,1);
+  box-shadow: 0 0 8px rgba(255,150,40,0.7);
+  transform: scale(1.25);
+}
+
+.panelSlidesTrack {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform;
+}
+
+.panelSlide {
+  min-width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.panelSlide::-webkit-scrollbar { width: 5px; }
+.panelSlide::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px;
+}
+.panelSlide::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.18);
+  border-radius: 8px;
+}
+.panelSlide::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.35);
+}
+
+/* Placeholder slide content */
+.panelSlidePlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  opacity: 0.18;
+  user-select: none;
+}
+
+.panelSlidePlaceholder svg {
+  width: 36px;
+  height: 36px;
+}
+
+.panelSlidePlaceholder span {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+/* ===============================
        Panel Article Cards
     =============================== */
 
@@ -2583,8 +2676,7 @@ function openCityPanel(city) {
           city.country &&
           city.name.toLowerCase() !== city.country.toLowerCase();
 
-        panel.innerHTML = `
-          <!-- WHAT: Redesigned panel header with inline electric search bar -->
+panel.innerHTML = `
           <div class="panelHeader" style="
             position:sticky;top:0;z-index:5;
             background:rgba(0,0,0,0.95);
@@ -2592,8 +2684,7 @@ function openCityPanel(city) {
             padding-bottom:10px;flex-shrink:0;
           ">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
-<!-- WHAT: Flag emoji from DB injected beside city name -->
-              <!-- WHY:  city.flag returned by /api/cities from countries table -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
                 ${city.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${city.flag}</span>` : ""}
                 <div style="min-width:0;">
@@ -2601,7 +2692,6 @@ function openCityPanel(city) {
                   ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
                 </div>
               </div>
-              <!-- Electric panel search -->
               <div class="panelSearchBar" id="panelSearchBar">
                 <input class="panelSearchInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
                 <div class="panelSearchBtn" id="panelSearchBtn" title="Search articles">
@@ -2611,9 +2701,6 @@ function openCityPanel(city) {
                   </svg>
                 </div>
               </div>
-              <!-- Time -->
-<!-- WHAT: Time pill moved to right near close btn, UTC label removed -->
-              <!-- WHY:  Sleek pill sits beside close button, timezone string removed from display -->
               <div id="timePill" style="
                 flex-shrink:0;
                 background:rgba(255,255,255,0.07);
@@ -2630,13 +2717,168 @@ function openCityPanel(city) {
             </div>
           </div>
 
-          <!-- WHAT: Grid viewport — vertical scroll only, touch-friendly -->
-          <div id="articlesViewport">
-            <div class="articlesGrid" id="articlesTrack"></div>
+          <!-- WHAT: Swipeable tab system — dots + horizontal slides -->
+          <div class="panelTabsWrapper">
+            <div class="panelDots" id="panelDots">
+              <div class="panelDot active" data-index="0"></div>
+              <div class="panelDot" data-index="1"></div>
+              <div class="panelDot" data-index="2"></div>
+            </div>
+            <div class="panelSlidesTrack" id="panelSlidesTrack">
+
+              <!-- Slide 0: News feed -->
+              <div class="panelSlide" id="articlesViewport">
+                <div class="articlesGrid" id="articlesTrack"></div>
+              </div>
+
+              <!-- Slide 1: placeholder -->
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                  <span>Overview</span>
+                </div>
+              </div>
+
+              <!-- Slide 2: placeholder -->
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  <span>Statistics</span>
+                </div>
+              </div>
+
+            </div>
           </div>
         `;
 
-        panel.classList.add("active");
+panel.classList.add("active");
+
+        setTimeout(() => {
+          targetZoom = Math.max(2.4, camera.position.z - 0.6);
+        }, 250);
+
+        // =====================================
+        // Swipeable tabs wiring
+        // =====================================
+
+        const slidesTrack = panel.querySelector("#panelSlidesTrack");
+        const dots        = panel.querySelectorAll(".panelDot");
+        let currentSlide  = 0;
+        const totalSlides = dots.length;
+
+        function goToSlide(index) {
+          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
+          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
+          dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
+        }
+
+        dots.forEach(dot => {
+          dot.addEventListener("click", (e) => {
+            e.stopPropagation();
+            goToSlide(parseInt(dot.dataset.index));
+          });
+        });
+
+        panel.addEventListener("wheel", (e) => {
+          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
+            e.stopPropagation();
+            goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1));
+          }
+        }, { passive: true });
+
+        let slideSwipeStartX = 0;
+        let slideSwipeStartY = 0;
+        let slideSwipeLocked = null;
+
+        panel.addEventListener("touchstart", (e) => {
+          slideSwipeStartX = e.touches[0].clientX;
+          slideSwipeStartY = e.touches[0].clientY;
+          slideSwipeLocked = null;
+        }, { passive: true });
+
+        panel.addEventListener("touchend", (e) => {
+          if (slideSwipeLocked !== "h") return;
+          const dx = e.changedTouches[0].clientX - slideSwipeStartX;
+          if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1));
+        }, { passive: true });
+
+        panel.addEventListener("touchmove", (e) => {
+          if (slideSwipeLocked === "v") return;
+          const dx = e.touches[0].clientX - slideSwipeStartX;
+          const dy = e.touches[0].clientY - slideSwipeStartY;
+          if (slideSwipeLocked === null) {
+            slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+          }
+        }, { passive: true });
+
+        // =====================================
+        // Panel inline search wiring
+        // =====================================
+        // =====================================
+        // Swipeable tabs wiring
+        // =====================================
+
+        const slidesTrack = panel.querySelector("#panelSlidesTrack");
+        const dots        = panel.querySelectorAll(".panelDot");
+        let currentSlide  = 0;
+        const totalSlides = dots.length;
+
+        function goToSlide(index) {
+          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
+          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
+          dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
+        }
+
+        dots.forEach(dot => {
+          dot.addEventListener("click", (e) => {
+            e.stopPropagation();
+            goToSlide(parseInt(dot.dataset.index));
+          });
+        });
+
+        // Trackpad horizontal swipe on the whole panel
+        panel.addEventListener("wheel", (e) => {
+          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
+            e.stopPropagation();
+            goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1));
+          }
+        }, { passive: true });
+
+        // Touch swipe
+        let slideSwipeStartX = 0;
+        let slideSwipeStartY = 0;
+        let slideSwipeLocked = null; // "h" | "v" | null
+
+        panel.addEventListener("touchstart", (e) => {
+          slideSwipeStartX = e.touches[0].clientX;
+          slideSwipeStartY = e.touches[0].clientY;
+          slideSwipeLocked = null;
+        }, { passive: true });
+
+        panel.addEventListener("touchend", (e) => {
+          if (slideSwipeLocked !== "h") return;
+          const dx = e.changedTouches[0].clientX - slideSwipeStartX;
+          if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1));
+        }, { passive: true });
+
+        panel.addEventListener("touchmove", (e) => {
+          if (slideSwipeLocked === "v") return;
+          const dx = e.touches[0].clientX - slideSwipeStartX;
+          const dy = e.touches[0].clientY - slideSwipeStartY;
+          if (slideSwipeLocked === null) {
+            slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+          }
+        }, { passive: true });
+
+        // =====================================
+        // Panel inline search wiring
+        // =====================================
 
         setTimeout(() => {
           targetZoom = Math.max(2.4, camera.position.z - 0.6);
@@ -2844,8 +3086,7 @@ function openCountryPanel(country) {
 
         const panel = document.getElementById("infoPanel");
 
-        panel.innerHTML = `
-          <!-- WHAT: Country panel matching city panel card grid design -->
+panel.innerHTML = `
           <div class="panelHeader" style="
             position:sticky;top:0;z-index:5;
             background:rgba(0,0,0,0.95);
@@ -2854,10 +3095,12 @@ function openCountryPanel(country) {
           ">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
-              <div style="min-width:0;flex:1;">
-                <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${country.name}</h2>
+              <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
+                ${country.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${country.flag}</span>` : ""}
+                <div style="min-width:0;">
+                  <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${country.name}</h2>
+                </div>
               </div>
-              <!-- Electric panel search -->
               <div class="panelSearchBar" id="panelSearchBar">
                 <input class="panelSearchInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
                 <div class="panelSearchBtn" id="panelSearchBtn" title="Search articles">
@@ -2870,8 +3113,42 @@ function openCountryPanel(country) {
             </div>
           </div>
 
-          <div id="articlesViewport">
-            <div class="articlesGrid" id="articlesTrack"></div>
+          <div class="panelTabsWrapper">
+            <div class="panelDots" id="panelDots">
+              <div class="panelDot active" data-index="0"></div>
+              <div class="panelDot" data-index="1"></div>
+              <div class="panelDot" data-index="2"></div>
+            </div>
+            <div class="panelSlidesTrack" id="panelSlidesTrack">
+
+              <!-- Slide 0: News feed -->
+              <div class="panelSlide" id="articlesViewport">
+                <div class="articlesGrid" id="articlesTrack"></div>
+              </div>
+
+              <!-- Slide 1: placeholder -->
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                  <span>Overview</span>
+                </div>
+              </div>
+
+              <!-- Slide 2: placeholder -->
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  <span>Statistics</span>
+                </div>
+              </div>
+
+</div>
           </div>
         `;
 
@@ -2882,9 +3159,61 @@ function openCountryPanel(country) {
         }, 250);
 
         // =====================================
+        // Swipeable tabs wiring
+        // =====================================
+        const slidesTrack = panel.querySelector("#panelSlidesTrack");
+        const dots        = panel.querySelectorAll(".panelDot");
+        let currentSlide  = 0;
+        const totalSlides = dots.length;
+
+        function goToSlide(index) {
+          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
+          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
+          dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
+        }
+
+        dots.forEach(dot => {
+          dot.addEventListener("click", (e) => {
+            e.stopPropagation();
+            goToSlide(parseInt(dot.dataset.index));
+          });
+        });
+
+        panel.addEventListener("wheel", (e) => {
+          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
+            e.stopPropagation();
+            goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1));
+          }
+        }, { passive: true });
+
+        let slideSwipeStartX = 0;
+        let slideSwipeStartY = 0;
+        let slideSwipeLocked = null;
+
+        panel.addEventListener("touchstart", (e) => {
+          slideSwipeStartX = e.touches[0].clientX;
+          slideSwipeStartY = e.touches[0].clientY;
+          slideSwipeLocked = null;
+        }, { passive: true });
+
+        panel.addEventListener("touchend", (e) => {
+          if (slideSwipeLocked !== "h") return;
+          const dx = e.changedTouches[0].clientX - slideSwipeStartX;
+          if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1));
+        }, { passive: true });
+
+        panel.addEventListener("touchmove", (e) => {
+          if (slideSwipeLocked === "v") return;
+          const dx = e.touches[0].clientX - slideSwipeStartX;
+          const dy = e.touches[0].clientY - slideSwipeStartY;
+          if (slideSwipeLocked === null) {
+            slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+          }
+        }, { passive: true });
+
+        // =====================================
         // Panel inline search wiring
         // =====================================
-
         const panelSearchBtn   = panel.querySelector("#panelSearchBtn");
         const panelSearchInput = panel.querySelector("#panelSearchInput");
         let panelSearchOpen = false;
@@ -2907,9 +3236,8 @@ function openCountryPanel(country) {
         // =====================================
         // Card Rendering
         // =====================================
-
         let allArticles = [];
-        const track = panel.querySelector("#articlesTrack");
+        const track   = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
 
         function articleCardHTML(article) {
@@ -2922,7 +3250,6 @@ function openCountryPanel(country) {
                   <path d="M21 15l-5-5L5 21"/>
                 </svg>
                </div>`;
-
           return `
             <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
               ${imageField}
@@ -2936,7 +3263,7 @@ function openCountryPanel(country) {
           `;
         }
 
-        function skeletonCards(n) {
+function skeletonCards(n) {
           return Array.from({length: n}, () => `
             <div class="skeletonCard">
               <div class="skImg"></div>
@@ -2955,7 +3282,6 @@ function openCountryPanel(country) {
                 (a.source_name || "").toLowerCase().includes(filterQuery)
               )
             : allArticles;
-
           if (!filtered.length && !loading) {
             track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">
               ${filterQuery ? "No matching articles." : "No recent articles."}
@@ -2965,74 +3291,44 @@ function openCountryPanel(country) {
           track.innerHTML = filtered.map(articleCardHTML).join("");
         }
 
-        // =====================================
-        // Infinite Scroll Pagination
-        // =====================================
-
         let offset = 0;
         const limit = 12;
         let loading = false;
         let hasMore = true;
-
         track.innerHTML = skeletonCards(6);
 
         function loadMore() {
           if (loading || !hasMore) return;
           loading = true;
-
           fetch(`https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}`)
             .then(res => res.json())
             .then(articles => {
               if (!articles.length && offset === 0) {
-                hasMore = false;
-                loading = false;
-                renderCards();
-                return;
+                hasMore = false; loading = false; renderCards(); return;
               }
               if (articles.length < limit) hasMore = false;
               allArticles = [...allArticles, ...articles];
-              offset += limit;
-              loading = false;
-              renderCards();
+              offset += limit; loading = false; renderCards();
             })
-            .catch(err => {
-              console.error("Country article load error:", err);
-              loading = false;
-              renderCards();
-            });
+            .catch(err => { console.error("Country article load error:", err); loading = false; renderCards(); });
         }
-
         loadMore();
 
         viewport.addEventListener("scroll", () => {
-          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) {
-            loadMore();
-          }
+          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore();
         });
+        viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
 
-        // Trackpad two-finger scroll
-        viewport.addEventListener("wheel", (e) => {
-          e.stopPropagation();
-        }, { passive: true });
-
-        // iOS touch drag scroll
         let vpTouchStartY = 0;
         let vpScrollStart = 0;
-
         viewport.addEventListener("touchstart", (e) => {
           vpTouchStartY = e.touches[0].clientY;
           vpScrollStart = viewport.scrollTop;
         }, { passive: true });
-
         viewport.addEventListener("touchmove", (e) => {
           e.stopPropagation();
-          const delta = vpTouchStartY - e.touches[0].clientY;
-          viewport.scrollTop = vpScrollStart + delta;
+          viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY);
         }, { passive: true });
-
-        // =====================================
-        // Close Button
-        // =====================================
 
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
@@ -3042,8 +3338,8 @@ function openCountryPanel(country) {
           selectedNodeIndex = null;
           scheduleAmbientResume();
         });
-
       }
+
       window.addEventListener("touchstart", (e) => {
 
         if (e.touches.length === 1) {
