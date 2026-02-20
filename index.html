@@ -835,6 +835,258 @@
   text-align: center;
 }
 
+/* ===============================
+       Panel Article Cards
+    =============================== */
+
+    .articlesGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+      gap: 12px;
+      padding: 4px 2px 20px;
+    }
+
+    /* On desktop show 2 columns so ~6 fit in panel without scroll */
+    @media (min-width: 700px) {
+      .articlesGrid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    .articleCard {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 16px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+      display: flex;
+      flex-direction: column;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .articleCard:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.22);
+      transform: translateY(-2px);
+    }
+
+    .articleCard:active {
+      transform: translateY(0);
+    }
+
+    .articleCardImage {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      background: rgba(255,255,255,0.05);
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .articleCardImagePlaceholder {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: linear-gradient(
+        135deg,
+        rgba(255,255,255,0.04) 0%,
+        rgba(255,255,255,0.02) 100%
+      );
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .articleCardImagePlaceholder svg {
+      width: 28px;
+      height: 28px;
+      opacity: 0.15;
+    }
+
+    .articleCardBody {
+      padding: 12px 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+    }
+
+    .articleCardSource {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,180,80,0.85);
+    }
+
+    .articleCardTitle {
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+      color: rgba(255,255,255,0.92);
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .articleCardSummary {
+      font-size: 11px;
+      line-height: 1.5;
+      color: rgba(255,255,255,0.45);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .articleCardDate {
+      font-size: 10px;
+      color: rgba(255,255,255,0.25);
+      margin-top: auto;
+      padding-top: 4px;
+    }
+
+    /* ===============================
+       Panel Articles Viewport — scrollable
+    =============================== */
+
+    #articlesViewport {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    #articlesViewport::-webkit-scrollbar { width: 5px; }
+    #articlesViewport::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.02);
+      border-radius: 8px;
+    }
+    #articlesViewport::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.18);
+      border-radius: 8px;
+    }
+    #articlesViewport::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.35);
+    }
+
+    /* ===============================
+       Panel Inline Search Bar (right side of header)
+    =============================== */
+
+    .panelSearchBar {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .panelSearchInput {
+      width: 0;
+      height: 32px;
+      padding: 0;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0);
+      outline: none;
+      background: rgba(255,255,255,0.07);
+      color: #fff;
+      font-size: 12px;
+      letter-spacing: 0.3px;
+      opacity: 0;
+      pointer-events: none;
+      box-sizing: border-box;
+      transition:
+        width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+        padding 0.28s ease,
+        border-color 0.2s ease,
+        opacity 0.2s ease,
+        box-shadow 0.2s ease;
+    }
+
+    .panelSearchInput.expanded {
+      width: 170px;
+      padding: 0 12px 0 12px;
+      border-color: rgba(255,255,255,0.25);
+      opacity: 1;
+      pointer-events: all;
+      box-shadow: 0 0 12px rgba(0,150,255,0.15), 0 0 0 1px rgba(0,150,255,0.1);
+    }
+
+    .panelSearchInput:focus {
+      border-color: rgba(0,180,255,0.5);
+      box-shadow: 0 0 16px rgba(0,150,255,0.3), 0 0 0 1px rgba(0,150,255,0.2);
+    }
+
+    .panelSearchInput::placeholder {
+      color: rgba(255,255,255,0.28);
+    }
+
+    .panelSearchBtn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: rgba(255,255,255,0.60);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+      margin-left: 6px;
+    }
+
+    .panelSearchBtn:hover,
+    .panelSearchBtn.active {
+      background: rgba(0,150,255,0.15);
+      border-color: rgba(0,180,255,0.4);
+      box-shadow: 0 0 12px rgba(0,150,255,0.25);
+      color: rgba(0,200,255,0.9);
+    }
+
+    .panelSearchBtn svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* ===============================
+       Panel loading skeleton pulse
+    =============================== */
+
+    .skeletonCard {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      overflow: hidden;
+      animation: skeletonPulse 1.6s ease-in-out infinite;
+    }
+
+    .skeletonCard .skImg {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: rgba(255,255,255,0.05);
+    }
+
+    .skeletonCard .skLine {
+      height: 10px;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.06);
+      margin: 12px 14px 6px;
+    }
+
+    .skeletonCard .skLine.short { width: 55%; margin-bottom: 14px; }
+
+    @keyframes skeletonPulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+
 
 
 
@@ -2323,7 +2575,7 @@ window.addEventListener("mousedown", e => {
         return city.timezone || "UTC";
       }     
 
-      function openCityPanel(city) {
+function openCityPanel(city) {
 
         const panel = document.getElementById("infoPanel");
 
@@ -2332,38 +2584,40 @@ window.addEventListener("mousedown", e => {
           city.name.toLowerCase() !== city.country.toLowerCase();
 
         panel.innerHTML = `
+          <!-- WHAT: Redesigned panel header with inline electric search bar -->
           <div class="panelHeader" style="
-            position:sticky;
-            top:0;
-            z-index:5;
+            position:sticky;top:0;z-index:5;
             background:rgba(0,0,0,0.95);
             backdrop-filter:blur(16px);
-            padding-bottom:10px;
+            padding-bottom:10px;flex-shrink:0;
           ">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
-            <div style="
-              display:flex;
-              justify-content:space-between;
-              align-items:center;
-              margin-top:4px;
-              padding-right:40px;
-            ">
-              <div>
-                <h2 style="margin:0;">${city.name}</h2>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
+              <div style="min-width:0;flex:1;">
+                <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${city.name}</h2>
                 ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
               </div>
-<!-- WHAT: opacity restored, timezone label added beneath time -->
-              <!-- WHY:  opacity was 0.00 so time updated but was invisible -->
-              <div style="text-align:right;">
+              <!-- Electric panel search -->
+              <div class="panelSearchBar" id="panelSearchBar">
+                <input class="panelSearchInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+                <div class="panelSearchBtn" id="panelSearchBtn" title="Search articles">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                       stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+                  </svg>
+                </div>
+              </div>
+              <!-- Time -->
+              <div style="text-align:right;flex-shrink:0;">
                 <div id="localTime" style="font-size:14px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;"></div>
                 <div id="localTZ" style="font-size:10px;opacity:0.40;white-space:nowrap;margin-top:2px;letter-spacing:0.03em;"></div>
               </div>
             </div>
           </div>
 
-          <div id="articlesViewport" style="position:relative;overflow-y:auto;flex:1;">
-            <div id="articlesTrack" style="display:flex;flex-direction:column;height:auto;">
-            </div>
+          <!-- WHAT: Grid viewport — vertical scroll only, touch-friendly -->
+          <div id="articlesViewport">
+            <div class="articlesGrid" id="articlesTrack"></div>
           </div>
         `;
 
@@ -2374,109 +2628,173 @@ window.addEventListener("mousedown", e => {
         }, 250);
 
         // =====================================
+        // Panel inline search wiring
+        // =====================================
+
+        const panelSearchBtn   = panel.querySelector("#panelSearchBtn");
+        const panelSearchInput = panel.querySelector("#panelSearchInput");
+        let panelSearchOpen = false;
+        let filterQuery = "";
+
+        panelSearchBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          panelSearchOpen = !panelSearchOpen;
+          panelSearchInput.classList.toggle("expanded", panelSearchOpen);
+          panelSearchBtn.classList.toggle("active", panelSearchOpen);
+          if (panelSearchOpen) setTimeout(() => panelSearchInput.focus(), 40);
+          else { panelSearchInput.value = ""; filterQuery = ""; renderCards(); }
+        });
+
+        panelSearchInput.addEventListener("input", () => {
+          filterQuery = panelSearchInput.value.trim().toLowerCase();
+          renderCards();
+        });
+
+        // =====================================
+        // Card Rendering — grid with image + title + summary
+        // =====================================
+
+        let allArticles = [];
+        const track = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
+
+        function articleCardHTML(article) {
+          const imageField = article.image_url
+            ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
+            : `<div class="articleCardImagePlaceholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <path d="M21 15l-5-5L5 21"/>
+                </svg>
+               </div>`;
+
+          return `
+            <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
+              ${imageField}
+              <div class="articleCardBody">
+                <div class="articleCardSource">${article.source_name || ""}</div>
+                <div class="articleCardTitle">${article.title || ""}</div>
+                <div class="articleCardSummary">${article.summary || ""}</div>
+                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+              </div>
+            </a>
+          `;
+        }
+
+        function skeletonCards(n) {
+          return Array.from({length: n}, () => `
+            <div class="skeletonCard">
+              <div class="skImg"></div>
+              <div class="skLine" style="width:40%;margin-top:12px;"></div>
+              <div class="skLine"></div>
+              <div class="skLine short"></div>
+            </div>
+          `).join("");
+        }
+
+        function renderCards() {
+          const filtered = filterQuery
+            ? allArticles.filter(a =>
+                (a.title || "").toLowerCase().includes(filterQuery) ||
+                (a.summary || "").toLowerCase().includes(filterQuery) ||
+                (a.source_name || "").toLowerCase().includes(filterQuery)
+              )
+            : allArticles;
+
+          if (!filtered.length && !loading) {
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">
+              ${filterQuery ? "No matching articles." : "No recent articles."}
+            </div>`;
+            return;
+          }
+          track.innerHTML = filtered.map(articleCardHTML).join("");
+        }
+
+        // =====================================
         // Infinite Scroll Pagination
         // =====================================
 
         let offset = 0;
-        const limit = 5;
+        const limit = 12;
         let loading = false;
         let hasMore = true;
 
-        const track = panel.querySelector("#articlesTrack");
-        const viewport = panel.querySelector("#articlesViewport");
+        // Show skeletons immediately
+        track.innerHTML = skeletonCards(6);
 
         function loadMore() {
-
           if (loading || !hasMore) return;
           loading = true;
 
-          fetch(
-            `https://earth-wjr6.onrender.com/api/news/city/${city.id}?limit=${limit}&offset=${offset}`
-          )
+          fetch(`https://earth-wjr6.onrender.com/api/news/city/${city.id}?limit=${limit}&offset=${offset}`)
             .then(res => res.json())
             .then(articles => {
-
               if (!articles.length && offset === 0) {
-                track.innerHTML = "<div style='padding:10px;'>No recent articles.</div>";
                 hasMore = false;
                 loading = false;
+                renderCards();
                 return;
               }
-
-              if (articles.length < limit) {
-                hasMore = false;
-              }
-
-              articles.forEach(article => {
-
-                const div = document.createElement("div");
-
-                div.innerHTML = `
-                  <div style="
-                    margin-bottom:14px;
-                    border-bottom:1px solid rgba(255,255,255,0.1);
-                    padding-bottom:8px;
-                  ">
-                    <a href="${article.url}" target="_blank" style="color:#4da6ff;">
-                      <strong>${article.title}</strong>
-                    </a>
-                    <div style="font-size:11px;opacity:0.6;margin-top:4px;">
-                      ${article.source_name} • 
-                      ${new Date(article.published_at).toLocaleDateString()}
-                    </div>
-                    <p style="margin-top:6px;">
-                      ${article.summary || ""}
-                    </p>
-                  </div>
-                `;
-
-                track.appendChild(div);
-
-              });
-
+              if (articles.length < limit) hasMore = false;
+              allArticles = [...allArticles, ...articles];
               offset += limit;
               loading = false;
-
+              renderCards();
             })
             .catch(err => {
               console.error("City article load error:", err);
               loading = false;
+              renderCards();
             });
-
         }
 
-        // Initial load
         loadMore();
 
-        // Scroll detection
+        // =====================================
+        // Infinite scroll detection
+        // =====================================
+
         viewport.addEventListener("scroll", () => {
-
-          const threshold = 120;
-
-          if (
-            viewport.scrollTop + viewport.clientHeight >=
-            viewport.scrollHeight - threshold
-          ) {
+          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) {
             loadMore();
           }
-
         });
+
+        // =====================================
+        // Trackpad two-finger scroll — pass through to viewport
+        // =====================================
+
+        viewport.addEventListener("wheel", (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+
+        // =====================================
+        // iOS touch drag scroll on viewport
+        // =====================================
+
+        let vpTouchStartY = 0;
+        let vpScrollStart = 0;
+
+        viewport.addEventListener("touchstart", (e) => {
+          vpTouchStartY  = e.touches[0].clientY;
+          vpScrollStart  = viewport.scrollTop;
+        }, { passive: true });
+
+        viewport.addEventListener("touchmove", (e) => {
+          e.stopPropagation();
+          const delta = vpTouchStartY - e.touches[0].clientY;
+          viewport.scrollTop = vpScrollStart + delta;
+        }, { passive: true });
 
         // =====================================
         // Local Time
         // =====================================
 
         const timeElement = document.getElementById("localTime");
-
-        // WHAT: Use DB timezone string via resolveTimezone()
-        // WHY:  Replaces lon/15 estimate — browser Intl engine handles
-        //       DST, half-hour offsets, and political zone boundaries
         const cityTimezone = resolveTimezone(city);
-
-// WHAT: Populate the timezone subtitle beneath the clock
-        // WHY:  Shows the user which IANA zone is active, e.g. "Asia/Kolkata"
         const tzLabel = document.getElementById("localTZ");
-        if (tzLabel) tzLabel.textContent = cityTimezone;        
+        if (tzLabel) tzLabel.textContent = cityTimezone;
 
         function updateLocalTime() {
           timeElement.textContent = new Date().toLocaleTimeString("en-US", {
@@ -2487,7 +2805,6 @@ window.addEventListener("mousedown", e => {
           });
         }
 
-
         updateLocalTime();
         if (timeInterval) clearInterval(timeInterval);
         timeInterval = setInterval(updateLocalTime, 1000);
@@ -2497,7 +2814,6 @@ window.addEventListener("mousedown", e => {
         // =====================================
 
         const closeBtn = panel.querySelector(".closePanel");
-
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
           clearInterval(timeInterval);
@@ -2507,39 +2823,39 @@ window.addEventListener("mousedown", e => {
           scheduleAmbientResume();
         });
 
-      }      
-
-        
-      function openCountryPanel(country) {
+      }
+function openCountryPanel(country) {
 
         const panel = document.getElementById("infoPanel");
 
         panel.innerHTML = `
+          <!-- WHAT: Country panel matching city panel card grid design -->
           <div class="panelHeader" style="
-            position:sticky;
-            top:0;
-            z-index:5;
+            position:sticky;top:0;z-index:5;
             background:rgba(0,0,0,0.95);
             backdrop-filter:blur(16px);
-            padding-bottom:10px;
+            padding-bottom:10px;flex-shrink:0;
           ">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
-            <div style="
-              display:flex;
-              justify-content:space-between;
-              align-items:center;
-              margin-top:4px;
-              padding-right:40px;
-            ">
-              <div>
-                <h2 style="margin:0;">${country.name}</h2>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
+              <div style="min-width:0;flex:1;">
+                <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${country.name}</h2>
+              </div>
+              <!-- Electric panel search -->
+              <div class="panelSearchBar" id="panelSearchBar">
+                <input class="panelSearchInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+                <div class="panelSearchBtn" id="panelSearchBtn" title="Search articles">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                       stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+                  </svg>
+                </div>
               </div>
             </div>
           </div>
 
-          <div id="articlesViewport" style="position:relative;overflow-y:auto;flex:1;">
-            <div id="articlesTrack" style="display:flex;flex-direction:column;height:auto;">
-            </div>
+          <div id="articlesViewport">
+            <div class="articlesGrid" id="articlesTrack"></div>
           </div>
         `;
 
@@ -2549,124 +2865,169 @@ window.addEventListener("mousedown", e => {
           targetZoom = Math.max(2.4, camera.position.z - 0.6);
         }, 250);
 
+        // =====================================
+        // Panel inline search wiring
+        // =====================================
+
+        const panelSearchBtn   = panel.querySelector("#panelSearchBtn");
+        const panelSearchInput = panel.querySelector("#panelSearchInput");
+        let panelSearchOpen = false;
+        let filterQuery = "";
+
+        panelSearchBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          panelSearchOpen = !panelSearchOpen;
+          panelSearchInput.classList.toggle("expanded", panelSearchOpen);
+          panelSearchBtn.classList.toggle("active", panelSearchOpen);
+          if (panelSearchOpen) setTimeout(() => panelSearchInput.focus(), 40);
+          else { panelSearchInput.value = ""; filterQuery = ""; renderCards(); }
+        });
+
+        panelSearchInput.addEventListener("input", () => {
+          filterQuery = panelSearchInput.value.trim().toLowerCase();
+          renderCards();
+        });
+
+        // =====================================
+        // Card Rendering
+        // =====================================
+
+        let allArticles = [];
+        const track = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
+
+        function articleCardHTML(article) {
+          const imageField = article.image_url
+            ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
+            : `<div class="articleCardImagePlaceholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <path d="M21 15l-5-5L5 21"/>
+                </svg>
+               </div>`;
+
+          return `
+            <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
+              ${imageField}
+              <div class="articleCardBody">
+                <div class="articleCardSource">${article.source_name || ""}</div>
+                <div class="articleCardTitle">${article.title || ""}</div>
+                <div class="articleCardSummary">${article.summary || ""}</div>
+                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+              </div>
+            </a>
+          `;
+        }
+
+        function skeletonCards(n) {
+          return Array.from({length: n}, () => `
+            <div class="skeletonCard">
+              <div class="skImg"></div>
+              <div class="skLine" style="width:40%;margin-top:12px;"></div>
+              <div class="skLine"></div>
+              <div class="skLine short"></div>
+            </div>
+          `).join("");
+        }
+
+        function renderCards() {
+          const filtered = filterQuery
+            ? allArticles.filter(a =>
+                (a.title || "").toLowerCase().includes(filterQuery) ||
+                (a.summary || "").toLowerCase().includes(filterQuery) ||
+                (a.source_name || "").toLowerCase().includes(filterQuery)
+              )
+            : allArticles;
+
+          if (!filtered.length && !loading) {
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">
+              ${filterQuery ? "No matching articles." : "No recent articles."}
+            </div>`;
+            return;
+          }
+          track.innerHTML = filtered.map(articleCardHTML).join("");
+        }
 
         // =====================================
         // Infinite Scroll Pagination
         // =====================================
 
         let offset = 0;
-        const limit = 5;
+        const limit = 12;
         let loading = false;
         let hasMore = true;
 
-        const track = panel.querySelector("#articlesTrack");
-        const viewport = panel.querySelector("#articlesViewport");
+        track.innerHTML = skeletonCards(6);
 
         function loadMore() {
-
           if (loading || !hasMore) return;
-
           loading = true;
 
-          fetch(
-            `https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}`
-          )
+          fetch(`https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}`)
             .then(res => res.json())
             .then(articles => {
-
               if (!articles.length && offset === 0) {
-                track.innerHTML = "<div style='padding:10px;'>No recent articles.</div>";
                 hasMore = false;
                 loading = false;
+                renderCards();
                 return;
               }
-
-              if (articles.length < limit) {
-                hasMore = false;
-              }
-
-              articles.forEach(article => {
-
-                const div = document.createElement("div");
-
-                div.innerHTML = `
-                  <div style="
-                    margin-bottom:14px;
-                    border-bottom:1px solid rgba(255,255,255,0.1);
-                    padding-bottom:8px;
-                  ">
-                    <a href="${article.url}" target="_blank" style="color:#4da6ff;">
-                      <strong>${article.title}</strong>
-                    </a>
-                    <div style="font-size:11px;opacity:0.6;margin-top:4px;">
-                      ${article.source_name} • 
-                      ${new Date(article.published_at).toLocaleDateString()}
-                    </div>
-                    <p style="margin-top:6px;">
-                      ${article.summary || ""}
-                    </p>
-                  </div>
-                `;
-
-                track.appendChild(div);
-
-              });
-
+              if (articles.length < limit) hasMore = false;
+              allArticles = [...allArticles, ...articles];
               offset += limit;
               loading = false;
-
+              renderCards();
             })
             .catch(err => {
-
               console.error("Country article load error:", err);
               loading = false;
-
+              renderCards();
             });
-
         }
 
-        // Initial load
         loadMore();
 
-        // Scroll detection
         viewport.addEventListener("scroll", () => {
-
-          const threshold = 120;
-
-          if (
-            viewport.scrollTop + viewport.clientHeight >=
-            viewport.scrollHeight - threshold
-          ) {
+          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) {
             loadMore();
           }
-
         });
 
+        // Trackpad two-finger scroll
+        viewport.addEventListener("wheel", (e) => {
+          e.stopPropagation();
+        }, { passive: true });
+
+        // iOS touch drag scroll
+        let vpTouchStartY = 0;
+        let vpScrollStart = 0;
+
+        viewport.addEventListener("touchstart", (e) => {
+          vpTouchStartY = e.touches[0].clientY;
+          vpScrollStart = viewport.scrollTop;
+        }, { passive: true });
+
+        viewport.addEventListener("touchmove", (e) => {
+          e.stopPropagation();
+          const delta = vpTouchStartY - e.touches[0].clientY;
+          viewport.scrollTop = vpScrollStart + delta;
+        }, { passive: true });
 
         // =====================================
-        // CLOSE BUTTON
+        // Close Button
         // =====================================
 
         const closeBtn = panel.querySelector(".closePanel");
-
         closeBtn.addEventListener("click", () => {
-
           panel.classList.remove("active");
-
-          if (timeInterval) {
-            clearInterval(timeInterval);
-            timeInterval = null;
-          }
-
+          if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           isFocused = false;
           selectedNodeIndex = null;
           scheduleAmbientResume();
-
         });
 
       }
-
-
       window.addEventListener("touchstart", (e) => {
 
         if (e.touches.length === 1) {
