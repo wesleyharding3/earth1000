@@ -431,6 +431,68 @@
 }
 
 /* ===============================
+   Scale Bar — Google Earth style
+   positioned below compass, right-aligned
+=============================== */
+#scaleBar {
+  position: absolute;
+  top: 86px;               /* 20px compass top + 56px height + 10px gap */
+  right: 20px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.scaleBarLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.05em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.scaleBarTrack {
+  position: relative;
+  height: 6px;
+  display: flex;
+  align-items: flex-end;
+}
+
+/* The main horizontal bar */
+.scaleBarLine {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.80);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
+  transition: width 0.25s ease;
+}
+
+/* Left end cap (vertical tick) */
+.scaleBarLine::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 2px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+/* Right end cap (vertical tick) */
+.scaleBarLine::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.80);
+}
+
+/* ===============================
    Top-Left Icon Cluster
    — wraps gear, eye, search in a row
 =============================== */
@@ -790,6 +852,14 @@
     </g>
 
   </svg>
+</div>
+
+<!-- Scale Bar — updates dynamically based on zoom -->
+<div id="scaleBar">
+  <div class="scaleBarLabel" id="scaleBarLabel">—</div>
+  <div class="scaleBarTrack">
+    <div class="scaleBarLine" id="scaleBarLine" style="width: 80px;"></div>
+  </div>
 </div>
 
 <!-- Top-left cluster: all three icon buttons in a row -->
@@ -1245,6 +1315,48 @@
           "transform",
           `rotate(${angle * 180 / Math.PI}, 50, 50)`
         );
+      }      
+
+// ── Scale Bar ───────────────────────────────────────────────
+      // Computes real-world km per pixel at current zoom, then picks
+      // the nearest round distance and sizes the bar to match.
+      function updateScaleBar() {
+
+        const label = document.getElementById("scaleBarLabel");
+        const bar   = document.getElementById("scaleBarLine");
+        if (!label || !bar) return;
+
+        // Earth radius in km
+        const EARTH_RADIUS_KM = 6371;
+
+        // How many globe-radii fit in one screen pixel at current zoom
+        // camera.position.z is distance from camera to globe center
+        // fov in radians → visible height in globe-units at z distance
+        const fovRad      = camera.fov * (Math.PI / 180);
+        const visibleH    = 2 * camera.position.z * Math.tan(fovRad / 2);
+        const kmPerPixel  = (visibleH / window.innerHeight) * EARTH_RADIUS_KM;
+
+        // Target bar width in px (we'll snap the label to a round number)
+        const targetPx = 80;
+
+        // Raw km the bar would represent
+        const rawKm = kmPerPixel * targetPx;
+
+        // Snap to nearest round value: 1, 2, 5, 10, 20, 50, 100 … 10000
+        const steps = [1,2,5,10,20,50,100,200,500,1000,2000,5000,10000];
+        let snapped = steps[0];
+        for (const s of steps) {
+          if (s <= rawKm) snapped = s;
+          else break;
+        }
+
+        // Resize bar so it exactly represents `snapped` km
+        const finalPx = snapped / kmPerPixel;
+
+        bar.style.width  = `${Math.round(finalPx)}px`;
+        label.textContent = snapped >= 1000
+          ? `${snapped / 1000} km`   // e.g. "1 km" → actually "1000 km" shows as "1000 km"
+          : `${snapped} km`;
       }      
 
 
@@ -3030,6 +3142,11 @@ if (tickGroup) {
         // Compass Rotation
         // --------------------------------
         updateCompass();
+
+   // --------------------------------
+        // Scale Bar
+        // --------------------------------
+        updateScaleBar();         
 
         // --------------------------------
         // Opacity Blending
