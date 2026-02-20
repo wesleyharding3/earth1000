@@ -24,6 +24,7 @@ app.get("/api/cities", async (req, res) => {
       SELECT 
         c.id,
         c.name,
+        c.timezone,
         c.country_id,
         c.latitude AS lat,
         c.longitude AS lon,
@@ -54,6 +55,7 @@ app.get("/api/countries", async (req, res) => {
       SELECT
         id,
         name,
+        flag,
         slug,
         iso_code,
         latitude AS lat,
