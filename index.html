@@ -1760,15 +1760,19 @@
 
       const compass = document.getElementById("compass");
 
+      let compassSnapActive = false;
+      let compassSnapTarget = null;
+
       compass.addEventListener("click", () => {
 
-        // Extract current yaw, rebuild globeQuat with zero tilt
         const currentEuler = new THREE.Euler()
           .setFromQuaternion(globeQuat, "YXZ");
 
-        globeQuat.setFromEuler(
+        compassSnapTarget = new THREE.Quaternion().setFromEuler(
           new THREE.Euler(0, currentEuler.y, 0, "YXZ")
         );
+
+        compassSnapActive = true;
 
         isFocused = false;
         focusTargetQuat = null;
@@ -3039,6 +3043,18 @@ if (tickGroup) {
             focusTargetQuat = null;
           }
 
+        }
+
+// --------------------------------
+        // Compass North Snap — slow manual slerp
+        // --------------------------------
+        if (compassSnapActive && compassSnapTarget) {
+          globeQuat.slerp(compassSnapTarget, 0.015);   // 0.015 = slow drift
+          if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
+            globeQuat.copy(compassSnapTarget);
+            compassSnapActive = false;
+            compassSnapTarget = null;
+          }
         }
 
         scene.quaternion.copy(globeQuat);
