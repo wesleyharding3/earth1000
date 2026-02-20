@@ -1138,6 +1138,64 @@
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
 
+      // --------------------------------
+      // Background Star Field
+      // --------------------------------
+      const starCount = 6000;
+      const starPositions = [];
+      const starBaseBrightness = [];
+
+      for (let i = 0; i < starCount; i++) {
+        // Distribute evenly on a large sphere behind the globe
+        const u = Math.random();
+        const v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2 * v - 1);
+        const r = 80; // far enough to always be behind everything
+        starPositions.push(
+          r * Math.sin(phi) * Math.cos(theta),
+          r * Math.cos(phi),
+          r * Math.sin(phi) * Math.sin(theta)
+        );
+        // Vary base brightness subtly so stars feel uneven/natural
+        starBaseBrightness.push(0.08 + Math.random() * 0.18);
+      }
+
+      const starGeo = new THREE.BufferGeometry();
+      starGeo.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(starPositions, 3)
+      );
+
+      const starColors = new Float32Array(starCount * 3);
+      starGeo.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(starColors, 3)
+      );
+
+      const starMat = new THREE.PointsMaterial({
+        size: 0.28,
+        sizeAttenuation: true,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+
+      const starPoints = new THREE.Points(starGeo, starMat);
+      // Stars must not rotate with the globe — add to scene directly
+      // but outside the globe's scene.quaternion, so we detach them
+      // by parenting to a separate static group
+      const starField = new THREE.Group();
+      starField.add(starPoints);
+      scene.add(starField);
+
+      // Twinkle state arrays — same pattern as earth twinkle
+      const starTwinkleChance    = 0.002;  // sparse firing per frame
+      const starTwinkleDuration  = 0.35;
+      const starTwinkleIntensity = 0.55;
+      const starTwinkleTimers    = new Array(starCount).fill(0);
+
             // ------------------------------
       // Earth Twinkle System
       // ------------------------------
@@ -1579,7 +1637,14 @@
       // Drag Rotation (Yaw / Pitch System)
       // ===============================
 
-      window.addEventListener("mousedown", e => {
+window.addEventListener("mousedown", e => {
+
+        // Do not start globe drag when interacting with a slider or any input
+        if (
+          e.target.tagName === "INPUT" ||
+          e.target.tagName === "BUTTON" ||
+          e.target.closest("#settingsSidebar")
+        ) return;
 
         pauseAmbientRotation();
 
@@ -1720,8 +1785,10 @@
 
       // Keep setActiveMode exactly as-is — it still highlights the correct option
       function setActiveMode(mode) {
-        document.getElementById("cityModeBtn")?.classList.remove("active");
-        document.getElementById("countryModeBtn")?.classList.remove("active");
+        // Update the dropdown option dots to reflect the current active mode
+        document.querySelectorAll(".viewOption").forEach(opt => {
+          opt.classList.toggle("active", opt.dataset.mode === mode);
+        });
       }
 
       // ── Search expand/collapse ──────────────────────────────────
@@ -3048,12 +3115,14 @@ if (tickGroup) {
 // --------------------------------
         // Compass North Snap — slow manual slerp
         // --------------------------------
-        if (compassSnapActive && compassSnapTarget) {
+if (compassSnapActive && compassSnapTarget) {
           globeQuat.slerp(compassSnapTarget, 0.015);   // 0.015 = slow drift
           if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
             globeQuat.copy(compassSnapTarget);
             compassSnapActive = false;
             compassSnapTarget = null;
+            // Release the globe so ambient rotation can resume freely
+            scheduleAmbientResume();
           }
         }
 
@@ -3201,6 +3270,35 @@ if (tickGroup) {
         }
 
         earthColorAttr.needsUpdate = true;
+
+        // --------------------------------
+        // Star Twinkle Update
+        // --------------------------------
+        const starColorAttr = starPoints.geometry.attributes.color;
+
+        for (let i = 0; i < starCount; i++) {
+
+          if (starTwinkleTimers[i] <= 0 &&
+              Math.random() < starTwinkleChance) {
+            starTwinkleTimers[i] = starTwinkleDuration;
+          }
+
+          let b = starBaseBrightness[i];
+
+          if (starTwinkleTimers[i] > 0) {
+            const t    = starTwinkleTimers[i] / starTwinkleDuration;
+            const fade = Math.sin(t * Math.PI);
+            b *= (1 - starTwinkleIntensity * fade);
+            starTwinkleTimers[i] -= 0.016;
+          }
+
+          starColorAttr.setXYZ(i, b, b, b);
+        }
+
+        starColorAttr.needsUpdate = true;
+
+        // Keep star field fixed — counter-rotate against the globe
+        starField.quaternion.copy(scene.quaternion).invert();
 
 
 // --------------------------------
