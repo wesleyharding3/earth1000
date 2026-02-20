@@ -1609,8 +1609,12 @@
         blending:THREE.AdditiveBlending,
         depthWrite:false
       });
-      const cityPoints=new THREE.Points(cityGeo,cityMat);
+const cityPoints=new THREE.Points(cityGeo,cityMat);
       scene.add(cityPoints);
+
+      // Pre-initialize color buffer so backside shading applies even in country mode
+      cityGeo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(positions.length), 3));
+      cityMat.vertexColors = true;
 
             // ===============================
       // Country Points
@@ -1811,8 +1815,7 @@
         }
       } 
 
-
-      function updateNodeGlow() {
+function updateNodeGlow() {
 
         const activePoints = currentViewMode === "country"
           ? countryPoints
@@ -1821,6 +1824,24 @@
         const activeMaterial = currentViewMode === "country"
           ? countryMat
           : cityMat;
+
+        // Also shade the inactive layer so backside stays dark
+        const inactivePoints = currentViewMode === "country"
+          ? cityPoints
+          : countryPoints;
+        if (inactivePoints.geometry.attributes.color) {
+          const cameraDir2 = new THREE.Vector3();
+          camera.getWorldDirection(cameraDir2).normalize();
+          const posAttr2 = inactivePoints.geometry.attributes.position;
+          const col2 = inactivePoints.geometry.attributes.color;
+          for (let i = 0; i < posAttr2.count; i++) {
+            const p = new THREE.Vector3().fromBufferAttribute(posAttr2, i)
+              .applyMatrix4(inactivePoints.matrixWorld).normalize();
+            const glow = 0.02 + (1 - 0.02) * Math.pow((-cameraDir2.dot(p) + 1) / 2, 4.5);
+            col2.setXYZ(i, glow, glow * 0.6, glow * 0.25);
+          }
+          col2.needsUpdate = true;
+        }
 
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
