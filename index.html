@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,12 +9,10 @@
       margin: 0; 
       overflow: hidden; 
       background: #000;
-
       font-family: -apple-system, BlinkMacSystemFont,
                    "Segoe UI", Roboto,
                    "Helvetica Neue", Arial,
                    sans-serif;
-
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -51,13 +50,13 @@
       margin-top: 8px;
       background: rgba(0,0,0,0.96);
       border-radius: 14px;
-      max-height: 210px; /* ~5 results */
+      max-height: 210px;
       overflow-y: auto;
       display: none;
       box-shadow: 0 0 15px rgba(255,255,255,0.04);
     }
 
-   .searchItem {
+    .searchItem {
       padding: 10px 14px;
       cursor: pointer;
       color: #fff;
@@ -76,6 +75,7 @@
     #cityList ul { list-style: none; padding: 0; margin: 0; }
     #cityList li { margin-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 3px; }
     #cityList li:last-child { border-bottom: none; }
+
     #infoPanel {
       position: fixed;
       bottom: -100%;
@@ -83,52 +83,33 @@
       left: 0;
       width: 100%;
       height: 420px;
-
-      background: rgba(0,0,0,0.95);
+      background: rgba(0,0,0,0.97);
       color: white;
-
       padding: 20px;
       box-sizing: border-box;
-
       transition: bottom 0.4s ease;
-
       overflow: hidden;
       display: flex;
       flex-direction: column;
-
       border: none;
       border-radius: 22px 22px 0 0;
-
       scroll-behavior: smooth;
-
-      backdrop-filter: blur(16px);
     }
 
-     .panelHeader {
+    .panelHeader {
       position: sticky;
       top: 0;
-
       display: flex;
       justify-content: space-between;
       align-items: center;
-
       padding-bottom: 10px;
       margin-bottom: 8px;
-
-      background: rgba(0,0,0,0.95);
-      backdrop-filter: blur(16px);
-
+      background: rgba(0,0,0,0.97);
       z-index: 5;
     }
 
-    .panelHeader h2 {
-      margin: 0;
-    }
-
-    .panelHeader h4 {
-      margin: 2px 0 0 0;
-      opacity: 0.7;
-    }
+    .panelHeader h2 { margin: 0; }
+    .panelHeader h4 { margin: 2px 0 0 0; opacity: 0.7; }
 
     .paginationBar {
       display: flex;
@@ -137,10 +118,7 @@
       margin-bottom: 10px;
     }
 
-    .dots {
-      display: flex;
-      gap: 8px;
-    }
+    .dots { display: flex; gap: 8px; }
 
     .dot {
       width: 8px;
@@ -191,70 +169,28 @@
       padding-right: 10px;
       box-sizing: border-box;
       overflow-y: auto;
-    }      
-
-   
-
+    }
 
     #infoPanel.active { bottom: 0; }
     #infoPanel a { color: #4da6ff; text-decoration: none; display: block; margin-bottom: 8px; }
     #infoPanel a:hover { text-decoration: underline; }
 
-    /* ===============================
-       Electric Glass Scrollbar
-    =============================== */
-
-    #infoPanel::-webkit-scrollbar {
-      width: 8px;
-    }
-
+    #infoPanel::-webkit-scrollbar { width: 8px; }
     #infoPanel::-webkit-scrollbar-track {
       background: rgba(255,255,255,0.03);
       border-radius: 12px;
-      backdrop-filter: blur(10px);
     }
-
     #infoPanel::-webkit-scrollbar-thumb {
-      background: linear-gradient(
-        180deg,
-        rgba(255,255,255,0.35),
-        rgba(120,180,255,0.25)
-      );
+      background: rgba(255,255,255,0.25);
       border-radius: 12px;
-
-      box-shadow:
-        0 0 6px rgba(255,255,255,0.15),
-        0 0 10px rgba(0,150,255,0.15);
-
-      transition:
-        background 0.3s ease,
-        box-shadow 0.3s ease,
-        transform 0.2s ease;
     }
-
     #infoPanel::-webkit-scrollbar-thumb:hover {
-      background: linear-gradient(
-        180deg,
-        rgba(255,255,255,0.6),
-        rgba(0,150,255,0.4)
-      );
-
-      box-shadow:
-        0 0 12px rgba(255,255,255,0.35),
-        0 0 20px rgba(0,150,255,0.45);
-
-      transform: scaleX(1.1);
+      background: rgba(255,255,255,0.45);
     }
-
-    /* Firefox */
-
     #infoPanel {
       scrollbar-width: thin;
-      scrollbar-color:
-        rgba(200,220,255,0.6)
-        rgba(255,255,255,0.04);
+      scrollbar-color: rgba(200,220,255,0.6) rgba(255,255,255,0.04);
     }
-
 
     #infoPanel button.closePanel {
       position: absolute;
@@ -268,9 +204,7 @@
       font-size: 12px;
       border-radius: 4px;
     }
-    #infoPanel button.closePanel:hover {
-       background: #666;
-    }
+    #infoPanel button.closePanel:hover { background: #666; }
 
     .cityBubble {
       position: absolute;
@@ -287,7 +221,6 @@
       border: 1px solid rgba(255, 255, 255, 0.2);
       padding: 6px 10px;
       border-radius: 10px;
-      backdrop-filter: blur(6px);
       box-shadow: 0 0 12px rgba(0, 0, 0, 0.5);
     }
 
@@ -312,10 +245,8 @@
 
     .bubbleOutline {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       pointer-events: none;
     }
 
@@ -338,600 +269,475 @@
     }
 
     @keyframes electricPulse {
-      0% {
-        box-shadow:
-          0 0 6px rgba(255,255,255,0.08),
-          0 0 0px rgba(0,150,255,0);
-      }
-      35% {
-        box-shadow:
-          0 0 18px rgba(255,255,255,0.35),
-          0 0 28px rgba(0,150,255,0.6);
-      }
-      70% {
-        box-shadow:
-          0 0 10px rgba(255,255,255,0.2),
-          0 0 14px rgba(0,150,255,0.3);
-      }
-      100% {
-        box-shadow:
-          0 0 6px rgba(255,255,255,0.08),
-          0 0 0px rgba(0,150,255,0);
-      }
+      0%   { box-shadow: 0 0 6px rgba(255,255,255,0.08), 0 0 0px rgba(0,150,255,0); }
+      35%  { box-shadow: 0 0 18px rgba(255,255,255,0.35), 0 0 28px rgba(0,150,255,0.6); }
+      70%  { box-shadow: 0 0 10px rgba(255,255,255,0.2), 0 0 14px rgba(0,150,255,0.3); }
+      100% { box-shadow: 0 0 6px rgba(255,255,255,0.08), 0 0 0px rgba(0,150,255,0); }
     }
 
-
-/* ===============================
-   Compass
-=============================== */
-
-#compass {
-
-  position: absolute;
-  top: 20px;
-  right: 20px;
-
-  width: 56px;
-  height: 56px;
-
-  border-radius: 50%;
-
-  backdrop-filter: blur(12px);
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255,255,255,0.25);
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  cursor: pointer;
-  user-select: none;
-
-  z-index: 30;
-
-  transition: transform 0.2s ease;
-}
-
-#compass:hover {
-  transform: scale(1.08);
-}
-
-.compass-svg {
-  width: 100%;
-  height: 100%;
-}
-
-.compass-circle {
-  fill: none;
-  stroke: rgba(255,255,255,0.5);
-  stroke-width: 2;
-}
-
-.compass-letter {
-  fill: white;
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.9;
-}
-
-.compass-arrow-line {
-  stroke: white;
-  stroke-width: 2;
-}
-
-.compass-arrow-head {
-  fill: red;
-}
-
-.compass-tick {
-  stroke: rgba(255,255,255,0.6);
-  stroke-width: 1;
-}
-
-.compass-tick.major {
-  stroke-width: 2;
-}
-
-/* ===============================
-   Scale Bar — vertical, Google Earth style
-   right side below compass
-=============================== */
-#scaleBar {
-  position: absolute;
-  top: 86px;               /* 20px compass top + 56px height + 10px gap */
-  right: 20px;
-  z-index: 30;
-  display: flex;
-  flex-direction: row;     /* label left, track right */
-  align-items: flex-end;
-  gap: 6px;
-  pointer-events: none;
-}
-
-/* km labels stacked on the left of the bar */
-.scaleBarLabels {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
-  height: 100%;            /* matches track height, set via JS */
-}
-
-.scaleBarLabel {
-  font-size: 9px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.70);
-  letter-spacing: 0.04em;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-/* Vertical track — the bar itself */
-.scaleBarTrack {
-  position: relative;
-  width: 6px;              /* track width */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-/* The vertical line */
-.scaleBarLine {
-  width: 2px;
-  background: rgba(255, 255, 255, 0.80);
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
-  transition: height 0.25s ease;
-  position: relative;
-}
-
-/* Top end cap */
-.scaleBarLine::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 6px;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.80);
-}
-
-/* Bottom end cap */
-.scaleBarLine::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 6px;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.80);
-}
-
-/* Tick marks along the bar for subdivisions */
-.scaleBarTick {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 4px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.55);
-}
-
-/* ===============================
-   Top-Left Icon Cluster
-   — wraps gear, eye, search in a row
-=============================== */
-#topLeftCluster {
-  position: absolute;
-  top: 20px;
-  left: 20px;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  z-index: 40;
-}
-
-/* Shared frosted-glass circle style for all three icon buttons */
-.iconBtn {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.70);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.20);
-  color: rgba(255, 255, 255, 0.80);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  user-select: none;
-  flex-shrink: 0;
-  transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-}
-
-.iconBtn:hover {
-  background: rgba(25, 25, 25, 0.90);
-  border-color: rgba(255, 255, 255, 0.40);
-  transform: scale(1.06);
-}
-
-/* Lit state when panel/dropdown is open */
-.iconBtn.active {
-  background: rgba(35, 35, 35, 0.95);
-  border-color: rgba(255, 255, 255, 0.50);
-  box-shadow: 0 0 16px rgba(255, 255, 255, 0.12);
-}
-
-.iconBtn svg {
-  width: 17px;
-  height: 17px;
-  flex-shrink: 0;
-}
-
-/* Gear rotates 60° when settings open */
-#settingsToggle.active svg {
-  transform: rotate(60deg);
-  transition: transform 0.35s ease;
-}
-
-/* ===============================
-   Search — expands rightward from icon
-=============================== */
-#searchWrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  height: 40px;
-}
-
-/* The input starts at width:0 (hidden), expands on .expanded */
-#citySearch {
-  position: absolute;
-  left: 0;
-  width: 0;
-  height: 40px;
-  padding: 0;
-  border-radius: 20px;
-  border: 1.5px solid rgba(255, 255, 255, 0);
-  outline: none;
-  background: rgba(0, 0, 0, 0.85);
-  color: #fff;
-  font-size: 14px;
-  letter-spacing: 0.4px;
-  backdrop-filter: blur(12px);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 1;
-  box-sizing: border-box;
-  transition: width 0.32s cubic-bezier(0.32, 0.72, 0, 1),
-              padding 0.32s ease,
-              border-color 0.2s ease,
-              opacity 0.2s ease;
-}
-
-#citySearch.expanded {
-  width: 240px;
-  padding: 0 16px 0 50px; /* left padding clears the icon button */
-  border-color: rgba(255, 255, 255, 0.60);
-  opacity: 1;
-  pointer-events: all;
-}
-
-#citySearch::placeholder {
-  color: rgba(255, 255, 255, 0.38);
-}
-
-/* Results dropdown repositioned under the cluster */
-#searchResults {
-  position: absolute;
-  top: 48px;
-  left: 0;
-  width: 240px;
-  margin-top: 0;           /* override original margin-top:8px */
-  background: rgba(0, 0, 0, 0.96);
-  border-radius: 14px;
-  max-height: 210px;
-  overflow-y: auto;
-  display: none;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  z-index: 50;
-}
-
-/* ===============================
-   View dropdown — appears below eye icon
-=============================== */
-#viewToggleWrapper {
-  position: relative;
-}
-
-#viewDropdown {
-  position: absolute;
-  top: 48px;
-  left: 0;
-  background: rgba(8, 8, 8, 0.92);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 14px;
-  overflow: hidden;
-  display: none;           /* toggled to flex via .open */
-  flex-direction: column;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  z-index: 50;
-  min-width: 110px;
-}
-
-#viewDropdown.open {
-  display: flex;
-}
-
-.viewOption {
-  padding: 9px 14px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.65);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
-}
-
-.viewOption:hover {
-  background: rgba(255, 255, 255, 0.07);
-  color: #fff;
-}
-
-.viewOption.active {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.10);
-}
-
-/* Orange dot = active mode indicator */
-.viewOptionDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.20);
-  flex-shrink: 0;
-}
-
-.viewOption.active .viewOptionDot {
-  background: rgba(255, 180, 80, 1);
-  box-shadow: 0 0 6px rgba(255, 150, 40, 0.8);
-}
-
-/* ===============================
-   Settings Sidebar — slides in from left
-=============================== */
-#settingsSidebar {
-  position: absolute;
-  top: 70px;
-  left: -300px;            /* hidden off-screen by default */
-  width: 230px;
-  border-radius: 18px;
-  background: rgba(8, 8, 8, 0.88);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  color: white;
-  z-index: 35;
-  padding: 16px 14px 20px;
-  box-sizing: border-box;
-  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
-  transition: left 0.36s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.28s ease;
-  opacity: 0;
-  max-height: calc(100vh - 100px);
-  overflow-y: auto;
-}
-
-/* Slides into view */
-#settingsSidebar.open {
-  left: 20px;
-  opacity: 1;
-}
-
-.sidebarTitle {
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.28);
-  margin: 0 0 14px 2px;
-}
-
-.sidebarSection {
-  margin-bottom: 20px;
-}
-
-.sidebarSectionLabel {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.28);
-  margin-bottom: 10px;
-}
-
-.sidebarDivider {
-  width: 100%;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.07);
-  margin: 6px 0 18px;
-}
-
-/* Ambient slider row */
-.sliderRow {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.sliderLabelRow {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.sliderLabel {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.72);
-}
-
-/* Live readout of current speed value */
-.sliderValue {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-  font-variant-numeric: tabular-nums;
-  min-width: 30px;
-  text-align: right;
-}
-
-/* Custom range thumb */
-.settingsSlider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 3px;
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
-  outline: none;
-  cursor: pointer;
-}
-
-.settingsSlider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 5px rgba(255, 255, 255, 0.45);
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.settingsSlider::-webkit-slider-thumb:hover {
-  transform: scale(1.25);
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.70);
-}
-
-.settingsSlider::-moz-range-thumb {
-  width: 13px;
-  height: 13px;
-  border: none;
-  border-radius: 50%;
-  background: #fff;
-  cursor: pointer;
-}
-
-/* Future expansion placeholder */
-.sidebarPlaceholder {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px dashed rgba(255, 255, 255, 0.09);
-  border-radius: 10px;
-  padding: 14px 10px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.22);
-  text-align: center;
-}
-
-/* ===============================
-   Swipeable Panel Tabs
-=============================== */
-
-.panelTabsWrapper {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  overflow: hidden;
-  min-height: 0;
-}
-
-.panelDots {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 14px;
-  padding: 0 0 10px;
-  margin-top: -4px;
-  flex-shrink: 0;
-}
-
-.panelDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.20);
-  cursor: pointer;
-  transition: background 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
-  flex-shrink: 0;
-}
-
-.panelDot.active {
-  background: rgba(255,180,80,1);
-  box-shadow: 0 0 8px rgba(255,150,40,0.7);
-  transform: scale(1.25);
-}
-
-.panelSlidesTrack {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
-  will-change: transform;
-}
-
-.panelSlide {
-  min-width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-
-.panelSlide::-webkit-scrollbar { width: 5px; }
-.panelSlide::-webkit-scrollbar-track {
-  background: rgba(255,255,255,0.02);
-  border-radius: 8px;
-}
-.panelSlide::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.18);
-  border-radius: 8px;
-}
-.panelSlide::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.35);
-}
-
-/* Placeholder slide content */
-.panelSlidePlaceholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  gap: 12px;
-  opacity: 0.18;
-  user-select: none;
-}
-
-.panelSlidePlaceholder svg {
-  width: 36px;
-  height: 36px;
-}
-
-.panelSlidePlaceholder span {
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 600;
-}
-
-/* ===============================
+    /* ===============================
+       Compass
+    =============================== */
+
+    #compass {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(255,255,255,0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      z-index: 30;
+      transition: transform 0.2s ease;
+    }
+
+    #compass:hover { transform: scale(1.08); }
+
+    .compass-svg { width: 100%; height: 100%; }
+    .compass-circle { fill: none; stroke: rgba(255,255,255,0.5); stroke-width: 2; }
+    .compass-letter { fill: white; font-size: 12px; font-weight: 600; opacity: 0.9; }
+    .compass-arrow-line { stroke: white; stroke-width: 2; }
+    .compass-arrow-head { fill: red; }
+    .compass-tick { stroke: rgba(255,255,255,0.6); stroke-width: 1; }
+    .compass-tick.major { stroke-width: 2; }
+
+    /* ===============================
+       Scale Bar
+    =============================== */
+
+    #scaleBar {
+      position: absolute;
+      top: 86px;
+      right: 20px;
+      z-index: 30;
+      display: flex;
+      flex-direction: row;
+      align-items: flex-end;
+      gap: 6px;
+      pointer-events: none;
+    }
+
+    .scaleBarLabels {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: flex-end;
+      height: 100%;
+    }
+
+    .scaleBarLabel {
+      font-size: 9px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.70);
+      letter-spacing: 0.04em;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .scaleBarTrack {
+      position: relative;
+      width: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .scaleBarLine {
+      width: 2px;
+      background: rgba(255, 255, 255, 0.80);
+      box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
+      transition: height 0.25s ease;
+      position: relative;
+    }
+
+    .scaleBarLine::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 6px; height: 2px;
+      background: rgba(255, 255, 255, 0.80);
+    }
+
+    .scaleBarLine::after {
+      content: "";
+      position: absolute;
+      bottom: 0; left: 50%;
+      transform: translateX(-50%);
+      width: 6px; height: 2px;
+      background: rgba(255, 255, 255, 0.80);
+    }
+
+    .scaleBarTick {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 4px; height: 1px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    /* ===============================
+       Top-Left Icon Cluster
+    =============================== */
+
+    #topLeftCluster {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      z-index: 40;
+    }
+
+    .iconBtn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.70);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      color: rgba(255, 255, 255, 0.80);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+      transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    }
+
+    .iconBtn:hover {
+      background: rgba(25, 25, 25, 0.90);
+      border-color: rgba(255, 255, 255, 0.40);
+      transform: scale(1.06);
+    }
+
+    .iconBtn.active {
+      background: rgba(35, 35, 35, 0.95);
+      border-color: rgba(255, 255, 255, 0.50);
+      box-shadow: 0 0 16px rgba(255, 255, 255, 0.12);
+    }
+
+    .iconBtn svg { width: 17px; height: 17px; flex-shrink: 0; }
+
+    #settingsToggle.active svg {
+      transform: rotate(60deg);
+      transition: transform 0.35s ease;
+    }
+
+    /* ===============================
+       Search
+    =============================== */
+
+    #searchWrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      height: 40px;
+    }
+
+    #citySearch {
+      position: absolute;
+      left: 0;
+      width: 0;
+      height: 40px;
+      padding: 0;
+      border-radius: 20px;
+      border: 1.5px solid rgba(255, 255, 255, 0);
+      outline: none;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      font-size: 14px;
+      letter-spacing: 0.4px;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 1;
+      box-sizing: border-box;
+      transition: width 0.32s cubic-bezier(0.32, 0.72, 0, 1),
+                  padding 0.32s ease,
+                  border-color 0.2s ease,
+                  opacity 0.2s ease;
+    }
+
+    #citySearch.expanded {
+      width: 240px;
+      padding: 0 16px 0 50px;
+      border-color: rgba(255, 255, 255, 0.60);
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    #citySearch::placeholder { color: rgba(255, 255, 255, 0.38); }
+
+    #searchResults {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      width: 240px;
+      margin-top: 0;
+      background: rgba(0, 0, 0, 0.96);
+      border-radius: 14px;
+      max-height: 210px;
+      overflow-y: auto;
+      display: none;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      z-index: 50;
+    }
+
+    /* ===============================
+       View Dropdown
+    =============================== */
+
+    #viewToggleWrapper { position: relative; }
+
+    #viewDropdown {
+      position: absolute;
+      top: 48px;
+      left: 0;
+      background: rgba(8, 8, 8, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px;
+      overflow: hidden;
+      display: none;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      z-index: 50;
+      min-width: 110px;
+    }
+
+    #viewDropdown.open { display: flex; }
+
+    .viewOption {
+      padding: 9px 14px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.65);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .viewOption:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
+    .viewOption.active { color: #fff; background: rgba(255, 255, 255, 0.10); }
+
+    .viewOptionDot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.20);
+      flex-shrink: 0;
+    }
+
+    .viewOption.active .viewOptionDot {
+      background: rgba(255, 180, 80, 1);
+      box-shadow: 0 0 6px rgba(255, 150, 40, 0.8);
+    }
+
+    /* ===============================
+       Settings Sidebar
+    =============================== */
+
+    #settingsSidebar {
+      position: absolute;
+      top: 70px;
+      left: -300px;
+      width: 230px;
+      border-radius: 18px;
+      background: rgba(8, 8, 8, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: white;
+      z-index: 35;
+      padding: 16px 14px 20px;
+      box-sizing: border-box;
+      box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
+      transition: left 0.36s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.28s ease;
+      opacity: 0;
+      max-height: calc(100vh - 100px);
+      overflow-y: auto;
+    }
+
+    #settingsSidebar.open { left: 20px; opacity: 1; }
+
+    .sidebarTitle {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.28);
+      margin: 0 0 14px 2px;
+    }
+
+    .sidebarSection { margin-bottom: 20px; }
+
+    .sidebarSectionLabel {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.28);
+      margin-bottom: 10px;
+    }
+
+    .sidebarDivider {
+      width: 100%; height: 1px;
+      background: rgba(255, 255, 255, 0.07);
+      margin: 6px 0 18px;
+    }
+
+    .sliderRow { display: flex; flex-direction: column; gap: 8px; }
+
+    .sliderLabelRow {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .sliderLabel { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+
+    .sliderValue {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.35);
+      font-variant-numeric: tabular-nums;
+      min-width: 30px;
+      text-align: right;
+    }
+
+    .settingsSlider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 4px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .settingsSlider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 5px rgba(255, 255, 255, 0.45);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .settingsSlider::-webkit-slider-thumb:hover {
+      transform: scale(1.25);
+      box-shadow: 0 0 10px rgba(255, 255, 255, 0.70);
+    }
+
+    .settingsSlider::-moz-range-thumb {
+      width: 13px; height: 13px;
+      border: none;
+      border-radius: 50%;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .sidebarPlaceholder {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px dashed rgba(255, 255, 255, 0.09);
+      border-radius: 10px;
+      padding: 14px 10px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.22);
+      text-align: center;
+    }
+
+    /* ===============================
+       Swipeable Panel Tabs
+    =============================== */
+
+    .panelTabsWrapper {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .panelDots {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 14px;
+      padding: 0 0 10px;
+      margin-top: -4px;
+      flex-shrink: 0;
+    }
+
+    .panelDot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.20);
+      cursor: pointer;
+      transition: background 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+      flex-shrink: 0;
+    }
+
+    .panelDot.active {
+      background: rgba(255,180,80,1);
+      box-shadow: 0 0 8px rgba(255,150,40,0.7);
+      transform: scale(1.25);
+    }
+
+    .panelSlidesTrack {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
+      will-change: transform;
+    }
+
+    .panelSlide {
+      min-width: 100%;
+      height: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      box-sizing: border-box;
+      flex-shrink: 0;
+    }
+
+    .panelSlide::-webkit-scrollbar { width: 5px; }
+    .panelSlide::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
+    .panelSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
+    .panelSlide::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
+
+    .panelSlidePlaceholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 12px;
+      opacity: 0.18;
+      user-select: none;
+    }
+
+    .panelSlidePlaceholder svg { width: 36px; height: 36px; }
+
+    .panelSlidePlaceholder span {
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    /* ===============================
        Panel Article Cards
     =============================== */
 
@@ -942,11 +748,8 @@
       padding: 4px 2px 20px;
     }
 
-    /* On desktop show 2 columns so ~6 fit in panel without scroll */
     @media (min-width: 700px) {
-      .articlesGrid {
-        grid-template-columns: repeat(2, 1fr);
-      }
+      .articlesGrid { grid-template-columns: repeat(2, 1fr); }
     }
 
     .articleCard {
@@ -968,9 +771,7 @@
       transform: translateY(-2px);
     }
 
-    .articleCard:active {
-      transform: translateY(0);
-    }
+    .articleCard:active { transform: translateY(0); }
 
     .articleCardImage {
       width: 100%;
@@ -984,22 +785,14 @@
     .articleCardImagePlaceholder {
       width: 100%;
       aspect-ratio: 16 / 9;
-      background: linear-gradient(
-        135deg,
-        rgba(255,255,255,0.04) 0%,
-        rgba(255,255,255,0.02) 100%
-      );
+      background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
     }
 
-    .articleCardImagePlaceholder svg {
-      width: 28px;
-      height: 28px;
-      opacity: 0.15;
-    }
+    .articleCardImagePlaceholder svg { width: 28px; height: 28px; opacity: 0.15; }
 
     .articleCardBody {
       padding: 12px 14px 14px;
@@ -1045,10 +838,6 @@
       padding-top: 4px;
     }
 
-    /* ===============================
-       Panel Articles Viewport — scrollable
-    =============================== */
-
     #articlesViewport {
       flex: 1;
       overflow-y: auto;
@@ -1058,21 +847,9 @@
     }
 
     #articlesViewport::-webkit-scrollbar { width: 5px; }
-    #articlesViewport::-webkit-scrollbar-track {
-      background: rgba(255,255,255,0.02);
-      border-radius: 8px;
-    }
-    #articlesViewport::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.18);
-      border-radius: 8px;
-    }
-    #articlesViewport::-webkit-scrollbar-thumb:hover {
-      background: rgba(255,255,255,0.35);
-    }
-
-    /* ===============================
-       Panel Inline Search Bar (right side of header)
-    =============================== */
+    #articlesViewport::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
+    #articlesViewport::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
+    #articlesViewport::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
 
     .panelSearchBar {
       display: flex;
@@ -1096,12 +873,11 @@
       opacity: 0;
       pointer-events: none;
       box-sizing: border-box;
-      transition:
-        width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
-        padding 0.28s ease,
-        border-color 0.2s ease,
-        opacity 0.2s ease,
-        box-shadow 0.2s ease;
+      transition: width 0.28s cubic-bezier(0.32, 0.72, 0, 1),
+                  padding 0.28s ease,
+                  border-color 0.2s ease,
+                  opacity 0.2s ease,
+                  box-shadow 0.2s ease;
     }
 
     .panelSearchInput.expanded {
@@ -1110,21 +886,13 @@
       border-color: rgba(255,255,255,0.25);
       opacity: 1;
       pointer-events: all;
-      box-shadow: 0 0 12px rgba(0,150,255,0.15), 0 0 0 1px rgba(0,150,255,0.1);
     }
 
-    .panelSearchInput:focus {
-      border-color: rgba(0,180,255,0.5);
-      box-shadow: 0 0 16px rgba(0,150,255,0.3), 0 0 0 1px rgba(0,150,255,0.2);
-    }
-
-    .panelSearchInput::placeholder {
-      color: rgba(255,255,255,0.28);
-    }
+    .panelSearchInput:focus { border-color: rgba(0,180,255,0.5); }
+    .panelSearchInput::placeholder { color: rgba(255,255,255,0.28); }
 
     .panelSearchBtn {
-      width: 32px;
-      height: 32px;
+      width: 32px; height: 32px;
       border-radius: 50%;
       background: rgba(255,255,255,0.07);
       border: 1px solid rgba(255,255,255,0.14);
@@ -1134,7 +902,7 @@
       justify-content: center;
       cursor: pointer;
       flex-shrink: 0;
-      transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+      transition: background 0.2s, border-color 0.2s;
       margin-left: 6px;
     }
 
@@ -1142,18 +910,10 @@
     .panelSearchBtn.active {
       background: rgba(0,150,255,0.15);
       border-color: rgba(0,180,255,0.4);
-      box-shadow: 0 0 12px rgba(0,150,255,0.25);
       color: rgba(0,200,255,0.9);
     }
 
-    .panelSearchBtn svg {
-      width: 14px;
-      height: 14px;
-    }
-
-    /* ===============================
-       Panel loading skeleton pulse
-    =============================== */
+    .panelSearchBtn svg { width: 14px; height: 14px; }
 
     .skeletonCard {
       background: rgba(255,255,255,0.03);
@@ -1163,11 +923,7 @@
       animation: skeletonPulse 1.6s ease-in-out infinite;
     }
 
-    .skeletonCard .skImg {
-      width: 100%;
-      aspect-ratio: 16/9;
-      background: rgba(255,255,255,0.05);
-    }
+    .skeletonCard .skImg { width: 100%; aspect-ratio: 16/9; background: rgba(255,255,255,0.05); }
 
     .skeletonCard .skLine {
       height: 10px;
@@ -1183,239 +939,122 @@
       50% { opacity: 1; }
     }
 
-    @keyframes scrollbarElectricPulse {
-      0%   { box-shadow: none; background: rgba(255,255,255,0.18); }
-      20%  { box-shadow: 0 0 14px rgba(0,180,255,0.7), 0 0 28px rgba(0,120,255,0.4); background: rgba(0,200,255,0.55); }
-      45%  { box-shadow: 0 0 8px rgba(255,255,255,0.3), 0 0 16px rgba(0,150,255,0.3); background: rgba(255,255,255,0.30); }
-      70%  { box-shadow: 0 0 18px rgba(0,180,255,0.6), 0 0 32px rgba(0,100,255,0.35); background: rgba(0,200,255,0.50); }
-      100% { box-shadow: none; background: rgba(255,255,255,0.18); }
-    }
-
-    .panelSlide.scrollbar-pulse::-webkit-scrollbar-thumb {
-      animation: scrollbarElectricPulse 1.2s ease-out forwards;
-    }
-
-    /* ===============================
-       Animated Panel Border
-    =============================== */
-    #panelBorderSVG {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-      z-index: 100;
-      overflow: visible;
-    }
-
-    #panelBorderPath {
-      fill: none;
-      stroke: rgba(255,255,255,0.85);
-      stroke-width: 2;
-      stroke-linecap: round;
-      filter: drop-shadow(0 0 6px rgba(255,255,255,0.6))
-              drop-shadow(0 0 14px rgba(180,220,255,0.4));
-      stroke-dasharray: 2000;
-      stroke-dashoffset: 2000;
-    }
-
-    #panelBorderPath.draw {
-      animation: borderDraw 0.55s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-    }
-
-    @keyframes borderDraw {
-      to { stroke-dashoffset: 0; }
-    }
-
-    #panelBorderPath.wave {
-      animation: borderWave 0.9s ease-in forwards;
-    }
-
-    @keyframes borderWave {
-      0%   { stroke: rgba(255,255,255,0.85);
-             filter: drop-shadow(0 0 6px rgba(255,255,255,0.6)) drop-shadow(0 0 14px rgba(180,220,255,0.4)); }
-      40%  { stroke: rgba(180,220,255,0.55);
-             filter: drop-shadow(0 0 18px rgba(100,180,255,0.7)) drop-shadow(0 0 32px rgba(0,140,255,0.35)); }
-      100% { stroke: rgba(255,255,255,0.08);
-             filter: drop-shadow(0 0 3px rgba(255,255,255,0.06)); }
-    }
-
-    #panelBorderOrb {
-      position: absolute;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(255,255,255,1) 0%, rgba(180,220,255,0.6) 55%, transparent 100%);
-      box-shadow: 0 0 12px 4px rgba(255,255,255,0.7), 0 0 28px 8px rgba(100,180,255,0.5);
-      pointer-events: none;
-      z-index: 101;
-      opacity: 0;
-      transform: translate(-50%, -50%);
-    }
-
-    #panelBorderOrb.pulse {
-      animation: orbPulse 0.55s ease-out forwards;
-    }
-
-    @keyframes orbPulse {
-      0%   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-      60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.5); }
-      100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
-    }
-
-
-
-
+    #panelBorderSVG { display: none; }
+    #panelBorderOrb { display: none; }
 
   </style>
 </head>
 
 <body>
   <div id="cityList"><h3>Geopolitical Cities</h3><ul id="list"></ul></div>
+
   <div id="infoPanel">
-    <svg id="panelBorderSVG" viewBox="0 0 100 100" preserveAspectRatio="none">
-      <path id="panelBorderPath" d="M0,100 L0,22 Q0,0 22,0 L78,0 Q100,0 100,22 L100,100 L0,100"/>
-    </svg>
-    <div id="panelBorderOrb"></div>
     <div id="panelContent"></div>
   </div>
+
   <div id="cityLabels" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
-  <svg id="uiOverlay"
-       style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;">
-    <line id="hoverLine"
-        stroke="white"
-        stroke-width="1"
-        opacity="0"/>
+
+  <svg id="uiOverlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;">
+    <line id="hoverLine" stroke="white" stroke-width="1" opacity="0"/>
   </svg>
 
-
-<!-- Compass Widget -->
-<div id="compass">
-  <svg class="compass-svg" viewBox="0 0 100 100">
-    
-    <!-- Outer Ring -->
-    <circle cx="50" cy="50" r="46" class="compass-circle" />
-
-    <!-- Tick Marks -->
-    <g class="compass-ticks"></g>
-
-    <!-- Cardinal Letters -->
-    <text x="50" y="18" text-anchor="middle" class="compass-letter">N</text>
-    <text x="50" y="92" text-anchor="middle" class="compass-letter">S</text>
-    <text x="8" y="54" text-anchor="middle" class="compass-letter">W</text>
-    <text x="92" y="54" text-anchor="middle" class="compass-letter">E</text>
-
-<!-- Arrow — wrapped in group so only needle rotates, not the N/S/E/W labels -->
-    <g class="compass-arrow-group">
-      <line x1="50" y1="50" x2="50" y2="25" class="compass-arrow-line"/>
-      <polygon points="50,15 45,25 55,25" class="compass-arrow-head"/>
-    </g>
-
-  </svg>
-</div>
-
-<!-- Scale Bar — vertical, updates dynamically based on zoom -->
-<div id="scaleBar">
-  <div class="scaleBarLabels" id="scaleBarLabels"></div>
-  <div class="scaleBarTrack">
-    <div class="scaleBarLine" id="scaleBarLine" style="height: 120px;"></div>
-  </div>
-</div>
-
-<!-- Top-left cluster: all three icon buttons in a row -->
-<div id="topLeftCluster">
-
-  <!-- GEAR: opens/closes settings sidebar -->
-  <div class="iconBtn" id="settingsToggle" title="Settings">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-         stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
-               a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
-               A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
-               l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
-               A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
-               l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
-               a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
-               l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
-               a1.65 1.65 0 0 0-1.51 1z"/>
+  <div id="compass">
+    <svg class="compass-svg" viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r="46" class="compass-circle" />
+      <g class="compass-ticks"></g>
+      <text x="50" y="18" text-anchor="middle" class="compass-letter">N</text>
+      <text x="50" y="92" text-anchor="middle" class="compass-letter">S</text>
+      <text x="8"  y="54" text-anchor="middle" class="compass-letter">W</text>
+      <text x="92" y="54" text-anchor="middle" class="compass-letter">E</text>
+      <g class="compass-arrow-group">
+        <line x1="50" y1="50" x2="50" y2="25" class="compass-arrow-line"/>
+        <polygon points="50,15 45,25 55,25" class="compass-arrow-head"/>
+      </g>
     </svg>
   </div>
 
-  <!-- EYE: opens view mode dropdown (City / Country) -->
-  <div id="viewToggleWrapper">
-    <div class="iconBtn" id="viewToggle" title="View mode">
+  <div id="scaleBar">
+    <div class="scaleBarLabels" id="scaleBarLabels"></div>
+    <div class="scaleBarTrack">
+      <div class="scaleBarLine" id="scaleBarLine" style="height: 120px;"></div>
+    </div>
+  </div>
+
+  <div id="topLeftCluster">
+
+    <div class="iconBtn" id="settingsToggle" title="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
         <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
+                 a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
+                 A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
+                 l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+                 A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
+                 l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
+                 a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
+                 l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+                 a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
     </div>
-    <!-- Dropdown — hidden until viewToggle clicked -->
-    <div id="viewDropdown">
-      <div class="viewOption active" data-mode="country">
-        <span class="viewOptionDot"></span>Country
+
+    <div id="viewToggleWrapper">
+      <div class="iconBtn" id="viewToggle" title="View mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+          <circle cx="12" cy="12" r="3"/>
+        </svg>
       </div>
-      <div class="viewOption" data-mode="city">
-        <span class="viewOptionDot"></span>City
+      <div id="viewDropdown">
+        <div class="viewOption active" data-mode="country">
+          <span class="viewOptionDot"></span>Country
+        </div>
+        <div class="viewOption" data-mode="city">
+          <span class="viewOptionDot"></span>City
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- MAGNIFIER: expands inline search input to the right -->
-  <div id="searchWrapper">
-    <div class="iconBtn" id="searchIconBtn" title="Search cities">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-           stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="7"/>
-        <line x1="16.5" y1="16.5" x2="22" y2="22"/>
-      </svg>
-    </div>
-    <!-- Input sits behind the icon at width:0, expands on .expanded -->
-    <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
-    <div id="searchResults"></div>
-  </div>
-
-</div>
-
-<!-- Settings sidebar — slides in from left when gear is clicked -->
-<div id="settingsSidebar">
-  <div class="sidebarTitle">Settings</div>
-
-  <div class="sidebarSection">
-    <div class="sidebarSectionLabel">Globe Motion</div>
-    <div class="sliderRow">
-      <div class="sliderLabelRow">
-        <span class="sliderLabel">Ambient Rotation</span>
-        <span class="sliderValue" id="ambientVal">—</span>
+    <div id="searchWrapper">
+      <div class="iconBtn" id="searchIconBtn" title="Search cities">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="16.5" y1="16.5" x2="22" y2="22"/>
+        </svg>
       </div>
-      <!-- Same id="ambientSlider" as before so existing JS still works -->
-      <input class="settingsSlider" type="range"
-             id="ambientSlider"
-             min="0" max="0.0020" step="0.00005" value="0.0010" />
+      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
+      <div id="searchResults"></div>
+    </div>
+
+  </div>
+
+  <div id="settingsSidebar">
+    <div class="sidebarTitle">Settings</div>
+    <div class="sidebarSection">
+      <div class="sidebarSectionLabel">Globe Motion</div>
+      <div class="sliderRow">
+        <div class="sliderLabelRow">
+          <span class="sliderLabel">Ambient Rotation</span>
+          <span class="sliderValue" id="ambientVal">—</span>
+        </div>
+        <input class="settingsSlider" type="range"
+               id="ambientSlider"
+               min="0" max="0.0020" step="0.00005" value="0.0010" />
+      </div>
+    </div>
+    <div class="sidebarDivider"></div>
+    <div class="sidebarSection">
+      <div class="sidebarSectionLabel">Appearance</div>
+      <div class="sidebarPlaceholder">More options coming soon</div>
+    </div>
+    <div class="sidebarDivider"></div>
+    <div class="sidebarSection">
+      <div class="sidebarSectionLabel">Data</div>
+      <div class="sidebarPlaceholder">More options coming soon</div>
     </div>
   </div>
-
-  <div class="sidebarDivider"></div>
-
-  <div class="sidebarSection">
-    <div class="sidebarSectionLabel">Appearance</div>
-    <div class="sidebarPlaceholder">More options coming soon</div>
-  </div>
-
-  <div class="sidebarDivider"></div>
-
-  <div class="sidebarSection">
-    <div class="sidebarSectionLabel">Data</div>
-    <div class="sidebarPlaceholder">More options coming soon</div>
-  </div>
-</div>
-
-
-
-
-
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
@@ -1428,43 +1067,31 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-
     const maxTilt = Math.PI / 2.2;
 
-          // ===============================
-      // Window Resize Handling
-      // ===============================
-
-      window.addEventListener("resize", () => {
-
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-
-        renderer.setSize(width, height);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-        camera.aspect = width / height;
-        camera.updateProjectionMatrix();
-
-      });
-
+    window.addEventListener("resize", () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    });
 
     const radius = 1;
 
-    // Smooth zoom target
     let targetZoom = camera.position.z;
     let zoomVelocity = 0;
     const zoomFriction = 0.92;
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
-    let globeQuat = new THREE.Quaternion();  // FIX #3: single quaternion replaces yaw/pitch
+    let globeQuat = new THREE.Quaternion();
     let ambientSpeed = 0.0010;
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
 
-    // FIX #3: quaternion delta helpers — no euler accumulation, no gimbal lock
     function applyYaw(rad) {
       globeQuat.premultiply(
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rad)
@@ -1480,61 +1107,34 @@
 
     function pauseAmbientRotation() {
       ambientPaused = true;
-      if (ambientResumeTimer) {
-        clearTimeout(ambientResumeTimer);
-      }
-      // Resume after 8 seconds of inactivity
-      ambientResumeTimer = setTimeout(() => {
-        ambientPaused = false;
-      }, 2500);
+      if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
+      ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 2500);
     }
 
-    // Hard lock on node selection — stays frozen until panel closes
     function lockAmbientRotation() {
       ambientPaused = true;
-      if (ambientResumeTimer) {
-        clearTimeout(ambientResumeTimer);
-        ambientResumeTimer = null;
-      }
+      if (ambientResumeTimer) { clearTimeout(ambientResumeTimer); ambientResumeTimer = null; }
     }
 
-    // Deferred resume — called when panel closes
     function scheduleAmbientResume() {
       if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
-      ambientResumeTimer = setTimeout(() => {
-        ambientPaused = false;
-      }, 8000);
+      ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 8000);
     }
 
-
-    /* ===============================
-       Load Earth texture and initialize
-    =============================== */
     const loader = new THREE.TextureLoader();
     const earthTexture = loader.load(
       "https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg",
       () => {
-
         Promise.all([
-          fetch("https://earth-wjr6.onrender.com/api/cities")
-            .then(res => res.json()),
-          fetch("https://earth-wjr6.onrender.com/api/countries")
-            .then(res => res.json())
+          fetch("https://earth-wjr6.onrender.com/api/cities").then(res => res.json()),
+          fetch("https://earth-wjr6.onrender.com/api/countries").then(res => res.json())
         ])
-          .then(([cities, countries]) => {
-            init(cities, countries);
-          })
-          .catch(err => {
-            console.error("Failed to load initial data:", err);
-          });
-
+        .then(([cities, countries]) => { init(cities, countries); })
+        .catch(err => { console.error("Failed to load initial data:", err); });
       }
     );
 
-
-
     function init(cities, countries) {
-      // Earth points
       const earthPointCount = 10000;
       const earthPositions = [];
       const earthColors = [];
@@ -1574,92 +1174,53 @@
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
 
-      // --------------------------------
-      // Background Star Field
-      // --------------------------------
       const starCount = 6000;
       const starPositions = [];
       const starBaseBrightness = [];
 
       for (let i = 0; i < starCount; i++) {
-        // Distribute evenly on a large sphere behind the globe
-        const u = Math.random();
-        const v = Math.random();
+        const u = Math.random(), v = Math.random();
         const theta = 2 * Math.PI * u;
         const phi = Math.acos(2 * v - 1);
-        const r = 80; // far enough to always be behind everything
+        const r = 80;
         starPositions.push(
           r * Math.sin(phi) * Math.cos(theta),
           r * Math.cos(phi),
           r * Math.sin(phi) * Math.sin(theta)
         );
-        // Vary base brightness subtly so stars feel uneven/natural
         starBaseBrightness.push(0.08 + Math.random() * 0.18);
       }
 
       const starGeo = new THREE.BufferGeometry();
-      starGeo.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(starPositions, 3)
-      );
-
+      starGeo.setAttribute("position", new THREE.Float32BufferAttribute(starPositions, 3));
       const starColors = new Float32Array(starCount * 3);
-      starGeo.setAttribute(
-        "color",
-        new THREE.Float32BufferAttribute(starColors, 3)
-      );
-
+      starGeo.setAttribute("color", new THREE.Float32BufferAttribute(starColors, 3));
       const starMat = new THREE.PointsMaterial({
-        size: 0.28,
-        sizeAttenuation: true,
-        vertexColors: true,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
+        size: 0.28, sizeAttenuation: true, vertexColors: true,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
       });
-
       const starPoints = new THREE.Points(starGeo, starMat);
-      // Stars must not rotate with the globe — add to scene directly
-      // but outside the globe's scene.quaternion, so we detach them
-      // by parenting to a separate static group
       const starField = new THREE.Group();
       starField.add(starPoints);
       scene.add(starField);
 
-      // Twinkle state arrays — same pattern as earth twinkle
-      const starTwinkleChance    = 0.002;  // sparse firing per frame
-      const starTwinkleDuration  = 0.35;
-      const starTwinkleIntensity = 0.55;
-      const starTwinkleTimers    = new Array(starCount).fill(0);
-
-            // ------------------------------
-      // Earth Twinkle System
-      // ------------------------------
-
-      const earthTwinkleChance = 0.04;
-      const earthTwinkleDuration = 0.2;
-      const earthTwinkleIntensity = 0.6;
-
+      const starTwinkleChance = 0.002, starTwinkleDuration = 0.35, starTwinkleIntensity = 0.55;
+      const starTwinkleTimers = new Array(starCount).fill(0);
+      const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
-
-      /* ===============================
-         FULL CITY LIST GOES HERE
-      =============================== */
-
-
-      // City points
       const citySize = 0.0375;
       const ringBurstDelay = 0.18;
-      const ringSpeed = 0.008; 
+      const ringSpeed = 0.008;
       const positions = [];
       const ringMultiplierMax = 8;
       const ringStartRadius = 0.005;
       const ringThickness = 0.0001;
       const ringOuterMultiplier = 8;
       const listElement = document.getElementById("list");
-      cities.forEach(city=>{
-        const {name,lat,lon,country}=city;
+
+      cities.forEach(city => {
+        const {name,lat,lon,country} = city;
         const phi=(90-lat)*(Math.PI/180);
         const theta=(lon+180)*(Math.PI/180);
         const x=-radius*Math.sin(phi)*Math.cos(theta);
@@ -1667,13 +1228,11 @@
         const y= radius*Math.cos(phi);
         positions.push(x,y,z);
         const li=document.createElement("li");
-        li.textContent = (country && name !== country)
-          ? `${name}, ${country}`
-          : name;
+        li.textContent = (country && name !== country) ? `${name}, ${country}` : name;
         listElement.appendChild(li);
       });
 
-      const cityGeo=new THREE.BufferGeometry();
+      const cityGeo = new THREE.BufferGeometry();
       cityGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions,3));
 
       function createGlowTexture(){
@@ -1681,7 +1240,6 @@
         const glowCanvas=document.createElement("canvas");
         glowCanvas.width=size; glowCanvas.height=size;
         const ctx=glowCanvas.getContext("2d");
-        const outerRadius = size * 0.15;
         const grad=ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
         grad.addColorStop(0,"rgba(255,200,120,1)");
         grad.addColorStop(0.4,"rgba(255,140,40,0.7)");
@@ -1691,235 +1249,120 @@
         return new THREE.CanvasTexture(glowCanvas);
       }
 
-      const glowTexture=createGlowTexture();
-      const cityMat=new THREE.PointsMaterial({
-        size:citySize,
-        sizeAttenuation: true,
-        map:glowTexture,
-        transparent:true,
-        blending:THREE.AdditiveBlending,
-        depthWrite:false
+      const glowTexture = createGlowTexture();
+      const cityMat = new THREE.PointsMaterial({
+        size:citySize, sizeAttenuation:true, map:glowTexture,
+        transparent:true, blending:THREE.AdditiveBlending, depthWrite:false
       });
-const cityPoints=new THREE.Points(cityGeo,cityMat);
+      const cityPoints = new THREE.Points(cityGeo, cityMat);
       scene.add(cityPoints);
-
-      // Pre-initialize color buffer so backside shading applies even in country mode
       cityGeo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(positions.length), 3));
       cityMat.vertexColors = true;
 
-            // ===============================
-      // Country Points
-      // ===============================
-
       const countryPositions = [];
-
       countries.forEach(country => {
-
         const { lat, lon } = country;
-
         const phi = (90 - lat) * (Math.PI / 180);
         const theta = (lon + 180) * (Math.PI / 180);
-
         const x = -radius * Math.sin(phi) * Math.cos(theta);
         const z =  radius * Math.sin(phi) * Math.sin(theta);
         const y =  radius * Math.cos(phi);
-
         countryPositions.push(x, y, z);
       });
 
       const countryGeo = new THREE.BufferGeometry();
-      countryGeo.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(countryPositions, 3)
-      );
-
+      countryGeo.setAttribute("position", new THREE.Float32BufferAttribute(countryPositions, 3));
       const countryMat = new THREE.PointsMaterial({
-        size: citySize * 1.6,
-        sizeAttenuation: true,
-        map: glowTexture,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        opacity: 1
+        size: citySize * 1.6, sizeAttenuation: true, map: glowTexture,
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 1
       });
-
       const countryPoints = new THREE.Points(countryGeo, countryMat);
       scene.add(countryPoints);
 
-
-            // ===============================
-      // Selection Ring Burst
-      // ===============================
-
-
       const ringGroup = new THREE.Group();
       scene.add(ringGroup);
-
       const ringCount = 3;
       const ringMeshes = [];
       const ringStates = [];
 
       for (let i = 0; i < ringCount; i++) {
-
         const ringGeo = new THREE.RingGeometry(
           ringStartRadius,
           ringStartRadius + ringThickness * ringOuterMultiplier,
           64
         );
-
-
         const ringMat = new THREE.MeshBasicMaterial({
           color: new THREE.Color(1.0, 0.6, 0.25),
-          transparent: true,
-          opacity: 0,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          blending: THREE.NormalBlending
+          transparent: true, opacity: 0,
+          side: THREE.DoubleSide, depthWrite: false, blending: THREE.NormalBlending
         });
-
-
         const ring = new THREE.Mesh(ringGeo, ringMat);
-
-
         ringGroup.add(ring);
         ringMeshes.push(ring);
-
-        ringStates.push({
-          progress: 0,
-          delay: i * ringBurstDelay,
-          active: false
-        });
+        ringStates.push({ progress: 0, delay: i * ringBurstDelay, active: false });
       }
-     
-
-      /* >>>>> INSERTED: GEO BOUNDARY LOADER START */
 
       const boundaryLayer = new GeoBoundaryLayer(scene, radius);
-
       fetch("custom.geo.json")
         .then(res => res.json())
-        .then(data => {
-          boundaryLayer.loadGeoJSON(data);
-        });
-
-      // ------------------------------
-      // Utility: check if city is facing the camera
-      // ------------------------------
+        .then(data => { boundaryLayer.loadGeoJSON(data); });
 
       function isCityVisible(pointPos, camera) {
- 
         const pointVector = pointPos.clone().normalize();
-
-
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
-
-        const dot = cameraDir.dot(pointVector);
-        return dot < 0;
+        return cameraDir.dot(pointVector) < 0;
       }
 
-      // FIX #1: True-north compass
-      // Projects the globe's north pole into camera screen space and rotates
-      // only the needle group — N/S/E/W labels stay fixed.
       function updateCompass() {
-
         const arrowGroup = document.querySelector(".compass-arrow-group");
         if (!arrowGroup) return;
-
-        const northWorld = new THREE.Vector3(0, 1, 0)
-          .applyQuaternion(scene.quaternion);
-
+        const northWorld = new THREE.Vector3(0, 1, 0).applyQuaternion(scene.quaternion);
         const northNDC = northWorld.clone().project(camera);
-
-        // atan2(dx, dy) = clockwise angle from screen-up to projected north
         const angle = Math.atan2(northNDC.x, northNDC.y);
+        arrowGroup.setAttribute("transform", `rotate(${angle * 180 / Math.PI}, 50, 50)`);
+      }
 
-        arrowGroup.setAttribute(
-          "transform",
-          `rotate(${angle * 180 / Math.PI}, 50, 50)`
-        );
-      }      
-
-// ── Scale Bar (vertical) ────────────────────────────────────
-      // Picks a round total distance that fits ~120px, divides into
-      // 4 equal segments with tick labels at each division.
       function updateScaleBar() {
-
         const labelsEl = document.getElementById("scaleBarLabels");
-        const bar      = document.getElementById("scaleBarLine");
+        const bar = document.getElementById("scaleBarLine");
         if (!labelsEl || !bar) return;
-
         const EARTH_RADIUS_KM = 6371;
-        const TARGET_PX       = 120;   // desired total bar height in px
-        const DIVISIONS       = 4;     // number of segments
-
-        // km represented by TARGET_PX pixels at current zoom
-        const fovRad     = camera.fov * (Math.PI / 180);
-        const visibleH   = 2 * camera.position.z * Math.tan(fovRad / 2);
+        const TARGET_PX = 120;
+        const DIVISIONS = 4;
+        const fovRad = camera.fov * (Math.PI / 180);
+        const visibleH = 2 * camera.position.z * Math.tan(fovRad / 2);
         const kmPerPixel = (visibleH / window.innerHeight) * EARTH_RADIUS_KM;
-        const rawKm      = kmPerPixel * TARGET_PX;
-
-        // Snap total to a round number divisible by DIVISIONS
-        // Steps chosen so division labels are always clean integers
-        const steps = [
-          500, 1000, 2000, 5000, 10000, 20000,
-          50000, 100000, 200000, 500000, 1000000
-        ];
+        const rawKm = kmPerPixel * TARGET_PX;
+        const steps = [500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1000000];
         let totalKm = steps[0];
-        for (const s of steps) {
-          if (s <= rawKm) totalKm = s;
-          else break;
-        }
-
-        // Resize bar to exactly represent totalKm
+        for (const s of steps) { if (s <= rawKm) totalKm = s; else break; }
         const finalPx = Math.round(totalKm / kmPerPixel);
         bar.style.height = `${finalPx}px`;
-
-        // Remove existing ticks from bar
         bar.querySelectorAll(".scaleBarTick").forEach(t => t.remove());
-
-        // Rebuild label column and ticks
         labelsEl.style.height = `${finalPx}px`;
-        labelsEl.innerHTML    = "";
-
+        labelsEl.innerHTML = "";
         const divKm = totalKm / DIVISIONS;
-
         for (let i = 0; i <= DIVISIONS; i++) {
-
-          const km    = totalKm - i * divKm;   // top = totalKm, bottom = 0
+          const km = totalKm - i * divKm;
           const label = document.createElement("div");
           label.className = "scaleBarLabel";
-
-          label.textContent = km === 0
-            ? "0"
-            : `${km.toLocaleString()} km`;
-
+          label.textContent = km === 0 ? "0" : `${km.toLocaleString()} km`;
           labelsEl.appendChild(label);
-
-          // Add a tick on the bar at each division (skip top/bottom — those are end caps)
           if (i > 0 && i < DIVISIONS) {
             const tick = document.createElement("div");
-            tick.className   = "scaleBarTick";
-            tick.style.top   = `${(i / DIVISIONS) * 100}%`;
+            tick.className = "scaleBarTick";
+            tick.style.top = `${(i / DIVISIONS) * 100}%`;
             bar.appendChild(tick);
           }
         }
-      } 
+      }
 
-function updateNodeGlow() {
+      function updateNodeGlow() {
+        const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeMaterial = currentViewMode === "country" ? countryMat : cityMat;
+        const inactivePoints = currentViewMode === "country" ? cityPoints : countryPoints;
 
-        const activePoints = currentViewMode === "country"
-          ? countryPoints
-          : cityPoints;
-
-        const activeMaterial = currentViewMode === "country"
-          ? countryMat
-          : cityMat;
-
-        // Also shade the inactive layer so backside stays dark
-        const inactivePoints = currentViewMode === "country"
-          ? cityPoints
-          : countryPoints;
         if (inactivePoints.geometry.attributes.color) {
           const cameraDir2 = new THREE.Vector3();
           camera.getWorldDirection(cameraDir2).normalize();
@@ -1936,273 +1379,143 @@ function updateNodeGlow() {
 
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
-
-        const positionsAttr =
-          activePoints.geometry.attributes.position;
-
+        const positionsAttr = activePoints.geometry.attributes.position;
         const count = positionsAttr.count;
 
         if (!activePoints.geometry.attributes.color) {
-
           const colors = new Float32Array(count * 3);
-
-          activePoints.geometry.setAttribute(
-            "color",
-            new THREE.BufferAttribute(colors, 3)
-          );
-
+          activePoints.geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
           activeMaterial.vertexColors = true;
-
         }
 
-        const colors =
-          activePoints.geometry.attributes.color;
-
+        const colors = activePoints.geometry.attributes.color;
         for (let i = 0; i < count; i++) {
-
           const nodePos = new THREE.Vector3();
-
           nodePos.fromBufferAttribute(positionsAttr, i);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           nodePos.normalize();
-
           let dot = -cameraDir.dot(nodePos);
           let normalized = (dot + 1) / 2;
-
-// WHAT: minGlow lowered, exponent raised
-          // WHY:  Points on the backside were too visible — lower floor
-          //       dims the shadow side, higher exponent steepens the
-          //       falloff so only the front hemisphere stays bright
           const minGlow = 0.02;
-
-          let glow =
-            minGlow +
-            (1 - minGlow) * Math.pow(normalized, 4.5);
-
+          let glow = minGlow + (1 - minGlow) * Math.pow(normalized, 4.5);
           if (glowPulseActive && i === selectedNodeIndex) {
-            const pulse =
-              1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
+            const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
             glow *= pulse;
           }
-
-          colors.setXYZ(
-            i,
-            glow,
-            glow * 0.6,
-            glow * 0.25
-          );
-
+          colors.setXYZ(i, glow, glow * 0.6, glow * 0.25);
         }
-
         colors.needsUpdate = true;
-
       }
-
-
 
       const cityLabelsContainer = document.getElementById("cityLabels");
       const cityLabels = cities.map(city => {
-
         const div = document.createElement("div");
-
         div.innerHTML = `
           <div class="bubbleWrapper">
-
             <svg class="bubbleOutline">
-              <rect class="bubbleRect"
-                    x="0"
-                    y="0"
-                    rx="12"
-                    ry="12"
-                    width="100%"
-                    height="100%" />
+              <rect class="bubbleRect" x="0" y="0" rx="12" ry="12" width="100%" height="100%" />
             </svg>
-
             <div class="bubbleContent">
               <div class="bubbleTitle">${city.name}</div>
-              <div class="bubbleMeta">
-                <span class="storyCount">0 stories</span>
-              </div>
+              <div class="bubbleMeta"><span class="storyCount">0 stories</span></div>
             </div>
-
-          </div>
-        `;
-
-
+          </div>`;
         div.className = "cityBubble";
         div.style.position = "absolute";
         div.style.pointerEvents = "none";
         div.style.opacity = 0;
         div.style.transition = "opacity 0.2s";
-
         cityLabelsContainer.appendChild(div);
-
         return div;
       });
 
-      
       const countryLabels = countries.map(country => {
-
         const div = document.createElement("div");
-
         div.innerHTML = `
           <div class="bubbleWrapper">
-
             <svg class="bubbleOutline">
-              <rect class="bubbleRect"
-                    x="0"
-                    y="0"
-                    rx="12"
-                    ry="12"
-                    width="100%"
-                    height="100%" />
+              <rect class="bubbleRect" x="0" y="0" rx="12" ry="12" width="100%" height="100%" />
             </svg>
-
             <div class="bubbleContent">
               <div class="bubbleTitle">${country.name}</div>
-              <div class="bubbleMeta">
-                <span class="storyCount">0 stories</span>
-              </div>
+              <div class="bubbleMeta"><span class="storyCount">0 stories</span></div>
             </div>
-
-          </div>
-        `;
-
+          </div>`;
         div.className = "cityBubble";
         div.style.position = "absolute";
         div.style.pointerEvents = "none";
         div.style.opacity = 0;
         div.style.transition = "opacity 0.2s";
-
         cityLabelsContainer.appendChild(div);
-
         return div;
-
       });
-
-      
-
-      
 
       let hoveredIndex = null;
       let selectedNodeIndex = null;
       let isFocused = false;
-      let focusTargetQuat = null;   // FIX #2: target quaternion we slerp toward
+      let focusTargetQuat = null;
       let hoveredCityPosition = null;
       let timeInterval = null;
       let dragging = false;
-      let prevX = 0;
-      let prevY = 0;
-
-
+      let prevX = 0, prevY = 0;
       let touchDragging = false;
-      let touchPrevX = 0;
-      let touchPrevY = 0;
+      let touchPrevX = 0, touchPrevY = 0;
 
-
-      // ===============================
-      // Drag Rotation (Yaw / Pitch System)
-      // ===============================
-
-window.addEventListener("mousedown", e => {
-
-        // Do not start globe drag when interacting with a slider or any input
-        if (
-          e.target.tagName === "INPUT" ||
-          e.target.tagName === "BUTTON" ||
-          e.target.closest("#settingsSidebar")
-        ) return;
-
+      window.addEventListener("mousedown", e => {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar")) return;
         pauseAmbientRotation();
-
         dragging = true;
-        prevX = e.clientX;
-        prevY = e.clientY;
-
-        selectedNodeIndex = null;
-        isFocused = false;
-
+        prevX = e.clientX; prevY = e.clientY;
+        selectedNodeIndex = null; isFocused = false;
       });
 
-      window.addEventListener("mouseup", () => {
-
-        dragging = false;
-
-      });
+      window.addEventListener("mouseup", () => { dragging = false; });
 
       window.addEventListener("mousemove", e => {
         if (!dragging) return;
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
-        applyYaw(deltaX);
-        applyTilt(deltaY);
-        prevX = e.clientX;
-        prevY = e.clientY;
+        applyYaw(deltaX); applyTilt(deltaY);
+        prevX = e.clientX; prevY = e.clientY;
       });
-
-
-
-      // ===============================
-      // VIEW MODE TOGGLE
-      // ===============================
 
       let currentViewMode = "country";
       setActiveMode("country");
-
       cityMat.opacity = 0.15;
       countryMat.opacity = 1.0;
 
-
-
-
-      
-// ── Settings sidebar toggle ─────────────────────────────────
-      // Gear click: flip open/closed, toggle .active on button
       const settingsToggle  = document.getElementById("settingsToggle");
       const settingsSidebar = document.getElementById("settingsSidebar");
       let settingsOpen = false;
 
       settingsToggle.addEventListener("click", (e) => {
-        e.stopPropagation();                        // don't fire window click-outside
+        e.stopPropagation();
         settingsOpen = !settingsOpen;
         settingsSidebar.classList.toggle("open", settingsOpen);
         settingsToggle.classList.toggle("active", settingsOpen);
       });
 
-      // Click anywhere outside sidebar or gear closes it
       window.addEventListener("click", (e) => {
-        if (
-          settingsOpen &&
-          !settingsSidebar.contains(e.target) &&
-          !settingsToggle.contains(e.target)
-        ) {
+        if (settingsOpen && !settingsSidebar.contains(e.target) && !settingsToggle.contains(e.target)) {
           settingsOpen = false;
           settingsSidebar.classList.remove("open");
           settingsToggle.classList.remove("active");
         }
       });
 
-      // Clicks inside sidebar don't bubble up to the closer above
       settingsSidebar.addEventListener("click", (e) => e.stopPropagation());
 
-      // ── Ambient slider (same logic, new home in sidebar) ────────
-      // Shows a live "1.5×" style readout next to the label
       const ambientSlider = document.getElementById("ambientSlider");
       const ambientVal    = document.getElementById("ambientVal");
 
-      function formatSpeed(v) {
-        return v === 0 ? "Off" : (v * 10000).toFixed(1) + "×";
-      }
+      function formatSpeed(v) { return v === 0 ? "Off" : (v * 10000).toFixed(1) + "×"; }
       ambientVal.textContent = formatSpeed(parseFloat(ambientSlider.value));
-
       ambientSlider.addEventListener("input", () => {
         ambientSpeed = parseFloat(ambientSlider.value);
         ambientVal.textContent = formatSpeed(ambientSpeed);
       });
-
       ambientSlider.addEventListener("pointerdown", (e) => e.stopPropagation());
 
-      // ── Eye / view-mode dropdown ────────────────────────────────
       const viewToggle   = document.getElementById("viewToggle");
       const viewDropdown = document.getElementById("viewDropdown");
       let viewDropOpen = false;
@@ -2214,69 +1527,46 @@ window.addEventListener("mousedown", e => {
         viewToggle.classList.toggle("active", viewDropOpen);
       });
 
-      // Click outside closes dropdown
       window.addEventListener("click", (e) => {
-        if (
-          viewDropOpen &&
-          !viewDropdown.contains(e.target) &&
-          !viewToggle.contains(e.target)
-        ) {
+        if (viewDropOpen && !viewDropdown.contains(e.target) && !viewToggle.contains(e.target)) {
           viewDropOpen = false;
           viewDropdown.classList.remove("open");
           viewToggle.classList.remove("active");
         }
       });
 
-      // Each option sets the mode and closes dropdown
       document.querySelectorAll(".viewOption").forEach((opt) => {
         opt.addEventListener("click", (e) => {
           e.stopPropagation();
           const mode = opt.dataset.mode;
-
           currentViewMode = mode;
-          setActiveMode(mode);                      // existing helper, untouched
-
-          if (mode === "city") {
-            targetCityOpacity    = 1.0;
-            targetCountryOpacity = 0.15;
-          } else {
-            targetCityOpacity    = 0.15;
-            targetCountryOpacity = 1.0;
-          }
-
+          setActiveMode(mode);
+          if (mode === "city") { targetCityOpacity = 1.0; targetCountryOpacity = 0.15; }
+          else { targetCityOpacity = 0.15; targetCountryOpacity = 1.0; }
           viewDropOpen = false;
           viewDropdown.classList.remove("open");
           viewToggle.classList.remove("active");
         });
       });
 
-      // Keep setActiveMode exactly as-is — it still highlights the correct option
       function setActiveMode(mode) {
-        // Update the dropdown option dots to reflect the current active mode
         document.querySelectorAll(".viewOption").forEach(opt => {
           opt.classList.toggle("active", opt.dataset.mode === mode);
         });
       }
 
-      // ── Search expand/collapse ──────────────────────────────────
       const searchIconBtn = document.getElementById("searchIconBtn");
       let searchOpen = false;
 
       searchIconBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         searchOpen = !searchOpen;
-        citySearch.classList.toggle("expanded", searchOpen);  // citySearch already declared below
+        citySearch.classList.toggle("expanded", searchOpen);
         searchIconBtn.classList.toggle("active", searchOpen);
-        if (searchOpen) {
-          setTimeout(() => citySearch.focus(), 40);           // slight delay lets CSS transition start
-        } else {
-          citySearch.blur();
-          citySearch.value = "";
-          resultsContainer.style.display = "none";
-        }
+        if (searchOpen) { setTimeout(() => citySearch.focus(), 40); }
+        else { citySearch.blur(); citySearch.value = ""; resultsContainer.style.display = "none"; }
       });
 
-      // Click outside search wrapper collapses it
       window.addEventListener("click", (e) => {
         if (searchOpen && !e.target.closest("#searchWrapper")) {
           searchOpen = false;
@@ -2287,569 +1577,213 @@ window.addEventListener("mousedown", e => {
         }
       });
 
-
-
       let glowPulseTime = 0;
       let glowPulseActive = false;
 
       const compass = document.getElementById("compass");
-
       let compassSnapActive = false;
       let compassSnapTarget = null;
 
       compass.addEventListener("click", () => {
-
-        const currentEuler = new THREE.Euler()
-          .setFromQuaternion(globeQuat, "YXZ");
-
-        compassSnapTarget = new THREE.Quaternion().setFromEuler(
-          new THREE.Euler(0, currentEuler.y, 0, "YXZ")
-        );
-
+        const currentEuler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+        compassSnapTarget = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, currentEuler.y, 0, "YXZ"));
         compassSnapActive = true;
-        isFocused = false;
-        focusTargetQuat = null;
-        selectedNodeIndex = null;
-        ambientPaused = true;
-
+        isFocused = false; focusTargetQuat = null; selectedNodeIndex = null; ambientPaused = true;
       });
 
       const hoverMouse = new THREE.Vector2();
-
-
       window.addEventListener("mousemove", (event) => {
-          hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-          hoverMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        hoverMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
       });
 
       function updateHoverLabels() {
-
         raycaster.setFromCamera(hoverMouse, camera);
-
-        const activePoints = currentViewMode === "country"
-          ? countryPoints
-          : cityPoints;
-
-        const activeData = currentViewMode === "country"
-          ? countries
-          : cities;
-
-        const activeLabels = currentViewMode === "country"
-          ? countryLabels
-          : cityLabels;
-
-        const activePositions = currentViewMode === "country"
-          ? countryPositions
-          : positions;
-
+        const activePoints   = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeData     = currentViewMode === "country" ? countries : cities;
+        const activeLabels   = currentViewMode === "country" ? countryLabels : cityLabels;
+        const activePositions = currentViewMode === "country" ? countryPositions : positions;
         const intersects = raycaster.intersectObject(activePoints);
-
-        hoveredIndex = null;
-        hoveredCityPosition = null;
-
+        hoveredIndex = null; hoveredCityPosition = null;
         const infoPanel = document.getElementById("infoPanel");
         const panelOpen = infoPanel.classList.contains("active");
 
-        // ------------------------------
-        // Hover Detection
-        // ------------------------------
-
         if (intersects.length > 0) {
-
           const index = intersects[0].index;
-
-          if (panelOpen && index === selectedNodeIndex) {
-            return;
-          }
-
+          if (panelOpen && index === selectedNodeIndex) return;
           const nodePos = new THREE.Vector3();
-
-          nodePos.fromBufferAttribute(
-            activePoints.geometry.attributes.position,
-            index
-          );
-
+          nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
-
           if (isCityVisible(nodePos, camera)) {
-
             hoveredIndex = index;
             hoveredCityPosition = nodePos.clone();
-
           }
-
         }
-
-        // ------------------------------
-        // Label Rendering
-        // ------------------------------
 
         activeData.forEach((item, i) => {
-
           const label = activeLabels[i];
           if (!label) return;
-
-          const pos = new THREE.Vector3(
-            activePositions[i * 3],
-            activePositions[i * 3 + 1],
-            activePositions[i * 3 + 2]
-          );
-
+          const pos = new THREE.Vector3(activePositions[i*3], activePositions[i*3+1], activePositions[i*3+2]);
           pos.applyMatrix4(activePoints.matrixWorld);
-
           const projected = pos.clone().project(camera);
-
           const x = (projected.x + 1) / 2 * window.innerWidth;
           const y = (-projected.y + 1) / 2 * window.innerHeight;
-
           label.style.left = `${x}px`;
           label.style.top  = `${y}px`;
-
           const isHovered  = (i === hoveredIndex);
           const isSelected = (i === selectedNodeIndex);
-
-          const shouldShow =
-            (isHovered) ||
-            (!panelOpen && isSelected);
-
-          if (isSelected) {
-            label.classList.add("focused");
-          } else {
-            label.classList.remove("focused");
-          }
-
-          if (isHovered) {
-            label.classList.add("hovered");
-          } else {
-            label.classList.remove("hovered");
-          }
-
+          const shouldShow = isHovered || (!panelOpen && isSelected);
+          if (isSelected) label.classList.add("focused"); else label.classList.remove("focused");
+          if (isHovered)  label.classList.add("hovered"); else label.classList.remove("hovered");
           const panelEl = document.getElementById("infoPanel");
           const panelOpenNow = panelEl.classList.contains("active");
-          const panelBlocksLabel = panelOpenNow &&
-            (parseFloat(label.style.top) > window.innerHeight - panelEl.offsetHeight - 40);
+          const panelBlocksLabel = panelOpenNow && (parseFloat(label.style.top) > window.innerHeight - panelEl.offsetHeight - 40);
 
           if (shouldShow && !panelBlocksLabel) {
-
             const storyCountEl = label.querySelector(".storyCount");
-
-            if (storyCountEl) {
-              storyCountEl.textContent =
-                `${item.storyCount || 0} stories`;
-            }
-
+            if (storyCountEl) storyCountEl.textContent = `${item.storyCount || 0} stories`;
             label.style.opacity = 1;
-            label.style.transform =
-              "translate(-50%, -160%) scale(1)";
-
-            if (isHovered || isSelected) {
-              triggerBubbleTyping(i);
-            }
-
+            label.style.transform = "translate(-50%, -160%) scale(1)";
+            if (isHovered || isSelected) triggerBubbleTyping(i);
           } else {
-
             label.style.opacity = 0;
-            label.style.transform =
-              "translate(-50%, -140%) scale(0.95)";
-
-            if (panelBlocksLabel) {
-              label.style.opacity = 0;
-            }
-
+            label.style.transform = "translate(-50%, -140%) scale(0.95)";
+            if (panelBlocksLabel) label.style.opacity = 0;
             const title = label.querySelector(".bubbleTitle");
-
             if (title) {
-
               title._typingActive = false;
-
-              if (title._typingTimer) {
-                clearTimeout(title._typingTimer);
-                title._typingTimer = null;
-              }
-
+              if (title._typingTimer) { clearTimeout(title._typingTimer); title._typingTimer = null; }
               title.textContent = item.name;
             }
-
           }
-
         });
-
       }
-
-
-            // ------------------------------
-      // Bubble Perimeter Trace
-      // ------------------------------
 
       function triggerBubbleTrace(index, onComplete) {
-
-        const activeLabels = currentViewMode === "country"
-          ? countryLabels
-          : cityLabels;
-
+        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
         const bubble = activeLabels[index];
         if (!bubble) return;
-
         const content = bubble.querySelector(".bubbleContent");
         if (!content) return;
-
         content.classList.remove("trace");
-        void content.offsetWidth; // force reflow to restart animation
+        void content.offsetWidth;
         content.classList.add("trace");
-
-        setTimeout(() => {
-
-          if (onComplete) {
-            onComplete();
-          }
-
-        }, 500);
-
+        setTimeout(() => { if (onComplete) onComplete(); }, 500);
       }
-
-
-      
 
       function triggerBubbleTyping(index) {
-
-        const activeData = currentViewMode === "country"
-          ? countries
-          : cities;
-
-        const activeLabels = currentViewMode === "country"
-          ? countryLabels
-          : cityLabels;
-
+        const activeData   = currentViewMode === "country" ? countries : cities;
+        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
         const bubble = activeLabels[index];
         if (!bubble) return;
-
         const title = bubble.querySelector(".bubbleTitle");
         if (!title) return;
-
         const fullText = activeData[index].name;
-
         if (title.textContent === fullText) return;
         if (title._typingActive) return;
-
-        if (title._typingTimer) {
-          clearTimeout(title._typingTimer);
-          title._typingTimer = null;
-        }
-
-        title.textContent = "";
-        title._typingActive = true;
-        title.classList.add("typing");
-
+        if (title._typingTimer) { clearTimeout(title._typingTimer); title._typingTimer = null; }
+        title.textContent = ""; title._typingActive = true; title.classList.add("typing");
         let charIndex = 0;
         const typingSpeed = 22.5;
-
         function type() {
-
           if (charIndex < fullText.length) {
-
             title.textContent += fullText.charAt(charIndex);
             charIndex++;
-
             title._typingTimer = setTimeout(type, typingSpeed);
-
           } else {
-
-            title._typingActive = false;
-            title._typingTimer = null;
-            title.classList.remove("typing");
-
+            title._typingActive = false; title._typingTimer = null; title.classList.remove("typing");
           }
-
         }
-
         type();
-
       }
 
-
-
-      // ------------------------------
-      // Electric Bubble Timer
-      // ------------------------------
-
       function triggerElectricPulse() {
-
-        const activeLabels = currentViewMode === "country"
-          ? countryLabels
-          : cityLabels;
-
+        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
         activeLabels.forEach(label => {
-
           if (label.style.opacity === "1") {
-
             label.classList.remove("electric");
             void label.offsetWidth;
             label.classList.add("electric");
-
           }
-
         });
-
       }
 
+      setInterval(() => { triggerElectricPulse(); }, 3000);
 
-      setInterval(() => {
+      const raycaster = new THREE.Raycaster();
+      raycaster.params.Points.threshold = 0.02;
+      const mouse = new THREE.Vector2();
 
-        triggerElectricPulse();
-
-      }, 3000);
-
-
-
-
-      // Raycaster for node clicks
-
-      const raycaster=new THREE.Raycaster();
-      raycaster.params.Points.threshold=0.02;
-      const mouse=new THREE.Vector2();
-
-      window.addEventListener("click",event=>{
-
-        mouse.x=(event.clientX/window.innerWidth)*2-1;
-        mouse.y=-(event.clientY/window.innerHeight)*2+1;
-
-        raycaster.setFromCamera(mouse,camera);
-
-        const activePoints = currentViewMode === "country"
-          ? countryPoints
-          : cityPoints;
-
-        const activeData = currentViewMode === "country"
-          ? countries
-          : cities;
-
-        const intersects=raycaster.intersectObject(activePoints);
-
-        if(intersects.length>0){
-
-          const index=intersects[0].index;
-
+      window.addEventListener("click", event => {
+        mouse.x = (event.clientX/window.innerWidth)*2-1;
+        mouse.y = -(event.clientY/window.innerHeight)*2+1;
+        raycaster.setFromCamera(mouse, camera);
+        const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeData   = currentViewMode === "country" ? countries : cities;
+        const intersects   = raycaster.intersectObject(activePoints);
+        if (intersects.length > 0) {
+          const index = intersects[0].index;
           const nodePos = new THREE.Vector3();
-          nodePos.fromBufferAttribute(
-            activePoints.geometry.attributes.position,
-            index
-          );
+          nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
-
           if (isCityVisible(nodePos, camera)) {
-
-            lockAmbientRotation();    
-
-            selectedNodeIndex = index;
-            isFocused = true;
-
-            if (currentViewMode === "country") {
-
-              focusCountry(activeData[index]);
-              openCountryPanel(activeData[index]);
-
-            } else {
-
-              focusCity(activeData[index]);
-              openCityPanel(activeData[index]);
-
-            }
-
+            lockAmbientRotation();
+            selectedNodeIndex = index; isFocused = true;
+            if (currentViewMode === "country") { focusCountry(activeData[index]); openCountryPanel(activeData[index]); }
+            else { focusCity(activeData[index]); openCityPanel(activeData[index]); }
           }
-
         }
-
       });
 
-      
-      
-
-
-      /* ===============================
-         iOS TOUCH NODE SELECTION
-      =============================== */
-
       window.addEventListener("touchstart", (event) => {
-
         if (event.touches.length !== 1) return;
-
         const touch = event.touches[0];
-
         mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
-
         raycaster.setFromCamera(mouse, camera);
-
-        const activePoints = currentViewMode === "country"
-          ? countryPoints
-          : cityPoints;
-
-        const activeData = currentViewMode === "country"
-          ? countries
-          : cities;
-
-        const intersects = raycaster.intersectObject(activePoints);
-
+        const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeData   = currentViewMode === "country" ? countries : cities;
+        const intersects   = raycaster.intersectObject(activePoints);
         if (intersects.length > 0) {
-
           const index = intersects[0].index;
-
           const nodePos = new THREE.Vector3();
-          nodePos.fromBufferAttribute(
-            activePoints.geometry.attributes.position,
-            index
-          );
+          nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
-
           if (isCityVisible(nodePos, camera)) {
-            lockAmbientRotation();    
-
-            selectedNodeIndex = index;
-            isFocused = true;
-
-            if (currentViewMode === "country") {
-
-              focusCountry(activeData[index]);
-              openCountryPanel(activeData[index]);
-
-            } else {
-
-              focusCity(activeData[index]);
-              openCityPanel(activeData[index]);
-
-            }
-
+            lockAmbientRotation();
+            selectedNodeIndex = index; isFocused = true;
+            if (currentViewMode === "country") { focusCountry(activeData[index]); openCountryPanel(activeData[index]); }
+            else { focusCity(activeData[index]); openCityPanel(activeData[index]); }
           }
-
         }
-
       }, { passive: true });
 
-
-            // ------------------------------
-      // Leader Line Helpers
-      // ------------------------------
-
-      // ------------------------------
-      // Leader Line Helpers
-      // ------------------------------
-
       function updateHoverLine(x, y) {
-
         const line = document.getElementById("hoverLine");
         if (!line) return;
-
-        if (hoveredIndex === null) {
-
-          line.style.opacity = "0";
-          return;
-
-        }
-
-        const activeLabels = currentViewMode === "country"
-          ? countryLabels
-          : cityLabels;
-
+        if (hoveredIndex === null) { line.style.opacity = "0"; return; }
+        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
         const bubble = activeLabels[hoveredIndex];
-
-        if (!bubble) {
-
-          line.style.opacity = "0";
-          return;
-
-        }
-
-
+        if (!bubble) { line.style.opacity = "0"; return; }
         const rect = bubble.getBoundingClientRect();
-
-        const bubbleX = rect.left + rect.width / 2;
-        const bubbleY = rect.bottom;
-
-        line.setAttribute("x1", x);
-        line.setAttribute("y1", y);
-        line.setAttribute("x2", bubbleX);
-        line.setAttribute("y2", bubbleY);
-
+        line.setAttribute("x1", x); line.setAttribute("y1", y);
+        line.setAttribute("x2", rect.left + rect.width / 2);
+        line.setAttribute("y2", rect.bottom);
         line.style.opacity = "0.6";
       }
 
       function hideHoverLine() {
-
         const line = document.getElementById("hoverLine");
-        if (line) {
-          line.style.opacity = "0";
-        }
-
+        if (line) line.style.opacity = "0";
       }
 
- // WHAT: Resolve timezone from DB cities.timezone column
-      // WHY:  city.timezone is returned by /api/cities — use it directly,
-      //       fall back to UTC only if the DB value is null
-      function resolveTimezone(city) {
-        return city.timezone || "UTC";
-      }     
+      function resolveTimezone(city) { return city.timezone || "UTC"; }
 
-      function triggerPanelBorderAnimation() {
-        const path = document.getElementById("panelBorderPath");
-        const orb  = document.getElementById("panelBorderOrb");
-        if (!path || !orb) return;
-
-        // Reset both
-        path.classList.remove("draw", "wave");
-        orb.classList.remove("pulse");
-        void path.offsetWidth;
-
-        // Measure true perimeter length
-        const totalLength = path.getTotalLength();
-        path.style.strokeDasharray  = totalLength;
-        path.style.strokeDashoffset = totalLength;
-
-        // Step 1 — draw border left→top→right→bottom
-        path.classList.add("draw");
-
-        path.addEventListener("animationend", function onDrawEnd() {
-          path.removeEventListener("animationend", onDrawEnd);
-
-          // Step 2 — orb pulses at end point (bottom-left, where path closes)
-          const panel    = document.getElementById("infoPanel");
-          const panelRect = panel.getBoundingClientRect();
-          const pt       = path.getPointAtLength(totalLength);
-          const scaleX   = panelRect.width  / 100;
-          const scaleY   = panelRect.height / 100;
-
-          orb.style.left = `${pt.x * scaleX}px`;
-          orb.style.top  = `${pt.y * scaleY}px`;
-          orb.classList.add("pulse");
-
-          // Step 3 — after orb fades, wave retreats back along border
-          orb.addEventListener("animationend", function onOrbEnd() {
-            orb.removeEventListener("animationend", onOrbEnd);
-            path.classList.remove("draw");
-            void path.offsetWidth;
-            path.style.strokeDasharray  = "";
-            path.style.strokeDashoffset = "";
-            path.classList.add("wave");
-          }, { once: true });
-
-        }, { once: true });
-      }
-
-
-function openCityPanel(city) {
-
+      function openCityPanel(city) {
         const panel = document.getElementById("infoPanel");
-
-        const showCountry =
-          city.country &&
-          city.name.toLowerCase() !== city.country.toLowerCase();
-
-panel.innerHTML = `
-          <div class="panelHeader" style="
-            position:sticky;top:0;z-index:5;
-            background:rgba(0,0,0,0.95);
-            backdrop-filter:blur(16px);
-            padding-bottom:10px;flex-shrink:0;
-          ">
+        const showCountry = city.country && city.name.toLowerCase() !== city.country.toLowerCase();
+        panel.innerHTML = `
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
@@ -2862,29 +1796,14 @@ panel.innerHTML = `
               <div class="panelSearchBar" id="panelSearchBar">
                 <input class="panelSearchInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
                 <div class="panelSearchBtn" id="panelSearchBtn" title="Search articles">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-                       stroke-linecap="round" stroke-linejoin="round">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
                   </svg>
                 </div>
               </div>
-              <div id="timePill" style="
-                flex-shrink:0;
-                background:rgba(255,255,255,0.07);
-                border:1px solid rgba(255,255,255,0.14);
-                border-radius:20px;
-                padding:5px 13px;
-                font-size:13px;
-                font-weight:600;
-                font-variant-numeric:tabular-nums;
-                white-space:nowrap;
-                letter-spacing:0.03em;
-                color:rgba(255,255,255,0.88);
-              "></div>
+              <div id="timePill" style="flex-shrink:0;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:5px 13px;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:0.03em;color:rgba(255,255,255,0.88);"></div>
             </div>
           </div>
-
-          <!-- WHAT: Swipeable tab system — dots + horizontal slides -->
           <div class="panelTabsWrapper">
             <div class="panelDots" id="panelDots">
               <div class="panelDot active" data-index="0"></div>
@@ -2892,25 +1811,16 @@ panel.innerHTML = `
               <div class="panelDot" data-index="2"></div>
             </div>
             <div class="panelSlidesTrack" id="panelSlidesTrack">
-
-              <!-- Slide 0: News feed -->
-              <div class="panelSlide" id="articlesViewport">
-                <div class="articlesGrid" id="articlesTrack"></div>
-              </div>
-
-              <!-- Slide 1: placeholder -->
+              <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
               <div class="panelSlide">
                 <div class="panelSlidePlaceholder">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
                     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
                   </svg>
                   <span>Overview</span>
                 </div>
               </div>
-
-              <!-- Slide 2: placeholder -->
               <div class="panelSlide">
                 <div class="panelSlidePlaceholder">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -2919,39 +1829,15 @@ panel.innerHTML = `
                   <span>Statistics</span>
                 </div>
               </div>
-
             </div>
-          </div>
-        `;
-
-
+          </div>`;
 
         panel.classList.add("active");
-        triggerPanelBorderAnimation();
-
-        setTimeout(() => {
-          targetZoom = Math.max(2.4, camera.position.z - 0.6);
-        }, 250);
-
-        setTimeout(() => {
-          panel.querySelectorAll(".panelSlide").forEach(slide => {
-            slide.classList.remove("scrollbar-pulse");
-            void slide.offsetWidth;
-            slide.classList.add("scrollbar-pulse");
-            slide.addEventListener("animationend", () => {
-              slide.classList.remove("scrollbar-pulse");
-            }, { once: true });
-          });
-        }, 420);
-
-
-        // =====================================
-        // Swipeable tabs wiring
-        // =====================================
+        setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
 
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
-        const dots        = panel.querySelectorAll(".panelDot");
-        let currentSlide  = 0;
+        const dots = panel.querySelectorAll(".panelDot");
+        let currentSlide = 0;
         const totalSlides = dots.length;
 
         function goToSlide(index) {
@@ -2960,89 +1846,38 @@ panel.innerHTML = `
           dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
         }
 
-        dots.forEach(dot => {
-          dot.addEventListener("click", (e) => {
-            e.stopPropagation();
-            goToSlide(parseInt(dot.dataset.index));
-          });
-        });
+        dots.forEach(dot => { dot.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(parseInt(dot.dataset.index)); }); });
 
         panel.addEventListener("wheel", (e) => {
-          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
-            e.stopPropagation();
-            goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1));
-          }
+          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) { e.stopPropagation(); goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1)); }
         }, { passive: true });
 
-        let slideSwipeStartX = 0;
-        let slideSwipeStartY = 0;
-        let slideSwipeLocked = null;
-
-        panel.addEventListener("touchstart", (e) => {
-          slideSwipeStartX = e.touches[0].clientX;
-          slideSwipeStartY = e.touches[0].clientY;
-          slideSwipeLocked = null;
-        }, { passive: true });
-
-        panel.addEventListener("touchend", (e) => {
-          if (slideSwipeLocked !== "h") return;
-          const dx = e.changedTouches[0].clientX - slideSwipeStartX;
-          if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1));
-        }, { passive: true });
-
-        panel.addEventListener("touchmove", (e) => {
-          if (slideSwipeLocked === "v") return;
-          const dx = e.touches[0].clientX - slideSwipeStartX;
-          const dy = e.touches[0].clientY - slideSwipeStartY;
-          if (slideSwipeLocked === null) {
-            slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-          }
-        }, { passive: true });
-
- 
-
-        // =====================================
-        // Panel inline search wiring
-        // =====================================
+        let slideSwipeStartX = 0, slideSwipeStartY = 0, slideSwipeLocked = null;
+        panel.addEventListener("touchstart", (e) => { slideSwipeStartX = e.touches[0].clientX; slideSwipeStartY = e.touches[0].clientY; slideSwipeLocked = null; }, { passive: true });
+        panel.addEventListener("touchend",   (e) => { if (slideSwipeLocked !== "h") return; const dx = e.changedTouches[0].clientX - slideSwipeStartX; if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1)); }, { passive: true });
+        panel.addEventListener("touchmove",  (e) => { if (slideSwipeLocked === "v") return; const dx = e.touches[0].clientX - slideSwipeStartX; const dy = e.touches[0].clientY - slideSwipeStartY; if (slideSwipeLocked === null) slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v"; }, { passive: true });
 
         const panelSearchBtn   = panel.querySelector("#panelSearchBtn");
         const panelSearchInput = panel.querySelector("#panelSearchInput");
-        let panelSearchOpen = false;
-        let filterQuery = "";
+        let panelSearchOpen = false, filterQuery = "";
 
         panelSearchBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          panelSearchOpen = !panelSearchOpen;
+          e.stopPropagation(); panelSearchOpen = !panelSearchOpen;
           panelSearchInput.classList.toggle("expanded", panelSearchOpen);
           panelSearchBtn.classList.toggle("active", panelSearchOpen);
           if (panelSearchOpen) setTimeout(() => panelSearchInput.focus(), 40);
           else { panelSearchInput.value = ""; filterQuery = ""; renderCards(); }
         });
-
-        panelSearchInput.addEventListener("input", () => {
-          filterQuery = panelSearchInput.value.trim().toLowerCase();
-          renderCards();
-        });
-
-        // =====================================
-        // Card Rendering — grid with image + title + summary
-        // =====================================
+        panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
 
         let allArticles = [];
-        const track = panel.querySelector("#articlesTrack");
+        const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
 
         function articleCardHTML(article) {
           const imageField = article.image_url
             ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
-            : `<div class="articleCardImagePlaceholder">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                  <path d="M21 15l-5-5L5 21"/>
-                </svg>
-               </div>`;
-
+            : `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
           return `
             <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
               ${imageField}
@@ -3052,164 +1887,63 @@ panel.innerHTML = `
                 <div class="articleCardSummary">${article.summary || ""}</div>
                 <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
               </div>
-            </a>
-          `;
+            </a>`;
         }
 
         function skeletonCards(n) {
-          return Array.from({length: n}, () => `
-            <div class="skeletonCard">
-              <div class="skImg"></div>
-              <div class="skLine" style="width:40%;margin-top:12px;"></div>
-              <div class="skLine"></div>
-              <div class="skLine short"></div>
-            </div>
-          `).join("");
+          return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
         }
 
         function renderCards() {
-          const filtered = filterQuery
-            ? allArticles.filter(a =>
-                (a.title || "").toLowerCase().includes(filterQuery) ||
-                (a.summary || "").toLowerCase().includes(filterQuery) ||
-                (a.source_name || "").toLowerCase().includes(filterQuery)
-              )
-            : allArticles;
-
-          if (!filtered.length && !loading) {
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">
-              ${filterQuery ? "No matching articles." : "No recent articles."}
-            </div>`;
-            return;
-          }
+          const filtered = filterQuery ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery)) : allArticles;
+          if (!filtered.length && !loading) { track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`; return; }
           track.innerHTML = filtered.map(articleCardHTML).join("");
         }
 
-        // =====================================
-        // Infinite Scroll Pagination
-        // =====================================
-
-        let offset = 0;
-        const limit = 12;
-        let loading = false;
-        let hasMore = true;
-
-        // Show skeletons immediately
+        let offset = 0, limit = 12, loading = false, hasMore = true;
         track.innerHTML = skeletonCards(6);
 
         function loadMore() {
           if (loading || !hasMore) return;
           loading = true;
-
           fetch(`https://earth-wjr6.onrender.com/api/news/city/${city.id}?limit=${limit}&offset=${offset}`)
             .then(res => res.json())
             .then(articles => {
-              if (!articles.length && offset === 0) {
-                hasMore = false;
-                loading = false;
-                renderCards();
-                return;
-              }
+              if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
               if (articles.length < limit) hasMore = false;
-              allArticles = [...allArticles, ...articles];
-              offset += limit;
-              loading = false;
-              renderCards();
+              allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
             })
-            .catch(err => {
-              console.error("City article load error:", err);
-              loading = false;
-              renderCards();
-            });
+            .catch(err => { console.error("City article load error:", err); loading = false; renderCards(); });
         }
-
         loadMore();
 
-        // =====================================
-        // Infinite scroll detection
-        // =====================================
+        viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
+        viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
 
-        viewport.addEventListener("scroll", () => {
-          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) {
-            loadMore();
-          }
-        });
+        let vpTouchStartY = 0, vpScrollStart = 0;
+        viewport.addEventListener("touchstart", (e) => { vpTouchStartY = e.touches[0].clientY; vpScrollStart = viewport.scrollTop; }, { passive: true });
+        viewport.addEventListener("touchmove",  (e) => { e.stopPropagation(); viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY); }, { passive: true });
 
-        // =====================================
-        // Trackpad two-finger scroll — pass through to viewport
-        // =====================================
-
-        viewport.addEventListener("wheel", (e) => {
-          e.stopPropagation();
-        }, { passive: true });
-
-        // =====================================
-        // iOS touch drag scroll on viewport
-        // =====================================
-
-        let vpTouchStartY = 0;
-        let vpScrollStart = 0;
-
-        viewport.addEventListener("touchstart", (e) => {
-          vpTouchStartY  = e.touches[0].clientY;
-          vpScrollStart  = viewport.scrollTop;
-        }, { passive: true });
-
-        viewport.addEventListener("touchmove", (e) => {
-          e.stopPropagation();
-          const delta = vpTouchStartY - e.touches[0].clientY;
-          viewport.scrollTop = vpScrollStart + delta;
-        }, { passive: true });
-
-        // =====================================
-        // Local Time
-        // =====================================
-
-// WHAT: Target timePill instead of localTime/localTZ — UTC removed
-        // WHY:  New pill element, no timezone subtitle needed
-        const timeElement = document.getElementById("timePill");
+        const timeElement  = document.getElementById("timePill");
         const cityTimezone = resolveTimezone(city);
-
         function updateLocalTime() {
-          timeElement.textContent = new Date().toLocaleTimeString("en-US", {
-            timeZone: cityTimezone,
-            hour:     "2-digit",
-            minute:   "2-digit",
-            second:   "2-digit"
-          });
+          timeElement.textContent = new Date().toLocaleTimeString("en-US", { timeZone: cityTimezone, hour:"2-digit", minute:"2-digit", second:"2-digit" });
         }
-        
-
         updateLocalTime();
         if (timeInterval) clearInterval(timeInterval);
         timeInterval = setInterval(updateLocalTime, 1000);
 
-        // =====================================
-        // Close Button
-        // =====================================
-
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
-          panel.classList.remove("active");
-          clearInterval(timeInterval);
-          timeInterval = null;
-          isFocused = false;
-          selectedNodeIndex = null;
-          scheduleAmbientResume();
+          panel.classList.remove("active"); clearInterval(timeInterval); timeInterval = null;
+          isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
-
       }
-function openCountryPanel(country) {
 
+      function openCountryPanel(country) {
         const panel = document.getElementById("infoPanel");
-
-panel.innerHTML = `
-          <div class="panelHeader" style="
-            position:sticky;top:0;z-index:5;
-            background:rgba(0,0,0,0.95);
-            backdrop-filter:blur(16px);
-            padding-bottom:10px;flex-shrink:0;
-          ">
+        panel.innerHTML = `
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
@@ -3221,15 +1955,13 @@ panel.innerHTML = `
               <div class="panelSearchBar" id="panelSearchBar">
                 <input class="panelSearchInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
                 <div class="panelSearchBtn" id="panelSearchBtn" title="Search articles">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-                       stroke-linecap="round" stroke-linejoin="round">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
                   </svg>
                 </div>
               </div>
             </div>
           </div>
-
           <div class="panelTabsWrapper">
             <div class="panelDots" id="panelDots">
               <div class="panelDot active" data-index="0"></div>
@@ -3237,57 +1969,33 @@ panel.innerHTML = `
               <div class="panelDot" data-index="2"></div>
             </div>
             <div class="panelSlidesTrack" id="panelSlidesTrack">
-
-              <!-- Slide 0: News feed -->
-              <div class="panelSlide" id="articlesViewport">
-                <div class="articlesGrid" id="articlesTrack"></div>
-              </div>
-
-              <!-- Slide 1: placeholder -->
+              <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
               <div class="panelSlide">
                 <div class="panelSlidePlaceholder">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="2" y1="12" x2="22" y2="12"/>
+                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
                     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
                   </svg>
                   <span>Overview</span>
                 </div>
               </div>
-
-              <!-- Slide 2: placeholder -->
               <div class="panelSlide">
                 <div class="panelSlidePlaceholder">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                   </svg>
                   <span>Statistics</span>
+                </div>
               </div>
             </div>
-          </div>
-        `;
-panel.classList.add("active");
-        setTimeout(() => {
-          targetZoom = Math.max(2.4, camera.position.z - 0.6);
-        }, 250);
+          </div>`;
 
-        setTimeout(() => {
-          panel.querySelectorAll(".panelSlide").forEach(slide => {
-            slide.classList.remove("scrollbar-pulse");
-            void slide.offsetWidth;
-            slide.classList.add("scrollbar-pulse");
-            slide.addEventListener("animationend", () => {
-              slide.classList.remove("scrollbar-pulse");
-            }, { once: true });
-          });
-        }, 420);
+        panel.classList.add("active");
+        setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
 
-        // =====================================
-        // Swipeable tabs wiring
-        // =====================================
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
-        const dots        = panel.querySelectorAll(".panelDot");
-        let currentSlide  = 0;
+        const dots = panel.querySelectorAll(".panelDot");
+        let currentSlide = 0;
         const totalSlides = dots.length;
 
         function goToSlide(index) {
@@ -3296,84 +2004,35 @@ panel.classList.add("active");
           dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
         }
 
-        dots.forEach(dot => {
-          dot.addEventListener("click", (e) => {
-            e.stopPropagation();
-            goToSlide(parseInt(dot.dataset.index));
-          });
-        });
+        dots.forEach(dot => { dot.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(parseInt(dot.dataset.index)); }); });
+        panel.addEventListener("wheel", (e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) { e.stopPropagation(); goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1)); } }, { passive: true });
 
-        panel.addEventListener("wheel", (e) => {
-          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
-            e.stopPropagation();
-            goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1));
-          }
-        }, { passive: true });
+        let slideSwipeStartX = 0, slideSwipeStartY = 0, slideSwipeLocked = null;
+        panel.addEventListener("touchstart", (e) => { slideSwipeStartX = e.touches[0].clientX; slideSwipeStartY = e.touches[0].clientY; slideSwipeLocked = null; }, { passive: true });
+        panel.addEventListener("touchend",   (e) => { if (slideSwipeLocked !== "h") return; const dx = e.changedTouches[0].clientX - slideSwipeStartX; if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1)); }, { passive: true });
+        panel.addEventListener("touchmove",  (e) => { if (slideSwipeLocked === "v") return; const dx = e.touches[0].clientX - slideSwipeStartX; const dy = e.touches[0].clientY - slideSwipeStartY; if (slideSwipeLocked === null) slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v"; }, { passive: true });
 
-        let slideSwipeStartX = 0;
-        let slideSwipeStartY = 0;
-        let slideSwipeLocked = null;
-
-        panel.addEventListener("touchstart", (e) => {
-          slideSwipeStartX = e.touches[0].clientX;
-          slideSwipeStartY = e.touches[0].clientY;
-          slideSwipeLocked = null;
-        }, { passive: true });
-
-        panel.addEventListener("touchend", (e) => {
-          if (slideSwipeLocked !== "h") return;
-          const dx = e.changedTouches[0].clientX - slideSwipeStartX;
-          if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1));
-        }, { passive: true });
-
-        panel.addEventListener("touchmove", (e) => {
-          if (slideSwipeLocked === "v") return;
-          const dx = e.touches[0].clientX - slideSwipeStartX;
-          const dy = e.touches[0].clientY - slideSwipeStartY;
-          if (slideSwipeLocked === null) {
-            slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-          }
-        }, { passive: true });
-
-        // =====================================
-        // Panel inline search wiring
-        // =====================================
         const panelSearchBtn   = panel.querySelector("#panelSearchBtn");
         const panelSearchInput = panel.querySelector("#panelSearchInput");
-        let panelSearchOpen = false;
-        let filterQuery = "";
+        let panelSearchOpen = false, filterQuery = "";
 
         panelSearchBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          panelSearchOpen = !panelSearchOpen;
+          e.stopPropagation(); panelSearchOpen = !panelSearchOpen;
           panelSearchInput.classList.toggle("expanded", panelSearchOpen);
           panelSearchBtn.classList.toggle("active", panelSearchOpen);
           if (panelSearchOpen) setTimeout(() => panelSearchInput.focus(), 40);
           else { panelSearchInput.value = ""; filterQuery = ""; renderCards(); }
         });
+        panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
 
-        panelSearchInput.addEventListener("input", () => {
-          filterQuery = panelSearchInput.value.trim().toLowerCase();
-          renderCards();
-        });
-
-        // =====================================
-        // Card Rendering
-        // =====================================
         let allArticles = [];
-        const track   = panel.querySelector("#articlesTrack");
+        const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
 
         function articleCardHTML(article) {
           const imageField = article.image_url
             ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
-            : `<div class="articleCardImagePlaceholder">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                  <path d="M21 15l-5-5L5 21"/>
-                </svg>
-               </div>`;
+            : `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
           return `
             <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
               ${imageField}
@@ -3383,42 +2042,20 @@ panel.classList.add("active");
                 <div class="articleCardSummary">${article.summary || ""}</div>
                 <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
               </div>
-            </a>
-          `;
+            </a>`;
         }
 
-function skeletonCards(n) {
-          return Array.from({length: n}, () => `
-            <div class="skeletonCard">
-              <div class="skImg"></div>
-              <div class="skLine" style="width:40%;margin-top:12px;"></div>
-              <div class="skLine"></div>
-              <div class="skLine short"></div>
-            </div>
-          `).join("");
+        function skeletonCards(n) {
+          return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
         }
 
         function renderCards() {
-          const filtered = filterQuery
-            ? allArticles.filter(a =>
-                (a.title || "").toLowerCase().includes(filterQuery) ||
-                (a.summary || "").toLowerCase().includes(filterQuery) ||
-                (a.source_name || "").toLowerCase().includes(filterQuery)
-              )
-            : allArticles;
-          if (!filtered.length && !loading) {
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">
-              ${filterQuery ? "No matching articles." : "No recent articles."}
-            </div>`;
-            return;
-          }
+          const filtered = filterQuery ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery)) : allArticles;
+          if (!filtered.length && !loading) { track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`; return; }
           track.innerHTML = filtered.map(articleCardHTML).join("");
         }
 
-        let offset = 0;
-        const limit = 12;
-        let loading = false;
-        let hasMore = true;
+        let offset = 0, limit = 12, loading = false, hasMore = true;
         track.innerHTML = skeletonCards(6);
 
         function loadMore() {
@@ -3427,886 +2064,343 @@ function skeletonCards(n) {
           fetch(`https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}`)
             .then(res => res.json())
             .then(articles => {
-              if (!articles.length && offset === 0) {
-                hasMore = false; loading = false; renderCards(); return;
-              }
+              if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
               if (articles.length < limit) hasMore = false;
-              allArticles = [...allArticles, ...articles];
-              offset += limit; loading = false; renderCards();
+              allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
             })
             .catch(err => { console.error("Country article load error:", err); loading = false; renderCards(); });
         }
         loadMore();
 
-        viewport.addEventListener("scroll", () => {
-          if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore();
-        });
+        viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
         viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
 
-        let vpTouchStartY = 0;
-        let vpScrollStart = 0;
-        viewport.addEventListener("touchstart", (e) => {
-          vpTouchStartY = e.touches[0].clientY;
-          vpScrollStart = viewport.scrollTop;
-        }, { passive: true });
-        viewport.addEventListener("touchmove", (e) => {
-          e.stopPropagation();
-          viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY);
-        }, { passive: true });
+        let vpTouchStartY = 0, vpScrollStart = 0;
+        viewport.addEventListener("touchstart", (e) => { vpTouchStartY = e.touches[0].clientY; vpScrollStart = viewport.scrollTop; }, { passive: true });
+        viewport.addEventListener("touchmove",  (e) => { e.stopPropagation(); viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY); }, { passive: true });
 
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
-          isFocused = false;
-          selectedNodeIndex = null;
-          scheduleAmbientResume();
+          isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
       }
 
       window.addEventListener("touchstart", (e) => {
-
-        if (e.touches.length === 1) {
-
-          touchDragging = true;
-
-          touchPrevX = e.touches[0].clientX;
-          touchPrevY = e.touches[0].clientY;
-
-          selectedNodeIndex = null;
-          isFocused = false;
-
-        }
-
+        if (e.touches.length === 1) { touchDragging = true; touchPrevX = e.touches[0].clientX; touchPrevY = e.touches[0].clientY; selectedNodeIndex = null; isFocused = false; }
       }, { passive: false });
-
-
 
       window.addEventListener("touchmove", (e) => {
-
         if (!touchDragging || e.touches.length !== 1) return;
-
         e.preventDefault();
-
-        const deltaX =
-          (e.touches[0].clientX - touchPrevX) * 0.005;
-
-        const deltaY =
-          (e.touches[0].clientY - touchPrevY) * 0.005;
-
-        applyYaw(deltaX);
-        applyTilt(-deltaY);
-
-        touchPrevX = e.touches[0].clientX;
-        touchPrevY = e.touches[0].clientY;
-
+        const deltaX = (e.touches[0].clientX - touchPrevX) * 0.005;
+        const deltaY = (e.touches[0].clientY - touchPrevY) * 0.005;
+        applyYaw(deltaX); applyTilt(-deltaY);
+        touchPrevX = e.touches[0].clientX; touchPrevY = e.touches[0].clientY;
       }, { passive: false });
 
-
-
-      window.addEventListener("touchend", () => {
-
-        touchDragging = false;
-
-      });
-
-
-      /* ===============================
-         Zoom controls: wheel, trackpad pinch, iOS pinch
-      =============================== */
+      window.addEventListener("touchend", () => { touchDragging = false; });
 
       window.addEventListener("wheel", e => {
-
         pauseAmbientRotation();
-
-        const panel =
-          document.getElementById("infoPanel");
-
-        // If panel is open and mouse is over it → allow scroll
-        if (
-          panel.classList.contains("active") &&
-          panel.contains(e.target)
-        ) {
-          return; // allow normal scroll
-        }
-
+        const panel = document.getElementById("infoPanel");
+        if (panel.classList.contains("active") && panel.contains(e.target)) return;
         e.preventDefault();
-
-        const isPinchZoom = e.ctrlKey;
-
-        if (isPinchZoom) {
-
-          zoomVelocity += e.deltaY * 0.0006;
-          return;
-
-        }
-
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0006; return; }
         const rotateSpeed = 0.003;
-
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
-
       }, { passive: false });
-
-
-
 
       let initialPinchDistance = null;
-
       function getDistance(touches) {
-        return Math.sqrt(
-          (touches[0].clientX - touches[1].clientX) ** 2 +
-          (touches[0].clientY - touches[1].clientY) ** 2
-        );
+        return Math.sqrt((touches[0].clientX-touches[1].clientX)**2 + (touches[0].clientY-touches[1].clientY)**2);
       }
 
-
-      window.addEventListener("touchstart", e => {
-        if (e.touches.length === 2) {
-          initialPinchDistance = getDistance(e.touches);
-        }
-      }, { passive: false });
-
-      window.addEventListener("touchmove", e => {
+      window.addEventListener("touchstart", e => { if (e.touches.length === 2) initialPinchDistance = getDistance(e.touches); }, { passive: false });
+      window.addEventListener("touchmove",  e => {
         if (e.touches.length === 2 && initialPinchDistance !== null) {
-
           e.preventDefault();
-
           const currentDistance = getDistance(e.touches);
-          const delta = initialPinchDistance - currentDistance;
-
-          // Add inertia instead of direct zoom
-          zoomVelocity += delta * 0.0008;
-
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.0008;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
+      window.addEventListener("touchend", e => { if (e.touches.length < 2) initialPinchDistance = null; });
 
-      window.addEventListener("touchend", e => {
-        if (e.touches.length < 2) {
-          initialPinchDistance = null;
+      const tickGroup = document.querySelector(".compass-ticks");
+      if (tickGroup) {
+        for (let i = 0; i < 16; i++) {
+          const angle = (i / 16) * Math.PI * 2;
+          const innerRadius = i % 4 === 0 ? 30 : 36;
+          const outerRadius = 44;
+          const x1 = 50 + innerRadius * Math.cos(angle);
+          const y1 = 50 + innerRadius * Math.sin(angle);
+          const x2 = 50 + outerRadius * Math.cos(angle);
+          const y2 = 50 + outerRadius * Math.sin(angle);
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", x1); line.setAttribute("y1", y1);
+          line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+          line.setAttribute("class", i % 4 === 0 ? "compass-tick major" : "compass-tick");
+          tickGroup.appendChild(line);
         }
-      });
-
-      /* ===============================
-   Generate Compass Ticks (16 divisions)
-=============================== */
-
-const tickGroup = document.querySelector(".compass-ticks");
-
-if (tickGroup) {
-
-  for (let i = 0; i < 16; i++) {
-
-    const angle = (i / 16) * Math.PI * 2;
-
-    const innerRadius = i % 4 === 0 ? 30 : 36; // major every 4
-    const outerRadius = 44;
-
-    const x1 = 50 + innerRadius * Math.cos(angle);
-    const y1 = 50 + innerRadius * Math.sin(angle);
-
-    const x2 = 50 + outerRadius * Math.cos(angle);
-    const y2 = 50 + outerRadius * Math.sin(angle);
-
-    const line = document.createElementNS(
-      "http://www.w3.org/2000/svg",
-      "line"
-    );
-
-    line.setAttribute("x1", x1);
-    line.setAttribute("y1", y1);
-    line.setAttribute("x2", x2);
-    line.setAttribute("y2", y2);
-
-    line.setAttribute(
-      "class",
-      i % 4 === 0 ? "compass-tick major" : "compass-tick"
-    );
-
-    tickGroup.appendChild(line);
-  }
-
-}
-
-
-
-      /* ===============================
-         SEARCH MODULE
-      =============================== */
+      }
 
       const searchInput = document.getElementById("citySearch");
       const resultsContainer = document.getElementById("searchResults");
 
       searchInput.addEventListener("input", () => {
-
         const query = searchInput.value.trim().toLowerCase();
-
-        if (query.length < 2) {
-          resultsContainer.style.display = "none";
-          return;
-        }
-
-        const matches = cities
-          .filter(city => city.name.toLowerCase().startsWith(query))
-          .slice(0, 5);
-
+        if (query.length < 2) { resultsContainer.style.display = "none"; return; }
+        const matches = cities.filter(city => city.name.toLowerCase().startsWith(query)).slice(0, 5);
         resultsContainer.innerHTML = "";
-
         matches.forEach(city => {
-
           const div = document.createElement("div");
           div.className = "searchItem";
-          div.textContent = (city.country && city.name !== city.country)
-            ? `${city.name}, ${city.country}`
-            : city.name;
-
-
-          div.addEventListener("click", () => {
-            
-
-            focusCity(city);
-            resultsContainer.style.display = "none";
-            searchInput.value = city.name;
-
-          });
-
+          div.textContent = (city.country && city.name !== city.country) ? `${city.name}, ${city.country}` : city.name;
+          div.addEventListener("click", () => { focusCity(city); resultsContainer.style.display = "none"; searchInput.value = city.name; });
           resultsContainer.appendChild(div);
         });
-
         resultsContainer.style.display = matches.length ? "block" : "none";
       });
 
-// Close results if clicking outside the search wrapper
-      window.addEventListener("click", (e) => {
-        if (!e.target.closest("#searchWrapper")) {
-          resultsContainer.style.display = "none";
-        }
-      });
+      window.addEventListener("click", (e) => { if (!e.target.closest("#searchWrapper")) resultsContainer.style.display = "none"; });
 
-
-      /* ===============================
-         FOCUS CITY ROTATION
-      =============================== */
-
-
-      // FIX #2: Compute the globeQuat that brings (lat,lon) to face the camera.
       function computeFocusQuat(lat, lon) {
-
-        // Convert lat/lon to 3D unit vector
         const phi   = (90 - lat) * (Math.PI / 180);
         const theta = (lon + 180) * (Math.PI / 180);
-
         const x = -Math.sin(phi) * Math.cos(theta);
         const z =  Math.sin(phi) * Math.sin(theta);
         const y =  Math.cos(phi);
-
         const cityVector = new THREE.Vector3(x, y, z).normalize();
-
-
-        // Target direction (camera looks down -Z,
-        // so we rotate city to face +Z)
         const forward = new THREE.Vector3(0, 0, 1);
-
-
-        // First rotation: bring city to front
-        const toFront = new THREE.Quaternion()
-          .setFromUnitVectors(cityVector, forward);
-
-
-        // Compute where north pole ends up
-        const northPole = new THREE.Vector3(0, 1, 0)
-          .applyQuaternion(toFront);
-
-
-        // Project north onto screen plane (remove Z)
-        const projectedNorth = new THREE.Vector3(
-          northPole.x,
-          northPole.y,
-          0
-        ).normalize();
-
-
-        // Desired upright direction
+        const toFront = new THREE.Quaternion().setFromUnitVectors(cityVector, forward);
+        const northPole = new THREE.Vector3(0, 1, 0).applyQuaternion(toFront);
+        const projectedNorth = new THREE.Vector3(northPole.x, northPole.y, 0).normalize();
         const worldUp = new THREE.Vector3(0, 1, 0);
-
-
-        // Second rotation: remove roll so north is upright
-        const rollFix = new THREE.Quaternion()
-          .setFromUnitVectors(projectedNorth, worldUp);
-
-
-        // Final upright quaternion
-        const finalQuat = rollFix.multiply(toFront);
-
-
-        return finalQuat;
-
+        const rollFix = new THREE.Quaternion().setFromUnitVectors(projectedNorth, worldUp);
+        return rollFix.multiply(toFront);
       }
-
-
 
       function startFocus(lat, lon) {
         focusTargetQuat = computeFocusQuat(lat, lon);
-        isFocused       = true;
-        yawVelocity     = 0;
-        tiltVelocity    = 0;
+        isFocused = true; yawVelocity = 0; tiltVelocity = 0;
       }
 
-
       function focusCity(city) {
-
         const index = cities.findIndex(c => c.name === city.name);
         selectedNodeIndex = index;
-
-        // FIX #2: delegate rotation to startFocus
         startFocus(city.lat, city.lon);
-
-        // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
-
-        // ===============================
-        // Ring Burst Placement
-        // ===============================
-
         const phi = (90 - city.lat) * (Math.PI / 180);
         const theta = (city.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
-
         const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
         const ringZ =  (radius + ringAltitude) * Math.sin(phi) * Math.sin(theta);
         const ringY =  (radius + ringAltitude) * Math.cos(phi);
-
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
-
-        ringStates.forEach((state, i) => {
-          state.progress = 0;
-          state.delay = i * ringBurstDelay;
-          state.active = true;
-
-          ringMeshes[i].scale.set(1, 1, 1);
-          ringMeshes[i].material.opacity = 0;
-        });
-
+        ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
       }
 
       function focusCountry(country) {
-
-        const index = countries.findIndex(
-          c => c.name === country.name
-        );
-
+        const index = countries.findIndex(c => c.name === country.name);
         selectedNodeIndex = index;
-
-        // FIX #2: delegate rotation to startFocus
         startFocus(country.lat, country.lon);
-
-        // Softer contextual zoom
         targetZoom = Math.max(2.4, camera.position.z - 0.6);
-
-        // ===============================
-        // Ring Burst Placement
-        // ===============================
-
         const phi = (90 - country.lat) * (Math.PI / 180);
         const theta = (country.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
-
         const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
         const ringZ =  (radius + ringAltitude) * Math.sin(phi) * Math.sin(theta);
         const ringY =  (radius + ringAltitude) * Math.cos(phi);
-
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
-
-        ringStates.forEach((state, i) => {
-
-          state.progress = 0;
-          state.delay = i * ringBurstDelay;
-          state.active = true;
-
-          ringMeshes[i].scale.set(1, 1, 1);
-          ringMeshes[i].material.opacity = 0;
-
-        });
-
+        ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
       }
 
       let targetCityOpacity = 0.15;
       let targetCountryOpacity = 1.0;
 
-      // ===============================
-      // Drag Scroll for Info Panel
-      // ===============================
+      const infoPanel = document.getElementById("infoPanel");
+      let panelScrolling = false, panelStartY, panelScrollStart;
 
-      const infoPanel =
-        document.getElementById("infoPanel");
-
-      let panelScrolling = false;
-      let panelStartY;
-      let panelScrollStart;
-
-      infoPanel.addEventListener("mousedown", (e) => {
-
-        panelScrolling = true;
-        panelStartY = e.clientY;
-        panelScrollStart = infoPanel.scrollTop;
-
-        infoPanel.style.cursor = "grabbing";
-
-      });
-
-      window.addEventListener("mousemove", (e) => {
-
-        if (!panelScrolling) return;
-
-        const delta =
-          e.clientY - panelStartY;
-
-        infoPanel.scrollTop =
-          panelScrollStart - delta;
-
-      });
-
-      window.addEventListener("mouseup", () => {
-
-        panelScrolling = false;
-        infoPanel.style.cursor = "grab";
-
-      });
-
+      infoPanel.addEventListener("mousedown", (e) => { panelScrolling = true; panelStartY = e.clientY; panelScrollStart = infoPanel.scrollTop; infoPanel.style.cursor = "grabbing"; });
+      window.addEventListener("mousemove", (e) => { if (!panelScrolling) return; infoPanel.scrollTop = panelScrollStart - (e.clientY - panelStartY); });
+      window.addEventListener("mouseup", () => { panelScrolling = false; infoPanel.style.cursor = "grab"; });
       infoPanel.style.cursor = "grab";
 
-
-
-
-      // Animation loop
-      function animate(){
+      function animate() {
         requestAnimationFrame(animate);
 
-
-
-
-// --------------------------------
-        // Trackpad Rotation Inertia — FIX #3
-        // --------------------------------
-        if (Math.abs(yawVelocity) > 0.00001 ||
-            Math.abs(tiltVelocity) > 0.00001) {
-          applyYaw(-yawVelocity);
-          applyTilt(tiltVelocity);
-          yawVelocity  *= 0.90;
-          tiltVelocity *= 0.90;
+        if (Math.abs(yawVelocity) > 0.00001 || Math.abs(tiltVelocity) > 0.00001) {
+          applyYaw(-yawVelocity); applyTilt(tiltVelocity);
+          yawVelocity *= 0.90; tiltVelocity *= 0.90;
         }
 
-        // --------------------------------
-        // Ambient Equatorial Rotation — FIX #3
-        // --------------------------------
-        if (!dragging && !isFocused && !ambientPaused && ambientEnabled) {
-          applyYaw(ambientSpeed);
-        }
+        if (!dragging && !isFocused && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
 
-
-        // --------------------------------
-        // Zoom Physics
-        // --------------------------------
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
         targetZoom = Math.max(1.5, Math.min(5, targetZoom));
-
         const zoomDelta = targetZoom - camera.position.z;
-
-        const easingStrength = 0.05;
-        const dynamicEasing =
-          easingStrength *
-          Math.min(Math.abs(zoomDelta) * 2, 1);
-
-        camera.position.z += zoomDelta * dynamicEasing;
-
-
-
-// --------------------------------
-        // Globe Rotation — FIX #2: slerp toward focus target
-        // --------------------------------
+        camera.position.z += zoomDelta * (0.05 * Math.min(Math.abs(zoomDelta) * 2, 1));
 
         if (isFocused && focusTargetQuat) {
-
           globeQuat.slerp(focusTargetQuat, 0.07);
-
-          if (globeQuat.angleTo(focusTargetQuat) < 0.0005) {
-            globeQuat.copy(focusTargetQuat);
-            focusTargetQuat = null;
-          }
-
+          if (globeQuat.angleTo(focusTargetQuat) < 0.0005) { globeQuat.copy(focusTargetQuat); focusTargetQuat = null; }
         }
 
-// --------------------------------
-        // Compass North Snap — slow manual slerp
-        // --------------------------------
         if (compassSnapActive && compassSnapTarget) {
-          globeQuat.slerp(compassSnapTarget, 0.06);   // 0.015 = slow drift
+          globeQuat.slerp(compassSnapTarget, 0.06);
           if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
-// WHAT: Short 1.5s resume delay after snap completes
-            // WHY:  Matches the feel of node selection — gives the user
-            //       a brief moment of stillness before ambient resumes
             globeQuat.copy(compassSnapTarget);
-            compassSnapActive = false;
-            compassSnapTarget = null;
-            isFocused = false;
-            focusTargetQuat = null;
+            compassSnapActive = false; compassSnapTarget = null; isFocused = false; focusTargetQuat = null;
             if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
-            ambientResumeTimer = setTimeout(() => {
-              ambientPaused = false;
-            }, 400);
+            ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 400);
           }
         }
 
         scene.quaternion.copy(globeQuat);
-
-
-
-        // --------------------------------
-        // Visual Updates
-        // --------------------------------
         updateNodeGlow();
         updateHoverLabels();
 
-        // Leader Line Projection
-        const panelOpen =
-          document.getElementById("infoPanel")
-            .classList.contains("active");
+        const panelOpen = document.getElementById("infoPanel").classList.contains("active");
+        const hoveringDifferentCity = hoveredIndex !== null && hoveredIndex !== selectedNodeIndex;
 
-        const hoveringDifferentCity =
-          hoveredIndex !== null &&
-          hoveredIndex !== selectedNodeIndex;
-
-        if (hoveredCityPosition &&
-            (!panelOpen || hoveringDifferentCity)) {
-
-          const vector =
-            hoveredCityPosition.clone();
-
-          vector.project(camera);
-
-          const x =
-            (vector.x * 0.5 + 0.5) *
-            window.innerWidth;
-
-          const y =
-            (-vector.y * 0.5 + 0.5) *
-            window.innerHeight;
-
-          updateHoverLine(x, y);
-
+        if (hoveredCityPosition && (!panelOpen || hoveringDifferentCity)) {
+          const vector = hoveredCityPosition.clone().project(camera);
+          updateHoverLine((vector.x * 0.5 + 0.5) * window.innerWidth, (-vector.y * 0.5 + 0.5) * window.innerHeight);
         } else {
-
           hideHoverLine();
         }
 
-        // --------------------------------
-        // Ring Burst Animation
-        // --------------------------------
-        if (isFocused &&
-            selectedNodeIndex !== null) {
-
+        if (isFocused && selectedNodeIndex !== null) {
           ringStates.forEach((state, i) => {
-
             if (!state.active) return;
-
-            if (state.delay > 0) {
-              state.delay -= ringSpeed;
-              return;
-            }
-
+            if (state.delay > 0) { state.delay -= ringSpeed; return; }
             state.progress += ringSpeed;
-
-            const maxScale = ringMultiplierMax;
-            const scale =
-              1 + state.progress * (maxScale - 1);
-
-            ringMeshes[i].scale.set(
-              scale, scale, scale
-            );
-
-            const opacity =
-              Math.pow(1 - state.progress, 1.8);
-
-            ringMeshes[i].material.opacity =
-              opacity;
-
-            if (state.progress >= 1) {
-              ringMeshes[i].material.opacity = 0;
-              state.active = false;
-            }
-
+            const scale = 1 + state.progress * (ringMultiplierMax - 1);
+            ringMeshes[i].scale.set(scale, scale, scale);
+            ringMeshes[i].material.opacity = Math.pow(1 - state.progress, 1.8);
+            if (state.progress >= 1) { ringMeshes[i].material.opacity = 0; state.active = false; }
           });
-
         } else {
-
-          ringMeshes.forEach(ring => {
-            ring.material.opacity = 0;
-          });
+          ringMeshes.forEach(ring => { ring.material.opacity = 0; });
         }
 
-        // --------------------------------
-        // Glow Pulse Update
-        // --------------------------------
-        if (glowPulseActive) {
+        if (glowPulseActive) { glowPulseTime += 0.03; if (glowPulseTime >= 1) glowPulseActive = false; }
 
-          glowPulseTime += 0.03;
-
-          if (glowPulseTime >= 1) {
-            glowPulseActive = false;
-          }
-        }
-
-        // --------------------------------
-        // Earth Twinkle Update
-        // --------------------------------
-        const earthColorAttr =
-          earthPoints.geometry.attributes.color;
-
-        for (let i = 0;
-             i < earthTwinkleTimers.length;
-             i++) {
-
-          if (earthTwinkleTimers[i] <= 0 &&
-              Math.random() < earthTwinkleChance) {
-            earthTwinkleTimers[i] =
-              earthTwinkleDuration;
-          }
-
-          let brightness =
-            earthBaseBrightness[i];
-
+        const earthColorAttr = earthPoints.geometry.attributes.color;
+        for (let i = 0; i < earthTwinkleTimers.length; i++) {
+          if (earthTwinkleTimers[i] <= 0 && Math.random() < earthTwinkleChance) earthTwinkleTimers[i] = earthTwinkleDuration;
+          let brightness = earthBaseBrightness[i];
           if (earthTwinkleTimers[i] > 0) {
-
-            const t =
-              earthTwinkleTimers[i] /
-              earthTwinkleDuration;
-
-            const fade =
-              Math.sin(t * Math.PI);
-
-            brightness *=
-              (1 -
-               earthTwinkleIntensity *
-               fade);
-
+            const fade = Math.sin((earthTwinkleTimers[i] / earthTwinkleDuration) * Math.PI);
+            brightness *= (1 - earthTwinkleIntensity * fade);
             earthTwinkleTimers[i] -= 0.016;
           }
-
-          earthColorAttr.setXYZ(
-            i,
-            brightness,
-            brightness,
-            brightness
-          );
+          earthColorAttr.setXYZ(i, brightness, brightness, brightness);
         }
-
         earthColorAttr.needsUpdate = true;
 
-        // --------------------------------
-        // Star Twinkle Update
-        // --------------------------------
         const starColorAttr = starPoints.geometry.attributes.color;
-
         for (let i = 0; i < starCount; i++) {
-
-          if (starTwinkleTimers[i] <= 0 &&
-              Math.random() < starTwinkleChance) {
-            starTwinkleTimers[i] = starTwinkleDuration;
-          }
-
+          if (starTwinkleTimers[i] <= 0 && Math.random() < starTwinkleChance) starTwinkleTimers[i] = starTwinkleDuration;
           let b = starBaseBrightness[i];
-
           if (starTwinkleTimers[i] > 0) {
-            const t    = starTwinkleTimers[i] / starTwinkleDuration;
-            const fade = Math.sin(t * Math.PI);
+            const fade = Math.sin((starTwinkleTimers[i] / starTwinkleDuration) * Math.PI);
             b *= (1 - starTwinkleIntensity * fade);
             starTwinkleTimers[i] -= 0.016;
           }
-
           starColorAttr.setXYZ(i, b, b, b);
         }
-
         starColorAttr.needsUpdate = true;
-
-        // Keep star field fixed — counter-rotate against the globe
         starField.quaternion.copy(scene.quaternion).invert();
 
-
-// --------------------------------
-        // Compass Rotation
-        // --------------------------------
         updateCompass();
+        updateScaleBar();
 
-   // --------------------------------
-        // Scale Bar
-        // --------------------------------
-        updateScaleBar();         
-
-        // --------------------------------
-        // Opacity Blending
-        // --------------------------------
-        cityMat.opacity +=
-          (targetCityOpacity -
-           cityMat.opacity) * 0.018;
-
-        countryMat.opacity +=
-          (targetCountryOpacity -
-           countryMat.opacity) * 0.018;
+        cityMat.opacity    += (targetCityOpacity    - cityMat.opacity)    * 0.018;
+        countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
 
         renderer.render(scene, camera);
       }
-
 
       animate();
     }
 
     class GeoBoundaryLayer {
-
       constructor(scene, radius) {
-        this.scene = scene;
-        this.radius = radius;
+        this.scene = scene; this.radius = radius;
         this.group = new THREE.Group();
         this.scene.add(this.group);
       }
 
       latLonToVector3(lat, lon, altitude = 0.01) {
-
         const phi = (90 - lat) * (Math.PI / 180);
         const theta = (lon + 180) * (Math.PI / 180);
-
         const r = this.radius + altitude;
-
-        const x = -r * Math.sin(phi) * Math.cos(theta);
-        const z =  r * Math.sin(phi) * Math.sin(theta);
-        const y =  r * Math.cos(phi);
-
-        return new THREE.Vector3(x, y, z);
+        return new THREE.Vector3(
+          -r * Math.sin(phi) * Math.cos(theta),
+           r * Math.cos(phi),
+           r * Math.sin(phi) * Math.sin(theta)
+        );
       }
 
       loadGeoJSON(geojson) {
-
         geojson.features.forEach(feature => {
-
           const geometry = feature.geometry;
-
-          if (geometry.type === "Polygon") {
-            this.drawPolygon(geometry.coordinates);
-          }
-
-          if (geometry.type === "MultiPolygon") {
-            geometry.coordinates.forEach(polygon => {
-              this.drawPolygon(polygon);
-            });
-          }
-
+          if (geometry.type === "Polygon") this.drawPolygon(geometry.coordinates);
+          if (geometry.type === "MultiPolygon") geometry.coordinates.forEach(polygon => this.drawPolygon(polygon));
         });
       }
 
-    drawPolygon(polygon) {
-
-      polygon.forEach(ring => {
-
-        const points = [];
-
-        ring.forEach(coord => {
-          const [lon, lat] = coord;
-          points.push(this.latLonToVector3(lat, lon));
+      drawPolygon(polygon) {
+        polygon.forEach(ring => {
+          const points = [];
+          ring.forEach(coord => { const [lon, lat] = coord; points.push(this.latLonToVector3(lat, lon)); });
+          const geometry = new THREE.BufferGeometry().setFromPoints(points);
+          const material = new THREE.ShaderMaterial({
+            transparent: true,
+            uniforms: {
+              color:   { value: new THREE.Color(1.5, 1.5, 1.5) },
+              opacity: { value: 0.99 }
+            },
+            vertexShader: `
+              varying float vDot;
+              void main() {
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vec3 normal = normalize(worldPosition.xyz);
+                vec3 cameraDir = normalize(cameraPosition - worldPosition.xyz);
+                vDot = dot(normal, cameraDir);
+                gl_Position = projectionMatrix * viewMatrix * worldPosition;
+              }`,
+            fragmentShader: `
+              uniform vec3 color;
+              uniform float opacity;
+              varying float vDot;
+              void main() {
+                float facing = clamp(vDot, 0.0, 1.0);
+                float backsideDark = 0.01;
+                float electricBoost = 1.2 + (facing * 1.8);
+                float coreIntensity = pow(facing, 2.0) * 1.2;
+                float horizonFade = smoothstep(0.0, 0.12, facing);
+                float finalShade = mix(backsideDark, electricBoost + coreIntensity, horizonFade);
+                float shimmer = sin(facing * 40.0) * 0.05;
+                finalShade += shimmer * horizonFade;
+                gl_FragColor = vec4(color * finalShade, opacity * horizonFade);
+              }`
+          });
+          const line = new THREE.Line(geometry, material);
+          this.group.add(line);
         });
+      }
 
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-
-        const material = new THREE.ShaderMaterial({
-          transparent: true,
-          uniforms: {
-            color: { value: new THREE.Color(1.5, 1.5, 1.5) },
-            opacity: { value: 0.99 }
-          },
-          vertexShader: `
-            varying float vDot;
-
-            void main() {
-
-              vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-              vec3 normal = normalize(worldPosition.xyz);
-
-              vec3 cameraDir = normalize(cameraPosition - worldPosition.xyz);
-
-              vDot = dot(normal, cameraDir);
-
-              gl_Position = projectionMatrix * viewMatrix * worldPosition;
-            }
-          `,
-          fragmentShader: `
-            uniform vec3 color;
-            uniform float opacity;
-            varying float vDot;
-
-            void main() {
-
-              // 1. Clamp facing value
-              //    vDot = 1.0 (fully facing camera)
-              //    vDot = 0.0 (horizon)
-              //    vDot < 0.0 (backside)
-              float facing = clamp(vDot, 0.0, 1.0);
-
-              // 2. Dark backside
-              float backsideDark = 0.01;
-
-              // 3. Electric front hemisphere brightness
-              //    Strong boost across entire visible side
-              float electricBoost = 1.2 + (facing * 1.8);
-
-              // 4. Extra center intensification
-              float coreIntensity = pow(facing, 2.0) * 1.2;
-
-              // 5. Soft horizon transition
-              float horizonFade = smoothstep(0.0, 0.12, facing);
-
-              // 6. Combine brightness
-              float finalShade = mix(
-                backsideDark,
-                electricBoost + coreIntensity,
-                horizonFade
-              );
-
-              // 7. Subtle electric shimmer
-              float shimmer = sin(facing * 40.0) * 0.05;
-              finalShade += shimmer * horizonFade;
-
-              gl_FragColor = vec4(
-                color * finalShade,
-                opacity * horizonFade
-              );
-            }
-          `
-
-        });
-
-
-        const line = new THREE.Line(geometry, material);
-        this.group.add(line);
-
-      });
+      setVisible(value) { this.group.visible = value; }
+      setColor(color) { this.group.children.forEach(child => { child.material.uniforms.color.value.set(color); }); }
     }
-
-
-    setVisible(value) {
-      this.group.visible = value;
-    }
-
-    setColor(color) {
-      this.group.children.forEach(child => {
-        child.material.uniforms.color.value.set(color);
-      });
-    }
-
-  }
-
-
 
   </script>
 </body>
