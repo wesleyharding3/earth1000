@@ -2817,65 +2817,7 @@ panel.classList.add("active");
           }
         }, { passive: true });
 
-        // =====================================
-        // Panel inline search wiring
-        // =====================================
-        // =====================================
-        // Swipeable tabs wiring
-        // =====================================
-
-        const slidesTrack = panel.querySelector("#panelSlidesTrack");
-        const dots        = panel.querySelectorAll(".panelDot");
-        let currentSlide  = 0;
-        const totalSlides = dots.length;
-
-        function goToSlide(index) {
-          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
-          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
-          dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
-        }
-
-        dots.forEach(dot => {
-          dot.addEventListener("click", (e) => {
-            e.stopPropagation();
-            goToSlide(parseInt(dot.dataset.index));
-          });
-        });
-
-        // Trackpad horizontal swipe on the whole panel
-        panel.addEventListener("wheel", (e) => {
-          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) {
-            e.stopPropagation();
-            goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1));
-          }
-        }, { passive: true });
-
-        // Touch swipe
-        let slideSwipeStartX = 0;
-        let slideSwipeStartY = 0;
-        let slideSwipeLocked = null; // "h" | "v" | null
-
-        panel.addEventListener("touchstart", (e) => {
-          slideSwipeStartX = e.touches[0].clientX;
-          slideSwipeStartY = e.touches[0].clientY;
-          slideSwipeLocked = null;
-        }, { passive: true });
-
-        panel.addEventListener("touchend", (e) => {
-          if (slideSwipeLocked !== "h") return;
-          const dx = e.changedTouches[0].clientX - slideSwipeStartX;
-          if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1));
-        }, { passive: true });
-
-        panel.addEventListener("touchmove", (e) => {
-          if (slideSwipeLocked === "v") return;
-          const dx = e.touches[0].clientX - slideSwipeStartX;
-          const dy = e.touches[0].clientY - slideSwipeStartY;
-          if (slideSwipeLocked === null) {
-            slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-          }
-        }, { passive: true });
-
+ 
         // =====================================
         // Panel inline search wiring
         // =====================================
@@ -3147,8 +3089,6 @@ panel.innerHTML = `
                   <span>Statistics</span>
                 </div>
               </div>
-
-</div>
           </div>
         `;
 
