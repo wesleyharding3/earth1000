@@ -19,14 +19,7 @@
     }
 
     canvas { display: block; }
-    #searchContainer {
-      position: absolute;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 340px;
-      z-index: 10;
-    }
+
 
     #citySearch {
       width: 100%;
@@ -430,81 +423,323 @@
   stroke-width: 2;
 }
 
-#modeWidget {
+/* ===============================
+   Top-Left Icon Cluster
+   — wraps gear, eye, search in a row
+=============================== */
+#topLeftCluster {
   position: absolute;
-  top: 90px;
+  top: 20px;
   left: 20px;
-  width: 140px;
-  border-radius: 16px;
-  background: rgba(0,0,0,0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.2);
-  color: white;
-  z-index: 30;
-  overflow: hidden;
-  transition: height 0.3s ease, width 0.3s ease;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  z-index: 40;
 }
 
-#modeWidget.minimized {
+/* Shared frosted-glass circle style for all three icon buttons */
+.iconBtn {
+  width: 40px;
   height: 40px;
-  width: 70px;
-}
-
-#modeHeader {
-  padding: 10px;
-  font-weight: 600;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.70);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  color: rgba(255, 255, 255, 0.80);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 
-#modeOptions {
+.iconBtn:hover {
+  background: rgba(25, 25, 25, 0.90);
+  border-color: rgba(255, 255, 255, 0.40);
+  transform: scale(1.06);
+}
+
+/* Lit state when panel/dropdown is open */
+.iconBtn.active {
+  background: rgba(35, 35, 35, 0.95);
+  border-color: rgba(255, 255, 255, 0.50);
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.12);
+}
+
+.iconBtn svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+/* Gear rotates 60° when settings open */
+#settingsToggle.active svg {
+  transform: rotate(60deg);
+  transition: transform 0.35s ease;
+}
+
+/* ===============================
+   Search — expands rightward from icon
+=============================== */
+#searchWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 40px;
+}
+
+/* The input starts at width:0 (hidden), expands on .expanded */
+#citySearch {
+  position: absolute;
+  left: 0;
+  width: 0;
+  height: 40px;
+  padding: 0;
+  border-radius: 20px;
+  border: 1.5px solid rgba(255, 255, 255, 0);
+  outline: none;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 14px;
+  letter-spacing: 0.4px;
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+  box-sizing: border-box;
+  transition: width 0.32s cubic-bezier(0.32, 0.72, 0, 1),
+              padding 0.32s ease,
+              border-color 0.2s ease,
+              opacity 0.2s ease;
+}
+
+#citySearch.expanded {
+  width: 240px;
+  padding: 0 16px 0 50px; /* left padding clears the icon button */
+  border-color: rgba(255, 255, 255, 0.60);
+  opacity: 1;
+  pointer-events: all;
+}
+
+#citySearch::placeholder {
+  color: rgba(255, 255, 255, 0.38);
+}
+
+/* Results dropdown repositioned under the cluster */
+#searchResults {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  width: 240px;
+  margin-top: 0;           /* override original margin-top:8px */
+  background: rgba(0, 0, 0, 0.96);
+  border-radius: 14px;
+  max-height: 210px;
+  overflow-y: auto;
+  display: none;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+}
+
+/* ===============================
+   View dropdown — appears below eye icon
+=============================== */
+#viewToggleWrapper {
+  position: relative;
+}
+
+#viewDropdown {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  background: rgba(8, 8, 8, 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  overflow: hidden;
+  display: none;           /* toggled to flex via .open */
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+  min-width: 110px;
+}
+
+#viewDropdown.open {
+  display: flex;
+}
+
+.viewOption {
+  padding: 9px 14px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.viewOption:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+
+.viewOption.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.10);
+}
+
+/* Orange dot = active mode indicator */
+.viewOptionDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.20);
+  flex-shrink: 0;
+}
+
+.viewOption.active .viewOptionDot {
+  background: rgba(255, 180, 80, 1);
+  box-shadow: 0 0 6px rgba(255, 150, 40, 0.8);
+}
+
+/* ===============================
+   Settings Sidebar — slides in from left
+=============================== */
+#settingsSidebar {
+  position: absolute;
+  top: 70px;
+  left: -300px;            /* hidden off-screen by default */
+  width: 230px;
+  border-radius: 18px;
+  background: rgba(8, 8, 8, 0.88);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: white;
+  z-index: 35;
+  padding: 16px 14px 20px;
+  box-sizing: border-box;
+  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
+  transition: left 0.36s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.28s ease;
+  opacity: 0;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+}
+
+/* Slides into view */
+#settingsSidebar.open {
+  left: 20px;
+  opacity: 1;
+}
+
+.sidebarTitle {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  margin: 0 0 14px 2px;
+}
+
+.sidebarSection {
+  margin-bottom: 20px;
+}
+
+.sidebarSectionLabel {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  margin-bottom: 10px;
+}
+
+.sidebarDivider {
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.07);
+  margin: 6px 0 18px;
+}
+
+/* Ambient slider row */
+.sliderRow {
   display: flex;
   flex-direction: column;
-  padding: 8px;
-  gap: 6px;
+  gap: 8px;
 }
 
-#modeOptions button {
-  background: rgba(255,255,255,0.08);
-  border: none;
-  color: white;
-  padding: 6px;
-  border-radius: 10px;
+.sliderLabelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sliderLabel {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* Live readout of current speed value */
+.sliderValue {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: right;
+}
+
+/* Custom range thumb */
+.settingsSlider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  outline: none;
   cursor: pointer;
 }
 
-#modeOptions button.active {
-  background: rgba(255,255,255,0.25);
+.settingsSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-#ambientControl {
-
-  position: absolute;
-
-  top: 80px;
-  left: 80%;
-  transform: translateX(-50%);
-
-  width: 220px;
-  padding: 12px;
-
-  border-radius: 16px;
-  background: rgba(0,0,0,0.7);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.2);
-
-  color: white;
-  z-index: 30;
-  font-size: 12px;
-
+.settingsSlider::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.70);
 }
 
-
-#ambientControl input {
-  width: 100%;
-  margin-top: 6px;
+.settingsSlider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
 }
 
-
+/* Future expansion placeholder */
+.sidebarPlaceholder {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  padding: 14px 10px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.22);
+  text-align: center;
+}
 
 
 
@@ -523,10 +758,7 @@
         stroke-width="1"
         opacity="0"/>
   </svg>
-  <div id="searchContainer">
-    <input type="text" id="citySearch" placeholder="Search city..." />
-    <div id="searchResults"></div>
-  </div>
+
 
 <!-- Compass Widget -->
 <div id="compass">
@@ -553,22 +785,93 @@
   </svg>
 </div>
 
-<div id="modeWidget" class="expanded">
-  <div id="modeHeader">View</div>
-  <div id="modeOptions">
-    <button id="cityModeBtn">City</button>
-    <button id="countryModeBtn" class="active">Country</button>
+<!-- Top-left cluster: all three icon buttons in a row -->
+<div id="topLeftCluster">
+
+  <!-- GEAR: opens/closes settings sidebar -->
+  <div class="iconBtn" id="settingsToggle" title="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
+               a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
+               A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
+               l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
+               A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
+               l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
+               a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
+               l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
+               a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
   </div>
+
+  <!-- EYE: opens view mode dropdown (City / Country) -->
+  <div id="viewToggleWrapper">
+    <div class="iconBtn" id="viewToggle" title="View mode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </div>
+    <!-- Dropdown — hidden until viewToggle clicked -->
+    <div id="viewDropdown">
+      <div class="viewOption active" data-mode="country">
+        <span class="viewOptionDot"></span>Country
+      </div>
+      <div class="viewOption" data-mode="city">
+        <span class="viewOptionDot"></span>City
+      </div>
+    </div>
+  </div>
+
+  <!-- MAGNIFIER: expands inline search input to the right -->
+  <div id="searchWrapper">
+    <div class="iconBtn" id="searchIconBtn" title="Search cities">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7"/>
+        <line x1="16.5" y1="16.5" x2="22" y2="22"/>
+      </svg>
+    </div>
+    <!-- Input sits behind the icon at width:0, expands on .expanded -->
+    <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
+    <div id="searchResults"></div>
+  </div>
+
 </div>
 
-<div id="ambientControl">
-  <label>Ambient Rotation</label>
-  <input type="range"
-         id="ambientSlider"
-         min="0"
-         max="0.0015"
-         step="0.00005"
-         value="0.00015" />
+<!-- Settings sidebar — slides in from left when gear is clicked -->
+<div id="settingsSidebar">
+  <div class="sidebarTitle">Settings</div>
+
+  <div class="sidebarSection">
+    <div class="sidebarSectionLabel">Globe Motion</div>
+    <div class="sliderRow">
+      <div class="sliderLabelRow">
+        <span class="sliderLabel">Ambient Rotation</span>
+        <span class="sliderValue" id="ambientVal">—</span>
+      </div>
+      <!-- Same id="ambientSlider" as before so existing JS still works -->
+      <input class="settingsSlider" type="range"
+             id="ambientSlider"
+             min="0" max="0.0015" step="0.00005" value="0.00015" />
+    </div>
+  </div>
+
+  <div class="sidebarDivider"></div>
+
+  <div class="sidebarSection">
+    <div class="sidebarSectionLabel">Appearance</div>
+    <div class="sidebarPlaceholder">More options coming soon</div>
+  </div>
+
+  <div class="sidebarDivider"></div>
+
+  <div class="sidebarSection">
+    <div class="sidebarSectionLabel">Data</div>
+    <div class="sidebarPlaceholder">More options coming soon</div>
+  </div>
 </div>
 
 
@@ -1149,62 +1452,138 @@
       cityMat.opacity = 0.15;
       countryMat.opacity = 1.0;
 
+
+
+
+      
+// ── Settings sidebar toggle ─────────────────────────────────
+      // Gear click: flip open/closed, toggle .active on button
+      const settingsToggle  = document.getElementById("settingsToggle");
+      const settingsSidebar = document.getElementById("settingsSidebar");
+      let settingsOpen = false;
+
+      settingsToggle.addEventListener("click", (e) => {
+        e.stopPropagation();                        // don't fire window click-outside
+        settingsOpen = !settingsOpen;
+        settingsSidebar.classList.toggle("open", settingsOpen);
+        settingsToggle.classList.toggle("active", settingsOpen);
+      });
+
+      // Click anywhere outside sidebar or gear closes it
+      window.addEventListener("click", (e) => {
+        if (
+          settingsOpen &&
+          !settingsSidebar.contains(e.target) &&
+          !settingsToggle.contains(e.target)
+        ) {
+          settingsOpen = false;
+          settingsSidebar.classList.remove("open");
+          settingsToggle.classList.remove("active");
+        }
+      });
+
+      // Clicks inside sidebar don't bubble up to the closer above
+      settingsSidebar.addEventListener("click", (e) => e.stopPropagation());
+
+      // ── Ambient slider (same logic, new home in sidebar) ────────
+      // Shows a live "1.5×" style readout next to the label
       const ambientSlider = document.getElementById("ambientSlider");
+      const ambientVal    = document.getElementById("ambientVal");
 
-      if (ambientSlider) {
-        ambientSlider.addEventListener("input", () => {
+      function formatSpeed(v) {
+        return v === 0 ? "Off" : (v * 10000).toFixed(1) + "×";
+      }
+      ambientVal.textContent = formatSpeed(parseFloat(ambientSlider.value));
+
+      ambientSlider.addEventListener("input", () => {
         ambientSpeed = parseFloat(ambientSlider.value);
-        });
+        ambientVal.textContent = formatSpeed(ambientSpeed);
+      });
 
-        ambientSlider.addEventListener("pointerdown", (e) => {
+      ambientSlider.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+      // ── Eye / view-mode dropdown ────────────────────────────────
+      const viewToggle   = document.getElementById("viewToggle");
+      const viewDropdown = document.getElementById("viewDropdown");
+      let viewDropOpen = false;
+
+      viewToggle.addEventListener("click", (e) => {
         e.stopPropagation();
-        });  
+        viewDropOpen = !viewDropOpen;
+        viewDropdown.classList.toggle("open", viewDropOpen);
+        viewToggle.classList.toggle("active", viewDropOpen);
+      });
+
+      // Click outside closes dropdown
+      window.addEventListener("click", (e) => {
+        if (
+          viewDropOpen &&
+          !viewDropdown.contains(e.target) &&
+          !viewToggle.contains(e.target)
+        ) {
+          viewDropOpen = false;
+          viewDropdown.classList.remove("open");
+          viewToggle.classList.remove("active");
+        }
+      });
+
+      // Each option sets the mode and closes dropdown
+      document.querySelectorAll(".viewOption").forEach((opt) => {
+        opt.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const mode = opt.dataset.mode;
+
+          currentViewMode = mode;
+          setActiveMode(mode);                      // existing helper, untouched
+
+          if (mode === "city") {
+            targetCityOpacity    = 1.0;
+            targetCountryOpacity = 0.15;
+          } else {
+            targetCityOpacity    = 0.15;
+            targetCountryOpacity = 1.0;
+          }
+
+          viewDropOpen = false;
+          viewDropdown.classList.remove("open");
+          viewToggle.classList.remove("active");
+        });
+      });
+
+      // Keep setActiveMode exactly as-is — it still highlights the correct option
+      function setActiveMode(mode) {
+        document.getElementById("cityModeBtn")?.classList.remove("active");
+        document.getElementById("countryModeBtn")?.classList.remove("active");
       }
 
+      // ── Search expand/collapse ──────────────────────────────────
+      const searchIconBtn = document.getElementById("searchIconBtn");
+      let searchOpen = false;
 
-      
-
-      const widget = document.getElementById("modeWidget");
-      const header = document.getElementById("modeHeader");
-
-      header.addEventListener("click", () => {
-        widget.classList.toggle("minimized");
-      });
-
-      document.getElementById("cityModeBtn").addEventListener("click", () => {
-
-        currentViewMode = "city";
-        setActiveMode("city");
-
-        targetCityOpacity = 1.0;
-        targetCountryOpacity = 0.15;
-
-      });
-
-      document.getElementById("countryModeBtn").addEventListener("click", () => {
-
-        currentViewMode = "country";
-        setActiveMode("country");
-
-        targetCityOpacity = 0.15;
-        targetCountryOpacity = 1.0;
-
-      });
-
-      function setActiveMode(mode) {
-
-        document.getElementById("cityModeBtn").classList.remove("active");
-        document.getElementById("countryModeBtn").classList.remove("active");
-
-        if (mode === "city") {
-          document.getElementById("cityModeBtn").classList.add("active");
+      searchIconBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        searchOpen = !searchOpen;
+        citySearch.classList.toggle("expanded", searchOpen);  // citySearch already declared below
+        searchIconBtn.classList.toggle("active", searchOpen);
+        if (searchOpen) {
+          setTimeout(() => citySearch.focus(), 40);           // slight delay lets CSS transition start
         } else {
-          document.getElementById("countryModeBtn").classList.add("active");
+          citySearch.blur();
+          citySearch.value = "";
+          resultsContainer.style.display = "none";
         }
+      });
 
-      }      
-
-      
+      // Click outside search wrapper collapses it
+      window.addEventListener("click", (e) => {
+        if (searchOpen && !e.target.closest("#searchWrapper")) {
+          searchOpen = false;
+          citySearch.classList.remove("expanded");
+          searchIconBtn.classList.remove("active");
+          citySearch.value = "";
+          resultsContainer.style.display = "none";
+        }
+      });
 
 
 
@@ -2231,8 +2610,9 @@ if (tickGroup) {
         resultsContainer.style.display = matches.length ? "block" : "none";
       });
 
+// Close results if clicking outside the search wrapper
       window.addEventListener("click", (e) => {
-        if (!document.getElementById("searchContainer").contains(e.target)) {
+        if (!e.target.closest("#searchWrapper")) {
           resultsContainer.style.display = "none";
         }
       });
