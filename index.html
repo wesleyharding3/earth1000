@@ -1512,11 +1512,15 @@
           let dot = -cameraDir.dot(nodePos);
           let normalized = (dot + 1) / 2;
 
-          const minGlow = 0.15;
+// WHAT: minGlow lowered, exponent raised
+          // WHY:  Points on the backside were too visible — lower floor
+          //       dims the shadow side, higher exponent steepens the
+          //       falloff so only the front hemisphere stays bright
+          const minGlow = 0.02;
 
           let glow =
             minGlow +
-            (1 - minGlow) * Math.pow(normalized, 2.5);
+            (1 - minGlow) * Math.pow(normalized, 4.5);
 
           if (glowPulseActive && i === selectedNodeIndex) {
             const pulse =
@@ -2312,7 +2316,14 @@ window.addEventListener("mousedown", e => {
 
       }
 
-function openCityPanel(city) {
+ // WHAT: Resolve timezone from DB cities.timezone column
+      // WHY:  city.timezone is returned by /api/cities — use it directly,
+      //       fall back to UTC only if the DB value is null
+      function resolveTimezone(city) {
+        return city.timezone || "UTC";
+      }     
+
+      function openCityPanel(city) {
 
         const panel = document.getElementById("infoPanel");
 
@@ -2341,7 +2352,12 @@ function openCityPanel(city) {
                 <h2 style="margin:0;">${city.name}</h2>
                 ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${city.country}</h4>` : ""}
               </div>
-              <div id="localTime" style="font-size:14px;opacity:0.00;white-space:nowrap;text-align:right;"></div>
+<!-- WHAT: opacity restored, timezone label added beneath time -->
+              <!-- WHY:  opacity was 0.00 so time updated but was invisible -->
+              <div style="text-align:right;">
+                <div id="localTime" style="font-size:14px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;"></div>
+                <div id="localTZ" style="font-size:10px;opacity:0.40;white-space:nowrap;margin-top:2px;letter-spacing:0.03em;"></div>
+              </div>
             </div>
           </div>
 
@@ -2452,16 +2468,25 @@ function openCityPanel(city) {
 
         const timeElement = document.getElementById("localTime");
 
+        // WHAT: Use DB timezone string via resolveTimezone()
+        // WHY:  Replaces lon/15 estimate — browser Intl engine handles
+        //       DST, half-hour offsets, and political zone boundaries
+        const cityTimezone = resolveTimezone(city);
+
+// WHAT: Populate the timezone subtitle beneath the clock
+        // WHY:  Shows the user which IANA zone is active, e.g. "Asia/Kolkata"
+        const tzLabel = document.getElementById("localTZ");
+        if (tzLabel) tzLabel.textContent = cityTimezone;        
+
         function updateLocalTime() {
-          const nowUTC = new Date();
-          const offsetHours = city.lon / 15;
-          const localTime = new Date(nowUTC.getTime() + offsetHours * 3600000);
-          timeElement.textContent = localTime.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit"
+          timeElement.textContent = new Date().toLocaleTimeString("en-US", {
+            timeZone: cityTimezone,
+            hour:     "2-digit",
+            minute:   "2-digit",
+            second:   "2-digit"
           });
         }
+
 
         updateLocalTime();
         if (timeInterval) clearInterval(timeInterval);
@@ -3425,7 +3450,7 @@ if (compassSnapActive && compassSnapTarget) {
               float facing = clamp(vDot, 0.0, 1.0);
 
               // 2. Dark backside
-              float backsideDark = 0.06;
+              float backsideDark = 0.01;
 
               // 3. Electric front hemisphere brightness
               //    Strong boost across entire visible side
