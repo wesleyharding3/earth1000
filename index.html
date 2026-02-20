@@ -697,13 +697,7 @@
       transform: scale(1.25);
     }
 
-    .panelSlidesTrack {
-      display: flex;
-      flex: 1;
-      min-height: 0;
-      transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
-      will-change: transform;
-    }
+
 
     .panelSlide {
       min-width: 100%;
@@ -1842,9 +1836,11 @@
         const totalSlides = dots.length;
 
         function goToSlide(index) {
+          slidesTrack.style.willChange = "transform";
           currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
           slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
           dots.forEach((d, i) => d.classList.toggle("active", i === currentSlide));
+          setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
         }
 
         dots.forEach(dot => { dot.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(parseInt(dot.dataset.index)); }); });
