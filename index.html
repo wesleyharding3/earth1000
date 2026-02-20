@@ -431,8 +431,8 @@
 }
 
 /* ===============================
-   Scale Bar — Google Earth style
-   positioned below compass, right-aligned
+   Scale Bar — vertical, Google Earth style
+   right side below compass
 =============================== */
 #scaleBar {
   position: absolute;
@@ -440,56 +440,81 @@
   right: 20px;
   z-index: 30;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;     /* label left, track right */
   align-items: flex-end;
-  gap: 4px;
+  gap: 6px;
   pointer-events: none;
 }
 
+/* km labels stacked on the left of the bar */
+.scaleBarLabels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  height: 100%;            /* matches track height, set via JS */
+}
+
 .scaleBarLabel {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.75);
-  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.70);
+  letter-spacing: 0.04em;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
+/* Vertical track — the bar itself */
 .scaleBarTrack {
   position: relative;
-  height: 6px;
+  width: 6px;              /* track width */
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: center;
 }
 
-/* The main horizontal bar */
+/* The vertical line */
 .scaleBarLine {
-  height: 2px;
+  width: 2px;
   background: rgba(255, 255, 255, 0.80);
   box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
-  transition: width 0.25s ease;
+  transition: height 0.25s ease;
+  position: relative;
 }
 
-/* Left end cap (vertical tick) */
+/* Top end cap */
 .scaleBarLine::before {
   content: "";
   position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 2px;
-  height: 6px;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 2px;
   background: rgba(255, 255, 255, 0.80);
 }
 
-/* Right end cap (vertical tick) */
+/* Bottom end cap */
 .scaleBarLine::after {
   content: "";
   position: absolute;
-  right: 0;
   bottom: 0;
-  width: 2px;
-  height: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 6px;
+  height: 2px;
   background: rgba(255, 255, 255, 0.80);
+}
+
+/* Tick marks along the bar for subdivisions */
+.scaleBarTick {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.55);
 }
 
 /* ===============================
@@ -854,11 +879,11 @@
   </svg>
 </div>
 
-<!-- Scale Bar — updates dynamically based on zoom -->
+<!-- Scale Bar — vertical, updates dynamically based on zoom -->
 <div id="scaleBar">
-  <div class="scaleBarLabel" id="scaleBarLabel">—</div>
+  <div class="scaleBarLabels" id="scaleBarLabels"></div>
   <div class="scaleBarTrack">
-    <div class="scaleBarLine" id="scaleBarLine" style="width: 80px;"></div>
+    <div class="scaleBarLine" id="scaleBarLine" style="height: 120px;"></div>
   </div>
 </div>
 
@@ -1317,47 +1342,71 @@
         );
       }      
 
-// ── Scale Bar ───────────────────────────────────────────────
-      // Computes real-world km per pixel at current zoom, then picks
-      // the nearest round distance and sizes the bar to match.
+// ── Scale Bar (vertical) ────────────────────────────────────
+      // Picks a round total distance that fits ~120px, divides into
+      // 4 equal segments with tick labels at each division.
       function updateScaleBar() {
 
-        const label = document.getElementById("scaleBarLabel");
-        const bar   = document.getElementById("scaleBarLine");
-        if (!label || !bar) return;
+        const labelsEl = document.getElementById("scaleBarLabels");
+        const bar      = document.getElementById("scaleBarLine");
+        if (!labelsEl || !bar) return;
 
-        // Earth radius in km
         const EARTH_RADIUS_KM = 6371;
+        const TARGET_PX       = 120;   // desired total bar height in px
+        const DIVISIONS       = 4;     // number of segments
 
-        // How many globe-radii fit in one screen pixel at current zoom
-        // camera.position.z is distance from camera to globe center
-        // fov in radians → visible height in globe-units at z distance
-        const fovRad      = camera.fov * (Math.PI / 180);
-        const visibleH    = 2 * camera.position.z * Math.tan(fovRad / 2);
-        const kmPerPixel  = (visibleH / window.innerHeight) * EARTH_RADIUS_KM;
+        // km represented by TARGET_PX pixels at current zoom
+        const fovRad     = camera.fov * (Math.PI / 180);
+        const visibleH   = 2 * camera.position.z * Math.tan(fovRad / 2);
+        const kmPerPixel = (visibleH / window.innerHeight) * EARTH_RADIUS_KM;
+        const rawKm      = kmPerPixel * TARGET_PX;
 
-        // Target bar width in px (we'll snap the label to a round number)
-        const targetPx = 80;
-
-        // Raw km the bar would represent
-        const rawKm = kmPerPixel * targetPx;
-
-        // Snap to nearest round value: 1, 2, 5, 10, 20, 50, 100 … 10000
-        const steps = [1,2,5,10,20,50,100,200,500,1000,2000,5000,10000];
-        let snapped = steps[0];
+        // Snap total to a round number divisible by DIVISIONS
+        // Steps chosen so division labels are always clean integers
+        const steps = [
+          500, 1000, 2000, 5000, 10000, 20000,
+          50000, 100000, 200000, 500000, 1000000
+        ];
+        let totalKm = steps[0];
         for (const s of steps) {
-          if (s <= rawKm) snapped = s;
+          if (s <= rawKm) totalKm = s;
           else break;
         }
 
-        // Resize bar so it exactly represents `snapped` km
-        const finalPx = snapped / kmPerPixel;
+        // Resize bar to exactly represent totalKm
+        const finalPx = Math.round(totalKm / kmPerPixel);
+        bar.style.height = `${finalPx}px`;
 
-        bar.style.width  = `${Math.round(finalPx)}px`;
-        label.textContent = snapped >= 1000
-          ? `${snapped / 1000} km`   // e.g. "1 km" → actually "1000 km" shows as "1000 km"
-          : `${snapped} km`;
-      }      
+        // Remove existing ticks from bar
+        bar.querySelectorAll(".scaleBarTick").forEach(t => t.remove());
+
+        // Rebuild label column and ticks
+        labelsEl.style.height = `${finalPx}px`;
+        labelsEl.innerHTML    = "";
+
+        const divKm = totalKm / DIVISIONS;
+
+        for (let i = 0; i <= DIVISIONS; i++) {
+
+          const km    = totalKm - i * divKm;   // top = totalKm, bottom = 0
+          const label = document.createElement("div");
+          label.className = "scaleBarLabel";
+
+          label.textContent = km === 0
+            ? "0"
+            : `${km.toLocaleString()} km`;
+
+          labelsEl.appendChild(label);
+
+          // Add a tick on the bar at each division (skip top/bottom — those are end caps)
+          if (i > 0 && i < DIVISIONS) {
+            const tick = document.createElement("div");
+            tick.className   = "scaleBarTick";
+            tick.style.top   = `${(i / DIVISIONS) * 100}%`;
+            bar.appendChild(tick);
+          }
+        }
+      } 
 
 
       function updateNodeGlow() {
