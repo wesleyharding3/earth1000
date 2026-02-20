@@ -79,6 +79,7 @@
     #infoPanel {
       position: fixed;
       bottom: -100%;
+      z-index: 20;
       left: 0;
       width: 100%;
       height: 420px;
@@ -95,7 +96,8 @@
       display: flex;
       flex-direction: column;
 
-      border-top: 2px solid rgba(255,255,255,0.1);
+      border: none;
+      border-radius: 22px 22px 0 0;
 
       scroll-behavior: smooth;
 
@@ -1193,6 +1195,75 @@
       animation: scrollbarElectricPulse 1.2s ease-out forwards;
     }
 
+    /* ===============================
+       Animated Panel Border
+    =============================== */
+    #panelBorderSVG {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 100;
+      overflow: visible;
+    }
+
+    #panelBorderPath {
+      fill: none;
+      stroke: rgba(255,255,255,0.85);
+      stroke-width: 2;
+      stroke-linecap: round;
+      filter: drop-shadow(0 0 6px rgba(255,255,255,0.6))
+              drop-shadow(0 0 14px rgba(180,220,255,0.4));
+      stroke-dasharray: 2000;
+      stroke-dashoffset: 2000;
+    }
+
+    #panelBorderPath.draw {
+      animation: borderDraw 0.55s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+
+    @keyframes borderDraw {
+      to { stroke-dashoffset: 0; }
+    }
+
+    #panelBorderPath.wave {
+      animation: borderWave 0.9s ease-in forwards;
+    }
+
+    @keyframes borderWave {
+      0%   { stroke: rgba(255,255,255,0.85);
+             filter: drop-shadow(0 0 6px rgba(255,255,255,0.6)) drop-shadow(0 0 14px rgba(180,220,255,0.4)); }
+      40%  { stroke: rgba(180,220,255,0.55);
+             filter: drop-shadow(0 0 18px rgba(100,180,255,0.7)) drop-shadow(0 0 32px rgba(0,140,255,0.35)); }
+      100% { stroke: rgba(255,255,255,0.08);
+             filter: drop-shadow(0 0 3px rgba(255,255,255,0.06)); }
+    }
+
+    #panelBorderOrb {
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,1) 0%, rgba(180,220,255,0.6) 55%, transparent 100%);
+      box-shadow: 0 0 12px 4px rgba(255,255,255,0.7), 0 0 28px 8px rgba(100,180,255,0.5);
+      pointer-events: none;
+      z-index: 101;
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+
+    #panelBorderOrb.pulse {
+      animation: orbPulse 0.55s ease-out forwards;
+    }
+
+    @keyframes orbPulse {
+      0%   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+      60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.5); }
+      100% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+    }
+
 
 
 
@@ -1202,7 +1273,13 @@
 
 <body>
   <div id="cityList"><h3>Geopolitical Cities</h3><ul id="list"></ul></div>
-  <div id="infoPanel"><div id="panelContent"></div></div>
+  <div id="infoPanel">
+    <svg id="panelBorderSVG" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <path id="panelBorderPath" d="M0,100 L0,22 Q0,0 22,0 L78,0 Q100,0 100,22 L100,100 L0,100"/>
+    </svg>
+    <div id="panelBorderOrb"></div>
+    <div id="panelContent"></div>
+  </div>
   <div id="cityLabels" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
   <svg id="uiOverlay"
        style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;">
@@ -2347,7 +2424,12 @@ window.addEventListener("mousedown", e => {
             label.classList.remove("hovered");
           }
 
-          if (shouldShow) {
+          const panelEl = document.getElementById("infoPanel");
+          const panelOpen = panelEl.classList.contains("active");
+          const panelBlocksLabel = panelOpen &&
+            (parseFloat(label.style.top) > window.innerHeight - panelEl.offsetHeight - 40);
+
+          if (shouldShow && !panelBlocksLabel) {
 
             const storyCountEl = label.querySelector(".storyCount");
 
@@ -2369,6 +2451,10 @@ window.addEventListener("mousedown", e => {
             label.style.opacity = 0;
             label.style.transform =
               "translate(-50%, -140%) scale(0.95)";
+
+            if (panelBlocksLabel) {
+              label.style.opacity = 0;
+            }
 
             const title = label.querySelector(".bubbleTitle");
 
@@ -2703,6 +2789,52 @@ window.addEventListener("mousedown", e => {
         return city.timezone || "UTC";
       }     
 
+      function triggerPanelBorderAnimation() {
+        const path = document.getElementById("panelBorderPath");
+        const orb  = document.getElementById("panelBorderOrb");
+        if (!path || !orb) return;
+
+        // Reset both
+        path.classList.remove("draw", "wave");
+        orb.classList.remove("pulse");
+        void path.offsetWidth;
+
+        // Measure true perimeter length
+        const totalLength = path.getTotalLength();
+        path.style.strokeDasharray  = totalLength;
+        path.style.strokeDashoffset = totalLength;
+
+        // Step 1 — draw border left→top→right→bottom
+        path.classList.add("draw");
+
+        path.addEventListener("animationend", function onDrawEnd() {
+          path.removeEventListener("animationend", onDrawEnd);
+
+          // Step 2 — orb pulses at end point (bottom-left, where path closes)
+          const panel    = document.getElementById("infoPanel");
+          const panelRect = panel.getBoundingClientRect();
+          const pt       = path.getPointAtLength(totalLength);
+          const scaleX   = panelRect.width  / 100;
+          const scaleY   = panelRect.height / 100;
+
+          orb.style.left = `${pt.x * scaleX}px`;
+          orb.style.top  = `${pt.y * scaleY}px`;
+          orb.classList.add("pulse");
+
+          // Step 3 — after orb fades, wave retreats back along border
+          orb.addEventListener("animationend", function onOrbEnd() {
+            orb.removeEventListener("animationend", onOrbEnd);
+            path.classList.remove("draw");
+            void path.offsetWidth;
+            path.style.strokeDasharray  = "";
+            path.style.strokeDashoffset = "";
+            path.classList.add("wave");
+          }, { once: true });
+
+        }, { once: true });
+      }
+
+
 function openCityPanel(city) {
 
         const panel = document.getElementById("infoPanel");
@@ -2792,9 +2924,10 @@ panel.innerHTML = `
           </div>
         `;
 
-panel.classList.add("active");
 
-panel.classList.add("active");
+
+        panel.classList.add("active");
+        triggerPanelBorderAnimation();
 
         setTimeout(() => {
           targetZoom = Math.max(2.4, camera.position.z - 0.6);
@@ -2811,9 +2944,6 @@ panel.classList.add("active");
           });
         }, 420);
 
-        // =====================================
-        // Swipeable tabs wiring
-        // =====================================
 
         // =====================================
         // Swipeable tabs wiring
