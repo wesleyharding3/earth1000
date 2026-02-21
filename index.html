@@ -1706,6 +1706,7 @@ const loader = new THREE.TextureLoader();
       });
 
       function updateHoverLabels() {
+
         raycaster.setFromCamera(hoverMouse, camera);
         const activePoints   = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData     = currentViewMode === "country" ? countries : cities;
@@ -1715,10 +1716,19 @@ const loader = new THREE.TextureLoader();
         hoveredIndex = null; hoveredCityPosition = null;
         const infoPanel = document.getElementById("infoPanel");
         const panelOpen = infoPanel.classList.contains("active");
+        if (panelOpen) {
+          hoveredIndex = null;
+          hoveredCityPosition = null;
+          const allLabels = [...cityLabels, ...countryLabels];
+          allLabels.forEach(label => {
+            label.style.opacity = 0;
+            label.classList.remove("hovered", "focused");
+        });
+        return;
+        }
 
         if (intersects.length > 0) {
           const index = intersects[0].index;
-          if (panelOpen && index === selectedNodeIndex) return;
           const nodePos = new THREE.Vector3();
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
@@ -2406,9 +2416,7 @@ const loader = new THREE.TextureLoader();
         scene.quaternion.copy(globeQuat);
         updateNodeGlow();
 
-        if (!document.getElementById("infoPanel").classList.contains("active")) {
-          updateHoverLabels();
-        }
+        updateHoverLabels();
 
         const panelOpen = document.getElementById("infoPanel").classList.contains("active");
         const hoveringDifferentCity = hoveredIndex !== null && hoveredIndex !== selectedNodeIndex;
