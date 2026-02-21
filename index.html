@@ -2170,6 +2170,16 @@ const loader = new THREE.TextureLoader();
               </svg>
             </span>
           </div>
+          <div class="panelSortRow">
+            <div class="panelSortOption active" data-sort="local">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Local</span>
+            </div>
+            <div class="panelSortOption" data-sort="global">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Global</span>
+            </div>
+          </div>          
           <div class="panelTabsWrapper" style="position:relative;">
             <div class="panelNavArrow left hidden" id="panelArrowLeft">
               <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -2243,8 +2253,9 @@ const loader = new THREE.TextureLoader();
 
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
 
-        const sortOptions = panel.querySelectorAll(".panelSortOption");
-        sortOptions.forEach(opt => {
+          const sortOptions = panel.querySelectorAll(".panelSortOption");
+
+          sortOptions.forEach(opt => {
           opt.addEventListener("click", (e) => {
             e.stopPropagation();
             sortOptions.forEach(o => o.classList.remove("active"));
