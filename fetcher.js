@@ -164,11 +164,18 @@ async function fetchFeeds() {
   console.log("Starting RSS fetch...");
   console.log("Google Translate key exists:", !!GOOGLE_TRANSLATE_API_KEY);
 
-  const feedResult = await pool.query(`
-    SELECT id, country_id, rss_url, city_id, failure_count
-    FROM news_sources
-    WHERE is_active = true
-  `);
+const feedResult = await pool.query(`
+  SELECT 
+    ns.id, 
+    ns.country_id, 
+    ns.rss_url, 
+    ns.city_id, 
+    ns.failure_count,
+    l.iso_code_2 AS language_code
+  FROM news_sources ns
+  LEFT JOIN languages l ON ns.language_id = l.id
+  WHERE ns.is_active = true
+`);
 
   const feeds = feedResult.rows;
 
@@ -198,7 +205,7 @@ async function fetchFeeds() {
         continue;
       }
 
-      const feedLanguage = parsed.language || "unknown";
+      const feedLanguage = feed.language_code || parsed.language || "unknown";
 
       for (const item of parsed.items) {
 
