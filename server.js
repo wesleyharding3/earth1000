@@ -181,7 +181,7 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-const fetchFeeds = require("./fetchFeeds");
+const fetchFeeds = require("./fetcher");
 
 // Run once on startup, then every 30 minutes
 fetchFeeds().catch(console.error);
