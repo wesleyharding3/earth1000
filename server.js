@@ -95,6 +95,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
         COALESCE(a.translated_title, a.title) AS title,
         a.url,
         COALESCE(a.translated_summary, a.summary) AS summary,
+        a.image_url,
         a.published_at,
         s.name AS source_name,
         s.site_url
@@ -138,6 +139,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
         COALESCE(a.translated_title, a.title) AS title,
         a.url,
         COALESCE(a.translated_summary, a.summary) AS summary,
+        a.image_url,
         a.published_at,
         a.sentiment_score,
         a.language,
