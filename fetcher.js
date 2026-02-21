@@ -151,8 +151,14 @@ function extractImage(item) {
     if (image?.url) return image.url;
   }
 
-  if (item.enclosure?.url) {
-    return item.enclosure.url;
+// 1. Enclosure (array or single)
+  if (item.enclosure) {
+    if (Array.isArray(item.enclosure)) {
+      const img = item.enclosure.find(e => e.url);
+      if (img?.url) return img.url;
+    } else if (item.enclosure.url) {
+      return item.enclosure.url;
+    }
   }
   // 2. media:content
   if (Array.isArray(item["media:content"]) && item["media:content"][0]?.$?.url) {
