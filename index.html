@@ -222,16 +222,24 @@
 
     /* Panel resize handle */
 #panelResizeHandle {
-  width: 100%;
+  position: absolute;
+  top: -14px;        /* half its height above the panel */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 48px;
   height: 28px;
+  border-radius: 14px 14px 0 0;   /* half-pill, flat bottom flush with panel */
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-bottom: none;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  flex-shrink: 0;
+  z-index: 110;
   user-select: none;
-  touch-action: none;
 }
+
 #panelResizeArrow {
   width: 28px;
   height: 28px;
@@ -729,6 +737,8 @@
       text-align: center;
     }
 
+
+
     /* ===============================
        Swipeable Panel Tabs
     =============================== */
@@ -847,6 +857,43 @@
       text-transform: uppercase;
       font-weight: 600;
     }
+
+    .panelSortRow {
+  display: flex;
+  justify-content: center;
+  gap: 32px;
+  padding: 10px 0 4px;
+  flex-shrink: 0;
+}
+.panelSortOption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.2s;
+}
+.panelSortOption.active { opacity: 1; }
+.panelSortDot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: rgba(255,180,80,0.4);
+  border: 1px solid rgba(255,150,40,0.5);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+.panelSortOption.active .panelSortDot {
+  background: rgba(255,180,80,1);
+  box-shadow: 0 0 8px rgba(255,150,40,0.9), 0 0 20px rgba(255,120,20,0.5);
+}
+.panelSortLabel {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.6);
+}
+.panelSortOption.active .panelSortLabel { color: rgba(255,200,100,0.9); }
 
     /* ===============================
        Panel Article Cards
@@ -1929,6 +1976,16 @@ const loader = new THREE.TextureLoader();
               </svg>
             </span>
           </div>
+          <div class="panelSortRow">
+            <div class="panelSortOption active" data-sort="local">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Local</span>
+            </div>
+            <div class="panelSortOption" data-sort="global">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Global</span>
+            </div>  
+          </div>  
           <div class="panelTabsWrapper" style="position:relative;">
             <div class="panelNavArrow left hidden" id="panelArrowLeft">
               <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -2003,6 +2060,16 @@ const loader = new THREE.TextureLoader();
         let filterQuery = "";
 
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
+
+                const sortOptions = panel.querySelectorAll(".panelSortOption");
+        sortOptions.forEach(opt => {
+          opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            sortOptions.forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            // currentSort = opt.dataset.sort; — wire to feed logic later
+          });
+        });
 
         let allArticles = [];
         const track    = panel.querySelector("#articlesTrack");
@@ -2175,6 +2242,16 @@ const loader = new THREE.TextureLoader();
         let filterQuery = "";
 
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
+
+        const sortOptions = panel.querySelectorAll(".panelSortOption");
+        sortOptions.forEach(opt => {
+          opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            sortOptions.forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            // currentSort = opt.dataset.sort; — wire to feed logic later
+          });
+        });
 
         let allArticles = [];
         const track    = panel.querySelector("#articlesTrack");
