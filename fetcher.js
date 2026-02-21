@@ -235,49 +235,49 @@ const feedResult = await pool.query(`
 
           if (translatedTitle)   console.log(`✅ Translated title [${feedLanguage}→en]: "${originalTitle?.slice(0,60)}" → "${translatedTitle?.slice(0,60)}"`);
           if (translatedSummary) console.log(`✅ Translated summary [${feedLanguage}→en]: ${translatedSummary?.slice(0,80)}…`);
-        }        
         
-        await pool.query(
-          `
-          INSERT INTO news_articles (
-            source_id,
-            city_id,
-            country_id,
-            title,
-            translated_title,
-            url,
-            summary,
-            translated_summary,
-            content,
-            language,
-            published_at,
-            ingested_at,
-            raw_json
-          )
-          VALUES (
-            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
-          )
-          ON CONFLICT (url)
-          DO UPDATE SET
-            translated_title   = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
-            translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary);
-          `,
-          [
-            feed.id,
-            feed.city_id,
-            feed.country_id,
-            originalTitle,
-            translatedTitle,
-            item.link || null,
-            originalSummary,
-            translatedSummary,
-            item.content || null,
-            feedLanguage,
-            publishedAt,
-            JSON.stringify(item)
-          ]
-        );
-      }
+
+          await pool.query(
+            `
+            INSERT INTO news_articles (
+              source_id,
+              city_id,
+              country_id,
+              title,
+              translated_title,
+              url,
+              summary,
+              translated_summary,
+              content,
+              language,
+              published_at,
+              ingested_at,
+              raw_json
+            )
+            VALUES (
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
+            )
+            ON CONFLICT (url)
+            DO UPDATE SET
+              translated_title   = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
+              translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary);
+            `,
+            [
+              feed.id,
+              feed.city_id,
+              feed.country_id,
+              originalTitle,
+              translatedTitle,
+              item.link || null,
+              originalSummary,
+              translatedSummary,
+              item.content || null,
+              feedLanguage,
+              publishedAt,
+              JSON.stringify(item)
+            ]
+          );
+        }
 
       // ===============================
       // SUCCESS RESET
