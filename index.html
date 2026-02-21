@@ -220,6 +220,52 @@
     }
     #infoPanel button.closePanel:hover { background: #666; }
 
+    /* Panel resize handle */
+#panelResizeHandle {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: ns-resize;
+  flex-shrink: 0;
+  user-select: none;
+  touch-action: none;
+  padding-top: 4px;
+}
+.handlePill {
+  width: 36px; height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.22);
+  transition: background 0.2s, width 0.2s;
+}
+#panelResizeHandle:hover .handlePill {
+  background: rgba(255,255,255,0.45);
+  width: 44px;
+}
+.snapBtn {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.45);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.snapBtn:hover {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.35);
+  color: rgba(255,255,255,0.9);
+}
+.snapBtn.active {
+  background: rgba(255,180,80,0.18);
+  border-color: rgba(255,180,80,0.55);
+  color: rgba(255,180,80,1);
+}
+.snapBtn svg { width: 9px; height: 9px; pointer-events: none; }
+
     .cityBubble {
       position: absolute;
       pointer-events: none;
@@ -747,14 +793,12 @@
 
     .articlesGrid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-      gap: 12px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
       padding: 4px 2px 20px;
     }
 
-    @media (min-width: 700px) {
-      .articlesGrid { grid-template-columns: repeat(2, 1fr); }
-    }
+
 
     .articleCard {
       background: rgba(255,255,255,0.04);
@@ -1121,7 +1165,7 @@
       ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 8000);
     }
 
-    const loader = new THREE.TextureLoader();
+const loader = new THREE.TextureLoader();
     const earthTexture = loader.load(
       "https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg",
       () => {
@@ -1133,6 +1177,94 @@
         .catch(err => { console.error("Failed to load initial data:", err); });
       }
     );
+
+    // ===============================
+    // Panel Resize / Snap System
+    // ===============================
+    const SNAP = {
+      min:     52,
+      default: 420,
+      max:     () => window.innerHeight - 60
+    };
+    let snapState = "default";
+    let resizeDragging = false, resizeStartY = 0, resizeStartH = 0;
+
+    function applySnapHeight(state, animate = true) {
+      snapState = state;
+      const h = typeof SNAP[state] === "function" ? SNAP[state]() : SNAP[state];
+      infoPanel.style.transition = animate
+        ? "bottom 0.4s ease, height 0.3s cubic-bezier(0.32,0.72,0,1)"
+        : "none";
+      infoPanel.style.height = h + "px";
+      document.querySelectorAll(".snapBtn").forEach(b =>
+        b.classList.toggle("active", b.dataset.snap === state)
+      );
+    }
+
+    function snapToNearest() {
+      const h = infoPanel.offsetHeight;
+      const points = [
+        { state: "min",     h: SNAP.min },
+        { state: "default", h: SNAP.default },
+        { state: "max",     h: SNAP.max() }
+      ];
+      const nearest = points.reduce((a, b) =>
+        Math.abs(b.h - h) < Math.abs(a.h - h) ? b : a
+      );
+      applySnapHeight(nearest.state, true);
+    }
+
+    function attachPanelResizeHandle() {
+      const handle = document.getElementById("panelResizeHandle");
+      if (!handle) return;
+
+      handle.querySelectorAll(".snapBtn").forEach(btn => {
+        btn.addEventListener("click", e => {
+          e.stopPropagation();
+          applySnapHeight(btn.dataset.snap);
+        });
+      });
+
+      handle.addEventListener("mousedown", e => {
+        if (e.target.closest(".snapBtn")) return;
+        e.preventDefault();
+        resizeDragging = true;
+        resizeStartY = e.clientY;
+        resizeStartH = infoPanel.offsetHeight;
+        infoPanel.style.transition = "none";
+        document.body.style.cursor = "ns-resize";
+      });
+
+      handle.addEventListener("touchstart", e => {
+        if (e.target.closest(".snapBtn")) return;
+        resizeDragging = true;
+        resizeStartY = e.touches[0].clientY;
+        resizeStartH = infoPanel.offsetHeight;
+        infoPanel.style.transition = "none";
+      }, { passive: true });
+    }
+
+    window.addEventListener("mousemove", e => {
+      if (!resizeDragging) return;
+      const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.clientY)));
+      infoPanel.style.height = h + "px";
+    });
+    window.addEventListener("mouseup", () => {
+      if (!resizeDragging) return;
+      resizeDragging = false;
+      document.body.style.cursor = "";
+      snapToNearest();
+    });
+    window.addEventListener("touchmove", e => {
+      if (!resizeDragging) return;
+      const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.touches[0].clientY)));
+      infoPanel.style.height = h + "px";
+    }, { passive: true });
+    window.addEventListener("touchend", () => {
+      if (!resizeDragging) return;
+      resizeDragging = false;
+      snapToNearest();
+    });
 
     function init(cities, countries) {
       const earthPointCount = 10000;
@@ -1783,6 +1915,24 @@
         const panel = document.getElementById("infoPanel");
         const showCountry = city.country && city.name.toLowerCase() !== city.country.toLowerCase();
         panel.innerHTML = `
+          <div id="panelResizeHandle">
+            <div class="handlePill"></div>
+            <div class="snapBtn" data-snap="min" title="Minimize">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <line x1="2" y1="8" x2="8" y2="8"/>
+              </svg>
+            </div>
+            <div class="snapBtn" data-snap="default" title="Default">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <rect x="1.5" y="4" width="7" height="4.5" rx="1"/>
+              </svg>
+            </div>
+            <div class="snapBtn" data-snap="max" title="Maximize">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <rect x="1.5" y="1.5" width="7" height="7" rx="1"/>
+              </svg>
+            </div>
+          </div>
           <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
@@ -1832,8 +1982,9 @@
               </div>
             </div>
           </div>`;
-
         panel.classList.add("active");
+        applySnapHeight("default", false);
+        attachPanelResizeHandle();
         setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
 
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
@@ -1946,6 +2097,24 @@
       function openCountryPanel(country) {
         const panel = document.getElementById("infoPanel");
         panel.innerHTML = `
+                    <div id="panelResizeHandle">
+            <div class="handlePill"></div>
+            <div class="snapBtn" data-snap="min" title="Minimize">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <line x1="2" y1="8" x2="8" y2="8"/>
+              </svg>
+            </div>
+            <div class="snapBtn" data-snap="default" title="Default">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <rect x="1.5" y="4" width="7" height="4.5" rx="1"/>
+              </svg>
+            </div>
+            <div class="snapBtn" data-snap="max" title="Maximize">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                <rect x="1.5" y="1.5" width="7" height="7" rx="1"/>
+              </svg>
+            </div>
+          </div>
           <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
@@ -1994,6 +2163,8 @@
           </div>`;
 
         panel.classList.add("active");
+        applySnapHeight("default", false);
+        attachPanelResizeHandle();
         setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
 
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
