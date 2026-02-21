@@ -179,55 +179,6 @@ function extractImage(item) {
   return null;
 }
 
-  // ===============================
-  // 2. Media RSS <media:content>
-  // ===============================
-  const mediaContent =
-    item["media:content"] ||
-    item.mediacontent;
-
-  if (mediaContent) {
-    const media = Array.isArray(mediaContent)
-      ? mediaContent[0]
-      : mediaContent;
-
-    if (media?.url) return media.url;
-    if (media?.$?.url) return media.$.url;
-  }
-
-  // ===============================
-  // 3. Media RSS <media:thumbnail>
-  // ===============================
-  const mediaThumbnail =
-    item["media:thumbnail"] ||
-    item.mediathumbnail;
-
-  if (mediaThumbnail) {
-    const thumb = Array.isArray(mediaThumbnail)
-      ? mediaThumbnail[0]
-      : mediaThumbnail;
-
-    if (thumb?.url) return thumb.url;
-    if (thumb?.$?.url) return thumb.$.url;
-  }
-
-  // ===============================
-  // 4. HTML fallback
-  // ===============================
-  const html =
-    item.content ||
-    item.contentSnippet ||
-    item.description ||
-    item["content:encoded"] ||
-    item.contentencoded;
-
-  if (html) {
-    const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
-    if (match?.[1]) return match[1];
-  }
-
-  return null;
-}
 
 // ===============================
 // Main Fetch Function
