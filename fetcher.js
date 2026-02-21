@@ -140,6 +140,32 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
   }
 }
 
+function extractImage(item) {
+  // 1. Standard enclosure
+  if (item.enclosure?.url) {
+    return item.enclosure.url;
+  }
+
+  // 2. Media content array
+  if (Array.isArray(item["media:content"]) && item["media:content"][0]?.$?.url) {
+    return item["media:content"][0].$.url;
+  }
+
+  // 3. Media thumbnail
+  if (Array.isArray(item["media:thumbnail"]) && item["media:thumbnail"][0]?.$?.url) {
+    return item["media:thumbnail"][0].$.url;
+  }
+
+  // 4. Extract from content HTML
+  const content = item.content || item["content:encoded"];
+  if (content) {
+    const match = content.match(/<img[^>]+src="([^">]+)"/i);
+    if (match && match[1]) return match[1];
+  }
+
+  return null;
+}
+
 // ===============================
 // Main Fetch Function
 // ===============================
@@ -206,6 +232,7 @@ const feedResult = await pool.query(`
 
         const publishedAt =
           item.pubDate ? new Date(item.pubDate) : null;
+        const imageUrl = extractImage(item);  
 
         let translatedTitle = null;
         let translatedSummary = null;
@@ -243,15 +270,17 @@ const feedResult = await pool.query(`
               language,
               published_at,
               ingested_at,
-              raw_json
+              raw_json,
+              image_url
             )
             VALUES (
-              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12, $13
             )
             ON CONFLICT (url)
             DO UPDATE SET
               translated_title   = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
               translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary);
+              image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url)
             `,
             [
               feed.id,
@@ -265,7 +294,8 @@ const feedResult = await pool.query(`
               item.content || null,
               feedLanguage,
               publishedAt,
-              JSON.stringify(item)
+              JSON.stringify(item),
+              imageUrl
             ]
           );
         }
