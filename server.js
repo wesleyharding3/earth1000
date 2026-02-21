@@ -118,6 +118,8 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 });
 
 
+
+
 // ===============================
 // GET NEWS BY COUNTRY
 // ===============================
@@ -178,6 +180,12 @@ app.get("/", (req, res) => {
 // ===============================
 
 const PORT = process.env.PORT || 3000;
+
+const fetchFeeds = require("./fetchFeeds");
+
+// Run once on startup, then every 30 minutes
+fetchFeeds().catch(console.error);
+setInterval(() => fetchFeeds().catch(console.error), 30 * 60 * 1000);
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
