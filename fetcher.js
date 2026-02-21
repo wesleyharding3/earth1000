@@ -146,8 +146,14 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 
 function extractImage(item) {
   // 1. Standard enclosure
-  if (item.enclosure?.url) return item.enclosure.url;
+  if (Array.isArray(item.enclosure)) {
+    const image = item.enclosure.find(e => e.type?.startsWith("image/"));
+    if (image?.url) return image.url;
+  }
 
+  if (item.enclosure?.url) {
+    return item.enclosure.url;
+  }
   // 2. media:content
   if (Array.isArray(item["media:content"]) && item["media:content"][0]?.$?.url) {
     return item["media:content"][0].$.url;
