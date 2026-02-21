@@ -146,25 +146,30 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 
 function extractImage(item) {
   // 1. Standard enclosure
-  if (item.enclosure?.url) {
-    return item.enclosure.url;
-  }
+  if (item.enclosure?.url) return item.enclosure.url;
 
-  // 2. Media content array
+  // 2. media:content
   if (Array.isArray(item["media:content"]) && item["media:content"][0]?.$?.url) {
     return item["media:content"][0].$.url;
   }
 
-  // 3. Media thumbnail
+  // 3. media:thumbnail
   if (Array.isArray(item["media:thumbnail"]) && item["media:thumbnail"][0]?.$?.url) {
     return item["media:thumbnail"][0].$.url;
   }
 
-  // 4. Extract from content HTML
-  const content = item.content || item["content:encoded"];
-  if (content) {
-    const match = content.match(/<img[^>]+src="([^">]+)"/i);
-    if (match && match[1]) return match[1];
+  // 4. Try ALL possible content fields
+  const possibleContent =
+    item.content ||
+    item.contentSnippet ||
+    item.description ||
+    item["content:encoded"] ||
+    item.contentencoded ||
+    item["contentencoded"];
+
+  if (possibleContent) {
+    const match = possibleContent.match(/<img[^>]+src=["']([^"'>]+)["']/i);
+    if (match?.[1]) return match[1];
   }
 
   return null;
