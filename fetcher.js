@@ -10,28 +10,30 @@ const { TranslationServiceClient } = require("@google-cloud/translate");
 // ===============================
 
 let translationClient = null;
+let PROJECT_ID = null;  
 
 function getTranslationClient() {
   if (translationClient) return translationClient;
 
   const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-
   if (!credentialsJson) {
     console.error("❌ GOOGLE_APPLICATION_CREDENTIALS_JSON is missing.");
     return null;
   }
 
   const credentials = JSON.parse(credentialsJson);
+  PROJECT_ID = credentials.project_id;
 
   translationClient = new TranslationServiceClient({
     credentials,
-    projectId: credentials.project_id,
+    projectId: PROJECT_ID,
   });
 
-  console.log("✅ Google Translation v3 client initialized.");
-
+  console.log("✅ Google Translation v3 client initialized. Project:", PROJECT_ID);
   return translationClient;
 }
+
+
 
 async function translateText(text, target = "en") {
   if (!text) return null;
@@ -41,7 +43,7 @@ async function translateText(text, target = "en") {
     if (!client) return null;
 
     const request = {
-      parent: `projects/${client.projectId}/locations/global`,
+      parent: `projects/${PROJECT_ID}/locations/global`,
       contents: [text],
       mimeType: "text/plain",
       targetLanguageCode: target,
