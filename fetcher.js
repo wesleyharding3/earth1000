@@ -150,31 +150,26 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 
 function extractImage(item) {
 
-  // ===============================
-  // 1. Standard RSS <enclosure>
-  // ===============================
-function extractImage(item) {
-
-  // 1. Enclosure
+  // 1. enclosure — rss-parser puts it as item.enclosure.url
   if (item.enclosure?.url) return item.enclosure.url;
 
-  // 2. media:content
-  const mc = item.mediaContent;
-  if (mc) {
-    const m = Array.isArray(mc) ? mc[0] : mc;
-    if (m?.url) return m.url;
-    if (m?.$?.url) return m.$.url;
-  }
-
-  // 3. media:thumbnail
+  // 2. media:thumbnail — simplest clean URL, Global News has this
   const mt = item.mediaThumbnail;
   if (mt) {
     const t = Array.isArray(mt) ? mt[0] : mt;
-    if (t?.url) return t.url;
-    if (t?.$?.url) return t.$.url;
+    const url = t?.url || t?.$?.url || (typeof t === "string" ? t : null);
+    if (url) return url;
   }
 
-  // 4. content:encoded HTML (WordPress galleries, inline images)
+  // 3. media:content
+  const mc = item.mediaContent;
+  if (mc) {
+    const m = Array.isArray(mc) ? mc[0] : mc;
+    const url = m?.url || m?.$?.url;
+    if (url) return url;
+  }
+
+  // 4. content:encoded HTML fallback (Antigua Observer, WordPress galleries)
   const html = item.contentEncoded || item.content || item.description;
   if (html) {
     const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
