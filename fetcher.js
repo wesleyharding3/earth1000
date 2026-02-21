@@ -1,9 +1,61 @@
-
-
 require("dotenv").config();
 
 const Parser = require("rss-parser");
 const pool = require("./db");
+const { TranslationServiceClient } = require("@google-cloud/translate");
+
+
+// ===============================
+// Google Translate v3 Config
+// ===============================
+
+let translationClient = null;
+
+function getTranslationClient() {
+  if (translationClient) return translationClient;
+
+  const credentialsJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+
+  if (!credentialsJson) {
+    console.error("❌ GOOGLE_APPLICATION_CREDENTIALS_JSON is missing.");
+    return null;
+  }
+
+  const credentials = JSON.parse(credentialsJson);
+
+  translationClient = new TranslationServiceClient({
+    credentials,
+    projectId: credentials.project_id,
+  });
+
+  console.log("✅ Google Translation v3 client initialized.");
+
+  return translationClient;
+}
+
+async function translateText(text, target = "en") {
+  if (!text) return null;
+
+  try {
+    const client = getTranslationClient();
+    if (!client) return null;
+
+    const request = {
+      parent: `projects/${client.projectId}/locations/global`,
+      contents: [text],
+      mimeType: "text/plain",
+      targetLanguageCode: target,
+    };
+
+    const [response] = await client.translateText(request);
+
+    return response.translations?.[0]?.translatedText || null;
+
+  } catch (err) {
+    console.error("❌ Google v3 translation error:", err.message);
+    return null;
+  }
+}
 
 // WHAT: Configure rss-parser with browser-like headers and loose XML parsing
 // WHY:  .xml/.feed endpoints commonly return 403 or Content-Type:text/html,
@@ -23,73 +75,9 @@ const parser = new Parser({
   }
 });
 
-// ===============================
-// Google Translate Config
-// ===============================
 
-// WHAT: Replace DeepL constants with Google Translate equivalents
-// WHY:  DeepL key is broken; Google Translate v2 uses a simple API key + JSON POST
-const GOOGLE_TRANSLATE_API_KEY = process.env.GOOGLE_TRANSLATE_API_KEY?.trim() || null;
-const GOOGLE_TRANSLATE_URL = "https://translation.googleapis.com/language/translate/v2";
-let translateDisabled = !GOOGLE_TRANSLATE_API_KEY;
 
-// WHAT: Only log Google Translate config — DeepL lines removed
-// WHY:  DEEPL_API_KEY, isFreeKey, DEEPL_URL no longer exist and would
-//       throw a ReferenceError on startup before any feed is fetched
-console.log("=== Google Translate Config ===");
-console.log("Key present:", !!GOOGLE_TRANSLATE_API_KEY);
-console.log("Key last 5 chars:", GOOGLE_TRANSLATE_API_KEY?.slice(-5));
 
-// ===============================
-// Translation Helper
-// ===============================
-
-// WHAT: Rewritten to call Google Translate v2 instead of DeepL
-// WHY:  Different auth method (query param key vs header), different request
-//       body shape (JSON vs form-encoded), different response path
-async function translateText(text, target = "en") {
-  if (!text || translateDisabled) return null;
-
-  try {
-    const url = `${GOOGLE_TRANSLATE_URL}?key=${GOOGLE_TRANSLATE_API_KEY}`;
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        q: text,
-        target,
-        format: "text"
-      })
-    });
-
-    // WHAT: Disable on 400/403 to avoid burning quota on a bad key
-    // WHY:  Google returns 400 for invalid keys, 403 for quota/permission issues
-    if (response.status === 400 || response.status === 403) {
-      const errorText = await response.text();
-      console.error(`❌ Google Translate ${response.status} — disabling translations.`, errorText);
-      translateDisabled = true;
-      return null;
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Google Translate API error:", response.status, errorText);
-      return null;
-    }
-
-    const data = await response.json();
-    // WHAT: Different response path from DeepL
-    // WHY:  Google wraps result in data.data.translations[0].translatedText
-    return data.data?.translations?.[0]?.translatedText || null;
-
-  } catch (err) {
-    console.error("Translation error:", err.message);
-    return null;
-  }
-}
 
 // ===============================
 // Utility: Clean HTML
@@ -162,7 +150,10 @@ async function fetchFeeds() {
   // WHY:  DEEPL_API_KEY is undefined — referencing it here would throw
   //       a ReferenceError and abort the entire fetch run
   console.log("Starting RSS fetch...");
-  console.log("Google Translate key exists:", !!GOOGLE_TRANSLATE_API_KEY);
+  console.log(
+    "Google credentials loaded:",
+    !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
+  );
 
 const feedResult = await pool.query(`
   SELECT 
