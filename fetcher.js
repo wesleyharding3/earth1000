@@ -80,7 +80,7 @@ const parser = new Parser({
   xml2js: {
     strict: false,
     normalize: true,
-    normalizeTags: true
+    normalizeTags: false
   }
 });
 
