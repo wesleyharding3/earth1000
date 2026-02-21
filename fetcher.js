@@ -232,6 +232,11 @@ const feedResult = await pool.query(`
           translatedTitle   = await translateText(originalTitle,   "en");
           translatedSummary = await translateText(originalSummary, "en");
         }
+
+          if (translatedTitle)   console.log(`✅ Translated title [${feedLanguage}→en]: "${originalTitle?.slice(0,60)}" → "${translatedTitle?.slice(0,60)}"`);
+          if (translatedSummary) console.log(`✅ Translated summary [${feedLanguage}→en]: ${translatedSummary?.slice(0,80)}…`);
+        }        
+        
         await pool.query(
           `
           INSERT INTO news_articles (
