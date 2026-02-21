@@ -66,10 +66,15 @@ async function translateText(text, target = "en") {
 //       and some use ISO-8859-1 encoding — these options handle all three cases
 const parser = new Parser({
   headers: {
-    "User-Agent":
-      "Mozilla/5.0 (compatible; RSSFetcher/1.0; +https://yoursite.com)",
-    "Accept":
-      "application/rss+xml, application/xml, text/xml, application/atom+xml, */*"
+    "User-Agent": "Mozilla/5.0 (compatible; RSSFetcher/1.0; +https://yoursite.com)",
+    "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*"
+  },
+  customFields: {
+    item: [
+      ["content:encoded", "contentEncoded"],
+      ["media:content", "mediaContent"],
+      ["media:thumbnail", "mediaThumbnail"],
+    ]
   },
   defaultRSS: 2.0,
   xml2js: {
@@ -78,7 +83,6 @@ const parser = new Parser({
     normalizeTags: true
   }
 });
-
 
 
 
@@ -145,26 +149,43 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 }
 
 function extractImage(item) {
+
   // ===============================
   // 1. Standard RSS <enclosure>
   // ===============================
-  if (item.enclosure) {
-    const enclosures = Array.isArray(item.enclosure)
-      ? item.enclosure
-      : [item.enclosure];
+function extractImage(item) {
 
-    const image = enclosures.find(e =>
-      e.type?.startsWith("image/") || e.url
-    );
+  // 1. Enclosure
+  if (item.enclosure?.url) return item.enclosure.url;
 
-    if (image?.url) {
-      return image.url;
-    }
+  // 2. media:content
+  const mc = item.mediaContent;
+  if (mc) {
+    const m = Array.isArray(mc) ? mc[0] : mc;
+    if (m?.url) return m.url;
+    if (m?.$?.url) return m.$.url;
   }
+
+  // 3. media:thumbnail
+  const mt = item.mediaThumbnail;
+  if (mt) {
+    const t = Array.isArray(mt) ? mt[0] : mt;
+    if (t?.url) return t.url;
+    if (t?.$?.url) return t.$.url;
+  }
+
+  // 4. content:encoded HTML (WordPress galleries, inline images)
+  const html = item.contentEncoded || item.content || item.description;
+  if (html) {
+    const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
 
   // ===============================
   // 2. Media RSS <media:content>
-  // (Bloomberg-style feeds)
   // ===============================
   const mediaContent =
     item["media:content"] ||
@@ -175,13 +196,8 @@ function extractImage(item) {
       ? mediaContent[0]
       : mediaContent;
 
-    if (media?.url) {
-      return media.url;
-    }
-
-    if (media?.$?.url) {
-      return media.$.url;
-    }
+    if (media?.url) return media.url;
+    if (media?.$?.url) return media.$.url;
   }
 
   // ===============================
@@ -196,17 +212,12 @@ function extractImage(item) {
       ? mediaThumbnail[0]
       : mediaThumbnail;
 
-    if (thumb?.url) {
-      return thumb.url;
-    }
-
-    if (thumb?.$?.url) {
-      return thumb.$.url;
-    }
+    if (thumb?.url) return thumb.url;
+    if (thumb?.$?.url) return thumb.$.url;
   }
 
   // ===============================
-  // 4. Fallback: extract <img> from HTML
+  // 4. HTML fallback
   // ===============================
   const html =
     item.content ||
@@ -217,13 +228,12 @@ function extractImage(item) {
 
   if (html) {
     const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
-    if (match?.[1]) {
-      return match[1];
-    }
+    if (match?.[1]) return match[1];
   }
 
   return null;
 }
+
 // ===============================
 // Main Fetch Function
 // ===============================
