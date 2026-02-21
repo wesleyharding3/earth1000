@@ -279,7 +279,7 @@ const feedResult = await pool.query(`
             ON CONFLICT (url)
             DO UPDATE SET
               translated_title   = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
-              translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary);
+              translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary),
               image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url)
             `,
             [
