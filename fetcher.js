@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+console.log("ENV CHECK:", !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+
 const Parser = require("rss-parser");
 const pool = require("./db");
 const { TranslationServiceClient } = require("@google-cloud/translate");
