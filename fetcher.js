@@ -145,48 +145,85 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 }
 
 function extractImage(item) {
-  // 1. Standard enclosure
-  if (Array.isArray(item.enclosure)) {
-    const image = item.enclosure.find(e => e.type?.startsWith("image/"));
-    if (image?.url) return image.url;
-  }
-
-// 1. Enclosure (array or single)
+  // ===============================
+  // 1. Standard RSS <enclosure>
+  // ===============================
   if (item.enclosure) {
-    if (Array.isArray(item.enclosure)) {
-      const img = item.enclosure.find(e => e.url);
-      if (img?.url) return img.url;
-    } else if (item.enclosure.url) {
-      return item.enclosure.url;
+    const enclosures = Array.isArray(item.enclosure)
+      ? item.enclosure
+      : [item.enclosure];
+
+    const image = enclosures.find(e =>
+      e.type?.startsWith("image/") || e.url
+    );
+
+    if (image?.url) {
+      return image.url;
     }
   }
-  // 2. media:content
-  if (Array.isArray(item["media:content"]) && item["media:content"][0]?.$?.url) {
-    return item["media:content"][0].$.url;
+
+  // ===============================
+  // 2. Media RSS <media:content>
+  // (Bloomberg-style feeds)
+  // ===============================
+  const mediaContent =
+    item["media:content"] ||
+    item.mediacontent;
+
+  if (mediaContent) {
+    const media = Array.isArray(mediaContent)
+      ? mediaContent[0]
+      : mediaContent;
+
+    if (media?.url) {
+      return media.url;
+    }
+
+    if (media?.$?.url) {
+      return media.$.url;
+    }
   }
 
-  // 3. media:thumbnail
-  if (Array.isArray(item["media:thumbnail"]) && item["media:thumbnail"][0]?.$?.url) {
-    return item["media:thumbnail"][0].$.url;
+  // ===============================
+  // 3. Media RSS <media:thumbnail>
+  // ===============================
+  const mediaThumbnail =
+    item["media:thumbnail"] ||
+    item.mediathumbnail;
+
+  if (mediaThumbnail) {
+    const thumb = Array.isArray(mediaThumbnail)
+      ? mediaThumbnail[0]
+      : mediaThumbnail;
+
+    if (thumb?.url) {
+      return thumb.url;
+    }
+
+    if (thumb?.$?.url) {
+      return thumb.$.url;
+    }
   }
 
-  // 4. Try ALL possible content fields
-  const possibleContent =
+  // ===============================
+  // 4. Fallback: extract <img> from HTML
+  // ===============================
+  const html =
     item.content ||
     item.contentSnippet ||
     item.description ||
     item["content:encoded"] ||
-    item.contentencoded ||
-    item["contentencoded"];
+    item.contentencoded;
 
-  if (possibleContent) {
-    const match = possibleContent.match(/<img[^>]+src=["']([^"'>]+)["']/i);
-    if (match?.[1]) return match[1];
+  if (html) {
+    const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
+    if (match?.[1]) {
+      return match[1];
+    }
   }
 
   return null;
 }
-
 // ===============================
 // Main Fetch Function
 // ===============================
