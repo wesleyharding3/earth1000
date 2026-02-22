@@ -162,26 +162,7 @@ function extractImage(item) {
     }
   }
 
-  function extractImage(item) {
 
-
-  const enclosureData =
-    item.enclosure ||
-    item.enclosures;   // ← YOU ARE MISSING THIS
-
-  if (enclosureData) {
-    const enclosures = Array.isArray(enclosureData)
-      ? enclosureData
-      : [enclosureData];
-
-    const image = enclosures.find(e =>
-      e?.type?.startsWith("image/") || e?.url
-    );
-
-    if (image?.url) {
-      return image.url;
-    }
-  }
 
   // ===============================
   // 2. Media RSS <media:content>
@@ -304,6 +285,7 @@ const feedResult = await pool.query(`
       const feedLanguage = feed.language_code || parsed.language || "unknown";
 
       for (const item of parsed.items) {
+        
 
         const originalTitle = cleanText(item.title);
         const originalSummary =
@@ -326,8 +308,10 @@ const feedResult = await pool.query(`
           feedLanguage &&
           !feedLanguage?.toLowerCase().startsWith("en")
         ) {
-          translatedTitle   = await translateText(originalTitle,   "en");
-          translatedSummary = await translateText(originalSummary, "en");
+          [translatedTitle, translatedSummary] = await Promise.all([
+            translateText(originalTitle, "en"),
+            translateText(originalSummary, "en")
+          ]);
         }
 
           if (translatedTitle)   console.log(`✅ Translated title [${feedLanguage}→en]: "${originalTitle?.slice(0,60)}" → "${translatedTitle?.slice(0,60)}"`);
