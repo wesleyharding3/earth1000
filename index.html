@@ -2119,7 +2119,7 @@ const loader = new THREE.TextureLoader();
 
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
 
-                const sortOptions = panel.querySelectorAll(".panelSortOption");
+        const sortOptions = panel.querySelectorAll(".panelSortOption");
         sortOptions.forEach(opt => {
           opt.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -2370,9 +2370,40 @@ const loader = new THREE.TextureLoader();
 
 
         function articleCardHTML(article) {
-          const imageField = article.image_url
-            ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
-            : `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+          const hasImage = article.image_url && article.image_url.trim() !== "";
+          const fallbackIso = (article.iso_code || country.iso_code || "").toLowerCase();
+
+          let imageField;
+
+          if (hasImage) {
+            imageField = `
+              <img class="articleCardImage"
+                   src="${article.image_url}"
+                   alt=""
+                   loading="lazy"
+                   onerror="this.src='${FLAG_CDN_BASE}${fallbackIso}.png'">
+            `;
+          } else if (fallbackIso) {
+            imageField = `
+              <img class="articleCardImage"
+                   src="${FLAG_CDN_BASE}${fallbackIso}.png"
+                   alt=""
+                   loading="lazy">
+            `;
+          } else {
+            imageField = `
+              <div class="articleCardImagePlaceholder">
+                <svg viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <path d="M21 15l-5-5L5 21"/>
+                </svg>
+              </div>
+            `;
+          }
           return `
             <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
               ${imageField}
