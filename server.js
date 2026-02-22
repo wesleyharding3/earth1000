@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
+const fetchFeeds = require("./fetcher");
 
 const app = express();
 
@@ -33,7 +34,7 @@ app.get("/api/countries", async (req, res) => {
     const result = await pool.query(`
       SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population
       FROM countries
-      WHERE is_active = true
+      
       ORDER BY name ASC
     `);
     res.json(result.rows);
@@ -98,7 +99,6 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 app.get("/", (req, res) => res.send("API is running"));
 
 const PORT = process.env.PORT || 3000;
-const fetchFeeds = require("./fetcher");
 
 fetchFeeds().catch(console.error);
 setInterval(() => fetchFeeds().catch(console.error), 30 * 60 * 1000);
