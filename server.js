@@ -33,6 +33,7 @@ app.get("/api/countries", async (req, res) => {
     const result = await pool.query(`
       SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population
       FROM countries
+      WHERE is_active = true
       ORDER BY name ASC
     `);
     res.json(result.rows);
