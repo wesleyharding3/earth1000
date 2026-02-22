@@ -66,23 +66,19 @@ async function translateText(text, target = "en") {
 //       and some use ISO-8859-1 encoding — these options handle all three cases
 const parser = new Parser({
   headers: {
-    "User-Agent": "Mozilla/5.0 (compatible; RSSFetcher/1.0; +https://yoursite.com)",
-    "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*"
-  },
-  customFields: {
-    item: [
-      ["content:encoded", "contentEncoded"],
-      ["media:content", "mediaContent"],
-      ["media:thumbnail", "mediaThumbnail"],
-    ]
+    "User-Agent":
+      "Mozilla/5.0 (compatible; RSSFetcher/1.0; +https://yoursite.com)",
+    "Accept":
+      "application/rss+xml, application/xml, text/xml, application/atom+xml, */*"
   },
   defaultRSS: 2.0,
   xml2js: {
     strict: false,
     normalize: true,
-    normalizeTags: false
+    normalizeTags: true
   }
 });
+
 
 
 
@@ -149,37 +145,106 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 }
 
 function extractImage(item) {
+  // ===============================
+  // 1. Standard RSS <enclosure>
+  // ===============================
+  if (item.enclosure) {
+    const enclosures = Array.isArray(item.enclosure)
+      ? item.enclosure
+      : [item.enclosure];
 
-  // 1. enclosure — rss-parser puts it as item.enclosure.url
-  if (item.enclosure?.url) return item.enclosure.url;
+    const image = enclosures.find(e =>
+      e.type?.startsWith("image/") || e.url
+    );
 
-  // 2. media:thumbnail — simplest clean URL, Global News has this
-  const mt = item.mediaThumbnail;
-  if (mt) {
-    const t = Array.isArray(mt) ? mt[0] : mt;
-    const url = t?.url || t?.$?.url || (typeof t === "string" ? t : null);
-    if (url) return url;
+    if (image?.url) {
+      return image.url;
+    }
   }
 
-  // 3. media:content
-  const mc = item.mediaContent;
-  if (mc) {
-    const m = Array.isArray(mc) ? mc[0] : mc;
-    const url = m?.url || m?.$?.url;
-    if (url) return url;
+  function extractImage(item) {
+
+
+  const enclosureData =
+    item.enclosure ||
+    item.enclosures;   // ← YOU ARE MISSING THIS
+
+  if (enclosureData) {
+    const enclosures = Array.isArray(enclosureData)
+      ? enclosureData
+      : [enclosureData];
+
+    const image = enclosures.find(e =>
+      e?.type?.startsWith("image/") || e?.url
+    );
+
+    if (image?.url) {
+      return image.url;
+    }
   }
 
-  // 4. content:encoded HTML fallback (Antigua Observer, WordPress galleries)
-  const html = item.contentEncoded || item.content || item.description;
+  // ===============================
+  // 2. Media RSS <media:content>
+  // (Bloomberg-style feeds)
+  // ===============================
+  const mediaContent =
+    item["media:content"] ||
+    item.mediacontent;
+
+  if (mediaContent) {
+    const media = Array.isArray(mediaContent)
+      ? mediaContent[0]
+      : mediaContent;
+
+    if (media?.url) {
+      return media.url;
+    }
+
+    if (media?.$?.url) {
+      return media.$.url;
+    }
+  }
+
+  // ===============================
+  // 3. Media RSS <media:thumbnail>
+  // ===============================
+  const mediaThumbnail =
+    item["media:thumbnail"] ||
+    item.mediathumbnail;
+
+  if (mediaThumbnail) {
+    const thumb = Array.isArray(mediaThumbnail)
+      ? mediaThumbnail[0]
+      : mediaThumbnail;
+
+    if (thumb?.url) {
+      return thumb.url;
+    }
+
+    if (thumb?.$?.url) {
+      return thumb.$.url;
+    }
+  }
+
+  // ===============================
+  // 4. Fallback: extract <img> from HTML
+  // ===============================
+  const html =
+    item.content ||
+    item.contentSnippet ||
+    item.description ||
+    item["content:encoded"] ||
+    item.contentencoded;
+
   if (html) {
     const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
-    if (match?.[1]) return match[1];
+    if (match?.[1]) {
+      return match[1];
+    }
   }
 
   return null;
 }
-
-
 // ===============================
 // Main Fetch Function
 // ===============================
