@@ -138,3 +138,33 @@ async function fetchFeeds() {
             feed.id, feed.city_id, feed.country_id,
             title, item.link || null, summary, item.content || null,
             publishedAt, JSON.stringify(item), imageUrl
+          ]
+        );
+      }
+
+      await pool.query(
+        `UPDATE news_sources SET failure_count = 0, last_success_at = NOW(), last_error = NULL WHERE id = $1`,
+        [feed.id]
+      );
+
+      console.log(`✅ Finished: ${feed.rss_url}`);
+
+    } catch (err) {
+      await logFeedError(feed, err);
+
+      await pool.query(
+        `UPDATE news_sources SET failure_count = COALESCE(failure_count,0) + 1, last_failed_at = NOW() WHERE id = $1`,
+        [feed.id]
+      );
+
+      await pool.query(
+        `UPDATE news_sources SET is_active = false WHERE id = $1 AND failure_count >= 10`,
+        [feed.id]
+      );
+    }
+  }
+
+  console.log("RSS fetch complete.");
+}
+
+module.exports = fetchFeeds;
