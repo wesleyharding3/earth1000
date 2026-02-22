@@ -3,7 +3,11 @@ const cheerio = require("cheerio");
 const Parser = require("rss-parser");
 const pool = require("./db");
 
-const parser = new Parser({
+/* =========================================
+   Parser Options (Reusable Config Only)
+========================================= */
+
+const parserOptions = {
   headers: {
     "User-Agent": "Mozilla/5.0 (compatible; RSSFetcher/1.0; +https://yoursite.com)",
     "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*"
@@ -14,7 +18,11 @@ const parser = new Parser({
     normalize: true,
     normalizeTags: true
   }
-});
+};
+
+/* =========================================
+   Utilities
+========================================= */
 
 function cleanText(text) {
   return text?.replace(/<[^>]*>/g, "").trim();
@@ -31,15 +39,25 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
     });
 
     await pool.query(
-      `INSERT INTO rss_error_logs (feed_id, rss_url, error_type, error_message, stack_trace)
+      `INSERT INTO rss_error_logs 
+       (feed_id, rss_url, error_type, error_message, stack_trace)
        VALUES ($1,$2,$3,$4,$5)`,
-      [feed.id, feed.rss_url, type, err.message?.substring(0, 1000) || null, err.stack?.substring(0, 5000) || null]
+      [
+        feed.id,
+        feed.rss_url,
+        type,
+        err.message?.substring(0, 1000) || null,
+        err.stack?.substring(0, 5000) || null
+      ]
     );
 
     await pool.query(
-      `UPDATE news_sources SET last_error = $1, last_failed_at = NOW() WHERE id = $2`,
+      `UPDATE news_sources 
+       SET last_error = $1, last_failed_at = NOW() 
+       WHERE id = $2`,
       [err.message?.substring(0, 1000), feed.id]
     );
+
   } catch (logErr) {
     console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
   }
@@ -79,14 +97,21 @@ function extractImage(item) {
 
   if (html) {
     const $ = cheerio.load(html);
-    const featured = $(".wp-block-gutenberg-custom-blocks-featured-media").first().attr("src");
+    const featured = $(".wp-block-gutenberg-custom-blocks-featured-media")
+      .first()
+      .attr("src");
     if (featured) return featured;
+
     const firstImg = $("img").first().attr("src");
     if (firstImg) return firstImg;
   }
 
   return null;
 }
+
+/* =========================================
+   Main Fetch Function
+========================================= */
 
 async function fetchFeeds() {
   console.log("Starting RSS fetch...");
@@ -102,7 +127,11 @@ async function fetchFeeds() {
   for (const feed of feeds) {
     try {
       if (!feed.rss_url) continue;
+
       console.log(`Fetching: ${feed.rss_url}`);
+
+      // ✅ NEW: Create parser instance per feed
+      const parser = new Parser(parserOptions);
 
       const parsed = await Promise.race([
         parser.parseURL(feed.rss_url),
@@ -112,7 +141,7 @@ async function fetchFeeds() {
       ]);
 
       if (!parsed.items || parsed.items.length === 0) {
-        console.warn(`⚠️  No items found in feed: ${feed.rss_url}`);
+        console.warn(`⚠️ No items found in feed: ${feed.rss_url}`);
         continue;
       }
 
@@ -135,30 +164,45 @@ async function fetchFeeds() {
           DO UPDATE SET
             image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url)`,
           [
-            feed.id, feed.city_id, feed.country_id,
-            title, item.link || null, summary, item.content || null,
-            publishedAt, JSON.stringify(item), imageUrl
+            feed.id,
+            feed.city_id,
+            feed.country_id,
+            title,
+            item.link || null,
+            summary,
+            item.content || null,
+            publishedAt,
+            JSON.stringify(item),
+            imageUrl
           ]
         );
       }
 
       await pool.query(
-        `UPDATE news_sources SET failure_count = 0, last_success_at = NOW(), last_error = NULL WHERE id = $1`,
+        `UPDATE news_sources 
+         SET failure_count = 0, last_success_at = NOW(), last_error = NULL 
+         WHERE id = $1`,
         [feed.id]
       );
 
       console.log(`✅ Finished: ${feed.rss_url}`);
 
     } catch (err) {
+
       await logFeedError(feed, err);
 
       await pool.query(
-        `UPDATE news_sources SET failure_count = COALESCE(failure_count,0) + 1, last_failed_at = NOW() WHERE id = $1`,
+        `UPDATE news_sources 
+         SET failure_count = COALESCE(failure_count,0) + 1, 
+             last_failed_at = NOW() 
+         WHERE id = $1`,
         [feed.id]
       );
 
       await pool.query(
-        `UPDATE news_sources SET is_active = false WHERE id = $1 AND failure_count >= 10`,
+        `UPDATE news_sources 
+         SET is_active = false 
+         WHERE id = $1 AND failure_count >= 10`,
         [feed.id]
       );
     }
