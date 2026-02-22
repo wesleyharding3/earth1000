@@ -1,4 +1,5 @@
 require("dotenv").config();
+const cheerio = require("cheerio");
 
 console.log("ENV CHECK:", !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
 
@@ -145,28 +146,26 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
 }
 
 function extractImage(item) {
-  // ===============================
-  // 1. Standard RSS <enclosure>
-  // ===============================
-  if (item.enclosure) {
-    const enclosures = Array.isArray(item.enclosure)
-      ? item.enclosure
-      : [item.enclosure];
 
-    const image = enclosures.find(e =>
-      e.type?.startsWith("image/") || e.url
-    );
+  // ===============================
+  // 🥇 1. Standard RSS <enclosure>
+  // ===============================
+  const enclosure = item.enclosure || item.enclosures;
+  if (enclosure) {
+    const list = Array.isArray(enclosure) ? enclosure : [enclosure];
 
-    if (image?.url) {
-      return image.url;
+    for (const e of list) {
+      const url  = e?.url || e?.$?.url;
+      const type = e?.type || e?.$?.type;
+
+      if (url && (!type || type.startsWith("image/"))) {
+        return url;
+      }
     }
   }
 
-
-
   // ===============================
-  // 2. Media RSS <media:content>
-  // (Bloomberg-style feeds)
+  // 🥇 2. Media RSS <media:content>
   // ===============================
   const mediaContent =
     item["media:content"] ||
@@ -177,55 +176,56 @@ function extractImage(item) {
       ? mediaContent[0]
       : mediaContent;
 
-    if (media?.url) {
-      return media.url;
-    }
-
-    if (media?.$?.url) {
-      return media.$.url;
-    }
+    const url = media?.url || media?.$?.url;
+    if (url) return url;
   }
 
   // ===============================
-  // 3. Media RSS <media:thumbnail>
+  // 🥇 3. Media RSS <media:thumbnail>
   // ===============================
-  const mediaThumbnail =
+  const mediaThumb =
     item["media:thumbnail"] ||
     item.mediathumbnail;
 
-  if (mediaThumbnail) {
-    const thumb = Array.isArray(mediaThumbnail)
-      ? mediaThumbnail[0]
-      : mediaThumbnail;
+  if (mediaThumb) {
+    const thumb = Array.isArray(mediaThumb)
+      ? mediaThumb[0]
+      : mediaThumb;
 
-    if (thumb?.url) {
-      return thumb.url;
-    }
-
-    if (thumb?.$?.url) {
-      return thumb.$.url;
-    }
+    const url = thumb?.url || thumb?.$?.url;
+    if (url) return url;
   }
 
   // ===============================
-  // 4. Fallback: extract <img> from HTML
+  // 🥈 4. Parse HTML Content
   // ===============================
   const html =
-    item.content ||
-    item.contentSnippet ||
-    item.description ||
+    item.contentEncoded ||
+    item.contentencoded ||
     item["content:encoded"] ||
-    item.contentencoded;
+    item.content ||
+    item.description;
 
   if (html) {
-    const match = html.match(/<img[^>]+src=["']([^"'>]+)["']/i);
-    if (match?.[1]) {
-      return match[1];
-    }
+    const $ = cheerio.load(html);
+
+    // Prefer WordPress featured image
+    const featured =
+      $(".wp-block-gutenberg-custom-blocks-featured-media")
+        .first()
+        .attr("src");
+
+    if (featured) return featured;
+
+    // Otherwise first image
+    const firstImg = $("img").first().attr("src");
+    if (firstImg) return firstImg;
   }
 
   return null;
 }
+
+
 // ===============================
 // Main Fetch Function
 // ===============================
@@ -285,7 +285,7 @@ const feedResult = await pool.query(`
       const feedLanguage = feed.language_code || parsed.language || "unknown";
 
       for (const item of parsed.items) {
-        
+
 
         const originalTitle = cleanText(item.title);
         const originalSummary =
