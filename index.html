@@ -1257,6 +1257,25 @@ const loader = new THREE.TextureLoader();
       updateArrow();
     }
 
+    function snapToNearest() {
+      const currentH = parseFloat(infoPanel.style.height);
+      const min = SNAP.min;
+      const def = SNAP.default;
+      const max = SNAP.max();
+
+      const states = [
+        { state: "min", value: min },
+        { state: "default", value: def },
+        { state: "max", value: max }
+      ];
+
+      states.sort((a, b) =>
+        Math.abs(currentH - a.value) - Math.abs(currentH - b.value)
+      );
+
+      applySnapHeight(states[0].state);
+    }
+
     function updateArrow() {
       const arrow = document.getElementById("panelResizeArrow");
       if (!arrow) return;
@@ -1520,6 +1539,11 @@ const loader = new THREE.TextureLoader();
           }
         }
       }
+
+      function isPanelActive() {
+        const panel = document.getElementById("infoPanel");
+        return !!(panel && panel.classList.contains("active"));
+      }      
 
       function updateNodeGlow() {
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
@@ -1888,6 +1912,7 @@ const loader = new THREE.TextureLoader();
       const mouse = new THREE.Vector2();
 
       window.addEventListener("click", event => {
+        if (isPanelActive() && event.target.closest("#infoPanel")) return;  
         mouse.x = (event.clientX/window.innerWidth)*2-1;
         mouse.y = -(event.clientY/window.innerHeight)*2+1;
         raycaster.setFromCamera(mouse, camera);
@@ -1974,7 +1999,7 @@ const loader = new THREE.TextureLoader();
                 </div>
               </div>
               <div id="timePill" style="flex-shrink:0;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:5px 13px;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:0.03em;color:rgba(255,255,255,0.88);"></div>
-</div>
+            </div>
           </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
@@ -2118,6 +2143,33 @@ const loader = new THREE.TextureLoader();
             `;
           }
 
+          return `
+            <a class="articleCard"
+               href="${article.url}"
+               target="_blank"
+               rel="noopener">
+              ${imageField}
+              <div class="articleCardBody">
+                <div class="articleCardSource">
+                  ${article.source_name || ""}
+                </div>
+                <div class="articleCardTitle">
+                  ${article.title || ""}
+                </div>
+                <div class="articleCardSummary">
+                  ${article.summary || ""}
+                </div>
+                <div class="articleCardDate">
+                  ${new Date(article.published_at).toLocaleDateString(
+                    "en-US",
+                    { month: "short", day: "numeric", year: "numeric" }
+                  )}
+                </div>
+              </div>
+            </a>
+          `;
+        }
+
         function skeletonCards(n) {
           return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
         }
@@ -2147,10 +2199,6 @@ const loader = new THREE.TextureLoader();
 
         viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
         viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
-
-        let vpTouchStartY = 0, vpScrollStart = 0;
-        viewport.addEventListener("touchstart", (e) => { vpTouchStartY = e.touches[0].clientY; vpScrollStart = viewport.scrollTop; }, { passive: true });
-        viewport.addEventListener("touchmove",  (e) => { e.stopPropagation(); viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY); }, { passive: true });
 
         const timeElement  = document.getElementById("timePill");
         const cityTimezone = resolveTimezone(city);
@@ -2295,6 +2343,7 @@ const loader = new THREE.TextureLoader();
         const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
 
+
         function articleCardHTML(article) {
           const imageField = article.image_url
             ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
@@ -2353,18 +2402,7 @@ const loader = new THREE.TextureLoader();
         });
       }
 
-      window.addEventListener("touchstart", (e) => {
-        if (e.touches.length === 1) { touchDragging = true; touchPrevX = e.touches[0].clientX; touchPrevY = e.touches[0].clientY; selectedNodeIndex = null; isFocused = false; }
-      }, { passive: false });
 
-      window.addEventListener("touchmove", (e) => {
-        if (!touchDragging || e.touches.length !== 1) return;
-        e.preventDefault();
-        const deltaX = (e.touches[0].clientX - touchPrevX) * 0.005;
-        const deltaY = (e.touches[0].clientY - touchPrevY) * 0.005;
-        applyYaw(deltaX); applyTilt(-deltaY);
-        touchPrevX = e.touches[0].clientX; touchPrevY = e.touches[0].clientY;
-      }, { passive: false });
 
       window.addEventListener("touchend", () => { touchDragging = false; });
 
@@ -2496,7 +2534,11 @@ const loader = new THREE.TextureLoader();
       const infoPanel = document.getElementById("infoPanel");
       let panelScrolling = false, panelStartY, panelScrollStart;
 
-      infoPanel.addEventListener("mousedown", (e) => { panelScrolling = true; panelStartY = e.clientY; panelScrollStart = infoPanel.scrollTop; infoPanel.style.cursor = "grabbing"; });
+      infoPanel.addEventListener("mousedown", (e) => { 
+        panelScrolling = true; 
+        panelStartY = e.clientY; 
+        panelScrollStart = infoPanel.scrollTop; 
+        infoPanel.style.cursor = "grabbing"; });
       window.addEventListener("mousemove", (e) => { if (!panelScrolling) return; infoPanel.scrollTop = panelScrollStart - (e.clientY - panelStartY); });
       window.addEventListener("mouseup", () => { panelScrolling = false; infoPanel.style.cursor = "grab"; });
       infoPanel.style.cursor = "grab";
