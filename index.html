@@ -1647,6 +1647,7 @@ const loader = new THREE.TextureLoader();
       let prevX = 0, prevY = 0;
       let touchDragging = false;
       let touchPrevX = 0, touchPrevY = 0;
+      let touchTapMoved = false;
 
       window.addEventListener("mousedown", e => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar")) return;
@@ -1657,6 +1658,29 @@ const loader = new THREE.TextureLoader();
       });
 
       window.addEventListener("mouseup", () => { dragging = false; });
+      window.addEventListener("touchstart", e => {
+        if (e.touches.length !== 1) return;
+        pauseAmbientRotation();
+        touchDragging = true;
+        touchTapMoved = false;
+        touchPrevX = e.touches[0].clientX;
+        touchPrevY = e.touches[0].clientY;
+      }, { passive: true });
+
+      window.addEventListener("touchmove", e => {
+        if (!touchDragging || e.touches.length !== 1) return;
+        const dx = (e.touches[0].clientX - touchPrevX) * 0.005;
+        const dy = (e.touches[0].clientY - touchPrevY) * 0.005;
+        if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) touchTapMoved = true;
+        applyYaw(dx);
+        applyTilt(dy);
+        touchPrevX = e.touches[0].clientX;
+        touchPrevY = e.touches[0].clientY;
+      }, { passive: true });
+
+      window.addEventListener("touchend", () => {
+        touchDragging = false;
+      });
 
       window.addEventListener("mousemove", e => {
         if (!dragging) return;
@@ -1934,6 +1958,7 @@ const loader = new THREE.TextureLoader();
       });
 
       window.addEventListener("touchstart", (event) => {
+        if (touchTapMoved) return;
         if (event.touches.length !== 1) return;
         const touch = event.touches[0];
         mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
@@ -2401,10 +2426,6 @@ const loader = new THREE.TextureLoader();
           isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
       }
-
-
-
-      window.addEventListener("touchend", () => { touchDragging = false; });
 
       window.addEventListener("wheel", e => {
         pauseAmbientRotation();
