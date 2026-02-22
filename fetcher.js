@@ -282,7 +282,7 @@ const feedResult = await pool.query(`
         continue;
       }
 
-      const items = parsed.items.slice(0, 20);
+      const items = parsed.items.slice(0, 40);
 
       const feedLanguage = feed.language_code || parsed.language || "unknown";
 
