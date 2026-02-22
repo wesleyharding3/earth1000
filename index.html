@@ -994,6 +994,12 @@
       padding-top: 4px;
     }
 
+    .articleCardImage.flag {
+      object-fit: contain;
+      padding: 12px;
+      background: #111;
+    }
+
     #articlesViewport {
       flex: 1;
       overflow-y: auto;
@@ -1147,6 +1153,8 @@
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
+
+    const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -2076,20 +2084,39 @@ const loader = new THREE.TextureLoader();
         const viewport = panel.querySelector("#articlesViewport");
 
         function articleCardHTML(article) {
-          const imageField = article.image_url
-            ? `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.parentElement.innerHTML='<div class=articleCardImagePlaceholder><svg viewBox=\\'0 0 24 24\\' fill=\\'none\\' stroke=\\'currentColor\\' stroke-width=\\'1.5\\'><rect x=\\'3\\' y=\\'3\\' width=\\'18\\' height=\\'18\\' rx=\\'2\\'/><circle cx=\\'8.5\\' cy=\\'8.5\\' r=\\'1.5\\'/><path d=\\'M21 15l-5-5L5 21\\'/></svg></div>'">`
-            : `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
-          return `
-            <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
-              ${imageField}
-              <div class="articleCardBody">
-                <div class="articleCardSource">${article.source_name || ""}</div>
-                <div class="articleCardTitle">${article.title || ""}</div>
-                <div class="articleCardSummary">${article.summary || ""}</div>
-                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+          const hasImage = article.image_url && article.image_url.trim() !== "";
+
+          let imageField;
+
+          if (hasImage) {
+            imageField = `
+              <img class="articleCardImage"
+                   src="${article.image_url}"
+                   alt=""
+                   loading="lazy"
+                   onerror="this.src='${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png'">
+            `;
+          } else if (article.iso_code) {
+            imageField = `
+              <img class="articleCardImage"
+                   src="${FLAG_CDN_BASE}${article.iso_code.toLowerCase()}.png"
+                   alt=""
+                   loading="lazy">
+            `;
+          } else {
+            imageField = `
+              <div class="articleCardImagePlaceholder">
+                <svg viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <path d="M21 15l-5-5L5 21"/>
+                </svg>
               </div>
-            </a>`;
-        }
+            `;
+          }
 
         function skeletonCards(n) {
           return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
