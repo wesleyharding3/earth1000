@@ -4,7 +4,7 @@ const Parser = require("rss-parser");
 const pool = require("./db");
 
 /* =========================================
-   Parser Options (Reusable Config Only)
+   Parser Options
 ========================================= */
 
 const parserOptions = {
@@ -130,7 +130,6 @@ async function fetchFeeds() {
 
       console.log(`Fetching: ${feed.rss_url}`);
 
-      // ✅ NEW: Create parser instance per feed
       const parser = new Parser(parserOptions);
 
       const parsed = await Promise.race([
@@ -142,50 +141,49 @@ async function fetchFeeds() {
 
       if (!parsed.items || parsed.items.length === 0) {
         console.warn(`⚠️ No items found in feed: ${feed.rss_url}`);
-        continue;
-      }
+      } else {
+        const items = parsed.items.slice(0, 40);
 
-      const items = parsed.items.slice(0, 40);
+        for (const item of items) {
+          const title       = cleanText(item.title);
+          const summary     = cleanText(item.contentSnippet || item.description);
+          const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
+          const imageUrl    = extractImage(item);
 
-      for (const item of items) {
-        const title       = cleanText(item.title);
-        const summary     = cleanText(item.contentSnippet || item.description);
-        const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
-        const imageUrl    = extractImage(item);
+          await pool.query(
+            `INSERT INTO news_articles (
+              source_id, city_id, country_id,
+              title, url, summary, content,
+              published_at, ingested_at, image_url
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9)
+            ON CONFLICT (url)
+            DO UPDATE SET
+              image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url)`,
+            [
+              feed.id,
+              feed.city_id,
+              feed.country_id,
+              title,
+              item.link || null,
+              summary,
+              item.content || null,
+              publishedAt,
+              imageUrl
+            ]
+          );
+        }
 
         await pool.query(
-          `INSERT INTO news_articles (
-            source_id, city_id, country_id,
-            title, url, summary, content,
-            published_at, ingested_at, raw_json, image_url
-          )
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10)
-          ON CONFLICT (url)
-          DO UPDATE SET
-            image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url)`,
-          [
-            feed.id,
-            feed.city_id,
-            feed.country_id,
-            title,
-            item.link || null,
-            summary,
-            item.content || null,
-            publishedAt,
-            JSON.stringify(item),
-            imageUrl
-          ]
+          `UPDATE news_sources 
+           SET failure_count = 0, last_success_at = NOW(), last_error = NULL 
+           WHERE id = $1`,
+          [feed.id]
         );
-      }
 
-      await pool.query(
-        `UPDATE news_sources 
-         SET failure_count = 0, last_success_at = NOW(), last_error = NULL 
-         WHERE id = $1`,
-        [feed.id]
-      );
+        console.log(`✅ Finished: ${feed.rss_url}`);
 
-      console.log(`✅ Finished: ${feed.rss_url}`);
+      } // closes else
 
     } catch (err) {
 
@@ -193,8 +191,7 @@ async function fetchFeeds() {
 
       await pool.query(
         `UPDATE news_sources 
-         SET failure_count = COALESCE(failure_count,0) + 1, 
-             last_failed_at = NOW() 
+         SET failure_count = COALESCE(failure_count,0) + 1, last_failed_at = NOW() 
          WHERE id = $1`,
         [feed.id]
       );
@@ -205,10 +202,15 @@ async function fetchFeeds() {
          WHERE id = $1 AND failure_count >= 10`,
         [feed.id]
       );
-    }
-  }
+
+    } // closes catch
+
+    await new Promise(resolve => setImmediate(resolve));
+
+  } // closes for loop
 
   console.log("RSS fetch complete.");
-}
+
+} // closes fetchFeeds
 
 module.exports = fetchFeeds;
