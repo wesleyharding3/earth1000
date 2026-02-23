@@ -100,7 +100,18 @@ app.get("/", (req, res) => res.send("API is running"));
 
 const PORT = process.env.PORT || 3000;
 
+let isFetching = false;
+
 fetchFeeds().catch(console.error);
-setInterval(() => fetchFeeds().catch(console.error), 30 * 60 * 1000);
+
+setInterval(async () => {
+  if (isFetching) return;    // skip if previous cycle still running
+  isFetching = true;
+  try { 
+    await fetchFeeds(); 
+  } finally { 
+    isFetching = false;      // always release even if fetchFeeds throws
+  }
+}, 30 * 60 * 1000);
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
