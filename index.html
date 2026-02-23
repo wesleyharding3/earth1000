@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1391,7 +1390,7 @@ const loader = new THREE.TextureLoader();
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
-      const citySize = 0.038;
+      const citySize = 0.028;
       const ringBurstDelay = 0.18;
       const ringSpeed = 0.008;
       const positions = [];
@@ -1423,9 +1422,9 @@ const loader = new THREE.TextureLoader();
         glowCanvas.width=size; glowCanvas.height=size;
         const ctx=glowCanvas.getContext("2d");
         const grad=ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
-        grad.addColorStop(0,"rgba(255,210,120,1)");
-        grad.addColorStop(0.2,"rgba(255,180,80,0.78)");
-        grad.addColorStop(0.45,"rgba(255,110,25,0.30)");
+        grad.addColorStop(0,"rgba(255,200,120,1)");
+        grad.addColorStop(0.2,"rgba(255,180,80,0.85)");
+        grad.addColorStop(0.45,"rgba(255,100,20,0.2)");
         grad.addColorStop(1,"rgba(255,80,20,0)");
         ctx.fillStyle=grad; ctx.fillRect(0,0,size,size);
         return new THREE.CanvasTexture(glowCanvas);
@@ -1583,7 +1582,7 @@ const loader = new THREE.TextureLoader();
           nodePos.normalize();
           let dot = -cameraDir.dot(nodePos);
           let normalized = (dot + 1) / 2;
-          const minGlow = 0.72;
+          const minGlow = 0.08;
           let glow = minGlow + (1 - minGlow) * Math.pow(normalized, 3.0);
           if (glowPulseActive && i === selectedNodeIndex) {
             const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
