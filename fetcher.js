@@ -110,6 +110,48 @@ function extractImage(item) {
 }
 
 /* =========================================
+   Controlled Fetch (Size-Limited)
+========================================= */
+
+const MAX_FEED_SIZE = 2 * 1024 * 1024; // 2MB
+
+async function fetchXmlWithLimit(url, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: parserOptions.headers
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    let received = 0;
+    const chunks = [];
+
+    for await (const chunk of response.body) {
+      received += chunk.length;
+
+      if (received > MAX_FEED_SIZE) {
+        throw new Error("Feed exceeds max size limit");
+      }
+
+      chunks.push(chunk);
+    }
+
+    return Buffer.concat(chunks).toString("utf8");
+
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+
+/* =========================================
    Main Fetch Function
 ========================================= */
 
@@ -124,20 +166,17 @@ async function fetchFeeds() {
 
   const feeds = feedResult.rows;
 
+  const parser = new Parser(parserOptions);
+
   for (const feed of feeds) {
     try {
       if (!feed.rss_url) continue;
 
       console.log(`Fetching: ${feed.rss_url}`);
 
-      const parser = new Parser(parserOptions);
 
-      const parsed = await Promise.race([
-        parser.parseURL(feed.rss_url),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Feed timeout")), 15000)
-        )
-      ]);
+      const xml = await fetchXmlWithLimit(feed.rss_url, 15000);
+      const parsed = await parser.parseString(xml);
 
       if (!parsed.items || parsed.items.length === 0) {
         console.warn(`⚠️ No items found in feed: ${feed.rss_url}`);
