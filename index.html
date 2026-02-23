@@ -1390,7 +1390,8 @@ const loader = new THREE.TextureLoader();
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
-      const citySize = 0.028;
+      // ── PATCH 1: citySize increased 50% (0.028 → 0.042) ──
+      const citySize = 0.042;
       const ringBurstDelay = 0.18;
       const ringSpeed = 0.008;
       const positions = [];
@@ -1416,16 +1417,20 @@ const loader = new THREE.TextureLoader();
       const cityGeo = new THREE.BufferGeometry();
       cityGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions,3));
 
+      // ── PATCH 2: gradient spread extended to 0.68 radius (+50% halo area)
+      //    Outer opacity stays near-zero → dark-side minGlow=0.08 still dim ──
       function createGlowTexture(){
         const size=128;
         const glowCanvas=document.createElement("canvas");
         glowCanvas.width=size; glowCanvas.height=size;
         const ctx=glowCanvas.getContext("2d");
         const grad=ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
-        grad.addColorStop(0,"rgba(255,200,120,1)");
-        grad.addColorStop(0.2,"rgba(255,180,80,0.85)");
-        grad.addColorStop(0.45,"rgba(255,100,20,0.2)");
-        grad.addColorStop(1,"rgba(255,80,20,0)");
+        grad.addColorStop(0,   "rgba(255,210,130,1)");
+        grad.addColorStop(0.18,"rgba(255,185,85,0.88)");
+        grad.addColorStop(0.38,"rgba(255,130,40,0.50)");
+        grad.addColorStop(0.58,"rgba(255,100,20,0.18)");
+        grad.addColorStop(0.68,"rgba(255,80,20,0.06)");
+        grad.addColorStop(1,   "rgba(255,80,20,0)");
         ctx.fillStyle=grad; ctx.fillRect(0,0,size,size);
         return new THREE.CanvasTexture(glowCanvas);
       }
