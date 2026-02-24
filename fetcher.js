@@ -4,6 +4,8 @@ const Parser = require("rss-parser");
 const pool = require("./db");
 const { translateText } = require("./translator");
 
+const TRANSLATION_ENABLED = false;
+
 /* =========================================
    Parser Options
 ========================================= */
@@ -185,7 +187,7 @@ async function fetchFeeds() {
         let translatedTitle = title;
         let translatedSummary = summary;
 
-        if (feed.language && feed.language.toUpperCase() !== "EN") {
+        if (TRANSLATION_ENABLED && feed.language && feed.language.toUpperCase() !== "EN") {
           translatedTitle = await translateText(title, "EN-US");
           translatedSummary = await translateText(summary, "EN-US");
         }
