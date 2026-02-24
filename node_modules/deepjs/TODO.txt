@@ -1,0 +1,306 @@
+
+## Beautify
+
+- refactor protocols naming									OK
+- check homogeneity for _deep_flag_ family					OK
+
+
+## TODO for 1.0.0
+
+clean
+- Clean BaseChain/Chain construction						OK
+- no more requirejs pattern
+
+DO
+- hierarchy selection														OK
+- SHared as _deep_compiler_ ?												OK
+- finalise stores constraints (variabilise userID + filters)				OK		
+- refactor _deep_ocm_ as _deep_flattener_ in flatten test function 			OK
+- manage path in flatten for _deep_flattener_								OK
+- store : serve schema														OK
+- store : put/patch manage query nicely										OK
+
+
+- rewrite RQL 																OK
+
+
+- contextualise protocols 													OK
+- OCM for what/how/where/done/fail 											OK
+- OCM for inner store's methods												OK
+
+- test context and modes 													OK		
+
+- homogeneise second arguments (add third) for stores post/put/patch/del : 
+	==> .post(obj, path, ?options) || .post(obj, ?options) 					OK ?
+- homogenise .createDefault of stores										OK
+
+
+- introduce '' in deep.queries
+- refactor swig + files accessors (json) for contextualised root (maybe multiple roots)				OK
+- add options and head http action in restful middleware.											OK
+
+
+- client micro caching + cache prefix with roles OR clearCache when roles change					
+==> work globally on cache : deep.mediacache should manage FileWatch								OK
+
+- manage headers in autobahn : in config + middleware(s)											OK
+
+- ligth DDP for deep : 
+	: use local collection or object stores (as jstorage) that write/send datas : and invalidate if server do so.
+
+- create first widgets
+- add more dp-* 
+- schema to form
+- protocol to CMS 
+
+- add sanitize in autobahn
+
+## ROAD MAP for further version (higher than 1.0.0)
+
+Workers : 
+
+1.2.0 - Finalise Chain Identities Management										OK
+1.3.0 - Optimise constraints and schema compilation. maybe externalise schema validation. manage error translation.
+1.4.0 - Optimise DeepQuerier
+
+1.1.0 - Finalise context and parano modes. maybe contextualised Emitter.
+
+
+
+TODO : flag enhance:true|false in views										OK
+Add all dp-* as deep_controlled (or _enhanced_) in controller
+
+use class for selection for dp-*
+
+
+
+rename resultType -> fullOutput												ok
+
+
+rename deep.utils.preorder/inorder : depthFirst/breadthFirst				OK
+add excludeLeafs in traversal												OK
+
+
+add transform while traversal
+
+
+check deep.log and error.
+
+
+
+
+
+extract deep-restful								: 			OK
+
+
+
+deep.up(target, src1, src2)	 				 OK 		
+deep.bottom(src1, src2, target)				 OK 	
+==> remove parent and key in up/bottom			OK
+
+
+var domSheet = {
+	_deep_sheet_:true,
+	"dom.transform::#selector":function(node){
+		
+	},
+	"dom.control::#selector":[ctrl1, ctrl2, ...],
+	"dom.from::#selector":[ressource1, ressource2]
+}
+
+rethrow : add flag in context. 			
+
+view enhance : 
+
+	==> apply own sheets !!! what, how, where, SHEETS (not enhance), done, fail
+
+
+	==> seek class dp-enhance				OK
+
+
+		==> read "sheets" attribut			OK : dp-sheets
+		==> apply dom sheets 				OK
+
+
+
+rename _backgrounds : 			OK
+
+
+FOREGROUNDS : try to implement it 				OK
+
+
+refactor load sequence in view : one object wired arg-return	:					ok
+
+
+
+
+
+
+_____________________________________________________________________
+
+SHEETS
+
+sheet : sequential by default 						: OK
+
+deep.sheet(target, sh1, sh2)   + in deep chain 		: OK
+
+Retrouver moyen de passer options pour les sheets 
+options doit dire si parallele ou linéaire
+==> possibilité : dernier argument === true : parallele					OK
+
+
+_____________________________________________________________________ CLASSES
+
+classes : doit en faire un deep_upper
+
+==> permet lazzy compilation + linked auto recompilations
+
+
+______________________________________________________________________ QUERIES
+
+introduce OCM resolution and traversal while querying.
+
+
+
+
+__________________________________ STUDIES FROM BLUEBIRD
+
+Add "state" method : isPending, isRejected, isResolved
+
+
+
+rename deep.promise.immediate(...) by
+deep.promise.resolve(...)
+
+
+run should be renamed : "call" and have arguments list management 
+
+bind / this : 
+
+shoud managed it this way : 
+
+.bind(obj)	// bind on object
+.bind()		// use success
+.bind(null)	// back to chain's bind
+
+.catch(error, cb)
+should be .fail(error, function(error){
+
+})
+
+maybe .join
+
+done(value)
+::> inject value, if it's a promise : forward state
+==> replace .when in chain
+
+CANCELLATION :  ?
+
+
+
+DONE as end checker : rethrow any error
+: could not be done in deep : because doesn't use fresh stack with process.tick or setTimeout
+==> should be studied
+
+
+but we could use .done() (without CB) to tell that we want here have no error)
+____________________________________________________________
+
+
+WARNING : 
+
+
+check promise timeout
+
+
+____________________________________________________________________
+
+More (for after ;)): 
+
+- deep.loop ==> should return a ChainLoop Object : keep chain, restart it. two modes : regular cycle, wait end of chain cycle : 			OK
+
+
+- closure-privatisate all sensible store stuffs (real collection, schema, config)
+	- need : late instance prototype compilation with closure wrapper function for applied layers and sheets that use sensible stuffs.
+	- sensible stuffs should be categorized in : config (cache, uri, root folder, ...), schema, real collection (or driver stuffs)
+	- sensible stuff should be definitly wrapped and hidded in closure at init of store. so schema and config or other needed datas need to be displaced from instance to closure.
+
+
+- deep.utils.set(entry, "/path/[a,b,c]", value);  deep.nodes(...).set(path, value); + sheet : "dq.set::./path/[a,b,c]":...
+
+- add flag in composition for managing error as callBack does, not as promise pipeline.
+
+- manage publish/subscription between stores and/or objects (server side or browser side)
+
+
+## ROAD MAP for other deepjs related libs.
+
+- gather deep-http-client : node + jquery					OK (to be tested)
+	- add jsonp capabilities (jsonp::...)
+	- add EJSON
+
+- deep-routes
+	- add staters
+
+rename deep-node by deep-nodejs
+- deep-nodejs : rewrite fs/json*  post/put/patch : use JSONObjectSheet
+
+## Questions
+- what to do with complex route params in restful ?   				OK
+
+- how manage chain's identities.									OK
+specialy with stores vs values : query, range, stores particular API 	ok
+
+
+## Todo details
+- use ocm as prototypes in classe construction :  			OK (see deep.compose.ClassFactory)
+
+- Events and context
+	- Chain.on("event", callBack) that wrap holded one
+	- deep.Emitter that conserve context ?
+
+- use protocols space for different kinds of object (not only stores - e.g. socket)
+==> use default handler in protocols : e.g. for stores : it's 'get'
+==> in ocm : it could be in constructor options
+==> need _deep_protocol_ object
+
+- protocols and context
+put protocols set in deep.context : ocmise present protocols = parano mode : consequence :  no possibility to change modes by after
+('after' from context point of view)
+
+==> when context is (simple)copied : we could contextualise protocols : for that we need to (simple)copy also protocols :
+ allow to have local (contextualised) protocols space. Imply that late definition of protocols will only be local. 
+
+==> maybe something like : 
+
+deep.contextualize("protocols", deepCopy:Bool, parano:Bool) : will copy protocols (simple or deep) and apply OCM parano
+
+
+
+
+
+MORE : 
+
+
+
+
+// TODO : .transform => .map  							OK
+// look up/bottoms order
+// deep-login											LATER (almost done)
+// 
+// .foregrounds & .backgrounds in Chain 				LATER
+// 
+// 
+// OCM : sensibleTo in place of modes 					OK
+// 
+// 
+// .restful in place of .rest  							OK
+// 
+// 
+// 
+// catched route should be placed in context  			LATER
+
+
+
+// views : when interpreting strings (what, how, where) 	LATER
+// ==> view context : { context:deep.context(), ctrl:ctrl }
