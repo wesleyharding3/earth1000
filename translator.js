@@ -1,4 +1,5 @@
 // translator.js
+console.log("DEEPL_API_KEY =", process.env.DEEPL_API_KEY ? "✅ set" : "❌ missing");
 require("dotenv").config();
 const deepl = require("deepl-node");  // import the package
 
