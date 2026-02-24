@@ -78,7 +78,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
     const result = await pool.query(
       `SELECT 
-        a.id, a.title, a.url, a.summary, a.image_url, a.published_at,
+        a.id, a. translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
         s.name AS source_name, s.site_url,
         co.iso_code
       FROM news_articles a
