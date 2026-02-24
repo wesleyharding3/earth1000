@@ -1,13 +1,15 @@
+// translator.js
 require("dotenv").config();
-const { DeepL } = require("deepl-node");
+const deepl = require("deepl-node");  // import the package
 
-const deepl = new DeepL(process.env.DEEPL_API_KEY);
+// Create a translator instance
+const translator = new deepl.Translator(process.env.DEEPL_API_KEY);
 
 async function translateText(text, targetLang = "EN") {
   if (!text) return null;
 
   try {
-    const result = await deepl.translateText(text, null, targetLang);
+    const result = await translator.translateText(text, null, targetLang);
     return result.text;
   } catch (err) {
     console.error("❌ Translation error:", err);
