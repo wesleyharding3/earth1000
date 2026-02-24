@@ -2,6 +2,13 @@
 require("dotenv").config();
 const deepl = require("deepl-node");  // import the package
 
+console.log("DEEPL_API_KEY =", process.env.DEEPL_API_KEY); // <-- debug
+
+if (!process.env.DEEPL_API_KEY) {
+  throw new Error("❌ DEEPL_API_KEY is not set in environment!");
+}
+
+
 // Create a translator instance
 const translator = new deepl.Translator(process.env.DEEPL_API_KEY);
 
