@@ -179,7 +179,7 @@ async function fetchFeeds() {
         let translatedTitle = title;
         let translatedSummary = summary;
 
-        if (feed.language_id && feed.language_id.toUpperCase() !== "US") {
+        if (feed.language_id && feed.language_id.toUpperCase() !== "EN") {
           translatedTitle = await translateText(title, "EN");
           translatedSummary = await translateText(summary, "EN");
         }
