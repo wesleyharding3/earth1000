@@ -146,7 +146,7 @@ async function fetchFeeds() {
   console.log("Starting RSS fetch...");
 
   const feedResult = await pool.query(`
-    SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id, ns.failure_count, ns.language_id
+    SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id, ns.failure_count, ns.language_id, l.iso_code_2 AS language
     FROM news_sources ns
     LEFT JOIN languages l ON l.id = ns.language_id
     WHERE ns.is_active = true
@@ -180,7 +180,7 @@ async function fetchFeeds() {
         let translatedTitle = title;
         let translatedSummary = summary;
 
-        if (feed.language_id && feed.language_id.toUpperCase() !== "EN") {
+        if (feed.language && feed.language.toUpperCase() !== "EN") {
           translatedTitle = await translateText(title, "EN");
           translatedSummary = await translateText(summary, "EN");
         }
