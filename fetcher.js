@@ -181,8 +181,8 @@ async function fetchFeeds() {
         let translatedSummary = summary;
 
         if (feed.language && feed.language.toUpperCase() !== "EN") {
-          translatedTitle = await translateText(title, "EN");
-          translatedSummary = await translateText(summary, "EN");
+          translatedTitle = await translateText(title, "EN-US");
+          translatedSummary = await translateText(summary, "EN-US");
         }
 
         const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
