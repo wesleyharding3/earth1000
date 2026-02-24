@@ -173,6 +173,11 @@ async function fetchFeeds() {
       for (const item of items) {
         const title   = cleanText(item.title);
         const summary = cleanText(item.contentSnippet || item.description);
+        const exists = await pool.query(
+          `SELECT id FROM news_articles WHERE url = $1`,
+          [item.link || null]
+        );
+        if (exists.rows.length) continue;
 
         // ------------------------
         // Step 5: Conditional Translation using language_id
