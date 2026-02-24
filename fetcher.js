@@ -168,7 +168,7 @@ async function fetchFeeds() {
         continue;
       }
 
-      const items = parsed.items.slice(0, 40);
+      const items = parsed.items.slice(0, 8);
 
       for (const item of items) {
         const title   = cleanText(item.title);
