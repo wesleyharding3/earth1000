@@ -2,6 +2,7 @@ require("dotenv").config();
 const cheerio = require("cheerio");
 const Parser = require("rss-parser");
 const pool = require("./db");
+const { translateText } = require("./translator");
 
 /* =========================================
    Parser Options
@@ -181,31 +182,38 @@ async function fetchFeeds() {
       if (!parsed.items || parsed.items.length === 0) {
         console.warn(`⚠️ No items found in feed: ${feed.rss_url}`);
       } else {
-        const items = parsed.items.slice(0, 40);
+        const items = parsed.items.slice(0, 40);  
 
         for (const item of items) {
           const title       = cleanText(item.title);
           const summary     = cleanText(item.contentSnippet || item.description);
+          const translatedTitle = await translateText(title, "EN");
+          const translatedSummary = await translateText(summary, "EN");
           const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
           const imageUrl    = extractImage(item);
+
 
           await pool.query(
             `INSERT INTO news_articles (
               source_id, city_id, country_id,
-              title, url, summary, content,
+              title, translated_title, url, summary, translated_summary, content,
               published_at, ingested_at, image_url
             )
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9, $10, $11)
             ON CONFLICT (url)
             DO UPDATE SET
-              image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url)`,
+              image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url),
+              translated_title = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
+              translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary)`
             [
               feed.id,
               feed.city_id,
               feed.country_id,
               title,
+              translatedTitle,
               item.link || null,
               summary,
+              translatedSummary,
               item.content || null,
               publishedAt,
               imageUrl
