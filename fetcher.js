@@ -148,6 +148,7 @@ async function fetchFeeds() {
   const feedResult = await pool.query(`
     SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id, ns.failure_count, ns.language_id
     FROM news_sources ns
+    LEFT JOIN languages l ON l.id = ns.language_id
     WHERE ns.is_active = true
   `);
 
