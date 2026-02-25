@@ -74,20 +74,6 @@ function extractImage(item) {
     }
   }
 
-  const mediaContent = item["media:content"] || item.mediacontent;
-  if (mediaContent) {
-    const media = Array.isArray(mediaContent) ? mediaContent[0] : mediaContent;
-    const url = media?.url || media?.$?.url;
-    if (url) return url;
-  }
-
-  const mediaThumb = item["media:thumbnail"] || item.mediathumbnail;
-  if (mediaThumb) {
-    const thumb = Array.isArray(mediaThumb) ? mediaThumb[0] : mediaThumb;
-    const url = thumb?.url || thumb?.$?.url;
-    if (url) return url;
-  }
-
   const html =
     item.contentEncoded ||
     item.contentencoded ||
@@ -97,11 +83,6 @@ function extractImage(item) {
 
   if (html) {
     const $ = cheerio.load(html);
-    const featured = $(".wp-block-gutenberg-custom-blocks-featured-media")
-      .first()
-      .attr("src");
-    if (featured) return featured;
-
     const firstImg = $("img").first().attr("src");
     if (firstImg) return firstImg;
   }
@@ -112,7 +93,7 @@ function extractImage(item) {
 /* =========================================
    Controlled Fetch (Size-Limited)
 ========================================= */
-const MAX_FEED_SIZE = 2 * 1024 * 1024; // 2MB
+const MAX_FEED_SIZE = 2 * 1024 * 1024;
 
 async function fetchXmlWithLimit(url, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -128,12 +109,14 @@ async function fetchXmlWithLimit(url, timeoutMs = 15000) {
 
     const text = await response.text();
 
-    if (text.length > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
+    if (text.length > MAX_FEED_SIZE)
+      throw new Error("Feed exceeds max size limit");
 
     return text;
 
   } catch (err) {
-    if (err.name === "AbortError") throw new Error(`Timeout after ${timeoutMs}ms`);
+    if (err.name === "AbortError")
+      throw new Error(`Timeout after ${timeoutMs}ms`);
     throw err;
   } finally {
     clearTimeout(timeout);
@@ -144,84 +127,83 @@ async function fetchXmlWithLimit(url, timeoutMs = 15000) {
    Main Fetch Function
 ========================================= */
 async function fetchFeeds() {
-  const jobStart = Date.now();
   console.log("🚀 Starting RSS fetch...", new Date().toISOString());
 
   const feedResult = await pool.query(`
-    SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id, ns.failure_count, ns.language_id, l.iso_code_2 AS language
+    SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id,
+           ns.failure_count, ns.language_id,
+           l.iso_code_2 AS language
     FROM news_sources ns
     LEFT JOIN languages l ON l.id = ns.language_id
     WHERE ns.is_active = true
+    AND (
+      ns.last_checked_at IS NULL
+      OR ns.last_checked_at < NOW() - INTERVAL '480 minutes'
+    )
+    ORDER BY ns.last_checked_at NULLS FIRST
+    LIMIT 300
   `);
 
   const feeds = feedResult.rows;
-  console.log(`📋 Total active feeds to process: ${feeds.length}`);
+  console.log(`📋 Feeds selected for this run: ${feeds.length}`);
 
   const parser = new Parser(parserOptions);
 
   for (let i = 0; i < feeds.length; i++) {
     const feed = feeds[i];
     const tag = `[${i + 1}/${feeds.length}]`;
-    const feedStart = Date.now();
 
     try {
       if (!feed.rss_url) continue;
 
+      // 🔒 Mark immediately to prevent reprocessing if crash occurs
+      await pool.query(
+        `UPDATE news_sources
+         SET last_checked_at = NOW()
+         WHERE id = $1`,
+        [feed.id]
+      );
+
       console.log(`\n${tag} 🔄 Starting: ${feed.rss_url}`);
-      console.log(`${tag} Fetching XML...`);
 
       const xml = await fetchXmlWithLimit(feed.rss_url, 15000);
-      console.log(`${tag} ✅ XML fetched (${xml.length} bytes)`);
-
       const parsed = await parser.parseString(xml);
-      console.log(`${tag} ✅ Parsed (${parsed.items?.length ?? 0} items)`);
 
       if (!parsed.items || parsed.items.length === 0) {
-        console.warn(`${tag} ⚠️ No items found in feed: ${feed.rss_url}`);
+        console.warn(`${tag} ⚠️ No items found.`);
         continue;
       }
 
       const isNonEnglish =
         feed.language && feed.language.toUpperCase() !== "EN";
 
-      let MAX_ITEMS;
-
-      if (!isNonEnglish) {
-        MAX_ITEMS = 25;
-      } else if (TRANSLATION_ENABLED) {
-        MAX_ITEMS = 3;
-      } else {
-        MAX_ITEMS = 10;
-      }
+      let MAX_ITEMS = !isNonEnglish
+        ? 25
+        : TRANSLATION_ENABLED
+          ? 3
+          : 10;
 
       const items = parsed.items.slice(0, MAX_ITEMS);
-      console.log(`${tag} Processing ${items.length} items...`);
 
       let inserted = 0;
-      let skipped = 0;
 
       for (const item of items) {
-        const title   = cleanText(item.title);
+        const title = cleanText(item.title);
         const summary = cleanText(item.contentSnippet || item.description);
-        const exists = await pool.query(
-          `SELECT id FROM news_articles WHERE url = $1`,
-          [item.link || null]
-        );
-        if (exists.rows.length) {
-          skipped++;
-          continue;
-        }
+        const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
+        const imageUrl = extractImage(item);
 
         let translatedTitle = title;
         let translatedSummary = summary;
 
-        if (TRANSLATION_ENABLED && feed.language && feed.language.toUpperCase() !== "EN") {
+        if (
+          TRANSLATION_ENABLED &&
+          feed.language &&
+          feed.language.toUpperCase() !== "EN"
+        ) {
           translatedTitle = await translateText(title, "EN-US");
           translatedSummary = await translateText(summary, "EN-US");
         }
-
-        const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
-        const imageUrl    = extractImage(item);
 
         await pool.query(
           `INSERT INTO news_articles (
@@ -232,10 +214,7 @@ async function fetchFeeds() {
           )
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11)
           ON CONFLICT (url)
-          DO UPDATE SET
-            image_url = COALESCE(EXCLUDED.image_url, news_articles.image_url),
-            translated_title = COALESCE(EXCLUDED.translated_title, news_articles.translated_title),
-            translated_summary = COALESCE(EXCLUDED.translated_summary, news_articles.translated_summary)`,
+          DO NOTHING`,
           [
             feed.id,
             feed.city_id,
@@ -254,27 +233,26 @@ async function fetchFeeds() {
         inserted++;
       }
 
-      console.log(`${tag} 📝 Items — inserted: ${inserted}, skipped: ${skipped}`);
-
       await pool.query(
         `UPDATE news_sources 
-         SET failure_count = 0, last_success_at = NOW(), last_error = NULL 
+         SET failure_count = 0,
+             last_success_at = NOW(),
+             last_error = NULL
          WHERE id = $1`,
         [feed.id]
       );
 
-      const elapsed = ((Date.now() - feedStart) / 1000).toFixed(1);
-      console.log(`${tag} ✅ Done in ${elapsed}s: ${feed.rss_url}`);
+      console.log(`${tag} ✅ Inserted: ${inserted}`);
 
     } catch (err) {
-      const elapsed = ((Date.now() - feedStart) / 1000).toFixed(1);
-      console.error(`${tag} ❌ Failed after ${elapsed}s: ${feed.rss_url} — ${err.message}`);
+      console.error(`${tag} ❌ Failed: ${err.message}`);
 
       await logFeedError(feed, err);
 
       await pool.query(
         `UPDATE news_sources 
-         SET failure_count = COALESCE(failure_count,0) + 1, last_failed_at = NOW() 
+         SET failure_count = COALESCE(failure_count,0) + 1,
+             last_failed_at = NOW()
          WHERE id = $1`,
         [feed.id]
       );
@@ -286,12 +264,9 @@ async function fetchFeeds() {
         [feed.id]
       );
     }
-
-    await new Promise(resolve => setImmediate(resolve));
   }
 
-  const totalElapsed = ((Date.now() - jobStart) / 1000).toFixed(1);
-  console.log(`\n🏁 RSS fetch complete. Processed ${feeds.length} feeds in ${totalElapsed}s.`);
+  console.log("🏁 RSS fetch batch complete.");
 }
 
 module.exports = fetchFeeds;
