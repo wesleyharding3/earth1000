@@ -4,7 +4,7 @@ const Parser = require("rss-parser");
 const pool = require("./db");
 const { translateText } = require("./translator");
 
-const TRANSLATION_ENABLED = true;
+const TRANSLATION_ENABLED = false;
 
 /* =========================================
    Parser Options
