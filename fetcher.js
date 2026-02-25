@@ -111,6 +111,8 @@ function extractImage(item) {
 
 /* =========================================
    Controlled Fetch (Size-Limited)
+   FIXED: replaced for-await stream with response.text()
+   which is safer and more compatible across environments
 ========================================= */
 const MAX_FEED_SIZE = 2 * 1024 * 1024; // 2MB
 
@@ -126,16 +128,15 @@ async function fetchXmlWithLimit(url, timeoutMs = 15000) {
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-    let received = 0;
-    const chunks = [];
+    const text = await response.text();
 
-    for await (const chunk of response.body) {
-      received += chunk.length;
-      if (received > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
-      chunks.push(chunk);
-    }
+    if (text.length > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
 
-    return Buffer.concat(chunks).toString("utf8");
+    return text;
+
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error(`Timeout after ${timeoutMs}ms`);
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
@@ -181,9 +182,6 @@ async function fetchFeeds() {
         );
         if (exists.rows.length) continue;
 
-        // ------------------------
-        // Step 5: Conditional Translation using language_id
-        // ------------------------
         let translatedTitle = title;
         let translatedSummary = summary;
 
@@ -254,7 +252,7 @@ async function fetchFeeds() {
     await new Promise(resolve => setImmediate(resolve));
   }
 
-  console.log("RSS fetch complete.");
+  console.log(`RSS fetch complete. Processed ${feeds.length} feeds.`);
 }
 
 module.exports = fetchFeeds;
