@@ -1,5 +1,19 @@
 require("dotenv").config();
 
+process.on('exit', (code) => {
+  console.log(`🚪 Process exiting with code ${code} at`, new Date().toISOString());
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('💥 Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('💥 Unhandled Rejection:', reason);
+  process.exit(1);
+});
+
 const fetchFeeds = require("./fetcher");
 
 async function run() {
