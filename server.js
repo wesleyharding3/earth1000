@@ -52,13 +52,13 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 
     const result = await pool.query(
       `SELECT 
-        a.id, a. translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
+        a.id, a.translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
         s.name AS source_name, s.site_url,
         co.iso_code
       FROM news_articles a
       JOIN news_sources s ON a.source_id = s.id
       LEFT JOIN countries co ON a.country_id = co.id
-      WHERE a.city_id = $1 AND city_id IS NULL
+      WHERE a.city_id = $1 
       ORDER BY a.published_at DESC
       LIMIT $2 OFFSET $3`,
       [cityId, limit, offset]
@@ -78,13 +78,14 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
     const result = await pool.query(
       `SELECT 
-        a.id, a. translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
+        a.id, a.translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
         s.name AS source_name, s.site_url,
         co.iso_code
       FROM news_articles a
       JOIN news_sources s ON a.source_id = s.id
       LEFT JOIN countries co ON a.country_id = co.id
       WHERE a.country_id = $1
+      AND a.city_id IS NULL
       ORDER BY a.published_at DESC
       LIMIT $2 OFFSET $3`,
       [countryId, limit, offset]
