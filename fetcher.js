@@ -111,8 +111,6 @@ function extractImage(item) {
 
 /* =========================================
    Controlled Fetch (Size-Limited)
-   FIXED: replaced for-await stream with response.text()
-   which is safer and more compatible across environments
 ========================================= */
 const MAX_FEED_SIZE = 2 * 1024 * 1024; // 2MB
 
@@ -146,7 +144,8 @@ async function fetchXmlWithLimit(url, timeoutMs = 15000) {
    Main Fetch Function
 ========================================= */
 async function fetchFeeds() {
-  console.log("Starting RSS fetch...");
+  const jobStart = Date.now();
+  console.log("🚀 Starting RSS fetch...", new Date().toISOString());
 
   const feedResult = await pool.query(`
     SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id, ns.failure_count, ns.language_id, l.iso_code_2 AS language
@@ -156,18 +155,29 @@ async function fetchFeeds() {
   `);
 
   const feeds = feedResult.rows;
+  console.log(`📋 Total active feeds to process: ${feeds.length}`);
+
   const parser = new Parser(parserOptions);
 
-  for (const feed of feeds) {
+  for (let i = 0; i < feeds.length; i++) {
+    const feed = feeds[i];
+    const tag = `[${i + 1}/${feeds.length}]`;
+    const feedStart = Date.now();
+
     try {
       if (!feed.rss_url) continue;
-      console.log(`Fetching: ${feed.rss_url}`);
+
+      console.log(`\n${tag} 🔄 Starting: ${feed.rss_url}`);
+      console.log(`${tag} Fetching XML...`);
 
       const xml = await fetchXmlWithLimit(feed.rss_url, 15000);
+      console.log(`${tag} ✅ XML fetched (${xml.length} bytes)`);
+
       const parsed = await parser.parseString(xml);
+      console.log(`${tag} ✅ Parsed (${parsed.items?.length ?? 0} items)`);
 
       if (!parsed.items || parsed.items.length === 0) {
-        console.warn(`⚠️ No items found in feed: ${feed.rss_url}`);
+        console.warn(`${tag} ⚠️ No items found in feed: ${feed.rss_url}`);
         continue;
       }
 
@@ -177,14 +187,18 @@ async function fetchFeeds() {
       let MAX_ITEMS;
 
       if (!isNonEnglish) {
-        MAX_ITEMS = 25;        // English feeds
+        MAX_ITEMS = 25;
       } else if (TRANSLATION_ENABLED) {
-        MAX_ITEMS = 3;         // Non-English + translation ON
+        MAX_ITEMS = 3;
       } else {
-        MAX_ITEMS = 10;        // Non-English + translation OFF
+        MAX_ITEMS = 10;
       }
 
       const items = parsed.items.slice(0, MAX_ITEMS);
+      console.log(`${tag} Processing ${items.length} items...`);
+
+      let inserted = 0;
+      let skipped = 0;
 
       for (const item of items) {
         const title   = cleanText(item.title);
@@ -193,7 +207,10 @@ async function fetchFeeds() {
           `SELECT id FROM news_articles WHERE url = $1`,
           [item.link || null]
         );
-        if (exists.rows.length) continue;
+        if (exists.rows.length) {
+          skipped++;
+          continue;
+        }
 
         let translatedTitle = title;
         let translatedSummary = summary;
@@ -233,7 +250,11 @@ async function fetchFeeds() {
             imageUrl
           ]
         );
+
+        inserted++;
       }
+
+      console.log(`${tag} 📝 Items — inserted: ${inserted}, skipped: ${skipped}`);
 
       await pool.query(
         `UPDATE news_sources 
@@ -242,9 +263,13 @@ async function fetchFeeds() {
         [feed.id]
       );
 
-      console.log(`✅ Finished: ${feed.rss_url}`);
+      const elapsed = ((Date.now() - feedStart) / 1000).toFixed(1);
+      console.log(`${tag} ✅ Done in ${elapsed}s: ${feed.rss_url}`);
 
     } catch (err) {
+      const elapsed = ((Date.now() - feedStart) / 1000).toFixed(1);
+      console.error(`${tag} ❌ Failed after ${elapsed}s: ${feed.rss_url} — ${err.message}`);
+
       await logFeedError(feed, err);
 
       await pool.query(
@@ -265,7 +290,8 @@ async function fetchFeeds() {
     await new Promise(resolve => setImmediate(resolve));
   }
 
-  console.log(`RSS fetch complete. Processed ${feeds.length} feeds.`);
+  const totalElapsed = ((Date.now() - jobStart) / 1000).toFixed(1);
+  console.log(`\n🏁 RSS fetch complete. Processed ${feeds.length} feeds in ${totalElapsed}s.`);
 }
 
 module.exports = fetchFeeds;
