@@ -188,6 +188,23 @@ async function fetchFeeds() {
       let inserted = 0;
 
       for (const item of items) {
+        const url = item.link || null;
+        if (!url) continue;
+
+        // 🔎 Check if article already exists (early-exit optimization)
+        const existsResult = await pool.query(
+          `SELECT 1
+           FROM news_articles
+           WHERE url = $1
+           LIMIT 1`,
+          [url]
+        );
+
+        if (existsResult.rowCount > 0) {
+          console.log(`${tag} ⏹ Encountered existing article → stopping early`);
+          break; // Stop processing THIS feed only
+        }
+
         const title = cleanText(item.title);
         const summary = cleanText(item.contentSnippet || item.description);
         const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
@@ -205,23 +222,33 @@ async function fetchFeeds() {
           translatedSummary = await translateText(summary, "EN-US");
         }
 
-        await pool.query(
+        const insertResult = await pool.query(
           `INSERT INTO news_articles (
-            source_id, city_id, country_id,
-            title, translated_title,
-            url, summary, translated_summary, content,
-            published_at, ingested_at, image_url
-          )
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11)
-          ON CONFLICT (url)
-          DO NOTHING`,
+             source_id,
+             city_id,
+             country_id,
+             title,
+             translated_title,
+             url,
+             summary,
+             translated_summary,
+             content,
+             published_at,
+             ingested_at,
+             image_url
+           )
+           VALUES (
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),$11
+           )
+           ON CONFLICT (url)
+           DO NOTHING`,
           [
             feed.id,
             feed.city_id,
             feed.country_id,
             title,
             translatedTitle,
-            item.link || null,
+            url,
             summary,
             translatedSummary,
             item.content || null,
@@ -230,7 +257,9 @@ async function fetchFeeds() {
           ]
         );
 
-        inserted++;
+        if (insertResult.rowCount > 0) {
+          inserted++;
+        }
       }
 
       await pool.query(
