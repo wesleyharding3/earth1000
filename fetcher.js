@@ -4,7 +4,7 @@ const Parser = require("rss-parser");
 const pool = require("./db");
 const { translateText } = require("./translator");
 
-const TRANSLATION_ENABLED = false;
+const TRANSLATION_ENABLED = true;
 
 /* =========================================
    Parser Options
@@ -171,7 +171,20 @@ async function fetchFeeds() {
         continue;
       }
 
-      const items = parsed.items.slice(0, 8);
+      const isNonEnglish =
+        feed.language && feed.language.toUpperCase() !== "EN";
+
+      let MAX_ITEMS;
+
+      if (!isNonEnglish) {
+        MAX_ITEMS = 25;        // English feeds
+      } else if (TRANSLATION_ENABLED) {
+        MAX_ITEMS = 3;         // Non-English + translation ON
+      } else {
+        MAX_ITEMS = 10;        // Non-English + translation OFF
+      }
+
+      const items = parsed.items.slice(0, MAX_ITEMS);
 
       for (const item of items) {
         const title   = cleanText(item.title);
