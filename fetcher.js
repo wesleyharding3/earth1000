@@ -3,6 +3,7 @@ const cheerio = require("cheerio");
 const Parser = require("rss-parser");
 const pool = require("./db");
 const { translateText } = require("./translator");
+const crypto = require("crypto");
 
 const TRANSLATION_ENABLED = false;
 
@@ -61,6 +62,20 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
   } catch (logErr) {
     console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
   }
+}
+
+function buildFingerprint(item) {
+  const base =
+    (item.guid || "") +
+    (item.link || "") +
+    (item.isoDate || item.pubDate || "") +
+    cleanText(item.title || "") +
+    cleanText(item.contentSnippet || item.description || "");
+
+  return crypto
+    .createHash("sha256")
+    .update(base)
+    .digest("hex");
 }
 
 function extractImage(item) {
@@ -188,8 +203,7 @@ async function fetchFeeds() {
       let inserted = 0;
 
       for (const item of items) {
-        const url = item.link || null;
-        if (!url) continue;
+        const fingerprint = buildFingerprint(item);
 
         // 🔎 Check if article already exists (early-exit optimization)
         const existsResult = await pool.query(
@@ -197,7 +211,7 @@ async function fetchFeeds() {
            FROM news_articles
            WHERE url = $1
            LIMIT 1`,
-          [url]
+          [fingerprint]
         );
 
         if (existsResult.rowCount > 0) {
@@ -207,7 +221,16 @@ async function fetchFeeds() {
 
         const title = cleanText(item.title);
         const summary = cleanText(item.contentSnippet || item.description);
-        const publishedAt = item.pubDate ? new Date(item.pubDate) : null;
+        let publishedAt = null;
+        if (item.isoDate) {
+          const d = new Date(item.isoDate);
+          if (!isNaN(d.getTime())) publishedAt = d;
+          } else if (item.pubDate) {
+            const d = new Date(item.pubDate);
+            if (!isNaN(d.getTime())) publishedAt = d;
+          }
+
+
         const imageUrl = extractImage(item);
 
         let translatedTitle = title;
@@ -230,6 +253,7 @@ async function fetchFeeds() {
              title,
              translated_title,
              url,
+             article_url,
              summary,
              translated_summary,
              content,
@@ -248,7 +272,8 @@ async function fetchFeeds() {
             feed.country_id,
             title,
             translatedTitle,
-            url,
+            fingerprint,
+            item.link || null,
             summary,
             translatedSummary,
             item.content || null,
