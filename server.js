@@ -58,7 +58,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
       FROM news_articles a
       JOIN news_sources s ON a.source_id = s.id
       LEFT JOIN countries co ON a.country_id = co.id
-      WHERE a.city_id = $1
+      WHERE a.city_id = $1 AND city_id IS NULL
       ORDER BY a.published_at DESC
       LIMIT $2 OFFSET $3`,
       [cityId, limit, offset]
