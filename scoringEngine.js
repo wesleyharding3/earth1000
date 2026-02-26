@@ -43,9 +43,13 @@ async function classifyArticle(articleId) {
 
     // ─────────────────────────────────────────
     // 1. Fetch article
+    //    COALESCE: use translated if available,
+    //    fall back to original for English sources
     // ─────────────────────────────────────────
     const articleRes = await client.query(
-      `SELECT id, translated_title, translated_summary, source_id
+      `SELECT id, source_id,
+              COALESCE(translated_title, title)     AS translated_title,
+              COALESCE(translated_summary, summary) AS translated_summary
        FROM news_articles
        WHERE id = $1`,
       [articleId]
@@ -53,10 +57,10 @@ async function classifyArticle(articleId) {
 
     if (!articleRes.rows.length) throw new Error("Article not found");
 
-    const article        = articleRes.rows[0];
-    const normTitle      = normalize(article.translated_title);
-    const normSummary    = normalize(article.translated_summary);
-    const totalWords     = wordCount(normTitle) + wordCount(normSummary);
+    const article     = articleRes.rows[0];
+    const normTitle   = normalize(article.translated_title);
+    const normSummary = normalize(article.translated_summary);
+    const totalWords  = wordCount(normTitle) + wordCount(normSummary);
 
     // ─────────────────────────────────────────
     // 2. Source tag priors
@@ -98,22 +102,18 @@ async function classifyArticle(articleId) {
       let summaryHits = 0;
 
       if (row.is_phrase) {
-        // Multi-word phrase — boundary-anchored regex
-        const re      = new RegExp(`\\b${phrase}\\b`, "g");
-        titleHits     = (normTitle.match(re)   || []).length;
-        summaryHits   = (normSummary.match(re) || []).length;
+        const re    = new RegExp(`\\b${phrase}\\b`, "g");
+        titleHits   = (normTitle.match(re)   || []).length;
+        summaryHits = (normSummary.match(re) || []).length;
       } else {
-        // Single word — exact token match
-        titleHits     = normTitle.split(" ").filter(w => w === phrase).length;
-        summaryHits   = normSummary.split(" ").filter(w => w === phrase).length;
+        titleHits   = normTitle.split(" ").filter(w => w === phrase).length;
+        summaryHits = normSummary.split(" ").filter(w => w === phrase).length;
       }
 
       const weightedHits = (titleHits * TITLE_WEIGHT) + summaryHits;
       if (weightedHits === 0) continue;
 
-      // Intensity: weighted hits scaled by keyword strength, normalised by doc length
       const intensity = (weightedHits * baseScore) / Math.sqrt(totalWords);
-
       tagKeywordScores[tagId] = (tagKeywordScores[tagId] || 0) + intensity;
     }
 
@@ -136,10 +136,9 @@ async function classifyArticle(articleId) {
 
       let combined = weightedPrior + weightedKeyword;
 
-      // Flip logic: keyword dominates → slight boost
       if (
         weightedKeyword > weightedPrior &&
-        weightedPrior > 0 &&               // avoid divide-by-zero amplification
+        weightedPrior > 0 &&
         weightedKeyword >= weightedPrior * FLIP_THRESHOLD
       ) {
         combined *= 1.1;
@@ -178,13 +177,7 @@ async function classifyArticle(articleId) {
     }
 
     // ─────────────────────────────────────────
-    // 7. Compute + write base_priority
-    //    priorityEngine reads this at query time,
-    //    but we pre-compute a source-only baseline
-    //    here so the field is never null.
-    //
-    //    Full re-score happens in priorityEngine
-    //    using popularity_score at read time.
+    // 7. Write base_priority
     // ─────────────────────────────────────────
     const topScore = topTags[0]?.combined || 0;
 
