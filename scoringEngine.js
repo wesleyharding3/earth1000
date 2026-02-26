@@ -1,5 +1,4 @@
 // scoringEngine.js
-
 const pool = require("./db");
 
 /*
@@ -7,19 +6,16 @@ const pool = require("./db");
 CONFIGURATION
 =========================================================
 */
-
-const ALPHA = 0.35;            // Source prior weight
-const BETA = 0.65;             // Keyword dominance
-const FLIP_THRESHOLD = 1.15;   // Keyword must beat prior by 15%
-const TITLE_WEIGHT = 1.8;      // Headline importance multiplier
+const ALPHA           = 0.35;   // Source prior weight
+const BETA            = 0.65;   // Keyword signal weight
+const FLIP_THRESHOLD  = 1.15;   // Keyword must beat prior by 15% to flip
+const TITLE_WEIGHT    = 1.8;    // Title hit multiplier
 
 /*
 =========================================================
 HELPERS
 =========================================================
 */
-
-// Normalize text
 function normalize(text) {
   return (text || "")
     .toLowerCase()
@@ -28,62 +24,43 @@ function normalize(text) {
     .trim();
 }
 
-// Word count
 function wordCount(text) {
-  if (!text) return 1;
-  return text.split(/\s+/).length || 1;
+  const t = (text || "").trim();
+  if (!t) return 1;
+  return t.split(/\s+/).length;
 }
 
 /*
 =========================================================
-MAIN CLASSIFICATION FUNCTION
+MAIN
 =========================================================
 */
-
 async function classifyArticle(articleId) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    /*
-    =========================================================
-    1️⃣ Fetch Article (Translated Fields Only)
-    =========================================================
-    */
-
+    // ─────────────────────────────────────────
+    // 1. Fetch article
+    // ─────────────────────────────────────────
     const articleRes = await client.query(
-      `SELECT a.id,
-              a.translated_title,
-              a.translated_summary,
-              a.source_id
-       FROM news_articles a
-       WHERE a.id = $1`,
+      `SELECT id, translated_title, translated_summary, source_id
+       FROM news_articles
+       WHERE id = $1`,
       [articleId]
     );
 
-    if (!articleRes.rows.length) {
-      throw new Error("Article not found");
-    }
+    if (!articleRes.rows.length) throw new Error("Article not found");
 
-    const article = articleRes.rows[0];
+    const article        = articleRes.rows[0];
+    const normTitle      = normalize(article.translated_title);
+    const normSummary    = normalize(article.translated_summary);
+    const totalWords     = wordCount(normTitle) + wordCount(normSummary);
 
-    const title = article.translated_title || "";
-    const summary = article.translated_summary || "";
-
-    const normalizedTitle = normalize(title);
-    const normalizedSummary = normalize(summary);
-
-    const totalWords =
-      wordCount(normalizedTitle) +
-      wordCount(normalizedSummary);
-
-    /*
-    =========================================================
-    2️⃣ Fetch Source Tag Priors
-    =========================================================
-    */
-
+    // ─────────────────────────────────────────
+    // 2. Source tag priors
+    // ─────────────────────────────────────────
     const priorRes = await client.query(
       `SELECT tag_id, weight
        FROM source_tag_weights
@@ -92,137 +69,98 @@ async function classifyArticle(articleId) {
     );
 
     const sourcePriors = {};
-    priorRes.rows.forEach(row => {
-      sourcePriors[row.tag_id] = parseFloat(row.weight);
+    priorRes.rows.forEach(r => {
+      sourcePriors[r.tag_id] = parseFloat(r.weight);
     });
 
-    /*
-    =========================================================
-    3️⃣ Fetch All Keywords + Tiers
-    =========================================================
-    */
-
+    // ─────────────────────────────────────────
+    // 3. Keyword scoring
+    // ─────────────────────────────────────────
     const keywordRes = await client.query(`
-      SELECT 
+      SELECT
         tk.tag_id,
         k.phrase,
         k.is_phrase,
         kt.base_score
       FROM tag_keywords tk
-      JOIN keywords k ON k.id = tk.keyword_id
+      JOIN keywords      k  ON k.id  = tk.keyword_id
       JOIN keyword_tiers kt ON kt.id = tk.tier_id
     `);
 
     const tagKeywordScores = {};
 
     for (const row of keywordRes.rows) {
-      const tagId = row.tag_id;
-      const phrase = normalize(row.phrase);
+      const phrase    = normalize(row.phrase);
       const baseScore = parseFloat(row.base_score);
+      const tagId     = row.tag_id;
 
-      let titleOccurrences = 0;
-      let summaryOccurrences = 0;
+      let titleHits   = 0;
+      let summaryHits = 0;
 
       if (row.is_phrase) {
-        const regex = new RegExp(`\\b${phrase}\\b`, "g");
-
-        const titleMatches = normalizedTitle.match(regex);
-        const summaryMatches = normalizedSummary.match(regex);
-
-        titleOccurrences = titleMatches ? titleMatches.length : 0;
-        summaryOccurrences = summaryMatches ? summaryMatches.length : 0;
-
+        // Multi-word phrase — boundary-anchored regex
+        const re      = new RegExp(`\\b${phrase}\\b`, "g");
+        titleHits     = (normTitle.match(re)   || []).length;
+        summaryHits   = (normSummary.match(re) || []).length;
       } else {
-        const titleWords = normalizedTitle.split(" ");
-        const summaryWords = normalizedSummary.split(" ");
-
-        titleOccurrences = titleWords.filter(w => w === phrase).length;
-        summaryOccurrences = summaryWords.filter(w => w === phrase).length;
+        // Single word — exact token match
+        titleHits     = normTitle.split(" ").filter(w => w === phrase).length;
+        summaryHits   = normSummary.split(" ").filter(w => w === phrase).length;
       }
 
-      const weightedOccurrences =
-        (titleOccurrences * TITLE_WEIGHT) +
-        summaryOccurrences;
+      const weightedHits = (titleHits * TITLE_WEIGHT) + summaryHits;
+      if (weightedHits === 0) continue;
 
-      if (weightedOccurrences > 0) {
-        if (!tagKeywordScores[tagId]) {
-          tagKeywordScores[tagId] = 0;
-        }
+      // Intensity: weighted hits scaled by keyword strength, normalised by doc length
+      const intensity = (weightedHits * baseScore) / Math.sqrt(totalWords);
 
-        const intensity =
-          (weightedOccurrences * baseScore) /
-          Math.sqrt(totalWords);
-
-        tagKeywordScores[tagId] += intensity;
-      }
+      tagKeywordScores[tagId] = (tagKeywordScores[tagId] || 0) + intensity;
     }
 
-    /*
-    =========================================================
-    4️⃣ Combine Prior + Keyword Signal
-    =========================================================
-    */
-
+    // ─────────────────────────────────────────
+    // 4. Combine prior + keyword signal
+    // ─────────────────────────────────────────
     const allTagIds = new Set([
-      ...Object.keys(sourcePriors),
-      ...Object.keys(tagKeywordScores)
+      ...Object.keys(sourcePriors).map(Number),
+      ...Object.keys(tagKeywordScores).map(Number)
     ]);
 
     const finalScores = [];
 
     for (const tagId of allTagIds) {
-      const prior = sourcePriors[tagId] || 0;
+      const prior        = sourcePriors[tagId]     || 0;
       const keywordScore = tagKeywordScores[tagId] || 0;
 
-      const combined =
-        (prior * ALPHA) +
-        (keywordScore * BETA);
+      const weightedPrior   = prior        * ALPHA;
+      const weightedKeyword = keywordScore * BETA;
 
-      finalScores.push({
-        tagId: parseInt(tagId),
-        prior,
-        keywordScore,
-        combined
-      });
-    }
+      let combined = weightedPrior + weightedKeyword;
 
-    /*
-    =========================================================
-    5️⃣ Flip Logic (Keyword Override)
-    =========================================================
-    */
-
-    finalScores.forEach(obj => {
-      const weightedPrior = obj.prior * ALPHA;
-      const weightedKeyword = obj.keywordScore * BETA;
-
+      // Flip logic: keyword dominates → slight boost
       if (
         weightedKeyword > weightedPrior &&
+        weightedPrior > 0 &&               // avoid divide-by-zero amplification
         weightedKeyword >= weightedPrior * FLIP_THRESHOLD
       ) {
-        obj.combined *= 1.1; // slight dominance boost
+        combined *= 1.1;
       }
-    });
 
-    /*
-    =========================================================
-    6️⃣ Sort + Early Exit If No Signal
-    =========================================================
-    */
+      finalScores.push({ tagId, prior, keywordScore, combined });
+    }
 
+    // ─────────────────────────────────────────
+    // 5. Sort
+    // ─────────────────────────────────────────
     finalScores.sort((a, b) => b.combined - a.combined);
 
-    if (finalScores.length === 0) {
+    if (!finalScores.length) {
       await client.query("COMMIT");
       return { success: false, reason: "No classification signal" };
     }
 
-    /*
-    =========================================================
-    7️⃣ Store Top 3 Tags
-    =========================================================
-    */
-
+    // ─────────────────────────────────────────
+    // 6. Write article_tags (top 3)
+    // ─────────────────────────────────────────
     await client.query(
       `DELETE FROM article_tags WHERE article_id = $1`,
       [articleId]
@@ -231,32 +169,43 @@ async function classifyArticle(articleId) {
     const topTags = finalScores.slice(0, 3);
 
     for (let i = 0; i < topTags.length; i++) {
-      const tag = topTags[i];
-
+      const { tagId, combined } = topTags[i];
       await client.query(
-        `INSERT INTO article_tags
-         (article_id, tag_id, rank, score)
+        `INSERT INTO article_tags (article_id, tag_id, rank, score)
          VALUES ($1, $2, $3, $4)`,
-        [articleId, tag.tagId, i + 1, tag.combined]
+        [articleId, tagId, i + 1, combined]
       );
     }
 
+    // ─────────────────────────────────────────
+    // 7. Compute + write base_priority
+    //    priorityEngine reads this at query time,
+    //    but we pre-compute a source-only baseline
+    //    here so the field is never null.
+    //
+    //    Full re-score happens in priorityEngine
+    //    using popularity_score at read time.
+    // ─────────────────────────────────────────
+    const topScore = topTags[0]?.combined || 0;
+
+    await client.query(
+      `UPDATE news_articles
+       SET base_priority = $1
+       WHERE id = $2`,
+      [topScore, articleId]
+    );
+
     await client.query("COMMIT");
 
-    return {
-      success: true,
-      topTags
-    };
+    return { success: true, topTags };
 
   } catch (err) {
     await client.query("ROLLBACK");
-    console.error("Classification error:", err);
+    console.error("classifyArticle error:", err);
     throw err;
   } finally {
     client.release();
   }
 }
 
-module.exports = {
-  classifyArticle
-};
+module.exports = { classifyArticle };
