@@ -623,6 +623,123 @@
     }
 
     /* ===============================
+   Tag Filter Dropdown
+=============================== */
+.tagFilterWrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tagFilterBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.70);
+  border: 1px solid rgba(255, 255, 255, 0.20);
+  color: rgba(255, 255, 255, 0.80);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.tagFilterBtn:hover {
+  background: rgba(25, 25, 25, 0.90);
+  border-color: rgba(255, 255, 255, 0.40);
+}
+
+.tagFilterBtn.active {
+  border-color: rgba(255, 180, 80, 0.55);
+  color: rgba(255, 200, 100, 0.9);
+}
+
+.tagFilterDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.20);
+  flex-shrink: 0;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.tagFilterBtn.active .tagFilterDot {
+  background: rgba(255, 180, 80, 1);
+  box-shadow: 0 0 6px rgba(255, 150, 40, 0.8);
+}
+
+.tagDropdown {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  width: 160px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: rgba(8, 8, 8, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  display: none;
+  flex-direction: column;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  z-index: 60;
+}
+
+.tagDropdown.open { display: flex; }
+
+.tagDropdown::-webkit-scrollbar { width: 4px; }
+.tagDropdown::-webkit-scrollbar-track { background: transparent; }
+.tagDropdown::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+}
+.tagDropdown::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.30);
+}
+
+.tagOption {
+  padding: 9px 14px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  text-transform: capitalize;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.tagOption:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+
+.tagOption.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tagOptionDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.tagOption.active .tagOptionDot {
+  background: rgba(255, 180, 80, 1);
+  box-shadow: 0 0 8px rgba(255, 150, 40, 0.9), 0 0 20px rgba(255, 120, 20, 0.5);
+}
+
+    /* ===============================
        Settings Sidebar
     =============================== */
 
@@ -2005,7 +2122,7 @@ const loader = new THREE.TextureLoader();
 
       function resolveTimezone(city) { return city.timezone || "UTC"; }
 
-      function openCityPanel(city) {
+function openCityPanel(city) {
         const panel = document.getElementById("infoPanel");
         const showCountry = city.country && city.name.toLowerCase() !== city.country.toLowerCase();
         panel.innerHTML = `
@@ -2029,14 +2146,6 @@ const loader = new THREE.TextureLoader();
               <div id="timePill" style="flex-shrink:0;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:5px 13px;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:0.03em;color:rgba(255,255,255,0.88);"></div>
             </div>
           </div>
-          <div class="panelSearchPill">
-            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-            <span class="panelSearchPillIcon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
-              </svg>
-            </span>
-          </div>
           <div class="panelSortRow">
             <div class="panelSortOption active" data-sort="local">
               <div class="panelSortDot"></div>
@@ -2045,225 +2154,19 @@ const loader = new THREE.TextureLoader();
             <div class="panelSortOption" data-sort="global">
               <div class="panelSortDot"></div>
               <span class="panelSortLabel">Global</span>
-            </div>  
-          </div>  
-          <div class="panelTabsWrapper" style="position:relative;">
-            <div class="panelNavArrow left hidden" id="panelArrowLeft">
-              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6.5,2 3.5,5 6.5,8"/>
-              </svg>
             </div>
-            <div class="panelNavArrow right" id="panelArrowRight">
-              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3.5,2 6.5,5 3.5,8"/>
-              </svg>
-            </div>
-            <div class="panelSlidesTrack" id="panelSlidesTrack">
-              <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
-              <div class="panelSlide">
-                <div class="panelSlidePlaceholder">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                  </svg>
-                  <span>Overview</span>
-                </div>
-              </div>
-              <div class="panelSlide">
-                <div class="panelSlidePlaceholder">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                  </svg>
-                  <span>Statistics</span>
-                </div>
-              </div>
-            </div>
-          </div>`;
-        panel.classList.add("active");
-        applySnapHeight("default", false);
-        attachPanelResizeHandle();
-        setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
-
-        const slidesTrack = panel.querySelector("#panelSlidesTrack");
-        let currentSlide = 0;
-        const totalSlides = 3;
-
-        function goToSlide(index) {
-          slidesTrack.style.willChange = "transform";
-          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
-          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
-          if (typeof syncArrows === "function") syncArrows();
-          setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
-        }
-
-        const arrowLeft  = panel.querySelector("#panelArrowLeft");
-        const arrowRight = panel.querySelector("#panelArrowRight");
-
-        function syncArrows() {
-          arrowLeft.classList.toggle("hidden",  currentSlide === 0);
-          arrowRight.classList.toggle("hidden", currentSlide === totalSlides - 1);
-        }
-        syncArrows();
-
-        arrowLeft.addEventListener("click",  (e) => { e.stopPropagation(); goToSlide(currentSlide - 1); syncArrows(); });
-        arrowRight.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(currentSlide + 1); syncArrows(); });
-
-        panel.addEventListener("wheel", (e) => {
-          if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) { e.stopPropagation(); goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1)); }
-        }, { passive: true });
-
-        let slideSwipeStartX = 0, slideSwipeStartY = 0, slideSwipeLocked = null;
-        panel.addEventListener("touchstart", (e) => { slideSwipeStartX = e.touches[0].clientX; slideSwipeStartY = e.touches[0].clientY; slideSwipeLocked = null; }, { passive: true });
-        panel.addEventListener("touchend",   (e) => { if (slideSwipeLocked !== "h") return; const dx = e.changedTouches[0].clientX - slideSwipeStartX; if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1)); }, { passive: true });
-        panel.addEventListener("touchmove",  (e) => { if (slideSwipeLocked === "v") return; const dx = e.touches[0].clientX - slideSwipeStartX; const dy = e.touches[0].clientY - slideSwipeStartY; if (slideSwipeLocked === null) slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v"; }, { passive: true });
-
-        const panelSearchInput = panel.querySelector("#panelSearchInput");
-        let filterQuery = "";
-
-        panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
-
-        const sortOptions = panel.querySelectorAll(".panelSortOption");
-        sortOptions.forEach(opt => {
-          opt.addEventListener("click", (e) => {
-            e.stopPropagation();
-            sortOptions.forEach(o => o.classList.remove("active"));
-            opt.classList.add("active");
-            // currentSort = opt.dataset.sort; — wire to feed logic later
-          });
-        });
-
-        let allArticles = [];
-        const track    = panel.querySelector("#articlesTrack");
-        const viewport = panel.querySelector("#articlesViewport");
-
-        function articleCardHTML(article) {
-          const hasImage = article.image_url && article.image_url.trim() !== "";
-
-          let imageField;
-
-          if (hasImage) {
-            imageField = `
-              <img class="articleCardImage"
-                   src="${article.image_url}"
-                   alt=""
-                   loading="lazy"
-                   onerror="this.src='${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png'">
-            `;
-          } else if (article.iso_code) {
-            imageField = `
-              <img class="articleCardImage"
-                   src="${FLAG_CDN_BASE}${article.iso_code.toLowerCase()}.png"
-                   alt=""
-                   loading="lazy">
-            `;
-          } else {
-            imageField = `
-              <div class="articleCardImagePlaceholder">
-                <svg viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="1.5">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                  <path d="M21 15l-5-5L5 21"/>
+            <div class="tagFilterWrapper" id="tagFilterWrapper">
+              <div class="tagFilterBtn" id="tagFilterBtn">
+                <span class="tagFilterDot"></span>
+                <span id="tagFilterLabel">All</span>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                     stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="2,3.5 5,6.5 8,3.5"/>
                 </svg>
               </div>
-            `;
-          }
-
-          return `
-            <a class="articleCard"
-               href="${article.url}"
-               target="_blank"
-               rel="noopener">
-              ${imageField}
-              <div class="articleCardBody">
-                <div class="articleCardSource">
-                  ${article.source_name || ""}
-                </div>
-                <div class="articleCardTitle">
-                  ${article.translated_title || article.title || ""}
-                </div>
-                <div class="articleCardSummary">
-                  ${article.translated_summary || article.summary || ""}
-                </div>
-                <div class="articleCardDate">
-                  ${new Date(article.published_at).toLocaleDateString(
-                    "en-US",
-                    { month: "short", day: "numeric", year: "numeric" }
-                  )}
-                </div>
-              </div>
-            </a>
-          `;
-        }
-
-        function skeletonCards(n) {
-          return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
-        }
-
-        function renderCards() {
-          const filtered = filterQuery ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery)) : allArticles;
-          if (!filtered.length && !loading) { track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`; return; }
-          track.innerHTML = filtered.map(articleCardHTML).join("");
-        }
-
-        let offset = 0, limit = 12, loading = false, hasMore = true;
-        track.innerHTML = skeletonCards(6);
-
-        function loadMore() {
-          if (loading || !hasMore) return;
-          loading = true;
-          fetch(`https://earth-wjr6.onrender.com/api/news/city/${city.id}?limit=${limit}&offset=${offset}`)
-            .then(res => res.json())
-            .then(articles => {
-              if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
-              if (articles.length < limit) hasMore = false;
-              allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
-            })
-            .catch(err => { console.error("City article load error:", err); loading = false; renderCards(); });
-        }
-        loadMore();
-
-        viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
-        viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
-
-        const timeElement  = document.getElementById("timePill");
-        const cityTimezone = resolveTimezone(city);
-        function updateLocalTime() {
-          timeElement.textContent = new Date().toLocaleTimeString("en-US", { timeZone: cityTimezone, hour:"2-digit", minute:"2-digit", second:"2-digit" });
-        }
-        updateLocalTime();
-        if (timeInterval) clearInterval(timeInterval);
-        timeInterval = setInterval(updateLocalTime, 1000);
-
-        const closeBtn = panel.querySelector(".closePanel");
-        closeBtn.addEventListener("click", () => {
-          panel.classList.remove("active"); clearInterval(timeInterval); timeInterval = null;
-          isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
-        });
-      }
-
-      function openCountryPanel(country) {
-        const panel = document.getElementById("infoPanel");
-        panel.innerHTML = `
-          <div id="panelResizeHandle">
-            <div id="panelResizeArrow">
-              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="2,6.5 5,3.5 8,6.5"/>
-              </svg>
+              <div class="tagDropdown" id="tagDropdown"></div>
             </div>
-          </div>
-          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
-            <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
-              <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
-                ${country.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${country.flag}</span>` : ""}
-                <div style="min-width:0;">
-                  <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${country.name}</h2>
-                </div>
-              </div>
-</div>
           </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
@@ -2273,16 +2176,6 @@ const loader = new THREE.TextureLoader();
               </svg>
             </span>
           </div>
-          <div class="panelSortRow">
-            <div class="panelSortOption active" data-sort="local">
-              <div class="panelSortDot"></div>
-              <span class="panelSortLabel">Local</span>
-            </div>
-            <div class="panelSortOption" data-sort="global">
-              <div class="panelSortDot"></div>
-              <span class="panelSortLabel">Global</span>
-            </div>
-          </div>          
           <div class="panelTabsWrapper" style="position:relative;">
             <div class="panelNavArrow left hidden" id="panelArrowLeft">
               <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -2353,62 +2246,92 @@ const loader = new THREE.TextureLoader();
 
         const panelSearchInput = panel.querySelector("#panelSearchInput");
         let filterQuery = "";
-
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
 
-          const sortOptions = panel.querySelectorAll(".panelSortOption");
+        // ── Sort (Local / Global) ──
+        const sortOptions = panel.querySelectorAll(".panelSortOption");
+        let currentSort = "local";
 
-          sortOptions.forEach(opt => {
+        sortOptions.forEach(opt => {
           opt.addEventListener("click", (e) => {
             e.stopPropagation();
+            const newSort = opt.dataset.sort;
+            if (newSort === currentSort) return;
+            currentSort = newSort;
             sortOptions.forEach(o => o.classList.remove("active"));
             opt.classList.add("active");
-            // currentSort = opt.dataset.sort; — wire to feed logic later
+            allArticles = []; offset = 0; hasMore = true;
+            track.innerHTML = skeletonCards(6);
+            loadMore();
           });
         });
 
+        // ── Tag dropdown ──
+        let currentTag = null;
+        const tagFilterBtn   = panel.querySelector("#tagFilterBtn");
+        const tagFilterLabel = panel.querySelector("#tagFilterLabel");
+        const tagDropdown    = panel.querySelector("#tagDropdown");
+        let tagDropOpen = false;
+
+        fetch("https://earth-wjr6.onrender.com/api/tags")
+          .then(res => res.json())
+          .then(tags => {
+            const allTags = [{ id: null, name: "All" }, ...tags];
+            tagDropdown.innerHTML = allTags.map(t => `
+              <div class="tagOption ${t.id === null ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
+                <span class="tagOptionDot"></span>
+                ${t.name.charAt(0).toUpperCase() + t.name.slice(1)}
+              </div>`).join("");
+
+            tagDropdown.querySelectorAll(".tagOption").forEach(opt => {
+              opt.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const rawId = opt.dataset.tagId;
+                currentTag = rawId ? parseInt(rawId) : null;
+                tagDropdown.querySelectorAll(".tagOption").forEach(o => o.classList.remove("active"));
+                opt.classList.add("active");
+                tagFilterLabel.textContent = opt.textContent.trim();
+                tagFilterBtn.classList.toggle("active", currentTag !== null);
+                tagDropOpen = false;
+                tagDropdown.classList.remove("open");
+                allArticles = []; offset = 0; hasMore = true;
+                track.innerHTML = skeletonCards(6);
+                loadMore();
+              });
+            });
+          })
+          .catch(err => console.error("Failed to load tags:", err));
+
+        tagFilterBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          tagDropOpen = !tagDropOpen;
+          tagDropdown.classList.toggle("open", tagDropOpen);
+        });
+
+        panel.addEventListener("click", (e) => {
+          if (tagDropOpen && !e.target.closest("#tagFilterWrapper")) {
+            tagDropOpen = false;
+            tagDropdown.classList.remove("open");
+          }
+        });
+
+        // ── Articles ──
         let allArticles = [];
         const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
 
-
         function articleCardHTML(article) {
           const hasImage = article.image_url && article.image_url.trim() !== "";
-          const fallbackIso = (article.iso_code || country.iso_code || "").toLowerCase();
-
           let imageField;
-
           if (hasImage) {
-            imageField = `
-              <img class="articleCardImage"
-                   src="${article.image_url}"
-                   alt=""
-                   loading="lazy"
-                   onerror="this.src='${FLAG_CDN_BASE}${fallbackIso}.png'">
-            `;
-          } else if (fallbackIso) {
-            imageField = `
-              <img class="articleCardImage"
-                   src="${FLAG_CDN_BASE}${fallbackIso}.png"
-                   alt=""
-                   loading="lazy">
-            `;
+            imageField = `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png'">`;
+          } else if (article.iso_code) {
+            imageField = `<img class="articleCardImage" src="${FLAG_CDN_BASE}${article.iso_code.toLowerCase()}.png" alt="" loading="lazy">`;
           } else {
-            imageField = `
-              <div class="articleCardImagePlaceholder">
-                <svg viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="1.5">
-                  <rect x="3" y="3" width="18" height="18" rx="2"/>
-                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                  <path d="M21 15l-5-5L5 21"/>
-                </svg>
-              </div>
-            `;
+            imageField = `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
           }
           return `
-            <a class="articleCard" href="${article.url}" target="_blank" rel="noopener">
+            <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
               ${imageField}
               <div class="articleCardBody">
                 <div class="articleCardSource">${article.source_name || ""}</div>
@@ -2435,7 +2358,279 @@ const loader = new THREE.TextureLoader();
         function loadMore() {
           if (loading || !hasMore) return;
           loading = true;
-          fetch(`https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}`)
+          const tagParam = currentTag ? `&tag=${currentTag}` : "";
+          const url = currentSort === "global"
+            ? `https://earth-wjr6.onrender.com/api/news/city/${city.id}/global?limit=${limit}&offset=${offset}${tagParam}`
+            : `https://earth-wjr6.onrender.com/api/news/city/${city.id}?limit=${limit}&offset=${offset}${tagParam}`;
+          fetch(url)
+            .then(res => res.json())
+            .then(articles => {
+              if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
+              if (articles.length < limit) hasMore = false;
+              allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
+            })
+            .catch(err => { console.error("City article load error:", err); loading = false; renderCards(); });
+        }
+        loadMore();
+
+        viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
+        viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+        const timeElement  = document.getElementById("timePill");
+        const cityTimezone = resolveTimezone(city);
+        function updateLocalTime() {
+          timeElement.textContent = new Date().toLocaleTimeString("en-US", { timeZone: cityTimezone, hour:"2-digit", minute:"2-digit", second:"2-digit" });
+        }
+        updateLocalTime();
+        if (timeInterval) clearInterval(timeInterval);
+        timeInterval = setInterval(updateLocalTime, 1000);
+
+        const closeBtn = panel.querySelector(".closePanel");
+        closeBtn.addEventListener("click", () => {
+          panel.classList.remove("active"); clearInterval(timeInterval); timeInterval = null;
+          isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
+        });
+      }
+
+      function openCountryPanel(country) {
+        const panel = document.getElementById("infoPanel");
+        panel.innerHTML = `
+          <div id="panelResizeHandle">
+            <div id="panelResizeArrow">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="2,6.5 5,3.5 8,6.5"/>
+              </svg>
+            </div>
+          </div>
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+            <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
+              <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
+                ${country.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${country.flag}</span>` : ""}
+                <div style="min-width:0;">
+                  <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${country.name}</h2>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="panelSortRow">
+            <div class="panelSortOption active" data-sort="local">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Local</span>
+            </div>
+            <div class="panelSortOption" data-sort="global">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Global</span>
+            </div>
+            <div class="tagFilterWrapper" id="tagFilterWrapper">
+              <div class="tagFilterBtn" id="tagFilterBtn">
+                <span class="tagFilterDot"></span>
+                <span id="tagFilterLabel">All</span>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                     stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="2,3.5 5,6.5 8,3.5"/>
+                </svg>
+              </div>
+              <div class="tagDropdown" id="tagDropdown"></div>
+            </div>
+          </div>
+          <div class="panelSearchPill">
+            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+            <span class="panelSearchPillIcon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+              </svg>
+            </span>
+          </div>
+          <div class="panelTabsWrapper" style="position:relative;">
+            <div class="panelNavArrow left hidden" id="panelArrowLeft">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6.5,2 3.5,5 6.5,8"/>
+              </svg>
+            </div>
+            <div class="panelNavArrow right" id="panelArrowRight">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3.5,2 6.5,5 3.5,8"/>
+              </svg>
+            </div>
+            <div class="panelSlidesTrack" id="panelSlidesTrack">
+              <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                  <span>Overview</span>
+                </div>
+              </div>
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  <span>Statistics</span>
+                </div>
+              </div>
+            </div>
+          </div>`;
+
+        panel.classList.add("active");
+        applySnapHeight("default", false);
+        attachPanelResizeHandle();
+        setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
+
+        const slidesTrack = panel.querySelector("#panelSlidesTrack");
+        let currentSlide = 0;
+        const totalSlides = 3;
+
+        function goToSlide(index) {
+          slidesTrack.style.willChange = "transform";
+          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
+          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
+          if (typeof syncArrows === "function") syncArrows();
+          setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
+        }
+
+        const arrowLeft  = panel.querySelector("#panelArrowLeft");
+        const arrowRight = panel.querySelector("#panelArrowRight");
+
+        function syncArrows() {
+          arrowLeft.classList.toggle("hidden",  currentSlide === 0);
+          arrowRight.classList.toggle("hidden", currentSlide === totalSlides - 1);
+        }
+        syncArrows();
+
+        arrowLeft.addEventListener("click",  (e) => { e.stopPropagation(); goToSlide(currentSlide - 1); syncArrows(); });
+        arrowRight.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(currentSlide + 1); syncArrows(); });
+        panel.addEventListener("wheel", (e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) { e.stopPropagation(); goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1)); } }, { passive: true });
+
+        let slideSwipeStartX = 0, slideSwipeStartY = 0, slideSwipeLocked = null;
+        panel.addEventListener("touchstart", (e) => { slideSwipeStartX = e.touches[0].clientX; slideSwipeStartY = e.touches[0].clientY; slideSwipeLocked = null; }, { passive: true });
+        panel.addEventListener("touchend",   (e) => { if (slideSwipeLocked !== "h") return; const dx = e.changedTouches[0].clientX - slideSwipeStartX; if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1)); }, { passive: true });
+        panel.addEventListener("touchmove",  (e) => { if (slideSwipeLocked === "v") return; const dx = e.touches[0].clientX - slideSwipeStartX; const dy = e.touches[0].clientY - slideSwipeStartY; if (slideSwipeLocked === null) slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v"; }, { passive: true });
+
+        const panelSearchInput = panel.querySelector("#panelSearchInput");
+        let filterQuery = "";
+        panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
+
+        // ── Sort (Local / Global) ──
+        const sortOptions = panel.querySelectorAll(".panelSortOption");
+        let currentSort = "local";
+
+        sortOptions.forEach(opt => {
+          opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const newSort = opt.dataset.sort;
+            if (newSort === currentSort) return;
+            currentSort = newSort;
+            sortOptions.forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            allArticles = []; offset = 0; hasMore = true;
+            track.innerHTML = skeletonCards(6);
+            loadMore();
+          });
+        });
+
+        // ── Tag dropdown ──
+        let currentTag = null;
+        const tagFilterBtn   = panel.querySelector("#tagFilterBtn");
+        const tagFilterLabel = panel.querySelector("#tagFilterLabel");
+        const tagDropdown    = panel.querySelector("#tagDropdown");
+        let tagDropOpen = false;
+
+        fetch("https://earth-wjr6.onrender.com/api/tags")
+          .then(res => res.json())
+          .then(tags => {
+            const allTags = [{ id: null, name: "All" }, ...tags];
+            tagDropdown.innerHTML = allTags.map(t => `
+              <div class="tagOption ${t.id === null ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
+                <span class="tagOptionDot"></span>
+                ${t.name.charAt(0).toUpperCase() + t.name.slice(1)}
+              </div>`).join("");
+
+            tagDropdown.querySelectorAll(".tagOption").forEach(opt => {
+              opt.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const rawId = opt.dataset.tagId;
+                currentTag = rawId ? parseInt(rawId) : null;
+                tagDropdown.querySelectorAll(".tagOption").forEach(o => o.classList.remove("active"));
+                opt.classList.add("active");
+                tagFilterLabel.textContent = opt.textContent.trim();
+                tagFilterBtn.classList.toggle("active", currentTag !== null);
+                tagDropOpen = false;
+                tagDropdown.classList.remove("open");
+                allArticles = []; offset = 0; hasMore = true;
+                track.innerHTML = skeletonCards(6);
+                loadMore();
+              });
+            });
+          })
+          .catch(err => console.error("Failed to load tags:", err));
+
+        tagFilterBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          tagDropOpen = !tagDropOpen;
+          tagDropdown.classList.toggle("open", tagDropOpen);
+        });
+
+        panel.addEventListener("click", (e) => {
+          if (tagDropOpen && !e.target.closest("#tagFilterWrapper")) {
+            tagDropOpen = false;
+            tagDropdown.classList.remove("open");
+          }
+        });
+
+        // ── Articles ──
+        let allArticles = [];
+        const track    = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
+
+        function articleCardHTML(article) {
+          const hasImage = article.image_url && article.image_url.trim() !== "";
+          const fallbackIso = (article.iso_code || country.iso_code || "").toLowerCase();
+          let imageField;
+          if (hasImage) {
+            imageField = `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${fallbackIso}.png'">`;
+          } else if (fallbackIso) {
+            imageField = `<img class="articleCardImage" src="${FLAG_CDN_BASE}${fallbackIso}.png" alt="" loading="lazy">`;
+          } else {
+            imageField = `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+          }
+          return `
+            <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
+              ${imageField}
+              <div class="articleCardBody">
+                <div class="articleCardSource">${article.source_name || ""}</div>
+                <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
+                <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
+                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+              </div>
+            </a>`;
+        }
+
+        function skeletonCards(n) {
+          return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
+        }
+
+        function renderCards() {
+          const filtered = filterQuery ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery)) : allArticles;
+          if (!filtered.length && !loading) { track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`; return; }
+          track.innerHTML = filtered.map(articleCardHTML).join("");
+        }
+
+        let offset = 0, limit = 12, loading = false, hasMore = true;
+        track.innerHTML = skeletonCards(6);
+
+        function loadMore() {
+          if (loading || !hasMore) return;
+          loading = true;
+          const tagParam = currentTag ? `&tag=${currentTag}` : "";
+          const url = currentSort === "global"
+            ? `https://earth-wjr6.onrender.com/api/news/country/${country.id}/global?limit=${limit}&offset=${offset}${tagParam}`
+            : `https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}${tagParam}`;
+          fetch(url)
             .then(res => res.json())
             .then(articles => {
               if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
@@ -2461,6 +2656,297 @@ const loader = new THREE.TextureLoader();
         });
       }
 
+function openCountryPanel(country) {
+        const panel = document.getElementById("infoPanel");
+        panel.innerHTML = `
+          <div id="panelResizeHandle">
+            <div id="panelResizeArrow">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="2,6.5 5,3.5 8,6.5"/>
+              </svg>
+            </div>
+          </div>
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+            <button class="closePanel" style="position:absolute;top:6px;right:0;">✕</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
+              <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
+                ${country.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${country.flag}</span>` : ""}
+                <div style="min-width:0;">
+                  <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${country.name}</h2>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="panelSortRow">
+            <div class="panelSortOption active" data-sort="local">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Local</span>
+            </div>
+            <div class="panelSortOption" data-sort="global">
+              <div class="panelSortDot"></div>
+              <span class="panelSortLabel">Global</span>
+            </div>
+            <div class="tagFilterWrapper" id="tagFilterWrapper">
+              <div class="tagFilterBtn" id="tagFilterBtn">
+                <span class="tagFilterDot"></span>
+                <span id="tagFilterLabel">All</span>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                     stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="2,3.5 5,6.5 8,3.5"/>
+                </svg>
+              </div>
+              <div class="tagDropdown" id="tagDropdown"></div>
+            </div>
+          </div>
+          <div class="panelSearchPill">
+            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+            <span class="panelSearchPillIcon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+              </svg>
+            </span>
+          </div>
+          <div class="panelTabsWrapper" style="position:relative;">
+            <div class="panelNavArrow left hidden" id="panelArrowLeft">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6.5,2 3.5,5 6.5,8"/>
+              </svg>
+            </div>
+            <div class="panelNavArrow right" id="panelArrowRight">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3.5,2 6.5,5 3.5,8"/>
+              </svg>
+            </div>
+            <div class="panelSlidesTrack" id="panelSlidesTrack">
+              <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                  </svg>
+                  <span>Overview</span>
+                </div>
+              </div>
+              <div class="panelSlide">
+                <div class="panelSlidePlaceholder">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                  </svg>
+                  <span>Statistics</span>
+                </div>
+              </div>
+            </div>
+          </div>`;
+
+        panel.classList.add("active");
+        applySnapHeight("default", false);
+        attachPanelResizeHandle();
+        setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
+
+        const slidesTrack = panel.querySelector("#panelSlidesTrack");
+        let currentSlide = 0;
+        const totalSlides = 3;
+
+        function goToSlide(index) {
+          slidesTrack.style.willChange = "transform";
+          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
+          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
+          if (typeof syncArrows === "function") syncArrows();
+          setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
+        }
+
+        const arrowLeft  = panel.querySelector("#panelArrowLeft");
+        const arrowRight = panel.querySelector("#panelArrowRight");
+
+        function syncArrows() {
+          arrowLeft.classList.toggle("hidden",  currentSlide === 0);
+          arrowRight.classList.toggle("hidden", currentSlide === totalSlides - 1);
+        }
+        syncArrows();
+
+        arrowLeft.addEventListener("click",  (e) => { e.stopPropagation(); goToSlide(currentSlide - 1); syncArrows(); });
+        arrowRight.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(currentSlide + 1); syncArrows(); });
+        panel.addEventListener("wheel", (e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) { e.stopPropagation(); goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1)); } }, { passive: true });
+
+        let slideSwipeStartX = 0, slideSwipeStartY = 0, slideSwipeLocked = null;
+        panel.addEventListener("touchstart", (e) => { slideSwipeStartX = e.touches[0].clientX; slideSwipeStartY = e.touches[0].clientY; slideSwipeLocked = null; }, { passive: true });
+        panel.addEventListener("touchend",   (e) => { if (slideSwipeLocked !== "h") return; const dx = e.changedTouches[0].clientX - slideSwipeStartX; if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1)); }, { passive: true });
+        panel.addEventListener("touchmove",  (e) => { if (slideSwipeLocked === "v") return; const dx = e.touches[0].clientX - slideSwipeStartX; const dy = e.touches[0].clientY - slideSwipeStartY; if (slideSwipeLocked === null) slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v"; }, { passive: true });
+
+        const panelSearchInput = panel.querySelector("#panelSearchInput");
+        let filterQuery = "";
+        panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
+
+        // ── Sort (Local / Global) ──
+        const sortOptions = panel.querySelectorAll(".panelSortOption");
+        let currentSort = "local";
+
+        sortOptions.forEach(opt => {
+          opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const newSort = opt.dataset.sort;
+            if (newSort === currentSort) return;
+            currentSort = newSort;
+            sortOptions.forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            allArticles = []; offset = 0; hasMore = true;
+            track.innerHTML = skeletonCards(6);
+            loadMore();
+          });
+        });
+
+        // ── Tag dropdown ──
+        let currentTag = null;
+        const tagFilterBtn   = panel.querySelector("#tagFilterBtn");
+        const tagFilterLabel = panel.querySelector("#tagFilterLabel");
+        const tagDropdown    = panel.querySelector("#tagDropdown");
+        let tagDropOpen = false;
+
+        fetch("https://earth-wjr6.onrender.com/api/tags")
+          .then(res => res.json())
+          .then(tags => {
+            const allTags = [{ id: null, name: "All" }, ...tags];
+            tagDropdown.innerHTML = allTags.map(t => `
+              <div class="tagOption ${t.id === null ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
+                <span class="tagOptionDot"></span>
+                ${t.name.charAt(0).toUpperCase() + t.name.slice(1)}
+              </div>`).join("");
+
+            tagDropdown.querySelectorAll(".tagOption").forEach(opt => {
+              opt.addEventListener("click", (e) => {
+                e.stopPropagation();
+                const rawId = opt.dataset.tagId;
+                currentTag = rawId ? parseInt(rawId) : null;
+                tagDropdown.querySelectorAll(".tagOption").forEach(o => o.classList.remove("active"));
+                opt.classList.add("active");
+                tagFilterLabel.textContent = opt.textContent.trim();
+                tagFilterBtn.classList.toggle("active", currentTag !== null);
+                tagDropOpen = false;
+                tagDropdown.classList.remove("open");
+                allArticles = []; offset = 0; hasMore = true;
+                track.innerHTML = skeletonCards(6);
+                loadMore();
+              });
+            });
+          })
+          .catch(err => console.error("Failed to load tags:", err));
+
+        tagFilterBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          tagDropOpen = !tagDropOpen;
+          tagDropdown.classList.toggle("open", tagDropOpen);
+        });
+
+        panel.addEventListener("click", (e) => {
+          if (tagDropOpen && !e.target.closest("#tagFilterWrapper")) {
+            tagDropOpen = false;
+            tagDropdown.classList.remove("open");
+          }
+        });
+
+        // ── Articles ──
+        let allArticles = [];
+        const track    = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
+
+        function articleCardHTML(article) {
+          const hasImage    = article.image_url && article.image_url.trim() !== "";
+          const fallbackIso = (article.iso_code || country.iso_code || "").toLowerCase();
+          let imageField;
+          if (hasImage) {
+            imageField = `
+              <img class="articleCardImage"
+                   src="${article.image_url}"
+                   alt=""
+                   loading="lazy"
+                   onerror="this.src='${FLAG_CDN_BASE}${fallbackIso}.png'">`;
+          } else if (fallbackIso) {
+            imageField = `
+              <img class="articleCardImage"
+                   src="${FLAG_CDN_BASE}${fallbackIso}.png"
+                   alt=""
+                   loading="lazy">`;
+          } else {
+            imageField = `
+              <div class="articleCardImagePlaceholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <path d="M21 15l-5-5L5 21"/>
+                </svg>
+              </div>`;
+          }
+          return `
+            <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
+              ${imageField}
+              <div class="articleCardBody">
+                <div class="articleCardSource">${article.source_name || ""}</div>
+                <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
+                <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
+                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+              </div>
+            </a>`;
+        }
+
+        function skeletonCards(n) {
+          return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
+        }
+
+        function renderCards() {
+          const filtered = filterQuery
+            ? allArticles.filter(a =>
+                (a.title||"").toLowerCase().includes(filterQuery) ||
+                (a.summary||"").toLowerCase().includes(filterQuery) ||
+                (a.source_name||"").toLowerCase().includes(filterQuery))
+            : allArticles;
+          if (!filtered.length && !loading) {
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`;
+            return;
+          }
+          track.innerHTML = filtered.map(articleCardHTML).join("");
+        }
+
+        let offset = 0, limit = 12, loading = false, hasMore = true;
+        track.innerHTML = skeletonCards(6);
+
+        function loadMore() {
+          if (loading || !hasMore) return;
+          loading = true;
+          const tagParam = currentTag ? `&tag=${currentTag}` : "";
+          const url = currentSort === "global"
+            ? `https://earth-wjr6.onrender.com/api/news/country/${country.id}/global?limit=${limit}&offset=${offset}${tagParam}`
+            : `https://earth-wjr6.onrender.com/api/news/country/${country.id}?limit=${limit}&offset=${offset}${tagParam}`;
+          fetch(url)
+            .then(res => res.json())
+            .then(articles => {
+              if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
+              if (articles.length < limit) hasMore = false;
+              allArticles = [...allArticles, ...articles];
+              offset += limit;
+              loading = false;
+              renderCards();
+            })
+            .catch(err => { console.error("Country article load error:", err); loading = false; renderCards(); });
+        }
+        loadMore();
+
+        viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
+        viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+        let vpTouchStartY = 0, vpScrollStart = 0;
+        viewport.addEventListener("touchstart", (e) => { vpTouchStartY = e.touches[0].clientY; vpScrollStart = viewport.scrollTop; }, { passive: true });
+        viewport.addEventListener("touchmove",  (e) => { e.stopPropagation(); viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY); }, { passive: true });
+
+        const closeBtn = panel.querySelector(".closePanel");
+        closeBtn.addEventListener("click", () => {
+          panel.classList.remove("active");
+          if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
+          isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
+        });
+      }
+      
       window.addEventListener("wheel", e => {
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
