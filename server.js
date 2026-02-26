@@ -1,14 +1,12 @@
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
-const fetchFeeds = require("./fetcher");
 const { startArticleListener } = require("./articleListener");
-
+const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
+// const fetchFeeds = require("./fetcher"); // handled by cron worker, not server
 
 const app = express();
-
 console.log("Node version:", process.version);
-
 app.use(cors());
 app.use(express.json());
 
@@ -36,7 +34,6 @@ app.get("/api/countries", async (req, res) => {
     const result = await pool.query(`
       SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population
       FROM countries
-      
       ORDER BY name ASC
     `);
     res.json(result.rows);
@@ -48,24 +45,10 @@ app.get("/api/countries", async (req, res) => {
 
 app.get("/api/news/city/:cityId", async (req, res) => {
   try {
-    const { cityId } = req.params;
-    let limit  = Math.min(parseInt(req.query.limit)  || 10, 50);
-    let offset = Math.max(parseInt(req.query.offset) || 0,  0);
-
-    const result = await pool.query(
-      `SELECT 
-        a.id, a.translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
-        s.name AS source_name, s.site_url,
-        co.iso_code
-      FROM news_articles a
-      JOIN news_sources s ON a.source_id = s.id
-      LEFT JOIN countries co ON a.country_id = co.id
-      WHERE a.city_id = $1 
-      ORDER BY a.published_at DESC
-      LIMIT $2 OFFSET $3`,
-      [cityId, limit, offset]
-    );
-    res.json(result.rows);
+    const limit  = Math.min(parseInt(req.query.limit)  || 10, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+    const ranked = await getRankedCityArticles(parseInt(req.params.cityId));
+    res.json(ranked.slice(offset, offset + limit));
   } catch (err) {
     console.error("City news error:", err.message);
     res.status(500).json({ error: "Failed to fetch city news" });
@@ -74,25 +57,10 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 
 app.get("/api/news/country/:countryId", async (req, res) => {
   try {
-    const { countryId } = req.params;
-    let limit  = Math.min(parseInt(req.query.limit)  || 50, 50);
-    let offset = Math.max(parseInt(req.query.offset) || 0,  0);
-
-    const result = await pool.query(
-      `SELECT 
-        a.id, a.translated_title, a.title, a.url, a.translated_summary, a.summary, a.image_url, a.published_at,
-        s.name AS source_name, s.site_url,
-        co.iso_code
-      FROM news_articles a
-      JOIN news_sources s ON a.source_id = s.id
-      LEFT JOIN countries co ON a.country_id = co.id
-      WHERE a.country_id = $1
-      AND a.city_id IS NULL
-      ORDER BY a.published_at DESC
-      LIMIT $2 OFFSET $3`,
-      [countryId, limit, offset]
-    );
-    res.json(result.rows);
+    const limit  = Math.min(parseInt(req.query.limit)  || 50, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+    const ranked = await getRankedArticles(parseInt(req.params.countryId));
+    res.json(ranked.slice(offset, offset + limit));
   } catch (err) {
     console.error("Country news error:", err.message);
     res.status(500).json({ error: "Failed to fetch country news" });
@@ -101,23 +69,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
 app.get("/", (req, res) => res.send("API is running"));
 
-
 const PORT = process.env.PORT || 3000;
 
-startArticleListener().catch(console.error); // ← add this
-
-let isFetching = false;
-
-fetchFeeds().catch(console.error);
-
-setInterval(async () => {
-  if (isFetching) return;    // skip if previous cycle still running
-  isFetching = true;
-  try { 
-    await fetchFeeds(); 
-  } finally { 
-    isFetching = false;      // always release even if fetchFeeds throws
-  }
-}, 30 * 60 * 1000);
-
+startArticleListener().catch(console.error);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
