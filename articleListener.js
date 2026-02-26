@@ -1,6 +1,7 @@
 // articleListener.js
 const pool = require("./db");
 const { classifyArticle } = require("./scoringEngine");
+const { routeArticle } = require("./locationRouter");
 
 async function startArticleListener() {
   const listener = await pool.connect();
@@ -13,15 +14,15 @@ async function startArticleListener() {
     console.log(`🔖 New article detected: ${articleId}`);
     try {
       await classifyArticle(articleId);
+      await routeArticle(articleId);
     } catch (err) {
-      console.error(`Classification failed for ${articleId}:`, err);
+      console.error(`Processing failed for ${articleId}:`, err);
     }
   });
 
   listener.on("error", (err) => {
     console.error("❌ Listener error:", err);
     listener.release();
-    // Reconnect after 5 seconds
     setTimeout(() => startArticleListener().catch(console.error), 5000);
   });
 
