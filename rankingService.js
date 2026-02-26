@@ -2,6 +2,7 @@
 const pool = require("./db");
 const { rankArticles } = require("./priorityEngine");
 
+
 async function getRankedArticles(countryId) {
   const { rows } = await pool.query(`
     SELECT
