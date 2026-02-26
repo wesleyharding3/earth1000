@@ -220,15 +220,17 @@ async function fetchFeeds() {
         }
 
         const title = cleanText(item.title);
-        const summary = cleanText(item.contentSnippet || item.description);
+        const rawSummary = cleanText(item.contentSnippet || item.description);
+        const summary = rawSummary ? rawSummary.substring(0, 50) : null;
+
         let publishedAt = null;
-        if (item.isoDate) {
-          const d = new Date(item.isoDate);
-          if (!isNaN(d.getTime())) publishedAt = d;
-          } else if (item.pubDate) {
-            const d = new Date(item.pubDate);
-            if (!isNaN(d.getTime())) publishedAt = d;
-          }
+        const rawDate = item.isoDate || item.pubDate;
+        if (rawDate) {
+          const d = new Date(rawDate);
+            if (!isNaN(d.getTime()) && d.getFullYear() > 1970) {
+              publishedAt = d;
+            }
+        }
 
 
         const imageUrl = extractImage(item);
