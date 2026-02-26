@@ -189,14 +189,29 @@ async function fetchFeeds() {
 
       console.log(`\n${tag} 🔄 Starting: ${feed.rss_url}`);
 
-      const xml = await fetchXmlWithLimit(feed.rss_url, 15000);
-      const parsed = await parser.parseString(xml);
-
-      if (!parsed.items || parsed.items.length === 0) {
-        console.warn(`${tag} ⚠️ No items found.`);
-        continue;
-      }
-
+let xml, parsed;
+        try {
+          xml = await fetchXmlWithLimit(feed.rss_url, 15000);
+          parsed = await parser.parseString(xml);
+        } catch (fetchErr) {
+          console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
+          await logFeedError(feed, fetchErr);
+          await pool.query(
+            `UPDATE news_sources 
+             SET failure_count = COALESCE(failure_count,0) + 1,
+                 last_failed_at = NOW()
+             WHERE id = $1`,
+            [feed.id]
+          );
+          await pool.query(
+            `UPDATE news_sources 
+             SET is_active = false 
+             WHERE id = $1 AND failure_count >= 10`,
+            [feed.id]
+          );
+          continue;
+        }
+        
       const isNonEnglish =
         feed.language && feed.language.toUpperCase() !== "EN";
 
