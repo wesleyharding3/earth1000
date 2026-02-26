@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
 const fetchFeeds = require("./fetcher");
+const { startArticleListener } = require("./articleListener");
+
 
 const app = express();
 
@@ -99,7 +101,10 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
 app.get("/", (req, res) => res.send("API is running"));
 
+
 const PORT = process.env.PORT || 3000;
+
+startArticleListener().catch(console.error); // ← add this
 
 let isFetching = false;
 
