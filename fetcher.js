@@ -34,7 +34,7 @@ function truncateAtWord(text, limit = 100) {
   if (!text || text.length <= limit) return text;
   const truncated = text.substring(0, limit);
   const lastSpace = truncated.lastIndexOf(" ");
-  if (lastSpace === -1) return truncated + "..."; // no space found, cut hard
+  if (lastSpace === -1) return truncated + "...";
   return truncated.substring(0, lastSpace) + "...";
 }
 
@@ -114,6 +114,19 @@ function extractImage(item) {
 }
 
 /* =========================================
+   Translation with Timeout
+========================================= */
+async function translateWithTimeout(text, lang, timeoutMs = 10000) {
+  if (!text) return text;
+  return Promise.race([
+    translateText(text, lang),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Translation timeout after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+}
+
+/* =========================================
    Controlled Fetch (Size-Limited)
 ========================================= */
 const MAX_FEED_SIZE = 2 * 1024 * 1024;
@@ -122,28 +135,23 @@ async function fetchXmlWithLimit(url, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: parserOptions.headers
-    });
+  const fetchPromise = fetch(url, {
+    signal: controller.signal,
+    headers: parserOptions.headers
+  });
 
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const response = await Promise.race([
+    fetchPromise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Hard timeout after ${timeoutMs}ms`)), timeoutMs + 1000)
+    )
+  ]);
 
-    const text = await response.text();
-
-    if (text.length > MAX_FEED_SIZE)
-      throw new Error("Feed exceeds max size limit");
-
-    return text;
-
-  } catch (err) {
-    if (err.name === "AbortError")
-      throw new Error(`Timeout after ${timeoutMs}ms`);
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
+  clearTimeout(timeout);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const text = await response.text();
+  if (text.length > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
+  return text;
 }
 
 /* =========================================
@@ -151,6 +159,7 @@ async function fetchXmlWithLimit(url, timeoutMs = 15000) {
 ========================================= */
 async function fetchFeeds() {
   console.log("🚀 Starting RSS fetch...", new Date().toISOString());
+  const startTime = Date.now();
 
   const feedResult = await pool.query(`
     SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id,
@@ -174,7 +183,8 @@ async function fetchFeeds() {
 
   for (let i = 0; i < feeds.length; i++) {
     const feed = feeds[i];
-    const tag = `[${i + 1}/${feeds.length}]`;
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    const tag = `[${i + 1}/${feeds.length}] [${elapsed}s]`;
 
     try {
       if (!feed.rss_url) continue;
@@ -190,30 +200,34 @@ async function fetchFeeds() {
       console.log(`\n${tag} 🔄 Starting: ${feed.rss_url}`);
 
       let xml, parsed;
-        try {
-          xml = await fetchXmlWithLimit(feed.rss_url, 15000);
-          parsed = await parser.parseString(xml);
-        } catch (fetchErr) {
-          console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
-          await logFeedError(feed, fetchErr);
-          await pool.query(
-            `UPDATE news_sources 
-             SET failure_count = COALESCE(failure_count,0) + 1,
-                 last_failed_at = NOW()
-             WHERE id = $1`,
-            [feed.id]
-          );
-          await pool.query(
-            `UPDATE news_sources 
-             SET is_active = false 
-             WHERE id = $1 AND failure_count >= 10`,
-            [feed.id]
-          );
-          continue;
-        }
+      try {
+        xml = await fetchXmlWithLimit(feed.rss_url, 15000);
+        parsed = await parser.parseString(xml);
+      } catch (fetchErr) {
+        console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
+        await logFeedError(feed, fetchErr);
+        await pool.query(
+          `UPDATE news_sources 
+           SET failure_count = COALESCE(failure_count,0) + 1,
+               last_failed_at = NOW()
+           WHERE id = $1`,
+          [feed.id]
+        );
+        await pool.query(
+          `UPDATE news_sources 
+           SET is_active = false 
+           WHERE id = $1 AND failure_count >= 10`,
+          [feed.id]
+        );
+        continue;
+      }
 
-      const isNonEnglish =
-        feed.language && feed.language.toUpperCase() !== "EN";
+      if (!parsed?.items || parsed.items.length === 0) {
+        console.warn(`${tag} ⚠️ No items found.`);
+        continue;
+      }
+
+      const isNonEnglish = feed.language && feed.language.toUpperCase() !== "EN";
 
       let MAX_ITEMS = !isNonEnglish
         ? 25
@@ -222,7 +236,6 @@ async function fetchFeeds() {
           : 10;
 
       const items = parsed.items.slice(0, MAX_ITEMS);
-
       let inserted = 0;
 
       for (const item of items) {
@@ -244,7 +257,7 @@ async function fetchFeeds() {
 
         const title = cleanText(item.title);
         const rawSummary = cleanText(item.contentSnippet || item.description);
-        const summary = rawSummary ? truncateAtWord(rawSummary, 100) : null; // ← updated
+        const summary = rawSummary ? truncateAtWord(rawSummary, 100) : null;
 
         let publishedAt = null;
         const rawDate = item.isoDate || item.pubDate;
@@ -260,13 +273,15 @@ async function fetchFeeds() {
         let translatedTitle = title;
         let translatedSummary = summary;
 
-        if (
-          TRANSLATION_ENABLED &&
-          feed.language &&
-          feed.language.toUpperCase() !== "EN"
-        ) {
-          translatedTitle  = await translateText(title, "EN-US");
-          translatedSummary = await translateText(summary, "EN-US"); // ← already truncated before DeepL
+        if (TRANSLATION_ENABLED && feed.language && feed.language.toUpperCase() !== "EN") {
+          try {
+            translatedTitle   = await translateWithTimeout(title, "EN-US");
+            translatedSummary = await translateWithTimeout(summary, "EN-US");
+          } catch (translateErr) {
+            console.warn(`${tag} ⚠️ Translation failed, using original: ${translateErr.message}`);
+            translatedTitle   = title;
+            translatedSummary = summary;
+          }
         }
 
         const insertResult = await pool.query(
