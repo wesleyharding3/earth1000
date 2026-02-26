@@ -30,6 +30,14 @@ function cleanText(text) {
   return text?.replace(/<[^>]*>/g, "").trim();
 }
 
+function truncateAtWord(text, limit = 100) {
+  if (!text || text.length <= limit) return text;
+  const truncated = text.substring(0, limit);
+  const lastSpace = truncated.lastIndexOf(" ");
+  if (lastSpace === -1) return truncated + "..."; // no space found, cut hard
+  return truncated.substring(0, lastSpace) + "...";
+}
+
 async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
   try {
     console.error("❌ RSS ERROR:", {
@@ -216,22 +224,21 @@ async function fetchFeeds() {
 
         if (existsResult.rowCount > 0) {
           console.log(`${tag} ⏹ Encountered existing article → stopping early`);
-          break; // Stop processing THIS feed only
+          break;
         }
 
         const title = cleanText(item.title);
         const rawSummary = cleanText(item.contentSnippet || item.description);
-        const summary = rawSummary ? rawSummary.substring(0, 50) : null;
+        const summary = rawSummary ? truncateAtWord(rawSummary, 100) : null; // ← updated
 
         let publishedAt = null;
         const rawDate = item.isoDate || item.pubDate;
         if (rawDate) {
           const d = new Date(rawDate);
-            if (!isNaN(d.getTime()) && d.getFullYear() > 1970) {
-              publishedAt = d;
-            }
+          if (!isNaN(d.getTime()) && d.getFullYear() > 1970) {
+            publishedAt = d;
+          }
         }
-
 
         const imageUrl = extractImage(item);
 
@@ -243,8 +250,8 @@ async function fetchFeeds() {
           feed.language &&
           feed.language.toUpperCase() !== "EN"
         ) {
-          translatedTitle = await translateText(title, "EN-US");
-          translatedSummary = await translateText(summary, "EN-US");
+          translatedTitle  = await translateText(title, "EN-US");
+          translatedSummary = await translateText(summary, "EN-US"); // ← already truncated before DeepL
         }
 
         const insertResult = await pool.query(
@@ -264,7 +271,7 @@ async function fetchFeeds() {
              image_url
            )
            VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10, $11, NOW(),$12
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
            )
            ON CONFLICT (url)
            DO NOTHING`,
