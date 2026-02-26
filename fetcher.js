@@ -189,7 +189,7 @@ async function fetchFeeds() {
 
       console.log(`\n${tag} 🔄 Starting: ${feed.rss_url}`);
 
-let xml, parsed;
+      let xml, parsed;
         try {
           xml = await fetchXmlWithLimit(feed.rss_url, 15000);
           parsed = await parser.parseString(xml);
@@ -211,7 +211,7 @@ let xml, parsed;
           );
           continue;
         }
-        
+
       const isNonEnglish =
         feed.language && feed.language.toUpperCase() !== "EN";
 
