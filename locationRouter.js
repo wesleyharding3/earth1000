@@ -1,0 +1,199 @@
+// locationRouter.js
+const pool = require("./db");
+
+/*
+=========================================================
+HELPERS
+=========================================================
+*/
+function normalize(text) {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countHits(text, phrase, isPhrase) {
+  if (!text) return 0;
+  if (isPhrase) {
+    const re = new RegExp(`\\b${phrase}\\b`, "g");
+    return (text.match(re) || []).length;
+  }
+  return text.split(" ").filter(w => w === phrase).length;
+}
+
+/*
+=========================================================
+MAIN
+=========================================================
+*/
+async function routeArticle(articleId) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // ─────────────────────────────────────────
+    // 1. Fetch article
+    //    COALESCE: translated if available,
+    //    fall back to original for English sources
+    // ─────────────────────────────────────────
+    const articleRes = await client.query(
+      `SELECT
+         a.id,
+         a.source_id,
+         a.country_id                              AS source_country_id,
+         a.city_id                                 AS source_city_id,
+         ns.city_id                                AS ns_city_id,
+         COALESCE(a.translated_title, a.title)     AS search_title,
+         COALESCE(a.translated_summary, a.summary) AS search_summary
+       FROM news_articles a
+       JOIN news_sources ns ON ns.id = a.source_id
+       WHERE a.id = $1`,
+      [articleId]
+    );
+
+    if (!articleRes.rows.length) throw new Error("Article not found");
+
+    const article      = articleRes.rows[0];
+    const normTitle    = normalize(article.search_title);
+    const normSummary  = normalize(article.search_summary);
+
+    // ─────────────────────────────────────────
+    // 2. Source routing
+    //    Local source → route to its city
+    //    National source → already on country
+    //    feed via news_articles.country_id,
+    //    no article_locations row needed
+    // ─────────────────────────────────────────
+    if (article.ns_city_id) {
+      await client.query(
+        `INSERT INTO article_locations
+           (article_id, country_id, city_id, routing_type)
+         VALUES ($1, $2, $3, 'source')
+         ON CONFLICT DO NOTHING`,
+        [articleId, article.source_country_id, article.ns_city_id]
+      );
+    }
+
+    // ─────────────────────────────────────────
+    // 3. Content routing — city keywords
+    // ─────────────────────────────────────────
+    const cityKeywordRes = await client.query(`
+      SELECT
+        clk.city_id,
+        clk.country_id,
+        clk.phrase,
+        clk.is_phrase,
+        clk.threshold,
+        kt.base_score
+      FROM city_location_keywords clk
+      JOIN keyword_tiers kt ON kt.id = clk.tier_id
+    `);
+
+    // Accumulate score per city
+    const cityScores = {};
+
+    for (const row of cityKeywordRes.rows) {
+      const phrase   = normalize(row.phrase);
+      const cityId   = row.city_id;
+
+      const titleHits   = countHits(normTitle,   phrase, row.is_phrase);
+      const summaryHits = countHits(normSummary, phrase, row.is_phrase);
+      const totalHits   = (titleHits * 1.8) + summaryHits;
+
+      if (totalHits === 0) continue;
+
+      const score = totalHits * parseFloat(row.base_score);
+
+      if (!cityScores[cityId]) {
+        cityScores[cityId] = {
+          score:      0,
+          threshold:  parseFloat(row.threshold),
+          country_id: row.country_id
+        };
+      }
+      cityScores[cityId].score += score;
+    }
+
+    // Insert city content routes that clear threshold
+    for (const [cityId, data] of Object.entries(cityScores)) {
+      if (data.score >= data.threshold) {
+        await client.query(
+          `INSERT INTO article_locations
+             (article_id, country_id, city_id, routing_type)
+           VALUES ($1, $2, $3, 'content')
+           ON CONFLICT DO NOTHING`,
+          [articleId, data.country_id, parseInt(cityId)]
+        );
+        console.log(`📍 City routed: article ${articleId} → city ${cityId} (score: ${data.score.toFixed(3)})`);
+      }
+    }
+
+    // ─────────────────────────────────────────
+    // 4. Content routing — country keywords
+    // ─────────────────────────────────────────
+    const countryKeywordRes = await client.query(`
+      SELECT
+        clk.country_id,
+        clk.phrase,
+        clk.is_phrase,
+        clk.threshold,
+        kt.base_score
+      FROM country_location_keywords clk
+      JOIN keyword_tiers kt ON kt.id = clk.tier_id
+    `);
+
+    // Accumulate score per country
+    const countryScores = {};
+
+    for (const row of countryKeywordRes.rows) {
+      const phrase     = normalize(row.phrase);
+      const countryId  = row.country_id;
+
+      const titleHits   = countHits(normTitle,   phrase, row.is_phrase);
+      const summaryHits = countHits(normSummary, phrase, row.is_phrase);
+      const totalHits   = (titleHits * 1.8) + summaryHits;
+
+      if (totalHits === 0) continue;
+
+      const score = totalHits * parseFloat(row.base_score);
+
+      if (!countryScores[countryId]) {
+        countryScores[countryId] = {
+          score:     0,
+          threshold: parseFloat(row.threshold)
+        };
+      }
+      countryScores[countryId].score += score;
+    }
+
+    // Insert country content routes that clear threshold
+    for (const [countryId, data] of Object.entries(countryScores)) {
+      if (data.score >= data.threshold) {
+        await client.query(
+          `INSERT INTO article_locations
+             (article_id, country_id, city_id, routing_type)
+           VALUES ($1, $2, NULL, 'content')
+           ON CONFLICT DO NOTHING`,
+          [articleId, parseInt(countryId)]
+        );
+        console.log(`🌍 Country routed: article ${articleId} → country ${countryId} (score: ${data.score.toFixed(3)})`);
+      }
+    }
+
+    await client.query("COMMIT");
+
+    return { success: true };
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("routeArticle error:", err);
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { routeArticle };
