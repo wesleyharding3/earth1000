@@ -95,6 +95,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 
 /* =========================================
    City Feed — Global (content + source routed, optional tag)
+   Excludes articles that originate from this city's local feed
 ========================================= */
 app.get("/api/news/city/:cityId/global", async (req, res) => {
   try {
@@ -128,6 +129,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
       ${tagJoin}
       WHERE al.city_id        = $1
         AND al.routing_type   IN ('content', 'source')
+        AND a.city_id        != $1
         ${tagWhere}
       ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
@@ -142,7 +144,6 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
 
 /* =========================================
    Country Feed — Local (ranked, optional tag)
-   NOTE: includes articles from city sources within this country
 ========================================= */
 app.get("/api/news/country/:countryId", async (req, res) => {
   try {
@@ -188,6 +189,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
 /* =========================================
    Country Feed — Global (content + source routed, optional tag)
+   Excludes articles that originate from this country's local feed
 ========================================= */
 app.get("/api/news/country/:countryId/global", async (req, res) => {
   try {
@@ -221,6 +223,7 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
       ${tagJoin}
       WHERE al.country_id     = $1
         AND al.routing_type   IN ('content', 'source')
+        AND a.country_id     != $1
         ${tagWhere}
       ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
