@@ -1,14 +1,20 @@
 require("dotenv").config();
 const pool = require("./db");
+const Parser = require("rss-parser");
 
-const fetch = global.fetch; // Node 18+ native fetch
+const parser = new Parser({
+  headers: {
+    "User-Agent": "Mozilla/5.0 (RSS Validator)"
+  }
+});
+
 const TIMEOUT_MS = 15000;
 const MAX_FEED_SIZE = 2 * 1024 * 1024;
 
 /* =========================================
    Fetch With Timeout
 ========================================= */
-async function fetchWithTimeout(url) {
+async function fetchXmlWithTimeout(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -30,7 +36,8 @@ async function fetchWithTimeout(url) {
       throw new Error("Feed exceeds max size");
     }
 
-    return true;
+    return text;
+
   } finally {
     clearTimeout(timeout);
   }
@@ -60,17 +67,12 @@ async function validateFeeds() {
     const wasActive = feed.is_active;
 
     try {
-      await fetchWithTimeout(feed.rss_url);
+      const xml = await fetchXmlWithTimeout(feed.rss_url);
 
-      const { rowCount } = await pool.query(`
-        SELECT 1
-        FROM news_articles
-        WHERE source_id = $1
-        LIMIT 1
-      `, [feed.id]);
+      const parsed = await parser.parseString(xml);
 
-      if (rowCount === 0) {
-        throw new Error("No articles exist for this source");
+      if (!parsed.items || parsed.items.length === 0) {
+        throw new Error("No RSS items found");
       }
 
       await pool.query(`
@@ -85,7 +87,7 @@ async function validateFeeds() {
       `, [feed.id]);
 
       if (!wasActive) activatedCount++;
-      console.log(`✅ Activated: ${feed.rss_url}`);
+      console.log(`✅ Valid RSS: ${feed.rss_url} (${parsed.items.length} items)`);
 
     } catch (err) {
       await pool.query(`
@@ -134,9 +136,6 @@ async function run() {
   }
 }
 
-/* =========================================
-   Only run if executed directly
-========================================= */
 if (require.main === module) {
   run();
 }
