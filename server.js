@@ -121,11 +121,14 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         ns.name          AS source_name,
         ns.site_url,
         ns.popularity_score,
-        co.iso_code
+        co.iso_code,
+        co.name          AS country_name,
+        ci.name          AS city_name
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
       JOIN news_sources  ns  ON ns.id = a.source_id
       LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities    ci ON ci.id = a.city_id
       ${tagJoin}
       WHERE al.city_id        = $1
         AND al.routing_type   IN ('content', 'source')
@@ -215,11 +218,14 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         ns.name          AS source_name,
         ns.site_url,
         ns.popularity_score,
-        co.iso_code
+        co.iso_code,
+        co.name          AS country_name,
+        ci.name          AS city_name
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
       JOIN news_sources  ns  ON ns.id = a.source_id
       LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities    ci ON ci.id = a.city_id
       ${tagJoin}
       WHERE al.country_id     = $1
         AND al.routing_type   IN ('content', 'source')
