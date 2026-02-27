@@ -128,7 +128,6 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
       ${tagJoin}
       WHERE al.city_id        = $1
         AND al.routing_type   IN ('content', 'source')
-        AND a.published_at    > NOW() - INTERVAL '7 days'
         ${tagWhere}
       ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
