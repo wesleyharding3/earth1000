@@ -52,7 +52,6 @@ async function getRankedCityArticles(cityId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.city_id = $1
-      AND a.published_at > NOW() - INTERVAL '7 days'
     GROUP BY a.id, ns.id, co.iso_code
   `, [cityId]);
 
