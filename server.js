@@ -79,7 +79,6 @@ app.get("/api/news/city/:cityId", async (req, res) => {
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE a.city_id      = $1
           AND at.tag_id      = $2
-          AND a.published_at > NOW() - INTERVAL '7 days'
         ORDER BY at.score DESC
         LIMIT $3 OFFSET $4
       `, [req.params.cityId, tagId, limit, offset]);
