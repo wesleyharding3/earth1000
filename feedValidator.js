@@ -1,51 +1,3 @@
-require("dotenv").config();
-const pool = require("./db");
-const Parser = require("rss-parser");
-const parser = new Parser({
-  headers: {
-    "User-Agent": "Mozilla/5.0 (RSS Validator)"
-  }
-});
-
-const MAX_FEED_SIZE = 2 * 1024 * 1024;
-const TIMEOUT_MS = 15000;
-
-/* =========================================
-   Fetch With Timeout
-========================================= */
-async function fetchWithTimeout(url) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  const start = Date.now();
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (RSS Validator)"
-      }
-    });
-    const duration = Date.now() - start;
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const text = await response.text();
-    if (text.length > MAX_FEED_SIZE) {
-      throw new Error("Feed exceeds max size");
-    }
-    const parsed = await parser.parseString(text);
-    if (!parsed.items || parsed.items.length === 0) {
-      throw new Error("No RSS items found");
-    }
-    return {
-      status: response.status,
-      duration,
-      itemCount: parsed.items.length
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 /* =========================================
    Main Validator
 ========================================= */
@@ -55,37 +7,45 @@ async function validateFeeds() {
   const { rows } = await pool.query(`
     SELECT id, rss_url, is_active
     FROM news_sources
-    WHERE rss_valid IS NULL
+    WHERE last_checked_at IS NULL
        OR is_active = false
     ORDER BY id ASC
   `);
 
   console.log(`Feeds selected: ${rows.length}`);
 
-  let activatedCount = 0;   // was false/null → now true
-  let deactivatedCount = 0; // was true → now false
-  let alreadyFalseCount = 0; // was false → still false
+  let activatedCount = 0;
+  let deactivatedCount = 0;
+  let alreadyFalseCount = 0;
 
   for (const feed of rows) {
     const wasActive = feed.is_active;
+
     try {
-      const result = await fetchWithTimeout(feed.rss_url);
+      await fetchWithTimeout(feed.rss_url);
+
+      // OPTIONAL: Require at least one article to exist
+      const { rowCount } = await pool.query(`
+        SELECT 1
+        FROM news_articles
+        WHERE source_id = $1
+        LIMIT 1
+      `, [feed.id]);
+
+      if (rowCount === 0) {
+        throw new Error("No articles exist for this source");
+      }
+
       await pool.query(`
         UPDATE news_sources
-        SET rss_valid = true,
-            is_active = true,
-            rss_last_status = $2,
-            rss_last_checked_at = NOW(),
-            rss_validation_error = NULL,
-            rss_response_ms = $3,
-            rss_item_count = $4
+        SET
+          is_active = true,
+          last_checked_at = NOW(),
+          last_success_at = NOW(),
+          last_error = NULL,
+          failure_count = 0
         WHERE id = $1
-      `, [
-        feed.id,
-        result.status,
-        result.duration,
-        result.itemCount
-      ]);
+      `, [feed.id]);
 
       if (!wasActive) activatedCount++;
       console.log(`✅ Activated: ${feed.rss_url}`);
@@ -93,12 +53,12 @@ async function validateFeeds() {
     } catch (err) {
       await pool.query(`
         UPDATE news_sources
-        SET rss_valid = false,
-            is_active = false,
-            rss_last_checked_at = NOW(),
-            rss_validation_error = $2,
-            rss_response_ms = NULL,
-            rss_item_count = NULL
+        SET
+          is_active = false,
+          last_checked_at = NOW(),
+          last_failed_at = NOW(),
+          last_error = $2,
+          failure_count = failure_count + 1
         WHERE id = $1
       `, [feed.id, err.message]);
 
@@ -117,14 +77,7 @@ async function validateFeeds() {
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ✅ Activated (false → true):     ${activatedCount}
 ❌ Deactivated (true → false):   ${deactivatedCount}
-⛔ Still inactive (false → false): ${alreadyFalseCount}
+⛔ Still inactive:              ${alreadyFalseCount}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   `);
 }
-
-validateFeeds()
-  .then(() => process.exit(0))
-  .catch(err => {
-    console.error("💥 Validator crashed:", err);
-    process.exit(1);
-  });
