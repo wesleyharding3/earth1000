@@ -3,7 +3,6 @@ const cors = require("cors");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
-// const fetchFeeds = require("./fetcher"); // handled by cron worker, not server
 
 const app = express();
 console.log("Node version:", process.version);
@@ -54,9 +53,9 @@ app.get("/api/countries", async (req, res) => {
 ========================================= */
 app.get("/api/news/city/:cityId", async (req, res) => {
   try {
-    const limit   = Math.min(parseInt(req.query.limit)  || 10, 50);
-    const offset  = Math.max(parseInt(req.query.offset) || 0,  0);
-    const tagId   = req.query.tag ? parseInt(req.query.tag) : null;
+    const limit  = Math.min(parseInt(req.query.limit)  || 10, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+    const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
     if (tagId) {
       const { rows } = await pool.query(`
@@ -78,9 +77,9 @@ app.get("/api/news/city/:cityId", async (req, res) => {
         JOIN news_sources  ns  ON ns.id = a.source_id
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN countries co ON co.id = a.country_id
-        WHERE a.city_id        = $1
-          AND at.tag_id        = $2
-          AND a.published_at   > NOW() - INTERVAL '30 days'
+        WHERE a.city_id      = $1
+          AND at.tag_id      = $2
+          AND a.published_at > NOW() - INTERVAL '7 days'
         ORDER BY at.score DESC
         LIMIT $3 OFFSET $4
       `, [req.params.cityId, tagId, limit, offset]);
@@ -96,7 +95,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 });
 
 /* =========================================
-   City Feed — Global (content routed, optional tag)
+   City Feed — Global (content + source routed, optional tag)
 ========================================= */
 app.get("/api/news/city/:cityId/global", async (req, res) => {
   try {
@@ -109,7 +108,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
     const { rows } = await pool.query(`
-      SELECT
+      SELECT DISTINCT ON (a.id)
         a.id,
         a.title,
         a.translated_title,
@@ -128,11 +127,11 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
       JOIN news_sources  ns  ON ns.id = a.source_id
       LEFT JOIN countries co ON co.id = a.country_id
       ${tagJoin}
-      WHERE al.city_id      = $1
-        AND al.routing_type = 'content'
-        AND a.published_at  > NOW() - INTERVAL '24 hours'
+      WHERE al.city_id        = $1
+        AND al.routing_type   IN ('content', 'source')
+        AND a.published_at    > NOW() - INTERVAL '7 days'
         ${tagWhere}
-      ORDER BY ${tagOrder}
+      ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
     `, [req.params.cityId, limit, offset]);
 
@@ -145,6 +144,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
 
 /* =========================================
    Country Feed — Local (ranked, optional tag)
+   NOTE: includes articles from city sources within this country
 ========================================= */
 app.get("/api/news/country/:countryId", async (req, res) => {
   try {
@@ -173,9 +173,8 @@ app.get("/api/news/country/:countryId", async (req, res) => {
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE a.country_id     = $1
-          AND a.city_id        IS NULL
           AND at.tag_id        = $2
-          AND a.published_at   > NOW() - INTERVAL '24 hours'
+          AND a.published_at   > NOW() - INTERVAL '7 days'
         ORDER BY at.score DESC
         LIMIT $3 OFFSET $4
       `, [req.params.countryId, tagId, limit, offset]);
@@ -191,7 +190,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 });
 
 /* =========================================
-   Country Feed — Global (content routed, optional tag)
+   Country Feed — Global (content + source routed, optional tag)
 ========================================= */
 app.get("/api/news/country/:countryId/global", async (req, res) => {
   try {
@@ -204,7 +203,7 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
     const { rows } = await pool.query(`
-      SELECT
+      SELECT DISTINCT ON (a.id)
         a.id,
         a.title,
         a.translated_title,
@@ -223,12 +222,11 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
       JOIN news_sources  ns  ON ns.id = a.source_id
       LEFT JOIN countries co ON co.id = a.country_id
       ${tagJoin}
-      WHERE al.country_id   = $1
-        AND al.city_id      IS NULL
-        AND al.routing_type = 'content'
-        AND a.published_at  > NOW() - INTERVAL '24 hours'
+      WHERE al.country_id     = $1
+        AND al.routing_type   IN ('content', 'source')
+        AND a.published_at    > NOW() - INTERVAL '7 days'
         ${tagWhere}
-      ORDER BY ${tagOrder}
+      ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
     `, [req.params.countryId, limit, offset]);
 
