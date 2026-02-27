@@ -1,3 +1,41 @@
+require("dotenv").config();
+const pool = require("./db");
+
+const fetch = global.fetch; // Node 18+ native fetch
+const TIMEOUT_MS = 15000;
+const MAX_FEED_SIZE = 2 * 1024 * 1024;
+
+/* =========================================
+   Fetch With Timeout
+========================================= */
+async function fetchWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (RSS Validator)"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+
+    if (text.length > MAX_FEED_SIZE) {
+      throw new Error("Feed exceeds max size");
+    }
+
+    return true;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /* =========================================
    Main Validator
 ========================================= */
@@ -12,7 +50,7 @@ async function validateFeeds() {
     ORDER BY id ASC
   `);
 
-  console.log(`Feeds selected: ${rows.length}`);
+  console.log(`📋 Feeds selected: ${rows.length}`);
 
   let activatedCount = 0;
   let deactivatedCount = 0;
@@ -24,7 +62,6 @@ async function validateFeeds() {
     try {
       await fetchWithTimeout(feed.rss_url);
 
-      // OPTIONAL: Require at least one article to exist
       const { rowCount } = await pool.query(`
         SELECT 1
         FROM news_articles
@@ -64,10 +101,10 @@ async function validateFeeds() {
 
       if (wasActive) {
         deactivatedCount++;
-        console.log(`❌ Deactivated (was active): ${feed.rss_url} → ${err.message}`);
+        console.log(`❌ Deactivated: ${feed.rss_url} → ${err.message}`);
       } else {
         alreadyFalseCount++;
-        console.log(`❌ Still inactive: ${feed.rss_url} → ${err.message}`);
+        console.log(`⛔ Still inactive: ${feed.rss_url} → ${err.message}`);
       }
     }
   }
@@ -75,9 +112,33 @@ async function validateFeeds() {
   console.log(`
 🏁 Targeted validation complete.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ Activated (false → true):     ${activatedCount}
-❌ Deactivated (true → false):   ${deactivatedCount}
-⛔ Still inactive:              ${alreadyFalseCount}
+✅ Activated:      ${activatedCount}
+❌ Deactivated:    ${deactivatedCount}
+⛔ Still inactive: ${alreadyFalseCount}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   `);
 }
+
+/* =========================================
+   Cron Runner
+========================================= */
+async function run() {
+  try {
+    console.log("🕒 Feed Validator Cron Started:", new Date().toISOString());
+    await validateFeeds();
+    console.log("✅ Feed Validator Finished");
+    process.exit(0);
+  } catch (err) {
+    console.error("💥 Feed Validator Failed:", err);
+    process.exit(1);
+  }
+}
+
+/* =========================================
+   Only run if executed directly
+========================================= */
+if (require.main === module) {
+  run();
+}
+
+module.exports = { validateFeeds };
