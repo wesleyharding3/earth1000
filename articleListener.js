@@ -97,3 +97,9 @@ async function startArticleListener() {
   });
 }
 
+module.exports = {
+  startArticleListener,
+  logScoringVerification,
+  resetStats
+};
+
