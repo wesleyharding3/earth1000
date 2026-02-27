@@ -1124,9 +1124,27 @@
     .articleCardDate {
       font-size: 10px;
       color: rgba(255,255,255,0.25);
-      margin-top: auto;
-      padding-top: 4px;
     }
+
+    .articleCardFooter {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-top: auto;
+  padding-top: 4px;
+  gap: 6px;
+}
+
+.articleCardOrigin {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 65%;
+}
 
     .articleCardImage.flag {
       object-fit: contain;
@@ -2340,7 +2358,6 @@ function openCityPanel(city) {
         let allArticles = [];
         const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
-
         function articleCardHTML(article) {
           const hasImage = article.image_url && article.image_url.trim() !== "";
           let imageField;
@@ -2351,6 +2368,18 @@ function openCityPanel(city) {
           } else {
             imageField = `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
           }
+
+          let originLabel = "";
+          if (currentSort === "global") {
+            const parts = [];
+            if (article.city_name) parts.push(article.city_name);
+            if (article.country_name) parts.push(article.country_name);
+            else if (article.iso_code) parts.push(article.iso_code.toUpperCase());
+            if (parts.length) {
+              originLabel = `<div class="articleCardOrigin">📍 ${parts.join(", ")}</div>`;
+            }
+          }
+
           return `
             <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
               ${imageField}
@@ -2358,7 +2387,10 @@ function openCityPanel(city) {
                 <div class="articleCardSource">${article.source_name || ""}</div>
                 <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
                 <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
-                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                <div class="articleCardFooter">
+                  ${originLabel}
+                  <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                </div>
               </div>
             </a>`;
         }
@@ -2611,15 +2643,26 @@ function openCityPanel(city) {
 
         function articleCardHTML(article) {
           const hasImage = article.image_url && article.image_url.trim() !== "";
-          const fallbackIso = (article.iso_code || country.iso_code || "").toLowerCase();
           let imageField;
           if (hasImage) {
-            imageField = `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${fallbackIso}.png'">`;
-          } else if (fallbackIso) {
-            imageField = `<img class="articleCardImage" src="${FLAG_CDN_BASE}${fallbackIso}.png" alt="" loading="lazy">`;
+            imageField = `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png'">`;
+          } else if (article.iso_code) {
+            imageField = `<img class="articleCardImage" src="${FLAG_CDN_BASE}${article.iso_code.toLowerCase()}.png" alt="" loading="lazy">`;
           } else {
             imageField = `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
           }
+
+          let originLabel = "";
+          if (currentSort === "global") {
+            const parts = [];
+            if (article.city_name) parts.push(article.city_name);
+            if (article.country_name) parts.push(article.country_name);
+            else if (article.iso_code) parts.push(article.iso_code.toUpperCase());
+            if (parts.length) {
+              originLabel = `<div class="articleCardOrigin">📍 ${parts.join(", ")}</div>`;
+            }
+          }
+
           return `
             <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
               ${imageField}
@@ -2627,7 +2670,10 @@ function openCityPanel(city) {
                 <div class="articleCardSource">${article.source_name || ""}</div>
                 <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
                 <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
-                <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                <div class="articleCardFooter">
+                  ${originLabel}
+                  <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                </div>
               </div>
             </a>`;
         }
