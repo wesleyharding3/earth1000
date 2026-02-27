@@ -37,8 +37,7 @@ async function getRankedArticles(countryId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.country_id = $1
-      AND a.city_id IS NULL
-      AND a.published_at > NOW() - INTERVAL '24 hours'
+      AND a.published_at > NOW() - INTERVAL '7 days'
     GROUP BY a.id, ns.id, co.iso_code
   `, [countryId]);
 
@@ -53,7 +52,7 @@ async function getRankedCityArticles(cityId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.city_id = $1
-      AND a.published_at > NOW() - INTERVAL '24 hours'
+      AND a.published_at > NOW() - INTERVAL '7 days'
     GROUP BY a.id, ns.id, co.iso_code
   `, [cityId]);
 
