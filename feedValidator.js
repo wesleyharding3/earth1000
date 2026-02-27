@@ -1,7 +1,6 @@
 require("dotenv").config();
 const pool = require("./db");
 const Parser = require("rss-parser");
-
 const parser = new Parser({
   headers: {
     "User-Agent": "Mozilla/5.0 (RSS Validator)"
@@ -17,9 +16,7 @@ const TIMEOUT_MS = 15000;
 async function fetchWithTimeout(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
   const start = Date.now();
-
   try {
     const response = await fetch(url, {
       signal: controller.signal,
@@ -27,31 +24,23 @@ async function fetchWithTimeout(url) {
         "User-Agent": "Mozilla/5.0 (RSS Validator)"
       }
     });
-
     const duration = Date.now() - start;
-
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
-
     const text = await response.text();
-
     if (text.length > MAX_FEED_SIZE) {
       throw new Error("Feed exceeds max size");
     }
-
     const parsed = await parser.parseString(text);
-
     if (!parsed.items || parsed.items.length === 0) {
       throw new Error("No RSS items found");
     }
-
     return {
       status: response.status,
       duration,
       itemCount: parsed.items.length
     };
-
   } finally {
     clearTimeout(timeout);
   }
@@ -64,7 +53,7 @@ async function validateFeeds() {
   console.log("🔎 Starting targeted feed validation...");
 
   const { rows } = await pool.query(`
-    SELECT id, rss_url
+    SELECT id, rss_url, is_active
     FROM news_sources
     WHERE rss_valid IS NULL
        OR is_active = false
@@ -74,10 +63,14 @@ async function validateFeeds() {
 
   console.log(`Feeds selected: ${rows.length}`);
 
+  let activatedCount = 0;   // was false/null → now true
+  let deactivatedCount = 0; // was true → now false
+  let alreadyFalseCount = 0; // was false → still false
+
   for (const feed of rows) {
+    const wasActive = feed.is_active;
     try {
       const result = await fetchWithTimeout(feed.rss_url);
-
       await pool.query(`
         UPDATE news_sources
         SET rss_valid = true,
@@ -95,6 +88,7 @@ async function validateFeeds() {
         result.itemCount
       ]);
 
+      if (!wasActive) activatedCount++;
       console.log(`✅ Activated: ${feed.rss_url}`);
 
     } catch (err) {
@@ -109,11 +103,24 @@ async function validateFeeds() {
         WHERE id = $1
       `, [feed.id, err.message]);
 
-      console.log(`❌ Deactivated: ${feed.rss_url} → ${err.message}`);
+      if (wasActive) {
+        deactivatedCount++;
+        console.log(`❌ Deactivated (was active): ${feed.rss_url} → ${err.message}`);
+      } else {
+        alreadyFalseCount++;
+        console.log(`❌ Still inactive: ${feed.rss_url} → ${err.message}`);
+      }
     }
   }
 
-  console.log("🏁 Targeted validation complete.");
+  console.log(`
+🏁 Targeted validation complete.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Activated (false → true):     ${activatedCount}
+❌ Deactivated (true → false):   ${deactivatedCount}
+⛔ Still inactive (false → false): ${alreadyFalseCount}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  `);
 }
 
 validateFeeds()
