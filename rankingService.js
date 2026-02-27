@@ -37,7 +37,6 @@ async function getRankedArticles(countryId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.country_id = $1
-      AND a.published_at > NOW() - INTERVAL '7 days'
     GROUP BY a.id, ns.id, co.iso_code
   `, [countryId]);
 
