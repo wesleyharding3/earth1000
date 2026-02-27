@@ -8,8 +8,16 @@ const parser = new Parser({
   }
 });
 
+/* =========================================
+   Config
+========================================= */
+
 const TIMEOUT_MS = 15000;
 const MAX_FEED_SIZE = 2 * 1024 * 1024;
+
+// NEW: Toggle whether inactive/stale feeds should be rechecked
+// Set CHECK_INACTIVE=true in .env to enable full validation mode
+const CHECK_INACTIVE = process.env.CHECK_INACTIVE === "true";
 
 /* =========================================
    Utilities
@@ -59,15 +67,32 @@ async function fetchXmlWithTimeout(url) {
 
 async function validateFeeds() {
   console.log("🔎 Starting targeted feed validation...");
+  console.log(`⚙️  CHECK_INACTIVE mode: ${CHECK_INACTIVE}`);
 
-  const { rows } = await pool.query(`
-    SELECT id, rss_url, is_active
-    FROM news_sources
-    WHERE last_checked_at IS NULL
-       OR last_checked_at < NOW() - INTERVAL '7 days'
-       OR is_active = false
-    ORDER BY last_checked_at NULLS FIRST
-  `);
+  let query;
+  let params = [];
+
+  if (CHECK_INACTIVE) {
+    // Full validation mode (original behavior)
+    query = `
+      SELECT id, rss_url, is_active
+      FROM news_sources
+      WHERE last_checked_at IS NULL
+         OR last_checked_at < NOW() - INTERVAL '7 days'
+         OR is_active = false
+      ORDER BY last_checked_at NULLS FIRST
+    `;
+  } else {
+    // Only validate feeds that have NEVER been checked
+    query = `
+      SELECT id, rss_url, is_active
+      FROM news_sources
+      WHERE last_checked_at IS NULL
+      ORDER BY id ASC
+    `;
+  }
+
+  const { rows } = await pool.query(query, params);
 
   console.log(`📋 Feeds selected: ${rows.length}`);
 
@@ -80,7 +105,6 @@ async function validateFeeds() {
 
     try {
       const xml = await fetchXmlWithTimeout(feed.rss_url);
-
       const parsed = await parser.parseString(xml);
 
       if (!parsed.items || parsed.items.length === 0) {
