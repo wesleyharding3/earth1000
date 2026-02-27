@@ -58,7 +58,6 @@ async function validateFeeds() {
     WHERE rss_valid IS NULL
        OR is_active = false
     ORDER BY id ASC
-    LIMIT 500
   `);
 
   console.log(`Feeds selected: ${rows.length}`);
