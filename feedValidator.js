@@ -12,8 +12,18 @@ const TIMEOUT_MS = 15000;
 const MAX_FEED_SIZE = 2 * 1024 * 1024;
 
 /* =========================================
+   Utilities
+========================================= */
+
+function sanitizeText(text) {
+  if (!text) return text;
+  return text.replace(/\u0000/g, "").substring(0, 1000);
+}
+
+/* =========================================
    Fetch With Timeout
 ========================================= */
+
 async function fetchXmlWithTimeout(url) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -46,6 +56,7 @@ async function fetchXmlWithTimeout(url) {
 /* =========================================
    Main Validator
 ========================================= */
+
 async function validateFeeds() {
   console.log("🔎 Starting targeted feed validation...");
 
@@ -53,8 +64,9 @@ async function validateFeeds() {
     SELECT id, rss_url, is_active
     FROM news_sources
     WHERE last_checked_at IS NULL
+       OR last_checked_at < NOW() - INTERVAL '7 days'
        OR is_active = false
-    ORDER BY id ASC
+    ORDER BY last_checked_at NULLS FIRST
   `);
 
   console.log(`📋 Feeds selected: ${rows.length}`);
@@ -87,9 +99,12 @@ async function validateFeeds() {
       `, [feed.id]);
 
       if (!wasActive) activatedCount++;
+
       console.log(`✅ Valid RSS: ${feed.rss_url} (${parsed.items.length} items)`);
 
     } catch (err) {
+      const cleanError = sanitizeText(err.message);
+
       await pool.query(`
         UPDATE news_sources
         SET
@@ -97,16 +112,16 @@ async function validateFeeds() {
           last_checked_at = NOW(),
           last_failed_at = NOW(),
           last_error = $2,
-          failure_count = failure_count + 1
+          failure_count = COALESCE(failure_count,0) + 1
         WHERE id = $1
-      `, [feed.id, err.message]);
+      `, [feed.id, cleanError]);
 
       if (wasActive) {
         deactivatedCount++;
-        console.log(`❌ Deactivated: ${feed.rss_url} → ${err.message}`);
+        console.log(`❌ Deactivated: ${feed.rss_url} → ${cleanError}`);
       } else {
         alreadyFalseCount++;
-        console.log(`⛔ Still inactive: ${feed.rss_url} → ${err.message}`);
+        console.log(`⛔ Still inactive: ${feed.rss_url} → ${cleanError}`);
       }
     }
   }
@@ -124,6 +139,7 @@ async function validateFeeds() {
 /* =========================================
    Cron Runner
 ========================================= */
+
 async function run() {
   try {
     console.log("🕒 Feed Validator Cron Started:", new Date().toISOString());
@@ -131,10 +147,14 @@ async function run() {
     console.log("✅ Feed Validator Finished");
     process.exit(0);
   } catch (err) {
-    console.error("💥 Feed Validator Failed:", err);
+    console.error("💥 Feed Validator Failed:", sanitizeText(err.message));
     process.exit(1);
   }
 }
+
+/* =========================================
+   Only execute when run directly
+========================================= */
 
 if (require.main === module) {
   run();
