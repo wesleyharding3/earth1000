@@ -298,10 +298,11 @@ async function fetchFeeds() {
              content,
              published_at,
              ingested_at,
-             image_url
+             image_url,
+             language
            )
            VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12, $13
            )
            ON CONFLICT (url)
            DO NOTHING`,
@@ -317,7 +318,8 @@ async function fetchFeeds() {
             translatedSummary,
             item.content || null,
             publishedAt,
-            imageUrl
+            imageUrl,
+            feed.Language || null
           ]
         );
 
