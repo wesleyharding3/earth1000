@@ -1336,37 +1336,21 @@
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
+    let globeYaw = 0;
+    let globePitch = 0;
+    const MAX_PITCH = Math.PI * 0.44;
     let globeQuat = new THREE.Quaternion();
-    let lastSafeTiltQuat = new THREE.Quaternion(); // add right after: let globeQuat = new THREE.Quaternion();
     let ambientSpeed = 0.0004;
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
 
-    function applyYaw(rad) {
-      globeQuat.premultiply(
-        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), rad)
-      );
-    }
-
-    function applyTilt(rad) {
-      globeQuat.premultiply(
-      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rad)
-      );
-    }
-
-    function clampGlobeTilt() {
-      // Extract the current "north pole" direction in world space
-      const north = new THREE.Vector3(0, 1, 0).applyQuaternion(globeQuat);
-      // Measure how far the pole has tipped toward/away from camera
-      const tiltAngle = Math.acos(Math.min(1, Math.abs(north.z)));
-      const maxTiltFromEquator = Math.PI * 0.42; // ~75 degrees — allows good vertical travel
-      if (tiltAngle < (Math.PI / 2 - maxTiltFromEquator)) {
-        // Poles are tipping too far — slerp back toward last safe orientation
-        globeQuat.slerp(lastSafeTiltQuat, 0.35);
-      } else {
-        lastSafeTiltQuat.copy(globeQuat);
-      }
+    function applyYaw(rad)  { globeYaw += rad; }
+    function applyTilt(rad) { globePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, globePitch + rad)); }
+    function rebuildGlobeQuat() {
+      const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), globeYaw);
+      const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), globePitch);
+      globeQuat.copy(qPitch).multiply(qYaw);
     }
 
     function pauseAmbientRotation() {
@@ -1846,7 +1830,7 @@ const loader = new THREE.TextureLoader();
         if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) touchTapMoved = true;
         applyYaw(dx);
         applyTilt(dy);
-        clampGlobeTilt();
+        rebuildGlobeQuat();
         touchPrevX = e.touches[0].clientX;
         touchPrevY = e.touches[0].clientY;
       }, { passive: true });
@@ -1860,7 +1844,7 @@ const loader = new THREE.TextureLoader();
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
         applyYaw(deltaX); applyTilt(deltaY);
-        clampGlobeTilt();
+        rebuildGlobeQuat();
         prevX = e.clientX; prevY = e.clientY;
       });
 
@@ -2889,9 +2873,11 @@ function openCityPanel(city) {
           applyYaw(-yawVelocity); applyTilt(tiltVelocity);
           yawVelocity *= 0.90; tiltVelocity *= 0.90;
         }
-        clampGlobeTilt();
+      
 
         if (!dragging && !isFocused && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
+
+        rebuildGlobeQuat();
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
@@ -2901,7 +2887,13 @@ function openCityPanel(city) {
 
         if (isFocused && focusTargetQuat) {
           globeQuat.slerp(focusTargetQuat, 0.07);
-          if (globeQuat.angleTo(focusTargetQuat) < 0.0005) { globeQuat.copy(focusTargetQuat); focusTargetQuat = null; }
+          if (globeQuat.angleTo(focusTargetQuat) < 0.0005) {
+            globeQuat.copy(focusTargetQuat); 
+            focusTargetQuat = null; 
+            const e = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+            globePitch = e.x;
+            globeYaw = e.y;
+          }
         }
 
         if (compassSnapActive && compassSnapTarget) {
@@ -2909,6 +2901,9 @@ function openCityPanel(city) {
           if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
             globeQuat.copy(compassSnapTarget);
             compassSnapActive = false; compassSnapTarget = null; isFocused = false; focusTargetQuat = null;
+            const e = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+            globePitch = e.x;
+            globeYaw = e.y;
             if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
             ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 400);
           }
