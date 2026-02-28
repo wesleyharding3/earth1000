@@ -1090,6 +1090,7 @@
       flex-direction: column;
       gap: 6px;
       flex: 1;
+      justify-content: space-between;
     }
 
     .articleCardSource {
@@ -1336,6 +1337,7 @@
     let yawVelocity = 0;
     let tiltVelocity = 0;
     let globeQuat = new THREE.Quaternion();
+    let lastSafeTiltQuat = new THREE.Quaternion(); // add right after: let globeQuat = new THREE.Quaternion();
     let ambientSpeed = 0.0004;
     let ambientEnabled = true;
     let ambientPaused = false;
@@ -1348,10 +1350,23 @@
     }
 
     function applyTilt(rad) {
-      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
       globeQuat.premultiply(
-        new THREE.Quaternion().setFromAxisAngle(right, rad)
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), rad)
       );
+    }
+
+    function clampGlobeTilt() {
+      // Extract the current "north pole" direction in world space
+      const north = new THREE.Vector3(0, 1, 0).applyQuaternion(globeQuat);
+      // Measure how far the pole has tipped toward/away from camera
+      const tiltAngle = Math.acos(Math.min(1, Math.abs(north.z)));
+      const maxTiltFromEquator = Math.PI * 0.42; // ~75 degrees — allows good vertical travel
+      if (tiltAngle < (Math.PI / 2 - maxTiltFromEquator)) {
+        // Poles are tipping too far — slerp back toward last safe orientation
+        globeQuat.slerp(lastSafeTiltQuat, 0.35);
+      } else {
+        lastSafeTiltQuat.copy(globeQuat);
+      }
     }
 
     function pauseAmbientRotation() {
@@ -1831,6 +1846,7 @@ const loader = new THREE.TextureLoader();
         if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) touchTapMoved = true;
         applyYaw(dx);
         applyTilt(dy);
+        clampGlobeTilt();
         touchPrevX = e.touches[0].clientX;
         touchPrevY = e.touches[0].clientY;
       }, { passive: true });
@@ -1844,6 +1860,7 @@ const loader = new THREE.TextureLoader();
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
         applyYaw(deltaX); applyTilt(deltaY);
+        clampGlobeTilt();
         prevX = e.clientX; prevY = e.clientY;
       });
 
@@ -2384,9 +2401,11 @@ function openCityPanel(city) {
             <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
               ${imageField}
               <div class="articleCardBody">
-                <div class="articleCardSource">${article.source_name || ""}</div>
-                <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
-                <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
+                <div>
+                  <div class="articleCardSource">${article.source_name || ""}</div>
+                  <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
+                  <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
+                </div>
                 <div class="articleCardFooter">
                   ${originLabel}
                   <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
@@ -2667,9 +2686,11 @@ function openCityPanel(city) {
             <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
               ${imageField}
               <div class="articleCardBody">
-                <div class="articleCardSource">${article.source_name || ""}</div>
-                <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
-                <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
+                <div>
+                  <div class="articleCardSource">${article.source_name || ""}</div>
+                  <div class="articleCardTitle">${article.translated_title || article.title || ""}</div>
+                  <div class="articleCardSummary">${article.translated_summary || article.summary || ""}</div>
+                </div>
                 <div class="articleCardFooter">
                   ${originLabel}
                   <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
@@ -2868,6 +2889,7 @@ function openCityPanel(city) {
           applyYaw(-yawVelocity); applyTilt(tiltVelocity);
           yawVelocity *= 0.90; tiltVelocity *= 0.90;
         }
+        clampGlobeTilt();
 
         if (!dragging && !isFocused && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
 
