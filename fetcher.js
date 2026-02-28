@@ -189,7 +189,6 @@ async function fetchFeeds() {
     try {
       if (!feed.rss_url) continue;
 
-      // 🔒 Mark immediately to prevent reprocessing if crash occurs
       await pool.query(
         `UPDATE news_sources
          SET last_checked_at = NOW()
@@ -200,25 +199,13 @@ async function fetchFeeds() {
       console.log(`\n${tag} 🔄 Starting: ${feed.rss_url}`);
 
       let xml, parsed;
+
       try {
         xml = await fetchXmlWithLimit(feed.rss_url, 15000);
         parsed = await parser.parseString(xml);
       } catch (fetchErr) {
         console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
         await logFeedError(feed, fetchErr);
-        await pool.query(
-          `UPDATE news_sources 
-           SET failure_count = COALESCE(failure_count,0) + 1,
-               last_failed_at = NOW()
-           WHERE id = $1`,
-          [feed.id]
-        );
-        await pool.query(
-          `UPDATE news_sources 
-           SET is_active = false 
-           WHERE id = $1 AND failure_count >= 10`,
-          [feed.id]
-        );
         continue;
       }
 
@@ -227,7 +214,8 @@ async function fetchFeeds() {
         continue;
       }
 
-      const isNonEnglish = feed.language && feed.language.toUpperCase() !== "EN";
+      const isNonEnglish =
+        feed.language && feed.language.toUpperCase() !== "EN";
 
       let MAX_ITEMS = !isNonEnglish
         ? 25
@@ -235,32 +223,46 @@ async function fetchFeeds() {
           ? 3
           : 10;
 
-      const items = parsed.items.slice(0, MAX_ITEMS);
+      const candidateItems = parsed.items.slice(0, MAX_ITEMS * 3);
+
+      const fingerprintMap = [];
+      const fingerprints   = [];
+
+      for (const item of candidateItems) {
+        const fingerprint = buildFingerprint(item);
+        fingerprintMap.push({ item, fingerprint });
+        fingerprints.push(fingerprint);
+      }
+
+      const existingRes = await pool.query(
+        `SELECT url FROM news_articles WHERE url = ANY($1)`,
+        [fingerprints]
+      );
+
+      const existingSet = new Set(existingRes.rows.map(r => r.url));
+
+      const newItems = [];
+
+      for (const entry of fingerprintMap) {
+        if (!existingSet.has(entry.fingerprint)) {
+          newItems.push(entry);
+        }
+        if (newItems.length >= MAX_ITEMS) break;
+      }
+
       let inserted = 0;
 
-      for (const item of items) {
-        const fingerprint = buildFingerprint(item);
-
-        // 🔎 Check if article already exists (early-exit optimization)
-        const existsResult = await pool.query(
-          `SELECT 1
-           FROM news_articles
-           WHERE url = $1
-           LIMIT 1`,
-          [fingerprint]
-        );
-
-        if (existsResult.rowCount > 0) {
-          console.log(`${tag} ⏹ Encountered existing article → stopping early`);
-          break;
-        }
+      for (const { item, fingerprint } of newItems) {
 
         const title = cleanText(item.title);
         const rawSummary = cleanText(item.contentSnippet || item.description);
-        const summary = rawSummary ? truncateAtWord(rawSummary, 100) : null;
+        const summary = rawSummary
+          ? truncateAtWord(rawSummary, 100)
+          : null;
 
         let publishedAt = null;
         const rawDate = item.isoDate || item.pubDate;
+
         if (rawDate) {
           const d = new Date(rawDate);
           if (!isNaN(d.getTime()) && d.getFullYear() > 1970) {
@@ -270,17 +272,15 @@ async function fetchFeeds() {
 
         const imageUrl = extractImage(item);
 
-        let translatedTitle = title;
+        let translatedTitle   = title;
         let translatedSummary = summary;
 
-        if (TRANSLATION_ENABLED && feed.language && feed.language.toUpperCase() !== "EN") {
+        if (TRANSLATION_ENABLED && isNonEnglish) {
           try {
             translatedTitle   = await translateWithTimeout(title, "EN-US");
             translatedSummary = await translateWithTimeout(summary, "EN-US");
           } catch (translateErr) {
-            console.warn(`${tag} ⚠️ Translation failed, using original: ${translateErr.message}`);
-            translatedTitle   = title;
-            translatedSummary = summary;
+            console.warn(`${tag} ⚠️ Translation failed, using original`);
           }
         }
 
@@ -326,36 +326,11 @@ async function fetchFeeds() {
         }
       }
 
-      await pool.query(
-        `UPDATE news_sources 
-         SET failure_count = 0,
-             last_success_at = NOW(),
-             last_error = NULL
-         WHERE id = $1`,
-        [feed.id]
-      );
-
       console.log(`${tag} ✅ Inserted: ${inserted}`);
 
     } catch (err) {
       console.error(`${tag} ❌ Failed: ${err.message}`);
-
       await logFeedError(feed, err);
-
-      await pool.query(
-        `UPDATE news_sources 
-         SET failure_count = COALESCE(failure_count,0) + 1,
-             last_failed_at = NOW()
-         WHERE id = $1`,
-        [feed.id]
-      );
-
-      await pool.query(
-        `UPDATE news_sources 
-         SET is_active = false 
-         WHERE id = $1 AND failure_count >= 10`,
-        [feed.id]
-      );
     }
   }
 
