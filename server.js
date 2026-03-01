@@ -259,6 +259,108 @@ app.get("/api/tags", async (req, res) => {
 });
 
 /* =========================================
+   Article Flow Animation
+   GET /api/flows?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=300&mode=city|country
+
+   Arc origin  = news_source location (ns.city_id → city coords, else ns.country_id → country coords)
+   Arc destination = article_locations routing targets (city or country coords)
+   
+   Add this route to server.js
+========================================= */
+
+app.get("/api/flows", async (req, res) => {
+  try {
+    const from  = req.query.from  || new Date(Date.now() - 7*24*60*60*1000).toISOString().slice(0,10);
+    const to    = req.query.to    || new Date().toISOString().slice(0,10);
+    const limit = Math.min(parseInt(req.query.limit) || 300, 600);
+    const mode  = req.query.mode === "city" ? "city" : "country"; // which dest type to emphasise
+
+    const { rows } = await pool.query(`
+      SELECT
+        a.id                          AS article_id,
+        a.published_at,
+        a.translated_title            AS title,
+        a.sentiment_score,
+        al.routing_type,
+
+        /* ── Source: prefer news_source city, fall back to source country ── */
+        ns.id                         AS source_id,
+        ns.name                       AS source_name,
+        COALESCE(src_city.latitude,  src_sco.latitude)  AS src_lat,
+        COALESCE(src_city.longitude, src_sco.longitude) AS src_lon,
+        COALESCE(src_city.name,      src_sco.name)      AS src_place,
+        COALESCE(src_sco.iso_code,   src_sco2.iso_code) AS src_iso,
+        CASE WHEN src_city.id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+
+        /* ── Destination: city preferred, fall back to country centroid ── */
+        COALESCE(dst_city.latitude,  dst_country.latitude)  AS dst_lat,
+        COALESCE(dst_city.longitude, dst_country.longitude) AS dst_lon,
+        COALESCE(dst_city.name,      dst_country.name)      AS dst_place,
+        COALESCE(dst_country.iso_code) AS dst_iso,
+        CASE WHEN dst_city.id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type
+
+      FROM news_articles a
+      JOIN news_sources       ns          ON ns.id          = a.source_id
+      JOIN article_locations  al          ON al.article_id  = a.id
+
+      /* source city (local outlet) */
+      LEFT JOIN cities        src_city    ON src_city.id    = ns.city_id
+      /* source country via ns.country_id */
+      LEFT JOIN countries     src_sco     ON src_sco.id     = ns.country_id
+      /* fallback iso via article country_id */
+      LEFT JOIN countries     src_sco2    ON src_sco2.id    = a.country_id
+
+      /* destination city / country */
+      LEFT JOIN cities        dst_city    ON dst_city.id    = al.city_id
+      LEFT JOIN countries     dst_country ON dst_country.id = al.country_id
+
+      WHERE a.published_at >= $1::date
+        AND a.published_at <  ($2::date + interval '1 day')
+        AND al.routing_type IN ('content', 'source')
+        /* must have valid source coords */
+        AND (
+          (src_city.latitude    IS NOT NULL AND src_city.longitude    IS NOT NULL) OR
+          (src_sco.latitude     IS NOT NULL AND src_sco.longitude     IS NOT NULL)
+        )
+        /* must have valid destination coords */
+        AND (
+          (dst_city.latitude    IS NOT NULL AND dst_city.longitude    IS NOT NULL) OR
+          (dst_country.latitude IS NOT NULL AND dst_country.longitude IS NOT NULL)
+        )
+      ORDER BY a.published_at DESC
+      LIMIT $3
+    `, [from, to, limit]);
+
+    const flows = rows
+      .map(r => {
+        const srcLat = parseFloat(r.src_lat);
+        const srcLon = parseFloat(r.src_lon);
+        const dstLat = parseFloat(r.dst_lat);
+        const dstLon = parseFloat(r.dst_lon);
+        if (isNaN(srcLat) || isNaN(srcLon) || isNaN(dstLat) || isNaN(dstLon)) return null;
+        // drop trivially same-location arcs
+        if (Math.abs(srcLat - dstLat) < 0.8 && Math.abs(srcLon - dstLon) < 0.8) return null;
+        return {
+          articleId:   r.article_id,
+          publishedAt: r.published_at,
+          title:       r.title,
+          sentiment:   r.sentiment_score,
+          routingType: r.routing_type,
+          sourceName:  r.source_name,
+          src: { lat: srcLat, lon: srcLon, place: r.src_place, iso: r.src_iso, type: r.src_type },
+          dst: { lat: dstLat, lon: dstLon, place: r.dst_place, iso: r.dst_iso, type: r.dst_type },
+        };
+      })
+      .filter(Boolean);
+
+    res.json(flows);
+  } catch (err) {
+    console.error("Flows error:", err.message);
+    res.status(500).json({ error: "Failed to fetch flows" });
+  }
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
