@@ -175,6 +175,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE a.country_id     = $1
+          AND a.city_id IS NULL   
           AND at.tag_id        = $2
         ORDER BY at.score DESC
         LIMIT $3 OFFSET $4
