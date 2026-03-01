@@ -869,6 +869,224 @@
       text-align: center;
     }
 
+    /* ── Flow Mode Button (in top-left cluster) ── */
+#flowModeBtn.active {
+  background: rgba(0,200,120,0.15);
+  border-color: rgba(0,220,130,0.55);
+  color: rgba(80,255,160,1);
+  box-shadow: 0 0 14px rgba(0,200,120,0.25);
+}
+
+/* ── Flow Controls Panel ── */
+#flowControls {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: all;
+  user-select: none;
+  min-width: 460px;
+}
+#flowControls.visible { display: flex; }
+
+.flowPanel {
+  background: rgba(5, 7, 10, 0.94);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 20px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,200,120,0.06);
+  backdrop-filter: blur(12px);
+}
+
+.flowPanelRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.flowLabel {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.28);
+  white-space: nowrap;
+  min-width: 34px;
+}
+
+/* Date inputs */
+.flowDateInput {
+  flex: 1;
+  height: 30px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 12px;
+  padding: 0 10px;
+  outline: none;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+.flowDateInput:focus  { border-color: rgba(0,220,130,0.5); }
+.flowDateInput::-webkit-calendar-picker-indicator { filter: invert(0.5); cursor: pointer; }
+
+/* Speed slider */
+.flowSpeedSlider {
+  flex: 1;
+  -webkit-appearance: none;
+  height: 3px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+.flowSpeedSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: rgba(80,255,160,1);
+  box-shadow: 0 0 8px rgba(0,220,130,0.7);
+  cursor: pointer;
+}
+
+/* Playback controls */
+.flowPlaybackRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flowBtn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.72);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.flowBtn:hover {
+  background: rgba(255,255,255,0.11);
+  border-color: rgba(255,255,255,0.28);
+  color: #fff;
+}
+.flowBtn.primary {
+  background: rgba(0,180,100,0.18);
+  border-color: rgba(0,220,130,0.45);
+  color: rgba(80,255,160,0.95);
+}
+.flowBtn.primary:hover {
+  background: rgba(0,180,100,0.28);
+  border-color: rgba(0,220,130,0.7);
+}
+.flowBtn.active {
+  background: rgba(0,180,100,0.25);
+  border-color: rgba(0,220,130,0.6);
+  color: rgba(80,255,160,1);
+}
+
+/* Progress bar */
+.flowProgressWrap {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+}
+.flowProgressBar {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(0,200,120,0.7), rgba(80,255,160,1));
+  border-radius: 4px;
+  width: 0%;
+  transition: width 0.1s linear;
+  box-shadow: 0 0 6px rgba(0,220,130,0.5);
+}
+
+/* Stats pill */
+.flowStats {
+  font-size: 10px;
+  color: rgba(255,255,255,0.28);
+  letter-spacing: 0.04em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.flowStatHighlight {
+  color: rgba(80,255,160,0.7);
+  font-weight: 600;
+}
+
+/* Colour mode toggle pills */
+.flowModeRow {
+  display: flex;
+  gap: 5px;
+}
+.flowModePill {
+  flex: 1;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.09);
+  color: rgba(255,255,255,0.38);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s;
+}
+.flowModePill:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
+.flowModePill.active {
+  background: rgba(0,180,100,0.15);
+  border-color: rgba(0,220,130,0.40);
+  color: rgba(80,255,160,0.9);
+}
+
+/* Tooltip overlay */
+#flowTooltip {
+  position: fixed;
+  pointer-events: none;
+  z-index: 200;
+  display: none;
+  background: rgba(5,7,10,0.95);
+  border: 1px solid rgba(0,220,130,0.25);
+  border-radius: 12px;
+  padding: 10px 14px;
+  max-width: 260px;
+}
+#flowTooltip .ftTitle  { font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 5px; line-height: 1.35; }
+#flowTooltip .ftMeta   { font-size: 10px; color: rgba(255,255,255,0.45); line-height: 1.6; }
+#flowTooltip .ftRoute  { font-size: 10px; color: rgba(80,255,160,0.75); margin-top: 4px; font-weight: 600; }
+
+
+
 
 
     /* ===============================
@@ -1246,7 +1464,6 @@
   </div>
 
   <div id="topLeftCluster">
-
     <div class="iconBtn" id="settingsToggle" title="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round">
@@ -1262,6 +1479,7 @@
                  a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
     </div>
+  </div>
 
     <div id="viewToggleWrapper">
       <div class="iconBtn" id="viewToggle" title="View mode">
@@ -1304,6 +1522,12 @@
 
   </div>
 
+  <!-- Flow controls panel -->
+  <div id="flowControls">
+  <div class="flowPanel">
+
+
+
   <div id="settingsSidebar">
     <div class="sidebarTitle">Settings</div>
     <div class="sidebarSection">
@@ -1329,6 +1553,63 @@
       <div class="sidebarPlaceholder">More options coming soon</div>
     </div>
   </div>
+
+<div class="iconBtn" id="flowModeBtn" title="Flow animation">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12h14M12 5l7 7-7 7"/>
+    <circle cx="5" cy="12" r="2" fill="currentColor" stroke="none" opacity="0.5"/>
+  </svg>
+</div>
+
+
+
+    <div class="flowPanelRow">
+      <span class="flowLabel">From</span>
+      <input type="date" class="flowDateInput" id="flowFrom" />
+      <span class="flowLabel" style="text-align:center;">To</span>
+      <input type="date" class="flowDateInput" id="flowTo" />
+      <button class="flowBtn primary" id="flowLoadBtn">Load</button>
+    </div>
+
+    <!-- Colour mode row -->
+    <div class="flowPanelRow">
+      <span class="flowLabel">Color</span>
+      <div class="flowModeRow" style="flex:1;">
+        <div class="flowModePill active" data-cmode="routing">By routing</div>
+        <div class="flowModePill" data-cmode="sentiment">Sentiment</div>
+        <div class="flowModePill" data-cmode="uniform">Uniform</div>
+      </div>
+    </div>
+
+    <!-- Speed row -->
+    <div class="flowPanelRow">
+      <span class="flowLabel">Speed</span>
+      <input type="range" class="flowSpeedSlider" id="flowSpeed"
+             min="0.2" max="4" step="0.1" value="1" />
+    </div>
+
+    <!-- Playback row -->
+    <div class="flowPlaybackRow">
+      <button class="flowBtn" id="flowPlayBtn">▶ Play</button>
+      <button class="flowBtn" id="flowResetBtn">↺</button>
+      <div class="flowProgressWrap" id="flowProgressWrap">
+        <div class="flowProgressBar" id="flowProgressBar"></div>
+      </div>
+      <span class="flowStats" id="flowStats">—</span>
+    </div>
+
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div id="flowTooltip">
+  <div class="ftTitle" id="ftTitle"></div>
+  <div class="ftMeta"  id="ftMeta"></div>
+  <div class="ftRoute" id="ftRoute"></div>
+</div>
+
+
 
   <script type="module">
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
@@ -2999,11 +3280,410 @@ function openCityPanel(city) {
         cityMat.opacity    += (targetCityOpacity    - cityMat.opacity)    * 0.018;
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
 
+        if (window.__flowTick) window.__flowTick(); 
         renderer.render(scene, camera);
       }
 
       animate();
     }
+
+(function setupFlowAnimation() {
+
+  /* ── Config ── */
+  const GLOBE_RADIUS   = radius;          // already in scope
+  const ARC_HEIGHT     = 0.45;            // bezier lift above globe
+  const ARC_SEGMENTS   = 64;              // tube path resolution
+  const TUBE_RADIUS    = 0.003;           // arc tube thickness
+  const TUBE_RADIAL    = 4;              // tube cross-section segments
+  const PARTICLE_COUNT = 3;              // moving dots per arc
+  const PARTICLE_SIZE  = 0.016;          // dot billboard size
+  const FADE_DURATION  = 0.35;           // arc fade-in secs
+  const MAX_VISIBLE    = 120;            // max simultaneous arcs
+
+  /* ── State ── */
+  let flowData        = [];
+  let arcObjects      = [];              // {mesh, particleMesh, state, flow}
+  let flowPlaying     = false;
+  let flowProgress    = 0;              // 0→1 over all flows
+  let flowSpeed       = 1.0;
+  let colorMode       = "routing";
+  let flowAnimId      = null;
+  let arcPool         = [];
+  let particlePool    = [];
+
+  /* ── Groups ── */
+  const flowGroup    = new THREE.Group();
+  const particleGroup = new THREE.Group();
+  scene.add(flowGroup);
+  scene.add(particleGroup);
+
+  /* ── Materials ── */
+  function makeArcMaterial(color, opacity) {
+    return new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+  }
+
+  function makeParticleTexture() {
+    const size = 64;
+    const c = document.createElement("canvas");
+    c.width = c.height = size;
+    const ctx = c.getContext("2d");
+    const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+    g.addColorStop(0,    "rgba(255,255,255,1)");
+    g.addColorStop(0.25, "rgba(255,255,255,0.85)");
+    g.addColorStop(0.55, "rgba(255,255,255,0.2)");
+    g.addColorStop(1,    "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    return new THREE.CanvasTexture(c);
+  }
+
+  const particleTex = makeParticleTexture();
+
+  /* ── Colour helpers ── */
+  function routingColor(routingType) {
+    return routingType === "source"
+      ? new THREE.Color(0.2, 0.8, 1.0)   // cyan — source routing
+      : new THREE.Color(0.3, 1.0, 0.55); // green — content routing
+  }
+
+  function sentimentColor(score) {
+    if (score == null) return new THREE.Color(0.6, 0.6, 0.7);
+    const t = (score + 1) / 2; // -1..1 → 0..1
+    return new THREE.Color(
+      t < 0.5 ? 1 : 2*(1-t),       // R: high when negative
+      t > 0.5 ? 1 : 2*t,           // G: high when positive
+      0.3
+    );
+  }
+
+  function uniformColor() { return new THREE.Color(0.9, 0.85, 1.0); }
+
+  function pickColor(flow) {
+    if (colorMode === "sentiment") return sentimentColor(flow.sentiment);
+    if (colorMode === "uniform")   return uniformColor();
+    return routingColor(flow.routingType);
+  }
+
+  /* ── Lat/lon → Vector3 ── */
+  function latLonToV3(lat, lon, r) {
+    const phi   = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+    return new THREE.Vector3(
+      -r * Math.sin(phi) * Math.cos(theta),
+       r * Math.cos(phi),
+       r * Math.sin(phi) * Math.sin(theta)
+    );
+  }
+
+  /* ── Build great-circle arc curve ── */
+  function buildArcCurve(srcLat, srcLon, dstLat, dstLon) {
+    const src  = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
+    const dst  = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
+    const mid  = src.clone().add(dst).multiplyScalar(0.5);
+    const lift = GLOBE_RADIUS + ARC_HEIGHT * (src.distanceTo(dst) / (2 * GLOBE_RADIUS));
+    mid.normalize().multiplyScalar(lift);
+    return new THREE.QuadraticBezierCurve3(src, mid, dst);
+  }
+
+  /* ── Create arc mesh from flow data ── */
+  function createArc(flow) {
+    const curve = buildArcCurve(
+      flow.src.lat, flow.src.lon,
+      flow.dst.lat, flow.dst.lon
+    );
+    const color   = pickColor(flow);
+    const tubeMat = makeArcMaterial(color, 0);   // start invisible
+    const tubeGeo = new THREE.TubeGeometry(curve, ARC_SEGMENTS, TUBE_RADIUS, TUBE_RADIAL, false);
+    const mesh    = new THREE.Mesh(tubeGeo, tubeMat);
+    mesh.renderOrder = 1;
+    flowGroup.add(mesh);
+
+    /* ── Particles: small points moving along the curve ── */
+    const ptPositions = new Float32Array(PARTICLE_COUNT * 3);
+    const ptColors    = new Float32Array(PARTICLE_COUNT * 3);
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      ptColors[i*3]   = color.r;
+      ptColors[i*3+1] = color.g;
+      ptColors[i*3+2] = color.b;
+    }
+    const ptGeo = new THREE.BufferGeometry();
+    ptGeo.setAttribute("position", new THREE.Float32BufferAttribute(ptPositions, 3));
+    ptGeo.setAttribute("color",    new THREE.Float32BufferAttribute(ptColors, 3));
+    const ptMat  = new THREE.PointsMaterial({
+      size: PARTICLE_SIZE, map: particleTex,
+      vertexColors: true, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
+    });
+    const ptMesh = new THREE.Points(ptGeo, ptMat);
+    ptMesh.renderOrder = 2;
+    particleGroup.add(ptMesh);
+
+    return { mesh, ptMesh, curve, tubeMat, ptMat, ptGeo, ptColors, color, flow, age: 0, totalAge: 3.5 + Math.random() * 1.5 };
+  }
+
+  /* ── Dispose arc cleanly ── */
+  function disposeArc(arc) {
+    flowGroup.remove(arc.mesh);
+    particleGroup.remove(arc.ptMesh);
+    arc.mesh.geometry.dispose();
+    arc.tubeMat.dispose();
+    arc.ptMesh.geometry.dispose();
+    arc.ptMat.dispose();
+  }
+
+  /* ── Reset all arcs ── */
+  function clearArcs() {
+    arcObjects.forEach(disposeArc);
+    arcObjects = [];
+  }
+
+  /* ── Animate all live arcs (called per frame) ── */
+  let lastTimestamp = performance.now();
+
+  function tickArcs() {
+    const now   = performance.now();
+    const delta = Math.min((now - lastTimestamp) / 1000, 0.05) * flowSpeed;
+    lastTimestamp = now;
+
+    for (let i = arcObjects.length - 1; i >= 0; i--) {
+      const arc = arcObjects[i];
+      arc.age += delta;
+      const t   = arc.age / arc.totalAge;
+
+      /* fade in → hold → fade out */
+      let opacity;
+      if (t < FADE_DURATION)            opacity = t / FADE_DURATION;
+      else if (t < 1 - FADE_DURATION)  opacity = 1;
+      else                              opacity = Math.max(0, (1 - t) / FADE_DURATION);
+
+      arc.tubeMat.opacity = opacity * 0.55;
+      arc.ptMat.opacity   = opacity;
+
+      /* move particles along curve */
+      const ptPos = arc.ptGeo.attributes.position.array;
+      for (let p = 0; p < PARTICLE_COUNT; p++) {
+        const frac  = ((t + p / PARTICLE_COUNT) % 1);
+        const point = arc.curve.getPoint(frac);
+        ptPos[p*3]   = point.x;
+        ptPos[p*3+1] = point.y;
+        ptPos[p*3+2] = point.z;
+      }
+      arc.ptGeo.attributes.position.needsUpdate = true;
+
+      /* retire expired arcs */
+      if (arc.age >= arc.totalAge) {
+        disposeArc(arc);
+        arcObjects.splice(i, 1);
+      }
+    }
+  }
+
+  /* ── Sequential playback ── */
+  let seqIndex  = 0;
+  let seqTimer  = 0;
+  let seqDelay  = 0.08;   // secs between arc spawns
+
+  function tickPlayback(delta) {
+    if (!flowPlaying || !flowData.length) return;
+
+    seqTimer += delta * flowSpeed;
+
+    while (seqTimer >= seqDelay && seqIndex < flowData.length) {
+      if (arcObjects.length < MAX_VISIBLE) {
+        arcObjects.push(createArc(flowData[seqIndex]));
+      }
+      seqIndex++;
+      seqTimer -= seqDelay;
+    }
+
+    flowProgress = seqIndex / flowData.length;
+    document.getElementById("flowProgressBar").style.width = (flowProgress * 100) + "%";
+
+    if (seqIndex >= flowData.length) {
+      // all launched — wait for last arcs to finish then stop
+      if (!arcObjects.length) {
+        flowPlaying = false;
+        document.getElementById("flowPlayBtn").textContent = "▶ Play";
+      }
+    }
+  }
+
+  /* ── Main animation loop (injected into THREE animate()) ── */
+  // We hook into the existing animate() via a global tickable
+  window.__flowTick = function() {
+    const now   = performance.now();
+    const delta = Math.min((now - lastTimestamp) / 1000, 0.05);
+    // Don't update lastTimestamp here — tickArcs does it
+    tickArcs();
+    tickPlayback(delta);
+
+    /* keep flowGroup/particleGroup synced to globe rotation */
+    flowGroup.quaternion.copy(scene.quaternion);
+    particleGroup.quaternion.copy(scene.quaternion);
+  };
+
+  /* ── Load flows from API ── */
+  async function loadFlows() {
+    const from = document.getElementById("flowFrom").value;
+    const to   = document.getElementById("flowTo").value;
+    if (!from || !to) return;
+
+    clearArcs();
+    seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
+    document.getElementById("flowPlayBtn").textContent = "▶ Play";
+    document.getElementById("flowProgressBar").style.width = "0%";
+    document.getElementById("flowStats").innerHTML = `<span style="opacity:0.4">Loading…</span>`;
+
+    try {
+      const res   = await fetch(`https://earth-wjr6.onrender.com/api/flows?from=${from}&to=${to}&limit=300`);
+      flowData    = await res.json();
+      const stats = document.getElementById("flowStats");
+      stats.innerHTML = `<span class="flowStatHighlight">${flowData.length}</span> flows · ${from} → ${to}`;
+    } catch(e) {
+      console.error("Flow load error:", e);
+      document.getElementById("flowStats").textContent = "Error loading data";
+    }
+  }
+
+  /* ── Date defaults ── */
+  function isoDate(d) { return d.toISOString().slice(0,10); }
+  const now = new Date();
+  const ago = new Date(now - 7*24*60*60*1000);
+  document.getElementById("flowFrom").value = isoDate(ago);
+  document.getElementById("flowTo").value   = isoDate(now);
+
+  /* ── UI wiring ── */
+  const flowModeBtn  = document.getElementById("flowModeBtn");
+  const flowControls = document.getElementById("flowControls");
+  let flowModeOpen   = false;
+
+  flowModeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    flowModeOpen = !flowModeOpen;
+    flowModeBtn.classList.toggle("active", flowModeOpen);
+    flowControls.classList.toggle("visible", flowModeOpen);
+    if (!flowModeOpen) { 
+      clearArcs(); 
+      flowPlaying = false; 
+      seqIndex = 0;
+      seqTimer = 0;
+      flowProgress = 0;
+      document.getElementById("flowProgressBar").style.width = "0%";
+    }
+
+  });
+
+  document.getElementById("flowLoadBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    loadFlows();
+  });
+
+  document.getElementById("flowPlayBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!flowData.length) { loadFlows().then(() => startPlay()); return; }
+    if (flowPlaying) {
+      flowPlaying = false;
+      e.target.textContent = "▶ Play";
+    } else {
+      startPlay();
+    }
+  });
+
+  function startPlay() {
+    if (seqIndex >= flowData.length) {
+      clearArcs(); seqIndex = 0; seqTimer = 0; flowProgress = 0;
+    }
+    flowPlaying = true;
+    lastTimestamp = performance.now();
+    document.getElementById("flowPlayBtn").textContent = "⏸ Pause";
+  }
+
+  document.getElementById("flowResetBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearArcs(); seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
+    document.getElementById("flowPlayBtn").textContent = "▶ Play";
+    document.getElementById("flowProgressBar").style.width = "0%";
+  });
+
+  document.getElementById("flowSpeed").addEventListener("input", (e) => {
+    flowSpeed = parseFloat(e.target.value);
+  });
+
+  document.getElementById("flowProgressWrap").addEventListener("click", (e) => {
+    if (!flowData.length) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    clearArcs();
+    seqIndex = Math.floor(frac * flowData.length);
+    seqTimer = 0;
+    document.getElementById("flowProgressBar").style.width = (frac * 100) + "%";
+    if (frac < 1) startPlay();
+  });
+
+  /* Color mode pills */
+  document.querySelectorAll(".flowModePill").forEach(pill => {
+    pill.addEventListener("click", (e) => {
+      e.stopPropagation();
+      colorMode = pill.dataset.cmode;
+      document.querySelectorAll(".flowModePill").forEach(p => p.classList.remove("active"));
+      pill.classList.add("active");
+      // Rebuild colors on live arcs
+      arcObjects.forEach(arc => {
+        const c = pickColor(arc.flow);
+        arc.tubeMat.color.set(c);
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          arc.ptColors[i*3]   = c.r;
+          arc.ptColors[i*3+1] = c.g;
+          arc.ptColors[i*3+2] = c.b;
+        }
+        arc.ptGeo.attributes.color.needsUpdate = true;
+      });
+    });
+  });
+
+
+  /* Tooltip on hover */
+  const tooltip  = document.getElementById("flowTooltip");
+  const ftTitle  = document.getElementById("ftTitle");
+  const ftMeta   = document.getElementById("ftMeta");
+  const ftRoute  = document.getElementById("ftRoute");
+  const raycasterFlow = new THREE.Raycaster();
+  const mousePosFlow  = new THREE.Vector2();
+
+  window.addEventListener("mousemove", (e) => {
+    if (!flowModeOpen) return;
+    mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
+    mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
+    raycasterFlow.setFromCamera(mousePosFlow, camera);
+
+    let hit = false;
+    for (const arc of arcObjects) {
+      const xs = raycasterFlow.intersectObject(arc.mesh);
+      if (xs.length) {
+        ftTitle.textContent = arc.flow.title || "(no title)";
+        ftMeta.textContent  = `${arc.flow.sourceName || ""} · ${new Date(arc.flow.publishedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
+        ftRoute.textContent = `${arc.flow.src.place || "?"} → ${arc.flow.dst.place || "?"} (${arc.flow.routingType})`;
+        tooltip.style.left    = (e.clientX + 14) + "px";
+        tooltip.style.top     = (e.clientY - 10) + "px";
+        tooltip.style.display = "block";
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) tooltip.style.display = "none";
+  });
+
+  /* Stop globe interaction bubbling into flow controls */
+  document.getElementById("flowControls").addEventListener("mousedown", e => e.stopPropagation());
+  document.getElementById("flowControls").addEventListener("touchstart", e => e.stopPropagation(), {passive:true});
+
+})(); 
+
 
     class GeoBoundaryLayer {
       constructor(scene, radius) {
