@@ -19,7 +19,7 @@ const CONFIG = {
   MAX_TAG_MULTIPLIER: 1.20,
   MIN_TAG_MULTIPLIER: 1.00,
   TIER_BONUS: {
-    4: 10.0,  // tier 4 always floats to top
+    4: 6.0,  // tier 4 always floats to top
     3: 1.0,
     2: 1.0,
     1: 1.0
