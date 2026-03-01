@@ -114,6 +114,77 @@ function extractImage(item) {
 }
 
 /* =========================================
+   Robust Date Parser
+========================================= */
+const DATE_FIELDS = [
+  "isoDate",
+  "pubDate",
+  "published",
+  "updated",
+  "dc:date",
+  "dcdate",
+  "date",
+  "created",
+  "modified"
+];
+
+function parseRobustDate(raw) {
+  if (!raw) return null;
+
+  const cleaned = raw.trim()
+    .replace(/\s+/g, " ")
+    .replace(/,\s*(\d{1,2})\s+/, ", $1 ");
+
+  // Attempt 1: native Date (handles ISO 8601 + RFC 2822)
+  const d1 = new Date(cleaned);
+  if (!isNaN(d1.getTime()) && d1.getFullYear() > 1970) return d1;
+
+  // Attempt 2: strip day-of-week prefix ("Sun, " etc.)
+  const stripped = cleaned.replace(/^[A-Za-z]{3},\s*/, "");
+  const d2 = new Date(stripped);
+  if (!isNaN(d2.getTime()) && d2.getFullYear() > 1970) return d2;
+
+  // Attempt 3: normalise GMT/UTC suffix variants
+  const normalised = cleaned
+    .replace(/\bGMT\b/, "+0000")
+    .replace(/\bUTC\b/, "+0000");
+  const d3 = new Date(normalised);
+  if (!isNaN(d3.getTime()) && d3.getFullYear() > 1970) return d3;
+
+  // Attempt 4: extract a date-like substring and parse that
+  const match = cleaned.match(
+    /(\d{1,2}\s+\w+\s+\d{4}|\d{4}-\d{2}-\d{2})[\sT]?(\d{2}:\d{2}(:\d{2})?)?(\s*[+-]\d{4}|\s*Z)?/
+  );
+  if (match) {
+    const d4 = new Date(match[0]);
+    if (!isNaN(d4.getTime()) && d4.getFullYear() > 1970) return d4;
+  }
+
+  return null;
+}
+
+function extractPublishedDate(item) {
+  // Try all known date fields in priority order
+  for (const field of DATE_FIELDS) {
+    const val = item[field];
+    if (!val) continue;
+    const parsed = parseRobustDate(String(val));
+    if (parsed) return parsed;
+  }
+
+  // Last resort: scan all string values on the item for anything date-like
+  for (const val of Object.values(item)) {
+    if (typeof val !== "string") continue;
+    if (!/\d{4}/.test(val)) continue;
+    if (val.length > 100) continue;
+    const parsed = parseRobustDate(val);
+    if (parsed) return parsed;
+  }
+
+  return null; // DB will COALESCE to NOW()
+}
+
+/* =========================================
    Translation with Timeout
 ========================================= */
 async function translateWithTimeout(text, lang, timeoutMs = 10000) {
@@ -260,15 +331,7 @@ async function fetchFeeds() {
           ? truncateAtWord(rawSummary, 100)
           : null;
 
-        let publishedAt = null;
-        const rawDate = item.isoDate || item.pubDate;
-
-        if (rawDate) {
-          const d = new Date(rawDate);
-          if (!isNaN(d.getTime()) && d.getFullYear() > 1970) {
-            publishedAt = d;
-          }
-        }
+        const publishedAt = extractPublishedDate(item);
 
         const imageUrl = extractImage(item);
 
@@ -302,7 +365,7 @@ async function fetchFeeds() {
              language
            )
            VALUES (
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12, $13
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11, NOW()), NOW(),$12,$13
            )
            ON CONFLICT (url)
            DO NOTHING`,
@@ -319,7 +382,7 @@ async function fetchFeeds() {
             item.content || null,
             publishedAt,
             imageUrl,
-            feed.Language || null
+            feed.language || null
           ]
         );
 
