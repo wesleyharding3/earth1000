@@ -63,16 +63,17 @@ async function backfillTranslations() {
 
   while (true) {
     const batchRes = await pool.query(`
-      SELECT id, title, summary, translated_title, translated_summary, language
-      FROM news_articles
-      WHERE language IS NOT NULL
-        AND language NOT ILIKE 'en%'
+      SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary, a.language
+      FROM news_articles a
+      JOIN news_sources ns ON ns.id = a.source_id
+      WHERE a.language IS NOT NULL
+        AND a.language NOT ILIKE 'en%'
         AND (
-          (translated_title   IS NULL OR translated_title   = title)
+          (a.translated_title   IS NULL OR a.translated_title   = a.title)
           OR
-          (translated_summary IS NULL OR translated_summary = summary)
+          (a.translated_summary IS NULL OR a.translated_summary = a.summary)
         )
-      ORDER BY ingested_at DESC
+      ORDER BY ns.popularity_tier DESC NULLS LAST, a.ingested_at DESC
       LIMIT $1 OFFSET $2
     `, [BATCH_SIZE, offset]);
 
