@@ -24,7 +24,7 @@ function buildFingerprint(item) {
   const base =
     (item.guid || "") +
     (item.link || "") +
-    (item.isoDate || item.pubDate || item.pubdate || "") +
+    (item.isoDate || "") +
     cleanText(item.title || "") +
     cleanText(item.contentSnippet || item.description || "");
 
@@ -32,7 +32,7 @@ function buildFingerprint(item) {
 }
 
 function parseItemDate(item) {
-  const raw = item.isoDate || item.pubDate || item.pubdate || item["dc:date"] || item.dcdate || null;
+  const raw = item.isoDate || item.pubdate || item["dc:date"] || item.dcdate || null;
   if (!raw) return null;
   const d = new Date(raw);
   if (!isNaN(d.getTime()) && d.getFullYear() > 1970) return d;
