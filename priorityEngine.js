@@ -17,8 +17,21 @@ const CONFIG = {
   MIN_POPULARITY: 0.90,
   MAX_POPULARITY: 1.60,
   MAX_TAG_MULTIPLIER: 1.20,
-  MIN_TAG_MULTIPLIER: 1.00
+  MIN_TAG_MULTIPLIER: 1.00,
+  TIER_BONUS: {
+    4: 10.0,  // tier 4 always floats to top
+    3: 1.0,
+    2: 1.0,
+    1: 1.0
+  }
 };
+
+function getTierBonus(tier) {
+  return CONFIG.TIER_BONUS[tier] ?? 1.0;
+}
+
+
+
 
 /**
  * Normalize raw intensity against country max
@@ -68,16 +81,19 @@ function calculatePriority({
   rawIntensity,
   maxIntensity,
   tagWeightSum,
-  popularityScore
+  popularityScore,
+  popularityTier        // ← add this
 }) {
-  const normalized = normalizeIntensity(rawIntensity, maxIntensity);
+  const normalized    = normalizeIntensity(rawIntensity, maxIntensity);
   const tagMultiplier = computeTagMultiplier(tagWeightSum);
-  const popularity = clampPopularity(popularityScore);
+  const popularity    = clampPopularity(popularityScore);
+  const tierBonus     = getTierBonus(popularityTier);  // ← add this
 
   const finalScore =
     normalized *
     tagMultiplier *
-    popularity;
+    popularity *
+    tierBonus;           // ← multiply in
 
   return Number(finalScore.toFixed(8));
 }
@@ -93,7 +109,8 @@ function rankArticles(articles = [], maxIntensity) {
         rawIntensity: article.intensity || 0,
         maxIntensity,
         tagWeightSum: article.tagWeightSum || 0,
-        popularityScore: article.popularity_score
+        popularityScore: article.popularity_score,
+        popularityTier:  article.popularity_tier
       })
     }))
     .sort((a, b) => b.priority - a.priority);
