@@ -37,6 +37,7 @@ async function getRankedArticles(countryId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.country_id = $1
+      AND a.city_id IS NULL  
     GROUP BY a.id, ns.id, co.iso_code
   `, [countryId]);
 
