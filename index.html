@@ -2966,6 +2966,8 @@ function openCityPanel(city) {
           panel.classList.remove("active"); clearInterval(timeInterval); timeInterval = null;
           isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
+        closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+    
       }
 
       function openCountryPanel(country) {
@@ -3247,6 +3249,7 @@ function openCityPanel(city) {
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
+        closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
       }
 
       window.addEventListener("wheel", e => {
