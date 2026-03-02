@@ -263,6 +263,65 @@ app.get("/api/tags", async (req, res) => {
 });
 
 /* =========================================
+   Flows — aggregated by country
+========================================= */
+app.get("/api/flows", async (req, res) => {
+  try {
+    const from  = req.query.from  || null;
+    const to    = req.query.to    || null;
+    const limit = Math.min(parseInt(req.query.limit) || 300, 500);
+
+    const { rows } = await pool.query(`
+      SELECT
+        a.id,
+        a.translated_title                    AS title,
+        a.published_at                        AS "publishedAt",
+        a.sentiment_score                     AS sentiment,
+        ns.name                               AS "sourceName",
+        al.routing_type                       AS "routingType",
+
+        -- Source: always the article's origin country
+        src_co.latitude                       AS src_lat,
+        src_co.longitude                      AS src_lon,
+        src_co.name                           AS src_place,
+
+        -- Destination: always the country (city routes already carry country_id)
+        dst_co.latitude                       AS dst_lat,
+        dst_co.longitude                      AS dst_lon,
+        dst_co.name                           AS dst_place
+
+      FROM article_locations al
+      JOIN news_articles  a      ON a.id      = al.article_id
+      JOIN news_sources   ns     ON ns.id     = a.source_id
+      JOIN countries      src_co ON src_co.id = a.country_id
+      JOIN countries      dst_co ON dst_co.id = al.country_id
+
+      WHERE al.routing_type IN ('content', 'source')
+        AND src_co.id != dst_co.id
+        AND ($1::date IS NULL OR a.published_at >= $1::date)
+        AND ($2::date IS NULL OR a.published_at <  $2::date + interval '1 day')
+      ORDER BY a.published_at DESC
+      LIMIT $3
+    `, [from, to, limit]);
+
+    const flows = rows.map(r => ({
+      title:       r.title,
+      publishedAt: r.publishedAt,
+      sentiment:   r.sentiment,
+      sourceName:  r.sourceName,
+      routingType: r.routingType,
+      src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon), place: r.src_place },
+      dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon), place: r.dst_place },
+    }));
+
+    res.json(flows);
+  } catch (err) {
+    console.error("Flows error:", err.message);
+    res.status(500).json({ error: "Failed to fetch flows" });
+  }
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
