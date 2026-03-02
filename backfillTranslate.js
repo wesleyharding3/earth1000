@@ -13,6 +13,21 @@ const MAX_ARTICLES        = null;  // set to e.g. 500 to cap a run, null = no ca
 const TARGET_LANG         = "EN-US";
 
 /* =========================================
+   Language allowlist — values must match languages.iso_code_2
+   Set to null to translate ALL non-English languages
+========================================= */
+const ALLOWED_LANGUAGES = [
+  "zh",  // Chinese
+  "fa",  // Farsi / Persian
+  "ar",  // Arabic
+  "ru",  // Russian
+  "uk",  // Ukrainian
+  "he",  // Hebrew
+  "ja",  // Japanese
+  "ko",  // Korean
+];
+
+/* =========================================
    Utilities
 ========================================= */
 function sleep(ms) {
@@ -35,17 +50,34 @@ async function translateWithTimeout(text, lang, timeoutMs = 12000) {
 async function backfillTranslations() {
   console.log("🚀 Starting translation backfill...", new Date().toISOString());
 
-  const countRes = await pool.query(`
-    SELECT COUNT(*) AS total
-    FROM news_articles
-    WHERE language IS NOT NULL
-      AND language NOT ILIKE 'en%'
-      AND (
-        (translated_title   IS NULL OR translated_title   = title)
-        OR
-        (translated_summary IS NULL OR translated_summary = summary)
-      )
-  `);
+  if (ALLOWED_LANGUAGES) {
+    console.log(`🔎 Language filter active: ${ALLOWED_LANGUAGES.join(", ")}`);
+  }
+
+  const countRes = await pool.query(
+    ALLOWED_LANGUAGES
+      ? `SELECT COUNT(*) AS total
+         FROM news_articles a
+         JOIN languages l ON l.iso_code_2 = LEFT(a.language, 2)
+           AND l.iso_code_2 = ANY($1::text[])
+         WHERE a.language IS NOT NULL
+           AND a.language NOT ILIKE 'en%'
+           AND (
+             (a.translated_title   IS NULL OR a.translated_title   = a.title)
+             OR
+             (a.translated_summary IS NULL OR a.translated_summary = a.summary)
+           )`
+      : `SELECT COUNT(*) AS total
+         FROM news_articles
+         WHERE language IS NOT NULL
+           AND language NOT ILIKE 'en%'
+           AND (
+             (translated_title   IS NULL OR translated_title   = title)
+             OR
+             (translated_summary IS NULL OR translated_summary = summary)
+           )`,
+    ALLOWED_LANGUAGES ? [ALLOWED_LANGUAGES] : []
+  );
 
   const total = parseInt(countRes.rows[0].total);
   console.log(`📋 Articles needing translation: ${total}`);
@@ -62,20 +94,38 @@ async function backfillTranslations() {
   const startTime = Date.now();
 
   while (true) {
-    const batchRes = await pool.query(`
-      SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary, a.language
-      FROM news_articles a
-      JOIN news_sources ns ON ns.id = a.source_id
-      WHERE a.language IS NOT NULL
-        AND a.language NOT ILIKE 'en%'
-        AND (
-          (a.translated_title   IS NULL OR a.translated_title   = a.title)
-          OR
-          (a.translated_summary IS NULL OR a.translated_summary = a.summary)
-        )
-      ORDER BY ns.popularity_tier DESC NULLS LAST, a.ingested_at DESC
-      LIMIT $1 OFFSET $2
-    `, [BATCH_SIZE, offset]);
+    const batchRes = await pool.query(
+      ALLOWED_LANGUAGES
+        ? `SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary, a.language
+           FROM news_articles a
+           JOIN news_sources ns ON ns.id = a.source_id
+           JOIN languages l ON l.iso_code_2 = LEFT(a.language, 2)
+             AND l.iso_code_2 = ANY($3::text[])
+           WHERE a.language IS NOT NULL
+             AND a.language NOT ILIKE 'en%'
+             AND (
+               (a.translated_title   IS NULL OR a.translated_title   = a.title)
+               OR
+               (a.translated_summary IS NULL OR a.translated_summary = a.summary)
+             )
+           ORDER BY ns.popularity_tier DESC NULLS LAST, a.ingested_at DESC
+           LIMIT $1 OFFSET $2`
+        : `SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary, a.language
+           FROM news_articles a
+           JOIN news_sources ns ON ns.id = a.source_id
+           WHERE a.language IS NOT NULL
+             AND a.language NOT ILIKE 'en%'
+             AND (
+               (a.translated_title   IS NULL OR a.translated_title   = a.title)
+               OR
+               (a.translated_summary IS NULL OR a.translated_summary = a.summary)
+             )
+           ORDER BY ns.popularity_tier DESC NULLS LAST, a.ingested_at DESC
+           LIMIT $1 OFFSET $2`,
+      ALLOWED_LANGUAGES
+        ? [BATCH_SIZE, offset, ALLOWED_LANGUAGES]
+        : [BATCH_SIZE, offset]
+    );
 
     const articles = batchRes.rows;
     if (articles.length === 0) break;
@@ -146,6 +196,9 @@ async function backfillTranslations() {
   console.log(`\n🏁 Backfill complete in ${totalTime}s`);
   console.log(`   ✅ Translated: ${totalTranslated}`);
   console.log(`   ❌ Failed:     ${totalFailed}`);
+  if (ALLOWED_LANGUAGES) {
+    console.log(`   🔎 Languages:  ${ALLOWED_LANGUAGES.join(", ")}`);
+  }
 
   await pool.end();
 }
