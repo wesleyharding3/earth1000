@@ -1773,7 +1773,86 @@ const loader = new THREE.TextureLoader();
       snapToNearest();
     });
 
+    // ═══════════════════════════════════════════════════════════
+// CITY TIER CONFIG
+// ═══════════════════════════════════════════════════════════
+
+const CITY_TIERS = [
+  { pointSize: 2.60, minGlow: 0.30, maxGlow: 1.00, glowPow: 1.6 },
+  { pointSize: 1.65, minGlow: 0.18, maxGlow: 0.88, glowPow: 2.2 },
+  { pointSize: 1.10, minGlow: 0.10, maxGlow: 0.70, glowPow: 2.8 },
+  { pointSize: 0.75, minGlow: 0.07, maxGlow: 0.52, glowPow: 3.4 },
+  { pointSize: 0.48, minGlow: 0.04, maxGlow: 0.32, glowPow: 4.2 },
+];
+
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const R = 3958.8;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+      Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) ** 2;
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function computeCityTiers(cities) {
+  const MAX_POP = 40000000;
+  const MAX_FAME = 100;
+
+  const raw = cities.map(c => {
+    const p = Math.log1p(Math.min(c.population || 0, MAX_POP)) /
+              Math.log1p(MAX_POP);
+    const f = Math.min(c.fame_index || 0, MAX_FAME) / MAX_FAME;
+    return f * 0.62 + p * 0.38;
+  });
+
+  const pen = raw.slice();
+
+  for (let i = 0; i < cities.length; i++) {
+    let maxPen = 0;
+
+    for (let j = 0; j < cities.length; j++) {
+      if (i === j || raw[j] <= raw[i]) continue;
+
+      const d = haversineMiles(
+        cities[i].lat, cities[i].lon,
+        cities[j].lat, cities[j].lon
+      );
+
+      if (d > 200) continue;
+
+      const p = 0.35 * (1 - d / 200) *
+                Math.min(raw[j] - raw[i], 1);
+
+      if (p > maxPen) maxPen = p;
+    }
+
+    pen[i] = Math.max(0, raw[i] - maxPen);
+  }
+
+  const hi  = Math.max(...pen) || 1;
+  const lo  = Math.min(...pen);
+  const rng = (hi - lo) || 1;
+
+  const norm = pen.map(s => (s - lo) / rng);
+
+  const t1cut = [...raw]
+    .sort((a, b) => b - a)[Math.min(34, raw.length - 1)];
+
+  return cities.map((c, i) => {
+    if (raw[i] >= t1cut) return 0;
+    if (norm[i] >= 0.62) return 1;
+    if (norm[i] >= 0.35) return 2;
+    if (norm[i] >= 0.14) return 3;
+    return 4;
+  });
+}
+
     function init(cities, countries) {
+      let currentViewMode = "country";
       const earthPointCount = 10000;
       const earthPositions = [];
       const earthColors = [];
@@ -1872,8 +1951,6 @@ const loader = new THREE.TextureLoader();
         listElement.appendChild(li);
       });
 
-      const cityGeo = new THREE.BufferGeometry();
-      cityGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions,3));
 
       // ── PATCH 2: gradient spread extended to 0.68 radius (+50% halo area)
       //    Outer opacity stays near-zero → dark-side minGlow=0.08 still dim ──
@@ -1894,14 +1971,106 @@ const loader = new THREE.TextureLoader();
       }
 
       const glowTexture = createGlowTexture();
-      const cityMat = new THREE.PointsMaterial({
-        size:citySize, sizeAttenuation:true, map:glowTexture,
-        transparent:true, blending:THREE.AdditiveBlending, depthWrite:false
+      // ── Compute tier for each city ────────────────────────────────
+      const cityTierIndices = computeCityTiers(cities);
+
+      // ── Invisible raycaster geometry ──────────────────────────────
+      const cityGeo = new THREE.BufferGeometry();
+      cityGeo.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(positions, 3)
+      );
+      cityGeo.setAttribute(
+        "color",
+        new THREE.Float32BufferAttribute(
+          new Float32Array(positions.length), 3
+        )
+      );
+
+      const raycastMat = new THREE.PointsMaterial({
+        size: 0.05,
+        transparent: true,
+        opacity: 0.0,
+        depthWrite: false,
+        vertexColors: true
       });
-      const cityPoints = new THREE.Points(cityGeo, cityMat);
+
+      const cityPoints = new THREE.Points(cityGeo, raycastMat);
       scene.add(cityPoints);
-      cityGeo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(positions.length), 3));
-      cityMat.vertexColors = true;
+
+      // ── Tier layers ───────────────────────────────────────────────
+      const tierLayers = [];
+
+      for (let t = 0; t < CITY_TIERS.length; t++) {
+
+        const cfg = CITY_TIERS[t];
+        const globalIndices = [];
+        const tierPositions = [];
+
+        cities.forEach((city, i) => {
+
+          if (cityTierIndices[i] !== t) return;
+
+          globalIndices.push(i);
+
+          const phi   = (90 - city.lat) * (Math.PI / 180);
+          const theta = (city.lon + 180) * (Math.PI / 180);
+
+          tierPositions.push(
+            -radius * Math.sin(phi) * Math.cos(theta),
+             radius * Math.cos(phi),
+             radius * Math.sin(phi) * Math.sin(theta)
+          );
+        });
+
+        if (!globalIndices.length) continue;
+
+        const geo = new THREE.BufferGeometry();
+
+        geo.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(tierPositions, 3)
+        );
+
+        geo.setAttribute(
+          "color",
+          new THREE.Float32BufferAttribute(
+            new Float32Array(tierPositions.length), 3
+          )
+        );
+
+        const mat = new THREE.PointsMaterial({
+          size: citySize * cfg.pointSize,
+          sizeAttenuation: true,
+          map: glowTexture,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          vertexColors: true,
+          opacity: currentViewMode === "city" ? 1.0 : 0.15
+        });
+
+        const pts = new THREE.Points(geo, mat);
+        scene.add(pts);
+
+        tierLayers.push({
+          pts,
+          geo,
+          mat,
+          tierIdx: t,
+          globalIndices
+        });
+      }
+
+      const cityLayerLookup = new Array(cities.length);
+
+      tierLayers.forEach((layer, li) => {
+        layer.globalIndices.forEach((gi, localIdx) => {
+          cityLayerLookup[gi] = { li, localIdx };
+        });
+      });
+
+      const cityMat = raycastMat;
 
       const countryPositions = [];
       countries.forEach(country => {
@@ -2037,24 +2206,70 @@ const loader = new THREE.TextureLoader();
           activeMaterial.vertexColors = true;
         }
 
-        const colors = activePoints.geometry.attributes.color;
-        for (let i = 0; i < count; i++) {
-          const nodePos = new THREE.Vector3();
-          nodePos.fromBufferAttribute(positionsAttr, i);
-          nodePos.applyMatrix4(activePoints.matrixWorld);
-          nodePos.normalize();
-          let dot = -cameraDir.dot(nodePos);
-          let normalized = (dot + 1) / 2;
-          const minGlow = 0.08;
-          let glow = minGlow + (1 - minGlow) * Math.pow(normalized, 3.0);
-          if (glowPulseActive && i === selectedNodeIndex) {
-            const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
-            glow *= pulse;
+
+        if (currentViewMode === "city") {
+
+          const tempVec = new THREE.Vector3();
+
+          tierLayers.forEach(layer => {
+
+            const cfg    = CITY_TIERS[layer.tierIdx];
+            const posArr = layer.geo.attributes.position;
+            const colArr = layer.geo.attributes.color;
+            const count  = posArr.count;
+
+            for (let li = 0; li < count; li++) {
+
+              tempVec.fromBufferAttribute(posArr, li);
+              tempVec.applyMatrix4(layer.pts.matrixWorld);
+              tempVec.normalize();
+
+              let dot = -cameraDir.dot(tempVec);
+              let normalized = (dot + 1) / 2;
+
+              let glow = cfg.minGlow +
+                         (cfg.maxGlow - cfg.minGlow) *
+                         Math.pow(normalized, cfg.glowPow);
+
+              const gi = layer.globalIndices[li];
+
+              if (glowPulseActive && gi === selectedNodeIndex) {
+                const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
+                glow *= pulse;
+              }
+
+              colArr.setXYZ(li, glow, glow * 0.6, glow * 0.25);
+            }
+
+            colArr.needsUpdate = true;
+          });
+
+        } else {
+
+          const tempVec = new THREE.Vector3();
+          const posArr  = activePoints.geometry.attributes.position;
+          const colArr  = activePoints.geometry.attributes.color;
+
+          for (let i = 0; i < posArr.count; i++) {
+
+            tempVec.fromBufferAttribute(posArr, i);
+            tempVec.applyMatrix4(activePoints.matrixWorld);
+            tempVec.normalize();
+
+            const dot = -cameraDir.dot(tempVec);
+            const normalized = (dot + 1) / 2;
+
+            const glow =
+              0.15 +
+              0.85 *
+              Math.pow(normalized, 2.8);
+
+            colArr.setXYZ(i, glow, glow * 0.6, glow * 0.25);
           }
-          colors.setXYZ(i, glow, glow * 0.6, glow * 0.25);
+
+          colArr.needsUpdate = true;
         }
-        colors.needsUpdate = true;
-      }
+
 
       const cityLabelsContainer = document.getElementById("cityLabels");
       const cityLabels = cities.map(city => {
@@ -2154,7 +2369,6 @@ const loader = new THREE.TextureLoader();
         prevX = e.clientX; prevY = e.clientY;
       });
 
-      let currentViewMode = "country";
       setActiveMode("country");
       cityMat.opacity = 0.15;
       countryMat.opacity = 1.0;
@@ -2396,7 +2610,7 @@ const loader = new THREE.TextureLoader();
       setInterval(() => { triggerElectricPulse(); }, 3000);
 
       const raycaster = new THREE.Raycaster();
-      raycaster.params.Points.threshold = 0.02;
+      raycaster.params.Points.threshold = 0.06;
       const mouse = new THREE.Vector2();
 
       window.addEventListener("click", event => {
@@ -3276,7 +3490,11 @@ function openCityPanel(city) {
         updateCompass();
         updateScaleBar();
 
-        cityMat.opacity    += (targetCityOpacity    - cityMat.opacity)    * 0.018;
+        tierLayers.forEach(layer => {
+          layer.mat.opacity +=
+            (targetCityOpacity - layer.mat.opacity) * 0.018;
+        });
+
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
 
         if (window.__flowTick) window.__flowTick(); 
@@ -3301,13 +3519,13 @@ function openCityPanel(city) {
 
   /* ── State ── */
   let flowData        = [];
-  let arcObjects      = [];              // {mesh, particleMesh, state, flow}
+  let arcObjects      = [];  
+  let arcPool = [];            // {mesh, particleMesh, state, flow}
   let flowPlaying     = false;
   let flowProgress    = 0;              // 0→1 over all flows
   let flowSpeed       = 1.0;
   let colorMode       = "routing";
   let flowAnimId      = null;
-  let arcPool         = [];
   let particlePool    = [];
 
   /* ── Groups ── */
@@ -3391,63 +3609,120 @@ function openCityPanel(city) {
 
   /* ── Create arc mesh from flow data ── */
   function createArc(flow) {
-    const curve = buildArcCurve(
+
+    let arc;
+
+        if (arcPool.length > 0) {
+
+          arc = arcPool.pop();
+
+          arc.curve = buildArcCurve(
+            flow.src.lat, flow.src.lon,
+            flow.dst.lat, flow.dst.lon
+          );
+
+          arc.mesh.geometry.dispose();
+          arc.mesh.geometry = new THREE.TubeGeometry(
+            arc.curve,
+            ARC_SEGMENTS,
+            TUBE_RADIUS,
+            TUBE_RADIAL,
+            false
+          );
+
+          arc.mesh.visible   = true;
+          arc.ptMesh.visible = true;
+
+        } else {
+
+      const dummyCurve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(),
+        new THREE.Vector3(),
+        new THREE.Vector3()
+      );
+
+      const tubeGeo = new THREE.TubeGeometry(dummyCurve, ARC_SEGMENTS, TUBE_RADIUS, TUBE_RADIAL, false);
+      const tubeMat = makeArcMaterial(new THREE.Color(1,1,1), 0);
+      const mesh    = new THREE.Mesh(tubeGeo, tubeMat);
+      mesh.renderOrder = 1;
+
+      const ptPositions = new Float32Array(PARTICLE_COUNT * 3);
+      const ptColors    = new Float32Array(PARTICLE_COUNT * 3);
+
+      const ptGeo = new THREE.BufferGeometry();
+      ptGeo.setAttribute("position", new THREE.Float32BufferAttribute(ptPositions, 3));
+      ptGeo.setAttribute("color",    new THREE.Float32BufferAttribute(ptColors, 3));
+
+      const ptMat  = new THREE.PointsMaterial({
+        size: PARTICLE_SIZE,
+       map: particleTex,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        sizeAttenuation: true
+      });
+
+      const ptMesh = new THREE.Points(ptGeo, ptMat);
+      ptMesh.renderOrder = 2;
+
+      arc = { mesh, ptMesh, tubeMat, ptMat, ptGeo, ptColors };
+    }
+
+    // RESET ARC STATE
+    arc.flow = flow;
+    arc.age  = 0;
+    arc.totalAge = 3.5 + Math.random() * 1.5;
+
+    arc.curve = buildArcCurve(
       flow.src.lat, flow.src.lon,
       flow.dst.lat, flow.dst.lon
     );
-    const color   = pickColor(flow);
-    const tubeMat = makeArcMaterial(color, 0);   // start invisible
-    const tubeGeo = new THREE.TubeGeometry(curve, ARC_SEGMENTS, TUBE_RADIUS, TUBE_RADIAL, false);
-    const mesh    = new THREE.Mesh(tubeGeo, tubeMat);
-    mesh.renderOrder = 1;
-    flowGroup.add(mesh);
 
-    /* ── Particles: small points moving along the curve ── */
-    const ptPositions = new Float32Array(PARTICLE_COUNT * 3);
-    const ptColors    = new Float32Array(PARTICLE_COUNT * 3);
+    const color = pickColor(flow);
+    arc.tubeMat.color.set(color);
+
     for (let i = 0; i < PARTICLE_COUNT; i++) {
-      ptColors[i*3]   = color.r;
-      ptColors[i*3+1] = color.g;
-      ptColors[i*3+2] = color.b;
+      arc.ptGeo.attributes.color.array[i*3]   = color.r;
+      arc.ptGeo.attributes.color.array[i*3+1] = color.g;
+      arc.ptGeo.attributes.color.array[i*3+2] = color.b;
     }
-    const ptGeo = new THREE.BufferGeometry();
-    ptGeo.setAttribute("position", new THREE.Float32BufferAttribute(ptPositions, 3));
-    ptGeo.setAttribute("color",    new THREE.Float32BufferAttribute(ptColors, 3));
-    const ptMat  = new THREE.PointsMaterial({
-      size: PARTICLE_SIZE, map: particleTex,
-      vertexColors: true, transparent: true, opacity: 0,
-      blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
-    });
-    const ptMesh = new THREE.Points(ptGeo, ptMat);
-    ptMesh.renderOrder = 2;
-    particleGroup.add(ptMesh);
+    arc.ptGeo.attributes.color.needsUpdate = true;
 
-    return { mesh, ptMesh, curve, tubeMat, ptMat, ptGeo, ptColors, color, flow, age: 0, totalAge: 3.5 + Math.random() * 1.5 };
+    arc.mesh.visible = true;
+    arc.ptMesh.visible = true;
+
+    flowGroup.add(arc.mesh);
+    particleGroup.add(arc.ptMesh);
+
+    return arc;
   }
 
-  /* ── Dispose arc cleanly ── */
-  function disposeArc(arc) {
+  function recycleArc(arc) {
     flowGroup.remove(arc.mesh);
     particleGroup.remove(arc.ptMesh);
-    arc.mesh.geometry.dispose();
-    arc.tubeMat.dispose();
-    arc.ptMesh.geometry.dispose();
-    arc.ptMat.dispose();
+
+    arc.mesh.visible = false;
+    arc.ptMesh.visible = false;
+
+    arcPool.push(arc);  
   }
 
   /* ── Reset all arcs ── */
-  function clearArcs() {
-    arcObjects.forEach(disposeArc);
-    arcObjects = [];
+function clearArcs() {
+  for (let i = 0; i < arcObjects.length; i++) {
+    recycleArc(arcObjects[i]);
   }
+  arcObjects.length = 0;   // fully clear references
+}
 
   /* ── Animate all live arcs (called per frame) ── */
   let lastTimestamp = performance.now();
 
-  function tickArcs() {
-    const now   = performance.now();
-    const delta = Math.min((now - lastTimestamp) / 1000, 0.05) * flowSpeed;
-    lastTimestamp = now;
+  function tickArcs(delta) {
+    delta *= flowSpeed;
+
 
     for (let i = arcObjects.length - 1; i >= 0; i--) {
       const arc = arcObjects[i];
@@ -3476,7 +3751,7 @@ function openCityPanel(city) {
 
       /* retire expired arcs */
       if (arc.age >= arc.totalAge) {
-        disposeArc(arc);
+        recycleArc(arc);
         arcObjects.splice(i, 1);
       }
     }
@@ -3494,7 +3769,8 @@ function openCityPanel(city) {
 
     while (seqTimer >= seqDelay && seqIndex < flowData.length) {
       if (arcObjects.length < MAX_VISIBLE) {
-        arcObjects.push(createArc(flowData[seqIndex]));
+        const arc = createArc(flowData[seqIndex]);
+        arcObjects.push(arc);
       }
       seqIndex++;
       seqTimer -= seqDelay;
@@ -3517,8 +3793,8 @@ function openCityPanel(city) {
   window.__flowTick = function() {
     const now   = performance.now();
     const delta = Math.min((now - lastTimestamp) / 1000, 0.05);
-    // Don't update lastTimestamp here — tickArcs does it
-    tickArcs();
+    lastTimestamp = now;
+    tickArcs(delta);
     tickPlayback(delta);
   };
 
