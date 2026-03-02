@@ -232,8 +232,8 @@ const CONFIG = {
    *                  pushed down until a gap exists, regardless of penalty math.
    */
   DIVERSITY: {
-    MAX_PENALTY:     0.60,
-    DECAY_PER_SLOT:  0.25,
+    MAX_PENALTY:     0.80,
+    DECAY_PER_SLOT:  0.15,
     MAX_CONSECUTIVE: 2
   }
 };
