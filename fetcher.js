@@ -244,7 +244,7 @@ async function fetchFeeds() {
       OR ns.last_checked_at < NOW() - INTERVAL '480 minutes'
     )
     ORDER BY ns.last_checked_at NULLS FIRST
-    LIMIT 300
+    LIMIT 5000
   `);
 
   const feeds = feedResult.rows;
