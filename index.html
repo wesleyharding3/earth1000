@@ -2047,7 +2047,7 @@ function computeCityTiers(cities) {
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           vertexColors: true,
-          opacity: currentViewMode === "city" ? 1.0 : 0.15
+          opacity: 0
         });
 
         const pts = new THREE.Points(geo, mat);
@@ -2370,7 +2370,7 @@ function computeCityTiers(cities) {
       });
 
       setActiveMode("country");
-      cityMat.opacity = 0.15;
+      cityMat.opacity = 0.0;
       countryMat.opacity = 1.0;
 
       const settingsToggle  = document.getElementById("settingsToggle");
@@ -3371,7 +3371,7 @@ function openCityPanel(city) {
         glowPulseTime = 0;
       }
 
-      let targetCityOpacity = 0.15;
+      let targetCityOpacity = 0.0;
       let targetCountryOpacity = 1.0;
 
       const infoPanel = document.getElementById("infoPanel");
@@ -3398,6 +3398,8 @@ function openCityPanel(city) {
         if (!dragging && !isFocused && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
 
         rebuildGlobeQuat();
+
+        raycaster.params.Points.threshold = Math.max(0.025, camera.position.z * 0.020);
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
