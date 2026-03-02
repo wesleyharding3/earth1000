@@ -2317,6 +2317,8 @@ function computeCityTiers(cities) {
       let selectedNodeIndex = null;
       let isFocused = false;
       let focusTargetQuat = null;
+      let focusInitialAngle = 0;
+      let focusZoomDone = false;
       let hoveredCityPosition = null;
       let timeInterval = null;
       let dragging = false;
@@ -3335,14 +3337,15 @@ function openCityPanel(city) {
 
       function startFocus(lat, lon) {
         focusTargetQuat = computeFocusQuat(lat, lon);
+        focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
+        focusZoomDone = false;
       }
 
       function focusCity(city) {
         const index = cities.findIndex(c => c.name === city.name);
         selectedNodeIndex = index;
         startFocus(city.lat, city.lon);
-        targetZoom = Math.max(2.4, camera.position.z - 0.6);
         const phi = (90 - city.lat) * (Math.PI / 180);
         const theta = (city.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
@@ -3360,7 +3363,6 @@ function openCityPanel(city) {
         const index = countries.findIndex(c => c.name === country.name);
         selectedNodeIndex = index;
         startFocus(country.lat, country.lon);
-        targetZoom = Math.max(2.4, camera.position.z - 0.6);
         const phi = (90 - country.lat) * (Math.PI / 180);
         const theta = (country.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
@@ -3411,10 +3413,24 @@ function openCityPanel(city) {
         camera.position.z += zoomDelta * (0.05 * Math.min(Math.abs(zoomDelta) * 2, 1));
 
         if (isFocused && focusTargetQuat) {
-          globeQuat.slerp(focusTargetQuat, 0.07);
-          if (globeQuat.angleTo(focusTargetQuat) < 0.0005) {
-            globeQuat.copy(focusTargetQuat); 
-            focusTargetQuat = null; 
+          const angleLeft = globeQuat.angleTo(focusTargetQuat);
+          // Ease in then ease out: fast in the middle, slow at start and end
+          const progress = focusInitialAngle > 0.001
+            ? 1 - (angleLeft / focusInitialAngle)
+            : 1;
+          const easedT = Math.sin(Math.PI * Math.max(0, Math.min(1, progress)));
+          const slerpT = 0.008 + 0.038 * easedT;
+          globeQuat.slerp(focusTargetQuat, slerpT);
+
+          // Trigger zoom only after rotation is 55% done — feels cinematic
+          if (!focusZoomDone && progress > 0.55) {
+            focusZoomDone = true;
+            targetZoom = Math.max(1.9, camera.position.z - 0.75);
+          }
+
+          if (angleLeft < 0.0005) {
+            globeQuat.copy(focusTargetQuat);
+            focusTargetQuat = null;
             const e = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
             globePitch = e.x;
             globeYaw = e.y;
