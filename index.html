@@ -17,54 +17,6 @@
     }
 
     canvas { display: block; }
-    #searchContainer {
-      position: absolute;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 340px;
-      z-index: 10;
-    }
-
-    #citySearch {
-      width: 100%;
-      padding: 12px 20px;
-      border-radius: 40px;
-      border: 1.5px solid rgba(255, 255, 255, 0.9);
-      outline: none;
-      background: #000;
-      color: #fff;
-      font-size: 15px;
-      letter-spacing: 0.5px;
-      box-shadow: 0 0 18px rgba(255,255,255,0.06);
-      transition: border 0.2s ease, box-shadow 0.2s ease;
-    }
-
-    #citySearch:focus {
-      border: 1.5px solid #ffffff;
-      box-shadow: 0 0 12px rgba(255,255,255,0.4);
-    }
-
-    #searchResults {
-      margin-top: 8px;
-      background: rgba(0,0,0,0.96);
-      border-radius: 14px;
-      max-height: 210px;
-      overflow-y: auto;
-      display: none;
-      box-shadow: 0 0 15px rgba(255,255,255,0.04);
-    }
-
-    .searchItem {
-      padding: 10px 14px;
-      cursor: pointer;
-      color: #fff;
-      font-size: 14px;
-    }
-
-    .searchItem:hover {
-      background: rgba(255,255,255,0.08);
-    }
 
     #cityList {
       display: none;
@@ -3627,16 +3579,6 @@ function openCityPanel(city) {
         updateNodeGlow();
 
         updateHoverLabels();
-
-        const panelOpen = document.getElementById("infoPanel").classList.contains("active");
-        const hoveringDifferentCity = hoveredIndex !== null && hoveredIndex !== selectedNodeIndex;
-
-        if (hoveredCityPosition && (!panelOpen || hoveringDifferentCity)) {
-          const vector = hoveredCityPosition.clone().project(camera);
-          updateHoverLine((vector.x * 0.5 + 0.5) * window.innerWidth, (-vector.y * 0.5 + 0.5) * window.innerHeight);
-        } else {
-          hideHoverLine();
-        }
 
         if (isFocused && selectedNodeIndex !== null) {
           ringStates.forEach((state, i) => {
