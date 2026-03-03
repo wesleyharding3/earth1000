@@ -2639,6 +2639,9 @@ function computeCityTiers(cities) {
       let hoverEraseTimer = null;
 
       function updateHoverLabels() {
+        raycaster.params.Points.threshold = currentViewMode === "country"
+        ? Math.max(0.035, camera.position.z * 0.030)
+        : Math.max(0.018, camera.position.z * 0.022);
         raycaster.setFromCamera(hoverMouse, camera);
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
@@ -2755,6 +2758,9 @@ function computeCityTiers(cities) {
         if (isPanelActive() && event.target.closest("#infoPanel")) return;  
         mouse.x = (event.clientX/window.innerWidth)*2-1;
         mouse.y = -(event.clientY/window.innerHeight)*2+1;
+        raycaster.params.Points.threshold = currentViewMode === "country"
+        ? Math.max(0.035, camera.position.z * 0.030)
+        : Math.max(0.018, camera.position.z * 0.022);
         raycaster.setFromCamera(mouse, camera);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
@@ -2779,6 +2785,9 @@ function computeCityTiers(cities) {
         const touch = event.touches[0];
         mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+        raycaster.params.Points.threshold = currentViewMode === "country"
+          ? Math.max(0.035, camera.position.z * 0.030)
+          : Math.max(0.018, camera.position.z * 0.022);  
         raycaster.setFromCamera(mouse, camera);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
@@ -3259,8 +3268,6 @@ function computeCityTiers(cities) {
         if (!dragging && !isFocused && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
 
         rebuildGlobeQuat();
-
-        raycaster.params.Points.threshold = Math.max(0.012, camera.position.z * 0.020);
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
