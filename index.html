@@ -1446,13 +1446,14 @@
 }
 .ahLine {
   position: absolute;
-  height: 1px;
+  height: 1.5px;
   background: linear-gradient(90deg,rgba(255,210,120,0.8) 0%,rgba(255,210,120,0.15) 100%);
   transform-origin: left center;
   transform: scaleX(0);
   transition: transform 0.30s cubic-bezier(0.32,0.72,0,1), opacity 0.3s ease;
   opacity: 0;
   pointer-events: none;
+  box-shadow: 0 0 6px rgba(255,190,80,0.55), 0 0 12px rgba(255,150,40,0.25);
 }
 .ahLine.drawn { transform: scaleX(1); opacity: 1; }
 .ahCard {
@@ -3809,11 +3810,13 @@ function openCityPanel(city) {
           if (window._ahTrackRaf) { cancelAnimationFrame(window._ahTrackRaf); window._ahTrackRaf = null; }
           card.classList.add("ahVanish");
           card.classList.remove("ahVisible");
-          line.classList.remove("drawn");
+          // fade line together with card (0.55s matches .ahVanish transition)
+          line.style.transition = "transform 0.30s cubic-bezier(0.32,0.72,0,1), opacity 0.55s ease";
           line.style.opacity = "0";
+          setTimeout(() => { line.classList.remove("drawn"); }, 560);
           dot.classList.remove("pulsing");
           dot.style.opacity = "0";
-          if (withGap && ahActive) gapTimer = setTimeout(startCycle, GAP_DURATION+400);
+          if (withGap && ahActive) gapTimer = setTimeout(startCycle, GAP_DURATION);
         }
 
         // ── Show one headline ──
@@ -3893,6 +3896,7 @@ function openCityPanel(city) {
           }
 
           line.style.transition = "transform 0.30s cubic-bezier(0.32,0.72,0,1), opacity 0.3s ease";
+          line.style.opacity = "1";
           requestAnimationFrame(() => {
             line.classList.add("drawn");
             trackNode();
@@ -3943,7 +3947,7 @@ function openCityPanel(city) {
             hideAll(false);
           }
         }, 500);
-        
+
         // ── Vanish immediately on any interaction ──
         ["mousedown","touchstart","keydown","wheel"].forEach(ev => {
           window.addEventListener(ev, () => {
