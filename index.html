@@ -3621,6 +3621,9 @@ function openCityPanel(city) {
         const SPAWN_DURATION   = 2000;
         const DISPLAY_DURATION = 5000;
         const GAP_DURATION     = 3000;
+        const RECENT_LIMIT     = 10; 
+        const recentArticles = [];
+        const recentNodeIds  = [];        
 
         let ahActive      = false;
         let cycleTimer    = null;
@@ -3649,6 +3652,18 @@ function openCityPanel(city) {
           <div class="ahDateEl"     id="ahDateEl"></div>`;
         ahRoot.appendChild(card);
 
+        function markShown(nodeId, article) {
+          const key = article.url || article.translated_title || article.title;
+          recentArticles.push(key);
+          recentNodeIds.push(nodeId);
+          if (recentArticles.length > RECENT_LIMIT) recentArticles.shift();
+          if (recentNodeIds.length  > RECENT_LIMIT) recentNodeIds.shift();
+        }
+
+        function wasRecentlyShown(nodeId, article) {
+          const key = article.url || article.translated_title || article.title;
+          return recentArticles.includes(key) || recentNodeIds.includes(nodeId);
+        }
         // ── Guards ──
         function canShow() {
           if (document.getElementById("infoPanel")?.classList.contains("active")) return false;
@@ -3752,10 +3767,16 @@ function openCityPanel(city) {
           isFetchingAH = true;
           const vis = getVisibleNodes();
           if (!vis.length) { isFetchingAH = false; return; }
-          const candidates = [...vis].sort(() => Math.random()-0.5).slice(0, 6);
+
+          // prefer nodes not recently shown; fall back to full list if too few
+          const fresh      = vis.filter(v => !recentNodeIds.includes(v.node.id));
+          const samplePool = fresh.length >= 4 ? fresh : vis;
+          const candidates = [...samplePool].sort(() => Math.random()-0.5).slice(0, 6);
+
           const results = await Promise.allSettled(candidates.map(async v => {
             const a = await fetchStory(v.node);
-            return a ? { nodeEntry: v, article: a } : null;
+            if (!a || wasRecentlyShown(v.node.id, a)) return null; // skip stale hits
+            return { nodeEntry: v, article: a };
           }));
           cachedStories = results.filter(r => r.status==="fulfilled" && r.value).map(r => r.value);
           isFetchingAH = false;
@@ -3821,31 +3842,49 @@ function openCityPanel(city) {
 
         // ── Show one headline ──
         async function showHeadline() {
-          if (!canShow()) { gapTimer = setTimeout(startCycle, 1800); return; }
+          if (!canShow()) { gapTimer = setTimeout(startCycle, GAP_DURATION); return; }
 
           let pick = null;
+
+          // ── Try cache first, skipping recently shown ──
           if (cachedStories.length) {
             const vis    = getVisibleNodes();
             const visIds = new Set(vis.map(v => v.node.id));
-            const cands  = cachedStories.filter(s => visIds.has(s.nodeEntry.node.id));
+            const cands  = cachedStories.filter(s =>
+              visIds.has(s.nodeEntry.node.id) &&
+              !wasRecentlyShown(s.nodeEntry.node.id, s.article)
+            );
             if (cands.length) {
-              pick = cands[Math.floor(Math.random()*cands.length)];
+              pick = cands[Math.floor(Math.random() * cands.length)];
               cachedStories = cachedStories.filter(s => s !== pick);
             }
           }
+
+          // ── Live fetch fallback, also skipping recent nodes ──
           if (!pick) {
             const vis = getVisibleNodes();
             if (!vis.length) { gapTimer = setTimeout(startCycle, 2000); return; }
-            const chosen  = pickWeighted(vis);
-            const article = await fetchStory(chosen.node);
-            if (!article)  { gapTimer = setTimeout(startCycle, 1500); return; }
+
+            // exclude recently shown node IDs from weighted pick
+            const freshVis = vis.filter(v => !recentNodeIds.includes(v.node.id));
+            const pool     = freshVis.length >= 2 ? freshVis : vis; // fallback if too few
+            const chosen   = pickWeighted(pool);
+            const article  = await fetchStory(chosen.node);
+            if (!article || wasRecentlyShown(chosen.node.id, article)) {
+              gapTimer = setTimeout(startCycle, 1500); return;
+            }
             pick = { nodeEntry: chosen, article };
           }
-          if (!canShow()) { gapTimer = setTimeout(startCycle, 1800); return; }
+
+          if (!canShow()) { gapTimer = setTimeout(startCycle, GAP_DURATION); return; }
 
           const { nodeEntry, article } = pick;
           const { sx, sy, node }       = nodeEntry;
 
+          // ── Mark as shown before displaying ──
+          markShown(node.id, article);
+
+          // … rest of showHeadline continues unchanged …
           // Show pulsing dot on node
           dot.style.left    = sx+"px";
           dot.style.top     = sy+"px";
@@ -3870,6 +3909,7 @@ function openCityPanel(city) {
           const posArr2   = isCity2 ? positions : countryPositions;
           const nodeIndex = (isCity2 ? cities : countries).indexOf(node);
           let trackRaf    = null;
+
           function trackNode() {
             if (!card.classList.contains("ahVisible") && !line.classList.contains("drawn")) return;
             const wv = new THREE.Vector3(
@@ -3880,7 +3920,6 @@ function openCityPanel(city) {
             const ly = (-p.y+1)/2 * window.innerHeight;
             dot.style.left = lx+"px";
             dot.style.top  = ly+"px";
-            // update line origin
             const ancX = parseFloat(card.style.left) < lx
               ? parseFloat(card.style.left) + 278
               : parseFloat(card.style.left);
@@ -3892,7 +3931,7 @@ function openCityPanel(city) {
             line.style.left      = lx+"px";
             line.style.top       = ly+"px";
             line.style.transform = `rotate(${ang2}deg) scaleX(1)`;
-            trackRaf = requestAnimationFrame(trackNode);
+            window._ahTrackRaf = requestAnimationFrame(trackNode); // ← was: trackRaf = ...
           }
 
           line.style.transition = "transform 0.30s cubic-bezier(0.32,0.72,0,1), opacity 0.3s ease";
