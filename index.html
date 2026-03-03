@@ -1579,7 +1579,7 @@
       bottom: 28px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 300;
+      z-index: 900;
       display: flex;
       align-items: center;
       gap: 10px;
@@ -2973,6 +2973,7 @@ function openCityPanel(city) {
           </div>`;
 
         panel.classList.add("active");
+        document.getElementById("pageNav").style.pointerEvents = "none";
         applySnapHeight("default", false);
         attachPanelResizeHandle();
         setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
@@ -3167,6 +3168,7 @@ function openCityPanel(city) {
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active"); clearInterval(timeInterval); timeInterval = null;
+          document.getElementById("pageNav").style.pointerEvents = "";
           isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
@@ -3259,6 +3261,7 @@ function openCityPanel(city) {
           </div>`;
 
         panel.classList.add("active");
+        document.getElementById("pageNav").style.pointerEvents = "none";
         applySnapHeight("default", false);
         attachPanelResizeHandle();
         setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
@@ -3449,6 +3452,7 @@ function openCityPanel(city) {
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
+          document.getElementById("pageNav").style.pointerEvents = "";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
