@@ -285,74 +285,6 @@
 }
 .snapBtn svg { width: 9px; height: 9px; pointer-events: none; }
 
-    .cityBubble {
-      position: absolute;
-      pointer-events: none;
-      transform: translate(-50%, -140%);
-      transition: opacity 0.2s ease, transform 0.2s ease;
-      font-size: 11px;
-      color: #fff;
-      white-space: nowrap;
-    }
-
-    .bubbleContent {
-      background: rgba(0, 0, 0, 0.88);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      padding: 6px 10px;
-      border-radius: 10px;
-      box-shadow: 0 0 12px rgba(0, 0, 0, 0.5);
-    }
-
-    .bubbleTitle {
-      font-weight: 600;
-      font-size: 12px;
-      margin-bottom: 2px;
-    }
-
-    .bubbleMeta {
-      font-size: 10px;
-      opacity: 0.7;
-      display: flex;
-      gap: 4px;
-      align-items: center;
-    }
-
-    .bubbleWrapper {
-      position: relative;
-      display: inline-block;
-    }
-
-    .bubbleOutline {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      pointer-events: none;
-    }
-
-    .bubbleRect {
-      fill: rgba(0, 0, 0, 0.88);
-      stroke: rgba(255, 255, 255, 0.4);
-      stroke-width: 1.2;
-    }
-
-    .bubbleContent {
-      position: relative;
-      padding: 6px 12px;
-      border-radius: 12px;
-      color: #fff;
-      white-space: nowrap;
-    }
-
-    .cityBubble.hovered .bubbleContent {
-      animation: bubblePulse 11s ease-in-out infinite;
-    }
-
-    @keyframes electricPulse {
-      0%   { box-shadow: 0 0 6px rgba(255,255,255,0.08), 0 0 0px rgba(0,150,255,0); }
-      35%  { box-shadow: 0 0 18px rgba(255,255,255,0.35), 0 0 28px rgba(0,150,255,0.6); }
-      70%  { box-shadow: 0 0 10px rgba(255,255,255,0.2), 0 0 14px rgba(0,150,255,0.3); }
-      100% { box-shadow: 0 0 6px rgba(255,255,255,0.08), 0 0 0px rgba(0,150,255,0); }
-    }
 
     /* ===============================
        Compass
@@ -1514,6 +1446,71 @@
 @keyframes ahBlink { 0%,100%{opacity:1} 50%{opacity:0} }
 .ahDateEl { font-size: 9px; color: rgba(255,255,255,0.22); margin-top: 7px; }
 
+/* ── Hover Node Card ── */
+.hoverCard {
+  position: fixed;
+  pointer-events: none;
+  z-index: 210;
+  max-width: 200px;
+  min-width: 130px;
+  background: rgba(4,5,9,0.97);
+  border: 1px solid rgba(255,200,100,0.18);
+  border-radius: 12px;
+  padding: 9px 12px 8px;
+  box-shadow: 0 0 0 1px rgba(255,180,60,0.04), 0 6px 22px rgba(0,0,0,0.7);
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  transform: translateY(5px) scale(0.95);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.hoverCard.hcVisible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.hoverCard.hcErase {
+  opacity: 0 !important;
+  transform: translateY(-4px) scaleY(0.7) !important;
+  transition: opacity 0.12s ease, transform 0.12s cubic-bezier(0.4,0,1,1) !important;
+}
+.hoverCardName {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255,200,100,0.90);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hoverCardDot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: rgba(255,190,80,1);
+  box-shadow: 0 0 6px rgba(255,150,40,0.9);
+  flex-shrink: 0;
+  animation: ahNodeGlow 1.8s ease-in-out infinite alternate;
+}
+.hoverCardPop {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.55);
+  letter-spacing: 0.02em;
+}
+.hoverLine {
+  position: fixed;
+  height: 1.5px;
+  background: linear-gradient(90deg, rgba(255,210,120,0.75) 0%, rgba(255,210,120,0.1) 100%);
+  transform-origin: left center;
+  pointer-events: none;
+  z-index: 209;
+  box-shadow: 0 0 5px rgba(255,190,80,0.45);
+  transition: opacity 0.12s ease;
+}
+
 /* ===============================
        Three-Page Swipe System
     =============================== */
@@ -1656,9 +1653,8 @@
 
   <div id="cityLabels" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
 
-  <svg id="uiOverlay" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;">
-    <line id="hoverLine" stroke="white" stroke-width="1" opacity="0"/>
-  </svg>
+  <div id="hoverCard" class="hoverCard"></div>
+  <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <div id="compass">
     <svg class="compass-svg" viewBox="0 0 100 100">
@@ -2688,28 +2684,21 @@ function computeCityTiers(cities) {
         hoverMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
       });
 
+let lastHoveredIndex = null;
+      let hoverEraseTimer = null;
+
       function updateHoverLabels() {
-
         raycaster.setFromCamera(hoverMouse, camera);
-        const activePoints   = currentViewMode === "country" ? countryPoints : cityPoints;
-        const activeData     = currentViewMode === "country" ? countries : cities;
-        const activeLabels   = currentViewMode === "country" ? countryLabels : cityLabels;
+        const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeData      = currentViewMode === "country" ? countries : cities;
         const activePositions = currentViewMode === "country" ? countryPositions : positions;
-        const intersects = raycaster.intersectObject(activePoints);
+        const panel = document.getElementById("infoPanel");
+        const panelOpen = panel.classList.contains("active");
         hoveredIndex = null; hoveredCityPosition = null;
-        const infoPanel = document.getElementById("infoPanel");
-        const panelOpen = infoPanel.classList.contains("active");
-        if (panelOpen) {
-          hoveredIndex = null;
-          hoveredCityPosition = null;
-          const allLabels = [...cityLabels, ...countryLabels];
-          allLabels.forEach(label => {
-            label.style.opacity = 0;
-            label.classList.remove("hovered", "focused");
-        });
-        return;
-        }
 
+        if (panelOpen) { hideHoverCard(); return; }
+
+        const intersects = raycaster.intersectObject(activePoints);
         if (intersects.length > 0) {
           const index = intersects[0].index;
           const nodePos = new THREE.Vector3();
@@ -2721,98 +2710,94 @@ function computeCityTiers(cities) {
           }
         }
 
-        activeData.forEach((item, i) => {
-          const label = activeLabels[i];
-          if (!label) return;
-          const pos = new THREE.Vector3(activePositions[i*3], activePositions[i*3+1], activePositions[i*3+2]);
-          pos.applyMatrix4(activePoints.matrixWorld);
+        if (hoveredIndex !== null) {
+          const node = activeData[hoveredIndex];
+          const pos = new THREE.Vector3(
+            activePositions[hoveredIndex*3],
+            activePositions[hoveredIndex*3+1],
+            activePositions[hoveredIndex*3+2]
+          ).applyMatrix4(activePoints.matrixWorld);
           const projected = pos.clone().project(camera);
-          const x = (projected.x + 1) / 2 * window.innerWidth;
-          const y = (-projected.y + 1) / 2 * window.innerHeight;
-          label.style.left = `${x}px`;
-          label.style.top  = `${y}px`;
-          const isHovered  = (i === hoveredIndex);
-          const isSelected = (i === selectedNodeIndex);
-          const shouldShow = isHovered || (!panelOpen && isSelected);
-          if (isSelected) label.classList.add("focused"); else label.classList.remove("focused");
-          if (isHovered)  label.classList.add("hovered"); else label.classList.remove("hovered");
-          const panelEl = document.getElementById("infoPanel");
-          const panelOpenNow = panelEl.classList.contains("active");
-          const panelBlocksLabel = panelOpenNow && (parseFloat(label.style.top) > window.innerHeight - panelEl.offsetHeight - 40);
-
-          if (shouldShow && !panelBlocksLabel) {
-            const storyCountEl = label.querySelector(".storyCount");
-            if (storyCountEl) storyCountEl.textContent = `${item.storyCount || 0} stories`;
-            label.style.opacity = 1;
-            label.style.transform = "translate(-50%, -160%) scale(1)";
-            if (isHovered || isSelected) triggerBubbleTyping(i);
+          const sx = (projected.x + 1) / 2 * window.innerWidth;
+          const sy = (-projected.y + 1) / 2 * window.innerHeight;
+          if (hoveredIndex !== lastHoveredIndex) {
+            if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
+            lastHoveredIndex = hoveredIndex;
+            showHoverCard(node, sx, sy);
           } else {
-            label.style.opacity = 0;
-            label.style.transform = "translate(-50%, -140%) scale(0.95)";
-            if (panelBlocksLabel) label.style.opacity = 0;
-            const title = label.querySelector(".bubbleTitle");
-            if (title) {
-              title._typingActive = false;
-              if (title._typingTimer) { clearTimeout(title._typingTimer); title._typingTimer = null; }
-              title.textContent = item.name;
-            }
+            trackHoverCard(sx, sy);
           }
-        });
-      }
-
-      function triggerBubbleTrace(index, onComplete) {
-        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
-        const bubble = activeLabels[index];
-        if (!bubble) return;
-        const content = bubble.querySelector(".bubbleContent");
-        if (!content) return;
-        content.classList.remove("trace");
-        void content.offsetWidth;
-        content.classList.add("trace");
-        setTimeout(() => { if (onComplete) onComplete(); }, 500);
-      }
-
-      function triggerBubbleTyping(index) {
-        const activeData   = currentViewMode === "country" ? countries : cities;
-        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
-        const bubble = activeLabels[index];
-        if (!bubble) return;
-        const title = bubble.querySelector(".bubbleTitle");
-        if (!title) return;
-        const fullText = activeData[index].name;
-        if (title.textContent === fullText) return;
-        if (title._typingActive) return;
-        if (title._typingTimer) { clearTimeout(title._typingTimer); title._typingTimer = null; }
-        title.textContent = ""; title._typingActive = true; title.classList.add("typing");
-        let charIndex = 0;
-        const typingSpeed = 22.5;
-        function type() {
-          if (charIndex < fullText.length) {
-            title.textContent += fullText.charAt(charIndex);
-            charIndex++;
-            title._typingTimer = setTimeout(type, typingSpeed);
-          } else {
-            title._typingActive = false; title._typingTimer = null; title.classList.remove("typing");
+        } else {
+          if (lastHoveredIndex !== null) {
+            lastHoveredIndex = null;
+            hideHoverCard();
           }
         }
-        type();
       }
 
-      function triggerElectricPulse() {
-        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
-        activeLabels.forEach(label => {
-          if (label.style.opacity === "1") {
-            label.classList.remove("electric");
-            void label.offsetWidth;
-            label.classList.add("electric");
-          }
-        });
+      function formatPopulation(pop) {
+        if (!pop) return "Unknown population";
+        if (pop >= 1e9) return (pop / 1e9).toFixed(1) + "B population";
+        if (pop >= 1e6) return (pop / 1e6).toFixed(1) + "M population";
+        if (pop >= 1e3) return (pop / 1e3).toFixed(0) + "K population";
+        return pop.toLocaleString() + " population";
       }
 
-      setInterval(() => { triggerElectricPulse(); }, 3000);
+      function showHoverCard(node, sx, sy) {
+        const card   = document.getElementById("hoverCard");
+        const lineEl = document.getElementById("hoverLineEl");
+        card.classList.remove("hcErase");
+        card.innerHTML = `
+          <div class="hoverCardName">
+            <div class="hoverCardDot"></div>
+            ${node.flag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
+            ${node.name}
+          </div>
+          <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
+        positionHoverCard(card, lineEl, sx, sy);
+        card.classList.add("hcVisible");
+        lineEl.style.opacity = "1";
+      }
+
+      function positionHoverCard(card, lineEl, sx, sy) {
+        const CW = 200, CH = 58, OFF = 28;
+        let cx = sx + OFF, cy = sy - CH / 2;
+        if (cx + CW > window.innerWidth - 12)  cx = sx - OFF - CW;
+        if (cy < 70)                            cy = sy + 14;
+        if (cy + CH > window.innerHeight - 80)  cy = sy - CH - 14;
+        card.style.left = cx + "px";
+        card.style.top  = cy + "px";
+        const ancX = cx < sx ? cx + CW : cx;
+        const ancY = cy + CH / 2;
+        const dx = ancX - sx, dy = ancY - sy;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+        lineEl.style.width           = len + "px";
+        lineEl.style.left            = sx + "px";
+        lineEl.style.top             = sy + "px";
+        lineEl.style.transform       = `rotate(${ang}deg)`;
+        lineEl.style.transformOrigin = "left center";
+      }
+
+      function trackHoverCard(sx, sy) {
+        const card   = document.getElementById("hoverCard");
+        const lineEl = document.getElementById("hoverLineEl");
+        if (!card.classList.contains("hcVisible")) return;
+        positionHoverCard(card, lineEl, sx, sy);
+      }
+
+      function hideHoverCard() {
+        const card   = document.getElementById("hoverCard");
+        const lineEl = document.getElementById("hoverLineEl");
+        card.classList.remove("hcVisible");
+        card.classList.add("hcErase");
+        lineEl.style.opacity = "0";
+        if (hoverEraseTimer) clearTimeout(hoverEraseTimer);
+        hoverEraseTimer = setTimeout(() => { card.classList.remove("hcErase"); }, 150);
+      }
 
       const raycaster = new THREE.Raycaster();
-      raycaster.params.Points.threshold = 0.06;
+      raycaster.params.Points.threshold = 0.03;
       const mouse = new THREE.Vector2();
 
       window.addEventListener("click", event => {
@@ -2861,25 +2846,6 @@ function computeCityTiers(cities) {
           }
         }
       }, { passive: true });
-
-      function updateHoverLine(x, y) {
-        const line = document.getElementById("hoverLine");
-        if (!line) return;
-        if (hoveredIndex === null) { line.style.opacity = "0"; return; }
-        const activeLabels = currentViewMode === "country" ? countryLabels : cityLabels;
-        const bubble = activeLabels[hoveredIndex];
-        if (!bubble) { line.style.opacity = "0"; return; }
-        const rect = bubble.getBoundingClientRect();
-        line.setAttribute("x1", x); line.setAttribute("y1", y);
-        line.setAttribute("x2", rect.left + rect.width / 2);
-        line.setAttribute("y2", rect.bottom);
-        line.style.opacity = "0.6";
-      }
-
-      function hideHoverLine() {
-        const line = document.getElementById("hoverLine");
-        if (line) line.style.opacity = "0";
-      }
 
       function resolveTimezone(city) { return city.timezone || "UTC"; }
 
@@ -3611,7 +3577,7 @@ function openCityPanel(city) {
 
         rebuildGlobeQuat();
 
-        raycaster.params.Points.threshold = Math.max(0.025, camera.position.z * 0.020);
+        raycaster.params.Points.threshold = Math.max(0.012, camera.position.z * 0.020);
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
