@@ -2139,19 +2139,15 @@ function computeCityTiers(cities) {
       const ringStartRadius = 0.005;
       const ringThickness = 0.0001;
       const ringOuterMultiplier = 8;
-      const listElement = document.getElementById("list");
-
+  
       cities.forEach(city => {
-        const {name,lat,lon,country} = city;
-        const phi=(90-lat)*(Math.PI/180);
-        const theta=(lon+180)*(Math.PI/180);
-        const x=-radius*Math.sin(phi)*Math.cos(theta);
-        const z= radius*Math.sin(phi)*Math.sin(theta);
-        const y= radius*Math.cos(phi);
-        positions.push(x,y,z);
-        const li=document.createElement("li");
-        li.textContent = (country && name !== country) ? `${name}, ${country}` : name;
-        listElement.appendChild(li);
+        const {name, lat, lon, country} = city;
+        const phi   = (90 - lat)  * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        const x = -radius * Math.sin(phi) * Math.cos(theta);
+        const z =  radius * Math.sin(phi) * Math.sin(theta);
+        const y =  radius * Math.cos(phi);
+        positions.push(x, y, z);
       });
 
 
