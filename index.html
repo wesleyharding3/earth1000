@@ -1514,12 +1514,140 @@
 @keyframes ahBlink { 0%,100%{opacity:1} 50%{opacity:0} }
 .ahDateEl { font-size: 9px; color: rgba(255,255,255,0.22); margin-top: 7px; }
 
+/* ===============================
+       Three-Page Swipe System
+    =============================== */
+    #pageTrack {
+      position: fixed;
+      top: 0; left: 0;
+      width: 300vw;
+      height: 100%;
+      display: flex;
+      will-change: transform;
+      transform: translateX(-100vw);
+      transition: transform 0.48s cubic-bezier(0.32, 0.72, 0, 1);
+      z-index: 0;
+    }
+    .page {
+      width: 100vw;
+      height: 100%;
+      position: relative;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    #pageGlobe {
+      background: #000;
+      z-index: 0;
+    }
+    #pageNews {
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #pageStats {
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    .pagePlaceholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      opacity: 0.18;
+      user-select: none;
+      pointer-events: none;
+    }
+    .pagePlaceholder svg {
+      width: 44px; height: 44px;
+    }
+    .pagePlaceholder span {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #fff;
+    }
+
+    /* ── Nav Dots ── */
+    #pageNav {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 300;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: all;
+    }
+    .pageNavDot {
+      position: relative;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: rgba(255,180,80,0.28);
+      border: 1px solid rgba(255,180,80,0.35);
+      cursor: pointer;
+      transition: background 0.25s, box-shadow 0.25s, transform 0.25s;
+    }
+    .pageNavDot:hover {
+      background: rgba(255,180,80,0.55);
+      transform: scale(1.25);
+    }
+    .pageNavDot.active {
+      background: rgba(255,180,80,1);
+      box-shadow: 0 0 8px rgba(255,150,40,0.9), 0 0 20px rgba(255,120,20,0.45);
+      transform: scale(1.15);
+    }
+    .pageNavDot .navDotLabel {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%) translateY(4px);
+      background: rgba(0,0,0,0.88);
+      border: 1px solid rgba(255,180,80,0.25);
+      border-radius: 8px;
+      padding: 4px 9px;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,200,100,0.9);
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+    .pageNavDot:hover .navDotLabel {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0px);
+    }
+
   </style>
 </head>
 
 <body>
-  <div id="cityList"><h3>Geopolitical Cities</h3><ul id="list"></ul></div>
 
+  <!-- ── Three-page track ── -->
+  <div id="pageTrack">
+
+    <!-- Page 0: Stats (left) -->
+    <div class="page" id="pageStats">
+      <div class="pagePlaceholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        <span>Stats</span>
+      </div>
+    </div>
+
+    <!-- Page 1: Globe (center, default) -->
+    <div class="page" id="pageGlobe">
+  <div id="cityList">
   <div id="infoPanel">
     <div id="panelContent"></div>
   </div>
@@ -4518,11 +4646,103 @@ function clearArcs() {
           this.group.add(line);
         });
       }
-
       setVisible(value) { this.group.visible = value; }
       setColor(color) { this.group.children.forEach(child => { child.material.uniforms.color.value.set(color); }); }
     }
-
   </script>
-</body>
-</html>
+
+  </div><!-- end #pageGlobe -->
+
+  <!-- Page 2: News Feed (right) -->
+  <div class="page" id="pageNews">
+    <div class="pagePlaceholder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5">
+        <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/>
+        <path d="M16 2v4H8V2"/><line x1="8" y1="13" x2="16" y2="13"/>
+        <line x1="8" y1="17" x2="13" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/>
+      </svg>
+      <span>News Feed</span>
+    </div>
+  </div>
+
+</div><!-- end #pageTrack -->
+
+<!-- ── Nav Dots ── -->
+<div id="pageNav">
+  <div class="pageNavDot" data-page="0">
+    <span class="navDotLabel">Stats</span>
+  </div>
+  <div class="pageNavDot active" data-page="1">
+    <span class="navDotLabel">Globe</span>
+  </div>
+  <div class="pageNavDot" data-page="2">
+    <span class="navDotLabel">News</span>
+  </div>
+</div>
+
+<script>
+  (function setupPageSwipe() {
+    const track = document.getElementById("pageTrack");
+    const dots  = document.querySelectorAll(".pageNavDot");
+    const PAGES = 3;
+    let current = 1;
+
+    function goTo(idx, animate = true) {
+      idx = Math.max(0, Math.min(PAGES - 1, idx));
+      current = idx;
+      track.style.transition = animate
+        ? "transform 0.48s cubic-bezier(0.32,0.72,0,1)"
+        : "none";
+      track.style.transform = `translateX(${-idx * 100}vw)`;
+      dots.forEach((d, i) => d.classList.toggle("active", i === idx));
+      const onGlobe = idx === 1;
+      ["compass","scaleBar","topLeftCluster","settingsSidebar",
+       "flowControls","flowTooltip"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = onGlobe ? "" : "none";
+      });
+    }
+
+    dots.forEach(dot => {
+      dot.addEventListener("click", (e) => {
+        e.stopPropagation();
+        goTo(parseInt(dot.dataset.page));
+      });
+    });
+
+    let t2StartX = null, t2StartY = null, t2Locked = null;
+
+    window.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 2) {
+        t2StartX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        t2StartY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        t2Locked = null;
+      }
+    }, { passive: true });
+
+    window.addEventListener("touchmove", (e) => {
+      if (e.touches.length !== 2 || t2StartX === null) return;
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const dx = cx - t2StartX;
+      const dy = cy - t2StartY;
+      if (t2Locked === null) t2Locked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+      if (t2Locked === "h" && Math.abs(dx) > 8) {
+        track.style.transition = "none";
+        track.style.transform  = `translateX(${-(current * window.innerWidth) + dx}px)`;
+      }
+    }, { passive: true });
+
+    window.addEventListener("touchend", (e) => {
+      if (t2StartX === null) return;
+      if (t2Locked === "h") {
+        const ex = (e.changedTouches[0].clientX +
+          (e.changedTouches[1]?.clientX ?? e.changedTouches[0].clientX)) / 2;
+        const dx = ex - t2StartX;
+        goTo(current + (Math.abs(dx) > 60 ? (dx < 0 ? 1 : -1) : 0));
+      }
+      t2StartX = null; t2StartY = null; t2Locked = null;
+    }, { passive: true });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT") return;
