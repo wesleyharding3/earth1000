@@ -1605,9 +1605,6 @@
 
   <div id="cityLabels" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></div>
 
-  <div id="hoverCard" class="hoverCard"></div>
-  <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
-
   <div id="compass">
     <svg class="compass-svg" viewBox="0 0 100 100">
       <circle cx="50" cy="50" r="46" class="compass-circle" />
@@ -2233,9 +2230,11 @@ function computeCityTiers(cities) {
 
       const countryGeo = new THREE.BufferGeometry();
       countryGeo.setAttribute("position", new THREE.Float32BufferAttribute(countryPositions, 3));
+      countryGeo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(countryPositions.length), 3));
       const countryMat = new THREE.PointsMaterial({
         size: citySize * 1.6, sizeAttenuation: true, map: glowTexture,
-        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 1
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 1,
+        vertexColors: true
       });
       const countryPoints = new THREE.Points(countryGeo, countryMat);
       scene.add(countryPoints);
@@ -2640,8 +2639,8 @@ function computeCityTiers(cities) {
 
       function updateHoverLabels() {
         raycaster.params.Points.threshold = currentViewMode === "country"
-        ? Math.max(0.035, camera.position.z * 0.030)
-        : Math.max(0.018, camera.position.z * 0.022);
+        ? Math.max(0.035, camera.position.z * 0.040)
+        : Math.max(0.018, camera.position.z * 0.032);
         raycaster.setFromCamera(hoverMouse, camera);
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
@@ -2759,8 +2758,8 @@ function computeCityTiers(cities) {
         mouse.x = (event.clientX/window.innerWidth)*2-1;
         mouse.y = -(event.clientY/window.innerHeight)*2+1;
         raycaster.params.Points.threshold = currentViewMode === "country"
-        ? Math.max(0.035, camera.position.z * 0.030)
-        : Math.max(0.018, camera.position.z * 0.022);
+        ? Math.max(0.035, camera.position.z * 0.040)
+        : Math.max(0.018, camera.position.z * 0.032);
         raycaster.setFromCamera(mouse, camera);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
@@ -2786,8 +2785,8 @@ function computeCityTiers(cities) {
         mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
         raycaster.params.Points.threshold = currentViewMode === "country"
-          ? Math.max(0.035, camera.position.z * 0.030)
-          : Math.max(0.018, camera.position.z * 0.022);  
+          ? Math.max(0.035, camera.position.z * 0.040)
+          : Math.max(0.018, camera.position.z * 0.032);  
         raycaster.setFromCamera(mouse, camera);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
@@ -4388,7 +4387,13 @@ function clearArcs() {
 
     goTo(1, false); // initialize to globe page
   })();
+
+
 </script>
+
+  <div id="hoverCard" class="hoverCard"></div>
+  <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
+
 
 </body>
 </html>
