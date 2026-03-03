@@ -3684,17 +3684,38 @@ function openCityPanel(city) {
         }
 
         // ── Weighted random pick (fame + population + facing) ──
+// ── Weighted random pick (fame + population + facing + screen-center proximity) ──
         function pickWeighted(arr) {
           if (!arr.length) return null;
-          const w = arr.map(v => {
-            const fame = v.node.fame_index || v.node.fame || 1;
-            const pop  = Math.log1p(v.node.population || 1000);
-            return Math.pow(fame*0.65 + pop*0.35, 1.35) * (0.35 + v.facing*0.65);
+          const CX = window.innerWidth  / 2;
+          const CY = window.innerHeight / 2;
+          const maxDist = Math.min(window.innerWidth, window.innerHeight) * 0.38;
+
+          const safe = arr.filter(v => {
+            const dx = v.sx - CX;
+            const dy = v.sy - CY;
+            const screenDist = Math.sqrt(dx * dx + dy * dy);
+            return screenDist <= maxDist && v.facing >= 0.18;
           });
-          const tot = w.reduce((s,x) => s+x, 0);
+
+          const pool = safe.length >= 2 ? safe : arr;
+
+          const w = pool.map(v => {
+            const fame  = v.node.fame_index || v.node.fame || 1;
+            const pop   = Math.log1p(v.node.population || 1000);
+            const dx    = v.sx - CX;
+            const dy    = v.sy - CY;
+            const dist  = Math.sqrt(dx * dx + dy * dy);
+            const prox  = Math.max(0, 1 - dist / maxDist);
+            return Math.pow(fame * 0.60 + pop * 0.30, 1.35)
+                   * (0.25 + v.facing * 0.50)
+                   * (0.25 + prox    * 0.75);
+          });
+
+          const tot = w.reduce((s, x) => s + x, 0);
           let r = Math.random() * tot;
-          for (let i = 0; i < arr.length; i++) { r -= w[i]; if (r <= 0) return arr[i]; }
-          return arr[arr.length-1];
+          for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0) return pool[i]; }
+          return pool[pool.length - 1];
         }
 
         // ── Fetch a recent (≤3 days) English story ──
