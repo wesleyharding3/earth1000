@@ -1,4 +1,5 @@
 import copernicusmarine
+import xarray as xr
 import pandas as pd
 from sqlalchemy import create_engine
 from config import DATABASE_URL, DATASET_ID, VARIABLE
@@ -6,27 +7,40 @@ from config import DATABASE_URL, DATASET_ID, VARIABLE
 
 def fetch_ocean_data():
 
-    print("Downloading reduced Copernicus ocean grid...")
+    print("Downloading Copernicus subset...")
 
-    ds = copernicusmarine.open_dataset(
+    # download subset file
+    copernicusmarine.subset(
         dataset_id=DATASET_ID,
+        variables=[VARIABLE],
         minimum_longitude=-180,
         maximum_longitude=180,
         minimum_latitude=-90,
         maximum_latitude=90,
-        step_longitude=1.0,
-        step_latitude=1.0
+        minimum_depth=0,
+        maximum_depth=0,
+        start_datetime="2024-01-01T00:00:00",
+        end_datetime="2024-01-01T00:00:00",
+        output_filename="ocean.nc"
     )
 
+    print("Opening NetCDF subset...")
+
+    ds = xr.open_dataset("ocean.nc")
+
     df = ds[VARIABLE].to_dataframe().reset_index()
+
+    # downsample to ~1° grid
+    df["latitude"] = df["latitude"].round()
+    df["longitude"] = df["longitude"].round()
+
+    df = df.groupby(["latitude", "longitude"])[VARIABLE].mean().reset_index()
 
     df = df.rename(columns={
         VARIABLE: "temperature"
     })
 
-    df = df.dropna()
-
-    print(f"Rows downloaded: {len(df)}")
+    print(f"Rows after downsampling: {len(df)}")
 
     return df
 
