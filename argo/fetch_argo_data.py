@@ -7,8 +7,10 @@ def fetch_ocean_data():
 
     print("Downloading NOAA SST dataset...")
 
-    df = pd.read_csv(DATA_URL, delim_whitespace=True)
+    # pandas >=2 uses regex separator instead of delim_whitespace
+    df = pd.read_csv(DATA_URL, sep=r"\s+")
 
+    # normalize column names
     df = df.rename(columns={
         "lat": "latitude",
         "lon": "longitude",
