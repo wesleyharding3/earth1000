@@ -16,8 +16,6 @@ def fetch_ocean_data():
         maximum_longitude=180,
         minimum_latitude=-80,
         maximum_latitude=90,
-        minimum_depth=0.49402499198913574,
-        maximum_depth=0.49402499198913574,
         start_datetime="2024-01-01T00:00:00",
         end_datetime="2024-01-01T00:00:00",
         output_filename="ocean.nc"
@@ -27,9 +25,12 @@ def fetch_ocean_data():
 
     ds = xr.open_dataset("ocean.nc")
 
-    df = ds[VARIABLE].to_dataframe().reset_index()
+    # take first depth layer (surface layer)
+    surface = ds[VARIABLE].isel(depth=0)
 
-    # Downsample to ~1° grid to reduce memory + DB size
+    df = surface.to_dataframe().reset_index()
+
+    # downsample to ~1° grid
     df["latitude"] = df["latitude"].round()
     df["longitude"] = df["longitude"].round()
 
