@@ -345,7 +345,6 @@ app.get("/api/news/search", async (req, res) => {
         src_co.flag        AS country_flag,
         ci.name            AS city_name,
         ${needsLocJoin ? "about_co.name AS about_country_name," : ""}
-        a.published_at     AS _sort
       FROM news_articles a
       JOIN news_sources  ns     ON ns.id     = a.source_id
       JOIN countries     src_co ON src_co.id = a.country_id
