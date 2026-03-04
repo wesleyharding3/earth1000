@@ -6,23 +6,19 @@ from config import DATABASE_URL, DATASET_ID, VARIABLE
 
 def fetch_ocean_data():
 
-    print("Downloading Copernicus ocean temperature dataset...")
+    print("Downloading reduced Copernicus ocean grid...")
 
     ds = copernicusmarine.open_dataset(
         dataset_id=DATASET_ID,
         minimum_longitude=-180,
         maximum_longitude=180,
         minimum_latitude=-90,
-        maximum_latitude=90
+        maximum_latitude=90,
+        step_longitude=1.0,
+        step_latitude=1.0
     )
 
     df = ds[VARIABLE].to_dataframe().reset_index()
-
-    # Downsample to ~1° grid
-    df["latitude"] = df["latitude"].round()
-    df["longitude"] = df["longitude"].round()
-
-    df = df.groupby(["latitude", "longitude"])[VARIABLE].mean().reset_index()
 
     df = df.rename(columns={
         VARIABLE: "temperature"
@@ -30,7 +26,7 @@ def fetch_ocean_data():
 
     df = df.dropna()
 
-    print(f"Rows after downsampling: {len(df)}")
+    print(f"Rows downloaded: {len(df)}")
 
     return df
 
