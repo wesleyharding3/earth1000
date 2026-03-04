@@ -1928,12 +1928,13 @@ const loader = new THREE.TextureLoader();
 // ═══════════════════════════════════════════════════════════
 
 const CITY_TIERS = [
-  { pointSize: 1.82, minGlow: 0.30, maxGlow: 1.00, glowPow: 1.6 },
-  { pointSize: 1.15, minGlow: 0.18, maxGlow: 0.88, glowPow: 2.2 },
-  { pointSize: 0.77, minGlow: 0.10, maxGlow: 0.70, glowPow: 2.8 },
-  { pointSize: 0.52, minGlow: 0.07, maxGlow: 0.52, glowPow: 3.4 },
-  { pointSize: 0.34, minGlow: 0.04, maxGlow: 0.32, glowPow: 4.2 },
+  { pointSize: 1.82, minGlow: 0.10, maxGlow: 1.00, glowPow: 1.6 },
+  { pointSize: 1.15, minGlow: 0.10, maxGlow: 1.00, glowPow: 1.8 },
+  { pointSize: 0.77, minGlow: 0.10, maxGlow: 1.00, glowPow: 2.0 },
+  { pointSize: 0.52, minGlow: 0.10, maxGlow: 1.00, glowPow: 2.2 },
+  { pointSize: 0.34, minGlow: 0.10, maxGlow: 1.00, glowPow: 2.4 },
 ];
+
 function haversineMiles(lat1, lon1, lat2, lon2) {
   const R = 3958.8;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -2105,12 +2106,12 @@ function computeCityTiers(cities) {
         glowCanvas.width=size; glowCanvas.height=size;
         const ctx=glowCanvas.getContext("2d");
         const grad=ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
-        grad.addColorStop(0,   "rgba(255,210,130,1)");
-        grad.addColorStop(0.18,"rgba(255,185,85,0.88)");
-        grad.addColorStop(0.38,"rgba(255,130,40,0.50)");
-        grad.addColorStop(0.58,"rgba(255,100,20,0.18)");
-        grad.addColorStop(0.68,"rgba(255,80,20,0.06)");
-        grad.addColorStop(1,   "rgba(255,80,20,0)");
+        grad.addColorStop(0,   "rgba(255,255,255,1)");
+        grad.addColorStop(0.15,"rgba(220,235,255,0.92)");
+        grad.addColorStop(0.35,"rgba(180,210,255,0.55)");
+        grad.addColorStop(0.55,"rgba(160,200,255,0.20)");
+        grad.addColorStop(0.68,"rgba(140,185,255,0.07)");
+        grad.addColorStop(1,   "rgba(120,170,255,0)");
         ctx.fillStyle=grad; ctx.fillRect(0,0,size,size);
         return new THREE.CanvasTexture(glowCanvas);
       }
@@ -2385,7 +2386,7 @@ function computeCityTiers(cities) {
                 glow *= pulse;
               }
 
-              colArr.setXYZ(li, glow, glow * 0.6, glow * 0.25);
+              colArr.setXYZ(li, glow, glow * 0.92, glow * 0.85);
             }
 
             colArr.needsUpdate = true;
