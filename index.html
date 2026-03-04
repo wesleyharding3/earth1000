@@ -1527,10 +1527,10 @@
       left: 50%;
       transform: translateX(-50%);
       z-index: 900;
-      display: flex;
+      display: flex !important;
       align-items: center;
       gap: 10px;
-      pointer-events: all;
+      pointer-events: all !important;
     }
     .pageNavDot {
       position: relative;
@@ -1712,8 +1712,11 @@
     #nfBuilderRow {
       display: flex;
       align-items: flex-end;
-      gap: 10px;
+      gap: 8px;
+      flex-wrap: wrap;
     }
+    .nfField.grow { flex: 1; min-width: 160px; }
+    .nfField.shrink { flex-shrink: 0; min-width: 0; }
 
     /* Field group: label + control */
     .nfField {
@@ -1886,7 +1889,7 @@
       display: flex; align-items: center; gap: 6px;
     }
     .nfDateInput {
-      flex: 1; height: 34px;
+      flex: 1; height: 34px; min-width: 100px;
       padding: 0 10px;
       border-radius: 10px;
       border: 1px solid rgba(255,255,255,0.11);
@@ -3154,6 +3157,10 @@ function computeCityTiers(cities) {
 
       const hoverMouse = new THREE.Vector2();
         window.addEventListener("mousemove", (event) => {
+          const globeRect = document.getElementById("pageGlobe")?.getBoundingClientRect();
+          if (!globeRect || globeRect.left < -50 || globeRect.left > 50) {
+            hideHoverCard(); return;
+          }
           const rect = renderer.domElement.getBoundingClientRect();
           hoverMouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
           hoverMouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -3960,6 +3967,9 @@ function computeCityTiers(cities) {
           if (isFocused)     return false;
           if (ambientPaused) return false;
           if (ambientSpeed === 0) return false;
+          // Only show on globe page
+          const globeRect = document.getElementById("pageGlobe")?.getBoundingClientRect();
+          if (!globeRect || globeRect.left < -50 || globeRect.left > 50) return false;
           return true;
         }
 
