@@ -3527,33 +3527,41 @@ function computeCityTiers(cities) {
         let tagDropOpen = false;
 
         fetch("https://earth-wjr6.onrender.com/api/tags")
-          .then(res => res.json())
-          .then(tags => {
-            const allTags = [{ id: null, name: "General" }, ...tags];
-            tagDropdown.innerHTML = allTags.map(t => `
-              <div class="tagOption ${t.id === null ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
-                <span class="tagOptionDot"></span>
-                ${t.name.charAt(0).toUpperCase() + t.name.slice(1)}
-              </div>`).join("");
-
-            tagDropdown.querySelectorAll(".tagOption").forEach(opt => {
-              opt.addEventListener("click", (e) => {
-                e.stopPropagation();
-                const rawId = opt.dataset.tagId;
-                currentTag = rawId ? parseInt(rawId) : null;
-                tagDropdown.querySelectorAll(".tagOption").forEach(o => o.classList.remove("active"));
-                opt.classList.add("active");
-                tagFilterLabel.textContent = opt.textContent.trim();
-                tagFilterBtn.classList.toggle("active", currentTag !== null);
-                tagDropOpen = false;
-                tagDropdown.classList.remove("open");
-                allArticles = []; offset = 0; hasMore = true;
-                track.innerHTML = skeletonCards(6);
-                loadMore();
+            .then(res => res.json())
+            .then(tags => {
+              const generalTag = tags.find(t => t.name.toLowerCase() === "general");
+              const allTags = [
+                { id: null, name: "All" },
+                ...tags
+              ];
+              if (generalTag) {
+                currentTag = generalTag.id;
+                tagFilterLabel.textContent = "General";
+                tagFilterBtn.classList.add("active");
+              }
+              tagDropdown.innerHTML = allTags.map(t => `
+                <div class="tagOption ${t.id === (generalTag?.id ?? null) ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
+                  <span class="tagOptionDot"></span>
+                  ${t.name.charAt(0).toUpperCase() + t.name.slice(1)}
+                </div>`).join("");
+              tagDropdown.querySelectorAll(".tagOption").forEach(opt => {
+                opt.addEventListener("click", (e) => {
+                  e.stopPropagation();
+                  const rawId = opt.dataset.tagId;
+                  currentTag = rawId ? parseInt(rawId) : null;
+                  tagDropdown.querySelectorAll(".tagOption").forEach(o => o.classList.remove("active"));
+                  opt.classList.add("active");
+                  tagFilterLabel.textContent = opt.textContent.trim();
+                  tagFilterBtn.classList.toggle("active", currentTag !== null);
+                  tagDropOpen = false;
+                  tagDropdown.classList.remove("open");
+                  allArticles = []; offset = 0; hasMore = true;
+                  track.innerHTML = skeletonCards(6);
+                  loadMore();
+                });
               });
-            });
-          })
-          .catch(err => console.error("Failed to load tags:", err));
+            })
+            .catch(err => console.error("Failed to load tags:", err));
 
         tagFilterBtn.addEventListener("click", (e) => {
           e.stopPropagation();
