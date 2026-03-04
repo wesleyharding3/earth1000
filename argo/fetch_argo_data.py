@@ -1,40 +1,23 @@
+import copernicusmarine
 import pandas as pd
-import requests
-import time
 from sqlalchemy import create_engine
-from config import DATABASE_URL, DATA_URL
+from config import DATABASE_URL, DATASET_ID, VARIABLE
 
 
 def fetch_ocean_data():
 
-    print("Downloading ocean dataset...")
+    print("Downloading Copernicus ocean temperature...")
 
-    retries = 5
-    delay = 10
+    ds = copernicusmarine.open_dataset(
+        dataset_id=DATASET_ID
+    )
 
-    for attempt in range(retries):
-        try:
-            response = requests.get(DATA_URL, timeout=60)
-
-            if response.status_code == 200:
-                break
-
-            print(f"Server returned {response.status_code}, retrying...")
-            time.sleep(delay)
-
-        except Exception as e:
-            print("Request failed:", e)
-            time.sleep(delay)
-
-    else:
-        raise Exception("Failed to download dataset after retries")
-
-    df = pd.read_csv(pd.compat.StringIO(response.text))
+    df = ds[VARIABLE].to_dataframe().reset_index()
 
     df = df.rename(columns={
         "latitude": "latitude",
         "longitude": "longitude",
-        "sst": "temperature"
+        VARIABLE: "temperature"
     })
 
     df = df.dropna()
