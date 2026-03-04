@@ -1468,17 +1468,17 @@
 /* ===============================
        Three-Page Swipe System
     =============================== */
-    #pageTrack {
+   #pageTrack {
       position: fixed;
-      top: 0; left: 0;
+      top: 0;
+      left: -100vw;
       width: 300vw;
       height: 100%;
       display: flex;
-      will-change: transform;
-      transform: translateX(-100vw);
-      transition: transform 0.48s cubic-bezier(0.32, 0.72, 0, 1);
+      transition: left 0.48s cubic-bezier(0.32, 0.72, 0, 1);
       z-index: auto;
     }
+
     .page {
       width: 100vw;
       height: 100%;
@@ -5305,9 +5305,9 @@ function clearArcs() {
       current = idx;
       window.__currentPage = idx; 
       track.style.transition = animate
-        ? "transform 0.48s cubic-bezier(0.32,0.72,0,1)"
+        ? "left 0.48s cubic-bezier(0.32,0.72,0,1)"
         : "none";
-      track.style.transform = `translateX(${-idx * 100}vw)`;
+      track.style.left = `${-idx * 100}vw`;
       dots.forEach((d, i) => d.classList.toggle("active", i === idx));
       document.getElementById("pageNav").style.pointerEvents = "all";
       const onGlobe = idx === 1;
@@ -5344,7 +5344,7 @@ function clearArcs() {
       if (t2Locked === null) t2Locked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
       if (t2Locked === "h" && Math.abs(dx) > 8) {
         track.style.transition = "none";
-        track.style.transform  = `translateX(${-(current * window.innerWidth) + dx}px)`;
+        track.style.left = `${-(current * window.innerWidth) + dx}px`;
       }
     }, { passive: true });
 
