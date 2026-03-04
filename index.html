@@ -1650,12 +1650,12 @@
     .nfTagWrap { position: relative; flex-shrink: 0; }
     .nfTagBtn {
       display: flex; align-items: center; gap: 6px;
-      height: 30px; padding: 0 11px;
-      border-radius: 15px;
+      height: 24px; padding: 0 9px;
+      border-radius: 12px;
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.10);
       color: rgba(255,255,255,0.50);
-      font-size: 10px; font-weight: 700;
+      font-size: 9px; font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
       cursor: pointer; user-select: none; white-space: nowrap;
       transition: border-color 0.2s, color 0.2s;
@@ -1692,8 +1692,8 @@
     .nfTextWrap { display: flex; align-items: center; position: relative; flex: 1; max-width: 220px; }
     .nfTextInput {
       width: 100%; height: 30px;
-      padding: 0 30px 0 12px;
-      border-radius: 15px;
+      padding: 0 26px 0 10px;
+      border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.10);
       background: rgba(255,255,255,0.04);
       color: #fff; font-size: 12px; font-family: inherit;
@@ -1712,7 +1712,7 @@
     #nfBuilderRow {
       display: flex;
       align-items: flex-end;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
     }
     .nfField.grow { flex: 1; min-width: 160px; }
@@ -1722,7 +1722,7 @@
     .nfField {
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 3px;
       min-width: 0;
     }
     .nfField.grow { flex: 1; }
@@ -1742,8 +1742,8 @@
     .nfMultiWrap { position: relative; }
 
     .nfMultiBtn {
-      width: 100%; min-height: 34px;
-      padding: 5px 28px 5px 10px;
+      width: 100%; min-height: 26px;
+      padding: 3px 22px 3px 8px;
       border-radius: 10px;
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.11);
@@ -1872,12 +1872,12 @@
 
     /* ── Keyword field ── */
     .nfKwInput {
-      width: 100%; height: 34px;
-      padding: 0 12px;
-      border-radius: 10px;
+      width: 100%; height: 26px;
+      padding: 0 10px;
+      border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.11);
       background: rgba(255,255,255,0.04);
-      color: #fff; font-size: 12px; font-family: inherit;
+      color: #fff; font-size: 11px; font-family: inherit;
       outline: none;
       transition: border-color 0.2s;
     }
@@ -1889,9 +1889,9 @@
       display: flex; align-items: center; gap: 6px;
     }
     .nfDateInput {
-      flex: 1; height: 34px; min-width: 100px;
-      padding: 0 10px;
-      border-radius: 10px;
+      flex: 1; height: 26px; min-width: 90px;
+      padding: 0 8px;
+      border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.11);
       background: rgba(255,255,255,0.04);
       color: rgba(255,255,255,0.75);
@@ -1911,8 +1911,8 @@
 
     /* ── Search + Clear buttons ── */
     .nfSearchBtn {
-      height: 34px; padding: 0 20px;
-      border-radius: 10px;
+      height: 26px; padding: 0 14px;
+      border-radius: 8px;
       background: rgba(255,180,80,0.13);
       border: 1px solid rgba(255,180,80,0.35);
       color: rgba(255,210,120,0.95);
@@ -1933,8 +1933,8 @@
     .nfSearchBtn svg { width: 13px; height: 13px; flex-shrink: 0; }
 
     .nfClearBtn {
-      height: 34px; padding: 0 13px;
-      border-radius: 10px;
+      height: 26px; padding: 0 10px;
+      border-radius: 8px;
       background: transparent;
       border: 1px solid rgba(255,255,255,0.09);
       color: rgba(255,255,255,0.26);
@@ -4832,14 +4832,6 @@ function clearArcs() {
       <!-- Row 1: title · sort · tag · text filter -->
       <div class="nfTopRow">
         <span class="nfPageTitle">News Feed</span>
-        <div class="nfSortSeg">
-          <div class="nfSortOpt active" data-sort="local">
-            <div class="nfSortDot"></div><span>Local</span>
-          </div>
-          <div class="nfSortOpt" data-sort="global">
-            <div class="nfSortDot"></div><span>Global</span>
-          </div>
-        </div>
         <div class="nfTopSpacer"></div>
         <div class="nfTagWrap" id="nfTagWrap">
           <div class="nfTagBtn" id="nfTagBtn">
@@ -4962,7 +4954,7 @@ function clearArcs() {
     const API      = "https://earth-wjr6.onrender.com";
     const FLAG_CDN = "https://flagcdn.com/w80/";
     let countries = [], tags = [], fromSel = new Set(), aboutSel = new Set();
-    let currentSort = "local", currentTag = null, lastKeyword = "", textFilter = "";
+    let currentTag = null, lastKeyword = "", textFilter = "";
     let articles = [], offset = 0, loading = false, hasMore = true, searched = false;
     const LIMIT = 24;
     const viewport  = document.getElementById("nfViewport");
@@ -4987,6 +4979,7 @@ function clearArcs() {
       initMulti("from"); initMulti("about"); initTags();
       const now = new Date(), past = new Date(now - 30 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
+      runSearch();
     }).catch(e => console.error("Bootstrap:", e));
 
     function initMulti(w) {
@@ -5099,15 +5092,6 @@ function clearArcs() {
       });
     }
 
-    document.querySelectorAll(".nfSortOpt").forEach(opt => {
-      opt.addEventListener("click", () => {
-        if (opt.dataset.sort === currentSort) return;
-        currentSort = opt.dataset.sort;
-        document.querySelectorAll(".nfSortOpt").forEach(o => o.classList.remove("active"));
-        opt.classList.add("active");
-      });
-    });
-
     let textDebounce = null;
     textFilter_el.addEventListener("input", () => {
       clearTimeout(textDebounce);
@@ -5156,6 +5140,7 @@ function clearArcs() {
       if (currentTag)     p.set("tag",       currentTag);
       if (dateFrom.value) p.set("from_date", dateFrom.value);
       if (dateTo.value)   p.set("to_date",   dateTo.value);
+      p.set("sort", "recent");
       p.set("limit", LIMIT); p.set("offset", off);
       return `${API}/api/news/search?${p}`;
     }
