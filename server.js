@@ -343,7 +343,7 @@ app.get("/api/news/search", async (req, res) => {
         src_co.iso_code,
         src_co.name        AS country_name,
         src_co.flag        AS country_flag,
-        ci.name            AS city_name,
+        ci.name            AS city_name
         ${needsLocJoin ? "about_co.name AS about_country_name," : ""}
       FROM news_articles a
       JOIN news_sources  ns     ON ns.id     = a.source_id
