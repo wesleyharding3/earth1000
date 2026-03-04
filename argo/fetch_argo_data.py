@@ -1,13 +1,35 @@
 import pandas as pd
+import requests
+import time
 from sqlalchemy import create_engine
 from config import DATABASE_URL, DATA_URL
 
 
 def fetch_ocean_data():
 
-    print("Downloading ocean temperature grid...")
+    print("Downloading ocean dataset...")
 
-    df = pd.read_csv(DATA_URL)
+    retries = 5
+    delay = 10
+
+    for attempt in range(retries):
+        try:
+            response = requests.get(DATA_URL, timeout=60)
+
+            if response.status_code == 200:
+                break
+
+            print(f"Server returned {response.status_code}, retrying...")
+            time.sleep(delay)
+
+        except Exception as e:
+            print("Request failed:", e)
+            time.sleep(delay)
+
+    else:
+        raise Exception("Failed to download dataset after retries")
+
+    df = pd.read_csv(pd.compat.StringIO(response.text))
 
     df = df.rename(columns={
         "latitude": "latitude",
@@ -26,7 +48,7 @@ def insert_data(df):
 
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting ocean temperature data...")
+    print("Inserting ocean temperature grid...")
 
     df.to_sql(
         "ocean_temperature",
