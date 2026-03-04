@@ -1,26 +1,25 @@
-import pandas as pd
 import requests
+import pandas as pd
+import xarray as xr
 from sqlalchemy import create_engine
-from config import DATABASE_URL, ARGO_URL
-from io import StringIO
+from config import DATABASE_URL, SST_URL
 
 
-def fetch_argo_data():
-    print("Downloading ARGO data...")
+def fetch_sst():
 
-    response = requests.get(ARGO_URL, timeout=60)
+    print("Downloading NOAA sea surface temperature dataset...")
 
-    if response.status_code != 200:
-        raise Exception(f"Failed to download data: {response.status_code}")
+    ds = xr.open_dataset(SST_URL)
 
-    csv_data = StringIO(response.text)
-
-    df = pd.read_csv(csv_data)
+    df = ds["sst"].to_dataframe().reset_index()
 
     df = df.rename(columns={
-        "platform_number": "float_id",
-        "pressure": "depth"
+        "lat": "latitude",
+        "lon": "longitude",
+        "sst": "temperature"
     })
+
+    df = df.dropna()
 
     print(f"Rows downloaded: {len(df)}")
 
@@ -28,25 +27,28 @@ def fetch_argo_data():
 
 
 def insert_data(df):
+
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting data into database...")
+    print("Inserting SST data...")
 
     df.to_sql(
-        "argo_measurements",
+        "ocean_temperature",
         engine,
         schema="ocean",
         if_exists="append",
         index=False,
         method="multi",
-        chunksize=1000
+        chunksize=2000
     )
 
     print("Finished inserting data")
 
 
 def main():
-    df = fetch_argo_data()
+
+    df = fetch_sst()
+
     insert_data(df)
 
 
