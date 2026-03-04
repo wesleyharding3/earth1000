@@ -1494,6 +1494,7 @@
       background: #000;
       display: flex;
       flex-direction: column;
+      z-index: 1;
     }
     #pageStats {
       background: #000;
@@ -1528,7 +1529,7 @@
       bottom: 28px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 900;
+      z-index: 999;
       display: flex !important;
       align-items: center;
       gap: 10px;
@@ -3184,8 +3185,8 @@ function computeCityTiers(cities) {
 
       function updateHoverLabels() {
         raycaster.params.Points.threshold = currentViewMode === "country"
-        ? Math.max(0.012, camera.position.z * 0.010)
-        : Math.max(0.008, camera.position.z * 0.008);
+        ? Math.max(0.012, camera.position.z * 0.014)
+        : Math.max(0.008, camera.position.z * 0.010);
         raycaster.setFromCamera(hoverMouse, camera);
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
@@ -3243,7 +3244,9 @@ function computeCityTiers(cities) {
       function showHoverCard(node, sx, sy) {
         const card   = document.getElementById("hoverCard");
         const lineEl = document.getElementById("hoverLineEl");
+        if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
         card.classList.remove("hcErase");
+        card.classList.remove("hcVisible");
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
@@ -4837,7 +4840,7 @@ function clearArcs() {
 
   </div><!-- end #pageGlobe -->
 
-<div class="page" id="pageNews" style="overflow:hidden;">
+<div class="page" id="pageNews" >
   <div id="newsFeedPage">
     <!-- ══ QUERY BAR ══ -->
     <div id="nfQueryBar">
@@ -4936,6 +4939,7 @@ function clearArcs() {
             </div>
           </div>
         </div>
+    </div>
     <!-- ══ META BAR ══ -->
     <div id="nfMeta">
       <span class="nfMetaCount" id="nfMetaCount"></span>
