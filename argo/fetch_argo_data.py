@@ -5,16 +5,14 @@ from config import DATABASE_URL, DATA_URL
 
 def fetch_ocean_data():
 
-    print("Downloading NOAA SST dataset...")
+    print("Downloading SST dataset...")
 
-    # pandas >=2 uses regex separator instead of delim_whitespace
-    df = pd.read_csv(DATA_URL, sep=r"\s+")
+    df = pd.read_csv(DATA_URL)
 
-    # normalize column names
     df = df.rename(columns={
-        "lat": "latitude",
-        "lon": "longitude",
-        "sst": "temperature"
+        "Latitude": "latitude",
+        "Longitude": "longitude",
+        "Value": "temperature"
     })
 
     df = df.dropna()
@@ -28,7 +26,7 @@ def insert_data(df):
 
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting ocean temperature grid...")
+    print("Inserting ocean temperature data...")
 
     df.to_sql(
         "ocean_temperature",
@@ -37,7 +35,7 @@ def insert_data(df):
         if_exists="replace",
         index=False,
         method="multi",
-        chunksize=1000
+        chunksize=2000
     )
 
     print("Insert complete")
