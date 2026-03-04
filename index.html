@@ -1722,10 +1722,15 @@
     .nfBuilderLine {
       display: flex;
       align-items: flex-end;
-      gap: 6px;
+      gap: 10px;          /* enforced gutter — fields can never touch */
       width: 100%;
+     flex-wrap: wrap;    /* wraps on very small screens instead of overlapping */
     }
-    .nfField.grow { flex: 1; min-width: 160px; }
+    .nfField.grow {
+      flex: 1 1 0;
+      min-width: 100px;   /* absolute floor — enough to type in */
+      max-width: 100%;
+    }
     .nfField.shrink { flex-shrink: 0; min-width: 0; }
 
     /* Field group: label + control */
@@ -1753,6 +1758,8 @@
 
     .nfMultiBtn {
       width: 100%; min-height: 26px;
+      min-width: 0;
+      overflow: hidden;
       padding: 3px 22px 3px 8px;
       border-radius: 10px;
       background: rgba(255,255,255,0.04);
@@ -1899,7 +1906,7 @@
       display: flex; align-items: center; gap: 6px;
     }
     .nfDateInput {
-      flex: 1; height: 26px; min-width: 90px;
+      flex: 1 1 0; height: 26px; min-width: 70px;
       padding: 0 8px;
       border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.11);
