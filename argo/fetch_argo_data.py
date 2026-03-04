@@ -6,17 +6,13 @@ from config import DATABASE_URL, DATASET_ID, VARIABLE
 
 def fetch_ocean_data():
 
-    print("Downloading Copernicus ocean temperature...")
+    print("Downloading Copernicus ocean temperature dataset...")
 
-    ds = copernicusmarine.open_dataset(
-        dataset_id=DATASET_ID
-    )
+    ds = copernicusmarine.open_dataset(dataset_id=DATASET_ID)
 
     df = ds[VARIABLE].to_dataframe().reset_index()
 
     df = df.rename(columns={
-        "latitude": "latitude",
-        "longitude": "longitude",
         VARIABLE: "temperature"
     })
 
@@ -31,7 +27,7 @@ def insert_data(df):
 
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting ocean temperature grid...")
+    print("Inserting ocean temperature data...")
 
     df.to_sql(
         "ocean_temperature",
