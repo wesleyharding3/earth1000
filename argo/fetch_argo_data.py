@@ -1,21 +1,13 @@
 import pandas as pd
 from sqlalchemy import create_engine
-from config import DATABASE_URL, SST_URL
+from config import DATABASE_URL, DATA_URL
 
 
-def fetch_sst():
+def fetch_data():
 
-    print("Downloading NOAA SST grid...")
+    print("Downloading test dataset...")
 
-    df = pd.read_csv(SST_URL)
-
-    df = df.rename(columns={
-        "latitude": "latitude",
-        "longitude": "longitude",
-        "sst": "temperature"
-    })
-
-    df = df.dropna()
+    df = pd.read_csv(DATA_URL)
 
     print(f"Rows downloaded: {len(df)}")
 
@@ -26,16 +18,14 @@ def insert_data(df):
 
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting SST data...")
+    print("Inserting into database...")
 
     df.to_sql(
-        "ocean_temperature",
+        "test_ingestion",
         engine,
         schema="ocean",
         if_exists="append",
-        index=False,
-        method="multi",
-        chunksize=2000
+        index=False
     )
 
     print("Insert complete")
@@ -43,7 +33,7 @@ def insert_data(df):
 
 def main():
 
-    df = fetch_sst()
+    df = fetch_data()
 
     insert_data(df)
 
