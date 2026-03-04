@@ -2,6 +2,6 @@ import os
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-ARGO_URL = (
-"https://data-argo.ifremer.fr/argo_synthetic-profile_index.txt"
+SST_URL = (
+"https://downloads.psl.noaa.gov/Datasets/noaa.oisst.v2.highres/sst.day.mean.nc"
 )
