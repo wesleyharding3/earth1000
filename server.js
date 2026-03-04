@@ -263,6 +263,110 @@ app.get("/api/tags", async (req, res) => {
 });
 
 /* =========================================
+   Search — relational (from → keyword → about)
+========================================= */
+app.get("/api/news/search", async (req, res) => {
+  try {
+    const limit   = Math.min(parseInt(req.query.limit)  || 24, 50);
+    const offset  = Math.max(parseInt(req.query.offset) || 0,  0);
+
+    // Parse comma-separated country ID arrays
+    const fromIds  = req.query.from
+      ? req.query.from.split(",").map(Number).filter(Boolean)
+      : null;
+    const aboutIds = req.query.about
+      ? req.query.about.split(",").map(Number).filter(Boolean)
+      : null;
+
+    const keyword  = req.query.keyword?.trim() || null;
+    const fromDate = req.query.from_date?.trim() || null;
+    const toDate   = req.query.to_date?.trim()   || null;
+
+    // Build WHERE clauses dynamically
+    const conditions = [];
+    const params     = [];
+
+    if (fromIds?.length) {
+      params.push(fromIds);
+      conditions.push(`a.country_id = ANY($${params.length})`);
+    }
+
+    if (aboutIds?.length) {
+      params.push(aboutIds);
+      conditions.push(`al.country_id = ANY($${params.length})`);
+    }
+
+    if (keyword) {
+      params.push(`%${keyword}%`);
+      conditions.push(`(
+      COALESCE(a.translated_title,   a.title)   ILIKE $${params.length}
+      OR
+      COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
+      )`);
+    }
+
+    if (fromDate) {
+      params.push(fromDate);
+      conditions.push(`a.published_at >= $${params.length}::date`);
+    }
+
+    if (toDate) {
+      params.push(toDate);
+      conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`);
+    }
+
+    const whereClause = conditions.length
+      ? "WHERE " + conditions.join(" AND ")
+      : "";
+
+    // aboutIds requires the article_locations join
+    const needsLocJoin = !!aboutIds?.length;
+
+    params.push(limit, offset);
+    const limitParam  = params.length - 1;
+    const offsetParam = params.length;
+
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        a.title,
+        a.translated_title,
+        a.url,
+        a.article_url,
+        a.summary,
+        a.translated_summary,
+        a.image_url,
+        a.published_at,
+        a.sentiment_score,
+        ns.name            AS source_name,
+        ns.site_url,
+        src_co.iso_code,
+        src_co.name        AS country_name,
+        src_co.flag        AS country_flag,
+        ci.name            AS city_name,
+        ${needsLocJoin ? "about_co.name AS about_country_name," : ""}
+        a.published_at     AS _sort
+      FROM news_articles a
+      JOIN news_sources  ns     ON ns.id     = a.source_id
+      JOIN countries     src_co ON src_co.id = a.country_id
+      LEFT JOIN cities   ci     ON ci.id     = a.city_id
+      ${needsLocJoin ? `
+        JOIN article_locations al    ON al.article_id = a.id
+        JOIN countries         about_co ON about_co.id = al.country_id
+      ` : ""}
+      ${whereClause}
+      ORDER BY a.id, a.published_at DESC
+      LIMIT $${limitParam} OFFSET $${offsetParam}
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Search error:", err.message);
+    res.status(500).json({ error: "Search failed", detail: err.message });
+  }
+});
+
+/* =========================================
    Flows — aggregated by country
 ========================================= */
 app.get("/api/flows", async (req, res) => {
