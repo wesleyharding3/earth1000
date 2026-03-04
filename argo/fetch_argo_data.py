@@ -7,11 +7,11 @@ def fetch_ocean_data():
 
     print("Downloading NOAA SST dataset...")
 
-    df = pd.read_csv(DATA_URL)
+    df = pd.read_csv(DATA_URL, delim_whitespace=True)
 
     df = df.rename(columns={
-        "latitude": "latitude",
-        "longitude": "longitude",
+        "lat": "latitude",
+        "lon": "longitude",
         "sst": "temperature"
     })
 
@@ -35,7 +35,7 @@ def insert_data(df):
         if_exists="replace",
         index=False,
         method="multi",
-        chunksize=2000
+        chunksize=1000
     )
 
     print("Insert complete")
