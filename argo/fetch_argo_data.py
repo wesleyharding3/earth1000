@@ -1,70 +1,51 @@
-import copernicusmarine
-import xarray as xr
 import pandas as pd
-import os
 from sqlalchemy import create_engine
-from config import DATABASE_URL, DATASET_ID, VARIABLE
+from config import DATABASE_URL, DATA_URL
 
 
-engine = create_engine(DATABASE_URL)
+def fetch_ocean_data():
+
+    print("Downloading NOAA SST dataset...")
+
+    df = pd.read_csv(DATA_URL)
+
+    df = df.rename(columns={
+        "latitude": "latitude",
+        "longitude": "longitude",
+        "sst": "temperature"
+    })
+
+    df = df.dropna()
+
+    print(f"Rows downloaded: {len(df)}")
+
+    return df
 
 
-def process_tile(lat_min, lat_max):
+def insert_data(df):
 
-    print(f"Downloading tile {lat_min} → {lat_max}")
+    engine = create_engine(DATABASE_URL)
 
-    filename = f"tile_{lat_min}_{lat_max}.nc"
-
-    if os.path.exists(filename):
-        os.remove(filename)
-
-    copernicusmarine.subset(
-        dataset_id=DATASET_ID,
-        variables=[VARIABLE],
-        minimum_longitude=-180,
-        maximum_longitude=180,
-        minimum_latitude=lat_min,
-        maximum_latitude=lat_max,
-        start_datetime="2024-01-01T00:00:00",
-        end_datetime="2024-01-01T00:00:00",
-        output_filename=filename
-    )
-
-    print("Opening NetCDF tile...")
-
-    ds = xr.open_dataset(filename)
-
-    surface = ds[VARIABLE].isel(depth=0)
-
-    df = surface.to_dataframe().reset_index()
-
-    df["latitude"] = df["latitude"].round()
-    df["longitude"] = df["longitude"].round()
-
-    df = df.groupby(["latitude", "longitude"])[VARIABLE].mean().reset_index()
-
-    df = df.rename(columns={VARIABLE: "temperature"})
+    print("Inserting ocean temperature grid...")
 
     df.to_sql(
         "ocean_temperature",
         engine,
         schema="ocean",
-        if_exists="append",
+        if_exists="replace",
         index=False,
         method="multi",
         chunksize=2000
     )
 
-    print(f"Inserted {len(df)} rows")
-
-    ds.close()
-    os.remove(filename)
+    print("Insert complete")
 
 
 def main():
 
-    for lat in range(-80, 90, 10):
-        process_tile(lat, lat + 10)
+    df = fetch_ocean_data()
+
+    insert_data(df)
 
 
 if __name__ == "__main__":
