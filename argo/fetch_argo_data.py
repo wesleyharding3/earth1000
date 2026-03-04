@@ -9,19 +9,18 @@ def fetch_ocean_data():
 
     print("Downloading Copernicus subset...")
 
-    # download subset file
     copernicusmarine.subset(
-      dataset_id=DATASET_ID,
-      variables=[VARIABLE],
-      minimum_longitude=-180,
-      maximum_longitude=180,
-      minimum_latitude=-80,
-      maximum_latitude=90,
-      minimum_depth=0.494,
-      maximum_depth=0.494,
-      start_datetime="2024-01-01T00:00:00",
-      end_datetime="2024-01-01T00:00:00",
-      output_filename="ocean.nc"
+        dataset_id=DATASET_ID,
+        variables=[VARIABLE],
+        minimum_longitude=-180,
+        maximum_longitude=180,
+        minimum_latitude=-80,
+        maximum_latitude=90,
+        minimum_depth=0.49402499198913574,
+        maximum_depth=0.49402499198913574,
+        start_datetime="2024-01-01T00:00:00",
+        end_datetime="2024-01-01T00:00:00",
+        output_filename="ocean.nc"
     )
 
     print("Opening NetCDF subset...")
@@ -30,7 +29,7 @@ def fetch_ocean_data():
 
     df = ds[VARIABLE].to_dataframe().reset_index()
 
-    # downsample to ~1° grid
+    # Downsample to ~1° grid to reduce memory + DB size
     df["latitude"] = df["latitude"].round()
     df["longitude"] = df["longitude"].round()
 
@@ -39,6 +38,8 @@ def fetch_ocean_data():
     df = df.rename(columns={
         VARIABLE: "temperature"
     })
+
+    df = df.dropna()
 
     print(f"Rows after downsampling: {len(df)}")
 
