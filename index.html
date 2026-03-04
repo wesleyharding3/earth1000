@@ -50,7 +50,6 @@
 
     #infoPanel.active {
       pointer-events: all; 
-      bottom: 0;
       border: 1.5px solid rgba(255, 255, 255, 0.25);
     }
 
@@ -2298,6 +2297,8 @@
 
 
   <script type="module">
+
+    window.__currentPage = 1;
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
 
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
@@ -3171,7 +3172,7 @@ function computeCityTiers(cities) {
 
       const hoverMouse = new THREE.Vector2();
         window.addEventListener("mousemove", (event) => {
-          if (window.__currentPage !== 1) {
+          if (window.__currentPage !== undefined && window.__currentPage !== 1) {
             hideHoverCard(); return;
           }
           hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -3445,7 +3446,6 @@ function computeCityTiers(cities) {
           </div>`;
 
         panel.classList.add("active");
-        document.getElementById("pageNav").style.pointerEvents = "none";
         applySnapHeight("default", false);
         attachPanelResizeHandle();
         setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
@@ -3655,7 +3655,7 @@ function computeCityTiers(cities) {
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
-          document.getElementById("pageNav").style.pointerEvents = "";
+          document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
         });
@@ -4866,33 +4866,76 @@ function clearArcs() {
         </div>
       </div>
 
-      <!-- Row 2: query builder -->
-      <div id="nfBuilderRow">
-        <div class="nfBuilderLine">
-          <div class="nfField grow">
-            <span class="nfFieldLabel">Stories from</span>
-            ... (From multi-select, unchanged)
+        <div id="nfBuilderRow">
+          <div class="nfBuilderLine">
+            <div class="nfField grow">
+              <span class="nfFieldLabel">Stories from</span>
+              <div class="nfMultiWrap">
+                <div class="nfMultiBtn" id="nfFromBtn">
+                  <span class="nfPlaceholder" id="nfFromPh">Any country…</span>
+                  <span class="nfBtnChevron">
+                    <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="2,3.5 5,6.5 8,3.5"/>
+                    </svg>
+                  </span>
+                </div>
+                <div class="nfMultiDrop" id="nfFromDrop">
+                  <input class="nfDropSearch" id="nfFromSearch" type="text" placeholder="Search countries…" autocomplete="off" />
+                  <div class="nfDropActions">
+                    <div class="nfDropAction" id="nfFromAll">All</div>
+                    <div class="nfDropAction" id="nfFromNone">None</div>
+                  </div>
+                  <div class="nfDropList" id="nfFromList"></div>
+                </div>
+              </div>
+            </div>
+            <div class="nfField grow">
+              <span class="nfFieldLabel">Mentioning</span>
+              <input class="nfKwInput" id="nfKw" type="text" placeholder="keyword…" autocomplete="off" />
+            </div>
+            <div class="nfField grow">
+              <span class="nfFieldLabel">About</span>
+              <div class="nfMultiWrap">
+                <div class="nfMultiBtn" id="nfAboutBtn">
+                  <span class="nfPlaceholder" id="nfAboutPh">Any country…</span>
+                  <span class="nfBtnChevron">
+                    <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="2,3.5 5,6.5 8,3.5"/>
+                    </svg>
+                  </span>
+                </div>
+                <div class="nfMultiDrop" id="nfAboutDrop">
+                  <input class="nfDropSearch" id="nfAboutSearch" type="text" placeholder="Search countries…" autocomplete="off" />
+                  <div class="nfDropActions">
+                    <div class="nfDropAction" id="nfAboutAll">All</div>
+                    <div class="nfDropAction" id="nfAboutNone">None</div>
+                  </div>
+                  <div class="nfDropList" id="nfAboutList"></div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="nfField grow">
-            <span class="nfFieldLabel">Mentioning</span>
-            ... (keyword input, unchanged)
-          </div>
-          <div class="nfField grow">
-            <span class="nfFieldLabel">About</span>
-            ... (About multi-select, unchanged)
+          <div class="nfBuilderLine">
+            <div class="nfField grow">
+              <span class="nfFieldLabel">Date range</span>
+              <div class="nfDateRow">
+                <input class="nfDateInput" id="nfDateFrom" type="date" />
+                <span class="nfDateSep">→</span>
+                <input class="nfDateInput" id="nfDateTo" type="date" />
+              </div>
+            </div>
+            <div class="nfField shrink" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:6px;">
+              <div class="nfClearBtn" id="nfClearBtn">Clear</div>
+              <button class="nfSearchBtn" id="nfSearchBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7"/>
+                  <line x1="16.5" y1="16.5" x2="22" y2="22"/>
+                </svg>
+                Search
+              </button>
+            </div>
           </div>
         </div>
-        <div class="nfBuilderLine">
-          <div class="nfField grow">
-            <span class="nfFieldLabel">Date range</span>
-            ... (date inputs, unchanged)
-          </div>
-          <div class="nfField shrink" style="justify-content:flex-end;">
-            ...buttons...
-          </div>
-        </div>
-      </div>
-    </div>
     <!-- ══ META BAR ══ -->
     <div id="nfMeta">
       <span class="nfMetaCount" id="nfMetaCount"></span>
@@ -5257,6 +5300,7 @@ function clearArcs() {
         : "none";
       track.style.transform = `translateX(${-idx * 100}vw)`;
       dots.forEach((d, i) => d.classList.toggle("active", i === idx));
+      document.getElementById("pageNav").style.pointerEvents = "all";
       const onGlobe = idx === 1;
       ["compass","scaleBar","topLeftCluster","settingsSidebar",
        "flowControls","flowTooltip"].forEach(id => {
