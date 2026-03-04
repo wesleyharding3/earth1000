@@ -1,13 +1,21 @@
 import pandas as pd
 from sqlalchemy import create_engine
-from config import DATABASE_URL, DATA_URL
+from config import DATABASE_URL, COPERNICUS_URL
 
 
-def fetch_data():
+def fetch_ocean_data():
 
-    print("Downloading test dataset...")
+    print("Downloading Copernicus ocean dataset...")
 
-    df = pd.read_csv(DATA_URL)
+    df = pd.read_csv(COPERNICUS_URL)
+
+    df = df.rename(columns={
+        "latitude": "latitude",
+        "longitude": "longitude",
+        "thetao": "temperature"
+    })
+
+    df = df.dropna()
 
     print(f"Rows downloaded: {len(df)}")
 
@@ -18,14 +26,16 @@ def insert_data(df):
 
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting into database...")
+    print("Inserting ocean temperature grid...")
 
     df.to_sql(
-        "test_ingestion",
+        "ocean_temperature",
         engine,
         schema="ocean",
         if_exists="append",
-        index=False
+        index=False,
+        method="multi",
+        chunksize=2000
     )
 
     print("Insert complete")
@@ -33,7 +43,7 @@ def insert_data(df):
 
 def main():
 
-    df = fetch_data()
+    df = fetch_ocean_data()
 
     insert_data(df)
 
