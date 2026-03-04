@@ -5,53 +5,38 @@ from sqlalchemy import create_engine
 from config import DATABASE_URL, DATASET_ID, VARIABLE
 
 
-def fetch_ocean_data():
+engine = create_engine(DATABASE_URL)
 
-    print("Downloading Copernicus subset...")
+
+def process_tile(lat_min, lat_max):
+
+    print(f"Downloading tile {lat_min} → {lat_max}")
 
     copernicusmarine.subset(
         dataset_id=DATASET_ID,
         variables=[VARIABLE],
         minimum_longitude=-180,
         maximum_longitude=180,
-        minimum_latitude=-80,
-        maximum_latitude=90,
+        minimum_latitude=lat_min,
+        maximum_latitude=lat_max,
         start_datetime="2024-01-01T00:00:00",
         end_datetime="2024-01-01T00:00:00",
-        output_filename="ocean.nc"
+        output_filename="tile.nc"
     )
 
-    print("Opening NetCDF subset...")
+    ds = xr.open_dataset("tile.nc")
 
-    ds = xr.open_dataset("ocean.nc")
-
-    # take first depth layer (surface layer)
     surface = ds[VARIABLE].isel(depth=0)
 
     df = surface.to_dataframe().reset_index()
 
-    # downsample to ~1° grid
+    # downsample grid
     df["latitude"] = df["latitude"].round()
     df["longitude"] = df["longitude"].round()
 
     df = df.groupby(["latitude", "longitude"])[VARIABLE].mean().reset_index()
 
-    df = df.rename(columns={
-        VARIABLE: "temperature"
-    })
-
-    df = df.dropna()
-
-    print(f"Rows after downsampling: {len(df)}")
-
-    return df
-
-
-def insert_data(df):
-
-    engine = create_engine(DATABASE_URL)
-
-    print("Inserting ocean temperature grid...")
+    df = df.rename(columns={VARIABLE: "temperature"})
 
     df.to_sql(
         "ocean_temperature",
@@ -63,14 +48,13 @@ def insert_data(df):
         chunksize=2000
     )
 
-    print("Insert complete")
+    print(f"Inserted {len(df)} rows")
 
 
 def main():
 
-    df = fetch_ocean_data()
-
-    insert_data(df)
+    for lat in range(-80, 90, 10):   # 10° latitude bands
+        process_tile(lat, lat + 10)
 
 
 if __name__ == "__main__":
