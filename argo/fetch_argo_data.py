@@ -1,6 +1,7 @@
 import copernicusmarine
 import xarray as xr
 import pandas as pd
+import os
 from sqlalchemy import create_engine
 from config import DATABASE_URL, DATASET_ID, VARIABLE
 
@@ -12,6 +13,11 @@ def process_tile(lat_min, lat_max):
 
     print(f"Downloading tile {lat_min} → {lat_max}")
 
+    filename = f"tile_{lat_min}_{lat_max}.nc"
+
+    if os.path.exists(filename):
+        os.remove(filename)
+
     copernicusmarine.subset(
         dataset_id=DATASET_ID,
         variables=[VARIABLE],
@@ -21,16 +27,17 @@ def process_tile(lat_min, lat_max):
         maximum_latitude=lat_max,
         start_datetime="2024-01-01T00:00:00",
         end_datetime="2024-01-01T00:00:00",
-        output_filename="tile.nc"
+        output_filename=filename
     )
 
-    ds = xr.open_dataset("tile.nc")
+    print("Opening NetCDF tile...")
+
+    ds = xr.open_dataset(filename)
 
     surface = ds[VARIABLE].isel(depth=0)
 
     df = surface.to_dataframe().reset_index()
 
-    # downsample grid
     df["latitude"] = df["latitude"].round()
     df["longitude"] = df["longitude"].round()
 
@@ -50,10 +57,13 @@ def process_tile(lat_min, lat_max):
 
     print(f"Inserted {len(df)} rows")
 
+    ds.close()
+    os.remove(filename)
+
 
 def main():
 
-    for lat in range(-80, 90, 10):   # 10° latitude bands
+    for lat in range(-80, 90, 10):
         process_tile(lat, lat + 10)
 
 
