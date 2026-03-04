@@ -11,17 +11,17 @@ def fetch_ocean_data():
 
     # download subset file
     copernicusmarine.subset(
-        dataset_id=DATASET_ID,
-        variables=[VARIABLE],
-        minimum_longitude=-180,
-        maximum_longitude=180,
-        minimum_latitude=-90,
-        maximum_latitude=90,
-        minimum_depth=0,
-        maximum_depth=0,
-        start_datetime="2024-01-01T00:00:00",
-        end_datetime="2024-01-01T00:00:00",
-        output_filename="ocean.nc"
+      dataset_id=DATASET_ID,
+      variables=[VARIABLE],
+      minimum_longitude=-180,
+      maximum_longitude=180,
+      minimum_latitude=-80,
+      maximum_latitude=90,
+      minimum_depth=0.494,
+      maximum_depth=0.494,
+      start_datetime="2024-01-01T00:00:00",
+      end_datetime="2024-01-01T00:00:00",
+      output_filename="ocean.nc"
     )
 
     print("Opening NetCDF subset...")
