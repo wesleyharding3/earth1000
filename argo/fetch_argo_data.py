@@ -1,15 +1,31 @@
 import requests
-import pandas as pd
 import xarray as xr
+import pandas as pd
 from sqlalchemy import create_engine
 from config import DATABASE_URL, SST_URL
 
 
-def fetch_sst():
+def download_file():
 
-    print("Downloading NOAA sea surface temperature dataset...")
+    print("Downloading NOAA SST dataset...")
 
-    ds = xr.open_dataset(SST_URL)
+    r = requests.get(SST_URL, stream=True)
+
+    if r.status_code != 200:
+        raise Exception(f"Download failed: {r.status_code}")
+
+    with open("sst.nc", "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+    print("Download complete")
+
+
+def load_sst():
+
+    print("Opening NetCDF dataset...")
+
+    ds = xr.open_dataset("sst.nc")
 
     df = ds["sst"].to_dataframe().reset_index()
 
@@ -21,7 +37,7 @@ def fetch_sst():
 
     df = df.dropna()
 
-    print(f"Rows downloaded: {len(df)}")
+    print(f"Rows extracted: {len(df)}")
 
     return df
 
@@ -30,7 +46,7 @@ def insert_data(df):
 
     engine = create_engine(DATABASE_URL)
 
-    print("Inserting SST data...")
+    print("Inserting into database...")
 
     df.to_sql(
         "ocean_temperature",
@@ -42,12 +58,14 @@ def insert_data(df):
         chunksize=2000
     )
 
-    print("Finished inserting data")
+    print("Insert complete")
 
 
 def main():
 
-    df = fetch_sst()
+    download_file()
+
+    df = load_sst()
 
     insert_data(df)
 
