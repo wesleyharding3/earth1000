@@ -210,176 +210,43 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
     const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
-    const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        a.image_url,
-        a.published_at,
-        ns.name          AS source_name,
-        ns.site_url,
-        ns.popularity_score,
-        co.iso_code,
-        co.name          AS country_name,
-        ci.name          AS city_name
-      FROM article_locations al
-      JOIN news_articles a   ON a.id  = al.article_id
-      JOIN news_sources  ns  ON ns.id = a.source_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities    ci ON ci.id = a.city_id
-      ${tagJoin}
-      WHERE al.country_id     = $1
-        AND al.routing_type   IN ('content', 'source')
-        AND a.country_id     != $1
-        ${tagWhere}
-      ORDER BY a.id, ${tagOrder}
-      LIMIT $2 OFFSET $3
-    `, [req.params.countryId, limit, offset]);
-
-    res.json(rows);
-  } catch (err) {
-    console.error("Country global feed error:", err.message);
-    res.status(500).json({ error: "Failed to fetch global country feed" });
-  }
-});
-
-/* =========================================
-   Tags
-========================================= */
-app.get("/api/tags", async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT id, name FROM tags ORDER BY id ASC
-    `);
-    res.json(result.rows);
-  } catch (err) {
-    console.error("Tags error:", err);
-    res.status(500).json({ error: "Failed to fetch tags" });
-  }
-});
-
-/* =========================================
-   Search — relational (from → keyword → about)
-========================================= */
-app.get("/api/news/search", async (req, res) => {
-  try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 24, 50);
-    const offset = Math.max(parseInt(req.query.offset) || 0,  0);
-
-    // Parse comma-separated country ID arrays
-    const fromIds = req.query.from
-      ? req.query.from.split(",").map(Number).filter(Boolean)
-      : null;
-
-    const aboutIds = req.query.about
-      ? req.query.about.split(",").map(Number).filter(Boolean)
-      : null;
-
-    const keyword  = req.query.keyword?.trim() || null;
-    const fromDate = req.query.from_date?.trim() || null;
-    const toDate   = req.query.to_date?.trim()   || null;
-
-    const conditions = [];
-    const params     = [];
-
-    if (fromIds?.length) {
-      params.push(fromIds);
-      conditions.push(`a.country_id = ANY($${params.length})`);
-    }
-
-    if (aboutIds?.length) {
-      params.push(aboutIds);
-      conditions.push(`al.country_id = ANY($${params.length})`);
-    }
-
-    if (keyword) {
-      params.push(`%${keyword}%`);
-      conditions.push(`(
-        COALESCE(a.translated_title, a.title) ILIKE $${params.length}
-        OR
-        COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
-      )`);
-    }
-
-    if (fromDate) {
-      params.push(fromDate);
-      conditions.push(`a.published_at >= $${params.length}::date`);
-    }
-
-    if (toDate) {
-      params.push(toDate);
-      conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`);
-    }
-
-    const whereClause = conditions.length
-      ? "WHERE " + conditions.join(" AND ")
-      : "";
-
-    const needsLocJoin = !!aboutIds?.length;
-
-    params.push(limit, offset);
-    const limitParam  = params.length - 1;
-    const offsetParam = params.length;
-
+// Replace the search query with:
 const { rows } = await pool.query(`
-  SELECT DISTINCT ON (a.id)
-    a.id,
-    a.title,
-    a.translated_title,
-    a.url,
-    a.article_url,
-    a.summary,
-    a.translated_summary,
-    a.image_url,
-    a.published_at,
-    a.sentiment_score,
-    a.base_priority,
-
-    ns.name            AS source_name,
-    ns.site_url,
-
-    src_co.iso_code,
-    src_co.name        AS country_name,
-    src_co.flag        AS country_flag,
-
-    ci.name            AS city_name,
-
-    COALESCE(cfb.boost_score,1.0) AS country_boost,
-
-    COUNT(*) OVER() AS total_count
-
-    ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
-
-  FROM news_articles a
-
-  JOIN news_sources ns
-    ON ns.id = a.source_id
-
-  JOIN countries src_co
-    ON src_co.id = a.country_id
-
-  LEFT JOIN country_feed_boost cfb
-    ON cfb.country_id = a.country_id
-
-  LEFT JOIN cities ci
-    ON ci.id = a.city_id
-
-  ${needsLocJoin ? `
-    JOIN article_locations al
-      ON al.article_id = a.id
-    JOIN countries about_co
-      ON about_co.id = al.country_id
-  ` : ""}
-
-  ${whereClause}
-
-  ORDER BY a.id, a.published_at DESC
-
+  SELECT * FROM (
+    SELECT DISTINCT ON (a.id)
+      a.id,
+      a.title,
+      a.translated_title,
+      a.url,
+      a.article_url,
+      a.summary,
+      a.translated_summary,
+      a.image_url,
+      a.published_at,
+      a.sentiment_score,
+      a.base_priority,
+      ns.name            AS source_name,
+      ns.site_url,
+      src_co.iso_code,
+      src_co.name        AS country_name,
+      src_co.flag        AS country_flag,
+      ci.name            AS city_name,
+      COALESCE(cfb.boost_score, 1.0) AS country_boost,
+      COUNT(*) OVER()    AS total_count
+      ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
+    FROM news_articles a
+    JOIN news_sources ns     ON ns.id     = a.source_id
+    JOIN countries src_co   ON src_co.id  = a.country_id
+    LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
+    LEFT JOIN cities ci      ON ci.id     = a.city_id
+    ${needsLocJoin ? `
+      JOIN article_locations al  ON al.article_id = a.id
+      JOIN countries about_co    ON about_co.id   = al.country_id
+    ` : ""}
+    ${whereClause}
+    ORDER BY a.id
+  ) sub
+  ORDER BY (sub.base_priority * sub.country_boost) DESC
   LIMIT $${limitParam} OFFSET $${offsetParam}
 `, params);
 
@@ -390,10 +257,14 @@ const { rows } = await pool.query(`
 
 let results = rows.map(r => ({
   ...r,
-  final_priority:
-    (r.base_priority || 0) *
-    (r.country_boost || 1)
+  final_priority: (r.base_priority || 0) * (r.country_boost || 1)
 }));
+
+// Skip re-sorting — SQL already did it. Just apply diversity pass.
+results = countryVarianceRerank(results);
+
+const total = rows.length ? rows[0].total_count : 0;
+res.json({ total, articles: results });
 
 
 /* =========================================
@@ -414,7 +285,7 @@ results = countryVarianceRerank(results);
    RETURN
 ========================================= */
 
-const total = rows.length ? rows[0].total_count : 0;
+const totalCount = rows.length ? rows[0].total_count : 0;
 
 res.json({
   total,
