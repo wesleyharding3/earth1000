@@ -503,5 +503,6 @@ module.exports = {
   calculatePriority,
   rankArticles,
   diversityRerank,
+  countryVarianceRerank,
   detectTierInflation
 };
