@@ -209,6 +209,7 @@ const CONFIG = {
   MAX_POPULARITY:     1.60,
   MAX_TAG_MULTIPLIER: 1.20,
   MIN_TAG_MULTIPLIER: 1.00,
+  CITY_SOURCE_PENALTY: 0.60,
   TIER_BONUS: {
     4: 6.0,
     3: 1.0,
@@ -286,23 +287,26 @@ function calculatePriority({
   tagWeightSum,
   popularityScore,
   popularityTier,
-  publishedAt
+  publishedAt,
+  isCitySource  
 }) {
   const normalized    = normalizeIntensity(rawIntensity, maxIntensity);
   const tagMultiplier = computeTagMultiplier(tagWeightSum);
   const popularity    = clampPopularity(popularityScore);
   const tierBonus     = getTierBonus(popularityTier);
   const decay         = computeDecay(publishedAt);
+  const cityPenalty   = isCitySource ? CONFIG.CITY_SOURCE_PENALTY : 1.0;
 
   const finalScore =
     normalized *
     tagMultiplier *
     popularity *
     tierBonus *
-    decay;
+    decay *
+    cityPenalty;
 
-  return Number(finalScore.toFixed(8));
-}
+  return parseFloat(finalScore.toFixed(8));
+  }
 
 // ─────────────────────────────────────────────────────────────
 // DIVERSITY PASS
@@ -472,7 +476,8 @@ function rankArticles(articles = [], maxIntensity) {
       tagWeightSum:    article.tagWeightSum || 0,
       popularityScore: article.popularity_score,
       popularityTier:  article.popularity_tier,
-      publishedAt:     article.published_at
+      publishedAt:     article.published_at,
+      isCitySource:    !!article.city_id 
     })
   }));
 
