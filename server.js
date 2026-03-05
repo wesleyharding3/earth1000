@@ -349,7 +349,9 @@ const { rows } = await pool.query(`
 
     ci.name            AS city_name,
 
-    COALESCE(cfb.boost_score,1.0) AS country_boost
+    COALESCE(cfb.boost_score,1.0) AS country_boost,
+
+    COUNT(*) OVER() AS total_count
 
     ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
 
@@ -412,7 +414,12 @@ results = countryVarianceRerank(results);
    RETURN
 ========================================= */
 
-res.json(results);
+const total = rows.length ? rows[0].total_count : 0;
+
+res.json({
+  total,
+  articles: results
+});
 
 } catch (err) {
   console.error("Search error:", err.message);
