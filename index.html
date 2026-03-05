@@ -2392,7 +2392,7 @@
         <div class="viewOption viewOption--soon" data-mode="regions">
           <span class="viewOptionDot"></span>Regions
         </div>
-        <div class="viewOption viewOption" data-mode="ocean">
+        <div class="viewOption" data-mode="ocean">
           <span class="viewOptionDot"></span>Ocean
         </div>
         <div class="viewOption viewOption--soon" data-mode="environment">
@@ -2533,7 +2533,7 @@
         <div class="sidebarDivider"></div>
 
         <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Time</div>
+          <div class="sidebarSectionLabel">Time Series</div>
           <div class="sliderRow">
             <div class="sliderLabelRow">
               <span class="sliderLabel">Year</span>
@@ -2542,6 +2542,32 @@
             <input class="settingsSlider" type="range" id="oceanYearSlider"
                    min="2020" max="2023" step="1" value="2020" />
           </div>
+          <div class="sliderRow" style="margin-top:10px;">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Month</span>
+              <span class="sliderValue" id="oceanMonthVal">Jan</span>
+            </div>
+            <input class="settingsSlider" type="range" id="oceanMonthSlider"
+                   min="1" max="12" step="1" value="1" />
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+            <button id="oceanPlayBtn" style="
+              flex:1; padding:6px 0; border-radius:7px;
+              background:rgba(255,180,80,0.18); border:1px solid rgba(255,180,80,0.35);
+              color:rgba(255,180,80,1); font-size:11px; cursor:pointer; letter-spacing:0.04em;
+            ">▶ Play</button>
+            <button id="oceanStepBackBtn" style="
+              padding:6px 10px; border-radius:7px;
+              background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
+              color:rgba(255,255,255,0.7); font-size:11px; cursor:pointer;
+            ">◀</button>
+            <button id="oceanStepFwdBtn" style="
+              padding:6px 10px; border-radius:7px;
+              background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
+              color:rgba(255,255,255,0.7); font-size:11px; cursor:pointer;
+            ">▶</button>
+          </div>
+          <div style="margin-top:8px;font-size:10px;opacity:0.4;text-align:center;" id="oceanLoadingLabel"></div>
         </div>
 
         <div class="sidebarDivider"></div>
@@ -3419,23 +3445,222 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const oceanOpacityVal    = document.getElementById("oceanOpacityVal");
       const oceanYearSlider    = document.getElementById("oceanYearSlider");
       const oceanYearVal       = document.getElementById("oceanYearVal");
+      const oceanMonthSlider   = document.getElementById("oceanMonthSlider");
+      const oceanMonthVal      = document.getElementById("oceanMonthVal");
+      const oceanPlayBtn       = document.getElementById("oceanPlayBtn");
+      const oceanStepBackBtn   = document.getElementById("oceanStepBackBtn");
+      const oceanStepFwdBtn    = document.getElementById("oceanStepFwdBtn");
+      const oceanLoadingLabel  = document.getElementById("oceanLoadingLabel");
 
+      const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+      // ── Heatmap state ──────────────────────────────────────────────
+      window.__oceanOpacity = 0.8;
+      window.__oceanYear    = 2020;
+      window.__oceanMonth   = 1;
+      window.__oceanLayer   = "temperature";
+
+      // Canvas texture approach: paint lat/lon grid → THREE texture on sphere shell
+      const OCEAN_W = 512, OCEAN_H = 256;
+      const oceanCanvas  = document.createElement("canvas");
+      oceanCanvas.width  = OCEAN_W;
+      oceanCanvas.height = OCEAN_H;
+      const oceanCtx     = oceanCanvas.getContext("2d");
+
+      const oceanTexture = new THREE.CanvasTexture(oceanCanvas);
+      const oceanGeo     = new THREE.SphereGeometry(radius + 0.004, 64, 32);
+      const oceanMat     = new THREE.MeshBasicMaterial({
+        map: oceanTexture, transparent: true, opacity: 0.8,
+        depthWrite: false, side: THREE.FrontSide,
+      });
+      const oceanMesh    = new THREE.Mesh(oceanGeo, oceanMat);
+      oceanMesh.visible  = false;
+      scene.add(oceanMesh);
+
+      // Keep ocean shell rotating with the globe scene
+      window.__oceanMeshSync = function() {
+        if (oceanMesh.visible) {
+          oceanMat.opacity = window.__oceanOpacity ?? 0.8;
+        }
+      };
+
+      // Temperature → colour (purple → blue → cyan → green → yellow → orange → red)
+      function tempToColor(t) {
+        // t in range −2…32°C → 0…1
+        const n = Math.max(0, Math.min(1, (t + 2) / 34));
+        // 5-stop gradient
+        const stops = [
+          [0.00, [80,  0, 130]],
+          [0.20, [0,   0, 220]],
+          [0.42, [0, 200, 220]],
+          [0.60, [0, 200,  50]],
+          [0.78, [255,220,  0]],
+          [0.90, [255,100,  0]],
+          [1.00, [255,  0,  0]],
+        ];
+        for (let i = 1; i < stops.length; i++) {
+          const [t0, c0] = stops[i-1];
+          const [t1, c1] = stops[i];
+          if (n <= t1) {
+            const f = (n - t0) / (t1 - t0);
+            return [
+              Math.round(c0[0] + f*(c1[0]-c0[0])),
+              Math.round(c0[1] + f*(c1[1]-c0[1])),
+              Math.round(c0[2] + f*(c1[2]-c0[2])),
+            ];
+          }
+        }
+        return [255, 0, 0];
+      }
+
+      // Paint canvas from flat data array [{lat,lon,temperature}]
+      function paintHeatmap(data) {
+        // Grid: 0.25° resolution → 1440 × 720, but we downsample to OCEAN_W × OCEAN_H
+        const grid = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
+        const cnt  = new Uint16Array(OCEAN_W * OCEAN_H);
+        for (const p of data) {
+          const u = ((parseFloat(p.lon) + 180) / 360) * OCEAN_W;
+          const v = ((90 - parseFloat(p.lat)) / 180)  * OCEAN_H;
+          const ix = Math.floor(u) % OCEAN_W;
+          const iy = Math.min(Math.floor(v), OCEAN_H - 1);
+          const idx = iy * OCEAN_W + ix;
+          if (isNaN(grid[idx])) grid[idx] = 0;
+          grid[idx] += parseFloat(p.temperature);
+          cnt[idx]++;
+        }
+
+        // Blur pass: fill empty ocean cells from neighbours (1-pass simple spread)
+        const filled = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
+        for (let y = 0; y < OCEAN_H; y++) {
+          for (let x = 0; x < OCEAN_W; x++) {
+            const i = y * OCEAN_W + x;
+            if (cnt[i] > 0) { filled[i] = grid[i] / cnt[i]; continue; }
+            let sum = 0, n = 0;
+            for (let dy = -2; dy <= 2; dy++) {
+              for (let dx = -2; dx <= 2; dx++) {
+                const nx = (x + dx + OCEAN_W) % OCEAN_W;
+                const ny = Math.max(0, Math.min(OCEAN_H-1, y + dy));
+                const ni = ny * OCEAN_W + nx;
+                if (cnt[ni] > 0) { sum += grid[ni] / cnt[ni]; n++; }
+              }
+            }
+            if (n > 0) filled[i] = sum / n;
+          }
+        }
+
+        const img = oceanCtx.createImageData(OCEAN_W, OCEAN_H);
+        for (let i = 0; i < OCEAN_W * OCEAN_H; i++) {
+          const t = filled[i];
+          if (isNaN(t)) { img.data[i*4+3] = 0; continue; }
+          const [r,g,b] = tempToColor(t);
+          img.data[i*4+0] = r;
+          img.data[i*4+1] = g;
+          img.data[i*4+2] = b;
+          img.data[i*4+3] = 200;
+        }
+        oceanCtx.putImageData(img, 0, 0);
+        oceanTexture.needsUpdate = true;
+      }
+
+      // Cache: key = "year-month"
+      const oceanCache = {};
+      let   oceanFetching = false;
+
+      async function loadOceanData(year, month) {
+        const key = `${year}-${month}`;
+        if (oceanCache[key]) { paintHeatmap(oceanCache[key]); return; }
+        if (oceanFetching) return;
+        oceanFetching = true;
+        oceanLoadingLabel.textContent = `Loading ${MONTH_NAMES[month-1]} ${year}…`;
+        try {
+          const res  = await fetch(
+            `https://earth-wjr6.onrender.com/api/ocean/temperature?year=${year}&month=${month}&limit=50000`
+          );
+          const data = await res.json();
+          oceanCache[key] = data;
+          paintHeatmap(data);
+          oceanLoadingLabel.textContent = `${data.length.toLocaleString()} readings`;
+        } catch(e) {
+          oceanLoadingLabel.textContent = "Error loading data";
+          console.error("Ocean fetch error:", e);
+        } finally {
+          oceanFetching = false;
+        }
+      }
+
+      // Show / hide based on current view mode
+      function syncOceanVisibility() {
+        const on = (window.__currentViewMode === "ocean") && (window.__oceanLayer === "temperature");
+        oceanMesh.visible = on;
+        if (on) loadOceanData(window.__oceanYear, window.__oceanMonth);
+      }
+
+      // Expose so the viewOption click can trigger it
+      window.__syncOceanVisibility = syncOceanVisibility;
+
+      // Opacity synced each frame via animate hook below
       oceanOpacitySlider.addEventListener("input", () => {
         const v = parseFloat(oceanOpacitySlider.value);
         oceanOpacityVal.textContent = Math.round(v * 100) + "%";
         window.__oceanOpacity = v;
+        oceanMat.opacity = v;
       });
+
       oceanYearSlider.addEventListener("input", () => {
-        oceanYearVal.textContent = oceanYearSlider.value;
         window.__oceanYear = parseInt(oceanYearSlider.value);
+        oceanYearVal.textContent = oceanYearSlider.value;
+        syncOceanVisibility();
       });
-      [oceanOpacitySlider, oceanYearSlider].forEach(el => el.addEventListener("pointerdown", e => e.stopPropagation()));
+
+      oceanMonthSlider.addEventListener("input", () => {
+        window.__oceanMonth = parseInt(oceanMonthSlider.value);
+        oceanMonthVal.textContent = MONTH_NAMES[window.__oceanMonth - 1];
+        syncOceanVisibility();
+      });
+
+      [oceanOpacitySlider, oceanYearSlider, oceanMonthSlider].forEach(
+        el => el.addEventListener("pointerdown", e => e.stopPropagation())
+      );
+
+      // Step buttons
+      function stepMonth(delta) {
+        let m = window.__oceanMonth + delta;
+        let y = window.__oceanYear;
+        if (m > 12) { m = 1;  y = Math.min(y + 1, 2023); }
+        if (m < 1)  { m = 12; y = Math.max(y - 1, 2020); }
+        window.__oceanMonth = m;
+        window.__oceanYear  = y;
+        oceanMonthSlider.value = m;
+        oceanYearSlider.value  = y;
+        oceanMonthVal.textContent = MONTH_NAMES[m-1];
+        oceanYearVal.textContent  = y;
+        syncOceanVisibility();
+      }
+      oceanStepBackBtn.addEventListener("click", (e) => { e.stopPropagation(); stepMonth(-1); });
+      oceanStepFwdBtn.addEventListener("click",  (e) => { e.stopPropagation(); stepMonth(+1); });
+      [oceanPlayBtn, oceanStepBackBtn, oceanStepFwdBtn].forEach(
+        el => el.addEventListener("pointerdown", e => e.stopPropagation())
+      );
+
+      // Auto-play: advance one month every 2 s
+      let oceanPlaying = false, oceanPlayInterval = null;
+      oceanPlayBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        oceanPlaying = !oceanPlaying;
+        oceanPlayBtn.textContent = oceanPlaying ? "⏹ Stop" : "▶ Play";
+        if (oceanPlaying) {
+          oceanPlayInterval = setInterval(() => {
+            if (!oceanFetching) stepMonth(+1);
+          }, 2000);
+        } else {
+          clearInterval(oceanPlayInterval);
+        }
+      });
 
       // Ocean layer dots — clicking toggles the active overlay
       document.querySelectorAll(".layerOpt:not(.soon)").forEach(opt => {
         opt.addEventListener("click", (e) => {
           e.stopPropagation();
-          // clicking active layer deselects it (no overlay); clicking another selects it
           const alreadyActive = opt.classList.contains("active");
           document.querySelectorAll(".layerOpt").forEach(o => o.classList.remove("active"));
           if (!alreadyActive) {
@@ -3444,6 +3669,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           } else {
             window.__oceanLayer = null;
           }
+          syncOceanVisibility();
         });
       });
       const viewToggle   = document.getElementById("viewToggle");
@@ -3476,6 +3702,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (mode === "city")       { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
           else if (mode === "ocean") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else                       { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
+          window.__currentViewMode = mode;
+          if (window.__syncOceanVisibility) window.__syncOceanVisibility();
           viewDropOpen = false;
           viewDropdown.classList.remove("open");
           viewToggle.classList.remove("active");
@@ -4281,7 +4509,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
 
-        if (window.__flowTick) window.__flowTick(); 
+        if (window.__flowTick) window.__flowTick();
+        // Sync ocean heatmap mesh with globe rotation
+        if (window.__oceanMeshSync) window.__oceanMeshSync();
         renderer.render(scene, camera);
       }
 
