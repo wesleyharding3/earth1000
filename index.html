@@ -3520,7 +3520,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const grid = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
         const cnt  = new Uint16Array(OCEAN_W * OCEAN_H);
         for (const p of data) {
-          const u = ((parseFloat(p.lon) + 180) / 360) * OCEAN_W;
+          const lon = parseFloat(p.lon);
+          const u = ((lon > 180 ? lon - 360 : lon) + 180) / 360 * OCEAN_W;
           const v = ((90 - parseFloat(p.lat)) / 180)  * OCEAN_H;
           const ix = Math.floor(u) % OCEAN_W;
           const iy = Math.min(Math.floor(v), OCEAN_H - 1);
