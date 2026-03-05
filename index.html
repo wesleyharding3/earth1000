@@ -1721,33 +1721,61 @@
       flex-direction: column;
       gap: 6px;
     }
+
+    /* ═══════════════════════════════════════
+   CLEAN QUERY BUILDER GRID
+═══════════════════════════════════════ */
+
   .nfBuilderLine {
-    display: flex;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns:
+      minmax(200px,1fr)   /* origin */
+      minmax(180px,1fr)   /* keyword */
+      minmax(200px,1fr)   /* destination */
+      minmax(170px,1fr)   /* date */
+      auto                /* buttons */
+    ;
     gap: 10px;
     width: 100%;
-    flex-wrap: wrap;
-    overflow: visible;
-  } 
+    align-items: end;
+  }
 
   .nfField {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    min-width: 160px;
+    min-width: 0;
     position: relative;
-    z-index: 1;
   }
 
-  .nfField.grow {
-    flex: 1 1 220px;
-    min-width: 220px;
+/* buttons stay compact */
+  .nfField.shrink {
+    width: auto;
   }
 
+/* responsive collapse */
+  @media (max-width: 1100px) {
+    .nfBuilderLine {
+      grid-template-columns:
+        minmax(200px,1fr)
+        minmax(180px,1fr)
+        minmax(200px,1fr);
+    }
+  }
 
-    /* Field group: label + control */
-    .nfField.shrink { flex-shrink: 0; }
-    
+  @media (max-width: 750px) {
+    .nfBuilderLine {
+      grid-template-columns:
+      minmax(200px,1fr)
+      minmax(200px,1fr);
+    }
+  }
+
+  @media (max-width: 520px) {
+    .nfBuilderLine {
+      grid-template-columns: 1fr;
+    }
+  }
 
     .nfFieldLabel {
       font-size: 9px;
@@ -1814,8 +1842,8 @@
     /* Dropdown panel */
     .nfMultiDrop {
       position: absolute; top: calc(100% + 5px); left: 0;
-      width: max(100%, 220px);
-      min-width: 200px;
+      width: 100%;
+      min-width: 220px;
       background: rgba(5,5,10,0.99);
       border: 1px solid rgba(255,255,255,0.11);
       border-radius: 13px;
