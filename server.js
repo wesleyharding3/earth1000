@@ -389,7 +389,7 @@ const { rows } = await pool.query(`
 let results = rows.map(r => ({
   ...r,
   final_priority:
-    (r.base_priority || 1) *
+    (r.base_priority || 0) *
     (r.country_boost || 1)
 }));
 
