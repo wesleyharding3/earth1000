@@ -4,30 +4,28 @@ from config import DATABASE_URL, DATA_URL
 
 
 def fetch_ocean_data():
+    print("Downloading SST dataset from NOAA ERDDAP...")
 
-    print("Downloading SST dataset...")
+    # ERDDAP CSVs have a units row on line 2 — skip it with header + skiprows
+    df = pd.read_csv(DATA_URL, header=0, skiprows=[1])
 
-    df = pd.read_csv(DATA_URL)
+    # Normalize column names regardless of source casing
+    df.columns = [c.strip().lower() for c in df.columns]
 
-    df = df.rename(columns={
-        "Latitude": "latitude",
-        "Longitude": "longitude",
-        "Value": "temperature"
-    })
+    # ERDDAP returns: time, latitude, longitude, sst
+    df = df.rename(columns={"sst": "temperature"})
 
-    df = df.dropna()
+    # Keep only the columns we need
+    df = df[["time", "latitude", "longitude", "temperature"]]
+    df = df.dropna(subset=["temperature"])
 
     print(f"Rows downloaded: {len(df)}")
-
     return df
 
 
 def insert_data(df):
-
     engine = create_engine(DATABASE_URL)
-
     print("Inserting ocean temperature data...")
-
     df.to_sql(
         "ocean_temperature",
         engine,
@@ -35,16 +33,13 @@ def insert_data(df):
         if_exists="replace",
         index=False,
         method="multi",
-        chunksize=2000
+        chunksize=2000,
     )
-
     print("Insert complete")
 
 
 def main():
-
     df = fetch_ocean_data()
-
     insert_data(df)
 
 
