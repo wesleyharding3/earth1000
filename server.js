@@ -425,6 +425,49 @@ app.get("/api/flows", async (req, res) => {
 });
 
 /* =========================================
+   Ocean Temperature
+========================================= */
+app.get("/api/ocean/temperature", async (req, res) => {
+  try {
+    const year  = req.query.year  ? parseInt(req.query.year)  : null;
+    const month = req.query.month ? parseInt(req.query.month) : null;
+    const limit = Math.min(parseInt(req.query.limit) || 10000, 50000);
+
+    const conditions = [];
+    const params     = [];
+
+    if (year) {
+      params.push(year);
+      conditions.push(`EXTRACT(YEAR  FROM time::date) = $${params.length}`);
+    }
+    if (month) {
+      params.push(month);
+      conditions.push(`EXTRACT(MONTH FROM time::date) = $${params.length}`);
+    }
+
+    const where = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+    params.push(limit);
+
+    const { rows } = await pool.query(`
+      SELECT
+        latitude  AS lat,
+        longitude AS lon,
+        temperature,
+        time
+      FROM ocean.ocean_temperature
+      ${where}
+      ORDER BY time DESC
+      LIMIT $${params.length}
+    `, params);
+
+    res.json(rows);
+  } catch (err) {
+    console.error("Ocean temperature error:", err.message);
+    res.status(500).json({ error: "Failed to fetch ocean temperature data" });
+  }
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
