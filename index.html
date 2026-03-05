@@ -3462,14 +3462,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__oceanLayer   = "temperature";
 
       // Canvas texture approach: paint lat/lon grid → THREE texture on sphere shell
-      const OCEAN_W = 512, OCEAN_H = 256;
+      const OCEAN_W = 1024, OCEAN_H = 512;
       const oceanCanvas  = document.createElement("canvas");
       oceanCanvas.width  = OCEAN_W;
       oceanCanvas.height = OCEAN_H;
       const oceanCtx     = oceanCanvas.getContext("2d");
 
       const oceanTexture = new THREE.CanvasTexture(oceanCanvas);
-      const oceanGeo     = new THREE.SphereGeometry(radius + 0.004, 64, 32);
+      const oceanGeo     = new THREE.SphereGeometry(radius + 0.004, 128, 64);
       const oceanMat     = new THREE.MeshBasicMaterial({
         map: oceanTexture, transparent: true, opacity: 0.8,
         depthWrite: false, side: THREE.FrontSide,
@@ -3560,7 +3560,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           img.data[i*4+2] = b;
           img.data[i*4+3] = 200;
         }
-        oceanCtx.putImageData(img, 0, 0);
+        // Draw raw data to offscreen canvas, then blur onto oceanCanvas
+        const rawCanvas = document.createElement("canvas");
+        rawCanvas.width = OCEAN_W; rawCanvas.height = OCEAN_H;
+        rawCanvas.getContext("2d").putImageData(img, 0, 0);
+        oceanCtx.clearRect(0, 0, OCEAN_W, OCEAN_H);
+        oceanCtx.filter = "blur(6px)";
+        oceanCtx.drawImage(rawCanvas, 0, 0);
+        oceanCtx.filter = "none";
         oceanTexture.needsUpdate = true;
       }
 
