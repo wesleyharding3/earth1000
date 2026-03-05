@@ -1,21 +1,23 @@
+import io
+import requests
 import pandas as pd
 from sqlalchemy import create_engine
 from config import DATABASE_URL, DATA_URL
 
 
 def fetch_ocean_data():
-    print("Downloading SST dataset from NOAA ERDDAP...")
+    print(f"Downloading SST dataset from:\n{DATA_URL}")
 
-    # ERDDAP CSVs have a units row on line 2 — skip it with header + skiprows
-    df = pd.read_csv(DATA_URL, header=0, skiprows=[1])
+    response = requests.get(DATA_URL, timeout=120)
 
-    # Normalize column names regardless of source casing
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"HTTP {response.status_code}\n{response.text[:500]}"
+        )
+
+    df = pd.read_csv(io.StringIO(response.text), skiprows=[1])
     df.columns = [c.strip().lower() for c in df.columns]
-
-    # ERDDAP returns: time, latitude, longitude, sst
     df = df.rename(columns={"sst": "temperature"})
-
-    # Keep only the columns we need
     df = df[["time", "latitude", "longitude", "temperature"]]
     df = df.dropna(subset=["temperature"])
 
