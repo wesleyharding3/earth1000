@@ -470,8 +470,11 @@ function countryVarianceRerank(articles) {
  * Rank articles by descending priority, then apply diversity pass.
  */
 function rankArticles(articles = [], maxIntensity) {
-  // Step 1: score every article.
-  const scored = articles.map(article => ({
+  // Step 1: exclude city articles entirely
+  const eligible = articles.filter(a => a.city_id == null);
+
+  // Step 2: score every article
+  const scored = eligible.map(article => ({
     ...article,
     priority: calculatePriority({
       rawIntensity:    article.intensity || 0,
@@ -480,10 +483,10 @@ function rankArticles(articles = [], maxIntensity) {
       popularityScore: article.popularity_score,
       popularityTier:  article.popularity_tier,
       publishedAt:     article.published_at,
-      isCitySource:    !!article.city_id 
+      isCitySource:    !!article.city_id
     })
   }));
-
+  
   // Step 2: sort by raw priority, tiebreak by recency.
   scored.sort((a, b) => {
     const scoreDiff = b.priority - a.priority;
