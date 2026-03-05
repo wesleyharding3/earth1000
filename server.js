@@ -267,13 +267,14 @@ app.get("/api/tags", async (req, res) => {
 ========================================= */
 app.get("/api/news/search", async (req, res) => {
   try {
-    const limit   = Math.min(parseInt(req.query.limit)  || 24, 50);
-    const offset  = Math.max(parseInt(req.query.offset) || 0,  0);
+    const limit  = Math.min(parseInt(req.query.limit)  || 24, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0,  0);
 
     // Parse comma-separated country ID arrays
-    const fromIds  = req.query.from
+    const fromIds = req.query.from
       ? req.query.from.split(",").map(Number).filter(Boolean)
       : null;
+
     const aboutIds = req.query.about
       ? req.query.about.split(",").map(Number).filter(Boolean)
       : null;
@@ -282,7 +283,6 @@ app.get("/api/news/search", async (req, res) => {
     const fromDate = req.query.from_date?.trim() || null;
     const toDate   = req.query.to_date?.trim()   || null;
 
-    // Build WHERE clauses dynamically
     const conditions = [];
     const params     = [];
 
@@ -299,9 +299,9 @@ app.get("/api/news/search", async (req, res) => {
     if (keyword) {
       params.push(`%${keyword}%`);
       conditions.push(`(
-      COALESCE(a.translated_title,   a.title)   ILIKE $${params.length}
-      OR
-      COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
+        COALESCE(a.translated_title, a.title) ILIKE $${params.length}
+        OR
+        COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
       )`);
     }
 
@@ -319,7 +319,6 @@ app.get("/api/news/search", async (req, res) => {
       ? "WHERE " + conditions.join(" AND ")
       : "";
 
-    // aboutIds requires the article_locations join
     const needsLocJoin = !!aboutIds?.length;
 
     params.push(limit, offset);
@@ -338,30 +337,59 @@ app.get("/api/news/search", async (req, res) => {
         a.image_url,
         a.published_at,
         a.sentiment_score,
+        a.base_priority,
+
         ns.name            AS source_name,
         ns.site_url,
+
         src_co.iso_code,
         src_co.name        AS country_name,
         src_co.flag        AS country_flag,
-        ci.name            AS city_name
-        ${needsLocJoin ? "about_co.name AS about_country_name," : ""}
+
+        ci.name            AS city_name,
+
+        COALESCE(cfb.boost_score,1.0) AS country_boost,
+
+        (COALESCE(a.base_priority,1.0) * COALESCE(cfb.boost_score,1.0)) AS final_priority
+
+        ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
+
       FROM news_articles a
-      JOIN news_sources  ns     ON ns.id     = a.source_id
-      JOIN countries     src_co ON src_co.id = a.country_id
-      LEFT JOIN cities   ci     ON ci.id     = a.city_id
+
+      JOIN news_sources ns
+        ON ns.id = a.source_id
+
+      JOIN countries src_co
+        ON src_co.id = a.country_id
+
+      LEFT JOIN country_feed_boost cfb
+        ON cfb.country_id = a.country_id
+
+      LEFT JOIN cities ci
+        ON ci.id = a.city_id
+
       ${needsLocJoin ? `
-        JOIN article_locations al    ON al.article_id = a.id
-        JOIN countries         about_co ON about_co.id = al.country_id
+        JOIN article_locations al
+          ON al.article_id = a.id
+        JOIN countries about_co
+          ON about_co.id = al.country_id
       ` : ""}
+
       ${whereClause}
-      ORDER BY a.id, a.published_at DESC
+
+      ORDER BY a.id, final_priority DESC, a.published_at DESC
+
       LIMIT $${limitParam} OFFSET $${offsetParam}
     `, params);
 
     res.json(rows);
+
   } catch (err) {
     console.error("Search error:", err.message);
-    res.status(500).json({ error: "Search failed", detail: err.message });
+    res.status(500).json({
+      error: "Search failed",
+      detail: err.message
+    });
   }
 });
 
