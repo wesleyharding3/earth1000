@@ -325,72 +325,101 @@ app.get("/api/news/search", async (req, res) => {
     const limitParam  = params.length - 1;
     const offsetParam = params.length;
 
-    const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        a.image_url,
-        a.published_at,
-        a.sentiment_score,
-        a.base_priority,
+const { rows } = await pool.query(`
+  SELECT DISTINCT ON (a.id)
+    a.id,
+    a.title,
+    a.translated_title,
+    a.url,
+    a.article_url,
+    a.summary,
+    a.translated_summary,
+    a.image_url,
+    a.published_at,
+    a.sentiment_score,
+    a.base_priority,
 
-        ns.name            AS source_name,
-        ns.site_url,
+    ns.name            AS source_name,
+    ns.site_url,
 
-        src_co.iso_code,
-        src_co.name        AS country_name,
-        src_co.flag        AS country_flag,
+    src_co.iso_code,
+    src_co.name        AS country_name,
+    src_co.flag        AS country_flag,
 
-        ci.name            AS city_name,
+    ci.name            AS city_name,
 
-        COALESCE(cfb.boost_score,1.0) AS country_boost,
+    COALESCE(cfb.boost_score,1.0) AS country_boost
 
-        (COALESCE(a.base_priority,1.0) * COALESCE(cfb.boost_score,1.0)) AS final_priority
+    ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
 
-        ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
+  FROM news_articles a
 
-      FROM news_articles a
+  JOIN news_sources ns
+    ON ns.id = a.source_id
 
-      JOIN news_sources ns
-        ON ns.id = a.source_id
+  JOIN countries src_co
+    ON src_co.id = a.country_id
 
-      JOIN countries src_co
-        ON src_co.id = a.country_id
+  LEFT JOIN country_feed_boost cfb
+    ON cfb.country_id = a.country_id
 
-      LEFT JOIN country_feed_boost cfb
-        ON cfb.country_id = a.country_id
+  LEFT JOIN cities ci
+    ON ci.id = a.city_id
 
-      LEFT JOIN cities ci
-        ON ci.id = a.city_id
+  ${needsLocJoin ? `
+    JOIN article_locations al
+      ON al.article_id = a.id
+    JOIN countries about_co
+      ON about_co.id = al.country_id
+  ` : ""}
 
-      ${needsLocJoin ? `
-        JOIN article_locations al
-          ON al.article_id = a.id
-        JOIN countries about_co
-          ON about_co.id = al.country_id
-      ` : ""}
+  ${whereClause}
 
-      ${whereClause}
+  ORDER BY a.id, a.published_at DESC
 
-      ORDER BY a.id, final_priority DESC, a.published_at DESC
+  LIMIT $${limitParam} OFFSET $${offsetParam}
+`, params);
 
-      LIMIT $${limitParam} OFFSET $${offsetParam}
-    `, params);
 
-    res.json(rows);
+/* =========================================
+   APPLY COUNTRY BOOST + PRIORITY
+========================================= */
 
-  } catch (err) {
-    console.error("Search error:", err.message);
-    res.status(500).json({
-      error: "Search failed",
-      detail: err.message
-    });
-  }
+let results = rows.map(r => ({
+  ...r,
+  final_priority:
+    (r.base_priority || 1) *
+    (r.country_boost || 1)
+}));
+
+
+/* =========================================
+   SORT BY PRIORITY
+========================================= */
+
+results.sort((a,b)=>b.final_priority-a.final_priority);
+
+
+/* =========================================
+   COUNTRY VARIANCE DIVERSIFICATION
+========================================= */
+
+results = countryVarianceRerank(results);
+
+
+/* =========================================
+   RETURN
+========================================= */
+
+res.json(results);
+
+} catch (err) {
+  console.error("Search error:", err.message);
+  res.status(500).json({
+    error: "Search failed",
+    detail: err.message
+  });
+}
 });
 
 /* =========================================
