@@ -3480,7 +3480,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__oceanLayer   = "temperature";
 
       // Canvas texture approach: paint lat/lon grid → THREE texture on sphere shell
-      const OCEAN_W = 1024, OCEAN_H = 512;
+      const OCEAN_W = 2048, OCEAN_H = 1024;
       const oceanCanvas  = document.createElement("canvas");
       oceanCanvas.width  = OCEAN_W;
       oceanCanvas.height = OCEAN_H;
@@ -3532,62 +3532,116 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return [255, 0, 0];
       }
 
-      // Paint canvas from flat data array [{lat,lon,temperature}]
-      function paintHeatmap(data) {
-        // Grid: 0.25° resolution → 1440 × 720, but we downsample to OCEAN_W × OCEAN_H
-        const grid = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
-        const cnt  = new Uint16Array(OCEAN_W * OCEAN_H);
+function paintHeatmap(data) {
+        const W = OCEAN_W, H = OCEAN_H;
+        const grid = new Float32Array(W * H).fill(NaN);
+        const weight = new Float32Array(W * H).fill(0);
+
+        // Splat each reading with a small radius so sparse data spreads
+        const SPLAT_R = 3;
         for (const p of data) {
           const lon = parseFloat(p.lon);
-          const u = ((lon > 180 ? lon - 360 : lon) + 180) / 360 * OCEAN_W;
-          const v = ((90 - parseFloat(p.lat)) / 180)  * OCEAN_H;
-          const ix = Math.floor(u) % OCEAN_W;
-          const iy = Math.min(Math.floor(v), OCEAN_H - 1);
-          const idx = iy * OCEAN_W + ix;
-          if (isNaN(grid[idx])) grid[idx] = 0;
-          grid[idx] += parseFloat(p.temperature);
-          cnt[idx]++;
-        }
-
-        // Blur pass: fill empty ocean cells from neighbours (1-pass simple spread)
-        const filled = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
-        for (let y = 0; y < OCEAN_H; y++) {
-          for (let x = 0; x < OCEAN_W; x++) {
-            const i = y * OCEAN_W + x;
-            if (cnt[i] > 0) { filled[i] = grid[i] / cnt[i]; continue; }
-            let sum = 0, n = 0;
-            for (let dy = -2; dy <= 2; dy++) {
-              for (let dx = -2; dx <= 2; dx++) {
-                const nx = (x + dx + OCEAN_W) % OCEAN_W;
-                const ny = Math.max(0, Math.min(OCEAN_H-1, y + dy));
-                const ni = ny * OCEAN_W + nx;
-                if (cnt[ni] > 0) { sum += grid[ni] / cnt[ni]; n++; }
-              }
+          const lat = parseFloat(p.lat);
+          const temp = parseFloat(p.temperature);
+          const u = ((lon > 180 ? lon - 360 : lon) + 180) / 360 * W;
+          const v = ((90 - lat) / 180) * H;
+          const cx = Math.floor(u);
+          const cy = Math.min(Math.floor(v), H - 1);
+          for (let dy = -SPLAT_R; dy <= SPLAT_R; dy++) {
+            for (let dx = -SPLAT_R; dx <= SPLAT_R; dx++) {
+              const dist = Math.sqrt(dx*dx + dy*dy);
+              if (dist > SPLAT_R) continue;
+              const nx = ((cx + dx) % W + W) % W;
+              const ny = Math.max(0, Math.min(H - 1, cy + dy));
+              const idx = ny * W + nx;
+              const w = Math.exp(-dist * dist / (SPLAT_R * 0.7));
+              if (isNaN(grid[idx])) grid[idx] = 0;
+              grid[idx] += temp * w;
+              weight[idx] += w;
             }
-            if (n > 0) filled[i] = sum / n;
           }
         }
 
-        const img = oceanCtx.createImageData(OCEAN_W, OCEAN_H);
-        for (let i = 0; i < OCEAN_W * OCEAN_H; i++) {
-          const t = filled[i];
-          if (isNaN(t)) { img.data[i*4+3] = 0; continue; }
-          const [r,g,b] = tempToColor(t);
+        // Average weighted sums
+        for (let i = 0; i < W * H; i++) {
+          if (weight[i] > 0) grid[i] /= weight[i];
+        }
+
+        // Multi-pass iterative fill: expand known values into unknown neighbors
+        const FILL_R = 6;
+        const PASSES = 18;
+        const filled = new Float32Array(W * H);
+        const filledMask = new Uint8Array(W * H);
+
+        for (let i = 0; i < W * H; i++) {
+          if (!isNaN(grid[i])) { filled[i] = grid[i]; filledMask[i] = 1; }
+        }
+
+        for (let pass = 0; pass < PASSES; pass++) {
+          let changed = false;
+          const snapshot = filled.slice();
+          const snapMask = filledMask.slice();
+          for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+              const i = y * W + x;
+              if (filledMask[i]) continue;
+              let sum = 0, cnt = 0;
+              const r = Math.min(FILL_R, 2 + pass * 2);
+              for (let dy = -r; dy <= r; dy++) {
+                for (let dx = -r; dx <= r; dx++) {
+                  if (dx === 0 && dy === 0) continue;
+                  const dist = Math.sqrt(dx*dx + dy*dy);
+                  if (dist > r) continue;
+                  const nx = ((x + dx) % W + W) % W;
+                  const ny = Math.max(0, Math.min(H - 1, y + dy));
+                  const ni = ny * W + nx;
+                  if (snapMask[ni]) {
+                    const w = 1 / (dist + 0.5);
+                    sum += snapshot[ni] * w;
+                    cnt += w;
+                  }
+                }
+              }
+              if (cnt > 0) {
+                filled[i] = sum / cnt;
+                filledMask[i] = 1;
+                changed = true;
+              }
+            }
+          }
+          if (!changed) break;
+        }
+
+        // Build raw ImageData
+        const img = oceanCtx.createImageData(W, H);
+        for (let i = 0; i < W * H; i++) {
+          if (!filledMask[i]) { img.data[i*4+3] = 0; continue; }
+          const [r,g,b] = tempToColor(filled[i]);
           img.data[i*4+0] = r;
           img.data[i*4+1] = g;
           img.data[i*4+2] = b;
-          img.data[i*4+3] = 200;
+          img.data[i*4+3] = 210;
         }
-        // Draw raw data to offscreen canvas, then blur onto oceanCanvas
+
+        // Render to offscreen, then multi-blur onto ocean canvas for smooth blending
         const rawCanvas = document.createElement("canvas");
-        rawCanvas.width = OCEAN_W; rawCanvas.height = OCEAN_H;
-        rawCanvas.getContext("2d").putImageData(img, 0, 0);
-        oceanCtx.clearRect(0, 0, OCEAN_W, OCEAN_H);
-        oceanCtx.filter = "blur(6px)";
+        rawCanvas.width = W; rawCanvas.height = H;
+        const rawCtx = rawCanvas.getContext("2d");
+        rawCtx.putImageData(img, 0, 0);
+
+        oceanCtx.clearRect(0, 0, W, H);
+        oceanCtx.filter = "blur(8px)";
+        oceanCtx.drawImage(rawCanvas, 0, 0);
+        oceanCtx.filter = "blur(4px)";
         oceanCtx.drawImage(rawCanvas, 0, 0);
         oceanCtx.filter = "none";
+        oceanCtx.globalAlpha = 0.35;
+        oceanCtx.drawImage(rawCanvas, 0, 0);
+        oceanCtx.globalAlpha = 1.0;
+
         oceanTexture.needsUpdate = true;
       }
+      
 
       // Cache: key = "year-month"
       const oceanCache = {};
