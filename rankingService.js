@@ -56,7 +56,7 @@ async function getRankedCityArticles(cityId) {
   `, [cityId]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
-  return rankArticles(rows, maxIntensity);
+  return rankArticles(rows, maxIntensity, { skipCityPenalty: true });
 }
 
 module.exports = { getRankedArticles, getRankedCityArticles };
