@@ -434,7 +434,9 @@ function countryVarianceRerank(articles) {
 // PUBLIC API
 // ─────────────────────────────────────────────────────────────
 
-function rankArticles(articles = [], maxIntensity) {
+function rankArticles(articles = [], maxIntensity, options = {}) {
+  const skipCityPenalty = options.skipCityPenalty || false;
+
   // Step 1: score every article
   const scored = articles.map(article => ({
     ...article,
@@ -445,9 +447,51 @@ function rankArticles(articles = [], maxIntensity) {
       popularityScore: article.popularity_score,
       popularityTier:  article.popularity_tier,
       publishedAt:     article.published_at,
-      isCitySource:    !!article.city_id
+      isCitySource:    skipCityPenalty ? false : !!article.city_id
     })
   }));
+
+  // Step 2: sort by raw priority, tiebreak by recency
+  scored.sort((a, b) => {
+    const scoreDiff = b.priority - a.priority;
+    if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
+    return new Date(b.published_at) - new Date(a.published_at);
+  });
+
+  // Step 3: reorder for source variance
+  const reranked = diversityRerank(scored);
+
+  // Step 4: enforce city concentration cap (skip if city feed)
+  if (skipCityPenalty) return reranked;
+
+  const { CAP_PER_WINDOW, WINDOW_SIZE } = CONFIG.CITY_FEED;
+
+  const result      = [];
+  const deferred    = [];
+  const windowQueue = [];
+  let cityCountInWindow = 0;
+
+  for (const article of reranked) {
+    const isCity = article.city_id != null;
+
+    if (isCity && cityCountInWindow >= CAP_PER_WINDOW) {
+      deferred.push(article);
+      continue;
+    }
+
+    result.push(article);
+    windowQueue.push(isCity);
+    if (isCity) cityCountInWindow++;
+
+    if (windowQueue.length > WINDOW_SIZE) {
+      const evicted = windowQueue.shift();
+      if (evicted) cityCountInWindow--;
+    }
+  }
+
+  deferred.sort((a, b) => b.priority - a.priority);
+  return [...result, ...deferred];
+}
 
   // Step 2: sort by raw priority, tiebreak by recency
   scored.sort((a, b) => {
