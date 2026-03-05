@@ -1725,20 +1725,32 @@
     /* ═══════════════════════════════════════
    CLEAN QUERY BUILDER GRID
 ═══════════════════════════════════════ */
+.nfBuilderLine {
+  display: grid;
+  grid-template-columns:
+    minmax(200px,1fr)
+    minmax(180px,1fr)
+    minmax(200px,1fr)
+    minmax(170px,1fr)
+    140px;
+  gap: 10px;
+  width: 100%;
+  align-items: end;
+}
 
-  .nfBuilderLine {
-    display: grid;
-    grid-template-columns:
-      minmax(200px,1fr)   /* origin */
-      minmax(180px,1fr)   /* keyword */
-      minmax(200px,1fr)   /* destination */
-      minmax(170px,1fr)   /* date */
-      auto                /* buttons */
-    ;
-    gap: 10px;
-    width: 100%;
-    align-items: end;
-  }
+.nfBuilderLine > * {
+  min-width: 0;
+}
+
+.nfKwInput,
+.nfDateInput,
+.nfSearchBtn,
+.nfClearBtn,
+.nfMultiBtn {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 
   .nfField {
     display: flex;
