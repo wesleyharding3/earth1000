@@ -407,7 +407,15 @@ function countryVarianceRerank(articles) {
   const DECAY       = 0.25;
   const MAX_REPEAT  = 2;
 
-  const pool      = [...articles];
+  // Precompute recency bonus: normalize age across the result set
+  const now = Date.now();
+  const ages = articles.map(a => now - new Date(a.published_at).getTime());
+  const maxAge = Math.max(...ages) || 1;
+
+  const pool      = articles.map(a => ({
+    ...a,
+    _recencyBonus: 1 + 0.25 * (1 - (now - new Date(a.published_at).getTime()) / maxAge)
+  }));
   const result    = [];
   const penalties = {};
 
@@ -418,7 +426,6 @@ function countryVarianceRerank(articles) {
     if (result.length >= MAX_REPEAT) {
       const tail = result.slice(-MAX_REPEAT);
       const lastCountry = tail[0].country_name;
-
       if (tail.every(a => a.country_name === lastCountry)) {
         blocked.add(lastCountry);
       }
@@ -428,14 +435,10 @@ function countryVarianceRerank(articles) {
     let bestScore = -Infinity;
 
     for (let i = 0; i < pool.length; i++) {
-
       const a = pool[i];
-
       if (blocked.has(a.country_name)) continue;
-
       const penalty = penalties[a.country_name] || 0;
-      const score   = a.final_priority * (1 - penalty);
-
+      const score   = a.final_priority * a._recencyBonus * (1 - penalty);
       if (score > bestScore) {
         bestScore = score;
         bestIdx   = i;
@@ -444,7 +447,7 @@ function countryVarianceRerank(articles) {
 
     if (bestIdx === -1) bestIdx = 0;
 
-    const chosen = pool.splice(bestIdx,1)[0];
+    const chosen = pool.splice(bestIdx, 1)[0];
     result.push(chosen);
 
     for (const c of Object.keys(penalties)) {
@@ -453,7 +456,7 @@ function countryVarianceRerank(articles) {
     }
 
     penalties[chosen.country_name] =
-      Math.min(MAX_PENALTY,(penalties[chosen.country_name] || 0) + MAX_PENALTY);
+      Math.min(MAX_PENALTY, (penalties[chosen.country_name] || 0) + MAX_PENALTY);
   }
 
   return result;
@@ -480,6 +483,17 @@ function rankArticles(articles = [], maxIntensity) {
       isCitySource:    !!article.city_id 
     })
   }));
+
+  // Step 2: sort by raw priority, tiebreak by recency.
+  scored.sort((a, b) => {
+    const scoreDiff = b.priority - a.priority;
+    if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
+    return new Date(b.published_at) - new Date(a.published_at);
+  });
+
+  // Step 3: reorder for source variance while respecting priority signal.
+  return diversityRerank(scored);
+}
 
   // Step 2: sort by raw priority (diversity pass starts from this order).
   scored.sort((a, b) => b.priority - a.priority);
