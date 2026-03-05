@@ -286,6 +286,9 @@ app.get("/api/news/search", async (req, res) => {
     const conditions = [];
     const params     = [];
 
+    // Always exclude city-level articles from the general search feed
+    conditions.push(`a.city_id IS NULL`);
+
     if (fromIds?.length) {
       params.push(fromIds);
       conditions.push(`a.country_id = ANY($${params.length})`);
@@ -457,6 +460,7 @@ app.get("/api/ocean/temperature", async (req, res) => {
 
     const conditions = [];
     const params     = [];
+    
 
     if (year) {
       params.push(year);
