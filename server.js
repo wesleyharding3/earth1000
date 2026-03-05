@@ -3,6 +3,7 @@ const cors = require("cors");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
+const { countryVarianceRerank } = require("./priorityEngine");
 
 const app = express();
 console.log("Node version:", process.version);
