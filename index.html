@@ -5572,6 +5572,7 @@ function clearArcs() {
     let countries = [], tags = [], fromSel = new Set(), aboutSel = new Set();
     let currentTag = null, lastKeyword = "", textFilter = "";
     let articles = [], offset = 0, loading = false, hasMore = true, searched = false;
+    let totalResults = 0;
     const LIMIT = 24;
     const viewport  = document.getElementById("nfViewport");
     const grid      = document.getElementById("nfGrid");
@@ -5767,9 +5768,16 @@ function clearArcs() {
       fetch(buildUrl(offset))
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
+          const rows = data.articles || [];
+          const total = data.total || 0;
+          totalResults = total;
+
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
-          if (!Array.isArray(data) || data.length < LIMIT) hasMore = false;
-          articles = [...articles, ...(Array.isArray(data) ? data : [])];
+
+          if (rows.length < LIMIT) hasMore = false;
+
+          articles = [...articles, ...rows];
+
           offset += LIMIT; renderCards(filtered()); updateMetaCount();
         })
         .catch(err => {
@@ -5802,8 +5810,12 @@ function clearArcs() {
     }
 
     function updateMetaCount() {
-      const n = filtered().length;
-      metaCount.innerHTML = `<strong>${n.toLocaleString()}</strong> article${n !== 1 ? "s" : ""}${hasMore ? "+" : ""}`;
+      const loaded = filtered().length;
+      const total  = totalResults || loaded;
+
+      metaCount.innerHTML =
+        `<strong>${total.toLocaleString()}</strong> articles` +
+        (loaded < total ? ` <span style="opacity:.55">(showing ${loaded})</span>` : "");
     }
 
     function renderPills() {
