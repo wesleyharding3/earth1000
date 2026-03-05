@@ -2877,6 +2877,7 @@ function computeCityTiers(cities) {
 
     function init(cities, countries) {
       let currentViewMode = "country";
+      window.__currentViewMode = "country";
       const earthPointCount = 10000;
       const earthPositions = [];
       const earthColors = [];
@@ -3590,7 +3591,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Show / hide based on current view mode
       function syncOceanVisibility() {
-        const on = (window.__currentViewMode === "ocean") && (window.__oceanLayer === "temperature");
+        const on = (currentViewMode === "ocean") && (window.__oceanLayer === "temperature");
         oceanMesh.visible = on;
         if (on) loadOceanData(window.__oceanYear, window.__oceanMonth);
       }
