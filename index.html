@@ -4264,6 +4264,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       window.addEventListener("wheel", e => {
+        if (window.__currentPage !== 1) return;
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
