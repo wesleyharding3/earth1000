@@ -495,13 +495,6 @@ function rankArticles(articles = [], maxIntensity) {
   return diversityRerank(scored);
 }
 
-  // Step 2: sort by raw priority (diversity pass starts from this order).
-  scored.sort((a, b) => b.priority - a.priority);
-
-  // Step 3: reorder for source variance while respecting priority signal.
-  return diversityRerank(scored);
-}
-
 /**
  * Optional: detect over-tiering distortion
  */
