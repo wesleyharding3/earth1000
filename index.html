@@ -1606,6 +1606,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      flex-wrap: wrap;
+      row-gap: 6px;
     }
 
     .nfPageTitle {
@@ -1619,7 +1621,7 @@
       margin-right: 4px;
     }
 
-    .nfTopSpacer { flex: 1; }
+    .nfTopSpacer { flex: 1; min-width: 12px; }
 
     /* Sort */
     .nfSortSeg {
@@ -1694,7 +1696,7 @@
     .nfTagOpt.active .nfTagOptDot { background: rgba(255,180,80,1); box-shadow: 0 0 6px rgba(255,150,40,0.8); }
 
     /* Text search */
-    .nfTextWrap { display: flex; align-items: center; position: relative; flex: 1; max-width: 220px; }
+    .nfTextWrap { display: flex; align-items: center; position: relative; flex: 1; max-width: 220px; min-width: 100px; flex-shrink: 1; }
     .nfTextInput {
       width: 100%; height: 30px;
       padding: 0 26px 0 10px;
@@ -1724,7 +1726,9 @@
       align-items: flex-end;
       gap: 10px;          /* enforced gutter — fields can never touch */
       width: 100%;
-     flex-wrap: wrap;    /* wraps on very small screens instead of overlapping */
+     flex-wrap: wrap;
+     row-gap: 8px;
+     min-width: 0;    /* wraps on very small screens instead of overlapping */
     }
 
     .nfField {
@@ -1736,7 +1740,7 @@
 
     .nfField.grow {
       flex: 1 1 0;
-      min-width: 100px;   /* absolute floor — enough to type in */
+      min-width: 160px;   /* absolute floor — enough to type in */
       max-width: 100%;
     }
 
