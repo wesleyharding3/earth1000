@@ -371,6 +371,18 @@ app.get("/api/news/search", async (req, res) => {
 
     results = countryVarianceRerank(results);
 
+    // Final pass: re-sort ensuring recency is respected within close priority bands
+    const PRIORITY_BAND = 0.15; // articles within 15% of each other sort by date
+    results.sort((a, b) => {
+      const pa = a.final_priority || 0;
+      const pb = b.final_priority || 0;
+      const maxP = Math.max(pa, pb) || 1;
+      if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
+        return new Date(b.published_at) - new Date(a.published_at);
+      }
+      return pb - pa;
+    });
+
     const total = rows.length ? rows[0].total_count : 0;
 
     res.json({ total, articles: results });
