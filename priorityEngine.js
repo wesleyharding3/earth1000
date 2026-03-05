@@ -202,13 +202,18 @@ module.exports = { classifyArticle };
  * - No source appears consecutively more than DIVERSITY.MAX_CONSECUTIVE times
  * - Source penalty decays with distance, so good articles from same source
  *   still surface — just spaced out
+ *
+ * City source guarantees:
+ * - City articles scored with CITY_SOURCE_PENALTY multiplier (0.01)
+ * - Hard cap of max 1 city article per 20-article window
+ * - Excess city articles deferred to end of feed, sorted by priority
  */
 
 const CONFIG = {
-  MIN_POPULARITY:     0.90,
-  MAX_POPULARITY:     1.60,
-  MAX_TAG_MULTIPLIER: 1.20,
-  MIN_TAG_MULTIPLIER: 1.00,
+  MIN_POPULARITY:      0.90,
+  MAX_POPULARITY:      1.60,
+  MAX_TAG_MULTIPLIER:  1.20,
+  MIN_TAG_MULTIPLIER:  1.00,
   CITY_SOURCE_PENALTY: 0.01,
   TIER_BONUS: {
     4: 6.0,
@@ -220,22 +225,14 @@ const CONFIG = {
     HALF_LIFE_HOURS: 24,
     MIN_DECAY:       0.05
   },
-
-  /*
-   * DIVERSITY controls the source-variance reordering pass.
-   *
-   * MAX_PENALTY    – maximum fractional score reduction applied to an article
-   *                  when its source has appeared very recently (0.6 = up to 60% cut).
-   * DECAY_PER_SLOT – how much the penalty shrinks per intervening article.
-   *                  e.g. 0.25 → penalty halves after ~2 slots, gone after ~4.
-   * MAX_CONSECUTIVE– hard cap: if inserting an article would place it immediately
-   *                  after MAX_CONSECUTIVE articles from the same source, it is
-   *                  pushed down until a gap exists, regardless of penalty math.
-   */
   DIVERSITY: {
     MAX_PENALTY:     0.80,
     DECAY_PER_SLOT:  0.15,
     MAX_CONSECUTIVE: 2
+  },
+  CITY_FEED: {
+    CAP_PER_WINDOW: 1,   // max city articles per window
+    WINDOW_SIZE:    20   // rolling window size
   }
 };
 
@@ -288,7 +285,7 @@ function calculatePriority({
   popularityScore,
   popularityTier,
   publishedAt,
-  isCitySource  
+  isCitySource
 }) {
   const normalized    = normalizeIntensity(rawIntensity, maxIntensity);
   const tagMultiplier = computeTagMultiplier(tagWeightSum);
@@ -306,31 +303,10 @@ function calculatePriority({
     cityPenalty;
 
   return parseFloat(finalScore.toFixed(8));
-  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // DIVERSITY PASS
-//
-// Algorithm: greedy slot-filling with source-penalty lookahead.
-//
-// We maintain a pool of unplaced articles (sorted by base priority).
-// At each position we pick the article with the highest
-// "effective score" = basePriority * (1 - sourcePenalty).
-//
-// sourcePenalty for article A at slot i =
-//   min(MAX_PENALTY,
-//       sum over recent slots j < i of:
-//         MAX_PENALTY * (1 - DECAY_PER_SLOT)^(i - j)
-//       where slot j contains the same source as A)
-//
-// In practice we track a running `penalties` map keyed by source_id.
-// After placing an article we:
-//   1. Decay all existing penalties by (1 - DECAY_PER_SLOT).
-//   2. Add MAX_PENALTY to the placed source's entry (capped at MAX_PENALTY).
-//
-// The MAX_CONSECUTIVE hard cap is enforced as a pre-filter: if the last
-// MAX_CONSECUTIVE slots are all from the same source, that source is
-// temporarily excluded from candidacy.
 // ─────────────────────────────────────────────────────────────
 
 function diversityRerank(articles) {
@@ -342,42 +318,34 @@ function diversityRerank(articles) {
     MAX_CONSECUTIVE
   } = CONFIG.DIVERSITY;
 
-  // Work with a shallow-copy pool so we don't mutate the input array.
   const pool      = articles.map((a, originalIndex) => ({ ...a, originalIndex }));
   const result    = [];
-  const penalties = {}; // source_id → current penalty (0–MAX_PENALTY)
+  const penalties = {};
 
   while (pool.length) {
-    // Determine which sources are hard-blocked by MAX_CONSECUTIVE rule.
     const blockedSources = new Set();
     if (result.length >= MAX_CONSECUTIVE) {
-      const tail = result.slice(-MAX_CONSECUTIVE);
+      const tail       = result.slice(-MAX_CONSECUTIVE);
       const tailSource = tail[0].source_id;
       if (tail.every(a => a.source_id === tailSource)) {
         blockedSources.add(tailSource);
       }
     }
 
-    // Score each candidate in the pool.
     let bestIdx      = -1;
     let bestEffScore = -Infinity;
 
     for (let i = 0; i < pool.length; i++) {
       const candidate = pool[i];
-
       if (blockedSources.has(candidate.source_id)) continue;
-
-      const penalty    = penalties[candidate.source_id] || 0;
-      const effScore   = candidate.priority * (1 - penalty);
-
+      const penalty  = penalties[candidate.source_id] || 0;
+      const effScore = candidate.priority * (1 - penalty);
       if (effScore > bestEffScore) {
         bestEffScore = effScore;
         bestIdx      = i;
       }
     }
 
-    // Fallback: if everything is blocked (shouldn't happen but be safe),
-    // just pick the highest raw-priority article ignoring the hard cap.
     if (bestIdx === -1) {
       bestIdx = pool.reduce(
         (best, a, i) => (a.priority > pool[best].priority ? i : best),
@@ -388,10 +356,9 @@ function diversityRerank(articles) {
     const chosen = pool.splice(bestIdx, 1)[0];
     result.push(chosen);
 
-    // Update penalties: decay all, then charge the chosen source.
     for (const src of Object.keys(penalties)) {
       penalties[src] = penalties[src] * (1 - DECAY_PER_SLOT);
-      if (penalties[src] < 0.001) delete penalties[src]; // prune near-zero entries
+      if (penalties[src] < 0.001) delete penalties[src];
     }
     penalties[chosen.source_id] =
       Math.min(MAX_PENALTY, (penalties[chosen.source_id] || 0) + MAX_PENALTY);
@@ -400,6 +367,10 @@ function diversityRerank(articles) {
   return result;
 }
 
+// ─────────────────────────────────────────────────────────────
+// COUNTRY VARIANCE PASS
+// ─────────────────────────────────────────────────────────────
+
 function countryVarianceRerank(articles) {
   if (!articles.length) return articles;
 
@@ -407,9 +378,8 @@ function countryVarianceRerank(articles) {
   const DECAY       = 0.25;
   const MAX_REPEAT  = 2;
 
-  // Precompute recency bonus: normalize age across the result set
-  const now = Date.now();
-  const ages = articles.map(a => now - new Date(a.published_at).getTime());
+  const now    = Date.now();
+  const ages   = articles.map(a => now - new Date(a.published_at).getTime());
   const maxAge = Math.max(...ages) || 1;
 
   const pool      = articles.map(a => ({
@@ -420,11 +390,10 @@ function countryVarianceRerank(articles) {
   const penalties = {};
 
   while (pool.length) {
-
     const blocked = new Set();
 
     if (result.length >= MAX_REPEAT) {
-      const tail = result.slice(-MAX_REPEAT);
+      const tail        = result.slice(-MAX_REPEAT);
       const lastCountry = tail[0].country_name;
       if (tail.every(a => a.country_name === lastCountry)) {
         blocked.add(lastCountry);
@@ -454,7 +423,6 @@ function countryVarianceRerank(articles) {
       penalties[c] = penalties[c] * (1 - DECAY);
       if (penalties[c] < 0.01) delete penalties[c];
     }
-
     penalties[chosen.country_name] =
       Math.min(MAX_PENALTY, (penalties[chosen.country_name] || 0) + MAX_PENALTY);
   }
@@ -466,15 +434,9 @@ function countryVarianceRerank(articles) {
 // PUBLIC API
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Rank articles by descending priority, then apply diversity pass.
- */
 function rankArticles(articles = [], maxIntensity) {
-  // Step 1: exclude city articles entirely
-  const eligible = articles.filter(a => a.city_id == null);
-
-  // Step 2: score every article
-  const scored = eligible.map(article => ({
+  // Step 1: score every article
+  const scored = articles.map(article => ({
     ...article,
     priority: calculatePriority({
       rawIntensity:    article.intensity || 0,
@@ -486,21 +448,48 @@ function rankArticles(articles = [], maxIntensity) {
       isCitySource:    !!article.city_id
     })
   }));
-  
-  // Step 2: sort by raw priority, tiebreak by recency.
+
+  // Step 2: sort by raw priority, tiebreak by recency
   scored.sort((a, b) => {
     const scoreDiff = b.priority - a.priority;
     if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
     return new Date(b.published_at) - new Date(a.published_at);
   });
 
-  // Step 3: reorder for source variance while respecting priority signal.
-  return diversityRerank(scored);
+  // Step 3: reorder for source variance
+  const reranked = diversityRerank(scored);
+
+  // Step 4: enforce city concentration cap (max 1 per 20-article window)
+  const { CAP_PER_WINDOW, WINDOW_SIZE } = CONFIG.CITY_FEED;
+
+  const result      = [];
+  const deferred    = [];
+  const windowQueue = [];
+  let cityCountInWindow = 0;
+
+  for (const article of reranked) {
+    const isCity = article.city_id != null;
+
+    if (isCity && cityCountInWindow >= CAP_PER_WINDOW) {
+      deferred.push(article);
+      continue;
+    }
+
+    result.push(article);
+    windowQueue.push(isCity);
+    if (isCity) cityCountInWindow++;
+
+    if (windowQueue.length > WINDOW_SIZE) {
+      const evicted = windowQueue.shift();
+      if (evicted) cityCountInWindow--;
+    }
+  }
+
+  // Append deferred city articles at the end, sorted by priority
+  deferred.sort((a, b) => b.priority - a.priority);
+  return [...result, ...deferred];
 }
 
-/**
- * Optional: detect over-tiering distortion
- */
 function detectTierInflation(sources = []) {
   const tier3Count = sources.filter(s => s.popularity_tier === 3).length;
   const tier4Count = sources.filter(s => s.popularity_tier === 4).length;
