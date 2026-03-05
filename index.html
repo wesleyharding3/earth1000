@@ -1952,9 +1952,12 @@
     .nfDateRow {
       display: flex; align-items: center; gap: 6px;
     }
+    .nfDateWrap {
+      flex: 1 1 0; position: relative; display: flex; align-items: center; min-width: 70px;
+    }
     .nfDateInput {
-      flex: 1 1 0; height: 26px; min-width: 70px;
-      padding: 0 8px;
+      flex: 1 1 0; width: 100%; height: 26px; min-width: 0;
+      padding: 0 24px 0 8px;
       border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.11);
       background: rgba(255,255,255,0.04);
@@ -1963,11 +1966,26 @@
       outline: none;
       cursor: pointer;
       transition: border-color 0.2s;
+      box-sizing: border-box;
     }
     .nfDateInput:focus { border-color: rgba(0,180,255,0.38); }
     .nfDateInput::-webkit-calendar-picker-indicator {
       filter: invert(0.45); cursor: pointer; opacity: 0.6;
     }
+    .nfDateClear {
+      position: absolute; right: 6px; top: 50%;
+      transform: translateY(-50%);
+      font-size: 13px; line-height: 1;
+      color: rgba(255,255,255,0.35);
+      cursor: pointer;
+      display: none;
+      user-select: none;
+      transition: color 0.15s;
+      z-index: 2;
+    }
+    .nfDateClear:hover { color: rgba(255,255,255,0.85); }
+    .nfDateWrap.has-val .nfDateClear { display: block; }
+    .nfDateWrap.has-val .nfDateInput { border-color: rgba(255,180,80,0.30); }
     .nfDateSep {
       font-size: 10px; color: rgba(255,255,255,0.20);
       flex-shrink: 0; font-weight: 600;
@@ -5523,9 +5541,15 @@ function clearArcs() {
             <div class="nfField grow">
               <span class="nfFieldLabel">Date range</span>
               <div class="nfDateRow">
-                <input class="nfDateInput" id="nfDateFrom" type="date" />
+                <div class="nfDateWrap">
+                  <input class="nfDateInput" id="nfDateFrom" type="date" />
+                  <span class="nfDateClear" id="nfDateFromClear" title="Clear">×</span>
+                </div>
                 <span class="nfDateSep">→</span>
-                <input class="nfDateInput" id="nfDateTo" type="date" />
+                <div class="nfDateWrap">
+                  <input class="nfDateInput" id="nfDateTo" type="date" />
+                  <span class="nfDateClear" id="nfDateToClear" title="Clear">×</span>
+                </div>
               </div>
             </div>
             <div class="nfField shrink" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:6px;">
@@ -5588,6 +5612,19 @@ function clearArcs() {
     const dateFrom  = document.getElementById("nfDateFrom");
     const dateTo    = document.getElementById("nfDateTo");
 
+    // Per-field clear buttons
+    function updateDateWrap(input) {
+      input.closest(".nfDateWrap").classList.toggle("has-val", !!input.value);
+    }
+    dateFrom.addEventListener("input", () => { updateDateWrap(dateFrom); syncClearBtn(); });
+    dateTo.addEventListener("input",   () => { updateDateWrap(dateTo);   syncClearBtn(); });
+    document.getElementById("nfDateFromClear").addEventListener("click", () => {
+      dateFrom.value = ""; updateDateWrap(dateFrom); syncClearBtn();
+    });
+    document.getElementById("nfDateToClear").addEventListener("click", () => {
+      dateTo.value = ""; updateDateWrap(dateTo); syncClearBtn();
+    });
+
     Promise.all([
       fetch(`${API}/api/countries`).then(r => r.json()),
       fetch(`${API}/api/tags`).then(r => r.json())
@@ -5597,6 +5634,7 @@ function clearArcs() {
       initMulti("from"); initMulti("about"); initTags();
       const now = new Date(), past = new Date(now - 30 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
+      updateDateWrap(dateFrom); updateDateWrap(dateTo);
       runSearch();
     }).catch(e => console.error("Bootstrap:", e));
 
@@ -5732,7 +5770,7 @@ function clearArcs() {
       const any = fromSel.size || aboutSel.size || kwEl.value.trim() || dateFrom.value || dateTo.value;
       clearBtn.classList.toggle("on", !!any);
     }
-    [kwEl, dateFrom, dateTo].forEach(el => el.addEventListener("input", syncClearBtn));
+    kwEl.addEventListener("input", syncClearBtn);
 
     searchBtn.addEventListener("click", runSearch);
     kwEl.addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
