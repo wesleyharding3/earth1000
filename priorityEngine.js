@@ -6,10 +6,10 @@ const pool = require("./db");
 CONFIGURATION
 =========================================================
 */
-const ALPHA           = 0.35;   // Source prior weight
-const BETA            = 0.65;   // Keyword signal weight
-const FLIP_THRESHOLD  = 1.15;   // Keyword must beat prior by 15% to flip
-const TITLE_WEIGHT    = 1.8;    // Title hit multiplier
+const ALPHA           = 0.35;
+const BETA            = 0.65;
+const FLIP_THRESHOLD  = 1.15;
+const TITLE_WEIGHT    = 1.8;
 
 /*
 =========================================================
@@ -191,22 +191,11 @@ module.exports = { classifyArticle };
  *   tierBonus *
  *   decay
  *
- * System guarantees:
- * - popularity_score capped at 1.60
- * - normalizedIntensity clamped 0–1
- * - tagMultiplier bounded
- * - decay bounded by MIN_DECAY floor
- * - deterministic output
- *
- * Diversity pass guarantees:
- * - No source appears consecutively more than DIVERSITY.MAX_CONSECUTIVE times
- * - Source penalty decays with distance, so good articles from same source
- *   still surface — just spaced out
- *
  * City source guarantees:
  * - City articles scored with CITY_SOURCE_PENALTY multiplier (0.01)
  * - Hard cap of max 1 city article per 20-article window
  * - Excess city articles deferred to end of feed, sorted by priority
+ * - City feed itself bypasses penalty via skipCityPenalty option
  */
 
 const CONFIG = {
@@ -231,8 +220,8 @@ const CONFIG = {
     MAX_CONSECUTIVE: 2
   },
   CITY_FEED: {
-    CAP_PER_WINDOW: 1,   // max city articles per window
-    WINDOW_SIZE:    20   // rolling window size
+    CAP_PER_WINDOW: 1,
+    WINDOW_SIZE:    20
   }
 };
 
@@ -489,47 +478,6 @@ function rankArticles(articles = [], maxIntensity, options = {}) {
     }
   }
 
-  deferred.sort((a, b) => b.priority - a.priority);
-  return [...result, ...deferred];
-}
-
-  // Step 2: sort by raw priority, tiebreak by recency
-  scored.sort((a, b) => {
-    const scoreDiff = b.priority - a.priority;
-    if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
-    return new Date(b.published_at) - new Date(a.published_at);
-  });
-
-  // Step 3: reorder for source variance
-  const reranked = diversityRerank(scored);
-
-  // Step 4: enforce city concentration cap (max 1 per 20-article window)
-  const { CAP_PER_WINDOW, WINDOW_SIZE } = CONFIG.CITY_FEED;
-
-  const result      = [];
-  const deferred    = [];
-  const windowQueue = [];
-  let cityCountInWindow = 0;
-
-  for (const article of reranked) {
-    const isCity = article.city_id != null;
-
-    if (isCity && cityCountInWindow >= CAP_PER_WINDOW) {
-      deferred.push(article);
-      continue;
-    }
-
-    result.push(article);
-    windowQueue.push(isCity);
-    if (isCity) cityCountInWindow++;
-
-    if (windowQueue.length > WINDOW_SIZE) {
-      const evicted = windowQueue.shift();
-      if (evicted) cityCountInWindow--;
-    }
-  }
-
-  // Append deferred city articles at the end, sorted by priority
   deferred.sort((a, b) => b.priority - a.priority);
   return [...result, ...deferred];
 }
