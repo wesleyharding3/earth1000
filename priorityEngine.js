@@ -396,6 +396,65 @@ function diversityRerank(articles) {
   return result;
 }
 
+function countryVarianceRerank(articles) {
+  if (!articles.length) return articles;
+
+  const MAX_PENALTY = 0.65;
+  const DECAY       = 0.25;
+  const MAX_REPEAT  = 2;
+
+  const pool      = [...articles];
+  const result    = [];
+  const penalties = {};
+
+  while (pool.length) {
+
+    const blocked = new Set();
+
+    if (result.length >= MAX_REPEAT) {
+      const tail = result.slice(-MAX_REPEAT);
+      const lastCountry = tail[0].country_name;
+
+      if (tail.every(a => a.country_name === lastCountry)) {
+        blocked.add(lastCountry);
+      }
+    }
+
+    let bestIdx   = -1;
+    let bestScore = -Infinity;
+
+    for (let i = 0; i < pool.length; i++) {
+
+      const a = pool[i];
+
+      if (blocked.has(a.country_name)) continue;
+
+      const penalty = penalties[a.country_name] || 0;
+      const score   = a.final_priority * (1 - penalty);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx   = i;
+      }
+    }
+
+    if (bestIdx === -1) bestIdx = 0;
+
+    const chosen = pool.splice(bestIdx,1)[0];
+    result.push(chosen);
+
+    for (const c of Object.keys(penalties)) {
+      penalties[c] = penalties[c] * (1 - DECAY);
+      if (penalties[c] < 0.01) delete penalties[c];
+    }
+
+    penalties[chosen.country_name] =
+      Math.min(MAX_PENALTY,(penalties[chosen.country_name] || 0) + MAX_PENALTY);
+  }
+
+  return result;
+}
+
 // ─────────────────────────────────────────────────────────────
 // PUBLIC API
 // ─────────────────────────────────────────────────────────────
