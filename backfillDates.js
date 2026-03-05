@@ -103,7 +103,11 @@ async function backfillDates() {
           `UPDATE news_articles
            SET published_at = $1
            WHERE url = $2
-             AND published_at IS NULL`,
+             AND (
+               published_at IS NULL
+               OR EXTRACT(YEAR FROM published_at) < 2000
+               OR EXTRACT(YEAR FROM published_at) > 2100
+             )`,
           [publishedAt, fingerprint]
         );
 
