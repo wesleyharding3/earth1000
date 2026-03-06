@@ -5522,7 +5522,7 @@ function clearArcs() {
   <div id="newsFeedPage">
     <!-- ══ QUERY BAR ══ -->
     <div id="nfQueryBar">
-      <!-- Row 1: title · sort · tag · text filter -->
+      <!-- Row 1: title · tag · text filter -->
       <div class="nfTopRow">
         <span class="nfPageTitle">News Feed</span>
         <div class="nfTopSpacer"></div>
@@ -5655,7 +5655,7 @@ function clearArcs() {
     const FLAG_CDN = "https://flagcdn.com/w80/";
     let countries = [], tags = [], fromSel = new Set(), aboutSel = new Set();
     let currentTag = null, lastKeyword = "", textFilter = "";
-    let articles = [], offset = 0, loading = false, hasMore = true, searched = false;
+    let articles = [], offset = 0, loading = false, hasMore = true, searched = false, totalCount = 0;
     const LIMIT = 24;
     const viewport  = document.getElementById("nfViewport");
     const grid      = document.getElementById("nfGrid");
@@ -5858,7 +5858,6 @@ function clearArcs() {
       if (currentTag)     p.set("tag",       currentTag);
       if (dateFrom.value) p.set("from_date", dateFrom.value);
       if (dateTo.value)   p.set("to_date",   dateTo.value);
-      p.set("sort", "recent");
       p.set("limit", LIMIT); p.set("offset", off);
       return `${API}/api/news/search?${p}`;
     }
@@ -5871,6 +5870,7 @@ function clearArcs() {
         .then(data => {
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
           const page = Array.isArray(data) ? data : (data.articles || []);
+          if (data.total != null) totalCount = data.total;
           if (page.length < LIMIT) hasMore = false;
           articles = [...articles, ...page];
           offset += LIMIT; renderCards(filtered()); updateMetaCount();
@@ -5906,7 +5906,8 @@ function clearArcs() {
 
     function updateMetaCount() {
       const n = filtered().length;
-      metaCount.innerHTML = `<strong>${n.toLocaleString()}</strong> article${n !== 1 ? "s" : ""}${hasMore ? "+" : ""}`;
+      const display = totalCount > n ? totalCount : n;
+      metaCount.innerHTML = `<strong>${display.toLocaleString()}</strong> article${display !== 1 ? "s" : ""}${hasMore ? "+" : ""}`;
     }
 
     function renderPills() {
