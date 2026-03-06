@@ -2410,6 +2410,9 @@
         <div class="viewOption" data-mode="ocean">
           <span class="viewOptionDot"></span>Ocean
         </div>
+        <div class="viewOption" data-mode="transportation">
+          <span class="viewOptionDot"></span>Transportation
+        </div>
         <div class="viewOption viewOption--soon" data-mode="environment">
           <span class="viewOptionDot"></span>Environment
         </div>
@@ -2595,6 +2598,60 @@
               <span class="sliderValue" id="ambientValOcean">—</span>
             </div>
             <input class="settingsSlider" type="range" id="ambientSliderOcean"
+                   min="0" max="0.0020" step="0.00005" value="0.0004" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Transportation view -->
+      <div class="sidebarPanel" id="sidebarPanelTransportation">
+        <div class="sidebarViewBadge">
+          <div class="sidebarViewBadgeDot"></div>
+          <span class="sidebarViewBadgeLabel">Transportation</span>
+        </div>
+
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">Layers</div>
+          <div class="layerList">
+            <div class="layerOpt active" id="transLayerRail" data-trans-layer="rail">
+              <div class="layerDot"></div>
+              <span class="layerLabel">Rail Networks</span>
+            </div>
+            <div class="layerOpt" id="transLayerFlight" data-trans-layer="flight">
+              <div class="layerDot"></div>
+              <span class="layerLabel">Flight Paths</span>
+            </div>
+            <div class="layerOpt" id="transLayerShipping" data-trans-layer="shipping">
+              <div class="layerDot"></div>
+              <span class="layerLabel">Shipping Lanes</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebarDivider"></div>
+
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">Appearance</div>
+          <div class="sliderRow">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Opacity</span>
+              <span class="sliderValue" id="transOpacityVal">80%</span>
+            </div>
+            <input class="settingsSlider" type="range" id="transOpacitySlider"
+                   min="0" max="1" step="0.01" value="0.8" />
+          </div>
+        </div>
+
+        <div class="sidebarDivider"></div>
+
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">Globe Motion</div>
+          <div class="sliderRow">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Ambient Rotation</span>
+              <span class="sliderValue" id="ambientValTransportation">—</span>
+            </div>
+            <input class="settingsSlider" type="range" id="ambientSliderTransportation"
                    min="0" max="0.0020" step="0.00005" value="0.0004" />
           </div>
         </div>
@@ -3491,8 +3548,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // All ambient sliders stay in sync
       function formatSpeed(v) { return v === 0 ? "Off" : (v * 10000).toFixed(1) + "×"; }
 
-      const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderOcean"];
-      const ambientVals    = ["ambientVal","ambientValCity","ambientValOcean"];
+      const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderOcean","ambientSliderTransportation"];
+      const ambientVals    = ["ambientVal","ambientValCity","ambientValOcean","ambientValTransportation"];
 
       ambientSliders.forEach(id => {
         const el = document.getElementById(id);
@@ -3744,11 +3801,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       // Ocean layer dots — clicking toggles the active overlay
-      document.querySelectorAll(".layerOpt:not(.soon)").forEach(opt => {
+      document.querySelectorAll("#sidebarPanelOcean .layerOpt:not(.soon)").forEach(opt => {
         opt.addEventListener("click", (e) => {
           e.stopPropagation();
           const alreadyActive = opt.classList.contains("active");
-          document.querySelectorAll(".layerOpt").forEach(o => o.classList.remove("active"));
+          document.querySelectorAll("#sidebarPanelOcean .layerOpt").forEach(o => o.classList.remove("active"));
           if (!alreadyActive) {
             opt.classList.add("active");
             window.__oceanLayer = opt.dataset.layer;
@@ -3758,6 +3815,174 @@ const settingsToggle     = document.getElementById("settingsToggle");
           syncOceanVisibility();
         });
       });
+
+      // ══════════════════════════════════════════════════════════
+      //  TRANSPORTATION VIEW
+      // ══════════════════════════════════════════════════════════
+
+      const transLayerVisible = { rail: true, flight: false, shipping: false };
+      const transMeshGroups   = { rail: null, flight: null, shipping: null };
+      let   transOpacity      = 0.8;
+
+      const TRANS_COLORS = {
+        rail:     new THREE.Color(0xf4a834),
+        flight:   new THREE.Color(0x56c4f5),
+        shipping: new THREE.Color(0x6de8b0),
+      };
+
+      function latLonToVec3Trans(lat, lon, r) {
+        const phi   = (90 - lat)  * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        return new THREE.Vector3(
+          -r * Math.sin(phi) * Math.cos(theta),
+           r * Math.cos(phi),
+           r * Math.sin(phi) * Math.sin(theta)
+        );
+      }
+
+      function buildLinesFromGeojson(geojson, color, altOffset) {
+        const R = radius + altOffset;
+        const positions = [];
+        geojson.features.forEach(f => {
+          const geom = f.geometry;
+          if (!geom) return;
+          const rings = geom.type === "LineString"      ? [geom.coordinates]
+                      : geom.type === "MultiLineString" ? geom.coordinates
+                      : [];
+          rings.forEach(coords => {
+            for (let i = 0; i < coords.length - 1; i++) {
+              const [lon0, lat0] = coords[i];
+              const [lon1, lat1] = coords[i + 1];
+              if (!isFinite(lat0)||!isFinite(lon0)||!isFinite(lat1)||!isFinite(lon1)) continue;
+              const v0 = latLonToVec3Trans(lat0, lon0, R);
+              const v1 = latLonToVec3Trans(lat1, lon1, R);
+              positions.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z);
+            }
+          });
+        });
+        if (!positions.length) return null;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity, depthWrite: false });
+        const mesh = new THREE.LineSegments(geo, mat);
+        mesh.visible = false;
+        scene.add(mesh);
+        return mesh;
+      }
+
+      function buildArcLines(routePairs, color, altOffset, arcHeight) {
+        const R = radius + altOffset;
+        const STEPS = 40;
+        const positions = [];
+        routePairs.forEach(([lat0,lon0,lat1,lon1]) => {
+          const v0 = latLonToVec3Trans(lat0, lon0, 1);
+          const v1 = latLonToVec3Trans(lat1, lon1, 1);
+          for (let i = 0; i < STEPS; i++) {
+            const t0 = i / STEPS, t1 = (i + 1) / STEPS;
+            const mid0 = v0.clone().lerp(v1, t0).normalize();
+            const mid1 = v0.clone().lerp(v1, t1).normalize();
+            const lift0 = 1 + arcHeight * Math.sin(t0 * Math.PI);
+            const lift1 = 1 + arcHeight * Math.sin(t1 * Math.PI);
+            positions.push(
+              mid0.x*R*lift0, mid0.y*R*lift0, mid0.z*R*lift0,
+              mid1.x*R*lift1, mid1.y*R*lift1, mid1.z*R*lift1
+            );
+          }
+        });
+        if (!positions.length) return null;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.65, depthWrite: false });
+        const mesh = new THREE.LineSegments(geo, mat);
+        mesh.visible = false;
+        scene.add(mesh);
+        return mesh;
+      }
+
+      const FLIGHT_ROUTES = [
+        [40.64,-73.78, 51.48,-0.46],[40.64,-73.78, 48.87,2.35],[40.64,-73.78, 52.37,4.90],
+        [40.64,-73.78, 53.36,-2.27],[25.79,-80.29, 50.83,4.48],[33.64,-84.43, 51.48,-0.46],
+        [34.06,-118.24, 35.55,139.78],[37.62,-122.38, 35.55,139.78],[47.45,-122.31, 35.55,139.78],
+        [34.06,-118.24, 1.36,103.99],[37.62,-122.38, 1.36,103.99],
+        [51.48,-0.46, 55.97,37.41],[48.87,2.35, 55.97,37.41],[51.48,-0.46, 35.55,139.78],
+        [48.87,2.35, 25.25,55.36],[51.48,-0.46, 25.25,55.36],[52.37,4.90, 25.25,55.36],
+        [35.55,139.78, 1.36,103.99],[35.55,139.78, 22.31,113.91],[1.36,103.99, 13.68,100.75],
+        [40.64,-73.78, 19.43,-99.07],[33.64,-84.43, 19.43,-99.07],[25.79,-80.29, 10.60,-66.99],
+        [51.48,-0.46, 4.00,9.72],[48.87,2.35, -33.96,18.59],[25.25,55.36, 4.00,9.72],
+      ];
+
+      const SHIPPING_LANES = [
+        [40.64,-74.0, 51.5,-0.12],[29.95,-90.07, 51.5,-0.12],[43.64,-70.25, 48.87,2.35],
+        [37.8,-122.3, 35.6,139.7],[33.7,-118.2, 22.3,114.2],[47.6,-122.3, 1.3,103.8],
+        [51.5,-0.12, 30.0,32.3],[30.0,32.3, 1.3,103.8],[48.87,2.35, 30.0,32.3],
+        [30.0,32.3, 25.3,55.4],[30.0,32.3, 22.6,88.4],
+        [51.5,-0.12, -33.9,25.6],[-33.9,25.6, 1.3,103.8],
+        [1.3,103.8, 22.3,114.2],[1.3,103.8, 35.6,139.7],
+        [22.6,88.4, 25.3,55.4],[22.6,88.4, 30.0,32.3],
+        [40.64,-74.0, 9.1,-79.6],[9.1,-79.6, 37.8,-122.3],[-33.9,-70.7, 9.1,-79.6],
+      ];
+
+      async function loadRailTransportation() {
+        if (transMeshGroups.rail !== null) return;
+        transMeshGroups.rail = undefined; // mark loading
+        try {
+          const res = await fetch("/railways.geojson");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const geojson = await res.json();
+          transMeshGroups.rail = buildLinesFromGeojson(geojson, TRANS_COLORS.rail, 0.001);
+        } catch (err) {
+          console.warn("railways.geojson load failed:", err);
+          transMeshGroups.rail = null;
+        }
+        syncTransportationVisibility();
+      }
+
+      function initFlightShipping() {
+        if (!transMeshGroups.flight)   transMeshGroups.flight   = buildArcLines(FLIGHT_ROUTES,   TRANS_COLORS.flight,   0.002, 0.06);
+        if (!transMeshGroups.shipping) transMeshGroups.shipping = buildArcLines(SHIPPING_LANES, TRANS_COLORS.shipping, 0.001, 0.018);
+      }
+
+      function syncTransportationVisibility() {
+        const isTransMode = window.__currentViewMode === "transportation";
+        Object.entries(transMeshGroups).forEach(([key, mesh]) => {
+          if (mesh && typeof mesh === "object" && mesh.isObject3D) {
+            mesh.visible = isTransMode && transLayerVisible[key];
+          }
+        });
+      }
+      window.__syncTransportationVisibility = function() {
+        if (window.__currentViewMode === "transportation") {
+          if (!transMeshGroups.rail) loadRailTransportation();
+          initFlightShipping();
+        }
+        syncTransportationVisibility();
+      };
+
+      const transOpacitySlider = document.getElementById("transOpacitySlider");
+      const transOpacityValEl  = document.getElementById("transOpacityVal");
+      if (transOpacitySlider) {
+        transOpacitySlider.addEventListener("input", () => {
+          transOpacity = parseFloat(transOpacitySlider.value);
+          transOpacityValEl.textContent = Math.round(transOpacity * 100) + "%";
+          Object.values(transMeshGroups).forEach(mesh => {
+            if (mesh && mesh.isObject3D) mesh.material.opacity = transOpacity;
+          });
+        });
+        transOpacitySlider.addEventListener("pointerdown", e => e.stopPropagation());
+      }
+
+      document.querySelectorAll("[data-trans-layer]").forEach(opt => {
+        opt.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const layer = opt.dataset.transLayer;
+          transLayerVisible[layer] = !transLayerVisible[layer];
+          opt.classList.toggle("active", transLayerVisible[layer]);
+          if ((layer === "flight" || layer === "shipping") && !transMeshGroups[layer]) initFlightShipping();
+          if (layer === "rail" && !transMeshGroups.rail) loadRailTransportation();
+          syncTransportationVisibility();
+        });
+      });
+
       const viewToggle   = document.getElementById("viewToggle");
       const viewDropdown = document.getElementById("viewDropdown");
       let viewDropOpen = false;
@@ -3785,11 +4010,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           setActiveMode(mode);
           setSidebarPanel(mode);
           openSidebar();
-          if (mode === "city")       { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
-          else if (mode === "ocean") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
-          else                       { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
+          if (mode === "city")           { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
+          else if (mode === "ocean")      { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
+          else if (mode === "transportation") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
+          else                            { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
           window.__currentViewMode = mode;
           if (window.__syncOceanVisibility) window.__syncOceanVisibility();
+          if (window.__syncTransportationVisibility) window.__syncTransportationVisibility();
           viewDropOpen = false;
           viewDropdown.classList.remove("open");
           viewToggle.classList.remove("active");
@@ -4967,6 +5194,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             && !isFocused
             && ambientSpeed > 0
             && currentViewMode !== "ocean"
+            && currentViewMode !== "transportation"
             && !document.getElementById("infoPanel")?.classList.contains("active")
             && !document.getElementById("flowControls")?.classList.contains("visible");
           if (on && !wasOn) {
