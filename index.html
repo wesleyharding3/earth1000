@@ -3840,6 +3840,56 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }
 
+      // Shared dash-animation shader for all transportation lines
+      function makeTransLineMaterial(color, baseOpacity) {
+        return new THREE.ShaderMaterial({
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          uniforms: {
+            uColor:      { value: new THREE.Color(color) },
+            uOpacity:    { value: baseOpacity },
+            uDashOffset: { value: 0.0 },
+            uDashScale:  { value: 8.0 },
+            uDashRatio:  { value: 0.45 },
+          },
+          vertexShader: `
+            attribute float lineDistance;
+            varying float vLineDistance;
+            void main() {
+              vLineDistance = lineDistance;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`,
+          fragmentShader: `
+            uniform vec3  uColor;
+            uniform float uOpacity;
+            uniform float uDashOffset;
+            uniform float uDashScale;
+            uniform float uDashRatio;
+            varying float vLineDistance;
+            void main() {
+              float d = mod(vLineDistance * uDashScale + uDashOffset, 1.0);
+              float dash = smoothstep(0.0, 0.08, d) * smoothstep(uDashRatio + 0.08, uDashRatio, d);
+              if (dash < 0.01) discard;
+              gl_FragColor = vec4(uColor * (0.7 + 0.3 * dash), uOpacity * dash);
+            }`
+        });
+      }
+
+      function addLineDistances(geo) {
+        const pos = geo.attributes.position.array;
+        const n   = pos.length / 3;
+        const ld  = new Float32Array(n);
+        for (let i = 0; i < n; i += 2) {
+          ld[i] = 0;
+          const dx = pos[(i+1)*3]   - pos[i*3];
+          const dy = pos[(i+1)*3+1] - pos[i*3+1];
+          const dz = pos[(i+1)*3+2] - pos[i*3+2];
+          ld[i+1] = Math.sqrt(dx*dx + dy*dy + dz*dz);
+        }
+        geo.setAttribute("lineDistance", new THREE.Float32BufferAttribute(ld, 1));
+      }
+
       function buildLinesFromGeojson(geojson, color, altOffset) {
         const R = radius + altOffset;
         const positions = [];
@@ -3863,7 +3913,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (!positions.length) return null;
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity, depthWrite: false });
+        addLineDistances(geo);
+        const mat  = makeTransLineMaterial(color, transOpacity);
         const mesh = new THREE.LineSegments(geo, mat);
         mesh.visible = false;
         scene.add(mesh);
@@ -3892,7 +3943,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (!positions.length) return null;
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.65, depthWrite: false });
+        addLineDistances(geo);
+        const mat  = makeTransLineMaterial(color, transOpacity * 0.65);
         const mesh = new THREE.LineSegments(geo, mat);
         mesh.visible = false;
         scene.add(mesh);
@@ -3973,6 +4025,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         syncTransportationVisibility();
       };
 
+      // Advance dash offset each frame for all visible trans meshes
+      const TRANS_DASH_SPEED = { rail: 0.18, flight: 0.55, shipping: 0.28 };
+      window.__transTick = function(delta) {
+        if (window.__currentViewMode !== "transportation") return;
+        Object.entries(transMeshGroups).forEach(([key, mesh]) => {
+          if (mesh && mesh.isObject3D && mesh.visible && mesh.material.uniforms) {
+            mesh.material.uniforms.uDashOffset.value -= (TRANS_DASH_SPEED[key] || 0.3) * delta;
+          }
+        });
+      };
+
       const transOpacitySlider = document.getElementById("transOpacitySlider");
       const transOpacityValEl  = document.getElementById("transOpacityVal");
       if (transOpacitySlider) {
@@ -3980,7 +4043,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           transOpacity = parseFloat(transOpacitySlider.value);
           transOpacityValEl.textContent = Math.round(transOpacity * 100) + "%";
           Object.values(transMeshGroups).forEach(mesh => {
-            if (mesh && mesh.isObject3D) mesh.material.opacity = transOpacity;
+            if (mesh && mesh.isObject3D) mesh.material.uniforms.uOpacity.value = transOpacity;
           });
         });
         transOpacitySlider.addEventListener("pointerdown", e => e.stopPropagation());
@@ -4839,6 +4902,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
 
+        if (window.__transTick) window.__transTick(0.016);
         if (window.__flowTick) window.__flowTick();
         // Sync ocean heatmap mesh with globe rotation
         if (window.__oceanMeshSync) window.__oceanMeshSync();
