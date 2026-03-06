@@ -363,13 +363,13 @@ app.get("/api/news/search", async (req, res) => {
         ${whereClause}
         ORDER BY a.id
       ) sub
-      ORDER BY (sub.base_priority * sub.country_boost) DESC
+      ORDER BY (sub.base_priority * POWER(sub.country_boost, 2.0)) DESC
       LIMIT $${limitParam} OFFSET $${offsetParam}
     `, params);
 
     let results = rows.map(r => ({
       ...r,
-      final_priority: (r.base_priority || 0) * (r.country_boost || 1)
+      final_priority: (r.base_priority || 0) * Math.pow(r.country_boost || 1, 2.0)
     }));
 
     results = countryVarianceRerank(results);
