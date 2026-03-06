@@ -1972,6 +1972,21 @@
       font-size: 10px; color: rgba(255,255,255,0.20);
       flex-shrink: 0; font-weight: 600;
     }
+    .nfDateWrap {
+      position: relative; display: flex; align-items: center; flex: 1 1 0;
+    }
+    .nfDateWrap .nfDateInput {
+      flex: 1; padding-right: 22px;
+    }
+    .nfDateClear {
+      position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; color: rgba(255,255,255,0.35); cursor: pointer;
+      line-height: 1; padding: 2px; border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+      display: none;
+    }
+    .nfDateClear:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.08); }
+    .nfDateClear.visible { display: block; }
 
     /* ── Search + Clear buttons ── */
     .nfSearchBtn {
@@ -5585,9 +5600,15 @@ function clearArcs() {
             <div class="nfField grow">
               <span class="nfFieldLabel">Date range</span>
               <div class="nfDateRow">
-                <input class="nfDateInput" id="nfDateFrom" type="date" />
+                <div class="nfDateWrap">
+                  <input class="nfDateInput" id="nfDateFrom" type="date" />
+                  <span class="nfDateClear" id="nfDateFromClear" title="Clear">✕</span>
+                </div>
                 <span class="nfDateSep">→</span>
-                <input class="nfDateInput" id="nfDateTo" type="date" />
+                <div class="nfDateWrap">
+                  <input class="nfDateInput" id="nfDateTo" type="date" />
+                  <span class="nfDateClear" id="nfDateToClear" title="Clear">✕</span>
+                </div>
               </div>
             </div>
             <div class="nfField shrink" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:6px;">
@@ -5658,6 +5679,7 @@ function clearArcs() {
       initMulti("from"); initMulti("about"); initTags();
       const now = new Date(), past = new Date(now - 30 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
+      syncDateClears();
       runSearch();
     }).catch(e => console.error("Bootstrap:", e));
 
@@ -5780,20 +5802,37 @@ function clearArcs() {
       }, 160);
     });
 
-    clearBtn.addEventListener("click", () => {
-      fromSel.clear(); aboutSel.clear(); kwEl.value = "";
-      refreshBtn("from"); refreshBtn("about");
-      ["nfFromList","nfAboutList"].forEach(id => {
-        document.getElementById(id).querySelectorAll(".nfDropOpt").forEach(o => o.classList.remove("sel"));
-      });
-      syncClearBtn();
-    });
-
     function syncClearBtn() {
       const any = fromSel.size || aboutSel.size || kwEl.value.trim() || dateFrom.value || dateTo.value;
       clearBtn.classList.toggle("on", !!any);
     }
     [kwEl, dateFrom, dateTo].forEach(el => el.addEventListener("input", syncClearBtn));
+
+    // Show/hide the ✕ clear buttons on date inputs
+    function syncDateClears() {
+      const fromClear = document.getElementById("nfDateFromClear");
+      const toClear   = document.getElementById("nfDateToClear");
+      if (fromClear) fromClear.classList.toggle("visible", !!dateFrom.value);
+      if (toClear)   toClear.classList.toggle("visible",   !!dateTo.value);
+    }
+    dateFrom.addEventListener("input", syncDateClears);
+    dateTo.addEventListener("input",   syncDateClears);
+    document.getElementById("nfDateFromClear").addEventListener("click", () => {
+      dateFrom.value = ""; syncClearBtn(); syncDateClears();
+    });
+    document.getElementById("nfDateToClear").addEventListener("click", () => {
+      dateTo.value = ""; syncClearBtn(); syncDateClears();
+    });
+
+    clearBtn.addEventListener("click", () => {
+      fromSel.clear(); aboutSel.clear(); kwEl.value = "";
+      dateFrom.value = ""; dateTo.value = "";
+      refreshBtn("from"); refreshBtn("about");
+      ["nfFromList","nfAboutList"].forEach(id => {
+        document.getElementById(id).querySelectorAll(".nfDropOpt").forEach(o => o.classList.remove("sel"));
+      });
+      syncClearBtn(); syncDateClears();
+    });
 
     searchBtn.addEventListener("click", runSearch);
     kwEl.addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
@@ -5831,8 +5870,9 @@ function clearArcs() {
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
-          if (!Array.isArray(data) || data.length < LIMIT) hasMore = false;
-          articles = [...articles, ...(Array.isArray(data) ? data : [])];
+          const page = Array.isArray(data) ? data : (data.articles || []);
+          if (page.length < LIMIT) hasMore = false;
+          articles = [...articles, ...page];
           offset += LIMIT; renderCards(filtered()); updateMetaCount();
         })
         .catch(err => {
