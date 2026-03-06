@@ -4344,6 +4344,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
+        if (window.__currentPage !== 1) return;
         e.preventDefault();
         if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0006; return; }
         const rotateSpeed = 0.003;
