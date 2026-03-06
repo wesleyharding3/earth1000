@@ -1952,12 +1952,9 @@
     .nfDateRow {
       display: flex; align-items: center; gap: 6px;
     }
-    .nfDateWrap {
-      flex: 1 1 0; position: relative; display: flex; align-items: center; min-width: 70px;
-    }
     .nfDateInput {
-      flex: 1 1 0; width: 100%; height: 26px; min-width: 0;
-      padding: 0 24px 0 8px;
+      flex: 1 1 0; height: 26px; min-width: 70px;
+      padding: 0 8px;
       border-radius: 8px;
       border: 1px solid rgba(255,255,255,0.11);
       background: rgba(255,255,255,0.04);
@@ -1966,26 +1963,11 @@
       outline: none;
       cursor: pointer;
       transition: border-color 0.2s;
-      box-sizing: border-box;
     }
     .nfDateInput:focus { border-color: rgba(0,180,255,0.38); }
     .nfDateInput::-webkit-calendar-picker-indicator {
       filter: invert(0.45); cursor: pointer; opacity: 0.6;
     }
-    .nfDateClear {
-      position: absolute; right: 6px; top: 50%;
-      transform: translateY(-50%);
-      font-size: 13px; line-height: 1;
-      color: rgba(255,255,255,0.35);
-      cursor: pointer;
-      display: none;
-      user-select: none;
-      transition: color 0.15s;
-      z-index: 2;
-    }
-    .nfDateClear:hover { color: rgba(255,255,255,0.85); }
-    .nfDateWrap.has-val .nfDateClear { display: block; }
-    .nfDateWrap.has-val .nfDateInput { border-color: rgba(255,180,80,0.30); }
     .nfDateSep {
       font-size: 10px; color: rgba(255,255,255,0.20);
       flex-shrink: 0; font-weight: 600;
@@ -2895,7 +2877,6 @@ function computeCityTiers(cities) {
 
     function init(cities, countries) {
       let currentViewMode = "country";
-      window.__currentViewMode = "country";
       const earthPointCount = 10000;
       const earthPositions = [];
       const earthColors = [];
@@ -3157,9 +3138,55 @@ function computeCityTiers(cities) {
       }
 
       const boundaryLayer = new GeoBoundaryLayer(scene, radius);
+
+      // ── Land mask for ocean heatmap ──────────────────────────────
+      let landMask = null; // Uint8Array, 1 = land, 0 = ocean
+
+      function buildLandMask(geojson) {
+        const W = OCEAN_W, H = OCEAN_H;
+        const mask = new Uint8Array(W * H);
+
+        // Collect all rings from Polygon / MultiPolygon features
+        const rings = [];
+        geojson.features.forEach(f => {
+          const g = f.geometry;
+          if (!g) return;
+          const polys = g.type === "Polygon" ? [g.coordinates]
+                      : g.type === "MultiPolygon" ? g.coordinates : [];
+          polys.forEach(poly => poly.forEach(ring => rings.push(ring)));
+        });
+
+        // For each canvas pixel, cast a ray and count crossings (even-odd rule)
+        for (let py = 0; py < H; py++) {
+          const lat = 90 - (py + 0.5) / H * 180;          // centre of pixel
+          for (let px = 0; px < W; px++) {
+            const lon = (px + 0.5) / W * 360 - 180;
+            let inside = false;
+            for (const ring of rings) {
+              const n = ring.length;
+              let j = n - 1;
+              for (let i = 0; i < n; i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                if (((yi > lat) !== (yj > lat)) &&
+                    (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+                  inside = !inside;
+                }
+                j = i;
+              }
+            }
+            if (inside) mask[py * W + px] = 1;
+          }
+        }
+        landMask = mask;
+      }
+
       fetch("custom.geo.json")
         .then(res => res.json())
-        .then(data => { boundaryLayer.loadGeoJSON(data); });
+        .then(data => {
+          boundaryLayer.loadGeoJSON(data);
+          buildLandMask(data);
+        });
 
       function isCityVisible(pointPos, camera) {
         const pointVector = pointPos.clone().normalize();
@@ -3487,7 +3514,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const oceanCtx     = oceanCanvas.getContext("2d");
 
       const oceanTexture = new THREE.CanvasTexture(oceanCanvas);
-      const oceanGeo     = new THREE.SphereGeometry(radius + 0.004, 128, 64);
+      const oceanGeo     = new THREE.SphereGeometry(radius + 0.004, 64, 32);
       const oceanMat     = new THREE.MeshBasicMaterial({
         map: oceanTexture, transparent: true, opacity: 0.8,
         depthWrite: false, side: THREE.FrontSide,
@@ -3532,115 +3559,69 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return [255, 0, 0];
       }
 
+      // Paint canvas from flat data array [{lat,lon,temperature}]
       function paintHeatmap(data) {
-        const W = OCEAN_W, H = OCEAN_H;
-        const grid   = new Float32Array(W * H).fill(NaN);
-        const weight = new Float32Array(W * H).fill(0);
-
-        const SPLAT_R = 3;
+        // Grid: 0.25° resolution → 1440 × 720, but we downsample to OCEAN_W × OCEAN_H
+        const grid = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
+        const cnt  = new Uint16Array(OCEAN_W * OCEAN_H);
         for (const p of data) {
-          const lon  = parseFloat(p.lon);
-          const lat  = parseFloat(p.lat);
-          const temp = parseFloat(p.temperature);
-          const u  = ((lon > 180 ? lon - 360 : lon) + 180) / 360 * W;
-          const v  = ((90 - lat) / 180) * H;
-          const cx = Math.floor(u);
-          const cy = Math.min(Math.floor(v), H - 1);
+          const u = ((parseFloat(p.lon) + 180) / 360) * OCEAN_W;
+          const v = ((90 - parseFloat(p.lat)) / 180)  * OCEAN_H;
+          const ix = Math.floor(u) % OCEAN_W;
+          const iy = Math.min(Math.floor(v), OCEAN_H - 1);
+          const idx = iy * OCEAN_W + ix;
+          if (isNaN(grid[idx])) grid[idx] = 0;
+          grid[idx] += parseFloat(p.temperature);
+          cnt[idx]++;
+        }
 
-          for (let dy = -SPLAT_R; dy <= SPLAT_R; dy++) {
-            for (let dx = -SPLAT_R; dx <= SPLAT_R; dx++) {
-              const dist = Math.sqrt(dx*dx + dy*dy);
-              if (dist > SPLAT_R) continue;
-              const nx  = ((cx + dx) % W + W) % W;
-              const ny  = Math.max(0, Math.min(H - 1, cy + dy));
-              const idx = ny * W + nx;
-              const w   = Math.exp(-dist * dist / (SPLAT_R * 0.7));
-              if (isNaN(grid[idx])) grid[idx] = 0;
-              grid[idx]   += temp * w;
-              weight[idx] += w;
+        // Blur pass: fill empty ocean cells from neighbours (1-pass simple spread)
+        const filled = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
+        for (let y = 0; y < OCEAN_H; y++) {
+          for (let x = 0; x < OCEAN_W; x++) {
+            const i = y * OCEAN_W + x;
+            if (cnt[i] > 0) { filled[i] = grid[i] / cnt[i]; continue; }
+            let sum = 0, n = 0;
+            for (let dy = -2; dy <= 2; dy++) {
+              for (let dx = -2; dx <= 2; dx++) {
+                const nx = (x + dx + OCEAN_W) % OCEAN_W;
+                const ny = Math.max(0, Math.min(OCEAN_H-1, y + dy));
+                const ni = ny * OCEAN_W + nx;
+                if (cnt[ni] > 0) { sum += grid[ni] / cnt[ni]; n++; }
+              }
             }
+            if (n > 0) filled[i] = sum / n;
           }
         }
 
-        for (let i = 0; i < W * H; i++) {
-          if (weight[i] > 0) grid[i] /= weight[i];
-        }
-
-        const FILL_R = 6;
-        const PASSES = 18;
-        const filled     = new Float32Array(W * H);
-        const filledMask = new Uint8Array(W * H);
-
-        for (let i = 0; i < W * H; i++) {
-          if (!isNaN(grid[i])) { filled[i] = grid[i]; filledMask[i] = 1; }
-        }
-
-        for (let pass = 0; pass < PASSES; pass++) {
-          let changed = false;
-          const snapshot = filled.slice();
-          const snapMask = filledMask.slice();
-
-          for (let y = 0; y < H; y++) {
-            for (let x = 0; x < W; x++) {
-              const i = y * W + x;
-              if (filledMask[i]) continue;
-              let sum = 0, cnt = 0;
-              const r = Math.min(FILL_R, 2 + pass * 2);
-
-              for (let dy = -r; dy <= r; dy++) {
-                for (let dx = -r; dx <= r; dx++) {
-                  if (dx === 0 && dy === 0) continue;
-                  const dist = Math.sqrt(dx*dx + dy*dy);
-                  if (dist > r) continue;
-                  const nx = ((x + dx) % W + W) % W;
-                  const ny = Math.max(0, Math.min(H - 1, y + dy));
-                  const ni = ny * W + nx;
-                  if (snapMask[ni]) {
-                    const w = 1 / (dist + 0.5);
-                    sum += snapshot[ni] * w;
-                    cnt += w;
-                  }
-                }
-              }
-
-              if (cnt > 0) {
-                filled[i]     = sum / cnt;
-                filledMask[i] = 1;
-                changed       = true;
-              }
-            }
-          }
-          if (!changed) break;
-        }
-
-        const img = oceanCtx.createImageData(W, H);
-        for (let i = 0; i < W * H; i++) {
-          if (!filledMask[i]) { img.data[i*4+3] = 0; continue; }
-          const [r,g,b] = tempToColor(filled[i]);
+        const img = oceanCtx.createImageData(OCEAN_W, OCEAN_H);
+        for (let i = 0; i < OCEAN_W * OCEAN_H; i++) {
+          const t = filled[i];
+          if (isNaN(t) || (landMask && landMask[i] === 1)) { img.data[i*4+3] = 0; continue; }
+          const [r,g,b] = tempToColor(t);
           img.data[i*4+0] = r;
           img.data[i*4+1] = g;
           img.data[i*4+2] = b;
-          img.data[i*4+3] = 210;
+          img.data[i*4+3] = 200;
         }
-
+        // Blur for fluid texture
         const rawCanvas = document.createElement("canvas");
-        rawCanvas.width = W; rawCanvas.height = H;
-        const rawCtx = rawCanvas.getContext("2d");
-        rawCtx.putImageData(img, 0, 0);
-
-        oceanCtx.clearRect(0, 0, W, H);
-        oceanCtx.filter = "blur(8px)";
-        oceanCtx.drawImage(rawCanvas, 0, 0);
-        oceanCtx.filter = "blur(4px)";
+        rawCanvas.width = OCEAN_W; rawCanvas.height = OCEAN_H;
+        rawCanvas.getContext("2d").putImageData(img, 0, 0);
+        oceanCtx.clearRect(0, 0, OCEAN_W, OCEAN_H);
+        oceanCtx.filter = "blur(6px)";
         oceanCtx.drawImage(rawCanvas, 0, 0);
         oceanCtx.filter = "none";
-        oceanCtx.globalAlpha = 0.35;
-        oceanCtx.drawImage(rawCanvas, 0, 0);
-        oceanCtx.globalAlpha = 1.0;
-
+        // Re-apply land mask after blur (blur bleeds colour onto land edges)
+        if (landMask) {
+          const blurred = oceanCtx.getImageData(0, 0, OCEAN_W, OCEAN_H);
+          for (let i = 0; i < OCEAN_W * OCEAN_H; i++) {
+            if (landMask[i] === 1) blurred.data[i*4+3] = 0;
+          }
+          oceanCtx.putImageData(blurred, 0, 0);
+        }
         oceanTexture.needsUpdate = true;
       }
-      
 
       // Cache: key = "year-month"
       const oceanCache = {};
@@ -3648,18 +3629,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       async function loadOceanData(year, month) {
         const key = `${year}-${month}`;
-        if (oceanCache[key]) { setTimeout(() => paintHeatmap(oceanCache[key]), 0); return; }
+        if (oceanCache[key]) { paintHeatmap(oceanCache[key]); return; }
         if (oceanFetching) return;
         oceanFetching = true;
         oceanLoadingLabel.textContent = `Loading ${MONTH_NAMES[month-1]} ${year}…`;
         try {
           const res  = await fetch(
-            `https://earth-wjr6.onrender.com/api/ocean/temperature?year=${year}&month=${month}&limit=20000`
+            `https://earth-wjr6.onrender.com/api/ocean/temperature?year=${year}&month=${month}&limit=50000`
           );
           const data = await res.json();
           oceanCache[key] = data;
           paintHeatmap(data);
-          setTimeout(() => paintHeatmap(data), 0);
           oceanLoadingLabel.textContent = `${data.length.toLocaleString()} readings`;
         } catch(e) {
           oceanLoadingLabel.textContent = "Error loading data";
@@ -3671,7 +3651,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Show / hide based on current view mode
       function syncOceanVisibility() {
-        const on = (currentViewMode === "ocean") && (window.__oceanLayer === "temperature");
+        const on = (window.__currentViewMode === "ocean") && (window.__oceanLayer === "temperature");
         oceanMesh.visible = on;
         if (on) loadOceanData(window.__oceanYear, window.__oceanMonth);
       }
@@ -4336,7 +4316,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       window.addEventListener("wheel", e => {
-        if (window.__currentPage !== 1) return;
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
@@ -5595,15 +5574,9 @@ function clearArcs() {
             <div class="nfField grow">
               <span class="nfFieldLabel">Date range</span>
               <div class="nfDateRow">
-                <div class="nfDateWrap">
-                  <input class="nfDateInput" id="nfDateFrom" type="date" />
-                  <span class="nfDateClear" id="nfDateFromClear" title="Clear">×</span>
-                </div>
+                <input class="nfDateInput" id="nfDateFrom" type="date" />
                 <span class="nfDateSep">→</span>
-                <div class="nfDateWrap">
-                  <input class="nfDateInput" id="nfDateTo" type="date" />
-                  <span class="nfDateClear" id="nfDateToClear" title="Clear">×</span>
-                </div>
+                <input class="nfDateInput" id="nfDateTo" type="date" />
               </div>
             </div>
             <div class="nfField shrink" style="justify-content:flex-end;flex-direction:row;align-items:flex-end;gap:6px;">
@@ -5651,7 +5624,6 @@ function clearArcs() {
     let countries = [], tags = [], fromSel = new Set(), aboutSel = new Set();
     let currentTag = null, lastKeyword = "", textFilter = "";
     let articles = [], offset = 0, loading = false, hasMore = true, searched = false;
-    let totalResults = 0;
     const LIMIT = 24;
     const viewport  = document.getElementById("nfViewport");
     const grid      = document.getElementById("nfGrid");
@@ -5666,19 +5638,6 @@ function clearArcs() {
     const dateFrom  = document.getElementById("nfDateFrom");
     const dateTo    = document.getElementById("nfDateTo");
 
-    // Per-field clear buttons
-    function updateDateWrap(input) {
-      input.closest(".nfDateWrap").classList.toggle("has-val", !!input.value);
-    }
-    dateFrom.addEventListener("input", () => { updateDateWrap(dateFrom); syncClearBtn(); });
-    dateTo.addEventListener("input",   () => { updateDateWrap(dateTo);   syncClearBtn(); });
-    document.getElementById("nfDateFromClear").addEventListener("click", () => {
-      dateFrom.value = ""; updateDateWrap(dateFrom); syncClearBtn();
-    });
-    document.getElementById("nfDateToClear").addEventListener("click", () => {
-      dateTo.value = ""; updateDateWrap(dateTo); syncClearBtn();
-    });
-
     Promise.all([
       fetch(`${API}/api/countries`).then(r => r.json()),
       fetch(`${API}/api/tags`).then(r => r.json())
@@ -5688,7 +5647,6 @@ function clearArcs() {
       initMulti("from"); initMulti("about"); initTags();
       const now = new Date(), past = new Date(now - 30 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
-      updateDateWrap(dateFrom); updateDateWrap(dateTo);
       runSearch();
     }).catch(e => console.error("Bootstrap:", e));
 
@@ -5824,7 +5782,7 @@ function clearArcs() {
       const any = fromSel.size || aboutSel.size || kwEl.value.trim() || dateFrom.value || dateTo.value;
       clearBtn.classList.toggle("on", !!any);
     }
-    kwEl.addEventListener("input", syncClearBtn);
+    [kwEl, dateFrom, dateTo].forEach(el => el.addEventListener("input", syncClearBtn));
 
     searchBtn.addEventListener("click", runSearch);
     kwEl.addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
@@ -5850,6 +5808,7 @@ function clearArcs() {
       if (currentTag)     p.set("tag",       currentTag);
       if (dateFrom.value) p.set("from_date", dateFrom.value);
       if (dateTo.value)   p.set("to_date",   dateTo.value);
+      p.set("sort", "recent");
       p.set("limit", LIMIT); p.set("offset", off);
       return `${API}/api/news/search?${p}`;
     }
@@ -5860,15 +5819,9 @@ function clearArcs() {
       fetch(buildUrl(offset))
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
-          const rows = data.articles || [];
-          totalResults = data.total || 0;
-
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
-
-          if (rows.length < LIMIT) hasMore = false;
-
-          articles = [...articles, ...rows];
-
+          if (!Array.isArray(data) || data.length < LIMIT) hasMore = false;
+          articles = [...articles, ...(Array.isArray(data) ? data : [])];
           offset += LIMIT; renderCards(filtered()); updateMetaCount();
         })
         .catch(err => {
@@ -5901,12 +5854,8 @@ function clearArcs() {
     }
 
     function updateMetaCount() {
-      const loaded = filtered().length;
-      const total  = totalResults || loaded;
-
-      metaCount.innerHTML =
-        `<strong>${total.toLocaleString()}</strong> articles` +
-        (loaded < total ? ` <span style="opacity:.55">(showing ${loaded})</span>` : "");
+      const n = filtered().length;
+      metaCount.innerHTML = `<strong>${n.toLocaleString()}</strong> article${n !== 1 ? "s" : ""}${hasMore ? "+" : ""}`;
     }
 
     function renderPills() {
