@@ -3592,8 +3592,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const i = y * OCEAN_W + x;
             if (cnt[i] > 0) { filled[i] = grid[i] / cnt[i]; continue; }
             let sum = 0, n = 0;
-            for (let dy = -8; dy <= 8; dy++) {
-              for (let dx = -8; dx <= 8; dx++) {
+            for (let dy = -12; dy <= 12; dy++) {
+              for (let dx = -12; dx <= 12; dx++) {
                 const nx = (x + dx + OCEAN_W) % OCEAN_W;
                 const ny = Math.max(0, Math.min(OCEAN_H-1, y + dy));
                 const ni = ny * OCEAN_W + nx;
@@ -3619,7 +3619,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         rawCanvas.width = OCEAN_W; rawCanvas.height = OCEAN_H;
         rawCanvas.getContext("2d").putImageData(img, 0, 0);
         oceanCtx.clearRect(0, 0, OCEAN_W, OCEAN_H);
-        oceanCtx.filter = "blur(14px)";
+        oceanCtx.filter = "blur(20px)";
         oceanCtx.drawImage(rawCanvas, 0, 0);
         oceanCtx.filter = "none";
         // Re-apply land mask after blur (blur bleeds colour onto land edges)
