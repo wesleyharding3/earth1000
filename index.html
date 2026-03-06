@@ -3945,12 +3945,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (transMeshGroups.shipping !== null) return;
         transMeshGroups.shipping = undefined; // mark loading
         try {
-          const res = await fetch("maritime_routes.geojson");
+          const res = await fetch("Shipping_Lanes_v1.geojson");
           if (!res.ok) throw new Error("HTTP " + res.status);
           const geojson = await res.json();
           transMeshGroups.shipping = buildLinesFromGeojson(geojson, TRANS_COLORS.shipping, 0.001);
         } catch (err) {
-          console.warn("maritime_routes.geojson load failed:", err);
+          console.warn("Shipping_Lanes_v1.geojson load failed:", err);
           transMeshGroups.shipping = null;
         }
         syncTransportationVisibility();
