@@ -69,8 +69,9 @@ await pool.query(
    WHERE id = $2`,
   [err.message?.substring(0, 1000), feed.id]
 );
-} catch (logErr) {
-  console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
+  } catch (logErr) {
+    console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
+  }
 }
 
 function buildFingerprint(item) {
