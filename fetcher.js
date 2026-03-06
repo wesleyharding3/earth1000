@@ -61,15 +61,16 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
       ]
     );
 
-    await pool.query(
-      `UPDATE news_sources 
-       SET last_error = $1, last_failed_at = NOW() 
-       WHERE id = $2`,
-      [err.message?.substring(0, 1000), feed.id]
-    );
-  } catch (logErr) {
-    console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
-  }
+await pool.query(
+  `UPDATE news_sources 
+   SET last_error = $1, last_failed_at = NOW(),
+       failure_count = failure_count + 1,
+       is_active = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
+   WHERE id = $2`,
+  [err.message?.substring(0, 1000), feed.id]
+);
+} catch (logErr) {
+  console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
 }
 
 function buildFingerprint(item) {
