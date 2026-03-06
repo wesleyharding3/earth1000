@@ -2916,6 +2916,22 @@ function computeCityTiers(cities) {
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
 
+      // Invisible occluder sphere — writes depth so stars don't show through the earth
+      const occluderMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(radius * 0.995, 64, 32),
+        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, side: THREE.FrontSide })
+      );
+      occluderMesh.renderOrder = 0;
+      scene.add(occluderMesh);
+
+      // Invisible occluder sphere — writes depth so stars are hidden behind earth
+      const occluderMat = new THREE.MeshBasicMaterial({
+        colorWrite: false, depthWrite: true, side: THREE.FrontSide
+      });
+      const occluderMesh = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.998, 48, 48), occluderMat);
+      occluderMesh.renderOrder = -1;
+      scene.add(occluderMesh);
+
       const starCount = 6000;
       const starPositions = [];
       const starBaseBrightness = [];
