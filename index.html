@@ -3938,8 +3938,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       function initFlightShipping() {
-        if (!transMeshGroups.flight)   transMeshGroups.flight   = buildArcLines(FLIGHT_ROUTES,   TRANS_COLORS.flight,   0.002, 0.06);
-        if (!transMeshGroups.shipping) transMeshGroups.shipping = buildArcLines(SHIPPING_LANES, TRANS_COLORS.shipping, 0.001, 0.018);
+        if (!transMeshGroups.flight) transMeshGroups.flight = buildArcLines(FLIGHT_ROUTES, TRANS_COLORS.flight, 0.002, 0.06);
+      }
+
+      async function loadShippingTransportation() {
+        if (transMeshGroups.shipping !== null) return;
+        transMeshGroups.shipping = undefined; // mark loading
+        try {
+          const res = await fetch("maritime_routes.geojson");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const geojson = await res.json();
+          transMeshGroups.shipping = buildLinesFromGeojson(geojson, TRANS_COLORS.shipping, 0.001);
+        } catch (err) {
+          console.warn("maritime_routes.geojson load failed:", err);
+          transMeshGroups.shipping = null;
+        }
+        syncTransportationVisibility();
       }
 
       function syncTransportationVisibility() {
@@ -3954,6 +3968,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__currentViewMode === "transportation") {
           if (!transMeshGroups.rail) loadRailTransportation();
           initFlightShipping();
+          if (transLayerVisible.shipping && !transMeshGroups.shipping) loadShippingTransportation();
         }
         syncTransportationVisibility();
       };
@@ -3977,8 +3992,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const layer = opt.dataset.transLayer;
           transLayerVisible[layer] = !transLayerVisible[layer];
           opt.classList.toggle("active", transLayerVisible[layer]);
-          if ((layer === "flight" || layer === "shipping") && !transMeshGroups[layer]) initFlightShipping();
+          if ((layer === "flight") && !transMeshGroups[layer]) initFlightShipping();
           if (layer === "rail" && !transMeshGroups.rail) loadRailTransportation();
+          if (layer === "shipping" && !transMeshGroups.shipping) loadShippingTransportation();
           syncTransportationVisibility();
         });
       });
