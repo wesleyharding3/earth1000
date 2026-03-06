@@ -3822,6 +3822,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       const transLayerVisible = { rail: true, flight: false, shipping: false };
       const transMeshGroups   = { rail: null, flight: null, shipping: null };
+      const transPulseMeshes  = { rail: null, flight: null, shipping: null };
       let   transOpacity      = 0.8;
 
       const TRANS_COLORS = {
@@ -3840,15 +3841,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }
 
-      // ── Transportation shader: permanent dim line + travelling glow pulse ──
-      function makeTransLineMaterial(color, baseOpacity, pulseSpeed, pulseWidth) {
+      // ── Pulse shader: additive glow travels along line, base mesh stays solid ──
+      function makePulseMaterial(color, pulseSpeed, pulseWidth) {
         return new THREE.ShaderMaterial({
           transparent: true,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
           uniforms: {
             uColor:      { value: new THREE.Color(color) },
-            uOpacity:    { value: baseOpacity },
             uTime:       { value: 0.0 },
             uPulseSpeed: { value: pulseSpeed },
             uPulseWidth: { value: pulseWidth },
@@ -3858,56 +3858,53 @@ const settingsToggle     = document.getElementById("settingsToggle");
             attribute float lineLen;
             varying float vT;
             void main() {
-              // normalised 0→1 position along this polyline
               vT = lineLen > 0.0 ? lineDist / lineLen : 0.0;
               gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }`,
           fragmentShader: `
             uniform vec3  uColor;
-            uniform float uOpacity;
             uniform float uTime;
             uniform float uPulseSpeed;
             uniform float uPulseWidth;
             varying float vT;
             void main() {
-              // pulse head 0→1 continuously
               float head = mod(uTime * uPulseSpeed, 1.0);
               float diff = abs(vT - head);
-              diff = min(diff, 1.0 - diff); // wrap around ends
-              // soft glow: 1 at head, fades over pulseWidth
+              diff = min(diff, 1.0 - diff);
               float pulse = smoothstep(uPulseWidth, 0.0, diff);
-              // base line always visible at low opacity, pulse brightens it
-              float alpha = uOpacity * (0.18 + 0.82 * pulse);
-              float bright = 0.25 + 0.75 * pulse;
-              gl_FragColor = vec4(uColor * bright, alpha);
+              if (pulse < 0.01) discard;
+              gl_FragColor = vec4(uColor * 1.8, pulse * 0.9);
             }`
         });
       }
 
-      // Per-vertex cumulative distance along each continuous polyline
-      function addPolylineDistances(positions, coords3d) {
-        // coords3d: array of THREE.Vector3 for one polyline
-        // returns [lineDists[], totalLen] for all segment pairs
-        const dists = [];
-        const lens  = [];
-        let totalLen = 0;
-        for (let i = 1; i < coords3d.length; i++) {
-          totalLen += coords3d[i].distanceTo(coords3d[i-1]);
-        }
-        let cum = 0;
-        for (let i = 0; i < coords3d.length - 1; i++) {
-          dists.push(cum, cum + coords3d[i+1].distanceTo(coords3d[i]));
-          lens.push(totalLen, totalLen);
-          cum += coords3d[i+1].distanceTo(coords3d[i]);
-        }
-        return { dists, lens };
-      }
-
-      function buildLinesFromGeojson(geojson, color, altOffset) {
-        const R = radius + altOffset;
-        const positions = [];
+      // Build geometry with cumulative polyline distances for the pulse layer
+      function buildPolylineGeo(segPositions, coordGroups) {
+        // coordGroups: array of arrays of THREE.Vector3 (one per polyline)
         const lineDists = [];
         const lineLens  = [];
+        coordGroups.forEach(verts => {
+          let totalLen = 0;
+          for (let i = 1; i < verts.length; i++) totalLen += verts[i].distanceTo(verts[i-1]);
+          let cum = 0;
+          for (let i = 0; i < verts.length - 1; i++) {
+            const seg = verts[i+1].distanceTo(verts[i]);
+            lineDists.push(cum, cum + seg);
+            lineLens.push(totalLen, totalLen);
+            cum += seg;
+          }
+        });
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(segPositions, 3));
+        geo.setAttribute("lineDist", new THREE.Float32BufferAttribute(lineDists, 1));
+        geo.setAttribute("lineLen",  new THREE.Float32BufferAttribute(lineLens,  1));
+        return geo;
+      }
+
+      function buildLinesFromGeojson(geojson, color, altOffset, layerKey) {
+        const R = radius + altOffset;
+        const positions  = [];
+        const coordGroups = [];
 
         geojson.features.forEach(f => {
           const geom = f.geometry;
@@ -3917,40 +3914,45 @@ const settingsToggle     = document.getElementById("settingsToggle");
                       : [];
           rings.forEach(coords => {
             const verts = [];
-            for (let i = 0; i < coords.length; i++) {
-              const [lon, lat] = coords[i];
+            for (const [lon, lat] of coords) {
               if (!isFinite(lat) || !isFinite(lon)) continue;
               verts.push(latLonToVec3Trans(lat, lon, R));
             }
             if (verts.length < 2) return;
-            const { dists, lens } = addPolylineDistances(positions, verts);
             for (let i = 0; i < verts.length - 1; i++) {
-              positions.push(verts[i].x, verts[i].y, verts[i].z);
-              positions.push(verts[i+1].x, verts[i+1].y, verts[i+1].z);
+              positions.push(verts[i].x, verts[i].y, verts[i].z,
+                             verts[i+1].x, verts[i+1].y, verts[i+1].z);
             }
-            dists.forEach(d => lineDists.push(d));
-            lens.forEach(l  => lineLens.push(l));
+            coordGroups.push(verts);
           });
         });
 
         if (!positions.length) return null;
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        geo.setAttribute("lineDist", new THREE.Float32BufferAttribute(lineDists, 1));
-        geo.setAttribute("lineLen",  new THREE.Float32BufferAttribute(lineLens,  1));
-        const mat  = makeTransLineMaterial(color, transOpacity, 0.20, 0.10);
-        const mesh = new THREE.LineSegments(geo, mat);
-        mesh.visible = false;
-        scene.add(mesh);
-        return mesh;
+
+        // Base mesh — solid, always visible, no shader magic
+        const baseGeo  = new THREE.BufferGeometry();
+        baseGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.35, depthWrite: false });
+        const baseMesh = new THREE.LineSegments(baseGeo, baseMat);
+        baseMesh.visible = false;
+        scene.add(baseMesh);
+
+        // Pulse overlay mesh — additive glow on same geometry
+        const pulseGeo  = buildPolylineGeo(positions, coordGroups);
+        const pulseMat  = makePulseMaterial(color, 0.20, 0.08);
+        const pulseMesh = new THREE.LineSegments(pulseGeo, pulseMat);
+        pulseMesh.visible = false;
+        scene.add(pulseMesh);
+
+        if (layerKey) transPulseMeshes[layerKey] = pulseMesh;
+        return baseMesh;
       }
 
-      function buildArcLines(routePairs, color, altOffset, arcHeight) {
+      function buildArcLines(routePairs, color, altOffset, arcHeight, layerKey) {
         const R = radius + altOffset;
         const STEPS = 40;
-        const positions = [];
-        const lineDists = [];
-        const lineLens  = [];
+        const positions  = [];
+        const coordGroups = [];
 
         routePairs.forEach(([lat0,lon0,lat1,lon1]) => {
           const v0 = latLonToVec3Trans(lat0, lon0, 1);
@@ -3962,29 +3964,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const lift = 1 + arcHeight * Math.sin(t * Math.PI);
             pts.push(mid.multiplyScalar(R * lift));
           }
-          let totalLen = 0;
-          for (let i = 1; i < pts.length; i++) totalLen += pts[i].distanceTo(pts[i-1]);
-          let cum = 0;
           for (let i = 0; i < STEPS; i++) {
-            const segLen = pts[i+1].distanceTo(pts[i]);
-            positions.push(pts[i].x,   pts[i].y,   pts[i].z);
-            positions.push(pts[i+1].x, pts[i+1].y, pts[i+1].z);
-            lineDists.push(cum, cum + segLen);
-            lineLens.push(totalLen, totalLen);
-            cum += segLen;
+            positions.push(pts[i].x,   pts[i].y,   pts[i].z,
+                           pts[i+1].x, pts[i+1].y, pts[i+1].z);
           }
+          coordGroups.push(pts);
         });
 
         if (!positions.length) return null;
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        geo.setAttribute("lineDist", new THREE.Float32BufferAttribute(lineDists, 1));
-        geo.setAttribute("lineLen",  new THREE.Float32BufferAttribute(lineLens,  1));
-        const mat  = makeTransLineMaterial(color, transOpacity * 0.85, 0.55, 0.22);
-        const mesh = new THREE.LineSegments(geo, mat);
-        mesh.visible = false;
-        scene.add(mesh);
-        return mesh;
+
+        const baseGeo  = new THREE.BufferGeometry();
+        baseGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.30, depthWrite: false });
+        const baseMesh = new THREE.LineSegments(baseGeo, baseMat);
+        baseMesh.visible = false;
+        scene.add(baseMesh);
+
+        const pulseGeo  = buildPolylineGeo(positions, coordGroups);
+        const pulseMat  = makePulseMaterial(color, 0.55, 0.18);
+        const pulseMesh = new THREE.LineSegments(pulseGeo, pulseMat);
+        pulseMesh.visible = false;
+        scene.add(pulseMesh);
+
+        if (layerKey) transPulseMeshes[layerKey] = pulseMesh;
+        return baseMesh;
       }
 
       const FLIGHT_ROUTES = [
@@ -4017,7 +4020,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const res = await fetch("railways.geojson");
           if (!res.ok) throw new Error("HTTP " + res.status);
           const geojson = await res.json();
-          transMeshGroups.rail = buildLinesFromGeojson(geojson, TRANS_COLORS.rail, 0.001);
+          transMeshGroups.rail = buildLinesFromGeojson(geojson, TRANS_COLORS.rail, 0.001, 'rail');
         } catch (err) {
           console.warn("railways.geojson load failed:", err);
           transMeshGroups.rail = null;
@@ -4026,7 +4029,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       function initFlightShipping() {
-        if (!transMeshGroups.flight) transMeshGroups.flight = buildArcLines(FLIGHT_ROUTES, TRANS_COLORS.flight, 0.002, 0.06);
+        if (!transMeshGroups.flight) transMeshGroups.flight = buildArcLines(FLIGHT_ROUTES, TRANS_COLORS.flight, 0.002, 0.06, 'flight');
       }
 
       async function loadShippingTransportation() {
@@ -4036,7 +4039,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const res = await fetch("Shipping_Lanes_v1.geojson");
           if (!res.ok) throw new Error("HTTP " + res.status);
           const geojson = await res.json();
-          transMeshGroups.shipping = buildLinesFromGeojson(geojson, TRANS_COLORS.shipping, 0.001);
+          transMeshGroups.shipping = buildLinesFromGeojson(geojson, TRANS_COLORS.shipping, 0.001, 'shipping');
         } catch (err) {
           console.warn("Shipping_Lanes_v1.geojson load failed:", err);
           transMeshGroups.shipping = null;
@@ -4048,7 +4051,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const isTransMode = window.__currentViewMode === "transportation";
         Object.entries(transMeshGroups).forEach(([key, mesh]) => {
           if (mesh && typeof mesh === "object" && mesh.isObject3D) {
-            mesh.visible = isTransMode && transLayerVisible[key];
+            const show = isTransMode && transLayerVisible[key];
+            mesh.visible = show;
+            // keep pulse overlay in sync
+            if (transPulseMeshes[key] && transPulseMeshes[key].isObject3D)
+              transPulseMeshes[key].visible = show;
           }
         });
       }
@@ -4061,11 +4068,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         syncTransportationVisibility();
       };
 
-      const TRANS_PULSE_SPEED = { rail: 0.20, shipping: 0.25, flight: 0.55 };
+      // Tick uTime on all pulse meshes each frame
+      const TRANS_PULSE_SPEED = { rail: 0.20, shipping: 0.22, flight: 0.55 };
       window.__transTick = function(delta) {
         if (window.__currentViewMode !== "transportation") return;
-        Object.entries(transMeshGroups).forEach(([key, mesh]) => {
-          if (mesh && mesh.isObject3D && mesh.material.uniforms) {
+        Object.entries(transPulseMeshes).forEach(([key, mesh]) => {
+          if (mesh && mesh.isObject3D && mesh.visible && mesh.material.uniforms) {
             mesh.material.uniforms.uTime.value += delta;
             mesh.material.uniforms.uPulseSpeed.value = TRANS_PULSE_SPEED[key] || 0.3;
           }
@@ -4079,7 +4087,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           transOpacity = parseFloat(transOpacitySlider.value);
           transOpacityValEl.textContent = Math.round(transOpacity * 100) + "%";
           Object.values(transMeshGroups).forEach(mesh => {
-            if (mesh && mesh.isObject3D) mesh.material.uniforms.uOpacity.value = transOpacity;
+            if (mesh && mesh.isObject3D) mesh.material.opacity = transOpacity * 0.35;
           });
         });
         transOpacitySlider.addEventListener("pointerdown", e => e.stopPropagation());
