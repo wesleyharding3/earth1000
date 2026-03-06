@@ -3926,7 +3926,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (transMeshGroups.rail !== null) return;
         transMeshGroups.rail = undefined; // mark loading
         try {
-          const res = await fetch("/railways.geojson");
+          const res = await fetch("railways.geojson");
           if (!res.ok) throw new Error("HTTP " + res.status);
           const geojson = await res.json();
           transMeshGroups.rail = buildLinesFromGeojson(geojson, TRANS_COLORS.rail, 0.001);
