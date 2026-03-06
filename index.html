@@ -3840,7 +3840,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }
 
-      // Shared dash-animation shader for all transportation lines
+      // ── Transportation line shader: travelling pulse along each polyline ──
       function makeTransLineMaterial(color, baseOpacity) {
         return new THREE.ShaderMaterial({
           transparent: true,
@@ -3849,50 +3849,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
           uniforms: {
             uColor:      { value: new THREE.Color(color) },
             uOpacity:    { value: baseOpacity },
-            uDashOffset: { value: 0.0 },
-            uDashScale:  { value: 8.0 },
-            uDashRatio:  { value: 0.45 },
+            uTime:       { value: 0.0 },
+            uPulseSpeed: { value: 1.0 },  // overridden per layer
+            uPulseWidth: { value: 0.12 }, // fraction of line length lit at once
           },
           vertexShader: `
-            attribute float lineDistance;
-            varying float vLineDistance;
+            attribute float lineDist;
+            attribute float lineLen;
+            varying float vLineDist;
+            varying float vLineLen;
             void main() {
-              vLineDistance = lineDistance;
+              vLineDist = lineDist;
+              vLineLen  = lineLen;
               gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }`,
           fragmentShader: `
             uniform vec3  uColor;
             uniform float uOpacity;
-            uniform float uDashOffset;
-            uniform float uDashScale;
-            uniform float uDashRatio;
-            varying float vLineDistance;
+            uniform float uTime;
+            uniform float uPulseSpeed;
+            uniform float uPulseWidth;
+            varying float vLineDist;
+            varying float vLineLen;
             void main() {
-              float d = mod(vLineDistance * uDashScale + uDashOffset, 1.0);
-              float dash = smoothstep(0.0, 0.08, d) * smoothstep(uDashRatio + 0.08, uDashRatio, d);
-              if (dash < 0.01) discard;
-              gl_FragColor = vec4(uColor * (0.7 + 0.3 * dash), uOpacity * dash);
+              // normalise position along this polyline 0→1
+              float t = vLineLen > 0.0 ? vLineDist / vLineLen : 0.0;
+              // pulse head travels from 0→1 repeatedly
+              float head = mod(uTime * uPulseSpeed, 1.0);
+              // distance from pulse head (wrap-around)
+              float diff = abs(t - head);
+              diff = min(diff, 1.0 - diff); // wrap
+              // soft glow around the head
+              float pulse = smoothstep(uPulseWidth, 0.0, diff);
+              // dim base line always visible, pulse adds brightness
+              float brightness = 0.15 + 0.85 * pulse;
+              if (brightness < 0.12) discard;
+              gl_FragColor = vec4(uColor * brightness, uOpacity * brightness);
             }`
         });
       }
 
-      function addLineDistances(geo) {
-        const pos = geo.attributes.position.array;
-        const n   = pos.length / 3;
-        const ld  = new Float32Array(n);
-        for (let i = 0; i < n; i += 2) {
-          ld[i] = 0;
-          const dx = pos[(i+1)*3]   - pos[i*3];
-          const dy = pos[(i+1)*3+1] - pos[i*3+1];
-          const dz = pos[(i+1)*3+2] - pos[i*3+2];
-          ld[i+1] = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        }
-        geo.setAttribute("lineDistance", new THREE.Float32BufferAttribute(ld, 1));
-      }
-
+      // Build LineSegments with per-vertex cumulative distance along each polyline
+      // lineDist = distance from start of this polyline
+      // lineLen  = total length of this polyline (same for all verts in a line)
       function buildLinesFromGeojson(geojson, color, altOffset) {
         const R = radius + altOffset;
         const positions = [];
+        const lineDists = [];
+        const lineLens  = [];
+
         geojson.features.forEach(f => {
           const geom = f.geometry;
           if (!geom) return;
@@ -3900,20 +3905,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
                       : geom.type === "MultiLineString" ? geom.coordinates
                       : [];
           rings.forEach(coords => {
-            for (let i = 0; i < coords.length - 1; i++) {
-              const [lon0, lat0] = coords[i];
-              const [lon1, lat1] = coords[i + 1];
-              if (!isFinite(lat0)||!isFinite(lon0)||!isFinite(lat1)||!isFinite(lon1)) continue;
-              const v0 = latLonToVec3Trans(lat0, lon0, R);
-              const v1 = latLonToVec3Trans(lat1, lon1, R);
-              positions.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z);
+            // First pass: compute total polyline length
+            let totalLen = 0;
+            const verts = [];
+            for (let i = 0; i < coords.length; i++) {
+              const [lon, lat] = coords[i];
+              if (!isFinite(lat) || !isFinite(lon)) continue;
+              verts.push(latLonToVec3Trans(lat, lon, R));
+            }
+            for (let i = 1; i < verts.length; i++) {
+              totalLen += verts[i].distanceTo(verts[i-1]);
+            }
+            if (totalLen === 0 || verts.length < 2) return;
+
+            // Second pass: emit LineSegments pairs with cumulative dist
+            let cumDist = 0;
+            for (let i = 0; i < verts.length - 1; i++) {
+              const v0 = verts[i], v1 = verts[i+1];
+              const segLen = v1.distanceTo(v0);
+              // start vertex
+              positions.push(v0.x, v0.y, v0.z);
+              lineDists.push(cumDist);
+              lineLens.push(totalLen);
+              // end vertex
+              cumDist += segLen;
+              positions.push(v1.x, v1.y, v1.z);
+              lineDists.push(cumDist);
+              lineLens.push(totalLen);
             }
           });
         });
+
         if (!positions.length) return null;
         const geo = new THREE.BufferGeometry();
-        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        addLineDistances(geo);
+        geo.setAttribute("position",  new THREE.Float32BufferAttribute(positions, 3));
+        geo.setAttribute("lineDist",  new THREE.Float32BufferAttribute(lineDists, 1));
+        geo.setAttribute("lineLen",   new THREE.Float32BufferAttribute(lineLens,  1));
         const mat  = makeTransLineMaterial(color, transOpacity);
         const mesh = new THREE.LineSegments(geo, mat);
         mesh.visible = false;
@@ -3925,26 +3952,44 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const R = radius + altOffset;
         const STEPS = 40;
         const positions = [];
+        const lineDists = [];
+        const lineLens  = [];
+
         routePairs.forEach(([lat0,lon0,lat1,lon1]) => {
           const v0 = latLonToVec3Trans(lat0, lon0, 1);
           const v1 = latLonToVec3Trans(lat1, lon1, 1);
+          // Build all points first to get total length
+          const pts = [];
+          for (let i = 0; i <= STEPS; i++) {
+            const t = i / STEPS;
+            const mid = v0.clone().lerp(v1, t).normalize();
+            const lift = 1 + arcHeight * Math.sin(t * Math.PI);
+            pts.push(mid.multiplyScalar(R * lift));
+          }
+          let totalLen = 0;
+          for (let i = 1; i < pts.length; i++) totalLen += pts[i].distanceTo(pts[i-1]);
+
+          let cumDist = 0;
           for (let i = 0; i < STEPS; i++) {
-            const t0 = i / STEPS, t1 = (i + 1) / STEPS;
-            const mid0 = v0.clone().lerp(v1, t0).normalize();
-            const mid1 = v0.clone().lerp(v1, t1).normalize();
-            const lift0 = 1 + arcHeight * Math.sin(t0 * Math.PI);
-            const lift1 = 1 + arcHeight * Math.sin(t1 * Math.PI);
-            positions.push(
-              mid0.x*R*lift0, mid0.y*R*lift0, mid0.z*R*lift0,
-              mid1.x*R*lift1, mid1.y*R*lift1, mid1.z*R*lift1
-            );
+            const segLen = pts[i+1].distanceTo(pts[i]);
+            positions.push(pts[i].x,   pts[i].y,   pts[i].z);
+            lineDists.push(cumDist);
+            lineLens.push(totalLen);
+            cumDist += segLen;
+            positions.push(pts[i+1].x, pts[i+1].y, pts[i+1].z);
+            lineDists.push(cumDist);
+            lineLens.push(totalLen);
           }
         });
+
         if (!positions.length) return null;
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        addLineDistances(geo);
-        const mat  = makeTransLineMaterial(color, transOpacity * 0.65);
+        geo.setAttribute("lineDist", new THREE.Float32BufferAttribute(lineDists, 1));
+        geo.setAttribute("lineLen",  new THREE.Float32BufferAttribute(lineLens,  1));
+        const mat  = makeTransLineMaterial(color, transOpacity * 0.8);
+        mat.uniforms.uPulseSpeed.value = 1.8; // flights pulse faster
+        mat.uniforms.uPulseWidth.value = 0.25; // wider glow on arcs
         const mesh = new THREE.LineSegments(geo, mat);
         mesh.visible = false;
         scene.add(mesh);
@@ -4025,13 +4070,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         syncTransportationVisibility();
       };
 
-      // Advance dash offset each frame for all visible trans meshes
-      const TRANS_DASH_SPEED = { rail: 0.18, flight: 0.55, shipping: 0.28 };
+      // Tick uTime forward each frame so pulse travels along lines
+      const TRANS_PULSE_SPEED = { rail: 0.18, shipping: 0.22, flight: 1.8 };
       window.__transTick = function(delta) {
         if (window.__currentViewMode !== "transportation") return;
         Object.entries(transMeshGroups).forEach(([key, mesh]) => {
-          if (mesh && mesh.isObject3D && mesh.visible && mesh.material.uniforms) {
-            mesh.material.uniforms.uDashOffset.value -= (TRANS_DASH_SPEED[key] || 0.3) * delta;
+          if (mesh && mesh.isObject3D && mesh.material.uniforms) {
+            mesh.material.uniforms.uTime.value += delta;
+            // keep pulse speed per layer
+            mesh.material.uniforms.uPulseSpeed.value = TRANS_PULSE_SPEED[key] || 0.3;
           }
         });
       };
