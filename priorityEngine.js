@@ -185,11 +185,17 @@ module.exports = { classifyArticle };
  * PRIORITY ENGINE
  *
  * final_score =
- *   normalizedIntensity *
- *   tagMultiplier *
- *   popularity_score *
+ *   blend(recencyScore * 0.75, qualityScore * 0.25) *
  *   tierBonus *
- *   decay
+ *   cityPenalty
+ *
+ * Where:
+ *   recencyScore = exponential decay from publishedAt (half-life 24h), normalized 0→1
+ *   qualityScore = normalizedIntensity * tagMultiplier * popularityScore, normalized 0→1
+ *
+ * Recency is the dominant signal (~75%). Quality, tier, and source diversity
+ * act as secondary modifiers so that among equally-fresh articles, better
+ * content still surfaces first.
  *
  * City source guarantees:
  * - City articles scored with CITY_SOURCE_PENALTY multiplier (0.01)
@@ -213,6 +219,12 @@ const CONFIG = {
   DECAY: {
     HALF_LIFE_HOURS: 24,
     MIN_DECAY:       0.05
+  },
+  // Blend weights: recency is the dominant signal (~75%), quality fills the rest.
+  // Raise RECENCY toward 1.0 to make freshness nearly everything.
+  SCORE_BLEND: {
+    RECENCY:  0.75,
+    QUALITY:  0.25
   },
   DIVERSITY: {
     MAX_PENALTY:     0.80,
@@ -276,20 +288,27 @@ function calculatePriority({
   publishedAt,
   isCitySource
 }) {
+  // Recency: exponential decay score, 0→1 (fresh = 1.0, old = MIN_DECAY)
+  const recencyScore = computeDecay(publishedAt);
+
+  // Quality: content signal rolled into a single 0→1 value.
+  // popularityScore is already clamped so its range is bounded; we divide by
+  // MAX_POPULARITY to nudge it back toward 0→1 before blending.
   const normalized    = normalizeIntensity(rawIntensity, maxIntensity);
   const tagMultiplier = computeTagMultiplier(tagWeightSum);
   const popularity    = clampPopularity(popularityScore);
-  const tierBonus     = getTierBonus(popularityTier);
-  const decay         = computeDecay(publishedAt);
-  const cityPenalty   = isCitySource ? CONFIG.CITY_SOURCE_PENALTY : 1.0;
+  const qualityScore  = Math.min(1, (normalized * tagMultiplier * popularity) / CONFIG.MAX_POPULARITY);
 
-  const finalScore =
-    normalized *
-    tagMultiplier *
-    popularity *
-    tierBonus *
-    decay *
-    cityPenalty;
+  // Blend: recency dominates at 75%
+  const { RECENCY, QUALITY } = CONFIG.SCORE_BLEND;
+  const blended = (RECENCY * recencyScore) + (QUALITY * qualityScore);
+
+  // Tier bonus and city penalty are applied after blending so they can still
+  // meaningfully separate articles within the same recency band.
+  const tierBonus   = getTierBonus(popularityTier);
+  const cityPenalty = isCitySource ? CONFIG.CITY_SOURCE_PENALTY : 1.0;
+
+  const finalScore = blended * tierBonus * cityPenalty;
 
   return parseFloat(finalScore.toFixed(8));
 }
@@ -371,9 +390,11 @@ function countryVarianceRerank(articles) {
   const ages   = articles.map(a => now - new Date(a.published_at).getTime());
   const maxAge = Math.max(...ages) || 1;
 
+  // Recency bonus weight raised to 0.50 (from 0.25) to stay consistent with
+  // the dominant-recency philosophy applied in calculatePriority.
   const pool      = articles.map(a => ({
     ...a,
-    _recencyBonus: 1 + 0.25 * (1 - (now - new Date(a.published_at).getTime()) / maxAge)
+    _recencyBonus: 1 + 0.50 * (1 - (now - new Date(a.published_at).getTime()) / maxAge)
   }));
   const result    = [];
   const penalties = {};
