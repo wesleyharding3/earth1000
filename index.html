@@ -4089,7 +4089,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panelOpen = panel.classList.contains("active");
         hoveredIndex = null;
 
-        if (panelOpen) { hideHoverCard(); return; }
+        if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
 
         const intersects = raycaster.intersectObject(activePoints);
         if (intersects.length > 0) {
