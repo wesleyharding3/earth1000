@@ -3873,7 +3873,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               diff = min(diff, 1.0 - diff);
               float pulse = smoothstep(uPulseWidth, 0.0, diff);
               if (pulse < 0.01) discard;
-              gl_FragColor = vec4(uColor * 1.8, pulse * 0.9);
+              gl_FragColor = vec4(uColor * 2.4, pulse * 0.95);
             }`
         });
       }
@@ -3932,17 +3932,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Base mesh — solid, always visible, no shader magic
         const baseGeo  = new THREE.BufferGeometry();
         baseGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.35, depthWrite: false });
+        const baseOpacity = layerKey === 'rail' ? transOpacity * 0.82 : transOpacity * 0.72;
+        const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: baseOpacity, depthWrite: false });
         const baseMesh = new THREE.LineSegments(baseGeo, baseMat);
         baseMesh.visible = false;
         scene.add(baseMesh);
 
         // Pulse overlay mesh — additive glow on same geometry
         const pulseGeo  = buildPolylineGeo(positions, coordGroups);
-        const pulseMat  = makePulseMaterial(color, 0.20, 0.08);
+        const pulseColor = layerKey === 'rail' ? new THREE.Color(color).multiplyScalar(1.6) : color;
+        const pulseWidth = layerKey === 'rail' ? 0.14 : 0.08;
+        const pulseMat  = makePulseMaterial(pulseColor, 0.20, pulseWidth);
         const pulseMesh = new THREE.LineSegments(pulseGeo, pulseMat);
         pulseMesh.visible = false;
         scene.add(pulseMesh);
+
+        // Extra wide glow halo for rail to simulate thickness
+        if (layerKey === 'rail') {
+          const haloGeo = buildPolylineGeo(positions, coordGroups);
+          const haloMat = makePulseMaterial(new THREE.Color(color).multiplyScalar(1.0), 0.20, 0.28);
+          haloMat.uniforms.uPulseWidth.value = 0.28;
+          const haloMesh = new THREE.LineSegments(haloGeo, haloMat);
+          haloMesh.visible = false;
+          scene.add(haloMesh);
+          // store halo as a secondary pulse mesh for tick updates
+          if (!window.__railHaloMeshes) window.__railHaloMeshes = [];
+          window.__railHaloMeshes.push(haloMesh);
+          transPulseMeshes['railHalo'] = haloMesh;
+        }
 
         if (layerKey) transPulseMeshes[layerKey] = pulseMesh;
         return baseMesh;
@@ -3975,7 +3992,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const baseGeo  = new THREE.BufferGeometry();
         baseGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.30, depthWrite: false });
+        const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: transOpacity * 0.68, depthWrite: false });
         const baseMesh = new THREE.LineSegments(baseGeo, baseMat);
         baseMesh.visible = false;
         scene.add(baseMesh);
@@ -4056,6 +4073,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             // keep pulse overlay in sync
             if (transPulseMeshes[key] && transPulseMeshes[key].isObject3D)
               transPulseMeshes[key].visible = show;
+            // keep rail halo in sync
+            if (key === 'rail' && transPulseMeshes['railHalo'] && transPulseMeshes['railHalo'].isObject3D)
+              transPulseMeshes['railHalo'].visible = show;
           }
         });
       }
@@ -4069,7 +4089,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       };
 
       // Tick uTime on all pulse meshes each frame
-      const TRANS_PULSE_SPEED = { rail: 0.20, shipping: 0.22, flight: 0.55 };
+      const TRANS_PULSE_SPEED = { rail: 0.20, shipping: 0.22, flight: 0.55, railHalo: 0.20 };
       window.__transTick = function(delta) {
         if (window.__currentViewMode !== "transportation") return;
         Object.entries(transPulseMeshes).forEach(([key, mesh]) => {
@@ -4086,8 +4106,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         transOpacitySlider.addEventListener("input", () => {
           transOpacity = parseFloat(transOpacitySlider.value);
           transOpacityValEl.textContent = Math.round(transOpacity * 100) + "%";
-          Object.values(transMeshGroups).forEach(mesh => {
-            if (mesh && mesh.isObject3D) mesh.material.opacity = transOpacity * 0.35;
+          Object.entries(transMeshGroups).forEach(([key, mesh]) => {
+            if (mesh && mesh.isObject3D) {
+              const mult = key === 'rail' ? 0.82 : 0.72;
+              mesh.material.opacity = transOpacity * mult;
+            }
           });
         });
         transOpacitySlider.addEventListener("pointerdown", e => e.stopPropagation());
@@ -5351,10 +5374,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const GLOBE_RADIUS   = radius;          // already in scope
   const ARC_HEIGHT     = 0.45;            // bezier lift above globe
   const ARC_SEGMENTS   = 64;              // tube path resolution
-  const TUBE_RADIUS    = 0.009;           // arc tube thickness (3× thicker)
-  const TUBE_RADIAL    = 6;              // tube cross-section segments (rounder)
-  const PARTICLE_COUNT = 6;              // moving dots per arc (more motion)
-  const PARTICLE_SIZE  = 0.038;          // dot billboard size (2.4× bigger)
+  const TUBE_RADIUS    = 0.003;           // arc tube thickness
+  const TUBE_RADIAL    = 4;              // tube cross-section segments
+  const PARTICLE_COUNT = 3;              // moving dots per arc
+  const PARTICLE_SIZE  = 0.016;          // dot billboard size
   const FADE_DURATION  = 0.35;           // arc fade-in secs
   const MAX_VISIBLE    = 120;            // max simultaneous arcs
 
@@ -5392,9 +5415,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const ctx = c.getContext("2d");
     const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
     g.addColorStop(0,    "rgba(255,255,255,1)");
-    g.addColorStop(0.15, "rgba(255,255,255,1)");
-    g.addColorStop(0.35, "rgba(255,255,255,0.75)");
-    g.addColorStop(0.65, "rgba(255,255,255,0.25)");
+    g.addColorStop(0.25, "rgba(255,255,255,0.85)");
+    g.addColorStop(0.55, "rgba(255,255,255,0.2)");
     g.addColorStop(1,    "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
@@ -5406,8 +5428,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Colour helpers ── */
   function routingColor(routingType) {
     return routingType === "source"
-      ? new THREE.Color(0.3, 1.0, 1.0)   // bright cyan — source routing
-      : new THREE.Color(0.3, 1.0, 0.6); // bright green — content routing
+      ? new THREE.Color(0.2, 0.8, 1.0)   // cyan — source routing
+      : new THREE.Color(0.3, 1.0, 0.55); // green — content routing
   }
 
   function sentimentColor(score) {
@@ -5420,7 +5442,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     );
   }
 
-  function uniformColor() { return new THREE.Color(1.0, 0.95, 1.0); }
+  function uniformColor() { return new THREE.Color(0.9, 0.85, 1.0); }
 
   function pickColor(flow) {
     if (colorMode === "sentiment") return sentimentColor(flow.sentiment);
@@ -5577,7 +5599,7 @@ function clearArcs() {
       else if (t < 1 - FADE_DURATION)  opacity = 1;
       else                              opacity = Math.max(0, (1 - t) / FADE_DURATION);
 
-      arc.tubeMat.opacity = opacity * 0.92;
+      arc.tubeMat.opacity = opacity * 0.55;
       arc.ptMat.opacity   = opacity;
 
       /* move particles along curve */
