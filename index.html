@@ -3932,7 +3932,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Base mesh — solid, always visible, no shader magic
         const baseGeo  = new THREE.BufferGeometry();
         baseGeo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        const baseOpacity = layerKey === 'rail' ? transOpacity * 0.82 : transOpacity * 0.72;
+        const baseOpacity = layerKey === 'rail' ? transOpacity * 0.48 : transOpacity * 0.72;
         const baseMat  = new THREE.LineBasicMaterial({ color, transparent: true, opacity: baseOpacity, depthWrite: false });
         const baseMesh = new THREE.LineSegments(baseGeo, baseMat);
         baseMesh.visible = false;
@@ -4108,7 +4108,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           transOpacityValEl.textContent = Math.round(transOpacity * 100) + "%";
           Object.entries(transMeshGroups).forEach(([key, mesh]) => {
             if (mesh && mesh.isObject3D) {
-              const mult = key === 'rail' ? 0.82 : 0.72;
+              const mult = key === 'rail' ? 0.48 : 0.72;
               mesh.material.opacity = transOpacity * mult;
             }
           });
