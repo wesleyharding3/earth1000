@@ -5351,10 +5351,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const GLOBE_RADIUS   = radius;          // already in scope
   const ARC_HEIGHT     = 0.45;            // bezier lift above globe
   const ARC_SEGMENTS   = 64;              // tube path resolution
-  const TUBE_RADIUS    = 0.003;           // arc tube thickness
-  const TUBE_RADIAL    = 4;              // tube cross-section segments
-  const PARTICLE_COUNT = 3;              // moving dots per arc
-  const PARTICLE_SIZE  = 0.016;          // dot billboard size
+  const TUBE_RADIUS    = 0.009;           // arc tube thickness (3× thicker)
+  const TUBE_RADIAL    = 6;              // tube cross-section segments (rounder)
+  const PARTICLE_COUNT = 6;              // moving dots per arc (more motion)
+  const PARTICLE_SIZE  = 0.038;          // dot billboard size (2.4× bigger)
   const FADE_DURATION  = 0.35;           // arc fade-in secs
   const MAX_VISIBLE    = 120;            // max simultaneous arcs
 
@@ -5392,8 +5392,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const ctx = c.getContext("2d");
     const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
     g.addColorStop(0,    "rgba(255,255,255,1)");
-    g.addColorStop(0.25, "rgba(255,255,255,0.85)");
-    g.addColorStop(0.55, "rgba(255,255,255,0.2)");
+    g.addColorStop(0.15, "rgba(255,255,255,1)");
+    g.addColorStop(0.35, "rgba(255,255,255,0.75)");
+    g.addColorStop(0.65, "rgba(255,255,255,0.25)");
     g.addColorStop(1,    "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
@@ -5405,8 +5406,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Colour helpers ── */
   function routingColor(routingType) {
     return routingType === "source"
-      ? new THREE.Color(0.2, 0.8, 1.0)   // cyan — source routing
-      : new THREE.Color(0.3, 1.0, 0.55); // green — content routing
+      ? new THREE.Color(0.3, 1.0, 1.0)   // bright cyan — source routing
+      : new THREE.Color(0.3, 1.0, 0.6); // bright green — content routing
   }
 
   function sentimentColor(score) {
@@ -5419,7 +5420,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     );
   }
 
-  function uniformColor() { return new THREE.Color(0.9, 0.85, 1.0); }
+  function uniformColor() { return new THREE.Color(1.0, 0.95, 1.0); }
 
   function pickColor(flow) {
     if (colorMode === "sentiment") return sentimentColor(flow.sentiment);
@@ -5576,7 +5577,7 @@ function clearArcs() {
       else if (t < 1 - FADE_DURATION)  opacity = 1;
       else                              opacity = Math.max(0, (1 - t) / FADE_DURATION);
 
-      arc.tubeMat.opacity = opacity * 0.55;
+      arc.tubeMat.opacity = opacity * 0.92;
       arc.ptMat.opacity   = opacity;
 
       /* move particles along curve */
