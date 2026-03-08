@@ -2626,6 +2626,33 @@
             </div>
           </div>
         </div>
+        <div class="sidebarDivider"></div>
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">GDP Filter</div>
+          <div class="popFilterWrap" id="gdpFilterCountry">
+            <div class="popRangeTrack" id="gdpTrackCountry">
+              <div class="popRangeBase"></div>
+              <div class="popRangeFill" id="gdpFillCountry"></div>
+              <input type="range" id="gdpMinCountry" min="0" max="100" value="0" step="1">
+              <input type="range" id="gdpMaxCountry" min="0" max="100" value="100" step="1">
+            </div>
+            <div class="popInputRow">
+              <div class="popInputGroup">
+                <span class="popInputLabel">Min</span>
+                <input class="popTextInput" id="gdpMinTextCountry" type="text" placeholder="0">
+              </div>
+              <span class="popInputSep">–</span>
+              <div class="popInputGroup">
+                <span class="popInputLabel">Max</span>
+                <input class="popTextInput" id="gdpMaxTextCountry" type="text" placeholder="30T">
+              </div>
+            </div>
+            <div class="popFilterFooter">
+              <span class="popActiveLabel" id="gdpActiveLabelCountry">Filter active</span>
+              <button class="popResetBtn" id="gdpResetCountry">Reset</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- City view -->
@@ -2669,6 +2696,33 @@
             <div class="popFilterFooter">
               <span class="popActiveLabel" id="popActiveLabelCity">Filter active</span>
               <button class="popResetBtn" id="popResetCity">Reset</button>
+            </div>
+          </div>
+        </div>
+        <div class="sidebarDivider"></div>
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">GDP Filter</div>
+          <div class="popFilterWrap" id="gdpFilterCity">
+            <div class="popRangeTrack" id="gdpTrackCity">
+              <div class="popRangeBase"></div>
+              <div class="popRangeFill" id="gdpFillCity"></div>
+              <input type="range" id="gdpMinCity" min="0" max="100" value="0" step="1">
+              <input type="range" id="gdpMaxCity" min="0" max="100" value="100" step="1">
+            </div>
+            <div class="popInputRow">
+              <div class="popInputGroup">
+                <span class="popInputLabel">Min</span>
+                <input class="popTextInput" id="gdpMinTextCity" type="text" placeholder="0">
+              </div>
+              <span class="popInputSep">–</span>
+              <div class="popInputGroup">
+                <span class="popInputLabel">Max</span>
+                <input class="popTextInput" id="gdpMaxTextCity" type="text" placeholder="2T">
+              </div>
+            </div>
+            <div class="popFilterFooter">
+              <span class="popActiveLabel" id="gdpActiveLabelCity">Filter active</span>
+              <button class="popResetBtn" id="gdpResetCity">Reset</button>
             </div>
           </div>
         </div>
@@ -3562,6 +3616,180 @@ function computeCityTiers(cities) {
 
       // ── End Population Filter ─────────────────────────────────────────────────
 
+      // ── GDP Filter ────────────────────────────────────────────────────────────
+
+      const cityGdps    = cities.map(c => c.gdp || 0);
+      const countryGdps = countries.map(c => c.gdp || 0);
+
+      const CITY_GDP_MAX    = Math.max(...cityGdps)    || 1;
+      const COUNTRY_GDP_MAX = Math.max(...countryGdps) || 1;
+
+      function fmtGdp(n) {
+        if (n >= 1e12) return (n / 1e12).toFixed(2).replace(/\.?0+$/, "") + "T";
+        if (n >= 1e9)  return (n / 1e9).toFixed(1).replace(/\.0$/, "")   + "B";
+        if (n >= 1e6)  return (n / 1e6).toFixed(1).replace(/\.0$/, "")   + "M";
+        if (n >= 1e3)  return Math.round(n / 1e3) + "K";
+        return n.toLocaleString();
+      }
+
+      function parseGdp(str) {
+        if (!str) return NaN;
+        str = str.trim().replace(/,/g, "");
+        const m = str.match(/^([\d.]+)\s*([kmbt]?)$/i);
+        if (!m) return NaN;
+        const val = parseFloat(m[1]);
+        const suf = m[2].toLowerCase();
+        if (suf === "t") return val * 1e12;
+        if (suf === "b") return val * 1e9;
+        if (suf === "m") return val * 1e6;
+        if (suf === "k") return val * 1e3;
+        return val;
+      }
+
+      function gdpToSlider(gdp, maxGdp) {
+        if (maxGdp <= 0) return 0;
+        return Math.round(Math.sqrt(gdp / maxGdp) * 100);
+      }
+
+      function sliderToGdp(pct, maxGdp) {
+        return Math.round((pct / 100) ** 2 * maxGdp);
+      }
+
+      let gdpFilter = {
+        city:    { min: 0, max: CITY_GDP_MAX },
+        country: { min: 0, max: COUNTRY_GDP_MAX }
+      };
+      let gdpFilterActive = { city: false, country: false };
+      let countryGdpMask  = null;
+      let cityGdpMask     = null;
+
+      function updateGdpFill(type) {
+        const sfx   = type === "city" ? "City" : "Country";
+        const fill  = document.getElementById("gdpFill"  + sfx);
+        const minEl = document.getElementById("gdpMin"   + sfx);
+        const maxEl = document.getElementById("gdpMax"   + sfx);
+        if (!fill || !minEl || !maxEl) return;
+        const lo = parseFloat(minEl.value);
+        const hi = parseFloat(maxEl.value);
+        fill.style.left  = lo + "%";
+        fill.style.width = (hi - lo) + "%";
+      }
+
+      function updateGdpTextInputs(type) {
+        const sfx     = type === "city" ? "City" : "Country";
+        const minText = document.getElementById("gdpMinText" + sfx);
+        const maxText = document.getElementById("gdpMaxText" + sfx);
+        if (!minText || !maxText) return;
+        if (document.activeElement !== minText) minText.value = fmtGdp(gdpFilter[type].min);
+        if (document.activeElement !== maxText) maxText.value = fmtGdp(gdpFilter[type].max);
+      }
+
+      function updateGdpActiveLabel(type) {
+        const sfx   = type === "city" ? "City" : "Country";
+        const label = document.getElementById("gdpActiveLabel" + sfx);
+        if (!label) return;
+        label.classList.toggle("visible", gdpFilterActive[type]);
+      }
+
+      function applyGdpFilter(type) {
+        const maxGdp = type === "city" ? CITY_GDP_MAX : COUNTRY_GDP_MAX;
+        const { min, max } = gdpFilter[type];
+        gdpFilterActive[type] = (min > 0 || max < maxGdp);
+        updateGdpActiveLabel(type);
+        if (type === "country") {
+          countryGdpMask = countries.map(c => { const g = c.gdp || 0; return g >= min && g <= max; });
+        } else {
+          cityGdpMask = cities.map(c => { const g = c.gdp || 0; return g >= min && g <= max; });
+        }
+      }
+
+      function resetGdpFilter(type) {
+        const sfx    = type === "city" ? "City" : "Country";
+        const maxGdp = type === "city" ? CITY_GDP_MAX : COUNTRY_GDP_MAX;
+        gdpFilter[type].min    = 0;
+        gdpFilter[type].max    = maxGdp;
+        gdpFilterActive[type]  = false;
+        if (type === "country") countryGdpMask = null;
+        else                    cityGdpMask    = null;
+        const minSlider = document.getElementById("gdpMin" + sfx);
+        const maxSlider = document.getElementById("gdpMax" + sfx);
+        if (minSlider) minSlider.value = 0;
+        if (maxSlider) maxSlider.value = 100;
+        updateGdpFill(type);
+        updateGdpTextInputs(type);
+        updateGdpActiveLabel(type);
+      }
+
+      function wireGdpFilter(type) {
+        const sfx      = type === "city" ? "City" : "Country";
+        const maxGdp   = type === "city" ? CITY_GDP_MAX : COUNTRY_GDP_MAX;
+        const minSlider = document.getElementById("gdpMin"     + sfx);
+        const maxSlider = document.getElementById("gdpMax"     + sfx);
+        const minText   = document.getElementById("gdpMinText" + sfx);
+        const maxText   = document.getElementById("gdpMaxText" + sfx);
+        const resetBtn  = document.getElementById("gdpReset"   + sfx);
+        if (!minSlider) return;
+
+        minText.value = fmtGdp(0);
+        maxText.value = fmtGdp(maxGdp);
+        updateGdpFill(type);
+
+        function onSliderChange() {
+          let lo = parseFloat(minSlider.value);
+          let hi = parseFloat(maxSlider.value);
+          if (lo > hi - 1) {
+            if (this === minSlider) lo = hi - 1;
+            else                   hi = lo + 1;
+            minSlider.value = lo;
+            maxSlider.value = hi;
+          }
+          gdpFilter[type].min = sliderToGdp(lo, maxGdp);
+          gdpFilter[type].max = sliderToGdp(hi, maxGdp);
+          updateGdpFill(type);
+          updateGdpTextInputs(type);
+          applyGdpFilter(type);
+        }
+
+        minSlider.addEventListener("input", onSliderChange);
+        maxSlider.addEventListener("input", onSliderChange);
+
+        function onTextCommit(isMin) {
+          const raw = isMin ? minText.value : maxText.value;
+          let val = parseGdp(raw);
+          if (isNaN(val)) { updateGdpTextInputs(type); return; }
+          val = Math.max(0, Math.min(maxGdp, val));
+          if (isMin) {
+            val = Math.min(val, gdpFilter[type].max);
+            gdpFilter[type].min = val;
+            minSlider.value = gdpToSlider(val, maxGdp);
+          } else {
+            val = Math.max(val, gdpFilter[type].min);
+            gdpFilter[type].max = val;
+            maxSlider.value = gdpToSlider(val, maxGdp);
+          }
+          updateGdpFill(type);
+          updateGdpTextInputs(type);
+          applyGdpFilter(type);
+        }
+
+        minText.addEventListener("blur",    () => onTextCommit(true));
+        maxText.addEventListener("blur",    () => onTextCommit(false));
+        minText.addEventListener("keydown", e => { if (e.key === "Enter") minText.blur(); });
+        maxText.addEventListener("keydown", e => { if (e.key === "Enter") maxText.blur(); });
+        resetBtn.addEventListener("click",  () => resetGdpFilter(type));
+      }
+
+      wireGdpFilter("country");
+      wireGdpFilter("city");
+
+      // Extend mode-switch reset to also clear GDP filters
+      window.__popFilterResetOnModeSwitch = function(mode) {
+        if (mode === "country") { resetPopFilter("country"); resetGdpFilter("country"); }
+        else if (mode === "city") { resetPopFilter("city"); resetGdpFilter("city"); }
+      };
+
+      // ── End GDP Filter ────────────────────────────────────────────────────────
+
       const countryPositions = [];
       countries.forEach(country => {
         const { lat, lon } = country;
@@ -3778,6 +4006,8 @@ function computeCityTiers(cities) {
 
               // Population filter mask
               if (cityPopMask && !cityPopMask[gi]) glow = 0;
+              // GDP filter mask
+              if (cityGdpMask && !cityGdpMask[gi]) glow = 0;
 
               colArr.setXYZ(li, glow, glow * 0.92, glow * 0.85);
             }
@@ -3807,6 +4037,8 @@ function computeCityTiers(cities) {
 
             // Population filter mask
             if (countryPopMask && !countryPopMask[i]) glow = 0;
+            // GDP filter mask
+            if (countryGdpMask && !countryGdpMask[i]) glow = 0;
 
             colArr.setXYZ(i, glow, glow * 0.6, glow * 0.25);
           }
@@ -4639,9 +4871,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           if (isCityVisible(nodePos, camera)) {
-            // Suppress hover for pop-filter-masked nodes
-            const mask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-            if (!mask || mask[index]) hoveredIndex = index;
+            // Suppress hover for pop/gdp-filter-masked nodes
+            const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+            const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) hoveredIndex = index;
           }
         }
 
@@ -4756,8 +4989,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           if (isCityVisible(nodePos, camera)) {
-            const mask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-            if (!mask || mask[index]) {
+            const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+            const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
               if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
@@ -4787,8 +5021,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           if (isCityVisible(nodePos, camera)) {
-            const mask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-            if (!mask || mask[index]) {
+            const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+            const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
               if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
@@ -5452,11 +5687,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const cDir = new THREE.Vector3();
           camera.getWorldDirection(cDir).normalize();
           const quat = scene.quaternion;
-          const mask = isCity ? cityPopMask : countryPopMask;
+          const mask    = isCity ? cityPopMask    : countryPopMask;
+          const gdpMask = isCity ? cityGdpMask    : countryGdpMask;
           const result = [];
           for (let i = 0; i < dataArr.length; i++) {
-            // Skip nodes masked by population filter
-            if (mask && !mask[i]) continue;
+            // Skip nodes masked by population or GDP filter
+            if (mask    && !mask[i])    continue;
+            if (gdpMask && !gdpMask[i]) continue;
             const wv = new THREE.Vector3(posArr[i*3], posArr[i*3+1], posArr[i*3+2]).applyQuaternion(quat);
             const facing = -cDir.dot(wv.clone().normalize());
             if (facing < 0.12) continue;
