@@ -18,8 +18,7 @@ const parser = new Parser({
 const TIMEOUT_MS = 15000;
 const MAX_FEED_SIZE = 2 * 1024 * 1024;
 
-// NEW: Toggle whether inactive/stale feeds should be rechecked
-// Set CHECK_INACTIVE=true in .env to enable full validation mode
+// Toggle full inactive validation
 const CHECK_INACTIVE = process.env.CHECK_INACTIVE === "true";
 
 /* =========================================
@@ -43,7 +42,9 @@ async function fetchXmlWithTimeout(url) {
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        "User-Agent": "Mozilla/5.0 (RSS Validator)"
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
       }
     });
 
@@ -69,33 +70,42 @@ async function fetchXmlWithTimeout(url) {
 ========================================= */
 
 async function validateFeeds() {
+
   console.log("🔎 Starting targeted feed validation...");
   console.log(`⚙️  CHECK_INACTIVE mode: ${CHECK_INACTIVE}`);
 
   let query;
-  let params = [];
 
   if (CHECK_INACTIVE) {
-    // Full validation mode (original behavior)
+    // Full validation mode (inactive or stale feeds)
     query = `
       SELECT id, rss_url, is_active
       FROM news_sources
-      WHERE last_checked_at IS NULL
-         OR last_checked_at < NOW() - INTERVAL '7 days'
-         OR is_active = false
+      WHERE
+        (
+          last_checked_at IS NULL
+          OR last_checked_at < NOW() - INTERVAL '2 days'
+        )
+        AND (
+          last_checked_at IS NULL
+          OR last_checked_at < NOW() - INTERVAL '7 days'
+          OR is_active = false
+        )
       ORDER BY last_checked_at NULLS FIRST
     `;
   } else {
-    // Only validate feeds that have NEVER been checked
+    // Only feeds never checked (still enforce 2-day rule)
     query = `
       SELECT id, rss_url, is_active
       FROM news_sources
-      WHERE last_checked_at IS NULL
+      WHERE
+        last_checked_at IS NULL
+        OR last_checked_at < NOW() - INTERVAL '2 days'
       ORDER BY id ASC
     `;
   }
 
-  const { rows } = await pool.query(query, params);
+  const { rows } = await pool.query(query);
 
   console.log(`📋 Feeds selected: ${rows.length}`);
 
@@ -104,9 +114,11 @@ async function validateFeeds() {
   let alreadyFalseCount = 0;
 
   for (const feed of rows) {
+
     const wasActive = feed.is_active;
 
     try {
+
       const xml = await fetchXmlWithTimeout(feed.rss_url);
       const parsed = await parser.parseString(xml);
 
@@ -130,6 +142,7 @@ async function validateFeeds() {
       console.log(`✅ Valid RSS: ${feed.rss_url} (${parsed.items.length} items)`);
 
     } catch (err) {
+
       const cleanError = sanitizeText(err.message);
 
       await pool.query(`
@@ -150,7 +163,9 @@ async function validateFeeds() {
         alreadyFalseCount++;
         console.log(`⛔ Still inactive: ${feed.rss_url} → ${cleanError}`);
       }
+
     }
+
   }
 
   console.log(`
@@ -160,23 +175,33 @@ async function validateFeeds() {
 ❌ Deactivated:    ${deactivatedCount}
 ⛔ Still inactive: ${alreadyFalseCount}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  `);
+`);
 }
 
 /* =========================================
-   Cron Runner
+   Runner
 ========================================= */
 
 async function run() {
+
   try {
+
     console.log("🕒 Feed Validator Cron Started:", new Date().toISOString());
+
     await validateFeeds();
+
     console.log("✅ Feed Validator Finished");
+
     process.exit(0);
+
   } catch (err) {
+
     console.error("💥 Feed Validator Failed:", sanitizeText(err.message));
+
     process.exit(1);
+
   }
+
 }
 
 /* =========================================
