@@ -25,6 +25,7 @@ app.get("/api/cities", async (req, res) => {
         c.longitude AS lon,
         c.fame_index,
         c.population,
+        c.gdp,
         co.name AS country
       FROM cities c
       LEFT JOIN countries co ON c.country_id = co.id
@@ -44,7 +45,7 @@ app.get("/api/cities", async (req, res) => {
 app.get("/api/countries", async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population
+      SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population, gdp
       FROM countries
       ORDER BY name ASC
     `);
