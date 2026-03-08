@@ -20,7 +20,7 @@ const MAX_FEED_SIZE = 2 * 1024 * 1024;
 
 // NEW: Toggle whether inactive/stale feeds should be rechecked
 // Set CHECK_INACTIVE=true in .env to enable full validation mode
-const CHECK_INACTIVE = process.env.CHECK_INACTIVE === "false";
+const CHECK_INACTIVE = process.env.CHECK_INACTIVE === "true";
 
 /* =========================================
    Utilities
