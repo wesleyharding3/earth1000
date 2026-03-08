@@ -12,8 +12,8 @@ const TRANSLATION_ENABLED = false;
 ========================================= */
 const parserOptions = {
   headers: {
-    "User-Agent": "Mozilla/5.0 (compatible; RSSFetcher/1.0; +https://yoursite.com)",
-    "Accept": "application/rss+xml, application/xml, text/xml, application/atom+xml, */*"
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
   },
   defaultRSS: 2.0,
   xml2js: {
