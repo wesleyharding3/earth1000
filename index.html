@@ -1590,6 +1590,16 @@
   color: rgba(255,255,255,0.55);
   letter-spacing: 0.02em;
 }
+.hoverCardCountry {
+  font-size: 10px;
+  font-weight: 400;
+  color: rgba(255,255,255,0.38);
+  letter-spacing: 0.03em;
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .hoverLine {
   position: fixed;
   height: 1.5px;
@@ -4936,12 +4946,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
         card.classList.remove("hcErase");
         card.classList.remove("hcVisible");
+        const showCountryLine = node.country && node.name !== node.country;
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
             ${node.flag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
             ${node.name}
           </div>
+          ${showCountryLine ? `<div class="hoverCardCountry">${node.country}</div>` : ""}
           <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
@@ -4949,7 +4961,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       function positionHoverCard(card, lineEl, sx, sy) {
-        const CW = 200, CH = 58, OFF = 28;
+        const CW = 200, CH = 72, OFF = 28;
         let cx = sx + OFF, cy = sy - CH / 2;
         if (cx + CW > window.innerWidth - 12)  cx = sx - OFF - CW;
         if (cy < 70)                            cy = sy + 14;
