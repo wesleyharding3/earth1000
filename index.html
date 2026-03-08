@@ -3646,13 +3646,20 @@ function computeCityTiers(cities) {
         return val;
       }
 
+      // Log scale for GDP: evenly spaces orders of magnitude so small
+      // economies get real slider room. Anything below $1M treated as zero anchor.
+      const GDP_LOG_MIN = 1e6;
       function gdpToSlider(gdp, maxGdp) {
-        if (maxGdp <= 0) return 0;
-        return Math.round(Math.sqrt(gdp / maxGdp) * 100);
+        if (maxGdp <= 0 || gdp <= 0) return 0;
+        const logMin = Math.log(GDP_LOG_MIN);
+        const logMax = Math.log(maxGdp);
+        return Math.round(Math.max(0, (Math.log(Math.max(gdp, GDP_LOG_MIN)) - logMin) / (logMax - logMin)) * 100);
       }
-
       function sliderToGdp(pct, maxGdp) {
-        return Math.round((pct / 100) ** 2 * maxGdp);
+        if (pct <= 0) return 0;
+        const logMin = Math.log(GDP_LOG_MIN);
+        const logMax = Math.log(maxGdp);
+        return Math.round(Math.exp(logMin + (pct / 100) * (logMax - logMin)));
       }
 
       let gdpFilter = {
