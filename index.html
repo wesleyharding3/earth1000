@@ -4991,7 +4991,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("click", event => {
         if (event.target.closest(".closePanel")) return;
-        if (isPanelActive() && event.target.closest("#infoPanel")) return; 
+        if (isPanelActive() && event.target.closest("#infoPanel")) return;
+        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const rect = renderer.domElement.getBoundingClientRect(); 
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -5023,6 +5024,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("touchstart", (event) => {
         if (touchTapMoved) return;
         if (event.touches.length !== 1) return;
+        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const touch = event.touches[0];
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
