@@ -3392,14 +3392,15 @@ function computeCityTiers(cities) {
         return val;
       }
 
-      // Convert raw pop value → slider percentage (0-100) using log scale
+      // Convert raw pop value → slider percentage (0-100) using sqrt scale
+      // sqrt gives even spread: midpoint (50%) = 25% of max pop
       function popToSlider(pop, maxPop) {
         if (maxPop <= 0) return 0;
-        return Math.round(Math.log1p(pop) / Math.log1p(maxPop) * 100);
+        return Math.round(Math.sqrt(pop / maxPop) * 100);
       }
 
       function sliderToPop(pct, maxPop) {
-        return Math.round(Math.expm1(pct / 100 * Math.log1p(maxPop)));
+        return Math.round((pct / 100) ** 2 * maxPop);
       }
 
       function updatePopFill(type) {
@@ -4638,7 +4639,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           if (isCityVisible(nodePos, camera)) {
-            hoveredIndex = index;
+            // Suppress hover for pop-filter-masked nodes
+            const mask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+            if (!mask || mask[index]) hoveredIndex = index;
           }
         }
 
@@ -4753,10 +4756,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           if (isCityVisible(nodePos, camera)) {
-            lockAmbientRotation();
-            selectedNodeIndex = index; isFocused = true;
-            if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
-            else { focusCity(activeData[index]); openNodePanel(activeData[index], "city"); }
+            const mask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+            if (!mask || mask[index]) {
+              lockAmbientRotation();
+              selectedNodeIndex = index; isFocused = true;
+              if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
+              else { focusCity(activeData[index]); openNodePanel(activeData[index], "city"); }
+            }
           }
         }
       });
@@ -4781,10 +4787,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
           nodePos.applyMatrix4(activePoints.matrixWorld);
           if (isCityVisible(nodePos, camera)) {
-            lockAmbientRotation();
-            selectedNodeIndex = index; isFocused = true;
-            if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
-            else { focusCity(activeData[index]); openNodePanel(activeData[index], "city"); }
+            const mask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+            if (!mask || mask[index]) {
+              lockAmbientRotation();
+              selectedNodeIndex = index; isFocused = true;
+              if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
+              else { focusCity(activeData[index]); openNodePanel(activeData[index], "city"); }
+            }
           }
         }
       }, { passive: true });
@@ -5443,8 +5452,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const cDir = new THREE.Vector3();
           camera.getWorldDirection(cDir).normalize();
           const quat = scene.quaternion;
+          const mask = isCity ? cityPopMask : countryPopMask;
           const result = [];
           for (let i = 0; i < dataArr.length; i++) {
+            // Skip nodes masked by population filter
+            if (mask && !mask[i]) continue;
             const wv = new THREE.Vector3(posArr[i*3], posArr[i*3+1], posArr[i*3+2]).applyQuaternion(quat);
             const facing = -cDir.dot(wv.clone().normalize());
             if (facing < 0.12) continue;
