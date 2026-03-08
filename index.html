@@ -2451,6 +2451,17 @@
       font-variant-numeric: tabular-nums;
     }
 
+    .bubbleCountry {
+      display: flex; align-items: center; gap: 4px;
+      margin-top: 1px; margin-bottom: 1px;
+    }
+    .bubbleFlag { font-size: 11px; line-height: 1; flex-shrink: 0; }
+    .bubbleCountryName {
+      font-size: 10px; color: rgba(255,255,255,0.45);
+      font-weight: 400; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+
   </style>
 </head>
 
@@ -4064,6 +4075,7 @@ function computeCityTiers(cities) {
             </svg>
             <div class="bubbleContent">
               <div class="bubbleTitle">${city.name}</div>
+              ${city.country && city.name !== city.country ? `<div class="bubbleCountry">${city.flag ? `<span class="bubbleFlag">${city.flag}</span>` : ''}<span class="bubbleCountryName">${city.country}</span></div>` : ''}
               <div class="bubbleMeta"><span class="storyCount">0 stories</span></div>
             </div>
           </div>`;
