@@ -46,6 +46,7 @@ async function routeArticle(articleId) {
          a.country_id                              AS source_country_id,
          a.city_id                                 AS source_city_id,
          ns.city_id                                AS ns_city_id,
+         ns.country_id                             AS ns_country_id,
          COALESCE(a.translated_title, a.title)     AS search_title,
          COALESCE(a.translated_summary, a.summary) AS search_summary
        FROM news_articles a
@@ -56,16 +57,18 @@ async function routeArticle(articleId) {
 
     if (!articleRes.rows.length) throw new Error("Article not found");
 
-    const article      = articleRes.rows[0];
-    const normTitle    = normalize(article.search_title);
-    const normSummary  = normalize(article.search_summary);
+    const article     = articleRes.rows[0];
+    const normTitle   = normalize(article.search_title);
+    const normSummary = normalize(article.search_summary);
 
     // ─────────────────────────────────────────
     // 2. Source routing
-    //    Local source → route to its city
-    //    National source → already on country
-    //    feed via news_articles.country_id,
-    //    no article_locations row needed
+    //
+    //    Municipal  (ns.city_id set)    → insert article_locations row for its city
+    //    National   (ns.country_id set) → no article_locations row needed;
+    //                                     a.country_id on the article handles local feed
+    //    International (both null)      → skip source routing entirely;
+    //                                     content routing (steps 3+4) handles all placement
     // ─────────────────────────────────────────
     if (article.ns_city_id) {
       await client.query(
@@ -75,6 +78,11 @@ async function routeArticle(articleId) {
          ON CONFLICT DO NOTHING`,
         [articleId, article.source_country_id, article.ns_city_id]
       );
+    } else if (article.ns_country_id) {
+      // National source — local feed reads directly from a.country_id, nothing to do here
+    } else {
+      // International source — content routing only, will not appear in any local feed
+      console.log(`🌐 Intl source: article ${articleId} — content routing only`);
     }
 
     // ─────────────────────────────────────────
@@ -92,12 +100,11 @@ async function routeArticle(articleId) {
       JOIN keyword_tiers kt ON kt.id = clk.tier_id
     `);
 
-    // Accumulate score per city
     const cityScores = {};
 
     for (const row of cityKeywordRes.rows) {
-      const phrase   = normalize(row.phrase);
-      const cityId   = row.city_id;
+      const phrase  = normalize(row.phrase);
+      const cityId  = row.city_id;
 
       const titleHits   = countHits(normTitle,   phrase, row.is_phrase);
       const summaryHits = countHits(normSummary, phrase, row.is_phrase);
@@ -117,7 +124,6 @@ async function routeArticle(articleId) {
       cityScores[cityId].score += score;
     }
 
-    // Insert city content routes that clear threshold
     for (const [cityId, data] of Object.entries(cityScores)) {
       if (data.score >= data.threshold) {
         await client.query(
@@ -145,12 +151,11 @@ async function routeArticle(articleId) {
       JOIN keyword_tiers kt ON kt.id = clk.tier_id
     `);
 
-    // Accumulate score per country
     const countryScores = {};
 
     for (const row of countryKeywordRes.rows) {
-      const phrase     = normalize(row.phrase);
-      const countryId  = row.country_id;
+      const phrase    = normalize(row.phrase);
+      const countryId = row.country_id;
 
       const titleHits   = countHits(normTitle,   phrase, row.is_phrase);
       const summaryHits = countHits(normSummary, phrase, row.is_phrase);
@@ -169,7 +174,6 @@ async function routeArticle(articleId) {
       countryScores[countryId].score += score;
     }
 
-    // Insert country content routes that clear threshold
     for (const [countryId, data] of Object.entries(countryScores)) {
       if (data.score >= data.threshold) {
         await client.query(
