@@ -5,7 +5,7 @@ const pool = require("./db");
 const { translateText } = require("./translator");
 const crypto = require("crypto");
 
-const TRANSLATION_ENABLED = false;
+const TRANSLATION_ENABLED = true;
 
 /* =========================================
    Parser Options
@@ -61,14 +61,14 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
       ]
     );
 
-await pool.query(
-  `UPDATE news_sources 
-   SET last_error = $1, last_failed_at = NOW(),
-       failure_count = failure_count + 1,
-       is_active = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
-   WHERE id = $2`,
-  [err.message?.substring(0, 1000), feed.id]
-);
+    await pool.query(
+      `UPDATE news_sources 
+       SET last_error = $1, last_failed_at = NOW(),
+           failure_count = failure_count + 1,
+           is_active = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
+       WHERE id = $2`,
+      [err.message?.substring(0, 1000), feed.id]
+    );
   } catch (logErr) {
     console.error("🚨 CRITICAL: Failed to log RSS error:", logErr);
   }
@@ -146,7 +146,6 @@ function parseRobustDate(raw) {
   const d3 = new Date(normalised);
   if (!isNaN(d3.getTime()) && d3.getFullYear() >= 2000 && d3.getFullYear() <= 2100) return d3;
 
-  // Attempt 4: only match well-formed date substrings
   const match = cleaned.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}\s+\w{3,}\s+\d{4})/);
   if (match) {
     const d4 = new Date(match[0]);
@@ -157,7 +156,6 @@ function parseRobustDate(raw) {
 }
 
 function extractPublishedDate(item) {
-  // Try all known date fields in priority order
   for (const field of DATE_FIELDS) {
     const val = item[field];
     if (!val) continue;
@@ -165,7 +163,6 @@ function extractPublishedDate(item) {
     if (parsed) return parsed;
   }
 
-  // Last resort: scan all string values on the item for anything date-like
   for (const val of Object.values(item)) {
     if (typeof val !== "string") continue;
     if (!/\d{4}/.test(val)) continue;
@@ -227,7 +224,7 @@ async function fetchFeeds() {
 
   const feedResult = await pool.query(`
     SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id,
-           ns.failure_count, ns.language_id,
+           ns.failure_count, ns.language_id, ns.popularity_tier,
            l.iso_code_2 AS language
     FROM news_sources ns
     LEFT JOIN languages l ON l.id = ns.language_id
@@ -278,14 +275,10 @@ async function fetchFeeds() {
         continue;
       }
 
-      const isNonEnglish =
-        feed.language && feed.language.toUpperCase() !== "EN";
-
-      let MAX_ITEMS = !isNonEnglish
-        ? 25
-        : TRANSLATION_ENABLED
-          ? 3
-          : 10;
+      const isEnglish = !feed.language || feed.language.toUpperCase() === "EN";
+      const MAX_ITEMS = isEnglish
+        ? 20
+        : ({ 4: 15, 3: 10, 2: 5, 1: 2 }[feed.popularity_tier] ?? 5);
 
       const candidateItems = parsed.items.slice(0, MAX_ITEMS * 3);
 
@@ -325,13 +318,12 @@ async function fetchFeeds() {
           : null;
 
         const publishedAt = extractPublishedDate(item);
-
         const imageUrl = extractImage(item);
 
         let translatedTitle   = title;
         let translatedSummary = summary;
 
-        if (TRANSLATION_ENABLED && isNonEnglish) {
+        if (TRANSLATION_ENABLED && !isEnglish) {
           try {
             translatedTitle   = await translateWithTimeout(title, "EN-US");
             translatedSummary = await translateWithTimeout(summary, "EN-US");
@@ -384,7 +376,7 @@ async function fetchFeeds() {
         }
       }
 
-      console.log(`${tag} ✅ Inserted: ${inserted}`);
+      console.log(`${tag} ✅ Inserted: ${inserted} (tier ${feed.popularity_tier ?? "?"}, max ${MAX_ITEMS})`);
 
     } catch (err) {
       console.error(`${tag} ❌ Failed: ${err.message}`);
