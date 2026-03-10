@@ -1311,8 +1311,6 @@
       text-decoration: none;
       color: inherit;
     }
-    .articleCardWrap { position: relative; }
-    .articleCardWrap .articleTranslateBtn { position: absolute; bottom: 8px; right: 8px; z-index: 2; }
 
     .articleCard:hover {
       background: rgba(255,255,255,0.08);
@@ -2276,8 +2274,6 @@
     }
     .nfCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfCard:active { transform: translateY(0); }
-    .nfCardWrap { position: relative; }
-    .nfCardWrap .articleTranslateBtn { position: absolute; bottom: 8px; right: 8px; z-index: 2; }
 
     .nfCardImg {
       width: 100%; aspect-ratio: 16/9;
@@ -5322,23 +5318,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
 
           return `
-            <div class="articleCardWrap">
-              <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
-                ${imageField}
-                <div class="articleCardBody">
-                  <div>
-                    <div class="articleCardSource">${article.source_name || ""}</div>
-                    <div class="articleCardTitle" data-aid="${article.id}">${article.translated_title || article.title || ""}</div>
-                    <div class="articleCardSummary" data-aid="${article.id}">${article.translated_summary || article.summary || ""}</div>
-                  </div>
-                  <div class="articleCardFooter">
-                    ${originLabel}
-                    <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
-                  </div>
+            <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
+              ${imageField}
+              <div class="articleCardBody">
+                <div>
+                  <div class="articleCardSource">${article.source_name || ""}</div>
+                  <div class="articleCardTitle" data-aid="${article.id}">${article.translated_title || article.title || ""}</div>
+                  <div class="articleCardSummary" data-aid="${article.id}">${article.translated_summary || article.summary || ""}</div>
                 </div>
-              </a>
-              ${!article.translated_title && article.language && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
-            </div>`;
+                <div class="articleCardFooter">
+                  ${originLabel}
+                  <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                  ${!article.translated_title && article.language && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
+                </div>
+              </div>
+            </a>`;
         }
 
         async function translateCard(e, btn, title, summary, articleId) {
@@ -5346,7 +5340,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (btn.classList.contains("done") || btn.classList.contains("error")) return;
           btn.textContent = "⏳"; btn.disabled = true;
           try {
-            const res = await fetch(`${API_BASE}/api/translate`, {
+            const res = await fetch(`https://earth-wjr6.onrender.com/api/translate`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ title, summary, id: articleId })
@@ -5366,6 +5360,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             btn.textContent = "✗"; btn.classList.add("error"); btn.disabled = false;
           }
         }
+        window.translateCard = translateCard;
 
         function skeletonCards(n) {
           return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
@@ -7042,8 +7037,7 @@ function clearArcs() {
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
       const origin = parts.length ? `<div class="nfCardOrigin">📍 ${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
-      return `<div class="nfCardWrap">
-      <a class="nfCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener noreferrer">
+      return `<a class="nfCard" href="${a.article_url||a.url||"#"}" target="_blank" rel="noopener noreferrer">
         ${img}
         <div class="nfCardBody">
           <div>
@@ -7051,11 +7045,9 @@ function clearArcs() {
             <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
             <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
           </div>
-          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
+          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div>${!a.translated_title && a.language && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}</div>
         </div>
-      </a>
-      ${!a.translated_title && a.language && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}
-    </div>`;
+      </a>`;
     }
 
     viewport.addEventListener("scroll", () => {
