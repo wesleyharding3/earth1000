@@ -16,6 +16,7 @@ const ARTICLE_FIELDS = `
   ns.site_url,
   ns.popularity_score,
   ns.popularity_tier,
+  ns.language,
   co.iso_code,
   COALESCE(SUM(at.score), 0)   AS intensity,
   COALESCE(SUM(stw.weight), 0) AS "tagWeightSum"
@@ -38,7 +39,7 @@ async function getRankedArticles(countryId) {
     ${ARTICLE_JOINS}
     WHERE a.country_id = $1
       AND a.city_id IS NULL  
-    GROUP BY a.id, ns.id, co.iso_code
+    GROUP BY a.id, ns.id, ns.language, co.iso_code
   `, [countryId]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
@@ -52,7 +53,7 @@ async function getRankedCityArticles(cityId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.city_id = $1
-    GROUP BY a.id, ns.id, co.iso_code
+    GROUP BY a.id, ns.id, ns.language, co.iso_code
   `, [cityId]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
