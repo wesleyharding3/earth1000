@@ -6773,7 +6773,7 @@ function clearArcs() {
       countries = c.sort((a, b) => a.name.localeCompare(b.name));
       tags = t;
       initMulti("from"); initMulti("about"); initTags();
-      const now = new Date(), past = new Date(now - 30 * 86400000);
+      const now = new Date(), past = new Date(now - 7 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
       syncDateClears();
       runSearch();
@@ -7041,10 +7041,10 @@ function clearArcs() {
         <div class="nfCardBody">
           <div>
             <div class="nfCardSrc">${esc(a.source_name||"")}</div>
-            <div class="nfCardTitle">${title}</div>
-            <div class="nfCardSummary">${summary}</div>
+            <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
+            <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
           </div>
-          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
+          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div>${!a.translated_title ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}</div>
         </div>
       </a>`;
     }
