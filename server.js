@@ -4,6 +4,7 @@ const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
 const { countryVarianceRerank } = require("./priorityEngine");
+const { translateText } = require("./translator");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -491,6 +492,30 @@ app.get("/api/ocean/temperature", async (req, res) => {
   } catch (err) {
     console.error("Ocean temperature error:", err.message);
     res.status(500).json({ error: "Failed to fetch ocean temperature data" });
+  }
+});
+
+/* =========================================
+   On-demand Translation
+========================================= */
+app.post("/api/translate", async (req, res) => {
+  const { title, summary, id } = req.body || {};
+  if (!title && !summary) return res.status(400).json({ error: "No text provided" });
+  try {
+    const [translatedTitle, translatedSummary] = await Promise.all([
+      title   ? translateText(title,   "EN-US") : Promise.resolve(null),
+      summary ? translateText(summary, "EN-US") : Promise.resolve(null),
+    ]);
+    if (id && (translatedTitle || translatedSummary)) {
+      await pool.query(
+        `UPDATE articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,
+        [translatedTitle, translatedSummary, id]
+      );
+    }
+    res.json({ translatedTitle, translatedSummary });
+  } catch (err) {
+    console.error("On-demand translate error:", err.message);
+    res.status(500).json({ error: "Translation failed" });
   }
 });
 
