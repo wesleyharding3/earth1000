@@ -343,6 +343,7 @@ app.get("/api/news/search", async (req, res) => {
           a.image_url,
           a.published_at,
           a.sentiment_score,
+          a.language,
           a.base_priority,
           ns.name            AS source_name,
           ns.site_url,
