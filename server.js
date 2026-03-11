@@ -519,7 +519,7 @@ app.post("/api/translate", async (req, res) => {
     ]);
     if (id && (translatedTitle || translatedSummary)) {
       await pool.query(
-        `UPDATE articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,
+        `UPDATE news_articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,
         [translatedTitle, translatedSummary, id]
       );
     }
