@@ -5337,13 +5337,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   </div>
                 </div>
               </a>
-              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
+              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
             </div>`;
         }
 
-        async function translateCard(e, btn, title, summary, articleId) {
+        async function translateCard(e, btn) {
           e.preventDefault(); e.stopPropagation();
           if (btn.classList.contains("done") || btn.classList.contains("error")) return;
+          const articleId = btn.dataset.id;
+          const title     = btn.dataset.title;
+          const summary   = btn.dataset.summary;
           console.log("🌐 translateCard fired", { articleId, title });
           btn.textContent = "⏳"; btn.disabled = true;
           try {
@@ -5356,15 +5359,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const { translatedTitle, translatedSummary } = await res.json();
             const wrapper = btn.closest("div[style*='position:relative']");
             if (translatedTitle) {
-              const el = wrapper
-                ? (wrapper.querySelector(".articleCardTitle, .nfCardTitle"))
-                : (document.querySelector(`.articleCardTitle[data-aid="${articleId}"]`) || document.querySelector(`.nfCardTitle[data-aid="${articleId}"]`));
+              const el = wrapper ? wrapper.querySelector(".articleCardTitle, .nfCardTitle") : null;
               if (el) el.textContent = translatedTitle;
             }
             if (translatedSummary) {
-              const el = wrapper
-                ? (wrapper.querySelector(".articleCardSummary, .nfCardSummary"))
-                : (document.querySelector(`.articleCardSummary[data-aid="${articleId}"]`) || document.querySelector(`.nfCardSummary[data-aid="${articleId}"]`));
+              const el = wrapper ? wrapper.querySelector(".articleCardSummary, .nfCardSummary") : null;
               if (el) el.textContent = translatedSummary;
             }
             btn.textContent = "✓"; btn.classList.add("done");
@@ -7063,7 +7062,7 @@ function clearArcs() {
             <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
         </a>
-        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}
+        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
       </div>`;
     }
 
