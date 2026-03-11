@@ -5337,13 +5337,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   </div>
                 </div>
               </a>
-              ${!article.translated_title && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
+              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
             </div>`;
         }
 
         async function translateCard(e, btn, title, summary, articleId) {
           e.preventDefault(); e.stopPropagation();
           if (btn.classList.contains("done") || btn.classList.contains("error")) return;
+          console.log("🌐 translateCard fired", { articleId, title });
           btn.textContent = "⏳"; btn.disabled = true;
           try {
             const res = await fetch(`https://earth-wjr6.onrender.com/api/translate`, {
@@ -7062,7 +7063,7 @@ function clearArcs() {
             <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
         </a>
-        ${!a.translated_title && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}
+        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}
       </div>`;
     }
 
