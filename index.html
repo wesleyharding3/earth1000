@@ -5318,6 +5318,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
 
           return `
+            <div style="position:relative">
             <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
               ${imageField}
               <div class="articleCardBody">
@@ -5329,10 +5330,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 <div class="articleCardFooter">
                   ${originLabel}
                   <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
-                  ${!article.translated_title && article.language && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
                 </div>
               </div>
-            </a>`;
+            </a>
+            ${!article.translated_title && article.language && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
+            </div>`;
         }
 
         async function translateCard(e, btn, title, summary, articleId) {
@@ -7038,7 +7040,8 @@ function clearArcs() {
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
       const origin = parts.length ? `<div class="nfCardOrigin">📍 ${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
-      return `<a class="nfCard" href="${a.article_url||a.url||"#"}" target="_blank" rel="noopener noreferrer">
+      return `<div style="position:relative">
+      <a class="nfCard" href="${a.article_url||a.url||"#"}" target="_blank" rel="noopener noreferrer">
         ${img}
         <div class="nfCardBody">
           <div>
@@ -7046,9 +7049,11 @@ function clearArcs() {
             <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
             <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
           </div>
-          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div>${!a.translated_title && a.language && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}</div>
+          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
         </div>
-      </a>`;
+      </a>
+      ${!a.translated_title && a.language && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}
+      </div>`;
     }
 
     viewport.addEventListener("scroll", () => {
