@@ -5,7 +5,7 @@ const pool = require("./db");
 const { translateText } = require("./translator");
 const crypto = require("crypto");
 
-const TRANSLATION_ENABLED = false;
+const TRANSLATION_ENABLED = true;
 
 /* =========================================
    Parser Options
@@ -320,17 +320,24 @@ async function fetchFeeds() {
         const publishedAt = extractPublishedDate(item);
         const imageUrl = extractImage(item);
 
-        let translatedTitle   = title;
-        let translatedSummary = summary;
+        let translatedTitle   = null;
+        let translatedSummary = null;
 
-        if (TRANSLATION_ENABLED && !isEnglish) {
+        if (isEnglish) {
+          // English articles don't need translation
+          translatedTitle   = null;
+          translatedSummary = null;
+        } else if (TRANSLATION_ENABLED) {
           try {
             translatedTitle   = await translateWithTimeout(title, "EN-US");
             translatedSummary = await translateWithTimeout(summary, "EN-US");
           } catch (translateErr) {
-            console.warn(`${tag} ⚠️ Translation failed, using original`);
+            console.warn(`${tag} ⚠️ Translation failed, storing null`);
+            // Leave as null — button will show on frontend for manual translation
           }
         }
+        // If TRANSLATION_ENABLED is false or translation failed, translatedTitle stays null
+        // so the 🌐 button will appear on the frontend
 
         const insertResult = await pool.query(
           `INSERT INTO news_articles (
