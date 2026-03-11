@@ -81,6 +81,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
           ns.name         AS source_name,
           ns.site_url,
           ns.popularity_score,
+          a.language,
           co.iso_code
         FROM news_articles a
         JOIN news_sources  ns  ON ns.id = a.source_id
@@ -129,6 +130,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         ns.name          AS source_name,
         ns.site_url,
         ns.popularity_score,
+          a.language,
         co.iso_code,
         co.name          AS country_name,
         ci.name          AS city_name
@@ -177,6 +179,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
           ns.name         AS source_name,
           ns.site_url,
           ns.popularity_score,
+          a.language,
           co.iso_code
         FROM news_articles a
         JOIN news_sources  ns  ON ns.id = a.source_id
@@ -226,6 +229,7 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         ns.name          AS source_name,
         ns.site_url,
         ns.popularity_score,
+          a.language,
         co.iso_code,
         co.name          AS country_name,
         ci.name          AS city_name
@@ -343,7 +347,7 @@ app.get("/api/news/search", async (req, res) => {
           a.image_url,
           a.published_at,
           a.sentiment_score,
-          ns.language,
+          a.language,
           a.base_priority,
           ns.name            AS source_name,
           ns.site_url,
