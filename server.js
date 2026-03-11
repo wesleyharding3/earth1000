@@ -81,11 +81,12 @@ app.get("/api/news/city/:cityId", async (req, res) => {
           ns.name         AS source_name,
           ns.site_url,
           ns.popularity_score,
-          a.language,
+          l.iso_code_2 AS language,
           co.iso_code
         FROM news_articles a
         JOIN news_sources  ns  ON ns.id = a.source_id
         JOIN article_tags  at  ON at.article_id = a.id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE a.city_id      = $1
           AND at.tag_id      = $2
@@ -130,13 +131,14 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         ns.name          AS source_name,
         ns.site_url,
         ns.popularity_score,
-          a.language,
+          l.iso_code_2 AS language,
         co.iso_code,
         co.name          AS country_name,
         ci.name          AS city_name
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
       JOIN news_sources  ns  ON ns.id = a.source_id
+      LEFT JOIN languages  l  ON l.id = ns.language_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities    ci ON ci.id = a.city_id
       ${tagJoin}
@@ -179,11 +181,12 @@ app.get("/api/news/country/:countryId", async (req, res) => {
           ns.name         AS source_name,
           ns.site_url,
           ns.popularity_score,
-          a.language,
+          l.iso_code_2 AS language,
           co.iso_code
         FROM news_articles a
         JOIN news_sources  ns  ON ns.id = a.source_id
         JOIN article_tags  at  ON at.article_id = a.id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE a.country_id     = $1
           AND a.city_id IS NULL   
@@ -229,13 +232,14 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         ns.name          AS source_name,
         ns.site_url,
         ns.popularity_score,
-          a.language,
+          l.iso_code_2 AS language,
         co.iso_code,
         co.name          AS country_name,
         ci.name          AS city_name
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
       JOIN news_sources  ns  ON ns.id = a.source_id
+      LEFT JOIN languages  l  ON l.id = ns.language_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities    ci ON ci.id = a.city_id
       ${tagJoin}
@@ -347,7 +351,7 @@ app.get("/api/news/search", async (req, res) => {
           a.image_url,
           a.published_at,
           a.sentiment_score,
-          a.language,
+          l.iso_code_2 AS language,
           a.base_priority,
           ns.name            AS source_name,
           ns.site_url,
@@ -360,6 +364,7 @@ app.get("/api/news/search", async (req, res) => {
           ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
         FROM news_articles a
         JOIN news_sources ns      ON ns.id      = a.source_id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
         JOIN countries src_co    ON src_co.id   = a.country_id
         LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
         LEFT JOIN cities ci       ON ci.id      = a.city_id
@@ -429,6 +434,7 @@ app.get("/api/flows", async (req, res) => {
       FROM article_locations al
       JOIN news_articles  a      ON a.id      = al.article_id
       JOIN news_sources   ns     ON ns.id     = a.source_id
+      LEFT JOIN languages  l  ON l.id = ns.language_id
       JOIN countries      src_co ON src_co.id = a.country_id
       JOIN countries      dst_co ON dst_co.id = al.country_id
       WHERE al.routing_type IN ('content', 'source')
@@ -513,7 +519,7 @@ app.post("/api/translate", async (req, res) => {
     ]);
     if (id && (translatedTitle || translatedSummary)) {
       await pool.query(
-        `UPDATE news_articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,
+        `UPDATE articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,
         [translatedTitle, translatedSummary, id]
       );
     }
