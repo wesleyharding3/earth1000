@@ -1310,6 +1310,7 @@
       flex-direction: column;
       text-decoration: none;
       color: inherit;
+      min-height: 220px;
     }
 
     .articleCard:hover {
@@ -5365,17 +5366,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const el = wrapper.querySelector(".articleCardSummary") || wrapper.querySelector(".nfCardSummary");
               if (el) el.textContent = translatedSummary;
             }
-            // Patch article arrays in both scopes so re-renders don't wipe the translation
-            [
-              typeof allArticles !== "undefined" ? allArticles : [],
-              typeof articles    !== "undefined" ? articles    : []
-            ].forEach(arr => {
-              const art = arr.find(a => String(a.id) === String(articleId));
-              if (art) {
-                if (translatedTitle)  art.translated_title   = translatedTitle;
-                if (translatedSummary) art.translated_summary = translatedSummary;
-              }
-            });
             btn.textContent = "✓"; btn.classList.add("done");
           } catch (err) {
             console.error("Translation failed:", err);
