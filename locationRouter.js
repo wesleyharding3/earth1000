@@ -9,7 +9,7 @@ HELPERS
 function normalize(text) {
   return (text || "")
     .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -153,8 +153,6 @@ async function routeArticle(articleId) {
       JOIN keyword_tiers kt ON kt.id = clk.tier_id
     `);
 
-    console.log("Sample keyword row:", JSON.stringify(countryKeywordRes.rows[0]));
-
     const countryScores = {};
 
     for (const row of countryKeywordRes.rows) {
@@ -168,10 +166,6 @@ async function routeArticle(articleId) {
       if (totalHits === 0) continue;
 
       const score = totalHits * parseFloat(row.base_score);
-      
-      if (score > 100) {
-        console.log(`HIGH SCORE DEBUG: phrase="${row.phrase}" titleHits=${titleHits} summaryHits=${summaryHits} totalHits=${totalHits} base_score=${row.base_score} score=${score}`);
-      }
 
       if (!countryScores[countryId]) {
         countryScores[countryId] = {
