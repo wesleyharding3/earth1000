@@ -5353,12 +5353,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             });
             if (!res.ok) throw new Error("bad response");
             const { translatedTitle, translatedSummary } = await res.json();
+            const wrapper = btn.closest("div[style*='position:relative']");
             if (translatedTitle) {
-              const el = document.querySelector(`.articleCardTitle[data-aid="${articleId}"], .nfCardTitle[data-aid="${articleId}"]`);
+              const el = wrapper
+                ? (wrapper.querySelector(".articleCardTitle, .nfCardTitle"))
+                : (document.querySelector(`.articleCardTitle[data-aid="${articleId}"]`) || document.querySelector(`.nfCardTitle[data-aid="${articleId}"]`));
               if (el) el.textContent = translatedTitle;
             }
             if (translatedSummary) {
-              const el = document.querySelector(`.articleCardSummary[data-aid="${articleId}"], .nfCardSummary[data-aid="${articleId}"]`);
+              const el = wrapper
+                ? (wrapper.querySelector(".articleCardSummary, .nfCardSummary"))
+                : (document.querySelector(`.articleCardSummary[data-aid="${articleId}"]`) || document.querySelector(`.nfCardSummary[data-aid="${articleId}"]`));
               if (el) el.textContent = translatedSummary;
             }
             btn.textContent = "✓"; btn.classList.add("done");
