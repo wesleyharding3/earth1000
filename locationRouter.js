@@ -15,12 +15,19 @@ function normalize(text) {
 }
 
 function countHits(text, phrase, isPhrase) {
-  if (!text) return 0;
+  if (!text || !phrase) return 0;
   if (isPhrase) {
-    const re = new RegExp(`\\b${phrase}\\b`, "g");
+    // Unicode-aware boundary: no letter/number before or after the phrase
+    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "gu");
     return (text.match(re) || []).length;
   }
-  return text.split(" ").filter(w => w === phrase).length;
+  // For space-separated scripts (Latin, Cyrillic, Arabic etc.), match exact word
+  // For CJK and other scripts with no spaces, use substring match
+  if (text.includes(" ")) {
+    return text.split(" ").filter(w => w === phrase).length;
+  }
+  return text.includes(phrase) ? 1 : 0;
 }
 
 /*
@@ -166,10 +173,6 @@ async function routeArticle(articleId) {
       if (totalHits === 0) continue;
 
       const score = totalHits * parseFloat(row.base_score);
-
-      if (score > 50) {
-        console.log(`HIGH: phrase="${row.phrase}" normalized="${normalize(row.phrase)}" titleHits=${titleHits} summaryHits=${summaryHits} totalHits=${totalHits} base_score=${row.base_score} score=${score}`);
-      }
 
       if (!countryScores[countryId]) {
         countryScores[countryId] = {
