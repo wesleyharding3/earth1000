@@ -167,6 +167,10 @@ async function routeArticle(articleId) {
 
       const score = totalHits * parseFloat(row.base_score);
 
+      if (score > 50) {
+        console.log(`HIGH: phrase="${row.phrase}" normalized="${normalize(row.phrase)}" titleHits=${titleHits} summaryHits=${summaryHits} totalHits=${totalHits} base_score=${row.base_score} score=${score}`);
+      }
+
       if (!countryScores[countryId]) {
         countryScores[countryId] = {
           score:     0,
