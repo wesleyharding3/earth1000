@@ -1,6 +1,8 @@
 // locationRouter.js
 const pool = require("./db");
 
+console.log("ROUTER VERSION: Unicode-aware v2");
+
 /*
 =========================================================
 HELPERS
@@ -187,6 +189,7 @@ async function routeArticle(articleId) {
 
     for (const [countryId, data] of Object.entries(countryScores)) {
       if (data.score >= data.threshold) {
+        console.log(`PASSING: country ${countryId} score=${data.score.toFixed(3)} hits=${JSON.stringify(data.hits)}`);
         await client.query(
           `INSERT INTO article_locations
              (article_id, country_id, city_id, routing_type)
@@ -194,7 +197,7 @@ async function routeArticle(articleId) {
            ON CONFLICT DO NOTHING`,
           [articleId, parseInt(countryId)]
         );
-        console.log(`🌍 Country routed: article ${articleId} → country ${countryId} (score: ${data.score.toFixed(3)}) — hits: ${JSON.stringify(data.hits)}`);
+        console.log(`🌍 Country routed: article ${articleId} → country ${countryId} (score: ${data.score.toFixed(3)})`);
       }
     }
 

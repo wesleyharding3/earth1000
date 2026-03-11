@@ -1,6 +1,7 @@
 // test.js
 require("dotenv").config();
 const pool = require("./db");
+console.log("ROUTER VERSION: Unicode-aware");
 const { routeArticle } = require("./locationRouter");
 
 const ID = 1198498;
