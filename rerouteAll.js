@@ -6,7 +6,7 @@ const { routeArticle } = require("./locationRouter");
 async function rerouteAll() {
   const { rows } = await pool.query(`
     SELECT id FROM news_articles
-    ORDER BY published_at DESC
+    ORDER BY published_at ASC
   `);
 
   console.log(`🔄 Re-routing ${rows.length} articles...`);
