@@ -5349,7 +5349,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const summary   = btn.dataset.summary;
           btn.textContent = "⏳"; btn.disabled = true;
           try {
-            console.log("📤 Sending:", { title, summary, articleId });
             const res = await fetch(`https://earth-wjr6.onrender.com/api/translate`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -5357,14 +5356,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
             });
             if (!res.ok) throw new Error("bad response");
             const { translatedTitle, translatedSummary } = await res.json();
-            console.log("📥 Received:", { translatedTitle, translatedSummary });
             const wrapper = btn.parentElement;
-            console.log("🔲 wrapper:", wrapper?.className, wrapper?.innerHTML?.slice(0, 100));
-            const titleEl = wrapper.querySelector(".articleCardTitle") || wrapper.querySelector(".nfCardTitle");
-            const summaryEl = wrapper.querySelector(".articleCardSummary") || wrapper.querySelector(".nfCardSummary");
-            console.log("🔤 titleEl:", titleEl, "summaryEl:", summaryEl);
-            if (translatedTitle && titleEl) titleEl.textContent = translatedTitle;
-            if (translatedSummary && summaryEl) summaryEl.textContent = translatedSummary;
+            if (translatedTitle) {
+              const el = wrapper.querySelector(".articleCardTitle") || wrapper.querySelector(".nfCardTitle");
+              if (el) el.textContent = translatedTitle;
+            }
+            if (translatedSummary) {
+              const el = wrapper.querySelector(".articleCardSummary") || wrapper.querySelector(".nfCardSummary");
+              if (el) el.textContent = translatedSummary;
+            }
+            // Patch article arrays in both scopes so re-renders don't wipe the translation
+            [
+              typeof allArticles !== "undefined" ? allArticles : [],
+              typeof articles    !== "undefined" ? articles    : []
+            ].forEach(arr => {
+              const art = arr.find(a => String(a.id) === String(articleId));
+              if (art) {
+                if (translatedTitle)  art.translated_title   = translatedTitle;
+                if (translatedSummary) art.translated_summary = translatedSummary;
+              }
+            });
             btn.textContent = "✓"; btn.classList.add("done");
           } catch (err) {
             console.error("Translation failed:", err);
