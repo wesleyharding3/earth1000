@@ -1405,17 +1405,21 @@
 }
 
 .articleTranslateBtn {
-  flex-shrink: 0;
-  background: none;
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 10;
+  background: rgba(0,0,0,0.55);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 4px;
   color: rgba(255,255,255,0.4);
   font-size: 10px;
-  padding: 2px 5px;
+  padding: 2px 6px;
   cursor: pointer;
   line-height: 1.4;
   transition: color 0.15s, border-color 0.15s, opacity 0.15s;
   white-space: nowrap;
+  pointer-events: all;
 }
 .articleTranslateBtn:hover { color: rgba(255,255,255,0.75); border-color: rgba(255,255,255,0.35); }
 .articleTranslateBtn.done  { color: rgba(100,220,130,0.7);  border-color: rgba(100,220,130,0.3); cursor: default; }
@@ -5318,21 +5322,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
 
           return `
-            <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
-              ${imageField}
-              <div class="articleCardBody">
-                <div>
-                  <div class="articleCardSource">${article.source_name || ""}</div>
-                  <div class="articleCardTitle" data-aid="${article.id}">${article.translated_title || article.title || ""}</div>
-                  <div class="articleCardSummary" data-aid="${article.id}">${article.translated_summary || article.summary || ""}</div>
+            <div style="position:relative">
+              <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
+                ${imageField}
+                <div class="articleCardBody">
+                  <div>
+                    <div class="articleCardSource">${article.source_name || ""}</div>
+                    <div class="articleCardTitle" data-aid="${article.id}">${article.translated_title || article.title || ""}</div>
+                    <div class="articleCardSummary" data-aid="${article.id}">${article.translated_summary || article.summary || ""}</div>
+                  </div>
+                  <div class="articleCardFooter">
+                    ${originLabel}
+                    <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                  </div>
                 </div>
-                <div class="articleCardFooter">
-                  ${originLabel}
-                  <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
-                  ${!article.translated_title && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
-                </div>
-              </div>
-            </a>`;
+              </a>
+              ${!article.translated_title && article.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(article.title||'')},${JSON.stringify(article.summary||'')},${article.id})" title="Translate">🌐</button>` : ""}
+            </div>`;
         }
 
         async function translateCard(e, btn, title, summary, articleId) {
@@ -7038,17 +7044,21 @@ function clearArcs() {
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
       const origin = parts.length ? `<div class="nfCardOrigin">📍 ${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
-      return `<a class="nfCard" href="${a.article_url||a.url||"#"}" target="_blank" rel="noopener noreferrer">
-        ${img}
-        <div class="nfCardBody">
-          <div>
-            <div class="nfCardSrc">${esc(a.source_name||"")}</div>
-            <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
-            <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
+      return `
+      <div style="position:relative">
+        <a class="nfCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener noreferrer">
+          ${img}
+          <div class="nfCardBody">
+            <div>
+              <div class="nfCardSrc">${esc(a.source_name||"")}</div>
+              <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
+              <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
+            </div>
+            <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
-          <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div>${!a.translated_title && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title=\"Translate\">🌐</button>` : ""}</div>
-        </div>
-      </a>`;
+        </a>
+        ${!a.translated_title && a.language !== 'en' ? `<button class="articleTranslateBtn" onclick="translateCard(event,this,${JSON.stringify(a.title||'')},${JSON.stringify(a.summary||'')},${a.id})" title="Translate">🌐</button>` : ""}
+      </div>`;
     }
 
     viewport.addEventListener("scroll", () => {
