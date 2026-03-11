@@ -5337,7 +5337,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   </div>
                 </div>
               </a>
-              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
+              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||''). replace(/"/g,'&quot;')}" data-summary="${(article.summary||''). replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
             </div>`;
         }
 
@@ -5361,6 +5361,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (translatedTitle) {
               const el = wrapper ? wrapper.querySelector(".articleCardTitle, .nfCardTitle") : null;
               if (el) el.textContent = translatedTitle;
+              else console.warn("⚠️ Could not find title element", { wrapper, articleId });
             }
             if (translatedSummary) {
               const el = wrapper ? wrapper.querySelector(".articleCardSummary, .nfCardSummary") : null;
@@ -7062,7 +7063,7 @@ function clearArcs() {
             <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
         </a>
-        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
+        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||''). replace(/"/g,'&quot;')}" data-summary="${(a.summary||''). replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
       </div>`;
     }
 
