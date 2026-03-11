@@ -1310,7 +1310,7 @@
       flex-direction: column;
       text-decoration: none;
       color: inherit;
-      min-height: 220px;
+      height: 260px;
     }
 
     .articleCard:hover {
@@ -5366,6 +5366,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const el = wrapper.querySelector(".articleCardSummary") || wrapper.querySelector(".nfCardSummary");
               if (el) el.textContent = translatedSummary;
             }
+            // Patch source arrays so re-renders don't revert the translation
+            [allArticles, window.__nfArticles || []].forEach(arr => {
+              const art = arr.find(a => String(a.id) === String(articleId));
+              if (art) {
+                if (translatedTitle)   art.translated_title   = translatedTitle;
+                if (translatedSummary) art.translated_summary = translatedSummary;
+              }
+            });
             btn.textContent = "✓"; btn.classList.add("done");
           } catch (err) {
             console.error("Translation failed:", err);
@@ -6765,6 +6773,7 @@ function clearArcs() {
     let countries = [], tags = [], fromSel = new Set(), aboutSel = new Set();
     let currentTag = null, lastKeyword = "", textFilter = "";
     let articles = [], offset = 0, loading = false, hasMore = true, searched = false, totalCount = 0;
+    window.__nfArticles = articles;
     const LIMIT = 24;
     const viewport  = document.getElementById("nfViewport");
     const grid      = document.getElementById("nfGrid");
@@ -6981,7 +6990,7 @@ function clearArcs() {
           const page = Array.isArray(data) ? data : (data.articles || []);
           if (data.total != null) totalCount = data.total;
           if (page.length < LIMIT) hasMore = false;
-          articles = [...articles, ...page];
+          articles = [...articles, ...page]; window.__nfArticles = articles;
           offset += LIMIT; renderCards(filtered()); updateMetaCount();
         })
         .catch(err => {
