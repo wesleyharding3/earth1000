@@ -14,11 +14,10 @@ async function rerouteAll() {
 
   for (const row of rows) {
     try {
-      // Skip if already routed within the last 7 days
+      // Skip if already routed
       const { rows: existing } = await pool.query(`
         SELECT 1 FROM article_locations
         WHERE article_id = $1
-          AND created_at >= NOW() - INTERVAL '7 days'
         LIMIT 1
       `, [row.id]);
 
