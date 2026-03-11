@@ -153,6 +153,8 @@ async function routeArticle(articleId) {
       JOIN keyword_tiers kt ON kt.id = clk.tier_id
     `);
 
+    console.log("Sample keyword row:", JSON.stringify(countryKeywordRes.rows[0]));
+
     const countryScores = {};
 
     for (const row of countryKeywordRes.rows) {
