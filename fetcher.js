@@ -5,7 +5,7 @@ const pool = require("./db");
 const { translateText } = require("./translator");
 const crypto = require("crypto");
 
-const TRANSLATION_ENABLED = true;
+const TRANSLATION_ENABLED = false;
 
 /* =========================================
    Parser Options
