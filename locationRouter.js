@@ -118,10 +118,12 @@ async function routeArticle(articleId) {
         cityScores[cityId] = {
           score:      0,
           threshold:  parseFloat(row.threshold),
-          country_id: row.country_id
+          country_id: row.country_id,
+          hits:       []
         };
       }
       cityScores[cityId].score += score;
+      cityScores[cityId].hits.push({ phrase: row.phrase, score });
     }
 
     for (const [cityId, data] of Object.entries(cityScores)) {
@@ -133,7 +135,7 @@ async function routeArticle(articleId) {
            ON CONFLICT DO NOTHING`,
           [articleId, data.country_id, parseInt(cityId)]
         );
-        console.log(`📍 City routed: article ${articleId} → city ${cityId} (score: ${data.score.toFixed(3)})`);
+        console.log(`📍 City routed: article ${articleId} → city ${cityId} (score: ${data.score.toFixed(3)}) — hits: ${JSON.stringify(data.hits)}`);
       }
     }
 
@@ -168,10 +170,12 @@ async function routeArticle(articleId) {
       if (!countryScores[countryId]) {
         countryScores[countryId] = {
           score:     0,
-          threshold: parseFloat(row.threshold)
+          threshold: parseFloat(row.threshold),
+          hits:      []
         };
       }
       countryScores[countryId].score += score;
+      countryScores[countryId].hits.push({ phrase: row.phrase, score });
     }
 
     for (const [countryId, data] of Object.entries(countryScores)) {
@@ -183,7 +187,7 @@ async function routeArticle(articleId) {
            ON CONFLICT DO NOTHING`,
           [articleId, parseInt(countryId)]
         );
-        console.log(`🌍 Country routed: article ${articleId} → country ${countryId} (score: ${data.score.toFixed(3)})`);
+        console.log(`🌍 Country routed: article ${articleId} → country ${countryId} (score: ${data.score.toFixed(3)}) — hits: ${JSON.stringify(data.hits)}`);
       }
     }
 
