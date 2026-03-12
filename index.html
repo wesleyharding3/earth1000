@@ -7711,13 +7711,13 @@ document.addEventListener('click', e=>{
 });
 
 // Live tick
-// Fetch real gold price from gold-api.com (no key required)
-async function grmFetchGold() {
+// Fetch real price from gold-api.com for a given symbol/catalog id
+async function grmFetchReal(symbol, id) {
   try {
-    const res  = await fetch('https://api.gold-api.com/price/XAU');
+    const res  = await fetch(`https://api.gold-api.com/price/${symbol}`);
     const data = await res.json();
     if (!data.price) return;
-    const c       = GRM_CATALOG['gold'];
+    const c       = GRM_CATALOG[id];
     const prev    = c.mock.price;
     c.mock.price  = data.price;
     c.mock.change = data.price - prev;
@@ -7728,14 +7728,14 @@ async function grmFetchGold() {
   }
 }
 
-// Visual ticker: tiny drift so price appears to animate between real fetches
+const GRM_REAL = ['gold', 'silver']; // ids backed by real API
+
+// Visual ticker: micro-jitter for real data, drift for simulated
 function grmTick() {
-  // Only drift non-gold entries (gold stays pinned to real fetch value with micro-jitter)
   Object.values(GRM_CATALOG).forEach(c=>{
-    if (c.id === 'gold') {
-      // micro-jitter ±0.01% so the price doesn't look frozen
+    if (GRM_REAL.includes(c.id)) {
       const jitter = (Math.random()-0.5) * c.mock.price * 0.0001;
-      c.mock.price  = Math.max(c.mock.price + jitter, 0.01);
+      c.mock.price = Math.max(c.mock.price + jitter, 0.01);
     } else {
       const drift = (Math.random()-0.499) * c.mock.price * 0.0003;
       c.mock.price  = Math.max(c.mock.price + drift, 0.01);
@@ -7773,9 +7773,10 @@ grmRefresh();
 grmUpdateDropdown();
 grmClockTick();
 
-// Fetch real gold price immediately, then every 10 minutes
-grmFetchGold();
-setInterval(grmFetchGold, 10 * 60 * 1000);
+// Fetch real prices immediately, then every 10 minutes
+grmFetchReal('XAU', 'gold');
+grmFetchReal('XAG', 'silver');
+setInterval(()=>{ grmFetchReal('XAU','gold'); grmFetchReal('XAG','silver'); }, 10 * 60 * 1000);
 
 // Visual ticker every 2s
 setInterval(grmTick, 2000);
