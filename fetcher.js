@@ -4,6 +4,9 @@ const Parser = require("rss-parser");
 const pool = require("./db");
 const { translateText } = require("./translator");
 const crypto = require("crypto");
+const { loadStopwords,
+        extractKeywords,
+        saveKeywords }      = require("./keywordExtractor");
 
 const TRANSLATION_ENABLED = true;
 
@@ -222,6 +225,14 @@ async function fetchFeeds() {
   console.log("🚀 Starting RSS fetch...", new Date().toISOString());
   const startTime = Date.now();
 
+  // Load stopwords once per fetch run (cached in memory, reloads hourly)
+  let stopwordCache = null;
+  try {
+    stopwordCache = await loadStopwords();
+  } catch (swErr) {
+    console.warn("⚠️  Could not load stopwords — keyword extraction disabled for this run:", swErr.message);
+  }
+
   const feedResult = await pool.query(`
     SELECT ns.id, ns.country_id, ns.rss_url, ns.city_id,
            ns.failure_count, ns.language_id, ns.popularity_tier,
@@ -360,7 +371,8 @@ async function fetchFeeds() {
              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11, NOW()), NOW(),$12,$13
            )
            ON CONFLICT (url)
-           DO NOTHING`,
+           DO NOTHING
+           RETURNING id`,
           [
             feed.id,
             feed.city_id,
@@ -380,6 +392,33 @@ async function fetchFeeds() {
 
         if (insertResult.rowCount > 0) {
           inserted++;
+
+          // ── Keyword extraction (async, non-blocking — won't stall ingest)
+          if (stopwordCache) {
+            const newArticleId = insertResult.rows[0].id;
+            const lang         = feed.language || 'en';
+            setImmediate(async () => {
+              try {
+                const keywords = extractKeywords(
+                  { title, summary },
+                  lang,
+                  stopwordCache
+                );
+                if (keywords.length > 0) {
+                  await saveKeywords(
+                    newArticleId,
+                    keywords,
+                    lang,
+                    publishedAt,
+                    feed.country_id  || null,
+                    feed.country_id  || null   // about_country_id defaults to source country
+                  );
+                }
+              } catch (kwErr) {
+                console.warn(`⚠️  Keyword extraction failed for article ${newArticleId}: ${kwErr.message}`);
+              }
+            });
+          }
         }
       }
 
