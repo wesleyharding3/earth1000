@@ -256,11 +256,17 @@ async function saveKeywords(
   }
 
   // ── 4. Bulk insert keyword_cooccurrence pairs
-  const words = keywords.map(k => k.keyword);
+  // Dedupe keywords first (bigrams + unigrams can overlap), then pair
+  const words = [...new Set(keywords.map(k => k.keyword))];
   const pairs = [];
+  const seenPairs = new Set();
   for (let i = 0; i < words.length; i++) {
     for (let j = i + 1; j < words.length; j++) {
+      if (words[i] === words[j]) continue;  // skip identical
       const [a, b] = words[i] < words[j] ? [words[i], words[j]] : [words[j], words[i]];
+      const key = `${a}||${b}`;
+      if (seenPairs.has(key)) continue;     // skip duplicate pairs
+      seenPairs.add(key);
       pairs.push([a, b]);
     }
   }
