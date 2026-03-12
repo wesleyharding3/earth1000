@@ -627,6 +627,162 @@ app.get("/api/commodities", (req, res) => {
 });
 
 /* =========================================
+   Keyword Routes
+========================================= */
+
+// GET /api/keywords/autocomplete?q=clim
+// Returns up to 10 distinct keywords matching the prefix
+app.get("/api/keywords/autocomplete", async (req, res) => {
+  const q = (req.query.q || "").trim();
+  if (q.length < 2) return res.json([]);
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT keyword
+       FROM article_keywords
+       WHERE keyword ILIKE $1
+       ORDER BY keyword ASC
+       LIMIT 10`,
+      [q + "%"]
+    );
+    res.json(rows.map(r => r.keyword));
+  } catch (err) {
+    console.error("[keywords/autocomplete]", err.message);
+    res.status(500).json({ error: "autocomplete failed" });
+  }
+});
+
+// GET /api/keywords/top?keyword=climate&days=7&source_country=us&about_country=cn&limit=20
+// Returns total mention count for a keyword over a date range
+app.get("/api/keywords/top", async (req, res) => {
+  const {
+    keyword,
+    days           = 7,
+    source_country = null,
+    about_country  = null,
+    limit          = 20,
+  } = req.query;
+
+  if (!keyword) return res.status(400).json({ error: "keyword required" });
+
+  try {
+    const params = [keyword.toLowerCase().trim(), parseInt(days)];
+    let   where  = `WHERE keyword = $1 AND date >= NOW() - ($2 || ' days')::INTERVAL`;
+
+    if (source_country) {
+      params.push(source_country.toLowerCase());
+      where += ` AND source_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
+    }
+    if (about_country) {
+      params.push(about_country.toLowerCase());
+      where += ` AND about_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
+    }
+
+    const limitIdx = params.push(parseInt(limit));
+    const { rows } = await pool.query(
+      `SELECT
+         keyword,
+         SUM(total_count)          AS total_mentions,
+         SUM(language_group_count) AS language_groups,
+         MIN(date)                 AS first_seen,
+         MAX(date)                 AS last_seen
+       FROM keyword_daily_stats
+       ${where}
+       GROUP BY keyword
+       ORDER BY total_mentions DESC
+       LIMIT $${limitIdx}`,
+      params
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/top]", err.message);
+    res.status(500).json({ error: "top keywords failed" });
+  }
+});
+
+// GET /api/keywords/trend?keyword=ukraine&days=30&source_country=us&about_country=ua
+// Returns day-by-day mention counts for a keyword (for line/bar charts)
+app.get("/api/keywords/trend", async (req, res) => {
+  const {
+    keyword,
+    days           = 30,
+    source_country = null,
+    about_country  = null,
+  } = req.query;
+
+  if (!keyword) return res.status(400).json({ error: "keyword required" });
+
+  try {
+    const params = [keyword.toLowerCase().trim(), parseInt(days)];
+    let   where  = `WHERE keyword = $1 AND date >= NOW() - ($2 || ' days')::INTERVAL`;
+
+    if (source_country) {
+      params.push(source_country.toLowerCase());
+      where += ` AND source_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
+    }
+    if (about_country) {
+      params.push(about_country.toLowerCase());
+      where += ` AND about_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
+    }
+
+    const { rows } = await pool.query(
+      `WITH date_series AS (
+         SELECT generate_series(
+           (NOW() - ($2 || ' days')::INTERVAL)::date,
+           NOW()::date,
+           '1 day'::interval
+         )::date AS date
+       ),
+       counts AS (
+         SELECT date, SUM(total_count) AS mentions
+         FROM keyword_daily_stats
+         ${where}
+         GROUP BY date
+       )
+       SELECT
+         ds.date,
+         COALESCE(c.mentions, 0) AS mentions
+       FROM date_series ds
+       LEFT JOIN counts c ON c.date = ds.date
+       ORDER BY ds.date ASC`,
+      params
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/trend]", err.message);
+    res.status(500).json({ error: "trend failed" });
+  }
+});
+
+// GET /api/keywords/cooccurrence?keyword=ukraine&days=30&limit=15
+// Returns keywords most frequently mentioned alongside the given keyword
+app.get("/api/keywords/cooccurrence", async (req, res) => {
+  const { keyword, days = 30, limit = 15 } = req.query;
+  if (!keyword) return res.status(400).json({ error: "keyword required" });
+
+  try {
+    const kw = keyword.toLowerCase().trim();
+    const { rows } = await pool.query(
+      `SELECT
+         CASE WHEN keyword_a = $1 THEN keyword_b ELSE keyword_a END AS related_keyword,
+         COUNT(*) AS co_mentions
+       FROM keyword_cooccurrence
+       WHERE (keyword_a = $1 OR keyword_b = $1)
+         AND date >= NOW() - ($2 || ' days')::INTERVAL
+       GROUP BY related_keyword
+       ORDER BY co_mentions DESC
+       LIMIT $3`,
+      [kw, parseInt(days), parseInt(limit)]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/cooccurrence]", err.message);
+    res.status(500).json({ error: "cooccurrence failed" });
+  }
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
