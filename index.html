@@ -1809,6 +1809,13 @@
     .grm-grid[data-count="3"] { grid-template-columns: 1fr 1fr; grid-template-rows: 160px 160px; }
     .grm-grid[data-count="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 160px 160px; }
     .grm-grid[data-count="3"] .grm-sub:nth-child(3) { grid-column: 1 / -1; }
+    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-price-view {
+      align-items: center; justify-content: center; text-align: center;
+    }
+    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-price-row { justify-content: center; }
+    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-chart-view { flex: 1; display: flex; flex-direction: column; }
+    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-chart-header { justify-content: center; gap: 24px; }
+    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-canvas-wrap { flex: 1; }
     .grm-sub {
       background: var(--grm-surface2);
       border: 1px solid var(--grm-border);
@@ -7772,20 +7779,19 @@ function grmClockTick() {
   if (el) el.textContent = new Date().toUTCString().slice(17,25) + ' UTC';
 }
 
-// Init
+// Init — poll server first so first paint shows real prices, not mock seeds
 grmBuildDropdown();
 ['gold'].forEach(id=>{ grmModes[id]='price'; grmRanges[id]='1M'; grmActive.push(id); });
-grmRefresh();
 grmUpdateDropdown();
 grmClockTick();
 
-// Pull real prices from server immediately, then every 10 minutes
-grmPollServer();
-setInterval(grmPollServer, 10 * 60 * 1000);
-
-// Visual ticker every 2s
-setInterval(grmTick, 2000);
-setInterval(grmClockTick, 1000);
+(async () => {
+  await grmPollServer();          // hydrate catalog with real prices before first render
+  grmRefresh();                   // first paint now shows real values
+  setInterval(grmPollServer, 10 * 60 * 1000);
+  setInterval(grmTick, 2000);
+  setInterval(grmClockTick, 1000);
+})();
 </script>
 
 </body>
