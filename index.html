@@ -5904,8 +5904,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (window.__currentPage !== undefined && window.__currentPage !== 1) {
             hideHoverCard(); return;
           }
-          hoverMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-          hoverMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+          const rect = renderer.domElement.getBoundingClientRect();
+          hoverMouse.x = ((event.clientX - rect.left) / rect.width)  * 2 - 1;
+          hoverMouse.y = -((event.clientY - rect.top)  / rect.height) * 2 + 1;
         });
 
       let lastHoveredIndex = null;
@@ -5947,8 +5948,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             activePositions[hoveredIndex*3+2]
           ).applyMatrix4(activePoints.matrixWorld);
           const projected = pos.clone().project(camera);
-          const sx = (projected.x + 1) / 2 * window.innerWidth;
-          const sy = (-projected.y + 1) / 2 * window.innerHeight;
+          const rect = renderer.domElement.getBoundingClientRect();
+          const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
+          const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
           if (hoveredIndex !== lastHoveredIndex) {
             if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
             lastHoveredIndex = hoveredIndex;
