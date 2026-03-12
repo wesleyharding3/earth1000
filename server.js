@@ -531,6 +531,102 @@ app.post("/api/translate", async (req, res) => {
 });
 
 /* =========================================
+   Commodities — server-side cache
+   Fetches gold/silver from gold-api.com (no key)
+   Fetches oil, gas, lumber, steel from FRED (free key)
+   Refreshes every 12 hours. Clients poll /api/commodities.
+========================================= */
+
+const FRED_API_KEY = process.env.FRED_API_KEY || "";
+
+// In-memory cache — persists between client requests
+const commodityCache = {
+  gold:   { price: null, change: null, pct: null, updatedAt: null },
+  silver: { price: null, change: null, pct: null, updatedAt: null },
+  oil:    { price: null, change: null, pct: null, updatedAt: null },
+  gas:    { price: null, change: null, pct: null, updatedAt: null },
+  lumber: { price: null, change: null, pct: null, updatedAt: null },
+  steel:  { price: null, change: null, pct: null, updatedAt: null },
+};
+
+// FRED series IDs
+const FRED_SERIES = {
+  oil:    "DCOILWTICO",  // WTI crude, daily, USD/barrel
+  gas:    "DHHNGSP",     // Henry Hub natural gas, daily, USD/MMBtu
+  lumber: "WPU081",      // PPI lumber, monthly, index
+  steel:  "WPU101",      // PPI steel mill products, monthly, index
+};
+
+async function fetchGoldApiPrice(symbol, id) {
+  try {
+    const res  = await fetch(`https://api.gold-api.com/price/${symbol}`);
+    if (!res.ok) throw new Error(`gold-api ${res.status}`);
+    const data = await res.json();
+    if (!data.price) throw new Error("no price field");
+    const prev = commodityCache[id].price;
+    commodityCache[id] = {
+      price:     data.price,
+      change:    prev != null ? data.price - prev : 0,
+      pct:       prev != null && prev > 0 ? ((data.price - prev) / prev) * 100 : 0,
+      updatedAt: data.updatedAt || new Date().toISOString(),
+    };
+    console.log(`[commodities] ${id} = $${data.price}`);
+  } catch (e) {
+    console.warn(`[commodities] ${id} fetch failed:`, e.message);
+  }
+}
+
+async function fetchFredPrice(seriesId, id) {
+  if (!FRED_API_KEY) {
+    console.warn(`[commodities] FRED_API_KEY not set — skipping ${id}`);
+    return;
+  }
+  try {
+    // Pull last 2 observations so we can compute change
+    const url = `https://api.stlouisfed.org/fred/series/observations`
+      + `?series_id=${seriesId}&api_key=${FRED_API_KEY}&file_type=json`
+      + `&sort_order=desc&limit=2`;
+    const res  = await fetch(url);
+    if (!res.ok) throw new Error(`FRED ${res.status}`);
+    const data = await res.json();
+    const obs  = (data.observations || []).filter(o => o.value !== ".");
+    if (!obs.length) throw new Error("no valid observations");
+    const latest = parseFloat(obs[0].value);
+    const prev   = obs[1] ? parseFloat(obs[1].value) : latest;
+    commodityCache[id] = {
+      price:     latest,
+      change:    latest - prev,
+      pct:       prev > 0 ? ((latest - prev) / prev) * 100 : 0,
+      updatedAt: obs[0].date,
+    };
+    console.log(`[commodities] ${id} (FRED ${seriesId}) = ${latest}`);
+  } catch (e) {
+    console.warn(`[commodities] ${id} FRED fetch failed:`, e.message);
+  }
+}
+
+async function refreshAllCommodities() {
+  console.log("[commodities] refreshing...");
+  await Promise.allSettled([
+    fetchGoldApiPrice("XAU", "gold"),
+    fetchGoldApiPrice("XAG", "silver"),
+    fetchFredPrice(FRED_SERIES.oil,    "oil"),
+    fetchFredPrice(FRED_SERIES.gas,    "gas"),
+    fetchFredPrice(FRED_SERIES.lumber, "lumber"),
+    fetchFredPrice(FRED_SERIES.steel,  "steel"),
+  ]);
+  console.log("[commodities] refresh complete");
+}
+
+// Fetch on startup, then every 12 hours
+refreshAllCommodities();
+setInterval(refreshAllCommodities, 12 * 60 * 60 * 1000);
+
+app.get("/api/commodities", (req, res) => {
+  res.json(commodityCache);
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
