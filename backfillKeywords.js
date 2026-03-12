@@ -21,17 +21,13 @@ const { loadStopwords,
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const BATCH_SIZE = parseInt((process.argv.find(a => a.startsWith('--batch=')) || '--batch=100').split('=')[1]);
-const RESET      = process.argv.includes('--reset');
+const RESET           = process.argv.includes('--reset');
+const NO_COOCCURRENCE = process.argv.includes('--no-cooccurrence');
 const LOG_EVERY  = 100;
-const PAUSE_MS   = 200;  // longer pause reduces connection churn
+const PAUSE_MS   = 200;
 
-// Prevent dropped-connection 'error' events from crashing the process
-process.on('unhandledRejection', (err) => {
-  console.error('[backfill] Unhandled rejection:', err?.message || err);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[backfill] Uncaught exception:', err?.message || err);
-});
+process.on('unhandledRejection', (err) => { console.error('[backfill] Unhandled rejection:', err?.message || err); });
+process.on('uncaughtException',  (err) => { console.error('[backfill] Uncaught exception:',  err?.message || err); });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -111,6 +107,26 @@ async function fetchBatch(afterId, limit) {
   return rows;
 }
 
+
+// ─── Prune keyword_daily_stats ────────────────────────────────────────────────
+// Keeps only the top 100 keywords per day (by total_count), deletes the rest.
+async function pruneKeywordStats() {
+  await pool.query(`
+    DELETE FROM keyword_daily_stats
+    WHERE (keyword, date, COALESCE(source_country_id::text,''), COALESCE(about_country_id::text,''))
+    NOT IN (
+      SELECT keyword, date, COALESCE(source_country_id::text,''), COALESCE(about_country_id::text,'')
+      FROM (
+        SELECT keyword, date, source_country_id, about_country_id,
+               ROW_NUMBER() OVER (PARTITION BY date ORDER BY total_count DESC) AS rn
+        FROM keyword_daily_stats
+      ) ranked
+      WHERE rn <= 100
+    )
+  `);
+  console.log('[backfill] keyword_daily_stats pruned.');
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -163,12 +179,14 @@ async function main() {
               lang,
               article.published_at,
               article.source_country_id,
-              article.about_country_id
+              article.about_country_id,
+              undefined,        // client
+              NO_COOCCURRENCE   // skip cooccurrence table
             );
           }
           totalDone++;
           lastId = article.id;
-          break; // success
+          break;
         } catch (err) {
           retries--;
           const isConnection = err.message?.includes('Connection terminated') ||
@@ -198,6 +216,8 @@ async function main() {
     await sleep(PAUSE_MS);
   }
 
+  console.log('[backfill] Pruning keyword_daily_stats to top 100 per day...');
+  await pruneKeywordStats();
   await markComplete();
   console.log('');
   console.log('[backfill] Complete!');
