@@ -203,64 +203,77 @@ async function saveKeywords(
   aboutCountryId  = null,
   client
 ) {
+  if (!keywords || keywords.length === 0) return;
   const db   = client || pool;
   const date = publishedAt
     ? new Date(publishedAt).toISOString().slice(0, 10)
     : new Date().toISOString().slice(0, 10);
 
-  // ── 1. Insert into article_keywords
+  // ── 1. Bulk insert into article_keywords (single query)
+  const akVals   = keywords.map((_, i) => `($1, $${i*3+2}, $${i*3+3}, $${i*3+4})`).join(',');
+  const akParams = [articleId];
   for (const { keyword, frequency } of keywords) {
-    await db.query(
-      `INSERT INTO article_keywords (article_id, keyword, source_language, frequency)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT DO NOTHING`,
-      [articleId, keyword, lang, frequency]
-    );
+    akParams.push(keyword, lang, frequency);
   }
+  await db.query(
+    `INSERT INTO article_keywords (article_id, keyword, source_language, frequency)
+     VALUES ${akVals}
+     ON CONFLICT DO NOTHING`,
+    akParams
+  );
 
-  // ── 2. Upsert keyword_daily_stats for each keyword
-  for (const { keyword } of keywords) {
-    // Global aggregate row (no country filters)
+  // ── 2. Bulk upsert keyword_daily_stats — global rows
+  const globalVals   = keywords.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, NULL, NULL)`).join(',');
+  const globalParams = [];
+  for (const { keyword } of keywords) globalParams.push(keyword, date);
+  await db.query(
+    `INSERT INTO keyword_daily_stats
+       (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
+     VALUES ${globalVals}
+     ON CONFLICT (keyword, date, source_country_id, about_country_id)
+     DO UPDATE SET
+       total_count          = keyword_daily_stats.total_count + 1,
+       language_group_count = keyword_daily_stats.language_group_count + 1`,
+    globalParams
+  );
+
+  // ── 3. Bulk upsert keyword_daily_stats — country rows (if we have country context)
+  if (sourceCountryId || aboutCountryId) {
+    const cVals   = keywords.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, $${keywords.length*2+1}, $${keywords.length*2+2})`).join(',');
+    const cParams = [];
+    for (const { keyword } of keywords) cParams.push(keyword, date);
+    cParams.push(sourceCountryId || null, aboutCountryId || null);
     await db.query(
       `INSERT INTO keyword_daily_stats
          (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
-       VALUES ($1, $2, 1, 1, NULL, NULL)
+       VALUES ${cVals}
        ON CONFLICT (keyword, date, source_country_id, about_country_id)
        DO UPDATE SET
          total_count          = keyword_daily_stats.total_count + 1,
          language_group_count = keyword_daily_stats.language_group_count + 1`,
-      [keyword, date]
+      cParams
     );
-
-    // Country-specific row (when we have country context)
-    if (sourceCountryId || aboutCountryId) {
-      await db.query(
-        `INSERT INTO keyword_daily_stats
-           (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
-         VALUES ($1, $2, 1, 1, $3, $4)
-         ON CONFLICT (keyword, date, source_country_id, about_country_id)
-         DO UPDATE SET
-           total_count          = keyword_daily_stats.total_count + 1,
-           language_group_count = keyword_daily_stats.language_group_count + 1`,
-        [keyword, date, sourceCountryId || null, aboutCountryId || null]
-      );
-    }
   }
 
-  // ── 3. Insert keyword_cooccurrence pairs (keyword_a < keyword_b enforced)
+  // ── 4. Bulk insert keyword_cooccurrence pairs
   const words = keywords.map(k => k.keyword);
+  const pairs = [];
   for (let i = 0; i < words.length; i++) {
     for (let j = i + 1; j < words.length; j++) {
-      const [a, b] = words[i] < words[j]
-        ? [words[i], words[j]]
-        : [words[j], words[i]];
-      await db.query(
-        `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT DO NOTHING`,
-        [a, b, articleId, date]
-      );
+      const [a, b] = words[i] < words[j] ? [words[i], words[j]] : [words[j], words[i]];
+      pairs.push([a, b]);
     }
+  }
+  if (pairs.length > 0) {
+    const pVals   = pairs.map((_, i) => `($${i*4+1}, $${i*4+2}, $${i*4+3}, $${i*4+4})`).join(',');
+    const pParams = [];
+    for (const [a, b] of pairs) pParams.push(a, b, articleId, date);
+    await db.query(
+      `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
+       VALUES ${pVals}
+       ON CONFLICT DO NOTHING`,
+      pParams
+    );
   }
 }
 
