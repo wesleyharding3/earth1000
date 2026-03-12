@@ -23,7 +23,7 @@ const { loadStopwords,
 
 const BATCH_SIZE      = parseInt(process.argv.find(a => a.startsWith('--batch='))?.split('=')[1] || '100');
 const RESET           = process.argv.includes('--reset');
-const LOG_EVERY       = 500;   // print progress every N articles
+const LOG_EVERY       = 10;    // print progress every N articles
 const PAUSE_MS        = 50;    // ms pause between batches (be kind to DB)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -119,6 +119,7 @@ async function fetchBatch(afterId, limit) {
 
 async function processArticle(article, cache) {
   const lang = article.language || 'en';
+  if (totalDone < 3) console.log(`[backfill] processing article ${article.id} lang=${lang} title=${(article.title||'').slice(0,40)}`);
 
   const keywords = extractKeywords(
     { title: article.title, summary: article.summary },
@@ -126,6 +127,7 @@ async function processArticle(article, cache) {
     cache
   );
 
+  if (totalDone < 3) console.log(`[backfill] extracted ${keywords.length} keywords for article ${article.id}`);
   if (keywords.length === 0) return;
 
   await saveKeywords(
@@ -159,6 +161,7 @@ async function main() {
   const progress = await getProgress();
   let lastId        = progress.last_article_id || 0;
   let totalDone     = progress.total_processed  || 0;
+  console.log('[backfill] Starting main loop...');
 
   if (totalDone > 0) {
     console.log(`[backfill] Resuming from article ID ${lastId} (${totalDone.toLocaleString()} already processed)`);
