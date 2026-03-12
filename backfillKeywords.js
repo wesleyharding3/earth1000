@@ -1,292 +1,192 @@
 /**
- * keywordExtractor.js
+ * backfillKeywords.js
  *
- * Shared keyword extraction module used by:
- *   - backfillKeywords.js  (one-time historical pass)
- *   - fetcher.js           (per-article at ingest time)
+ * One-time script to extract and store keywords for all existing articles.
+ * Picks up where it left off if interrupted (via keyword_backfill_progress).
  *
- * For each article, returns up to MAX_KEYWORDS scored keywords
- * and up to MAX_BIGRAMS scored bigrams, stopword-filtered,
- * with title words boosted 3× over body words.
+ * Usage:
+ *   node backfillKeywords.js
+ *   node backfillKeywords.js --batch=200   (override batch size)
+ *   node backfillKeywords.js --reset       (restart from article 0)
  */
 
 'use strict';
 
-const pool = require('./db');
+require('dotenv').config();
+const pool                         = require('./db');
+const { loadStopwords,
+        extractKeywords,
+        saveKeywords }             = require('./keywordExtractor');
 
-// ─── Config ────────────────────────────────────────────────────────────────
+// ─── Config ──────────────────────────────────────────────────────────────────
 
-const MAX_KEYWORDS  = 25;   // unigrams stored per article
-const MAX_BIGRAMS   = 10;   // bigrams stored per article (counted toward the 25)
-const TITLE_BOOST   = 3;    // multiplier for words found in the title
-const MIN_WORD_LEN  = 3;    // skip tokens shorter than this
+const BATCH_SIZE = parseInt((process.argv.find(a => a.startsWith('--batch=')) || '--batch=100').split('=')[1]);
+const RESET      = process.argv.includes('--reset');
+const LOG_EVERY  = 100;
+const PAUSE_MS   = 50;
 
-// ─── Stopword cache ────────────────────────────────────────────────────────
-// Loaded once from DB on first use, keyed by language code.
-// 'all' = universal noise list applied to every language.
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-let stopwordCache = null;   // { [lang]: Set<string>, all: Set<string> }
-let cacheLoadedAt = null;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function loadStopwords() {
-  if (stopwordCache && Date.now() - cacheLoadedAt < 60 * 60 * 1000) {
-    return stopwordCache;
-  }
-  const { rows } = await pool.query('SELECT word, language FROM stopwords');
-  const cache = {};
-  for (const { word, language } of rows) {
-    if (!cache[language]) cache[language] = new Set();
-    cache[language].add(word.toLowerCase());
-  }
-  stopwordCache = cache;
-  cacheLoadedAt = Date.now();
-  return cache;
+function elapsed(startMs) {
+  const s = Math.floor((Date.now() - startMs) / 1000);
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function isStopword(token, lang, cache) {
-  return (
-    (cache['all']  && cache['all'].has(token))  ||
-    (cache[lang]   && cache[lang].has(token))   ||
-    (cache['en']   && cache['en'].has(token))      // English always applied as fallback
+function eta(startMs, done, total) {
+  if (done === 0) return '?';
+  const remaining = Math.floor((total - done) * ((Date.now() - startMs) / done) / 1000);
+  return `${Math.floor(remaining / 60)}m ${remaining % 60}s`;
+}
+
+// ─── Progress ─────────────────────────────────────────────────────────────────
+
+async function getProgress() {
+  const { rows } = await pool.query(
+    `SELECT last_article_id, total_processed, total_articles
+     FROM keyword_backfill_progress ORDER BY id DESC LIMIT 1`
+  );
+  return rows[0] || { last_article_id: 0, total_processed: 0, total_articles: 0 };
+}
+
+async function updateProgress(lastId, done, total) {
+  await pool.query(
+    `UPDATE keyword_backfill_progress
+     SET last_article_id=$1, total_processed=$2, total_articles=$3, updated_at=NOW()
+     WHERE id=(SELECT id FROM keyword_backfill_progress ORDER BY id DESC LIMIT 1)`,
+    [lastId, done, total]
   );
 }
 
-// ─── Tokeniser ─────────────────────────────────────────────────────────────
-// Works for space-segmented scripts (Latin, Cyrillic, Arabic, etc.)
-// CJK (zh, ja, ko) and scripts without spaces (th, km, lo) are handled
-// separately with a simple character n-gram fallback since we don't want
-// to pull in a heavy NLP dependency.
-
-const CJK_LANGS    = new Set(['zh', 'ja', 'ko']);
-const NOSPACE_LANGS = new Set(['th', 'km', 'lo']);
-
-function tokenise(text, lang) {
-  if (!text) return [];
-
-  if (CJK_LANGS.has(lang) || NOSPACE_LANGS.has(lang)) {
-    // For scripts without spaces: extract character bigrams and trigrams
-    // as proxy tokens. Not perfect but better than no segmentation.
-    const clean = text.replace(/\s+/g, '');
-    const tokens = [];
-    for (let i = 0; i < clean.length - 1; i++) {
-      if (i + 2 <= clean.length) tokens.push(clean.slice(i, i + 2));
-      if (i + 3 <= clean.length) tokens.push(clean.slice(i, i + 3));
-    }
-    return tokens;
-  }
-
-  // For all other scripts: split on whitespace and punctuation
-  return text
-    .toLowerCase()
-    .split(/[\s\u00A0\u200B]+/)                     // whitespace incl. NBSP/ZWSP
-    .map(t => t.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, ''))  // strip leading/trailing punct
-    .filter(t => t.length >= MIN_WORD_LEN);
-}
-
-// ─── Bigram builder ────────────────────────────────────────────────────────
-// Only pairs two consecutive non-stopword tokens.
-
-function buildBigrams(tokens, lang, cache) {
-  const bigrams = [];
-  for (let i = 0; i < tokens.length - 1; i++) {
-    const a = tokens[i];
-    const b = tokens[i + 1];
-    if (
-      a.length >= MIN_WORD_LEN &&
-      b.length >= MIN_WORD_LEN &&
-      !isStopword(a, lang, cache) &&
-      !isStopword(b, lang, cache)
-    ) {
-      bigrams.push(`${a} ${b}`);
-    }
-  }
-  return bigrams;
-}
-
-// ─── Score accumulator ─────────────────────────────────────────────────────
-
-function scoreTokens(tokens, boost) {
-  const scores = {};
-  for (const token of tokens) {
-    scores[token] = (scores[token] || 0) + boost;
-  }
-  return scores;
-}
-
-function mergeScores(base, extra) {
-  for (const [k, v] of Object.entries(extra)) {
-    base[k] = (base[k] || 0) + v;
-  }
-  return base;
-}
-
-// ─── Main extraction function ───────────────────────────────────────────────
-/**
- * extractKeywords(article, lang, stopwordCache)
- *
- * @param {object} article  - { title, summary } (summary = article body/description)
- * @param {string} lang     - ISO 639-1 language code, e.g. 'en', 'ar', 'ru'
- * @param {object} cache    - stopword cache from loadStopwords()
- *
- * @returns {Array<{ keyword: string, frequency: number, is_bigram: boolean }>}
- *   Sorted by frequency descending, capped at MAX_KEYWORDS total
- *   (up to MAX_BIGRAMS of which may be bigrams).
- */
-function extractKeywords(article, lang, cache) {
-  const titleText   = article.title   || '';
-  const bodyText    = article.summary || '';
-
-  // ── Tokenise title and body separately
-  const titleTokens = tokenise(titleText, lang);
-  const bodyTokens  = tokenise(bodyText,  lang);
-
-  // ── Filter stopwords from each
-  const cleanTitle = titleTokens.filter(t => !isStopword(t, lang, cache));
-  const cleanBody  = bodyTokens.filter(t =>  !isStopword(t, lang, cache));
-
-  // ── Score unigrams: title tokens get TITLE_BOOST, body tokens get 1
-  let unigramScores = {};
-  mergeScores(unigramScores, scoreTokens(cleanTitle, TITLE_BOOST));
-  mergeScores(unigramScores, scoreTokens(cleanBody,  1));
-
-  // ── Score bigrams: built from full token stream (title then body)
-  const allTokens   = [...titleTokens, ...bodyTokens];
-  const bigramList  = buildBigrams(allTokens, lang, cache);
-  // Title bigrams get boost too: count bigrams from title with TITLE_BOOST
-  const titleBigrams = buildBigrams(titleTokens, lang, cache);
-  const bodyBigrams  = buildBigrams(bodyTokens,  lang, cache);
-
-  let bigramScores = {};
-  mergeScores(bigramScores, scoreTokens(titleBigrams, TITLE_BOOST));
-  mergeScores(bigramScores, scoreTokens(bodyBigrams,  1));
-
-  // ── Sort and cap
-  const topUnigrams = Object.entries(unigramScores)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_KEYWORDS - MAX_BIGRAMS)  // leave room for bigrams
-    .map(([keyword, frequency]) => ({ keyword, frequency, is_bigram: false }));
-
-  const topBigrams = Object.entries(bigramScores)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, MAX_BIGRAMS)
-    .map(([keyword, frequency]) => ({ keyword, frequency, is_bigram: true }));
-
-  // ── Merge, re-sort, final cap at MAX_KEYWORDS
-  return [...topUnigrams, ...topBigrams]
-    .sort((a, b) => b.frequency - a.frequency)
-    .slice(0, MAX_KEYWORDS);
-}
-
-// ─── DB write helper ────────────────────────────────────────────────────────
-/**
- * saveKeywords(articleId, keywords, lang, client?)
- *
- * Inserts extracted keywords into article_keywords.
- * Also updates keyword_daily_stats and keyword_cooccurrence.
- * Pass an existing pg client for transaction support (backfill),
- * or omit to use the pool directly (fetcher).
- *
- * @param {number}  articleId
- * @param {Array}   keywords   - output of extractKeywords()
- * @param {string}  lang
- * @param {Date}    publishedAt
- * @param {number|null} sourceCountryId
- * @param {number|null} aboutCountryId
- * @param {object}  [client]   - optional pg client
- */
-async function saveKeywords(
-  articleId,
-  keywords,
-  lang,
-  publishedAt,
-  sourceCountryId = null,
-  aboutCountryId  = null,
-  client
-) {
-  if (!keywords || keywords.length === 0) return;
-  const db   = client || pool;
-  const date = publishedAt
-    ? new Date(publishedAt).toISOString().slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
-
-  // ── 1. Bulk insert into article_keywords (single query)
-  const akVals   = keywords.map((_, i) => `($1, $${i*3+2}, $${i*3+3}, $${i*3+4})`).join(',');
-  const akParams = [articleId];
-  for (const { keyword, frequency } of keywords) {
-    akParams.push(keyword, lang, frequency);
-  }
-  await db.query(
-    `INSERT INTO article_keywords (article_id, keyword, source_language, frequency)
-     VALUES ${akVals}
-     ON CONFLICT DO NOTHING`,
-    akParams
+async function markComplete() {
+  await pool.query(
+    `UPDATE keyword_backfill_progress SET completed_at=NOW()
+     WHERE id=(SELECT id FROM keyword_backfill_progress ORDER BY id DESC LIMIT 1)`
   );
-
-  // ── 2. Bulk upsert keyword_daily_stats — global rows
-  const globalVals   = keywords.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, NULL, NULL)`).join(',');
-  const globalParams = [];
-  for (const { keyword } of keywords) globalParams.push(keyword, date);
-  await db.query(
-    `INSERT INTO keyword_daily_stats
-       (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
-     VALUES ${globalVals}
-     ON CONFLICT (keyword, date, source_country_id, about_country_id)
-     DO UPDATE SET
-       total_count          = keyword_daily_stats.total_count + 1,
-       language_group_count = keyword_daily_stats.language_group_count + 1`,
-    globalParams
-  );
-
-  // ── 3. Bulk upsert keyword_daily_stats — country rows (if we have country context)
-  if (sourceCountryId || aboutCountryId) {
-    const cVals   = keywords.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, $${keywords.length*2+1}, $${keywords.length*2+2})`).join(',');
-    const cParams = [];
-    for (const { keyword } of keywords) cParams.push(keyword, date);
-    cParams.push(sourceCountryId || null, aboutCountryId || null);
-    await db.query(
-      `INSERT INTO keyword_daily_stats
-         (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
-       VALUES ${cVals}
-       ON CONFLICT (keyword, date, source_country_id, about_country_id)
-       DO UPDATE SET
-         total_count          = keyword_daily_stats.total_count + 1,
-         language_group_count = keyword_daily_stats.language_group_count + 1`,
-      cParams
-    );
-  }
-
-  // ── 4. Bulk insert keyword_cooccurrence pairs
-  // Dedupe keywords first (bigrams + unigrams can overlap), then pair
-  const words = [...new Set(keywords.map(k => k.keyword))];
-  const pairs = [];
-  const seenPairs = new Set();
-  for (let i = 0; i < words.length; i++) {
-    for (let j = i + 1; j < words.length; j++) {
-      if (words[i] === words[j]) continue;  // skip identical
-      const [a, b] = words[i] < words[j] ? [words[i], words[j]] : [words[j], words[i]];
-      const key = `${a}||${b}`;
-      if (seenPairs.has(key)) continue;     // skip duplicate pairs
-      seenPairs.add(key);
-      pairs.push([a, b]);
-    }
-  }
-  if (pairs.length > 0) {
-    const pVals   = pairs.map((_, i) => `($${i*4+1}, $${i*4+2}, $${i*4+3}, $${i*4+4})`).join(',');
-    const pParams = [];
-    for (const [a, b] of pairs) pParams.push(a, b, articleId, date);
-    await db.query(
-      `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
-       VALUES ${pVals}
-       ON CONFLICT DO NOTHING`,
-      pParams
-    );
-  }
 }
 
-// ─── Public API ─────────────────────────────────────────────────────────────
+async function resetProgress(total) {
+  await pool.query(
+    `UPDATE keyword_backfill_progress
+     SET last_article_id=0, total_processed=0, total_articles=$1,
+         started_at=NOW(), updated_at=NOW(), completed_at=NULL
+     WHERE id=(SELECT id FROM keyword_backfill_progress ORDER BY id DESC LIMIT 1)`,
+    [total]
+  );
+}
 
-module.exports = {
-  loadStopwords,
-  extractKeywords,
-  saveKeywords,
-};
+// ─── Fetch batch ──────────────────────────────────────────────────────────────
+
+async function fetchBatch(afterId, limit) {
+  const { rows } = await pool.query(
+    `SELECT
+       a.id,
+       a.title,
+       a.summary,
+       a.published_at,
+       l.iso_code_2        AS language,
+       ns.country_id       AS source_country_id,
+       al.country_id       AS about_country_id
+     FROM news_articles a
+     JOIN news_sources ns ON ns.id = a.source_id
+     LEFT JOIN languages l ON l.id = ns.language_id
+     LEFT JOIN LATERAL (
+       SELECT country_id FROM article_locations
+       WHERE article_id = a.id LIMIT 1
+     ) al ON true
+     WHERE a.id > $1
+     ORDER BY a.id ASC
+     LIMIT $2`,
+    [afterId, limit]
+  );
+  return rows;
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+async function main() {
+  console.log('[backfill] Starting keyword backfill...');
+  console.log(`[backfill] Batch size: ${BATCH_SIZE}`);
+
+  const { rows: cr } = await pool.query('SELECT COUNT(*) FROM news_articles');
+  const totalArticles = parseInt(cr[0].count);
+  console.log(`[backfill] Total articles: ${totalArticles.toLocaleString()}`);
+
+  if (RESET) {
+    console.log('[backfill] --reset: restarting from 0');
+    await resetProgress(totalArticles);
+  }
+
+  const progress = await getProgress();
+  let lastId     = progress.last_article_id || 0;
+  let totalDone  = progress.total_processed  || 0;
+
+  if (totalDone > 0) {
+    console.log(`[backfill] Resuming from article ID ${lastId} (${totalDone.toLocaleString()} already done)`);
+  }
+
+  console.log('[backfill] Loading stopwords...');
+  const cache = await loadStopwords();
+  console.log(`[backfill] Stopwords loaded for ${Object.keys(cache).length} languages`);
+  console.log('[backfill] Starting main loop...');
+
+  const startMs = Date.now();
+  let errors    = 0;
+
+  while (true) {
+    const batch = await fetchBatch(lastId, BATCH_SIZE);
+    if (batch.length === 0) break;
+
+    for (const article of batch) {
+      try {
+        const lang     = article.language || 'en';
+        const keywords = extractKeywords(
+          { title: article.title, summary: article.summary },
+          lang,
+          cache
+        );
+        if (keywords.length > 0) {
+          await saveKeywords(
+            article.id,
+            keywords,
+            lang,
+            article.published_at,
+            article.source_country_id,
+            article.about_country_id
+          );
+        }
+        totalDone++;
+        lastId = article.id;
+      } catch (err) {
+        errors++;
+        console.error(`[backfill] Error on article ${article.id}: ${err.message}`);
+      }
+
+      if (totalDone % LOG_EVERY === 0) {
+        const pct = ((totalDone / totalArticles) * 100).toFixed(1);
+        console.log(
+          `[backfill] ${totalDone.toLocaleString()} / ${totalArticles.toLocaleString()} ` +
+          `(${pct}%) | elapsed: ${elapsed(startMs)} | eta: ${eta(startMs, totalDone, totalArticles)} | errors: ${errors}`
+        );
+      }
+    }
+
+    await updateProgress(lastId, totalDone, totalArticles);
+    await sleep(PAUSE_MS);
+  }
+
+  await markComplete();
+  console.log('');
+  console.log('[backfill] Complete!');
+  console.log(`[backfill]   Processed : ${totalDone.toLocaleString()}`);
+  console.log(`[backfill]   Errors    : ${errors}`);
+  console.log(`[backfill]   Time      : ${elapsed(startMs)}`);
+
+  await pool.end();
+}
+
+main().catch(err => {
+  console.error('[backfill] Fatal error:', err);
+  process.exit(1);
+});
