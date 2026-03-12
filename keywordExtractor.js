@@ -283,7 +283,7 @@ async function saveKeywords(
     const filteredCount = pParams.length / 4;
     if (filteredCount > 0) {
       const fVals = Array.from({length: filteredCount}, (_, i) =>
-        `(LEAST($${i*4+1},$${i*4+2}), GREATEST($${i*4+1},$${i*4+2}), $${i*4+3}, $${i*4+4})`
+        `(LEAST($${i*4+1},$${i*4+2}), GREATEST($${i*4+1},$${i*4+2}), $${i*4+3}::integer, $${i*4+4}::date)`
       ).join(',');
       await db.query(
         `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
