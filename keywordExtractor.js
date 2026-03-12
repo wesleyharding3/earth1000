@@ -199,9 +199,10 @@ async function saveKeywords(
   keywords,
   lang,
   publishedAt,
-  sourceCountryId = null,
-  aboutCountryId  = null,
-  client
+  sourceCountryId   = null,
+  aboutCountryId    = null,
+  client            = undefined,
+  skipCooccurrence  = false
 ) {
   if (!keywords || keywords.length === 0) return;
   const db   = client || pool;
@@ -255,7 +256,8 @@ async function saveKeywords(
     );
   }
 
-  // ── 4. Bulk insert keyword_cooccurrence pairs
+  // ── 4. Bulk insert keyword_cooccurrence pairs (skipped if skipCooccurrence=true)
+  if (skipCooccurrence) return;
   // Dedupe keywords first (bigrams + unigrams can overlap), then pair
   const words = [...new Set(keywords.map(k => k.keyword))];
   const pairs = [];
