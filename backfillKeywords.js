@@ -23,7 +23,15 @@ const { loadStopwords,
 const BATCH_SIZE = parseInt((process.argv.find(a => a.startsWith('--batch=')) || '--batch=100').split('=')[1]);
 const RESET      = process.argv.includes('--reset');
 const LOG_EVERY  = 100;
-const PAUSE_MS   = 50;
+const PAUSE_MS   = 200;  // longer pause reduces connection churn
+
+// Prevent dropped-connection 'error' events from crashing the process
+process.on('unhandledRejection', (err) => {
+  console.error('[backfill] Unhandled rejection:', err?.message || err);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[backfill] Uncaught exception:', err?.message || err);
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -139,28 +147,42 @@ async function main() {
     if (batch.length === 0) break;
 
     for (const article of batch) {
-      try {
-        const lang     = article.language || 'en';
-        const keywords = extractKeywords(
-          { title: article.title, summary: article.summary },
-          lang,
-          cache
-        );
-        if (keywords.length > 0) {
-          await saveKeywords(
-            article.id,
-            keywords,
+      let retries = 3;
+      while (retries > 0) {
+        try {
+          const lang     = article.language || 'en';
+          const keywords = extractKeywords(
+            { title: article.title, summary: article.summary },
             lang,
-            article.published_at,
-            article.source_country_id,
-            article.about_country_id
+            cache
           );
+          if (keywords.length > 0) {
+            await saveKeywords(
+              article.id,
+              keywords,
+              lang,
+              article.published_at,
+              article.source_country_id,
+              article.about_country_id
+            );
+          }
+          totalDone++;
+          lastId = article.id;
+          break; // success
+        } catch (err) {
+          retries--;
+          const isConnection = err.message?.includes('Connection terminated') ||
+                               err.message?.includes('connect ECONNREFUSED') ||
+                               err.code === 'ECONNRESET';
+          if (retries > 0 && isConnection) {
+            console.warn(`[backfill] Connection error on article ${article.id}, retrying in 3s... (${retries} left)`);
+            await sleep(3000);
+          } else {
+            errors++;
+            console.error(`[backfill] Error on article ${article.id}: ${err.message}`);
+            break;
+          }
         }
-        totalDone++;
-        lastId = article.id;
-      } catch (err) {
-        errors++;
-        console.error(`[backfill] Error on article ${article.id}: ${err.message}`);
       }
 
       if (totalDone % LOG_EVERY === 0) {
