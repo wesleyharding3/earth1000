@@ -271,15 +271,29 @@ async function saveKeywords(
     }
   }
   if (pairs.length > 0) {
-    const pVals   = pairs.map((_, i) => `($${i*4+1}, $${i*4+2}, $${i*4+3}, $${i*4+4})`).join(',');
+    // Use LEAST/GREATEST in SQL to guarantee keyword_a < keyword_b
+    // regardless of JS vs Postgres collation differences
+    const pVals   = pairs.map((_, i) => `(LEAST($${i*4+1},$${i*4+2}), GREATEST($${i*4+1},$${i*4+2}), $${i*4+3}, $${i*4+4})`).join(',');
     const pParams = [];
-    for (const [a, b] of pairs) pParams.push(a, b, articleId, date);
-    await db.query(
-      `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
-       VALUES ${pVals}
-       ON CONFLICT DO NOTHING`,
-      pParams
-    );
+    for (const [a, b] of pairs) {
+      if (a === b) continue;  // final safety: skip identical
+      pParams.push(a, b, articleId, date);
+    }
+    // Rebuild vals to match filtered pParams
+    const filteredCount = pParams.length / 4;
+    if (filteredCount > 0) {
+      const fVals = Array.from({length: filteredCount}, (_, i) =>
+        `(LEAST($${i*4+1},$${i*4+2}), GREATEST($${i*4+1},$${i*4+2}), $${i*4+3}, $${i*4+4})`
+      ).join(',');
+      await db.query(
+        `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
+         SELECT v.a, v.b, v.article_id, v.date
+         FROM (VALUES ${fVals}) AS v(a, b, article_id, date)
+         WHERE v.a < v.b
+         ON CONFLICT DO NOTHING`,
+        pParams
+      );
+    }
   }
 }
 
