@@ -7510,10 +7510,12 @@ function clearArcs() {
 
 const GRM_CATALOG = {
   gold:     { id:'gold',     label:'Gold',        symbol:'XAU', unit:'USD/oz',    icon:'⬡', iconBg:'rgba(212,168,67,0.15)',  color:'#d4a843', mock:{ price:2175.34, change:+1.24,  pct:+0.057 } },
+  silver:   { id:'silver',   label:'Silver',      symbol:'XAG', unit:'USD/oz',    icon:'◇', iconBg:'rgba(200,200,220,0.12)',color:'#c0c0d0', mock:{ price:24.61,   change:+0.18,  pct:+0.74  } },
   oil:      { id:'oil',      label:'Crude Oil',   symbol:'WTI', unit:'USD/bbl',   icon:'◉', iconBg:'rgba(180,100,40,0.15)', color:'#c06028', mock:{ price:78.42,   change:-0.61,  pct:-0.77  } },
   gas:      { id:'gas',      label:'Natural Gas', symbol:'NG',  unit:'USD/MMBtu', icon:'◈', iconBg:'rgba(100,180,220,0.15)',color:'#60b4dc', mock:{ price:1.88,    change:+0.03,  pct:+1.62  } },
-  lithium:  { id:'lithium',  label:'Lithium',     symbol:'LI',  unit:'USD/ton',   icon:'⬟', iconBg:'rgba(140,90,220,0.15)', color:'#9060dc', mock:{ price:13450,   change:-180,   pct:-1.32  } },
-  silver:   { id:'silver',   label:'Silver',      symbol:'XAG', unit:'USD/oz',    icon:'◇', iconBg:'rgba(200,200,220,0.12)',color:'#c0c0d0', mock:{ price:24.61,   change:+0.18,  pct:+0.74  } },
+  lumber:   { id:'lumber',   label:'Lumber',      symbol:'LBR', unit:'USD/mbf',   icon:'▤', iconBg:'rgba(160,100,50,0.15)', color:'#a06432', mock:{ price:559,     change:-1.86,  pct:-0.33  } },
+  steel:    { id:'steel',    label:'Steel',       symbol:'STL', unit:'USD/ton',   icon:'▦', iconBg:'rgba(120,140,160,0.15)',color:'#7890a0', mock:{ price:3118,    change:+19,    pct:+0.61  } },
+  lithium:  { id:'lithium',  label:'Lithium',     symbol:'LI',  unit:'CNY/ton',   icon:'⬟', iconBg:'rgba(140,90,220,0.15)', color:'#9060dc', mock:{ price:154750,  change:-500,   pct:-0.32  } },
   copper:   { id:'copper',   label:'Copper',      symbol:'HG',  unit:'USD/lb',    icon:'◆', iconBg:'rgba(180,100,60,0.15)', color:'#b46438', mock:{ price:3.87,    change:-0.02,  pct:-0.52  } },
   platinum: { id:'platinum', label:'Platinum',    symbol:'XPT', unit:'USD/oz',    icon:'⬢', iconBg:'rgba(150,200,200,0.12)',color:'#90c8c0', mock:{ price:901.20,  change:+5.40,  pct:+0.60  } },
   coal:     { id:'coal',     label:'Coal',        symbol:'MTF', unit:'USD/ton',   icon:'■', iconBg:'rgba(100,100,120,0.15)',color:'#808090', mock:{ price:127.50,  change:-1.20,  pct:-0.93  } },
@@ -7711,29 +7713,33 @@ document.addEventListener('click', e=>{
 });
 
 // Live tick
-// Fetch real price from gold-api.com for a given symbol/catalog id
-async function grmFetchReal(symbol, id) {
+// IDs served by real server-side data (all others stay simulated)
+const GRM_REAL = new Set(['gold','silver','oil','gas','lumber','steel']);
+
+// Poll /api/commodities — server refreshes every 12h, we poll every 10min
+async function grmPollServer() {
   try {
-    const res  = await fetch(`https://api.gold-api.com/price/${symbol}`);
+    const res  = await fetch('/api/commodities');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (!data.price) return;
-    const c       = GRM_CATALOG[id];
-    const prev    = c.mock.price;
-    c.mock.price  = data.price;
-    c.mock.change = data.price - prev;
-    c.mock.pct    = prev > 0 ? ((data.price - prev) / prev) * 100 : 0;
-    c._lastFetch  = data.updatedAt || new Date().toISOString();
+    Object.entries(data).forEach(([id, d]) => {
+      if (!GRM_CATALOG[id] || d.price == null) return;
+      const c    = GRM_CATALOG[id];
+      c.mock.price  = d.price;
+      c.mock.change = d.change ?? 0;
+      c.mock.pct    = d.pct    ?? 0;
+      c._updatedAt  = d.updatedAt;
+    });
   } catch(e) {
-    // silently retain last known price on network error
+    // silently retain last known values on network error
   }
 }
 
-const GRM_REAL = ['gold', 'silver']; // ids backed by real API
-
-// Visual ticker: micro-jitter for real data, drift for simulated
+// Visual ticker: micro-jitter for server-backed data, drift for simulated
 function grmTick() {
   Object.values(GRM_CATALOG).forEach(c=>{
-    if (GRM_REAL.includes(c.id)) {
+    if (GRM_REAL.has(c.id)) {
+      // ±0.01% jitter so price looks alive between server polls
       const jitter = (Math.random()-0.5) * c.mock.price * 0.0001;
       c.mock.price = Math.max(c.mock.price + jitter, 0.01);
     } else {
@@ -7773,10 +7779,9 @@ grmRefresh();
 grmUpdateDropdown();
 grmClockTick();
 
-// Fetch real prices immediately, then every 10 minutes
-grmFetchReal('XAU', 'gold');
-grmFetchReal('XAG', 'silver');
-setInterval(()=>{ grmFetchReal('XAU','gold'); grmFetchReal('XAG','silver'); }, 10 * 60 * 1000);
+// Pull real prices from server immediately, then every 10 minutes
+grmPollServer();
+setInterval(grmPollServer, 10 * 60 * 1000);
 
 // Visual ticker every 2s
 setInterval(grmTick, 2000);
