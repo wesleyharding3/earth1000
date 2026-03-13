@@ -631,11 +631,17 @@ async function runTester() {
 
     let detection;
     try {
-      detection = await detectSource(source);
+      detection = await Promise.race([
+        detectSource(source),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Detection timed out after 30s")), 30000)
+        )
+      ]);
     } catch (err) {
-      console.log(`  ❌ Detection crashed: ${err.message}`);
+      const isTimeout = err.message.includes("timed out");
+      console.log(isTimeout ? "  ⏱  Timed out (30s) — marked as failed" : `  ❌ Detection crashed: ${err.message}`);
       failed++;
-      logResult(source, null, `crashed: ${err.message}`);
+      logResult(source, null, isTimeout ? "timeout" : `crashed: ${err.message}`);
       progress = { lastId: source.id, applied, skipped, failed };
       saveProgress(progress);
       eta.record(Date.now() - stepStart);
