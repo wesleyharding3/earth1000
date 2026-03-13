@@ -39,7 +39,7 @@
       color: white;
       padding: 20px;
       box-sizing: border-box;
-      transition: bottom 0.4s ease;
+      transition: bottom 0.75s cubic-bezier(0.22, 1, 0.36, 1);
       overflow: visible;
       display: flex;
       flex-direction: column;
@@ -6681,6 +6681,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const slerpT = 0.04 + 0.10 * easedT;
           globeQuat.slerp(focusTargetQuat, slerpT);
 
+          // Fire panel early — at 75% through the rotation, arrives just before center
+          if (focusPendingPanel && progress > 0.75) {
+            const cb = focusPendingPanel;
+            focusPendingPanel = null;
+            cb();
+          }
+
           if (angleLeft < 0.0008) {
             globeQuat.copy(focusTargetQuat);
             focusTargetQuat = null;
@@ -6692,12 +6699,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (!focusZoomDone) {
               focusZoomDone = true;
               targetZoom = Math.max(1.9, camera.position.z - 0.65);
-            }
-            // Panel slides up now
-            if (focusPendingPanel) {
-              const cb = focusPendingPanel;
-              focusPendingPanel = null;
-              cb();
             }
           }
         }
