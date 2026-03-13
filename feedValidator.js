@@ -94,13 +94,11 @@ async function validateFeeds() {
       ORDER BY last_checked_at NULLS FIRST
     `;
   } else {
-    // Only feeds never checked (still enforce 2-day rule)
+    // Only feeds never checked (truly new/unprocessed entries only)
     query = `
       SELECT id, rss_url, is_active
       FROM news_sources
-      WHERE
-        last_checked_at IS NULL
-        OR last_checked_at < NOW() - INTERVAL '2 days'
+      WHERE last_checked_at IS NULL
       ORDER BY id ASC
     `;
   }
