@@ -4238,6 +4238,115 @@ function computeCityTiers(cities) {
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
+      // ═══════════════════════════════════════════════════════════════
+      // SHOOTING STARS
+      // Exist in world space (not scene), so globe rotation doesn't
+      // carry them. Each star is a Line with a head + tail. Depth is
+      // randomised so some pass in front of and some behind the globe.
+      // Fires at most once per 60 s, with a random delay each time.
+      // ═══════════════════════════════════════════════════════════════
+      const SHOOT_MIN_GAP  = 60000;   // minimum ms between stars
+      const SHOOT_MAX_GAP  = 120000;  // maximum ms between stars
+      const SHOOT_SPEED    = 0.045;   // world-units per frame
+      const SHOOT_TAIL_LEN = 0.55;    // length of the luminous tail
+      const MAX_SHOOT      = 3;       // pool size (only 1 active at a time)
+
+      const shootPool = [];
+      for (let i = 0; i < MAX_SHOOT; i++) {
+        const geo = new THREE.BufferGeometry();
+        // two points: [tail, head]
+        const pts = new Float32Array(6);
+        geo.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+        const mat = new THREE.LineBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending
+        });
+        const line = new THREE.Line(geo, mat);
+        line.renderOrder = 999;
+        // Add directly to the renderer's scene root so globe rotation doesn't affect it
+        scene.add(line);
+        shootPool.push({
+          line, geo, mat,
+          active: false,
+          head: new THREE.Vector3(),
+          dir:  new THREE.Vector3(),
+          life: 0,        // 0→1 progress
+          duration: 0,    // total frames for this star
+          depth: 0        // z position (varies for in-front / behind feel)
+        });
+      }
+
+      let shootNextAt = Date.now() + SHOOT_MIN_GAP + Math.random() * (SHOOT_MAX_GAP - SHOOT_MIN_GAP);
+
+      function spawnShootingStar() {
+        const star = shootPool.find(s => !s.active);
+        if (!star) return;
+
+        // Random depth: -3.5 (deep behind) to +3.5 (well in front)
+        // Globe sits at z=0 with radius 1, camera at z=3
+        const depth = (Math.random() * 7) - 3.5;
+
+        // Pick a random start position on a large off-screen rect at that depth
+        // Use NDC-like coords projected to world: span ±3 units at depth
+        const span   = 3.5;
+        const startX = (Math.random() * 2 - 1) * span;
+        const startY = (Math.random() * 2 - 1) * span;
+
+        // Direction: mostly downward/diagonal like a real meteor
+        const angle  = (Math.random() * 0.7 + 0.2) * Math.PI;  // 36°–162° from +x
+        const spread = 0.35 + Math.random() * 0.4;              // steepness variation
+        const dirX   = Math.cos(angle) * spread;
+        const dirY   = -Math.abs(Math.sin(angle)) * spread - 0.25; // always going down
+        const dirZ   = (Math.random() - 0.5) * 0.1;
+
+        star.head.set(startX, startY, depth);
+        star.dir.set(dirX, dirY, dirZ).normalize();
+        star.depth   = depth;
+        star.life     = 0;
+        star.duration = 55 + Math.random() * 45;  // 55–100 frames
+        star.active   = true;
+        star.mat.opacity = 0;
+      }
+
+      function tickShootingStars() {
+        const now = Date.now();
+        if (now >= shootNextAt) {
+          spawnShootingStar();
+          shootNextAt = now + SHOOT_MIN_GAP + Math.random() * (SHOOT_MAX_GAP - SHOOT_MIN_GAP);
+        }
+
+        for (const star of shootPool) {
+          if (!star.active) continue;
+
+          star.life += 1;
+          const t = star.life / star.duration;
+
+          // Fade: quick ramp-in, long hold, fade-out in last 30%
+          const fadeIn  = Math.min(t / 0.12, 1);
+          const fadeOut = t > 0.70 ? 1 - (t - 0.70) / 0.30 : 1;
+          star.mat.opacity = fadeIn * fadeOut * 0.92;
+
+          // Advance head
+          star.head.addScaledVector(star.dir, SHOOT_SPEED);
+
+          // Tail trails behind
+          const tail = star.head.clone().addScaledVector(star.dir, -SHOOT_TAIL_LEN);
+
+          const pts = star.geo.attributes.position.array;
+          pts[0] = tail.x; pts[1] = tail.y; pts[2] = tail.z;
+          pts[3] = star.head.x; pts[4] = star.head.y; pts[5] = star.head.z;
+          star.geo.attributes.position.needsUpdate = true;
+
+          if (star.life >= star.duration) {
+            star.active = false;
+            star.mat.opacity = 0;
+          }
+        }
+      }
+
       // ── PATCH 1: citySize increased 50% (0.028 → 0.042) ──
       const citySize = 0.042;
       const ringBurstDelay = 0.18;
@@ -6792,6 +6901,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__flowTick) window.__flowTick();
         // Sync ocean heatmap mesh with globe rotation
         if (window.__oceanMeshSync) window.__oceanMeshSync();
+        tickShootingStars();
         renderer.render(scene, camera);
       }
 
