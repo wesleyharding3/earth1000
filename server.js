@@ -118,38 +118,35 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
     const { rows } = await pool.query(`
-      SELECT * FROM (
-        SELECT DISTINCT ON (a.id)
-          a.id,
-          a.title,
-          a.translated_title,
-          a.url,
-          a.article_url,
-          a.summary,
-          a.translated_summary,
-          a.image_url,
-          a.published_at,
-          ns.name          AS source_name,
-          ns.site_url,
-          ns.popularity_score,
-          l.iso_code_2     AS language,
-          co.iso_code,
-          co.name          AS country_name,
-          ci.name          AS city_name
-        FROM article_locations al
-        JOIN news_articles a   ON a.id  = al.article_id
-        JOIN news_sources  ns  ON ns.id = a.source_id
-        LEFT JOIN languages  l  ON l.id = ns.language_id
-        LEFT JOIN countries co ON co.id = a.country_id
-        LEFT JOIN cities    ci ON ci.id = a.city_id
-        ${tagJoin}
-        WHERE al.city_id        = $1
-          AND al.routing_type   IN ('content', 'source')
-          AND a.city_id        != $1
-          ${tagWhere}
-        ORDER BY a.id
-      ) sub
-      ORDER BY ${tagId ? 'sub.published_at DESC' : 'sub.published_at DESC'}
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        a.title,
+        a.translated_title,
+        a.url,
+        a.article_url,
+        a.summary,
+        a.translated_summary,
+        a.image_url,
+        a.published_at,
+        ns.name          AS source_name,
+        ns.site_url,
+        ns.popularity_score,
+          l.iso_code_2 AS language,
+        co.iso_code,
+        co.name          AS country_name,
+        ci.name          AS city_name
+      FROM article_locations al
+      JOIN news_articles a   ON a.id  = al.article_id
+      JOIN news_sources  ns  ON ns.id = a.source_id
+      LEFT JOIN languages  l  ON l.id = ns.language_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities    ci ON ci.id = a.city_id
+      ${tagJoin}
+      WHERE al.city_id        = $1
+        AND al.routing_type   IN ('content', 'source')
+        AND a.city_id        != $1
+        ${tagWhere}
+      ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
     `, [req.params.cityId, limit, offset]);
 
@@ -219,40 +216,38 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
+    const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
     const { rows } = await pool.query(`
-      SELECT * FROM (
-        SELECT DISTINCT ON (a.id)
-          a.id,
-          a.title,
-          a.translated_title,
-          a.url,
-          a.article_url,
-          a.summary,
-          a.translated_summary,
-          a.image_url,
-          a.published_at,
-          ns.name          AS source_name,
-          ns.site_url,
-          ns.popularity_score,
-          l.iso_code_2     AS language,
-          co.iso_code,
-          co.name          AS country_name,
-          ci.name          AS city_name
-        FROM article_locations al
-        JOIN news_articles a   ON a.id  = al.article_id
-        JOIN news_sources  ns  ON ns.id = a.source_id
-        LEFT JOIN languages  l  ON l.id = ns.language_id
-        LEFT JOIN countries co ON co.id = a.country_id
-        LEFT JOIN cities    ci ON ci.id = a.city_id
-        ${tagJoin}
-        WHERE al.country_id     = $1
-          AND al.routing_type   IN ('content', 'source')
-          AND a.country_id     != $1
-          ${tagWhere}
-        ORDER BY a.id
-      ) sub
-      ORDER BY ${tagId ? 'sub.published_at DESC' : 'sub.published_at DESC'}
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        a.title,
+        a.translated_title,
+        a.url,
+        a.article_url,
+        a.summary,
+        a.translated_summary,
+        a.image_url,
+        a.published_at,
+        ns.name          AS source_name,
+        ns.site_url,
+        ns.popularity_score,
+          l.iso_code_2 AS language,
+        co.iso_code,
+        co.name          AS country_name,
+        ci.name          AS city_name
+      FROM article_locations al
+      JOIN news_articles a   ON a.id  = al.article_id
+      JOIN news_sources  ns  ON ns.id = a.source_id
+      LEFT JOIN languages  l  ON l.id = ns.language_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities    ci ON ci.id = a.city_id
+      ${tagJoin}
+      WHERE al.country_id     = $1
+        AND al.routing_type   IN ('content', 'source')
+        AND a.country_id     != $1
+        ${tagWhere}
+      ORDER BY a.id, ${tagOrder}
       LIMIT $2 OFFSET $3
     `, [req.params.countryId, limit, offset]);
 
@@ -365,7 +360,12 @@ app.get("/api/news/search", async (req, res) => {
           src_co.flag        AS country_flag,
           ci.name            AS city_name,
           COALESCE(cfb.boost_score, 1.0) AS country_boost,
-          COUNT(*) OVER()    AS total_count
+          COUNT(*) OVER()    AS total_count,
+          -- Recency decay: half-life 6h, floor 0.02
+          GREATEST(
+            POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+            0.02
+          ) AS recency_decay
           ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
         FROM news_articles a
         JOIN news_sources ns      ON ns.id      = a.source_id
@@ -380,13 +380,18 @@ app.get("/api/news/search", async (req, res) => {
         ${whereClause}
         ORDER BY a.id
       ) sub
-      ORDER BY (sub.base_priority * POWER(sub.country_boost, 2.0)) DESC
+      ORDER BY (
+        (sub.base_priority * 0.10 + sub.recency_decay * 0.90)
+        * POWER(sub.country_boost, 2.0)
+      ) DESC
       LIMIT $${limitParam} OFFSET $${offsetParam}
     `, params);
 
     let results = rows.map(r => ({
       ...r,
-      final_priority: (r.base_priority || 0) * Math.pow(r.country_boost || 1, 2.0)
+      final_priority: (r.base_priority || 0) * 0.10
+                    + (r.recency_decay  || 1) * 0.90
+                    * Math.pow(r.country_boost || 1, 2.0)
     }));
 
     results = countryVarianceRerank(results);
