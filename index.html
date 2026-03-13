@@ -6513,9 +6513,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
-          const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-          globePitch = euler.x; globeYaw = euler.y;
-          isFocused = false; selectedNodeIndex = null; focusPendingPanel = null; focusLocked = false;
+          isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
+          // Sync Euler then release focusLocked one frame later — prevents
+          // rebuildGlobeQuat firing the same tick as the Euler write and snapping.
+          requestAnimationFrame(() => {
+            const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+            globePitch = euler.x; globeYaw = euler.y;
+            focusLocked = false;
+          });
           targetZoom = preFocusZoom;
           scheduleAmbientResume();
         });
@@ -6700,6 +6705,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const cb = focusPendingPanel;
             focusPendingPanel = null;
             cb();
+            // Slow zoom-in begins as panel slides up
+            targetZoom = Math.max(1.9, camera.position.z - 0.55);
           }
 
           if (angleLeft < 0.0008) {
