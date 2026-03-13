@@ -648,12 +648,12 @@ async function runTester() {
       detection = await Promise.race([
         detectSource(source),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Detection timed out after 30s")), 30000)
+          setTimeout(() => reject(new Error("Detection timed out after 2m")), 120000)
         )
       ]);
     } catch (err) {
       const isTimeout = err.message.includes("timed out");
-      console.log(isTimeout ? "  ⏱  Timed out (30s) — deleting source" : `  ❌ Detection crashed: ${err.message} — deleting source`);
+      console.log(isTimeout ? "  ⏱  Timed out (2m) — deleting source" : `  ❌ Detection crashed: ${err.message} — deleting source`);
       failed++;
       logResult(source, null, isTimeout ? "timeout:deleted" : `crashed:deleted: ${err.message}`);
       await deleteSource(source.id);
