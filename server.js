@@ -118,35 +118,38 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        a.image_url,
-        a.published_at,
-        ns.name          AS source_name,
-        ns.site_url,
-        ns.popularity_score,
-          l.iso_code_2 AS language,
-        co.iso_code,
-        co.name          AS country_name,
-        ci.name          AS city_name
-      FROM article_locations al
-      JOIN news_articles a   ON a.id  = al.article_id
-      JOIN news_sources  ns  ON ns.id = a.source_id
-      LEFT JOIN languages  l  ON l.id = ns.language_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities    ci ON ci.id = a.city_id
-      ${tagJoin}
-      WHERE al.city_id        = $1
-        AND al.routing_type   IN ('content', 'source')
-        AND a.city_id        != $1
-        ${tagWhere}
-      ORDER BY a.id, ${tagOrder}
+      SELECT * FROM (
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          a.title,
+          a.translated_title,
+          a.url,
+          a.article_url,
+          a.summary,
+          a.translated_summary,
+          a.image_url,
+          a.published_at,
+          ns.name          AS source_name,
+          ns.site_url,
+          ns.popularity_score,
+          l.iso_code_2     AS language,
+          co.iso_code,
+          co.name          AS country_name,
+          ci.name          AS city_name
+        FROM article_locations al
+        JOIN news_articles a   ON a.id  = al.article_id
+        JOIN news_sources  ns  ON ns.id = a.source_id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities    ci ON ci.id = a.city_id
+        ${tagJoin}
+        WHERE al.city_id        = $1
+          AND al.routing_type   IN ('content', 'source')
+          AND a.city_id        != $1
+          ${tagWhere}
+        ORDER BY a.id
+      ) sub
+      ORDER BY ${tagId ? 'sub.published_at DESC' : 'sub.published_at DESC'}
       LIMIT $2 OFFSET $3
     `, [req.params.cityId, limit, offset]);
 
@@ -216,38 +219,40 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
-    const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
 
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        a.image_url,
-        a.published_at,
-        ns.name          AS source_name,
-        ns.site_url,
-        ns.popularity_score,
-          l.iso_code_2 AS language,
-        co.iso_code,
-        co.name          AS country_name,
-        ci.name          AS city_name
-      FROM article_locations al
-      JOIN news_articles a   ON a.id  = al.article_id
-      JOIN news_sources  ns  ON ns.id = a.source_id
-      LEFT JOIN languages  l  ON l.id = ns.language_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities    ci ON ci.id = a.city_id
-      ${tagJoin}
-      WHERE al.country_id     = $1
-        AND al.routing_type   IN ('content', 'source')
-        AND a.country_id     != $1
-        ${tagWhere}
-      ORDER BY a.id, ${tagOrder}
+      SELECT * FROM (
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          a.title,
+          a.translated_title,
+          a.url,
+          a.article_url,
+          a.summary,
+          a.translated_summary,
+          a.image_url,
+          a.published_at,
+          ns.name          AS source_name,
+          ns.site_url,
+          ns.popularity_score,
+          l.iso_code_2     AS language,
+          co.iso_code,
+          co.name          AS country_name,
+          ci.name          AS city_name
+        FROM article_locations al
+        JOIN news_articles a   ON a.id  = al.article_id
+        JOIN news_sources  ns  ON ns.id = a.source_id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities    ci ON ci.id = a.city_id
+        ${tagJoin}
+        WHERE al.country_id     = $1
+          AND al.routing_type   IN ('content', 'source')
+          AND a.country_id     != $1
+          ${tagWhere}
+        ORDER BY a.id
+      ) sub
+      ORDER BY ${tagId ? 'sub.published_at DESC' : 'sub.published_at DESC'}
       LIMIT $2 OFFSET $3
     `, [req.params.countryId, limit, offset]);
 
