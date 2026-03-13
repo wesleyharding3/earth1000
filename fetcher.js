@@ -413,9 +413,12 @@ async function fetchFeeds() {
                     feed.country_id  || null,
                     feed.country_id  || null   // about_country_id defaults to source country
                   );
+                  console.log(`  ✅ Keywords [${newArticleId}] ${keywords.length} extracted (${lang}) — top: ${keywords.slice(0, 3).map(k => k.keyword).join(", ")}`);
+                } else {
+                  console.log(`  ⚠️  Keywords [${newArticleId}] 0 extracted (${lang}) — title may be too short or all stopwords`);
                 }
               } catch (kwErr) {
-                console.warn(`⚠️  Keyword extraction failed for article ${newArticleId}: ${kwErr.message}`);
+                console.warn(`  ❌ Keywords [${newArticleId}] extraction failed: ${kwErr.message}`);
               }
             });
           }
