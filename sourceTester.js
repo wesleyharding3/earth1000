@@ -538,6 +538,18 @@ async function detectSource(source) {
 }
 
 /* =========================================
+   DB Delete
+========================================= */
+async function deleteSource(id) {
+  try {
+    await pool.query(`DELETE FROM news_sources WHERE id = $1`, [id]);
+    console.log(`  🗑  Deleted source #${id} from DB`);
+  } catch (err) {
+    console.error(`  ❌ Failed to delete source #${id}: ${err.message}`);
+  }
+}
+
+/* =========================================
    DB Write
 ========================================= */
 async function applyToDb(source, detection) {
@@ -618,11 +630,13 @@ async function runTester() {
     return;
   }
 
+  const CONFIDENCE_THRESHOLD = 95;
+
   let { applied, skipped, failed } = progress;
   const eta = new ETATracker();
 
   for (let i = 0; i < sources.length; i++) {
-    const source  = sources[i];
+    const source    = sources[i];
     const stepStart = Date.now();
     const remaining = total - i - 1;
 
@@ -639,28 +653,27 @@ async function runTester() {
       ]);
     } catch (err) {
       const isTimeout = err.message.includes("timed out");
-      console.log(isTimeout ? "  ⏱  Timed out (30s) — marked as failed" : `  ❌ Detection crashed: ${err.message}`);
+      console.log(isTimeout ? "  ⏱  Timed out (30s) — deleting source" : `  ❌ Detection crashed: ${err.message} — deleting source`);
       failed++;
-      logResult(source, null, isTimeout ? "timeout" : `crashed: ${err.message}`);
+      logResult(source, null, isTimeout ? "timeout:deleted" : `crashed:deleted: ${err.message}`);
+      await deleteSource(source.id);
       progress = { lastId: source.id, applied, skipped, failed };
       saveProgress(progress);
       eta.record(Date.now() - stepStart);
       printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
-      const ans = await ask("  Continue to next? (y/n/q): ");
-      if (ans.trim().toLowerCase() === "q") break;
       continue;
     }
 
+    // ── No method found → delete
     if (!detection.type) {
-      console.log(`  ❌ No method found — ${detection.reason}`);
+      console.log(`  ❌ No method found — ${detection.reason} — deleting source`);
       failed++;
-      logResult(source, null, `no_method: ${detection.reason}`);
+      logResult(source, null, `no_method:deleted: ${detection.reason}`);
+      await deleteSource(source.id);
       progress = { lastId: source.id, applied, skipped, failed };
       saveProgress(progress);
       eta.record(Date.now() - stepStart);
       printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
-      const ans = await ask("  Continue to next? (y/n/q): ");
-      if (ans.trim().toLowerCase() === "q") break;
       continue;
     }
 
@@ -685,33 +698,18 @@ async function runTester() {
     }
     console.log(`  └───────────────────────────────────────`);
 
-    // ── Confirm
-    const ans = await ask("\n  Apply to DB and reactivate? (y/n/e/q) [y=yes, n=skip, e=edit type, q=quit]: ");
-    const choice = ans.trim().toLowerCase();
-
-    if (choice === "q") {
-      console.log("\n👋 Quitting — progress saved.");
-      progress = { lastId: source.id, applied, skipped, failed };
-      saveProgress(progress);
-      break;
-    }
-
-    if (choice === "n") {
-      console.log("  ⏭  Skipped.");
-      skipped++;
-      logResult(source, detection, "skipped");
-    } else {
-      if (choice === "e") {
-        console.log("\n  Available types: rss, atom, xml_feed, news_sitemap, xml_sitemap,");
-        console.log("  html_list, html_roll, html_table, mobile_html, amp_list,");
-        console.log("  json_api, site_search, archive_index, headless_html,");
-        console.log("  aggregator, wechat_feed, telegram_channel");
-        const newType = await ask("  Enter source_type: ");
-        detection.type = newType.trim();
-      }
+    // ── High confidence → auto-apply
+    if (detection.confidence >= CONFIDENCE_THRESHOLD) {
+      console.log(`  ✅ Confidence ${detection.confidence}% >= ${CONFIDENCE_THRESHOLD}% — auto-applying`);
       await applyToDb(source, detection);
       applied++;
-      logResult(source, detection, "applied");
+      logResult(source, detection, `auto-applied:${detection.confidence}%`);
+
+    // ── Low confidence → auto-skip, log for manual review
+    } else {
+      console.log(`  ⏭  Confidence ${detection.confidence}% < ${CONFIDENCE_THRESHOLD}% — skipped (review log)`);
+      skipped++;
+      logResult(source, detection, `low-confidence:${detection.confidence}%`);
     }
 
     eta.record(Date.now() - stepStart);
@@ -720,11 +718,12 @@ async function runTester() {
     printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
   }
 
-  console.log(`\n${"═".repeat(50)}`);
-  console.log(`✅ Session complete.`);
-  console.log(`   Applied: ${applied} | Skipped: ${skipped} | Failed: ${failed}`);
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`✅ Run complete.`);
+  console.log(`   Auto-applied: ${applied} | Low-confidence skipped: ${skipped} | Failed/deleted: ${failed}`);
   console.log(`   Total elapsed: ${eta.elapsed()}`);
-  console.log(`   Log: ${LOG_FILE}`);
+  console.log(`   Review low-confidence sources: ${LOG_FILE}`);
+  console.log(`   Filter with: grep low-confidence ${LOG_FILE}`);
 
   if (applied + skipped + failed >= total) {
     clearProgress();
@@ -734,7 +733,6 @@ async function runTester() {
   rl.close();
   process.exit(0);
 }
-
 runTester().catch(err => {
   console.error("💥 Fatal error:", err);
   rl.close();
