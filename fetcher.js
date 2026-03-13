@@ -8,7 +8,7 @@ const { loadStopwords,
         extractKeywords,
         saveKeywords }      = require("./keywordExtractor");
 
-const TRANSLATION_ENABLED = true;
+const TRANSLATION_ENABLED = false;
 
 /* =========================================
    Parser Options
