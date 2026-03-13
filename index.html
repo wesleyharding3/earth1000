@@ -5076,6 +5076,7 @@ function computeCityTiers(cities) {
       let focusInitialAngle = 0;
       let focusPendingPanel = null;   // callback fired when focus animation completes
       let preFocusZoom = 3;           // zoom level before focus, restored on panel close
+      let focusLocked = false;        // true after focus lands — skip rebuildGlobeQuat until next drag
       let timeInterval = null;
       let dragging = false;
       let prevX = 0, prevY = 0;
@@ -5086,6 +5087,12 @@ function computeCityTiers(cities) {
       window.addEventListener("mousedown", e => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
         pauseAmbientRotation();
+        if (focusLocked) {
+          // Sync Euler from current globeQuat now — user motion will mask any discontinuity
+          const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+          globePitch = euler.x; globeYaw = euler.y;
+          focusLocked = false;
+        }
         dragging = true;
         prevX = e.clientX; prevY = e.clientY;
         selectedNodeIndex = null; isFocused = false; focusPendingPanel = null;
@@ -5095,6 +5102,11 @@ function computeCityTiers(cities) {
       window.addEventListener("touchstart", e => {
         if (e.touches.length !== 1) return;
         pauseAmbientRotation();
+        if (focusLocked) {
+          const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+          globePitch = euler.x; globeYaw = euler.y;
+          focusLocked = false;
+        }
         touchDragging = true;
         touchTapMoved = false;
         touchPrevX = e.touches[0].clientX;
@@ -6501,7 +6513,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
-          isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
+          const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+          globePitch = euler.x; globeYaw = euler.y;
+          isFocused = false; selectedNodeIndex = null; focusPendingPanel = null; focusLocked = false;
           targetZoom = preFocusZoom;
           scheduleAmbientResume();
         });
@@ -6652,6 +6666,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // Skip rebuildGlobeQuat entirely during focus — it overwrites globeQuat
           // from globeYaw/globePitch every frame, killing the slerp.
           yawVelocity = 0; tiltVelocity = 0;
+        } else if (focusLocked) {
+          // Focus just landed — hold globeQuat exactly as-is, don't rebuild from
+          // Euler angles (they can't round-trip a quaternion with roll component).
+          // focusLocked clears on the next drag mousedown/touchstart.
         } else {
           if (Math.abs(yawVelocity) > 0.00001 || Math.abs(tiltVelocity) > 0.00001) {
             applyYaw(-yawVelocity); applyTilt(tiltVelocity);
@@ -6687,10 +6705,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (angleLeft < 0.0008) {
             globeQuat.copy(focusTargetQuat);
             focusTargetQuat = null;
-            // Sync back so drag resumes from correct position
-            const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-            globePitch = euler.x;
-            globeYaw   = euler.y;
+            focusLocked = true;  // hold globeQuat as-is — skip rebuildGlobeQuat until next drag
           }
         }
 
