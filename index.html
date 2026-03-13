@@ -6652,15 +6652,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function animate() {
         requestAnimationFrame(animate);
 
-        if (Math.abs(yawVelocity) > 0.00001 || Math.abs(tiltVelocity) > 0.00001) {
-          applyYaw(-yawVelocity); applyTilt(tiltVelocity);
-          yawVelocity *= 0.90; tiltVelocity *= 0.90;
+        if (isFocused && focusTargetQuat) {
+          // Skip rebuildGlobeQuat entirely during focus — it overwrites globeQuat
+          // from globeYaw/globePitch every frame, killing the slerp.
+          yawVelocity = 0; tiltVelocity = 0;
+        } else {
+          if (Math.abs(yawVelocity) > 0.00001 || Math.abs(tiltVelocity) > 0.00001) {
+            applyYaw(-yawVelocity); applyTilt(tiltVelocity);
+            yawVelocity *= 0.90; tiltVelocity *= 0.90;
+          }
+          if (!dragging && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
+          rebuildGlobeQuat();
         }
-      
-
-        if (!dragging && !isFocused && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
-
-        rebuildGlobeQuat();
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
@@ -6670,27 +6673,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         if (isFocused && focusTargetQuat) {
           const angleLeft = globeQuat.angleTo(focusTargetQuat);
-          // Ease in then ease out: fast in the middle, slow at start and end
           const progress = focusInitialAngle > 0.001
             ? 1 - (angleLeft / focusInitialAngle)
             : 1;
+          // Ease-in-out: snappy arc, ~1–1.5s for a half-globe rotation
           const easedT = Math.sin(Math.PI * Math.max(0, Math.min(1, progress)));
-          const slerpT = 0.008 + 0.038 * easedT;
+          const slerpT = 0.04 + 0.10 * easedT;
           globeQuat.slerp(focusTargetQuat, slerpT);
 
-          // Trigger zoom only after rotation is 55% done — feels cinematic
-          if (angleLeft < 0.0005) {
+          if (angleLeft < 0.0008) {
             globeQuat.copy(focusTargetQuat);
             focusTargetQuat = null;
-            const e = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-            globePitch = e.x;
-            globeYaw = e.y;
-            // Zoom-in snap fires exactly when centered
+            // Sync back so drag resumes from correct position
+            const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+            globePitch = euler.x;
+            globeYaw   = euler.y;
+            // Zoom punch on arrival
             if (!focusZoomDone) {
               focusZoomDone = true;
-              targetZoom = Math.max(1.9, camera.position.z - 0.75);
+              targetZoom = Math.max(1.9, camera.position.z - 0.65);
             }
-            // Open the panel now that the node is centered
+            // Panel slides up now
             if (focusPendingPanel) {
               const cb = focusPendingPanel;
               focusPendingPanel = null;
