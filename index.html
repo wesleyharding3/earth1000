@@ -5075,6 +5075,8 @@ function computeCityTiers(cities) {
       let focusTargetQuat = null;
       let focusInitialAngle = 0;
       let focusZoomDone = false;
+      let focusPendingPanel = null;   // callback fired when focus animation completes
+      let preFocusZoom = 3;           // zoom level before focus, restored on panel close
       let timeInterval = null;
       let dragging = false;
       let prevX = 0, prevY = 0;
@@ -5087,7 +5089,7 @@ function computeCityTiers(cities) {
         pauseAmbientRotation();
         dragging = true;
         prevX = e.clientX; prevY = e.clientY;
-        selectedNodeIndex = null; isFocused = false;
+        selectedNodeIndex = null; isFocused = false; focusPendingPanel = null;
       });
 
       window.addEventListener("mouseup", () => { dragging = false; });
@@ -6094,15 +6096,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
-              if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
-              else { focusCity(activeData[index]); openNodePanel(activeData[index], "city"); }
+              preFocusZoom = camera.position.z;
+              if (currentViewMode === "country") {
+                focusCountry(activeData[index]);
+                focusPendingPanel = () => openNodePanel(activeData[index], "country");
+              } else {
+                focusCity(activeData[index]);
+                focusPendingPanel = () => openNodePanel(activeData[index], "city");
+              }
             }
           }
         }
       });
 
       window.addEventListener("touchstart", (event) => {
-        if (touchTapMoved) return;
         if (event.touches.length !== 1) return;
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const touch = event.touches[0];
@@ -6127,8 +6134,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
-              if (currentViewMode === "country") { focusCountry(activeData[index]); openNodePanel(activeData[index], "country"); }
-              else { focusCity(activeData[index]); openNodePanel(activeData[index], "city"); }
+              preFocusZoom = camera.position.z;
+              if (currentViewMode === "country") {
+                focusCountry(activeData[index]);
+                focusPendingPanel = () => openNodePanel(activeData[index], "country");
+              } else {
+                focusCity(activeData[index]);
+                focusPendingPanel = () => openNodePanel(activeData[index], "city");
+              }
             }
           }
         }
@@ -6230,7 +6243,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         panel.classList.add("active");
         applySnapHeight("default", false);
         attachPanelResizeHandle();
-        setTimeout(() => { targetZoom = Math.max(2.4, camera.position.z - 0.6); }, 250);
 
         // ── Slides ──
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
@@ -6490,7 +6502,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
-          isFocused = false; selectedNodeIndex = null; scheduleAmbientResume();
+          isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
+          targetZoom = preFocusZoom;
+          scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
       }
@@ -6665,17 +6679,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           globeQuat.slerp(focusTargetQuat, slerpT);
 
           // Trigger zoom only after rotation is 55% done — feels cinematic
-          if (!focusZoomDone && progress > 0.55) {
-            focusZoomDone = true;
-            targetZoom = Math.max(1.9, camera.position.z - 0.75);
-          }
-
           if (angleLeft < 0.0005) {
             globeQuat.copy(focusTargetQuat);
             focusTargetQuat = null;
             const e = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
             globePitch = e.x;
             globeYaw = e.y;
+            // Zoom-in snap fires exactly when centered
+            if (!focusZoomDone) {
+              focusZoomDone = true;
+              targetZoom = Math.max(1.9, camera.position.z - 0.75);
+            }
+            // Open the panel now that the node is centered
+            if (focusPendingPanel) {
+              const cb = focusPendingPanel;
+              focusPendingPanel = null;
+              cb();
+            }
           }
         }
 
