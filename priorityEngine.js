@@ -217,14 +217,14 @@ const CONFIG = {
     1: 1.0
   },
   DECAY: {
-    HALF_LIFE_HOURS: 24,
-    MIN_DECAY:       0.05
+    HALF_LIFE_HOURS: 6,      // was 24 — score halves every 6h instead of every 24h
+    MIN_DECAY:       0.02    // was 0.05 — older articles score lower
   },
   // Blend weights: recency is the dominant signal (~75%), quality fills the rest.
   // Raise RECENCY toward 1.0 to make freshness nearly everything.
   SCORE_BLEND: {
-    RECENCY:  0.75,
-    QUALITY:  0.25
+    RECENCY:  0.90,          // was 0.75
+    QUALITY:  0.10           // was 0.25
   },
   DIVERSITY: {
     MAX_PENALTY:     0.80,
@@ -390,11 +390,10 @@ function countryVarianceRerank(articles) {
   const ages   = articles.map(a => now - new Date(a.published_at).getTime());
   const maxAge = Math.max(...ages) || 1;
 
-  // Recency bonus weight raised to 0.50 (from 0.25) to stay consistent with
-  // the dominant-recency philosophy applied in calculatePriority.
+  // Recency bonus raised to 1.20 — freshest articles get up to 2.2× rerank boost.
   const pool      = articles.map(a => ({
     ...a,
-    _recencyBonus: 1 + 0.50 * (1 - (now - new Date(a.published_at).getTime()) / maxAge)
+    _recencyBonus: 1 + 1.20 * (1 - (now - new Date(a.published_at).getTime()) / maxAge)
   }));
   const result    = [];
   const penalties = {};
