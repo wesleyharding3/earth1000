@@ -5074,7 +5074,6 @@ function computeCityTiers(cities) {
       let isFocused = false;
       let focusTargetQuat = null;
       let focusInitialAngle = 0;
-      let focusZoomDone = false;
       let focusPendingPanel = null;   // callback fired when focus animation completes
       let preFocusZoom = 3;           // zoom level before focus, restored on panel close
       let timeInterval = null;
@@ -6595,14 +6594,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusTargetQuat = computeFocusQuat(lat, lon);
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
-        focusZoomDone = false;
       }
 
       function focusCity(city) {
         const index = cities.findIndex(c => c.name === city.name);
         selectedNodeIndex = index;
         startFocus(city.lat, city.lon);
-        targetZoom = 2.2;
         const phi = (90 - city.lat) * (Math.PI / 180);
         const theta = (city.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
@@ -6620,7 +6617,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const index = countries.findIndex(c => c.name === country.name);
         selectedNodeIndex = index;
         startFocus(country.lat, country.lon);
-        targetZoom = 2.2;
         const phi = (90 - country.lat) * (Math.PI / 180);
         const theta = (country.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
@@ -6695,11 +6691,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
             globePitch = euler.x;
             globeYaw   = euler.y;
-            // Zoom punch on arrival
-            if (!focusZoomDone) {
-              focusZoomDone = true;
-              targetZoom = Math.max(1.9, camera.position.z - 0.65);
-            }
           }
         }
 
