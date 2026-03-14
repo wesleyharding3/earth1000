@@ -3938,6 +3938,7 @@
     const radius = 1;
 
     let targetZoom = camera.position.z;
+    let zoomingOut = false; // true while easing back to preFocusZoom after panel close
     let zoomVelocity = 0;
     const zoomFriction = 0.92;
 
@@ -6899,8 +6900,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             globePitch = euler.x; globeYaw = euler.y;
             focusLocked = false;
           });
-          // Delay zoom-out until panel has mostly slid down (transition is 0.75s)
-          setTimeout(() => { targetZoom = preFocusZoom; }, 400);
+          // Immediately freeze targetZoom at current camera.z to terminate
+          // any in-progress zoom-in without a direction-reversal snap.
+          // Then after panel slides down, smoothly zoom back out.
+          targetZoom = camera.position.z;
+          zoomingOut = false;
+          setTimeout(() => {
+            targetZoom = preFocusZoom;
+            zoomingOut = true;
+          }, 450);
           scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
@@ -7068,7 +7076,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         targetZoom += zoomVelocity;
         targetZoom = Math.max(1.5, Math.min(5, targetZoom));
         const zoomDelta = targetZoom - camera.position.z;
-        camera.position.z += zoomDelta * (0.05 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        // Zoom-out uses a gentler lerp so the camera eases back slowly;
+        // zoom-in stays snappy. Clear zoomingOut once camera has settled.
+        const zoomLerp = zoomingOut ? 0.022 : (0.05 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        camera.position.z += zoomDelta * zoomLerp;
+        if (zoomingOut && Math.abs(zoomDelta) < 0.005) zoomingOut = false;
 
         if (isFocused && focusTargetQuat) {
           const angleLeft = globeQuat.angleTo(focusTargetQuat);
