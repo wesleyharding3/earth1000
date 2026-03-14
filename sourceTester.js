@@ -85,30 +85,16 @@ function printRecentLog(n = 20) {
 ========================================= */
 async function enterManualMode(source, detection, { applied, skipped, failed, onApply, onSkip, onDelete, onResume }) {
   if (!manualMode) {
+    // First entry into manual mode — stop auto, print log for context
     stopKeypressListener();
     manualMode = true;
     reviewRequested = false;
     printRecentLog(20);
+    console.log("\n🔧 MANUAL MODE — [r] got you here. Press [a] to resume automation.");
   }
 
-  console.log("\n🔧 MANUAL MODE — commands: y=apply  n=skip  d=delete  e=edit type  l=more log  a=resume auto");
-
-  // Show current source result again for context
-  if (detection?.type) {
-    console.log(`\n  Current source: [${source.id}] ${source.name}`);
-    console.log(`  ┌─ RESULT ──────────────────────────────`);
-    console.log(`  │ type:       ${detection.type}`);
-    console.log(`  │ confidence: ${detection.confidence}%`);
-    console.log(`  │ scrape_url: ${detection.scrape_url}`);
-    if (detection.config) console.log(`  │ config:     ${JSON.stringify(detection.config, null, 0)}`);
-    if (detection.samples?.length) {
-      console.log(`  │ samples:`);
-      detection.samples.forEach((s, idx) => console.log(`  │   ${idx+1}. "${s.title.substring(0,80)}"`));
-    }
-    console.log(`  └───────────────────────────────────────`);
-  } else {
-    console.log(`\n  Current source: [${source.id}] ${source.name} — no method detected`);
-  }
+  // Always just show the current source result — no re-probing, no re-fetching
+  console.log("\n  Commands: y=apply  n=skip  d=delete  e=edit type  l=more log  a=resume auto");
 
   while (true) {
     const ans = await ask("\n  > ");
