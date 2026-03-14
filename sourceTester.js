@@ -93,8 +93,28 @@ async function enterManualMode(source, detection, { applied, skipped, failed, on
     console.log("\n🔧 MANUAL MODE — [r] got you here. Press [a] to resume automation.");
   }
 
-  // Always just show the current source result — no re-probing, no re-fetching
-  console.log("\n  Commands: y=apply  n=skip  d=delete  e=edit type  l=more log  a=resume auto");
+  // Show current source result — no re-probing, no re-fetching
+  console.log(`\n${"─".repeat(60)}`);
+  if (detection?.type) {
+    console.log(`  [${source.id}] ${source.name}`);
+    console.log(`  type:       ${detection.type}`);
+    console.log(`  confidence: ${detection.confidence}%`);
+    console.log(`  scrape_url: ${detection.scrape_url}`);
+    if (detection.warning) console.log(`  ⚠️  ${detection.warning}`);
+    if (detection.config)  console.log(`  config:     ${JSON.stringify(detection.config, null, 0)}`);
+    if (detection.samples?.length) {
+      console.log(`  samples:`);
+      detection.samples.forEach((s, idx) => {
+        console.log(`    ${idx + 1}. "${s.title.substring(0, 80)}"`);
+        if (s.link) console.log(`       ${s.link.substring(0, 80)}`);
+      });
+    }
+  } else {
+    console.log(`  [${source.id}] ${source.name} — no method detected`);
+    console.log(`  site_url: ${source.site_url}`);
+  }
+  console.log(`${"─".repeat(60)}`);
+  console.log("  y=apply  n=skip  d=delete  e=edit type  l=show log  a=resume auto");
 
   while (true) {
     const ans = await ask("\n  > ");
