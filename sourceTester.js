@@ -84,11 +84,12 @@ function printRecentLog(n = 20) {
    Called when user presses r during auto run
 ========================================= */
 async function enterManualMode(source, detection, { applied, skipped, failed, onApply, onSkip, onDelete, onResume }) {
-  stopKeypressListener();
-  manualMode = true;
-  reviewRequested = false;
-
-  printRecentLog(20);
+  if (!manualMode) {
+    stopKeypressListener();
+    manualMode = true;
+    reviewRequested = false;
+    printRecentLog(20);
+  }
 
   console.log("\n🔧 MANUAL MODE — commands: y=apply  n=skip  d=delete  e=edit type  l=more log  a=resume auto");
 
@@ -135,8 +136,9 @@ async function enterManualMode(source, detection, { applied, skipped, failed, on
     } else if (cmd === "l") {
       printRecentLog(40);
     } else if (cmd === "a") {
-      console.log("\n▶️  Resuming automation...");
+      console.log("\n▶️  Resuming automation — press [r] to re-enter manual mode at any time.");
       manualMode = false;
+      reviewRequested = false;
       startKeypressListener();
       await onResume();
       break;
@@ -798,7 +800,7 @@ async function runTester() {
       printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
 
       // ── Check for review request after failure
-      if (reviewRequested) {
+      if (reviewRequested || manualMode) {
         let resumeSignal = false;
         await enterManualMode(source, null, {
           applied, skipped, failed,
@@ -823,7 +825,7 @@ async function runTester() {
       eta.record(Date.now() - stepStart);
       printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
 
-      if (reviewRequested) {
+      if (reviewRequested || manualMode) {
         await enterManualMode(source, null, {
           applied, skipped, failed,
           onApply:  async () => { console.log("  ❌ Nothing to apply — source already deleted"); },
@@ -857,7 +859,7 @@ async function runTester() {
     console.log(`  └───────────────────────────────────────`);
 
     // ── Check for review request before deciding action
-    if (reviewRequested) {
+    if (reviewRequested || manualMode) {
       let resumeSignal = false;
       await enterManualMode(source, detection, {
         applied, skipped, failed,
