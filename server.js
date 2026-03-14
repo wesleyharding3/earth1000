@@ -800,6 +800,10 @@ app.get("/api/regions/geojson", (req, res) => {
   res.sendFile(path.join(__dirname, "regions.geojson"));
 });
 
+app.get("/api/land/geojson", (req, res) => {
+  res.sendFile(path.join(__dirname, "ne_110m_land.geojson"));
+});
+
 app.get("/api/regions", async (req, res) => {
   try {
     const { rows } = await pool.query(`
