@@ -801,26 +801,80 @@ app.get("/api/keywords/cooccurrence", async (req, res) => {
 });
 
 /* =========================================
+   Region News Feed
+   Articles from countries whose centroid_lat/lng falls within the region's
+   bounding area, proxied via article_locations with region_id
+========================================= */
+app.get("/api/news/region/:regionId", async (req, res) => {
+  try {
+    const limit  = Math.min(parseInt(req.query.limit)  || 12, 50);
+    const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        a.title,
+        a.translated_title,
+        a.url,
+        a.article_url,
+        a.summary,
+        a.translated_summary,
+        a.image_url,
+        a.published_at,
+        ns.name         AS source_name,
+        ns.site_url,
+        ns.popularity_score,
+        l.iso_code_2    AS language,
+        co.iso_code,
+        co.name         AS country_name
+      FROM article_locations al
+      JOIN news_articles  a   ON a.id  = al.article_id
+      JOIN news_sources   ns  ON ns.id = a.source_id
+      LEFT JOIN languages l   ON l.id  = ns.language_id
+      LEFT JOIN countries co  ON co.id = a.country_id
+      WHERE al.region_id = $1
+        AND a.published_at > NOW() - INTERVAL '7 days'
+      ORDER BY a.id, a.published_at DESC
+      LIMIT $2 OFFSET $3
+    `, [req.params.regionId, limit, offset]);
+    res.json(rows);
+  } catch (err) {
+    // Fallback: region_id column may not exist yet — return empty array gracefully
+    console.warn("[region news]", err.message);
+    res.json([]);
+  }
+});
+
+/* =========================================
    Regions GeoJSON
 ========================================= */
 app.get("/api/regions/geojson", (req, res) => {
   const file = path.join(__dirname, "regions.geojson");
-  res.setHeader("Content-Type", "application/json");
-  res.sendFile(file, err => {
+  fs.readFile(file, "utf8", (err, data) => {
     if (err) {
-      console.error("regions.geojson error:", err.message, "| path:", file);
-      res.status(404).json({ error: "regions.geojson not found", path: file });
+      console.error("regions.geojson read error:", err.message, "| path:", file);
+      return res.status(404).json({ error: "regions.geojson not found", path: file });
+    }
+    try {
+      res.json(JSON.parse(data));
+    } catch (parseErr) {
+      console.error("regions.geojson parse error:", parseErr.message);
+      res.status(500).json({ error: "regions.geojson is invalid JSON" });
     }
   });
 });
 
 app.get("/api/land/geojson", (req, res) => {
   const file = path.join(__dirname, "ne_50m_land.geojson");
-  res.setHeader("Content-Type", "application/json");
-  res.sendFile(file, err => {
+  fs.readFile(file, "utf8", (err, data) => {
     if (err) {
-      console.error("ne_50m_land.geojson error:", err.message, "| path:", file);
-      res.status(404).json({ error: "ne_50m_land.geojson not found", path: file });
+      console.error("ne_50m_land.geojson read error:", err.message, "| path:", file);
+      return res.status(404).json({ error: "ne_50m_land.geojson not found", path: file });
+    }
+    try {
+      res.json(JSON.parse(data));
+    } catch (parseErr) {
+      console.error("ne_50m_land.geojson parse error:", parseErr.message);
+      res.status(500).json({ error: "ne_50m_land.geojson is invalid JSON" });
     }
   });
 });
