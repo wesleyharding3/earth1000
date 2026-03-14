@@ -7403,8 +7403,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           isFetchingAH = false;
         }
 
-        // ‚îÄ‚îÄ Typewriter ‚îÄ‚îÄ
+        // Typewriter — cancel token prevents insertBefore crash on interrupted animations
+        let _typeCancel = 0;
         function typeText(el, text, durationMs, onDone) {
+          const token = ++_typeCancel;
           el.textContent = "";
           const cursor = document.createElement("span");
           cursor.className = "ahCursor";
@@ -7413,6 +7415,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const delay = Math.max(18, durationMs / Math.max(chars.length, 1));
           let i = 0;
           function tick() {
+            if (token !== _typeCancel) { cursor.remove(); return; }
             if (i < chars.length) { el.insertBefore(document.createTextNode(chars[i++]), cursor); setTimeout(tick, delay); }
             else { cursor.remove(); onDone?.(); }
           }
