@@ -15,6 +15,138 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
 /* =========================================
+   Keypress Listener (r to review/pause)
+========================================= */
+let reviewRequested = false;
+let manualMode      = false;
+
+function startKeypressListener() {
+  if (!process.stdin.isTTY) return; // non-interactive shell, skip
+  readline.emitKeypressEvents(process.stdin);
+  process.stdin.setRawMode(true);
+  process.stdin.on("keypress", (str, key) => {
+    if (!key) return;
+    if (key.ctrl && key.name === "c") { process.exit(0); }
+    if (key.name === "r" && !manualMode) {
+      reviewRequested = true;
+      console.log("\n\n⏸  [r] pressed — will pause after this source for review...");
+    }
+  });
+}
+
+function stopKeypressListener() {
+  if (process.stdin.isTTY) {
+    try { process.stdin.setRawMode(false); } catch {}
+  }
+}
+
+/* =========================================
+   Log Reviewer — prints last N entries
+========================================= */
+function printRecentLog(n = 20) {
+  console.log(`\n${"═".repeat(60)}`);
+  console.log(`📋 LAST ${n} LOG ENTRIES`);
+  console.log("═".repeat(60));
+  try {
+    if (!fs.existsSync(LOG_FILE)) {
+      console.log("  (log file is empty)");
+      return;
+    }
+    const lines = fs.readFileSync(LOG_FILE, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .slice(-n);
+
+    lines.forEach((line, idx) => {
+      try {
+        const entry = JSON.parse(line);
+        const icon =
+          entry.action?.startsWith("auto-applied")    ? "✅" :
+          entry.action?.startsWith("low-confidence")  ? "⏭ " :
+          entry.action?.includes("deleted")           ? "🗑 " :
+          entry.action?.startsWith("timeout")         ? "⏱ " :
+          entry.action?.startsWith("manual-applied")  ? "✋" :
+          entry.action?.startsWith("manual-skipped")  ? "⏩" : "❓";
+        const conf = entry.confidence ? ` (${entry.confidence}%)` : "";
+        console.log(`  ${icon} [${entry.id}] ${(entry.name || "").substring(0, 35).padEnd(35)} ${(entry.action || "").substring(0, 30)}${conf}`);
+      } catch {
+        console.log(`  ${line.substring(0, 80)}`);
+      }
+    });
+  } catch (err) {
+    console.log(`  Could not read log: ${err.message}`);
+  }
+  console.log("═".repeat(60));
+}
+
+/* =========================================
+   Manual Interactive Handler
+   Called when user presses r during auto run
+========================================= */
+async function enterManualMode(source, detection, { applied, skipped, failed, onApply, onSkip, onDelete, onResume }) {
+  stopKeypressListener();
+  manualMode = true;
+  reviewRequested = false;
+
+  printRecentLog(20);
+
+  console.log("\n🔧 MANUAL MODE — commands: y=apply  n=skip  d=delete  e=edit type  l=more log  a=resume auto");
+
+  // Show current source result again for context
+  if (detection?.type) {
+    console.log(`\n  Current source: [${source.id}] ${source.name}`);
+    console.log(`  ┌─ RESULT ──────────────────────────────`);
+    console.log(`  │ type:       ${detection.type}`);
+    console.log(`  │ confidence: ${detection.confidence}%`);
+    console.log(`  │ scrape_url: ${detection.scrape_url}`);
+    if (detection.config) console.log(`  │ config:     ${JSON.stringify(detection.config, null, 0)}`);
+    if (detection.samples?.length) {
+      console.log(`  │ samples:`);
+      detection.samples.forEach((s, idx) => console.log(`  │   ${idx+1}. "${s.title.substring(0,80)}"`));
+    }
+    console.log(`  └───────────────────────────────────────`);
+  } else {
+    console.log(`\n  Current source: [${source.id}] ${source.name} — no method detected`);
+  }
+
+  while (true) {
+    const ans = await ask("\n  > ");
+    const cmd = ans.trim().toLowerCase();
+
+    if (cmd === "y") {
+      if (!detection?.type) { console.log("  ❌ No detection to apply — use d to delete or n to skip"); continue; }
+      await onApply(detection);
+      break;
+    } else if (cmd === "n") {
+      await onSkip();
+      break;
+    } else if (cmd === "d") {
+      await onDelete();
+      break;
+    } else if (cmd === "e") {
+      if (!detection) { console.log("  ❌ No detection to edit"); continue; }
+      console.log("  Available types: rss, atom, xml_feed, news_sitemap, xml_sitemap,");
+      console.log("  html_list, html_roll, html_table, mobile_html, amp_list,");
+      console.log("  json_api, site_search, archive_index, headless_html,");
+      console.log("  aggregator, wechat_feed, telegram_channel");
+      const newType = await ask("  Enter source_type: ");
+      detection.type = newType.trim();
+      console.log(`  ✏️  Type overridden to: ${detection.type}`);
+    } else if (cmd === "l") {
+      printRecentLog(40);
+    } else if (cmd === "a") {
+      console.log("\n▶️  Resuming automation...");
+      manualMode = false;
+      startKeypressListener();
+      await onResume();
+      break;
+    } else {
+      console.log("  Commands: y=apply  n=skip  d=delete  e=edit type  l=more log  a=resume auto");
+    }
+  }
+}
+
+/* =========================================
    Progress Persistence
 ========================================= */
 function loadProgress() {
@@ -635,6 +767,9 @@ async function runTester() {
   let { applied, skipped, failed } = progress;
   const eta = new ETATracker();
 
+  console.log("  💡 Press [r] at any time to pause and enter manual review mode.\n");
+  startKeypressListener();
+
   for (let i = 0; i < sources.length; i++) {
     const source    = sources[i];
     const stepStart = Date.now();
@@ -661,6 +796,19 @@ async function runTester() {
       saveProgress(progress);
       eta.record(Date.now() - stepStart);
       printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
+
+      // ── Check for review request after failure
+      if (reviewRequested) {
+        let resumeSignal = false;
+        await enterManualMode(source, null, {
+          applied, skipped, failed,
+          onApply:  async () => { console.log("  ❌ Nothing to apply — source already deleted"); },
+          onSkip:   async () => { console.log("  ⏭  Noted."); },
+          onDelete: async () => { console.log("  🗑  Already deleted."); },
+          onResume: async () => { resumeSignal = true; }
+        });
+        if (!resumeSignal) continue;
+      }
       continue;
     }
 
@@ -674,6 +822,16 @@ async function runTester() {
       saveProgress(progress);
       eta.record(Date.now() - stepStart);
       printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
+
+      if (reviewRequested) {
+        await enterManualMode(source, null, {
+          applied, skipped, failed,
+          onApply:  async () => { console.log("  ❌ Nothing to apply — source already deleted"); },
+          onSkip:   async () => {},
+          onDelete: async () => {},
+          onResume: async () => {}
+        });
+      }
       continue;
     }
 
@@ -697,6 +855,38 @@ async function runTester() {
       });
     }
     console.log(`  └───────────────────────────────────────`);
+
+    // ── Check for review request before deciding action
+    if (reviewRequested) {
+      let resumeSignal = false;
+      await enterManualMode(source, detection, {
+        applied, skipped, failed,
+        onApply: async (det) => {
+          await applyToDb(source, det);
+          applied++;
+          logResult(source, det, `manual-applied:${det.confidence}%`);
+          console.log(`  ✋ Manually applied.`);
+        },
+        onSkip: async () => {
+          skipped++;
+          logResult(source, detection, `manual-skipped:${detection.confidence}%`);
+          console.log(`  ⏩ Manually skipped.`);
+        },
+        onDelete: async () => {
+          failed++;
+          logResult(source, detection, "manual-deleted");
+          await deleteSource(source.id);
+        },
+        onResume: async () => { resumeSignal = true; }
+      });
+      eta.record(Date.now() - stepStart);
+      progress = { lastId: source.id, applied, skipped, failed };
+      saveProgress(progress);
+      printProgress({ i, total, applied, skipped, failed, eta: eta.eta(remaining - 1) });
+      // If resume was chosen, the current source was already handled inside manual mode
+      // so just continue to next
+      continue;
+    }
 
     // ── High confidence → auto-apply
     if (detection.confidence >= CONFIDENCE_THRESHOLD) {
@@ -730,6 +920,7 @@ async function runTester() {
     console.log("   Progress file cleared — all sources processed.");
   }
 
+  stopKeypressListener();
   rl.close();
   process.exit(0);
 }
