@@ -4925,7 +4925,7 @@ function computeCityTiers(cities) {
 
       const boundaryLayer = new GeoBoundaryLayer(scene, radius);
 
-      // Land coastline layer (regions mode only)
+      // Coastline-only layer shown in regions mode (no internal borders)
       let landBoundaryLayer = null;
       fetch("/api/land/geojson")
         .then(r => r.json())
@@ -6089,12 +6089,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const metaBySlug = {};
           meta.forEach(r => { metaBySlug[r.slug] = r; });
 
+          // Continent color palette — fallback when DB color is NULL
+          const CONTINENT_COLORS = {
+            1: "#c47a3a",  // Africa      — warm amber
+            2: "#a0c8e8",  // Arctic/Polar — icy blue
+            3: "#c44a3a",  // Asia         — terracotta red
+            4: "#4a7abf",  // Europe       — cobalt blue
+            5: "#4aab6d",  // North America — forest green
+            6: "#8a5abf",  // Oceania       — violet
+            7: "#bf4a7a",  // South America — rose
+          };
+
           // Build polygon meshes
           regionGroup = new THREE.Group();
           regionGroup.visible = false;
           geojson.features.forEach(feature => {
-            const slug  = feature.properties?.slug;
-            const color = metaBySlug[slug]?.color || "#888888";
+            const slug = feature.properties?.slug;
+            const meta = metaBySlug[slug];
+            const color = meta?.color
+              || CONTINENT_COLORS[meta?.continent_id]
+              || "#888888";
             buildFeatureMeshes(feature, color, regionGroup);
           });
           scene.add(regionGroup);
@@ -6117,12 +6131,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Hide country + city nodes; earth dots stay on
         targetCountryOpacity = active ? 0.0 : (window.__currentViewMode === "city" ? 0.0 : 1.0);
         targetCityOpacity    = active ? 0.0 : (window.__currentViewMode === "city" ? 1.0 : 0.0);
-        // targetEarthOpacity intentionally untouched — earth dots always visible
+        // targetEarthOpacity intentionally untouched
 
         if (regionGroup) regionGroup.visible = active;
-        // regionPoints opacity fade handled by __regionsTick
+        // regionPoints opacity handled by __regionsTick
 
-        // Land coastline overlay — only visible in regions mode
+        // Swap boundary layers: national borders off, coastline-only on
+        boundaryLayer.setVisible(!active);
         if (landBoundaryLayer) landBoundaryLayer.setVisible(active);
       }
 
