@@ -4927,7 +4927,7 @@ function computeCityTiers(cities) {
 
       // Coastline-only layer shown in regions mode (no internal borders)
       let landBoundaryLayer = null;
-      fetch("https://earth-wjr6.onrender.com/api/land/geojson")
+      fetch("/api/land/geojson")
         .then(r => r.json())
         .then(data => {
           landBoundaryLayer = new GeoBoundaryLayer(scene, radius);
@@ -6081,8 +6081,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         regionLoading = true;
         try {
           const [metaRes, geoRes] = await Promise.all([
-            fetch("https://earth-wjr6.onrender.com/api/regions"),
-            fetch("https://earth-wjr6.onrender.com/api/regions/geojson")
+            fetch("/api/regions"),
+            fetch("/api/regions/geojson")
           ]);
           const meta   = await metaRes.json();
           const geojson = await geoRes.json();
@@ -6499,14 +6499,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("click", event => {
         if (event.target.closest(".closePanel")) return;
         if (isPanelActive() && event.target.closest("#infoPanel")) return;
-        if (currentViewMode === "ocean" || currentViewMode === "transportation" || currentViewMode === "regions") return;
-        const rect = renderer.domElement.getBoundingClientRect(); 
+        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
+        const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-        raycaster.params.Points.threshold = currentViewMode === "country"
-        ? Math.max(0.012, camera.position.z * 0.010)
-        : Math.max(0.008, camera.position.z * 0.008);
         raycaster.setFromCamera(mouse, camera);
+
+        // Region mode — hit-test centroid nodes
+        if (currentViewMode === "regions") {
+          if (!regionPoints || !regionPositions) return;
+          raycaster.params.Points.threshold = Math.max(0.018, camera.position.z * 0.014);
+          const hits = raycaster.intersectObject(regionPoints);
+          if (hits.length > 0) {
+            const index = hits[0].index;
+            const nodePos = new THREE.Vector3(
+              regionPositions[index*3], regionPositions[index*3+1], regionPositions[index*3+2]
+            ).applyMatrix4(regionPoints.matrixWorld);
+            if (isCityVisible(nodePos, camera)) {
+              lockAmbientRotation();
+              isFocused = true; preFocusZoom = camera.position.z;
+              const r = regionData[index];
+              focusRegion(r);
+              focusPendingPanel = () => openRegionPanel(r);
+            }
+          }
+          return;
+        }
+
+        raycaster.params.Points.threshold = currentViewMode === "country"
+          ? Math.max(0.012, camera.position.z * 0.010)
+          : Math.max(0.008, camera.position.z * 0.008);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
         const intersects   = raycaster.intersectObject(activePoints);
@@ -6536,15 +6558,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("touchstart", (event) => {
         if (event.touches.length !== 1) return;
-        if (currentViewMode === "ocean" || currentViewMode === "transportation" || currentViewMode === "regions") return;
+        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const touch = event.touches[0];
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+
+        // Region mode
+        if (currentViewMode === "regions") {
+          if (!regionPoints || !regionPositions) return;
+          raycaster.params.Points.threshold = Math.max(0.018, camera.position.z * 0.014);
+          const hits = raycaster.intersectObject(regionPoints);
+          if (hits.length > 0) {
+            const index = hits[0].index;
+            const nodePos = new THREE.Vector3(
+              regionPositions[index*3], regionPositions[index*3+1], regionPositions[index*3+2]
+            ).applyMatrix4(regionPoints.matrixWorld);
+            if (isCityVisible(nodePos, camera)) {
+              lockAmbientRotation();
+              isFocused = true; preFocusZoom = camera.position.z;
+              const r = regionData[index];
+              focusRegion(r);
+              focusPendingPanel = () => openRegionPanel(r);
+            }
+          }
+          return;
+        }
+
         raycaster.params.Points.threshold = currentViewMode === "country"
           ? Math.max(0.012, camera.position.z * 0.010)
           : Math.max(0.008, camera.position.z * 0.008);  
-        raycaster.setFromCamera(mouse, camera);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
         const intersects   = raycaster.intersectObject(activePoints);
@@ -7071,6 +7115,140 @@ const settingsToggle     = document.getElementById("settingsToggle");
         glowPulseTime = 0;
       }
 
+      function focusRegion(region) {
+        const lat = parseFloat(region.centroid_lat);
+        const lon = parseFloat(region.centroid_lng);
+        startFocus(lat, lon);
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        const ringAltitude = 0.03;
+        const ringX = -(radius + ringAltitude) * Math.sin(phi) * Math.cos(theta);
+        const ringZ =  (radius + ringAltitude) * Math.sin(phi) * Math.sin(theta);
+        const ringY =  (radius + ringAltitude) * Math.cos(phi);
+        ringGroup.position.set(ringX, ringY, ringZ);
+        ringGroup.lookAt(0, 0, 0);
+        ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
+        glowPulseActive = true;
+        glowPulseTime = 0;
+      }
+
+      function openRegionPanel(region) {
+        const panel = document.getElementById("infoPanel");
+        const popFormatted = region.population ? formatPopulation(region.population) : null;
+        const accentColor = region.color || "#6699cc";
+
+        panel.innerHTML = `
+          <div id="panelResizeHandle">
+            <div id="panelResizeArrow">
+              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="2,6.5 5,3.5 8,6.5"/>
+              </svg>
+            </div>
+          </div>
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+            <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
+              <div style="width:14px;height:14px;border-radius:50%;background:${accentColor};flex-shrink:0;"></div>
+              <div style="min-width:0;">
+                <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${region.name}</h2>
+                ${popFormatted ? `<div style="margin-top:3px;font-size:12px;opacity:0.55;letter-spacing:0.04em;">Population ${popFormatted}</div>` : ""}
+              </div>
+            </div>
+          </div>
+          <div class="panelSearchPill">
+            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+            <span class="panelSearchPillIcon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+              </svg>
+            </span>
+          </div>
+          <div class="panelTabsWrapper" style="position:relative;">
+            <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
+          </div>`;
+
+        panel.classList.add("active");
+        applySnapHeight("default", false);
+        attachPanelResizeHandle();
+
+        const track    = panel.querySelector("#articlesTrack");
+        const viewport = panel.querySelector("#articlesViewport");
+        const searchInput = panel.querySelector("#panelSearchInput");
+        let allArticles = [], offset = 0, limit = 12, loading = false, hasMore = true, filterQuery = "";
+
+        searchInput.addEventListener("input", () => { filterQuery = searchInput.value.trim().toLowerCase(); renderCards(); });
+
+        function skeletonCards(n) {
+          return Array.from({length:n}, () => `<div class="skeletonCard"><div class="skImg"></div><div class="skLine" style="width:40%;margin-top:12px;"></div><div class="skLine"></div><div class="skLine short"></div></div>`).join("");
+        }
+
+        function renderCards() {
+          const filtered = filterQuery
+            ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
+            : allArticles;
+          if (!filtered.length && !loading) {
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">No recent articles for this region.</div>`;
+            return;
+          }
+          track.innerHTML = filtered.map(a => {
+            const hasImg = a.image_url && a.image_url.trim();
+            const img = hasImg
+              ? `<img class="articleCardImage" src="${a.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${(a.iso_code||'').toLowerCase()}.png'">`
+              : (a.iso_code ? `<img class="articleCardImage" src="${FLAG_CDN_BASE}${a.iso_code.toLowerCase()}.png" alt="" loading="lazy">` : `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`);
+            const title = a.translated_title || a.title || "";
+            const summary = a.translated_summary || a.summary || "";
+            const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+            return `<a class="articleCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener">
+              ${img}
+              <div class="articleCardBody">
+                <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""}</div>
+                <div class="articleCardTitle">${title}</div>
+                ${summary ? `<div class="articleCardSummary">${summary}</div>` : ""}
+              </div>
+            </a>`;
+          }).join("");
+        }
+
+        function loadMore() {
+          if (loading || !hasMore) return;
+          loading = true;
+          // Use region slug to query article_locations via country fallback
+          // Region articles come from countries whose centroid falls in the region
+          const url = `https://earth-wjr6.onrender.com/api/news/region/${region.id}?limit=${limit}&offset=${offset}`;
+          fetch(url)
+            .then(res => res.ok ? res.json() : Promise.reject(res.status))
+            .then(articles => {
+              if (!Array.isArray(articles) || (!articles.length && offset === 0)) { hasMore = false; loading = false; renderCards(); return; }
+              if (articles.length < limit) hasMore = false;
+              allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
+            })
+            .catch(() => { loading = false; renderCards(); });
+        }
+
+        track.innerHTML = skeletonCards(6);
+        loadMore();
+
+        viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
+        viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
+
+        const closeBtn = panel.querySelector(".closePanel");
+        closeBtn.addEventListener("click", () => {
+          panel.classList.remove("active");
+          document.getElementById("pageNav").style.pointerEvents = "all";
+          isFocused = false; focusPendingPanel = null;
+          requestAnimationFrame(() => {
+            const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
+            globePitch = euler.x; globeYaw = euler.y;
+            focusLocked = false;
+          });
+          targetZoom = camera.position.z;
+          zoomingOut = false;
+          setTimeout(() => { targetZoom = preFocusZoom; zoomingOut = true; }, 450);
+          scheduleAmbientResume();
+        });
+        closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+      }
+
       let targetCityOpacity = 0.0;
       let targetCountryOpacity = 1.0;
       let targetEarthOpacity = 1.0;
@@ -7403,10 +7581,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           isFetchingAH = false;
         }
 
-        // Typewriter — cancel token prevents insertBefore crash on interrupted animations
-        let _typeCancel = 0;
+        // ‚îÄ‚îÄ Typewriter ‚îÄ‚îÄ
         function typeText(el, text, durationMs, onDone) {
-          const token = ++_typeCancel;
           el.textContent = "";
           const cursor = document.createElement("span");
           cursor.className = "ahCursor";
@@ -7415,7 +7591,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const delay = Math.max(18, durationMs / Math.max(chars.length, 1));
           let i = 0;
           function tick() {
-            if (token !== _typeCancel) { cursor.remove(); return; }
             if (i < chars.length) { el.insertBefore(document.createTextNode(chars[i++]), cursor); setTimeout(tick, delay); }
             else { cursor.remove(); onDone?.(); }
           }
