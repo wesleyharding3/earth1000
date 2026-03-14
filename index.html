@@ -5932,16 +5932,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         syncTransportationVisibility();
       };
 
-      // ── REGIONS LAYER ────────────────────────────────────────────────
-      // Fetches regions.geojson, projects each polygon onto the globe
-      // surface as a filled THREE.Mesh, shown only in "regions" view mode.
+      // ══════════════════════════════════════════════════════════════════
+      // REGIONS LAYER
+      // Renders geographic region polygons + centroid nodes with hover
+      // labels. Fades out all country/city/earth dot layers on activation.
+      // ══════════════════════════════════════════════════════════════════
 
-      let regionGroup = null;      // THREE.Group holding all region meshes
-      let regionLoading = false;   // prevent double-fetch
-      let regionMeta = {};         // slug → { color, name, population } from /api/regions
+      let regionGroup     = null;   // THREE.Group — filled polygon meshes
+      let regionPoints    = null;   // THREE.Points — centroid nodes
+      let regionData      = [];     // array of region meta rows from /api/regions
+      let regionPositions = null;   // Float32Array of centroid xyz positions
+      let regionLoading   = false;
 
       // Project [lng, lat] → THREE.Vector3 on globe surface
-      // Reuses same convention as latLonToVec3Trans
       function lngLatToVec3(lng, lat, r) {
         const phi   = (90 - lat)  * (Math.PI / 180);
         const theta = (lng + 180) * (Math.PI / 180);
@@ -5952,50 +5955,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }
 
-      // Triangulate a single polygon ring (array of [lng,lat] pairs)
-      // Returns a THREE.BufferGeometry or null if ring is too small
+      // Triangulate one polygon ring onto the sphere surface
       function buildRingGeometry(ring, r) {
         if (ring.length < 3) return null;
-
-        // Build 3D verts
         const verts3d = ring.map(([lng, lat]) => lngLatToVec3(lng, lat, r));
 
-        // Use THREE.Shape in a tangent-plane projection centred on ring centroid
-        // so ShapeGeometry triangulation works in 2D space
+        // Tangent-plane centroid
         let cx = 0, cy = 0, cz = 0;
         verts3d.forEach(v => { cx += v.x; cy += v.y; cz += v.z; });
         const n = verts3d.length;
-        const centroid = new THREE.Vector3(cx / n, cy / n, cz / n).normalize();
+        const centroid = new THREE.Vector3(cx/n, cy/n, cz/n).normalize();
 
-        // Build local tangent frame
-        const up = new THREE.Vector3(0, 1, 0);
+        const up    = new THREE.Vector3(0, 1, 0);
         const right = new THREE.Vector3().crossVectors(up, centroid).normalize();
         const fwd   = new THREE.Vector3().crossVectors(centroid, right).normalize();
 
-        // Project each 3D vert into the 2D tangent plane
         const pts2d = verts3d.map(v => {
           const d = v.clone().sub(centroid.clone().multiplyScalar(r));
           return new THREE.Vector2(d.dot(right), d.dot(fwd));
         });
 
-        // Triangulate in 2D using THREE.ShapeUtils
-        const shape = new THREE.Shape(pts2d);
+        const shape   = new THREE.Shape(pts2d);
         const shapeGeo = new THREE.ShapeGeometry(shape);
+        const pos2d   = shapeGeo.attributes.position;
 
-        // Lift the 2D triangulated verts back onto the sphere
-        const pos2d = shapeGeo.attributes.position;
         const positions3d = new Float32Array(pos2d.count * 3);
         for (let i = 0; i < pos2d.count; i++) {
-          const u = pos2d.getX(i);
+          const u  = pos2d.getX(i);
           const v3 = pos2d.getY(i);
-          // Reconstruct 3D point from tangent-plane coords then normalize to sphere
           const pt = centroid.clone().multiplyScalar(r)
             .addScaledVector(right, u)
             .addScaledVector(fwd,   v3);
-          pt.normalize().multiplyScalar(r * 1.0008); // sit just above surface
-          positions3d[i * 3]     = pt.x;
-          positions3d[i * 3 + 1] = pt.y;
-          positions3d[i * 3 + 2] = pt.z;
+          pt.normalize().multiplyScalar(r * 1.001);
+          positions3d[i*3]   = pt.x;
+          positions3d[i*3+1] = pt.y;
+          positions3d[i*3+2] = pt.z;
         }
 
         const geo = new THREE.BufferGeometry();
@@ -6005,24 +5999,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return geo;
       }
 
-      // Build one THREE.Mesh per polygon ring across a feature's geometry
       function buildFeatureMeshes(feature, color, group) {
         const geom = feature.geometry;
         if (!geom) return;
-
-        const R = radius * 1.0008; // float just above globe surface
-
+        const R = radius * 1.001;
         let rings = [];
-        if (geom.type === "Polygon") {
-          rings = [geom.coordinates[0]]; // outer ring only
-        } else if (geom.type === "MultiPolygon") {
-          rings = geom.coordinates.map(poly => poly[0]);
-        }
+        if      (geom.type === "Polygon")      rings = [geom.coordinates[0]];
+        else if (geom.type === "MultiPolygon") rings = geom.coordinates.map(p => p[0]);
 
         const mat = new THREE.MeshBasicMaterial({
           color: new THREE.Color(color),
           transparent: true,
-          opacity: 0.55,
+          opacity: 0.0,      // fades in via regionsTick
           depthWrite: false,
           side: THREE.FrontSide
         });
@@ -6031,84 +6019,186 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try {
             const geo = buildRingGeometry(ring, R);
             if (!geo) return;
-            const mesh = new THREE.Mesh(geo, mat);
+            const mesh = new THREE.Mesh(geo, mat.clone());
             mesh.renderOrder = 1;
             group.add(mesh);
-          } catch (e) {
-            // silently skip malformed rings
-          }
+          } catch (e) { /* skip malformed rings */ }
         });
+      }
+
+      // Build the centroid node point cloud from region meta
+      function buildRegionNodes(meta) {
+        const pos   = [];
+        const cols  = [];
+        regionData  = [];
+
+        meta.forEach(r => {
+          if (r.centroid_lng == null || r.centroid_lat == null) return;
+          const v = lngLatToVec3(parseFloat(r.centroid_lng), parseFloat(r.centroid_lat), radius * 1.002);
+          pos.push(v.x, v.y, v.z);
+          const c = new THREE.Color(r.color || "#ffffff");
+          cols.push(c.r, c.g, c.b);
+          regionData.push(r);
+        });
+
+        regionPositions = new Float32Array(pos);
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(regionPositions, 3));
+        geo.setAttribute("color",    new THREE.Float32BufferAttribute(new Float32Array(cols), 3));
+
+        const mat = new THREE.PointsMaterial({
+          size: 0.018,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.0,
+          depthWrite: false,
+          sizeAttenuation: true
+        });
+
+        regionPoints = new THREE.Points(geo, mat);
+        regionPoints.renderOrder = 2;
+        scene.add(regionPoints);
       }
 
       async function loadRegions() {
         if (regionLoading || regionGroup) return;
         regionLoading = true;
-
         try {
-          // Fetch meta (colors, names, populations) and GeoJSON in parallel
           const [metaRes, geoRes] = await Promise.all([
             fetch("/api/regions"),
             fetch("/api/regions/geojson")
           ]);
-          const metaRows = await metaRes.json();
-          const geojson  = await geoRes.json();
+          const meta   = await metaRes.json();
+          const geojson = await geoRes.json();
 
-          // Build slug → meta lookup
-          metaRows.forEach(r => {
-            regionMeta[r.slug] = r;
-          });
+          // Build meta lookup by slug
+          const metaBySlug = {};
+          meta.forEach(r => { metaBySlug[r.slug] = r; });
 
+          // Build polygon meshes
           regionGroup = new THREE.Group();
           regionGroup.visible = false;
-
           geojson.features.forEach(feature => {
             const slug  = feature.properties?.slug;
-            const meta  = regionMeta[slug];
-            const color = meta?.color || "#888888";
+            const color = metaBySlug[slug]?.color || "#888888";
             buildFeatureMeshes(feature, color, regionGroup);
           });
-
           scene.add(regionGroup);
-          console.log(`🗺  Regions layer loaded — ${regionGroup.children.length} meshes`);
 
+          // Build centroid nodes
+          buildRegionNodes(meta);
+
+          console.log(`🗺  Regions loaded — ${regionGroup.children.length} meshes, ${regionData.length} nodes`);
         } catch (err) {
           console.error("❌ Failed to load regions:", err);
         } finally {
           regionLoading = false;
+          syncRegionsVisibility();
         }
-
-        syncRegionsVisibility();
       }
 
       function syncRegionsVisibility() {
         const active = window.__currentViewMode === "regions";
-        if (regionGroup) regionGroup.visible = active;
 
-        // Fade out country/city dots when in regions mode
-        if (active) {
-          targetCountryOpacity = 0.0;
-          targetCityOpacity    = 0.0;
-        }
+        // Fade country dots, city dots, and earth land dots
+        targetCountryOpacity = active ? 0.0 : (window.__currentViewMode === "city" ? 0.0 : 1.0);
+        targetCityOpacity    = active ? 0.0 : (window.__currentViewMode === "city" ? 1.0 : 0.0);
+        targetEarthOpacity   = active ? 0.0 : 1.0;
+
+        if (regionGroup)  regionGroup.visible  = active;
+        if (regionPoints) regionPoints.visible = active;
       }
 
       window.__syncRegionsVisibility = function() {
-        if (window.__currentViewMode === "regions") {
-          if (!regionGroup && !regionLoading) loadRegions();
+        if (window.__currentViewMode === "regions" && !regionGroup && !regionLoading) {
+          loadRegions();
+        } else {
+          syncRegionsVisibility();
         }
-        syncRegionsVisibility();
       };
 
-      // Subtle opacity pulse on the region meshes — makes the layer feel alive
-      let regionPulseTime = 0;
+      // Hover label for region nodes
+      let regionHoveredIndex = null;
+      let regionHoverEraseTimer = null;
+
+      function updateRegionHoverLabels() {
+        if (window.__currentViewMode !== "regions" || !regionPoints || !regionPositions) return;
+
+        raycaster.params.Points.threshold = Math.max(0.018, camera.position.z * 0.014);
+        raycaster.setFromCamera(hoverMouse, camera);
+        const intersects = raycaster.intersectObject(regionPoints);
+
+        if (intersects.length > 0) {
+          const index = intersects[0].index;
+          const nodePos = new THREE.Vector3(
+            regionPositions[index*3],
+            regionPositions[index*3+1],
+            regionPositions[index*3+2]
+          ).applyMatrix4(regionPoints.matrixWorld);
+
+          if (isCityVisible(nodePos, camera)) {
+            if (index !== regionHoveredIndex) {
+              regionHoveredIndex = index;
+              if (regionHoverEraseTimer) { clearTimeout(regionHoverEraseTimer); regionHoverEraseTimer = null; }
+              const projected = nodePos.clone().project(camera);
+              const rect = renderer.domElement.getBoundingClientRect();
+              const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
+              const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+              const r = regionData[index];
+              const card = document.getElementById("hoverCard");
+              card.innerHTML = `
+                <div class="hoverCardName">
+                  <div class="hoverCardDot" style="background:${r.color || '#fff'}"></div>
+                  ${r.name}
+                </div>
+                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}`;
+              card.classList.remove("hcErase");
+              card.classList.add("hcVisible");
+              card.style.left = sx + "px";
+              card.style.top  = (sy - 48) + "px";
+            }
+            return;
+          }
+        }
+
+        // No hit
+        if (regionHoveredIndex !== null) {
+          regionHoveredIndex = null;
+          hideHoverCard();
+        }
+      }
+
+      // Opacity pulse + node fade-in, hover label updates
+      let regionPulseTime  = 0;
+      let regionTargetOpacity = 0.0;
+
       window.__regionsTick = function(delta) {
-        if (!regionGroup || !regionGroup.visible) return;
-        regionPulseTime += delta;
-        const pulse = 0.45 + 0.10 * Math.sin(regionPulseTime * 0.8);
-        regionGroup.children.forEach(mesh => {
-          if (mesh.material) mesh.material.opacity = pulse;
-        });
+        const active = window.__currentViewMode === "regions";
+        regionTargetOpacity = active ? 1.0 : 0.0;
+
+        // Fade polygon meshes
+        if (regionGroup) {
+          regionGroup.visible = active || regionGroup.children.some(m => m.material.opacity > 0.01);
+          regionPulseTime += active ? delta : 0;
+          const pulse = active ? (0.45 + 0.10 * Math.sin(regionPulseTime * 0.8)) : 0.0;
+          regionGroup.children.forEach(m => {
+            if (m.material) {
+              m.material.opacity += (pulse - m.material.opacity) * 0.04;
+            }
+          });
+        }
+
+        // Fade centroid nodes
+        if (regionPoints) {
+          regionPoints.visible = active || regionPoints.material.opacity > 0.01;
+          regionPoints.material.opacity += (regionTargetOpacity - regionPoints.material.opacity) * 0.04;
+        }
+
+        // Update hover labels for region nodes
+        if (active) updateRegionHoverLabels();
       };
-      // ── END REGIONS LAYER ────────────────────────────────────────────
+      // ── END REGIONS LAYER ──────────────────────────────────────────────
 
       // Tick uTime on all pulse meshes each frame
       const TRANS_PULSE_SPEED = { rail: 0.20, shipping: 0.22, flight: 0.55, railHalo: 0.20 };
@@ -6259,7 +6349,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panelOpen = panel.classList.contains("active");
         hoveredIndex = null;
 
-        if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
+        if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation" || currentViewMode === "regions") { hideHoverCard(); return; }
 
         const intersects = raycaster.intersectObject(activePoints);
         if (intersects.length > 0) {
@@ -6373,7 +6463,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("click", event => {
         if (event.target.closest(".closePanel")) return;
         if (isPanelActive() && event.target.closest("#infoPanel")) return;
-        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
+        if (currentViewMode === "ocean" || currentViewMode === "transportation" || currentViewMode === "regions") return;
         const rect = renderer.domElement.getBoundingClientRect(); 
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -6410,7 +6500,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("touchstart", (event) => {
         if (event.touches.length !== 1) return;
-        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
+        if (currentViewMode === "ocean" || currentViewMode === "transportation" || currentViewMode === "regions") return;
         const touch = event.touches[0];
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
@@ -6939,6 +7029,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       let targetCityOpacity = 0.0;
       let targetCountryOpacity = 1.0;
+      let targetEarthOpacity = 1.0;
 
       const infoPanel = document.getElementById("infoPanel");
       let panelScrolling = false, panelStartY, panelScrollStart;
@@ -7075,6 +7166,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
 
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
+        earthMat.opacity   += (targetEarthOpacity   - earthMat.opacity)   * 0.018;
 
         if (window.__transTick) window.__transTick(0.016);
         if (window.__regionsTick) window.__regionsTick(0.016);
