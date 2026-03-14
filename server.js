@@ -849,32 +849,22 @@ app.get("/api/news/region/:regionId", async (req, res) => {
 ========================================= */
 app.get("/api/regions/geojson", (req, res) => {
   const file = path.join(__dirname, "regions.geojson");
-  fs.readFile(file, "utf8", (err, data) => {
+  res.setHeader("Content-Type", "application/json");
+  res.sendFile(file, err => {
     if (err) {
-      console.error("regions.geojson read error:", err.message, "| path:", file);
-      return res.status(404).json({ error: "regions.geojson not found", path: file });
-    }
-    try {
-      res.json(JSON.parse(data));
-    } catch (parseErr) {
-      console.error("regions.geojson parse error:", parseErr.message);
-      res.status(500).json({ error: "regions.geojson is invalid JSON" });
+      console.error("regions.geojson sendFile error:", err.message, "| path:", file);
+      if (!res.headersSent) res.status(404).json({ error: "regions.geojson not found" });
     }
   });
 });
 
 app.get("/api/land/geojson", (req, res) => {
   const file = path.join(__dirname, "ne_50m_land.geojson");
-  fs.readFile(file, "utf8", (err, data) => {
+  res.setHeader("Content-Type", "application/json");
+  res.sendFile(file, err => {
     if (err) {
-      console.error("ne_50m_land.geojson read error:", err.message, "| path:", file);
-      return res.status(404).json({ error: "ne_50m_land.geojson not found", path: file });
-    }
-    try {
-      res.json(JSON.parse(data));
-    } catch (parseErr) {
-      console.error("ne_50m_land.geojson parse error:", parseErr.message);
-      res.status(500).json({ error: "ne_50m_land.geojson is invalid JSON" });
+      console.error("ne_50m_land.geojson sendFile error:", err.message, "| path:", file);
+      if (!res.headersSent) res.status(404).json({ error: "ne_50m_land.geojson not found" });
     }
   });
 });
