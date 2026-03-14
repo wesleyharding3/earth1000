@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
@@ -797,13 +798,35 @@ app.get("/api/keywords/cooccurrence", async (req, res) => {
    Regions GeoJSON
 ========================================= */
 app.get("/api/regions/geojson", (req, res) => {
-  const file = path.resolve(__dirname, "regions.geojson");
-  res.sendFile(file, err => { if (err) res.status(404).json({ error: "regions.geojson not found", path: file }); });
+  const file = path.join(__dirname, "regions.geojson");
+  fs.readFile(file, "utf8", (err, data) => {
+    if (err) {
+      console.error("regions.geojson read error:", err.message, "| path:", file);
+      return res.status(404).json({ error: "regions.geojson not found", path: file });
+    }
+    try {
+      res.json(JSON.parse(data));
+    } catch (parseErr) {
+      console.error("regions.geojson parse error:", parseErr.message);
+      res.status(500).json({ error: "regions.geojson is invalid JSON" });
+    }
+  });
 });
 
 app.get("/api/land/geojson", (req, res) => {
-  const file = path.resolve(__dirname, "ne_50m_land.geojson");
-  res.sendFile(file, err => { if (err) res.status(404).json({ error: "ne_50m_land.geojson not found", path: file }); });
+  const file = path.join(__dirname, "ne_50m_land.geojson");
+  fs.readFile(file, "utf8", (err, data) => {
+    if (err) {
+      console.error("ne_50m_land.geojson read error:", err.message, "| path:", file);
+      return res.status(404).json({ error: "ne_50m_land.geojson not found", path: file });
+    }
+    try {
+      res.json(JSON.parse(data));
+    } catch (parseErr) {
+      console.error("ne_50m_land.geojson parse error:", parseErr.message);
+      res.status(500).json({ error: "ne_50m_land.geojson is invalid JSON" });
+    }
+  });
 });
 
 app.get("/api/regions", async (req, res) => {
@@ -829,5 +852,16 @@ app.get("/", (req, res) => res.send("API is running"));
    Start
 ========================================= */
 const PORT = process.env.PORT || 3000;
+
+// Verify GeoJSON files exist on startup
+["regions.geojson", "ne_50m_land.geojson"].forEach(f => {
+  const p = path.join(__dirname, f);
+  fs.access(p, fs.constants.R_OK, err =>
+    err
+      ? console.error(`[startup] MISSING: ${p}`)
+      : console.log(`[startup] OK: ${p}`)
+  );
+});
+
 startArticleListener().catch(console.error);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
