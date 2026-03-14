@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
@@ -789,6 +790,27 @@ app.get("/api/keywords/cooccurrence", async (req, res) => {
   } catch (err) {
     console.error("[keywords/cooccurrence]", err.message);
     res.status(500).json({ error: "cooccurrence failed" });
+  }
+});
+
+/* =========================================
+   Regions GeoJSON
+========================================= */
+app.get("/api/regions/geojson", (req, res) => {
+  res.sendFile(path.join(__dirname, "regions.geojson"));
+});
+
+app.get("/api/regions", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, slug, continent_id, color,
+             centroid_lng, centroid_lat, population
+      FROM regions
+      ORDER BY name ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch regions" });
   }
 });
 
