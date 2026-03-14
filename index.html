@@ -4927,7 +4927,7 @@ function computeCityTiers(cities) {
 
       // Coastline-only layer shown in regions mode (no internal borders)
       let landBoundaryLayer = null;
-      fetch("/api/land/geojson")
+      fetch("https://earth-wjr6.onrender.com/api/land/geojson")
         .then(r => r.json())
         .then(data => {
           landBoundaryLayer = new GeoBoundaryLayer(scene, radius);
@@ -6081,8 +6081,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         regionLoading = true;
         try {
           const [metaRes, geoRes] = await Promise.all([
-            fetch("/api/regions"),
-            fetch("/api/regions/geojson")
+            fetch("https://earth-wjr6.onrender.com/api/regions"),
+            fetch("https://earth-wjr6.onrender.com/api/regions/geojson")
           ]);
           const meta   = await metaRes.json();
           const geojson = await geoRes.json();
@@ -7582,7 +7582,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         // ‚îÄ‚îÄ Typewriter ‚îÄ‚îÄ
+        // Typewriter — cancel token prevents insertBefore crash on interrupted animations
+        let _typeCancel = 0;
         function typeText(el, text, durationMs, onDone) {
+          const token = ++_typeCancel;
           el.textContent = "";
           const cursor = document.createElement("span");
           cursor.className = "ahCursor";
@@ -7591,6 +7594,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const delay = Math.max(18, durationMs / Math.max(chars.length, 1));
           let i = 0;
           function tick() {
+            if (token !== _typeCancel) { cursor.remove(); return; }
             if (i < chars.length) { el.insertBefore(document.createTextNode(chars[i++]), cursor); setTimeout(tick, delay); }
             else { cursor.remove(); onDone?.(); }
           }
