@@ -6160,9 +6160,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let regionHoverEraseTimer = null;
 
       function updateRegionHoverLabels() {
-        if (window.__currentViewMode !== "regions" || !regionPoints || !regionPositions) return;
+        if (window.__currentViewMode !== "regions" || !regionPoints || !regionPositions) {
+          if (regionHoveredIndex !== null) { regionHoveredIndex = null; hideHoverCard(); }
+          return;
+        }
 
-        raycaster.params.Points.threshold = Math.max(0.018, camera.position.z * 0.014);
+        const panel = document.getElementById("infoPanel");
+        if (panel.classList.contains("active")) {
+          if (regionHoveredIndex !== null) { regionHoveredIndex = null; hideHoverCard(); }
+          return;
+        }
+
+        raycaster.params.Points.threshold = Math.max(0.022, camera.position.z * 0.016);
         raycaster.setFromCamera(hoverMouse, camera);
         const intersects = raycaster.intersectObject(regionPoints);
 
@@ -6175,31 +6184,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ).applyMatrix4(regionPoints.matrixWorld);
 
           if (isCityVisible(nodePos, camera)) {
+            const projected = nodePos.clone().project(camera);
+            const rect = renderer.domElement.getBoundingClientRect();
+            const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
+            const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+
             if (index !== regionHoveredIndex) {
               regionHoveredIndex = index;
-              if (regionHoverEraseTimer) { clearTimeout(regionHoverEraseTimer); regionHoverEraseTimer = null; }
-              const projected = nodePos.clone().project(camera);
-              const rect = renderer.domElement.getBoundingClientRect();
-              const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
-              const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
               const r = regionData[index];
               const card = document.getElementById("hoverCard");
+              const lineEl = document.getElementById("hoverLineEl");
+              if (regionHoverEraseTimer) { clearTimeout(regionHoverEraseTimer); regionHoverEraseTimer = null; }
+              card.classList.remove("hcErase");
+              card.classList.remove("hcVisible");
               card.innerHTML = `
                 <div class="hoverCardName">
-                  <div class="hoverCardDot" style="background:${r.color || '#fff'}"></div>
+                  <div class="hoverCardDot" style="background:${r.color || '#ffffff'}"></div>
                   ${r.name}
                 </div>
                 ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}`;
-              card.classList.remove("hcErase");
+              positionHoverCard(card, lineEl, sx, sy);
               card.classList.add("hcVisible");
-              card.style.left = sx + "px";
-              card.style.top  = (sy - 48) + "px";
+              lineEl.style.opacity = "1";
+            } else {
+              // Track card + line as globe rotates
+              trackHoverCard(sx, sy);
             }
             return;
           }
         }
 
-        // No hit
+        // No hit — hide
         if (regionHoveredIndex !== null) {
           regionHoveredIndex = null;
           hideHoverCard();
@@ -6226,9 +6241,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           });
         }
 
-        // Fade centroid nodes
+        // Fade centroid nodes — hard-hide in ocean/transportation regardless of opacity
         if (regionPoints) {
-          regionPoints.visible = active || regionPoints.material.opacity > 0.01;
+          const mode = window.__currentViewMode;
+          const blocked = mode === "ocean" || mode === "transportation";
+          regionPoints.visible = !blocked && (active || regionPoints.material.opacity > 0.01);
           regionPoints.material.opacity += (regionTargetOpacity - regionPoints.material.opacity) * 0.04;
         }
 
