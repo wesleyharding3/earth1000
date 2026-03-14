@@ -4925,6 +4925,18 @@ function computeCityTiers(cities) {
 
       const boundaryLayer = new GeoBoundaryLayer(scene, radius);
 
+      // Land coastline layer (regions mode only)
+      let landBoundaryLayer = null;
+      fetch("/api/land/geojson")
+        .then(r => r.json())
+        .then(data => {
+          landBoundaryLayer = new GeoBoundaryLayer(scene, radius);
+          landBoundaryLayer.loadGeoJSON(data);
+          landBoundaryLayer.setColor("#8899bb");
+          landBoundaryLayer.setVisible(false);
+        })
+        .catch(err => console.warn("land/geojson load failed:", err));
+
       // ‚îÄ‚îÄ Land mask for ocean heatmap ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
       let landMask = null; // Uint8Array, 1 = land, 0 = ocean
 
@@ -6102,13 +6114,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function syncRegionsVisibility() {
         const active = window.__currentViewMode === "regions";
 
-        // Fade country dots, city dots, and earth land dots
+        // Hide country + city nodes; earth dots stay on
         targetCountryOpacity = active ? 0.0 : (window.__currentViewMode === "city" ? 0.0 : 1.0);
         targetCityOpacity    = active ? 0.0 : (window.__currentViewMode === "city" ? 1.0 : 0.0);
-        targetEarthOpacity   = active ? 0.0 : 1.0;
+        // targetEarthOpacity intentionally untouched — earth dots always visible
 
-        if (regionGroup)  regionGroup.visible  = active;
-        if (regionPoints) regionPoints.visible = active;
+        if (regionGroup) regionGroup.visible = active;
+        // regionPoints opacity fade handled by __regionsTick
+
+        // Land coastline overlay — only visible in regions mode
+        if (landBoundaryLayer) landBoundaryLayer.setVisible(active);
       }
 
       window.__syncRegionsVisibility = function() {
@@ -6272,6 +6287,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (mode === "city")           { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
           else if (mode === "ocean")      { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else if (mode === "transportation") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
+          else if (mode === "regions")    { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else                            { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
           window.__currentViewMode = mode;
           if (window.__syncOceanVisibility) window.__syncOceanVisibility();
