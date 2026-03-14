@@ -10,7 +10,13 @@ const { translateText } = require("./translator");
 
 const app = express();
 console.log("Node version:", process.version);
-app.use(cors());
+app.use(cors({
+  origin: [
+    "https://wesleyharding3.github.io",
+    "http://localhost:3000",
+    "http://localhost:5500"
+  ]
+}));
 app.use(express.json());
 
 /* =========================================
@@ -853,7 +859,6 @@ app.get("/", (req, res) => res.send("API is running"));
 ========================================= */
 const PORT = process.env.PORT || 3000;
 
-// Verify GeoJSON files exist on startup
 ["regions.geojson", "ne_50m_land.geojson"].forEach(f => {
   const p = path.join(__dirname, f);
   fs.access(p, fs.constants.R_OK, err =>
