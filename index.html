@@ -4933,7 +4933,9 @@ function computeCityTiers(cities) {
           landBoundaryLayer = new GeoBoundaryLayer(scene, radius);
           landBoundaryLayer.loadGeoJSON(data);
           landBoundaryLayer.setColor("#8899bb");
-          landBoundaryLayer.setVisible(false);
+          // Show immediately if regions mode is already active when this resolves
+          const activeNow = window.__currentViewMode === "regions";
+          landBoundaryLayer.setVisible(activeNow);
         })
         .catch(err => console.warn("land/geojson load failed:", err));
 
@@ -6142,10 +6144,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       window.__syncRegionsVisibility = function() {
+        // Always sync layer visibility immediately (hides national borders,
+        // shows coastline layer) regardless of whether data is loaded yet.
+        syncRegionsVisibility();
+        // Then kick off the data fetch if needed
         if (window.__currentViewMode === "regions" && !regionGroup && !regionLoading) {
           loadRegions();
-        } else {
-          syncRegionsVisibility();
         }
       };
 
