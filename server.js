@@ -797,15 +797,13 @@ app.get("/api/keywords/cooccurrence", async (req, res) => {
    Regions GeoJSON
 ========================================= */
 app.get("/api/regions/geojson", (req, res) => {
-  res.sendFile(path.join(__dirname, "regions.geojson"));
+  const file = path.resolve(__dirname, "regions.geojson");
+  res.sendFile(file, err => { if (err) res.status(404).json({ error: "regions.geojson not found", path: file }); });
 });
 
 app.get("/api/land/geojson", (req, res) => {
-  res.sendFile(path.join(__dirname, "ne_50m_land.geojson"));
-});
-
-app.get("/api/land/geojson", (req, res) => {
-  res.sendFile(path.join(__dirname, "ne_110m_land.geojson"));
+  const file = path.resolve(__dirname, "ne_50m_land.geojson");
+  res.sendFile(file, err => { if (err) res.status(404).json({ error: "ne_50m_land.geojson not found", path: file }); });
 });
 
 app.get("/api/regions", async (req, res) => {
