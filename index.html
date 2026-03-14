@@ -6063,11 +6063,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         geo.setAttribute("color",    new THREE.Float32BufferAttribute(new Float32Array(cols), 3));
 
         const mat = new THREE.PointsMaterial({
-          size: 0.018,
-          vertexColors: true,
+          size: citySize * 1.8,
+          map: glowTexture,
           transparent: true,
-          opacity: 0.0,
+          blending: THREE.AdditiveBlending,
           depthWrite: false,
+          opacity: 0.0,
+          color: new THREE.Color(1.0, 1.0, 1.0),
           sizeAttenuation: true
         });
 
@@ -6965,23 +6967,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
           timeInterval = setInterval(updateLocalTime, 1000);
         }
 
-        // ‚îÄ‚îÄ Close ‚îÄ‚îÄ
+        // Close
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
-          // Sync Euler then release focusLocked one frame later ‚Äî prevents
-          // rebuildGlobeQuat firing the same tick as the Euler write and snapping.
           requestAnimationFrame(() => {
             const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
             globePitch = euler.x; globeYaw = euler.y;
             focusLocked = false;
           });
-          // Immediately freeze targetZoom at current camera.z to terminate
-          // any in-progress zoom-in without a direction-reversal snap.
-          // Then after panel slides down, smoothly zoom back out.
+          // Kill any in-flight zoom velocity so it can't push targetZoom after we freeze it
+          zoomVelocity = 0;
           targetZoom = camera.position.z;
           zoomingOut = false;
           setTimeout(() => {
@@ -7241,6 +7240,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             globePitch = euler.x; globeYaw = euler.y;
             focusLocked = false;
           });
+          zoomVelocity = 0;
           targetZoom = camera.position.z;
           zoomingOut = false;
           setTimeout(() => { targetZoom = preFocusZoom; zoomingOut = true; }, 450);
