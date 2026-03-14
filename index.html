@@ -6249,8 +6249,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           regionPoints.material.opacity += (regionTargetOpacity - regionPoints.material.opacity) * 0.04;
         }
 
-        // Update hover labels for region nodes
-        if (active) updateRegionHoverLabels();
+        // Update hover labels handled by updateHoverLabels() in main animate loop
       };
       // ‚îÄ‚îÄ END REGIONS LAYER ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
 
@@ -6404,7 +6403,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panelOpen = panel.classList.contains("active");
         hoveredIndex = null;
 
-        if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation" || currentViewMode === "regions") { hideHoverCard(); return; }
+        if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
+        if (currentViewMode === "regions") { updateRegionHoverLabels(); return; }
 
         const intersects = raycaster.intersectObject(activePoints);
         if (intersects.length > 0) {
