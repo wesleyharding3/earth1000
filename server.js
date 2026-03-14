@@ -844,19 +844,6 @@ app.get("/api/news/region/:regionId", async (req, res) => {
   }
 });
 
-/* =========================================
-   Regions GeoJSON
-========================================= */
-app.get("/api/regions/geojson", (req, res) => {
-  const file = path.join(__dirname, "regions.geojson");
-  res.setHeader("Content-Type", "application/json");
-  res.sendFile(file, err => {
-    if (err) {
-      console.error("regions.geojson sendFile error:", err.message, "| path:", file);
-      if (!res.headersSent) res.status(404).json({ error: "regions.geojson not found" });
-    }
-  });
-});
 
 app.get("/api/land/geojson", (req, res) => {
   const file = path.join(__dirname, "ne_50m_land.geojson");
@@ -893,7 +880,7 @@ app.get("/", (req, res) => res.send("API is running"));
 ========================================= */
 const PORT = process.env.PORT || 3000;
 
-["regions.geojson", "ne_50m_land.geojson"].forEach(f => {
+["ne_50m_land.geojson"].forEach(f => {
   const p = path.join(__dirname, f);
   fs.access(p, fs.constants.R_OK, err =>
     err
