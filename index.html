@@ -3511,7 +3511,7 @@
         <div class="viewOption" data-mode="city">
           <span class="viewOptionDot"></span>City
         </div>
-        <div class="viewOption viewOption--soon" data-mode="regions">
+        <div class="viewOption" data-mode="regions">
           <span class="viewOptionDot"></span>Regions
         </div>
         <div class="viewOption" data-mode="ocean">
@@ -5932,6 +5932,184 @@ const settingsToggle     = document.getElementById("settingsToggle");
         syncTransportationVisibility();
       };
 
+      // ── REGIONS LAYER ────────────────────────────────────────────────
+      // Fetches regions.geojson, projects each polygon onto the globe
+      // surface as a filled THREE.Mesh, shown only in "regions" view mode.
+
+      let regionGroup = null;      // THREE.Group holding all region meshes
+      let regionLoading = false;   // prevent double-fetch
+      let regionMeta = {};         // slug → { color, name, population } from /api/regions
+
+      // Project [lng, lat] → THREE.Vector3 on globe surface
+      // Reuses same convention as latLonToVec3Trans
+      function lngLatToVec3(lng, lat, r) {
+        const phi   = (90 - lat)  * (Math.PI / 180);
+        const theta = (lng + 180) * (Math.PI / 180);
+        return new THREE.Vector3(
+          -r * Math.sin(phi) * Math.cos(theta),
+           r * Math.cos(phi),
+           r * Math.sin(phi) * Math.sin(theta)
+        );
+      }
+
+      // Triangulate a single polygon ring (array of [lng,lat] pairs)
+      // Returns a THREE.BufferGeometry or null if ring is too small
+      function buildRingGeometry(ring, r) {
+        if (ring.length < 3) return null;
+
+        // Build 3D verts
+        const verts3d = ring.map(([lng, lat]) => lngLatToVec3(lng, lat, r));
+
+        // Use THREE.Shape in a tangent-plane projection centred on ring centroid
+        // so ShapeGeometry triangulation works in 2D space
+        let cx = 0, cy = 0, cz = 0;
+        verts3d.forEach(v => { cx += v.x; cy += v.y; cz += v.z; });
+        const n = verts3d.length;
+        const centroid = new THREE.Vector3(cx / n, cy / n, cz / n).normalize();
+
+        // Build local tangent frame
+        const up = new THREE.Vector3(0, 1, 0);
+        const right = new THREE.Vector3().crossVectors(up, centroid).normalize();
+        const fwd   = new THREE.Vector3().crossVectors(centroid, right).normalize();
+
+        // Project each 3D vert into the 2D tangent plane
+        const pts2d = verts3d.map(v => {
+          const d = v.clone().sub(centroid.clone().multiplyScalar(r));
+          return new THREE.Vector2(d.dot(right), d.dot(fwd));
+        });
+
+        // Triangulate in 2D using THREE.ShapeUtils
+        const shape = new THREE.Shape(pts2d);
+        const shapeGeo = new THREE.ShapeGeometry(shape);
+
+        // Lift the 2D triangulated verts back onto the sphere
+        const pos2d = shapeGeo.attributes.position;
+        const positions3d = new Float32Array(pos2d.count * 3);
+        for (let i = 0; i < pos2d.count; i++) {
+          const u = pos2d.getX(i);
+          const v3 = pos2d.getY(i);
+          // Reconstruct 3D point from tangent-plane coords then normalize to sphere
+          const pt = centroid.clone().multiplyScalar(r)
+            .addScaledVector(right, u)
+            .addScaledVector(fwd,   v3);
+          pt.normalize().multiplyScalar(r * 1.0008); // sit just above surface
+          positions3d[i * 3]     = pt.x;
+          positions3d[i * 3 + 1] = pt.y;
+          positions3d[i * 3 + 2] = pt.z;
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(positions3d, 3));
+        geo.setIndex(shapeGeo.index);
+        shapeGeo.dispose();
+        return geo;
+      }
+
+      // Build one THREE.Mesh per polygon ring across a feature's geometry
+      function buildFeatureMeshes(feature, color, group) {
+        const geom = feature.geometry;
+        if (!geom) return;
+
+        const R = radius * 1.0008; // float just above globe surface
+
+        let rings = [];
+        if (geom.type === "Polygon") {
+          rings = [geom.coordinates[0]]; // outer ring only
+        } else if (geom.type === "MultiPolygon") {
+          rings = geom.coordinates.map(poly => poly[0]);
+        }
+
+        const mat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(color),
+          transparent: true,
+          opacity: 0.55,
+          depthWrite: false,
+          side: THREE.FrontSide
+        });
+
+        rings.forEach(ring => {
+          try {
+            const geo = buildRingGeometry(ring, R);
+            if (!geo) return;
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.renderOrder = 1;
+            group.add(mesh);
+          } catch (e) {
+            // silently skip malformed rings
+          }
+        });
+      }
+
+      async function loadRegions() {
+        if (regionLoading || regionGroup) return;
+        regionLoading = true;
+
+        try {
+          // Fetch meta (colors, names, populations) and GeoJSON in parallel
+          const [metaRes, geoRes] = await Promise.all([
+            fetch("/api/regions"),
+            fetch("/api/regions/geojson")
+          ]);
+          const metaRows = await metaRes.json();
+          const geojson  = await geoRes.json();
+
+          // Build slug → meta lookup
+          metaRows.forEach(r => {
+            regionMeta[r.slug] = r;
+          });
+
+          regionGroup = new THREE.Group();
+          regionGroup.visible = false;
+
+          geojson.features.forEach(feature => {
+            const slug  = feature.properties?.slug;
+            const meta  = regionMeta[slug];
+            const color = meta?.color || "#888888";
+            buildFeatureMeshes(feature, color, regionGroup);
+          });
+
+          scene.add(regionGroup);
+          console.log(`🗺  Regions layer loaded — ${regionGroup.children.length} meshes`);
+
+        } catch (err) {
+          console.error("❌ Failed to load regions:", err);
+        } finally {
+          regionLoading = false;
+        }
+
+        syncRegionsVisibility();
+      }
+
+      function syncRegionsVisibility() {
+        const active = window.__currentViewMode === "regions";
+        if (regionGroup) regionGroup.visible = active;
+
+        // Fade out country/city dots when in regions mode
+        if (active) {
+          targetCountryOpacity = 0.0;
+          targetCityOpacity    = 0.0;
+        }
+      }
+
+      window.__syncRegionsVisibility = function() {
+        if (window.__currentViewMode === "regions") {
+          if (!regionGroup && !regionLoading) loadRegions();
+        }
+        syncRegionsVisibility();
+      };
+
+      // Subtle opacity pulse on the region meshes — makes the layer feel alive
+      let regionPulseTime = 0;
+      window.__regionsTick = function(delta) {
+        if (!regionGroup || !regionGroup.visible) return;
+        regionPulseTime += delta;
+        const pulse = 0.45 + 0.10 * Math.sin(regionPulseTime * 0.8);
+        regionGroup.children.forEach(mesh => {
+          if (mesh.material) mesh.material.opacity = pulse;
+        });
+      };
+      // ── END REGIONS LAYER ────────────────────────────────────────────
+
       // Tick uTime on all pulse meshes each frame
       const TRANS_PULSE_SPEED = { rail: 0.20, shipping: 0.22, flight: 0.55, railHalo: 0.20 };
       window.__transTick = function(delta) {
@@ -6007,6 +6185,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.__currentViewMode = mode;
           if (window.__syncOceanVisibility) window.__syncOceanVisibility();
           if (window.__syncTransportationVisibility) window.__syncTransportationVisibility();
+          if (window.__syncRegionsVisibility) window.__syncRegionsVisibility();
           viewDropOpen = false;
           viewDropdown.classList.remove("open");
           viewToggle.classList.remove("active");
@@ -6898,6 +7077,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
 
         if (window.__transTick) window.__transTick(0.016);
+        if (window.__regionsTick) window.__regionsTick(0.016);
         if (window.__flowTick) window.__flowTick();
         // Sync ocean heatmap mesh with globe rotation
         if (window.__oceanMeshSync) window.__oceanMeshSync();
