@@ -3961,6 +3961,18 @@
       globeQuat.copy(qPitch).multiply(qYaw);
     }
 
+    // Extract yaw/pitch from a quaternion by analyzing the forward vector direction.
+    // This avoids Euler decomposition issues when the quaternion has a roll component.
+    function extractYawPitchFromQuat(quat) {
+      // Get where the forward vector (0,0,1) points after rotation
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
+      // Yaw: angle in the XZ plane (atan2 gives us the horizontal rotation)
+      const yaw = Math.atan2(-forward.x, forward.z);
+      // Pitch: vertical angle (clamp to avoid asin domain errors)
+      const pitch = Math.asin(Math.max(-1, Math.min(1, -forward.y)));
+      return { yaw, pitch };
+    }
+
     function pauseAmbientRotation() {
       ambientPaused = true;
       if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
@@ -5212,9 +5224,9 @@ function computeCityTiers(cities) {
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
         pauseAmbientRotation();
         if (focusLocked) {
-          // Sync Euler from current globeQuat now ‚Äî user motion will mask any discontinuity
-          const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-          globePitch = euler.x; globeYaw = euler.y;
+          // Sync from current globeQuat now — user motion will mask any discontinuity
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
           focusLocked = false;
         }
         dragging = true;
@@ -5227,8 +5239,8 @@ function computeCityTiers(cities) {
         if (e.touches.length !== 1) return;
         pauseAmbientRotation();
         if (focusLocked) {
-          const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-          globePitch = euler.x; globeYaw = euler.y;
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
           focusLocked = false;
         }
         touchDragging = true;
@@ -6245,8 +6257,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let compassSnapTarget = null;
 
       compass.addEventListener("click", () => {
-        const currentEuler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-        compassSnapTarget = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, currentEuler.y, 0, "YXZ"));
+        const { yaw } = extractYawPitchFromQuat(globeQuat);
+        compassSnapTarget = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, "YXZ"));
         compassSnapActive = true;
         isFocused = false; focusTargetQuat = null; selectedNodeIndex = null; ambientPaused = false;
       });
@@ -6865,8 +6877,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
           requestAnimationFrame(() => {
-            const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-            globePitch = euler.x; globeYaw = euler.y;
+            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+            globeYaw = yaw; globePitch = pitch;
             focusLocked = false;
           });
           // Kill any in-flight zoom velocity so it can't push targetZoom after we freeze it
@@ -7126,8 +7138,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           document.getElementById("pageNav").style.pointerEvents = "all";
           isFocused = false; focusPendingPanel = null;
           requestAnimationFrame(() => {
-            const euler = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-            globePitch = euler.x; globeYaw = euler.y;
+            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+            globeYaw = yaw; globePitch = pitch;
             focusLocked = false;
           });
           zoomVelocity = 0;
@@ -7217,9 +7229,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
             globeQuat.copy(compassSnapTarget);
             compassSnapActive = false; compassSnapTarget = null; isFocused = false; focusTargetQuat = null;
-            const e = new THREE.Euler().setFromQuaternion(globeQuat, "YXZ");
-            globePitch = e.x;
-            globeYaw = e.y;
+            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+            globePitch = pitch;
+            globeYaw = yaw;
             if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
             ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 400);
           }
