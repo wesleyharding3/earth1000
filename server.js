@@ -635,6 +635,10 @@ app.get("/api/flows", async (req, res) => {
       const { rows } = await pool.query(`
         SELECT
           a.id,
+          a.title AS "originalTitle",
+          a.summary AS "originalSummary",
+          a.translated_title AS "translatedTitle",
+          a.translated_summary AS "translatedSummary",
           COALESCE(a.translated_title, a.title) AS title,
           COALESCE(a.translated_summary, a.summary) AS summary,
           a.article_url,
