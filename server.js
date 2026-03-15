@@ -624,6 +624,9 @@ app.get("/api/flows", async (req, res) => {
         SELECT
           a.id,
           COALESCE(a.translated_title, a.title) AS title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.article_url,
+          a.image_url,
           a.published_at                        AS "publishedAt",
           a.sentiment_score                     AS sentiment,
           ns.name                               AS "sourceName",
@@ -755,6 +758,9 @@ app.get("/api/flows", async (req, res) => {
       const flows = selected.map(r => ({
         id: r.id,
         title: r.title,
+        summary: r.summary,
+        articleUrl: r.article_url,
+        imageUrl: r.image_url,
         publishedAt: r.publishedAt,
         sentiment: r.sentiment,
         sourceName: r.sourceName,
