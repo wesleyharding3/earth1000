@@ -2310,6 +2310,114 @@
     }
     .kwi-footer-text { font-size: 10px; color: rgba(255,255,255,0.3); letter-spacing: 0.05em; }
     .kwi-footer-dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.2); }
+    
+    /* Keyword mode tabs */
+    .kwi-mode-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 0 12px 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin-bottom: 8px;
+    }
+    .kwi-mode-tab {
+      flex: 1;
+      padding: 6px 8px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: rgba(255,255,255,0.45);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .kwi-mode-tab:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.04); }
+    .kwi-mode-tab.active { color: #4a9eff; background: rgba(74,158,255,0.12); }
+    .kwi-mode-tab .kwi-fire { color: #ff6b35; margin-left: 3px; }
+    
+    /* Trending list */
+    .kwi-trending-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 8px;
+      overflow-y: auto;
+      max-height: 180px;
+    }
+    .kwi-trending-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      background: rgba(255,255,255,0.02);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .kwi-trending-item:hover { background: rgba(74,158,255,0.1); }
+    .kwi-trending-rank {
+      width: 18px;
+      font-size: 10px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.3);
+      text-align: center;
+    }
+    .kwi-trending-item:nth-child(1) .kwi-trending-rank { color: #ffd700; }
+    .kwi-trending-item:nth-child(2) .kwi-trending-rank { color: #c0c0c0; }
+    .kwi-trending-item:nth-child(3) .kwi-trending-rank { color: #cd7f32; }
+    .kwi-trending-keyword {
+      flex: 1;
+      font-size: 12px;
+      color: rgba(255,255,255,0.85);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .kwi-trending-mentions {
+      font-size: 10px;
+      color: rgba(255,255,255,0.4);
+      font-variant-numeric: tabular-nums;
+    }
+    .kwi-trending-badge {
+      font-size: 9px;
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .kwi-badge-rising {
+      background: rgba(255,107,53,0.2);
+      color: #ff8c5a;
+    }
+    .kwi-badge-new {
+      background: rgba(0,200,120,0.2);
+      color: #50ffa0;
+    }
+    
+    /* Location context pill */
+    .kwi-location-context {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      margin: 0 12px 8px;
+      background: rgba(74,158,255,0.1);
+      border: 1px solid rgba(74,158,255,0.25);
+      border-radius: 12px;
+      font-size: 10px;
+      color: rgba(74,158,255,0.9);
+    }
+    .kwi-location-context.visible { display: flex; }
+    .kwi-location-context img { width: 14px; height: 10px; border-radius: 2px; }
+    .kwi-location-clear {
+      margin-left: auto;
+      opacity: 0.6;
+      cursor: pointer;
+      font-size: 11px;
+    }
+    .kwi-location-clear:hover { opacity: 1; }
+    
     .kwi-loading {
       position: absolute; inset: 0;
       display: flex; align-items: center; justify-content: center;
@@ -3498,8 +3606,25 @@
           </div>
         </div>
 
-        <!-- Search -->
-        <div class="kwi-search-wrap" style="position:relative;">
+        <!-- Mode tabs -->
+        <div class="kwi-mode-tabs">
+          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">🔥 Trending</button>
+          <button class="kwi-mode-tab" data-mode="rising" onclick="kwiSetMode('rising')">📈 Rising</button>
+          <button class="kwi-mode-tab" data-mode="search" onclick="kwiSetMode('search')">🔍 Search</button>
+        </div>
+
+        <!-- Location context (shows when country selected) -->
+        <div class="kwi-location-context" id="kwiLocationCtx">
+          <img id="kwiLocationFlag" src="" alt=""/>
+          <span id="kwiLocationName">Global</span>
+          <span class="kwi-location-clear" onclick="kwiClearLocation()">✕</span>
+        </div>
+
+        <!-- Trending list (default view) -->
+        <div class="kwi-trending-list" id="kwiTrendingList"></div>
+
+        <!-- Search (hidden by default) -->
+        <div class="kwi-search-wrap" id="kwiSearchWrap" style="display:none;position:relative;">
           <input class="kwi-search-input" id="kwiInput" type="text"
             placeholder="Search keyword or phrase…"
             autocomplete="off"
@@ -3520,8 +3645,8 @@
           <span class="kwi-chip-x" onclick="kwiClear()">✕</span>
         </div>
 
-        <!-- Controls -->
-        <div class="kwi-controls" id="kwiControls">
+        <!-- Controls (for search mode) -->
+        <div class="kwi-controls" id="kwiControls" style="display:none;">
           <button class="kwi-range-btn active" data-days="7"   onclick="kwiSetRange(7)">7D</button>
           <button class="kwi-range-btn"        data-days="30"  onclick="kwiSetRange(30)">30D</button>
           <button class="kwi-range-btn"        data-days="90"  onclick="kwiSetRange(90)">90D</button>
@@ -8914,9 +9039,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try {
       const res  = await fetch(`https://earth-wjr6.onrender.com/api/flows?${params}`);
       const data = await res.json();
+      
+      console.log("Flows API response:", data);
+      
+      // Handle error responses
+      if (data.error) {
+        console.error("API error:", data.error, data.detail);
+        document.getElementById("flowStats").textContent = "Error: " + data.error;
+        return;
+      }
 
       if (flowMode === "aggregate") {
-        flowData = (data.flows || []).map(remapFlowForView);
+        const flows = Array.isArray(data.flows) ? data.flows : [];
+        flowData = flows.map(remapFlowForView);
         const maxCount = data.maxCount || 1;
 
         // Render all aggregate arcs immediately
@@ -8931,7 +9066,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById("flowStats").innerHTML = `<span class="flowStatHighlight">${data.totalRoutes}</span> routes`;
 
       } else {
-        flowData = (data.flows || data || []).map(remapFlowForView);
+        // Handle both { flows: [...] } and direct array responses
+        const flows = Array.isArray(data.flows) ? data.flows : (Array.isArray(data) ? data : []);
+        flowData = flows.map(remapFlowForView);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
         
@@ -10205,6 +10342,7 @@ grmClockTick();
   let kwiKeyword  = null;
   let kwiDays     = 7;
   let kwiView     = 'bar';     // 'bar' | 'trend'
+  let kwiMode     = 'trending'; // 'trending' | 'search' - what are we showing
   let kwiAcIdx    = -1;
   let kwiAcList   = [];
   let kwiAcTimer  = null;
@@ -10215,7 +10353,7 @@ grmClockTick();
 
   async function fetchAC(q) {
     try {
-      const r = await fetch(`/api/keywords/autocomplete?q=${encodeURIComponent(q)}`);
+      const r = await fetch(`https://earth-wjr6.onrender.com/api/keywords/autocomplete?q=${encodeURIComponent(q)}`);
       return await r.json();
     } catch { return []; }
   }
@@ -10287,14 +10425,15 @@ grmClockTick();
 
   window.kwiClear = function() {
     kwiKeyword = null;
+    kwiMode = 'trending';
     document.getElementById('kwiInput').value = '';
     document.getElementById('kwiChip').classList.remove('visible');
-    kwiShowEmpty();
-    document.getElementById('kwiFooterText').textContent = '—';
+    kwiLoadTrending();  // Return to trending view instead of empty
   };
 
   function kwiDoSearch(word) {
     kwiKeyword = word.toLowerCase().trim();
+    kwiMode = 'search';
     document.getElementById('kwiChipLabel').textContent = kwiKeyword;
     document.getElementById('kwiChip').classList.add('visible');
     kwiLoad();
@@ -10307,7 +10446,12 @@ grmClockTick();
     document.querySelectorAll('.kwi-range-btn').forEach(b => {
       b.classList.toggle('active', parseInt(b.dataset.days) === days);
     });
-    if (kwiKeyword) kwiLoad();
+    // Refresh trending or search depending on mode
+    if (kwiKeyword) {
+      kwiLoad();
+    } else {
+      kwiLoadTrending();
+    }
   };
 
   window.kwiSetView = function(view) {
@@ -10315,7 +10459,12 @@ grmClockTick();
     document.querySelectorAll('.kwi-view-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.view === view);
     });
-    if (kwiKeyword) kwiLoad();
+    // Refresh based on current mode
+    if (kwiKeyword) {
+      kwiLoad();
+    } else {
+      kwiLoadTrending();
+    }
   };
 
   // ── Data fetching ─────────────────────────────────────────────────────────
@@ -10328,7 +10477,190 @@ grmClockTick();
     document.getElementById('kwiEmpty').style.display = 'flex';
     document.getElementById('kwiBars').style.display = 'none';
     document.getElementById('kwiCanvasWrap').style.display = 'none';
+    document.getElementById('kwiTrendingList').style.display = 'none';
   }
+
+  // ── Location context (for country-specific keywords) ───────────────────────
+  let kwiLocationCountry = null; // { id, iso, name }
+  
+  window.kwiSetLocationContext = function(country) {
+    kwiLocationCountry = country;
+    const ctx = document.getElementById('kwiLocationCtx');
+    if (country) {
+      document.getElementById('kwiLocationFlag').src = 
+        `https://flagcdn.com/w40/${country.iso.toLowerCase()}.png`;
+      document.getElementById('kwiLocationName').textContent = country.name;
+      ctx.classList.add('visible');
+    } else {
+      ctx.classList.remove('visible');
+    }
+    // Reload current view with new context
+    if (kwiMode === 'trending') kwiLoadTrending();
+    else if (kwiMode === 'rising') kwiLoadRising();
+  };
+
+  window.kwiClearLocation = function() {
+    kwiSetLocationContext(null);
+  };
+
+  // ── Mode switching ──────────────────────────────────────────────────────────
+  window.kwiSetMode = function(mode) {
+    kwiMode = mode;
+    
+    // Update tab active state
+    document.querySelectorAll('.kwi-mode-tab').forEach(t => 
+      t.classList.toggle('active', t.dataset.mode === mode));
+    
+    // Show/hide elements based on mode
+    const searchWrap = document.getElementById('kwiSearchWrap');
+    const controls = document.getElementById('kwiControls');
+    const trendingList = document.getElementById('kwiTrendingList');
+    const chartArea = document.getElementById('kwiChartArea');
+    const chip = document.getElementById('kwiChip');
+    
+    if (mode === 'search') {
+      searchWrap.style.display = 'block';
+      controls.style.display = kwiKeyword ? 'flex' : 'none';
+      trendingList.style.display = 'none';
+      chartArea.style.display = 'block';
+      if (kwiKeyword) {
+        kwiLoad();
+      } else {
+        kwiShowEmpty();
+        document.getElementById('kwiEmpty').innerHTML = `
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/>
+            <line x1="19" y1="19" x2="26" y2="26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Search a keyword to explore trends
+        `;
+      }
+    } else {
+      searchWrap.style.display = 'none';
+      controls.style.display = 'none';
+      chip.classList.remove('visible');
+      trendingList.style.display = 'flex';
+      chartArea.style.display = 'none';
+      
+      if (mode === 'trending') {
+        kwiLoadTrending();
+      } else if (mode === 'rising') {
+        kwiLoadRising();
+      }
+    }
+  };
+
+  // ── Load rising keywords ────────────────────────────────────────────────────
+  async function kwiLoadRising() {
+    kwiSetLoading(true);
+    
+    try {
+      let url = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=15`;
+      if (kwiLocationCountry) {
+        url += `&about_country=${kwiLocationCountry.iso}`;
+      }
+      
+      const res = await fetch(url);
+      const rising = await res.json();
+      
+      renderRisingList(rising);
+      document.getElementById('kwiFooterText').textContent = 
+        `Rapidly rising · last 3 days vs. baseline`;
+    } catch (err) {
+      console.warn('[kwi] rising load error:', err.message);
+      document.getElementById('kwiTrendingList').innerHTML = 
+        '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">No rising keywords found</div>';
+    } finally {
+      kwiSetLoading(false);
+    }
+  }
+
+  // ── Render rising keywords list ─────────────────────────────────────────────
+  function renderRisingList(rising) {
+    const container = document.getElementById('kwiTrendingList');
+    container.style.display = 'flex';
+    
+    if (!rising.length) {
+      container.innerHTML = '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">No rising keywords detected</div>';
+      return;
+    }
+    
+    container.innerHTML = rising.map((r, i) => {
+      const growth = r.growth_pct ? `+${Math.round(r.growth_pct)}%` : 'NEW';
+      const badgeClass = r.is_new ? 'kwi-badge-new' : 'kwi-badge-rising';
+      return `
+        <div class="kwi-trending-item" onclick="kwiTrendingClick('${r.keyword.replace(/'/g,"\\'")}')">
+          <div class="kwi-trending-rank">${i + 1}</div>
+          <div class="kwi-trending-keyword">${r.keyword}</div>
+          <span class="kwi-trending-badge ${badgeClass}">${growth}</span>
+          <div class="kwi-trending-mentions">${parseInt(r.recent_mentions || 0).toLocaleString()}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // ── Render trending list (alternative format for list view) ─────────────────
+  function renderTrendingList(trending, rising) {
+    const container = document.getElementById('kwiTrendingList');
+    container.style.display = 'flex';
+    
+    const risingSet = new Set(rising.map(r => r.keyword));
+    
+    container.innerHTML = trending.map((t, i) => {
+      const isRising = risingSet.has(t.keyword);
+      return `
+        <div class="kwi-trending-item" onclick="kwiTrendingClick('${t.keyword.replace(/'/g,"\\'")}')">
+          <div class="kwi-trending-rank">${i + 1}</div>
+          <div class="kwi-trending-keyword">${t.keyword}${isRising ? ' 🔥' : ''}</div>
+          <div class="kwi-trending-mentions">${parseInt(t.mentions).toLocaleString()}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  window.kwiTrendingClick = function(keyword) {
+    kwiSetMode('search');
+    document.getElementById('kwiInput').value = keyword;
+    kwiDoSearch(keyword);
+  };
+
+  // ── Load trending keywords (default view) ─────────────────────────────────
+  async function kwiLoadTrending() {
+    kwiSetLoading(true);
+    document.getElementById('kwiChip').classList.remove('visible');
+    
+    try {
+      let trendingUrl = `https://earth-wjr6.onrender.com/api/keywords/trending?days=${kwiDays}&limit=15`;
+      let risingUrl = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=5`;
+      
+      if (kwiLocationCountry) {
+        trendingUrl += `&about_country=${kwiLocationCountry.iso}`;
+        risingUrl += `&about_country=${kwiLocationCountry.iso}`;
+      }
+      
+      const [trendingRes, risingRes] = await Promise.all([
+        fetch(trendingUrl),
+        fetch(risingUrl)
+      ]);
+      const trending = await trendingRes.json();
+      const rising   = await risingRes.json();
+      
+      renderTrendingList(trending, rising);
+      
+      const locationLabel = kwiLocationCountry ? kwiLocationCountry.name : 'Global';
+      document.getElementById('kwiFooterText').textContent = 
+        `${locationLabel} · last ${kwiDays} days`;
+    } catch (err) {
+      console.warn('[kwi] trending load error:', err.message);
+      document.getElementById('kwiTrendingList').innerHTML = 
+        '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">Failed to load trends</div>';
+    } finally {
+      kwiSetLoading(false);
+    }
+  }
+
+  // Initialize with trending keywords on page load
+  setTimeout(kwiLoadTrending, 1500);
 
   async function kwiLoad() {
     if (!kwiKeyword) return;
@@ -10338,8 +10670,8 @@ grmClockTick();
       if (kwiView === 'bar') {
         // Fetch top co-occurring keywords for bar chart
         const [topRes, coRes] = await Promise.all([
-          fetch(`/api/keywords/top?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}&limit=1`),
-          fetch(`/api/keywords/cooccurrence?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}&limit=12`)
+          fetch(`https://earth-wjr6.onrender.com/api/keywords/top?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}&limit=1`),
+          fetch(`https://earth-wjr6.onrender.com/api/keywords/cooccurrence?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}&limit=12`)
         ]);
         const topData = await topRes.json();
         const coData  = await coRes.json();
@@ -10351,7 +10683,7 @@ grmClockTick();
 
       } else {
         // Trend line chart
-        const r = await fetch(`/api/keywords/trend?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}`);
+        const r = await fetch(`https://earth-wjr6.onrender.com/api/keywords/trend?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}`);
         const data = await r.json();
         renderTrend(data);
         const total = data.reduce((s, d) => s + parseInt(d.mentions), 0);
