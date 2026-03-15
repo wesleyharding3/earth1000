@@ -1566,7 +1566,7 @@
   position: fixed;
   pointer-events: none;
   z-index: 210;
-  max-width: 240px;
+  max-width: 200px;
   min-width: 130px;
   background: rgba(4,5,9,0.97);
   border: 1px solid rgba(255,200,100,0.18);
@@ -1624,38 +1624,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.hoverCardStory {
-  font-size: 11px;
-  font-weight: 500;
-  color: rgba(255,255,255,0.85);
-  line-height: 1.35;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255,200,100,0.12);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 220px;
-}
-.hoverCardCity {
-  font-size: 9px;
-  font-weight: 600;
-  color: rgba(255,180,80,0.65);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.hoverCardLoading {
-  font-size: 10px;
-  color: rgba(255,255,255,0.35);
-  font-style: italic;
-  margin-top: 6px;
 }
 .hoverLine {
   position: fixed;
@@ -6084,48 +6052,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let regionData      = [];     // array of region meta rows from /api/regions
       let regionPositions = null;   // Float32Array of centroid xyz positions
       let regionLoading   = false;
-      
-      // Cache for region stories - maps region.id to { story, cityName, loading }
-      const regionStoryCache = new Map();
-      
-      // Fetch a random story for a region
-      async function fetchRegionStory(regionId) {
-        if (regionStoryCache.has(regionId)) {
-          return regionStoryCache.get(regionId);
-        }
-        
-        // Mark as loading
-        regionStoryCache.set(regionId, { loading: true, story: null, cityName: null });
-        
-        try {
-          const url = `https://earth-wjr6.onrender.com/api/news/region/${regionId}?limit=10&offset=0`;
-          const res = await fetch(url);
-          const data = await res.json();
-          
-          if (data.articles && data.articles.length > 0) {
-            // Pick a random article
-            const randomIdx = Math.floor(Math.random() * data.articles.length);
-            const article = data.articles[randomIdx];
-            const result = {
-              loading: false,
-              story: article.title || article.translated_title,
-              cityName: article.city_name || article.country_name || null,
-              source: article.source_name || null
-            };
-            regionStoryCache.set(regionId, result);
-            return result;
-          } else {
-            const result = { loading: false, story: null, cityName: null };
-            regionStoryCache.set(regionId, result);
-            return result;
-          }
-        } catch (err) {
-          console.error("Failed to fetch region story:", err);
-          const result = { loading: false, story: null, cityName: null };
-          regionStoryCache.set(regionId, result);
-          return result;
-        }
-      }
 
       // Project [lng, lat] → THREE.Vector3 on globe surface
       function lngLatToVec3(lng, lat, r) {
@@ -6251,39 +6177,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (regionHoverEraseTimer) { clearTimeout(regionHoverEraseTimer); regionHoverEraseTimer = null; }
               card.classList.remove("hcErase");
               card.classList.remove("hcVisible");
-              
-              // Check cache first
-              const cached = regionStoryCache.get(r.id);
-              let storyHtml = '';
-              
-              if (cached && !cached.loading && cached.story) {
-                storyHtml = `
-                  <div class="hoverCardStory">${cached.story}</div>
-                  ${cached.cityName ? `<div class="hoverCardCity">📍 ${cached.cityName}</div>` : ''}`;
-              } else if (!cached || cached.loading) {
-                storyHtml = `<div class="hoverCardLoading">Loading story...</div>`;
-                // Fetch story and update card
-                fetchRegionStory(r.id).then(result => {
-                  // Only update if still hovering same region
-                  if (regionHoveredIndex === index && result.story) {
-                    const currentCard = document.getElementById("hoverCard");
-                    const loadingEl = currentCard.querySelector('.hoverCardLoading');
-                    if (loadingEl) {
-                      loadingEl.outerHTML = `
-                        <div class="hoverCardStory">${result.story}</div>
-                        ${result.cityName ? `<div class="hoverCardCity">📍 ${result.cityName}</div>` : ''}`;
-                    }
-                  }
-                });
-              }
-              
               card.innerHTML = `
                 <div class="hoverCardName">
                   <div class="hoverCardDot" style="background:${r.color || '#ffffff'}"></div>
                   ${r.name}
                 </div>
-                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}
-                ${storyHtml}`;
+                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}`;
               positionHoverCard(card, lineEl, sx, sy);
               card.classList.add("hcVisible");
               lineEl.style.opacity = "1";
@@ -6530,14 +6429,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
         card.classList.remove("hcErase");
         card.classList.remove("hcVisible");
+        
+        // For cities with region: show region as title, then "city, country"
+        // For countries or cities without region: show name as title, country below
+        const hasRegion = node.region && node.region !== node.name;
         const showCountryLine = node.country && node.name !== node.country;
+        
+        let titleText, subtitleText;
+        if (hasRegion) {
+          // City with region: Region is title, "City, Country" is subtitle
+          titleText = node.region;
+          subtitleText = showCountryLine ? `${node.name}, ${node.country}` : node.name;
+        } else {
+          // Country or city without region: Name is title, country is subtitle
+          titleText = node.name;
+          subtitleText = showCountryLine ? node.country : null;
+        }
+        
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
-            ${node.flag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
-            ${node.name}
+            ${node.flag && !hasRegion ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
+            ${titleText}
           </div>
-          ${showCountryLine ? `<div class="hoverCardCountry">${node.country}</div>` : ""}
+          ${subtitleText ? `<div class="hoverCardCountry">${node.flag && hasRegion ? `<span style="font-size:11px;margin-right:4px;">${node.flag}</span>` : ""}${subtitleText}</div>` : ""}
           <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
