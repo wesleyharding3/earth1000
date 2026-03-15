@@ -252,7 +252,7 @@ async function main() {
       process.exit(0);
     }
 
-    if (ANALYZE_ONLY || DO_PRUNE) {
+    if (ANALYZE_ONLY) {
       await analyze();
     }
 
