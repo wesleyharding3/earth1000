@@ -3940,7 +3940,7 @@
     let targetZoom = camera.position.z;
     let zoomingOut = false; // true while easing back to preFocusZoom after panel close
     let zoomVelocity = 0;
-    const zoomFriction = 0.88;
+    const zoomFriction = 0.82;
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
@@ -6900,7 +6900,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
         if (window.__currentPage !== 1) return;
         e.preventDefault();
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00008; return; }
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00003; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -6916,7 +6916,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
           const currentDistance = getDistance(e.touches);
-          zoomVelocity += (initialPinchDistance - currentDistance) * 0.00015;
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.00006;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
@@ -7193,7 +7193,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const zoomDelta = targetZoom - camera.position.z;
         // Zoom-out uses a gentler lerp so the camera eases back slowly;
         // zoom-in stays snappy. Clear zoomingOut once camera has settled.
-        const zoomLerp = zoomingOut ? 0.018 : (0.03 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        const zoomLerp = zoomingOut ? 0.015 : (0.025 * Math.min(Math.abs(zoomDelta) * 2, 1));
         camera.position.z += zoomDelta * zoomLerp;
         if (zoomingOut && Math.abs(zoomDelta) < 0.005) zoomingOut = false;
 
@@ -7243,7 +7243,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         updateHoverLabels();
 
-        if (isFocused && selectedNodeIndex !== null) {
+        if (ringStates.some(s => s.active)) {
           ringStates.forEach((state, i) => {
             if (!state.active) return;
             if (state.delay > 0) { state.delay -= ringSpeed; return; }
@@ -7253,7 +7253,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             ringMeshes[i].material.opacity = Math.pow(1 - state.progress, 1.8);
             if (state.progress >= 1) { ringMeshes[i].material.opacity = 0; state.active = false; }
           });
-        } else {
+        } else if (!isFocused) {
           ringMeshes.forEach(ring => { ring.material.opacity = 0; });
         }
 
