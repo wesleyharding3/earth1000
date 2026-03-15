@@ -8841,9 +8841,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const GLOBE_RADIUS   = radius;
   const ARC_HEIGHT     = 0.45;
   const ARC_SEGMENTS   = 64;
-  const TUBE_RADIUS_BASE = 0.003;
-  const TUBE_RADIUS_MIN  = 0.002;
-  const TUBE_RADIUS_MAX  = 0.018;
+  const TUBE_RADIUS_BASE = 0.002;
+  const TUBE_RADIUS_MIN  = 0.0012;
+  const TUBE_RADIUS_MAX  = 0.010;
   const TUBE_RADIAL    = 6;
   const PARTICLE_COUNT = 3;
   const PARTICLE_SIZE  = 0.016;
@@ -9391,7 +9391,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Build query params
     const params = new URLSearchParams();
     params.set("mode", flowMode);
-    params.set("limit", flowMode === "aggregate" ? "500" : "800");
+    params.set("limit", flowMode === "aggregate" ? "500" : "2000");
 
     if (fromDate) params.set("from_date", fromDate);
     if (toDate)   params.set("to_date", toDate);
@@ -9792,7 +9792,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* Click on flow arc to open article detail */
   window.addEventListener("click", (e) => {
-    if (!flowModeOpen || flowMode === "aggregate") return;
+    if (!flowModeOpen) return;
     
     mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
     mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
@@ -9800,36 +9800,133 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     for (const arc of arcObjects) {
       const xs = raycasterFlow.intersectObject(arc.mesh);
-      if (xs.length && arc.flow && !arc.flow.count) {
-        // Individual flow - open article detail
+      if (xs.length && arc.flow) {
         const flow = arc.flow;
-        const article = {
-          id: flow.id,
-          title: flow.title,
-          translated_title: flow.title,
-          summary: flow.summary || '',
-          translated_summary: flow.summary || '',
-          source_name: flow.sourceName,
-          published_at: flow.publishedAt,
-          article_url: flow.articleUrl,
-          image_url: flow.imageUrl,
-          iso_code: flow.src?.iso || flow.dst?.iso,
-          country_name: flow.dst?.place,
-          sentiment_score: flow.sentiment
-        };
         
-        // Save flow state for return
-        window.__flowSeqIndex = seqIndex;
-        window.__flowProgress = flowProgress;
-        window.__flowPlaying = flowPlaying;
-        
-        if (window.openArticleDetail) {
-          window.openArticleDetail(article, { type: 'flow' });
+        if (flow.count) {
+          // Aggregate mode - fetch articles for this route and show panel
+          openAggregateRoutePanel(flow);
+        } else {
+          // Individual flow - open article detail
+          const article = {
+            id: flow.id,
+            title: flow.title,
+            translated_title: flow.title,
+            summary: flow.summary || '',
+            translated_summary: flow.summary || '',
+            source_name: flow.sourceName,
+            published_at: flow.publishedAt,
+            article_url: flow.articleUrl,
+            image_url: flow.imageUrl,
+            iso_code: flow.src?.iso || flow.dst?.iso,
+            country_name: flow.dst?.place,
+            sentiment_score: flow.sentiment
+          };
+          
+          // Save flow state for return
+          window.__flowSeqIndex = seqIndex;
+          window.__flowProgress = flowProgress;
+          window.__flowPlaying = flowPlaying;
+          
+          if (window.openArticleDetail) {
+            window.openArticleDetail(article, { type: 'flow' });
+          }
         }
         break;
       }
     }
   });
+
+  /* Open panel showing articles for an aggregate route */
+  async function openAggregateRoutePanel(flow) {
+    const panel = document.getElementById("infoPanel");
+    
+    // Build fetch URL for individual articles on this route
+    const params = new URLSearchParams();
+    params.set("mode", "individual");
+    params.set("limit", "50");
+    
+    // Set source filter
+    if (flow.src.type === "city") {
+      params.set("from_city", flow.src.id);
+    } else {
+      params.set("from_country", flow.src.id);
+    }
+    
+    // Set destination filter
+    if (flow.dst.type === "city") {
+      params.set("about_city", flow.dst.id);
+    } else {
+      params.set("about_country", flow.dst.id);
+    }
+    
+    const routeLabel = `${flow.src.place} → ${flow.dst.place}`;
+    
+    panel.innerHTML = `
+      <div id="panelResizeHandle">
+        <div id="panelResizeArrow">
+          <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="2,6.5 5,3.5 8,6.5"/>
+          </svg>
+        </div>
+      </div>
+      <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+        <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
+          <div style="font-size:1.15rem;font-weight:600;color:#fff;">${routeLabel}</div>
+        </div>
+        <div style="font-size:0.85rem;color:#888;margin-top:4px;">
+          ${flow.count.toLocaleString()} articles · Avg sentiment: ${flow.avgSentiment?.toFixed(2) || "—"}
+        </div>
+      </div>
+      <div id="aggRouteArticles" style="padding:10px 0;">
+        <div style="color:#888;text-align:center;padding:20px;">Loading articles...</div>
+      </div>
+    `;
+    
+    panel.classList.add("active");
+    
+    // Close handler
+    panel.querySelector(".closePanel").onclick = () => {
+      panel.classList.remove("active");
+    };
+    
+    // Fetch articles
+    try {
+      const resp = await fetch(`https://earth-wjr6.onrender.com/api/flows?${params}`);
+      const data = await resp.json();
+      
+      const container = document.getElementById("aggRouteArticles");
+      if (!data.flows || data.flows.length === 0) {
+        container.innerHTML = `<div style="color:#888;text-align:center;padding:20px;">No articles found</div>`;
+        return;
+      }
+      
+      container.innerHTML = data.flows.map(f => `
+        <div class="aggRouteCard" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);cursor:pointer;" data-url="${f.articleUrl || ''}">
+          <div style="display:flex;gap:10px;">
+            ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;flex-shrink:0;">` : ''}
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:0.9rem;font-weight:500;color:#fff;line-height:1.3;margin-bottom:4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${f.title || '(no title)'}</div>
+              <div style="font-size:0.75rem;color:#888;">${f.sourceName || ''} · ${new Date(f.publishedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+            </div>
+          </div>
+        </div>
+      `).join('');
+      
+      // Add click handlers
+      container.querySelectorAll(".aggRouteCard").forEach(card => {
+        card.addEventListener("click", () => {
+          const url = card.dataset.url;
+          if (url) window.open(url, "_blank");
+        });
+      });
+      
+    } catch (err) {
+      console.error("Failed to load aggregate route articles:", err);
+      document.getElementById("aggRouteArticles").innerHTML = `<div style="color:#f66;text-align:center;padding:20px;">Failed to load articles</div>`;
+    }
+  }
 
   /* Stop globe interaction bubbling into flow controls */
   document.getElementById("flowControls").addEventListener("mousedown", e => e.stopPropagation());
