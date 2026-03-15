@@ -7277,6 +7277,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const mouse = new THREE.Vector2();
 
       window.addEventListener("click", event => {
+        // Skip this handler when flow mode is active
+        const flowControls = document.getElementById("flowControls");
+        if (flowControls && flowControls.classList.contains("visible")) return;
+        
         if (event.target.closest(".closePanel")) return;
         
         // If panel is active and click is outside panel, close it and don't select new node
@@ -9422,6 +9426,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const arc = createArc(flow, maxCount);
           arcObjects.push(arc);
         });
+        console.log("[AggLoad] Created", arcObjects.length, "aggregate arcs");
 
         // Update stats
         document.getElementById("aggRouteCount").textContent = data.totalRoutes || 0;
@@ -9766,9 +9771,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     let hit = false;
     for (const arc of arcObjects) {
+      arc.mesh.updateMatrixWorld(true);
+      if (!arc.mesh.geometry.boundingSphere) {
+        arc.mesh.geometry.computeBoundingSphere();
+      }
       const xs = raycasterFlow.intersectObject(arc.mesh);
       if (xs.length) {
         const flow = arc.flow;
+        
+        // SHIFT+hover opens aggregate panel
+        if (e.shiftKey && flow && flow.count) {
+          openAggregateRoutePanel(flow);
+          return;
+        }
+        
         if (flow.count) {
           // Aggregate mode tooltip
           ftTitle.textContent = `${flow.count.toLocaleString()} articles`;
@@ -9794,12 +9810,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.addEventListener("click", (e) => {
     if (!flowModeOpen) return;
     
+    // DEBUG: Log state on every click
+    console.log("[FlowClick] === CLICK DEBUG ===");
+    console.log("[FlowClick] flowMode:", flowMode);
+    console.log("[FlowClick] arcObjects.length:", arcObjects.length);
+    console.log("[FlowClick] First arc visible?", arcObjects[0]?.mesh?.visible);
+    console.log("[FlowClick] First arc has flow?", !!arcObjects[0]?.flow);
+    console.log("[FlowClick] First arc flow.count:", arcObjects[0]?.flow?.count);
+    
     mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
     mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
     raycasterFlow.setFromCamera(mousePosFlow, camera);
 
+    let hitAny = false;
     for (const arc of arcObjects) {
+      // Ensure geometry is ready for raycasting
+      arc.mesh.updateMatrixWorld(true);
+      if (!arc.mesh.geometry.boundingSphere) {
+        arc.mesh.geometry.computeBoundingSphere();
+      }
       const xs = raycasterFlow.intersectObject(arc.mesh);
+      if (xs.length) {
+        hitAny = true;
+        console.log("[FlowClick] HIT! arc.flow:", arc.flow?.src?.place, "→", arc.flow?.dst?.place, "count:", arc.flow?.count);
+      }
       if (xs.length && arc.flow) {
         const flow = arc.flow;
         
@@ -9835,6 +9869,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         break;
       }
     }
+    if (!hitAny) console.log("[FlowClick] No intersections found");
   });
 
   /* Open panel showing articles for an aggregate route */
@@ -9931,6 +9966,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* Stop globe interaction bubbling into flow controls */
   document.getElementById("flowControls").addEventListener("mousedown", e => e.stopPropagation());
   document.getElementById("flowControls").addEventListener("touchstart", e => e.stopPropagation(), {passive:true});
+
+  // DEBUG: Press 'D' to dump arc state
+  window.addEventListener("keydown", (e) => {
+    if (e.key === 'd' || e.key === 'D') {
+      console.log("=== ARC DEBUG ===");
+      console.log("flowModeOpen:", flowModeOpen);
+      console.log("flowMode:", flowMode);
+      console.log("arcObjects.length:", arcObjects.length);
+      console.log("flowGroup.children.length:", flowGroup.children.length);
+      if (arcObjects.length > 0) {
+        const arc = arcObjects[0];
+        console.log("First arc:");
+        console.log("  mesh.visible:", arc.mesh.visible);
+        console.log("  mesh.parent:", arc.mesh.parent?.type);
+        console.log("  flow:", arc.flow?.src?.place, "→", arc.flow?.dst?.place);
+        console.log("  flow.count:", arc.flow?.count);
+        console.log("  geometry.boundingSphere:", arc.mesh.geometry.boundingSphere);
+        console.log("  matrixWorld:", arc.mesh.matrixWorld.elements.slice(0, 4));
+      }
+    }
+  });
 
 })(); 
 
