@@ -1029,23 +1029,113 @@
   color: rgba(80,255,160,1);
 }
 
-/* Progress bar */
+/* Progress bar - YouTube-style with draggable thumb */
 .flowProgressWrap {
   flex: 1;
+  height: 20px;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.flowProgressTrack {
+  position: relative;
   height: 4px;
   background: rgba(255,255,255,0.08);
   border-radius: 4px;
-  overflow: hidden;
-  cursor: pointer;
-  position: relative;
+  overflow: visible;
+  transition: height 0.15s ease;
+}
+.flowProgressWrap:hover .flowProgressTrack {
+  height: 6px;
 }
 .flowProgressBar {
   height: 100%;
   background: linear-gradient(90deg, rgba(0,200,120,0.7), rgba(80,255,160,1));
   border-radius: 4px;
   width: 0%;
-  transition: width 0.1s linear;
+  transition: width 0.05s linear;
   box-shadow: 0 0 6px rgba(0,220,130,0.5);
+  position: relative;
+}
+/* Draggable thumb - hidden by default, shows on hover */
+.flowProgressThumb {
+  position: absolute;
+  right: -6px;
+  top: 50%;
+  transform: translateY(-50%) scale(0);
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 4px rgba(0,0,0,0.5), 0 0 8px rgba(0,220,130,0.6);
+  transition: transform 0.15s ease;
+  pointer-events: none;
+}
+.flowProgressWrap:hover .flowProgressThumb,
+.flowProgressWrap.dragging .flowProgressThumb {
+  transform: translateY(-50%) scale(1);
+}
+.flowProgressWrap.dragging .flowProgressThumb {
+  transform: translateY(-50%) scale(1.2);
+  box-shadow: 0 0 6px rgba(0,0,0,0.6), 0 0 12px rgba(0,220,130,0.8);
+}
+/* Date ticks container */
+.flowDateTicks {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.flowProgressWrap:hover .flowDateTicks,
+.flowProgressWrap.dragging .flowDateTicks {
+  opacity: 1;
+}
+.flowDateTick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 8px;
+  color: rgba(255,255,255,0.5);
+  letter-spacing: 0.03em;
+}
+.flowDateTick::after {
+  content: '';
+  width: 1px;
+  height: 4px;
+  background: rgba(255,255,255,0.25);
+  margin-top: 2px;
+}
+/* Current date tooltip on drag */
+.flowDateTooltip {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.85);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.9);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  z-index: 10;
+}
+.flowProgressWrap.dragging .flowDateTooltip {
+  opacity: 1;
 }
 
 /* Stats pill */
@@ -4120,7 +4210,13 @@
         <button class="flowBtn" id="flowPlayBtn">▶ Play</button>
         <button class="flowBtn" id="flowResetBtn">↺</button>
         <div class="flowProgressWrap" id="flowProgressWrap">
-          <div class="flowProgressBar" id="flowProgressBar"></div>
+          <div class="flowDateTicks" id="flowDateTicks"></div>
+          <div class="flowDateTooltip" id="flowDateTooltip"></div>
+          <div class="flowProgressTrack">
+            <div class="flowProgressBar" id="flowProgressBar">
+              <div class="flowProgressThumb"></div>
+            </div>
+          </div>
         </div>
         <span class="flowStats" id="flowStats">—</span>
       </div>
@@ -8277,6 +8373,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let colorMode       = "routing";
   let flowMode        = "individual";   // "individual" | "aggregate"
   let flowModeOpen    = false;
+  let flowDateSnapPoints = []; // Date snap points for timeline
 
   // Filter state
   let filterFromCountry = null;   // { id, name, iso }
@@ -8686,6 +8783,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     flowPlaying = false;
     seqIndex = 0; seqTimer = 0; flowProgress = 0;
     document.getElementById("flowProgressBar").style.width = "0%";
+    document.getElementById("flowDateTicks").innerHTML = "";
+    flowDateSnapPoints = [];
   }
 
   /* ── Autocomplete setup ── */
@@ -8835,6 +8934,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         flowData = (data.flows || data || []).map(remapFlowForView);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
+        
+        // Generate date ticks for the timeline
+        generateDateTicks();
       }
 
     } catch(e) {
@@ -8924,14 +9026,183 @@ const settingsToggle     = document.getElementById("settingsToggle");
     flowSpeed = parseFloat(e.target.value);
   });
 
-  document.getElementById("flowProgressWrap").addEventListener("click", (e) => {
+  /* ── Date ticks generation ── */
+  
+  function generateDateTicks() {
+    const container = document.getElementById("flowDateTicks");
+    container.innerHTML = "";
+    flowDateSnapPoints = [];
+    
+    if (!flowData.length) return;
+    
+    // Extract unique dates and their positions
+    const datePositions = new Map(); // dateStr -> { firstIndex, lastIndex }
+    
+    flowData.forEach((flow, idx) => {
+      if (!flow.publishedAt) return;
+      const d = new Date(flow.publishedAt);
+      const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      
+      if (!datePositions.has(dateStr)) {
+        datePositions.set(dateStr, { firstIndex: idx, lastIndex: idx, date: d });
+      } else {
+        datePositions.get(dateStr).lastIndex = idx;
+      }
+    });
+    
+    // Convert to array and sort by date
+    const dates = Array.from(datePositions.entries())
+      .map(([label, data]) => ({
+        label,
+        date: data.date,
+        frac: data.firstIndex / flowData.length
+      }))
+      .sort((a, b) => a.date - b.date);
+    
+    if (dates.length === 0) return;
+    
+    // Limit to ~5-7 ticks for readability
+    const maxTicks = 7;
+    let displayDates = dates;
+    if (dates.length > maxTicks) {
+      const step = Math.ceil(dates.length / maxTicks);
+      displayDates = dates.filter((_, i) => i % step === 0);
+      // Always include last date
+      if (displayDates[displayDates.length - 1] !== dates[dates.length - 1]) {
+        displayDates.push(dates[dates.length - 1]);
+      }
+    }
+    
+    // Store snap points for dragging
+    flowDateSnapPoints = dates.map(d => ({
+      frac: d.frac,
+      date: d.date,
+      label: d.label
+    }));
+    
+    // Create tick elements
+    displayDates.forEach(d => {
+      const tick = document.createElement("div");
+      tick.className = "flowDateTick";
+      tick.textContent = d.label;
+      tick.style.position = "absolute";
+      tick.style.left = (d.frac * 100) + "%";
+      tick.style.transform = "translateX(-50%)";
+      container.appendChild(tick);
+    });
+  }
+  
+  function getDateAtFrac(frac) {
+    if (!flowData.length) return null;
+    const idx = Math.floor(frac * flowData.length);
+    const flow = flowData[Math.min(idx, flowData.length - 1)];
+    if (!flow || !flow.publishedAt) return null;
+    return new Date(flow.publishedAt);
+  }
+  
+  function snapToNearestDate(frac) {
+    if (!flowDateSnapPoints.length) return frac;
+    
+    // Find nearest snap point
+    let nearest = flowDateSnapPoints[0];
+    let minDist = Math.abs(frac - nearest.frac);
+    
+    for (const sp of flowDateSnapPoints) {
+      const dist = Math.abs(frac - sp.frac);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = sp;
+      }
+    }
+    
+    // Only snap if within threshold
+    const snapThreshold = 0.05;
+    if (minDist < snapThreshold) {
+      return nearest.frac;
+    }
+    return frac;
+  }
+
+  /* ── Progress bar drag handling ── */
+  const progressWrap = document.getElementById("flowProgressWrap");
+  const progressBar = document.getElementById("flowProgressBar");
+  const dateTooltip = document.getElementById("flowDateTooltip");
+  let isDragging = false;
+  
+  function updateProgressFromEvent(e) {
     if (!flowData.length || flowMode === "aggregate") return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    
+    const rect = progressWrap.getBoundingClientRect();
+    let frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    
+    // Snap to date boundaries when dragging
+    if (isDragging) {
+      frac = snapToNearestDate(frac);
+    }
+    
     clearArcs();
     seqIndex = Math.floor(frac * flowData.length);
     seqTimer = 0;
-    document.getElementById("flowProgressBar").style.width = (frac * 100) + "%";
+    progressBar.style.width = (frac * 100) + "%";
+    
+    // Update tooltip
+    const date = getDateAtFrac(frac);
+    if (date) {
+      dateTooltip.textContent = date.toLocaleDateString("en-US", { 
+        month: "short", day: "numeric", year: "numeric" 
+      });
+      dateTooltip.style.left = (frac * 100) + "%";
+    }
+    
+    return frac;
+  }
+  
+  progressWrap.addEventListener("mousedown", (e) => {
+    if (!flowData.length || flowMode === "aggregate") return;
+    e.preventDefault();
+    isDragging = true;
+    progressWrap.classList.add("dragging");
+    updateProgressFromEvent(e);
+  });
+  
+  document.addEventListener("mousemove", (e) => {
+    if (!isDragging) return;
+    updateProgressFromEvent(e);
+  });
+  
+  document.addEventListener("mouseup", (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    progressWrap.classList.remove("dragging");
+    
+    const frac = updateProgressFromEvent(e);
+    if (frac < 1) startPlay();
+  });
+  
+  // Touch support
+  progressWrap.addEventListener("touchstart", (e) => {
+    if (!flowData.length || flowMode === "aggregate") return;
+    e.preventDefault();
+    isDragging = true;
+    progressWrap.classList.add("dragging");
+    const touch = e.touches[0];
+    updateProgressFromEvent(touch);
+  }, { passive: false });
+  
+  document.addEventListener("touchmove", (e) => {
+    if (!isDragging) return;
+    const touch = e.touches[0];
+    updateProgressFromEvent(touch);
+  });
+  
+  document.addEventListener("touchend", (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    progressWrap.classList.remove("dragging");
+    
+    // Get last position from the changed touch
+    const rect = progressWrap.getBoundingClientRect();
+    let frac = seqIndex / flowData.length;
     if (frac < 1) startPlay();
   });
 
