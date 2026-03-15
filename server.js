@@ -814,7 +814,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
     // Aggregate articles from:
     // 1. article_locations routed to this region
     // 2. articles from cities that belong to this region
-    // 3. articles from sources whose city belongs to this region (international sources)
+    // 3. articles from sources whose city belongs to this region
     const { rows } = await pool.query(`
       WITH region_articles AS (
         -- Articles routed to region via article_locations
