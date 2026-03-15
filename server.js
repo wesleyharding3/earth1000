@@ -961,6 +961,112 @@ app.get("/api/commodities", (req, res) => {
    Keyword Routes
 ========================================= */
 
+/* =========================================
+   Keyword Intelligence API
+========================================= */
+
+// GET /api/keywords/trending?days=7&limit=20&source_country=us&about_country=cn
+// Returns globally trending keywords (top by total mentions in date range)
+app.get("/api/keywords/trending", async (req, res) => {
+  const {
+    days           = 7,
+    limit          = 20,
+    source_country = null,
+    about_country  = null,
+  } = req.query;
+
+  try {
+    const params = [parseInt(days)];
+    let where = `WHERE date >= NOW() - ($1 || ' days')::INTERVAL
+                 AND source_country_id IS NULL AND about_country_id IS NULL`;
+
+    // If filtering by country, query those specific rows instead
+    if (source_country || about_country) {
+      where = `WHERE date >= NOW() - ($1 || ' days')::INTERVAL`;
+      if (source_country) {
+        params.push(source_country.toLowerCase());
+        where += ` AND source_country_id = (SELECT id FROM countries WHERE LOWER(iso_code) = $${params.length} LIMIT 1)`;
+      }
+      if (about_country) {
+        params.push(about_country.toLowerCase());
+        where += ` AND about_country_id = (SELECT id FROM countries WHERE LOWER(iso_code) = $${params.length} LIMIT 1)`;
+      }
+    }
+
+    params.push(parseInt(limit));
+    const limitIdx = params.length;
+
+    const { rows } = await pool.query(
+      `SELECT
+         keyword,
+         SUM(total_count) AS mentions,
+         COUNT(DISTINCT date) AS days_active
+       FROM keyword_daily_stats
+       ${where}
+       GROUP BY keyword
+       HAVING SUM(total_count) >= 3
+       ORDER BY mentions DESC
+       LIMIT $${limitIdx}`,
+      params
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/trending]", err.message);
+    res.status(500).json({ error: "trending failed" });
+  }
+});
+
+// GET /api/keywords/rising?days=3&baseline_days=14&limit=15
+// Returns keywords with recent spike vs baseline (momentum detection)
+app.get("/api/keywords/rising", async (req, res) => {
+  const {
+    days          = 3,    // Recent window
+    baseline_days = 14,   // Baseline comparison window
+    limit         = 15,
+  } = req.query;
+
+  try {
+    const { rows } = await pool.query(
+      `WITH recent AS (
+         SELECT keyword, SUM(total_count) AS recent_count
+         FROM keyword_daily_stats
+         WHERE date >= NOW() - ($1 || ' days')::INTERVAL
+           AND source_country_id IS NULL AND about_country_id IS NULL
+         GROUP BY keyword
+         HAVING SUM(total_count) >= 2
+       ),
+       baseline AS (
+         SELECT keyword, SUM(total_count) AS baseline_count
+         FROM keyword_daily_stats
+         WHERE date >= NOW() - ($2 || ' days')::INTERVAL
+           AND date < NOW() - ($1 || ' days')::INTERVAL
+           AND source_country_id IS NULL AND about_country_id IS NULL
+         GROUP BY keyword
+       )
+       SELECT
+         r.keyword,
+         r.recent_count,
+         COALESCE(b.baseline_count, 0) AS baseline_count,
+         CASE
+           WHEN COALESCE(b.baseline_count, 0) = 0 THEN r.recent_count * 10
+           ELSE ROUND((r.recent_count::numeric / NULLIF(b.baseline_count, 0)::numeric * ($2::numeric / $1::numeric)) * 100) / 100
+         END AS momentum
+       FROM recent r
+       LEFT JOIN baseline b ON b.keyword = r.keyword
+       WHERE r.recent_count >= 2
+       ORDER BY momentum DESC, r.recent_count DESC
+       LIMIT $3`,
+      [parseInt(days), parseInt(baseline_days), parseInt(limit)]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/rising]", err.message);
+    res.status(500).json({ error: "rising failed" });
+  }
+});
+
 // GET /api/keywords/autocomplete?q=clim
 // Returns up to 10 distinct keywords matching the prefix
 app.get("/api/keywords/autocomplete", async (req, res) => {
@@ -1110,6 +1216,46 @@ app.get("/api/keywords/cooccurrence", async (req, res) => {
   } catch (err) {
     console.error("[keywords/cooccurrence]", err.message);
     res.status(500).json({ error: "cooccurrence failed" });
+  }
+});
+
+// GET /api/keywords/articles?keyword=ukraine&days=7&limit=20
+// Returns recent articles containing the keyword
+app.get("/api/keywords/articles", async (req, res) => {
+  const { keyword, days = 7, limit = 20 } = req.query;
+  if (!keyword) return res.status(400).json({ error: "keyword required" });
+
+  try {
+    const kw = keyword.toLowerCase().trim();
+    const { rows } = await pool.query(
+      `SELECT
+         a.id,
+         COALESCE(a.translated_title, a.title) AS title,
+         COALESCE(a.translated_summary, a.summary) AS summary,
+         a.image_url,
+         a.article_url,
+         a.published_at,
+         a.sentiment_score,
+         ns.name AS source_name,
+         ns.site_url AS source_url,
+         co.name AS country_name,
+         co.iso_code,
+         ak.frequency
+       FROM article_keywords ak
+       JOIN news_articles a ON a.id = ak.article_id
+       JOIN news_sources ns ON ns.id = a.source_id
+       LEFT JOIN countries co ON co.id = a.country_id
+       WHERE ak.keyword = $1
+         AND a.published_at >= NOW() - ($2 || ' days')::INTERVAL
+       ORDER BY ak.frequency DESC, a.published_at DESC
+       LIMIT $3`,
+      [kw, parseInt(days), parseInt(limit)]
+    );
+
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/articles]", err.message);
+    res.status(500).json({ error: "articles lookup failed" });
   }
 });
 
