@@ -8361,11 +8361,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Build great-circle arc curve ── */
   function buildArcCurve(srcLat, srcLon, dstLat, dstLon) {
-    const src  = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
-    const dst  = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
-    const mid  = src.clone().add(dst).multiplyScalar(0.5);
-    const lift = GLOBE_RADIUS + ARC_HEIGHT * (src.distanceTo(dst) / (2 * GLOBE_RADIUS));
-    mid.normalize().multiplyScalar(lift);
+    const src = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
+    const dst = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
+    
+    // Calculate angular distance (dot product of normalized vectors)
+    const srcNorm = src.clone().normalize();
+    const dstNorm = dst.clone().normalize();
+    const dot = srcNorm.dot(dstNorm);
+    const angularDist = Math.acos(Math.max(-1, Math.min(1, dot))); // radians, 0 to PI
+    
+    // For nearly antipodal points (> ~150°), the simple midpoint breaks down
+    // Use a perpendicular approach vector instead
+    let mid;
+    if (dot < -0.85) {  // ~148° or more apart
+      // Find a perpendicular vector to create the arc direction
+      // Use cross product with "up" (Y-axis), or X-axis if that fails
+      let perp = new THREE.Vector3(0, 1, 0).cross(srcNorm);
+      if (perp.length() < 0.1) {
+        perp = new THREE.Vector3(1, 0, 0).cross(srcNorm);
+      }
+      perp.normalize();
+      
+      // Spherical midpoint using perpendicular rotation
+      // Rotate src toward dst by half the angle, going "over the top"
+      const halfAngle = angularDist / 2;
+      mid = srcNorm.clone()
+        .multiplyScalar(Math.cos(halfAngle))
+        .add(perp.multiplyScalar(Math.sin(halfAngle)));
+      mid.normalize();
+    } else {
+      // Standard midpoint for normal distances
+      mid = src.clone().add(dst).normalize();
+    }
+    
+    // Lift scales with angular distance — long arcs get higher lift
+    // angularDist ranges from 0 to PI, so we scale lift accordingly
+    const distanceFactor = angularDist / Math.PI; // 0 to 1
+    const baseLift = ARC_HEIGHT * (0.3 + distanceFactor * 0.7);
+    const lift = GLOBE_RADIUS + baseLift;
+    
+    mid.multiplyScalar(lift);
+    
     return new THREE.QuadraticBezierCurve3(src, mid, dst);
   }
 
