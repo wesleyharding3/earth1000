@@ -7605,15 +7605,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ‚îÄ‚îÄ Visible node list ‚îÄ‚îÄ
         function getVisibleNodes() {
-          const isCity  = currentViewMode === "city";
-          const dataArr = isCity ? cities : countries;
-          const posArr  = isCity ? positions : countryPositions;
-          if (!dataArr?.length) return [];
+          const isCity   = currentViewMode === "city";
+          const isRegion = currentViewMode === "regions";
+          
+          let dataArr, posArr, mask, gdpMask;
+          if (isRegion) {
+            dataArr = regionData;
+            posArr  = regionPositions;
+            mask    = null;
+            gdpMask = null;
+          } else if (isCity) {
+            dataArr = cities;
+            posArr  = positions;
+            mask    = cityPopMask;
+            gdpMask = cityGdpMask;
+          } else {
+            dataArr = countries;
+            posArr  = countryPositions;
+            mask    = countryPopMask;
+            gdpMask = countryGdpMask;
+          }
+          
+          if (!dataArr?.length || !posArr) return [];
           const cDir = new THREE.Vector3();
           camera.getWorldDirection(cDir).normalize();
           const quat = scene.quaternion;
-          const mask    = isCity ? cityPopMask    : countryPopMask;
-          const gdpMask = isCity ? cityGdpMask    : countryGdpMask;
           const result = [];
           for (let i = 0; i < dataArr.length; i++) {
             // Skip nodes masked by population or GDP filter
@@ -7670,14 +7686,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ‚îÄ‚îÄ Fetch a recent (‚â§3 days) English story ‚îÄ‚îÄ
         async function fetchStory(node) {
-          const isCity = currentViewMode === "city";
-          const url = isCity
-            ? `https://earth-wjr6.onrender.com/api/news/city/${node.id}?limit=20&offset=0`
-            : `https://earth-wjr6.onrender.com/api/news/country/${node.id}?limit=20&offset=0`;
+          const isCity   = currentViewMode === "city";
+          const isRegion = currentViewMode === "regions";
+          
+          let url;
+          if (isRegion) {
+            url = `https://earth-wjr6.onrender.com/api/news/region/${node.id}?feed=local&limit=20&offset=0`;
+          } else if (isCity) {
+            url = `https://earth-wjr6.onrender.com/api/news/city/${node.id}?limit=20&offset=0`;
+          } else {
+            url = `https://earth-wjr6.onrender.com/api/news/country/${node.id}?limit=20&offset=0`;
+          }
+          
           const cutoff = Date.now() - 3*24*60*60*1000;
           try {
-            const articles = await fetch(url).then(r => r.json());
-            if (!Array.isArray(articles)) return null;
+            const data = await fetch(url).then(r => r.json());
+            // Handle both array format and { articles: [] } format
+            const articles = Array.isArray(data) ? data : (data.articles || []);
+            if (!articles.length) return null;
             const recent = articles.filter(a => a.published_at && new Date(a.published_at).getTime() > cutoff);
             if (!recent.length) return null;
             const scored = recent.map(a => {
@@ -7832,10 +7858,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // Fill card content
           const isCity   = currentViewMode === "city";
-          const nodeName = isCity && node.country && node.name !== node.country
-            ? `${node.name}, ${node.country}` : node.name;
+          const isRegion = currentViewMode === "regions";
+          
+          let nodeName, nodeFlag;
+          if (isRegion) {
+            // For regions: show region name, then city/country from article
+            const cityCountry = article.city_name && article.country_name 
+              ? `${article.city_name}, ${article.country_name}`
+              : (article.city_name || article.country_name || "");
+            nodeName = cityCountry ? `${node.name} · ${cityCountry}` : node.name;
+            nodeFlag = ""; // regions don't have flags
+          } else if (isCity && node.country && node.name !== node.country) {
+            nodeName = `${node.name}, ${node.country}`;
+            nodeFlag = node.flag || "";
+          } else {
+            nodeName = node.name;
+            nodeFlag = node.flag || "";
+          }
+          
           document.getElementById("ahNodeLabel").textContent  = nodeName;
-          document.getElementById("ahFlagEl").textContent     = node.flag || "";
+          document.getElementById("ahFlagEl").textContent     = nodeFlag;
           document.getElementById("ahSource").textContent     = article.source_name || "";
           document.getElementById("ahHeadlineEl").textContent = "";
           document.getElementById("ahDateEl").textContent     = new Date(article.published_at)
@@ -7845,12 +7887,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // Step 1: draw connector line
           const isCity2   = currentViewMode === "city";
-          const posArr2   = isCity2 ? positions : countryPositions;
-          const nodeIndex = (isCity2 ? cities : countries).indexOf(node);
+          const isRegion2 = currentViewMode === "regions";
+          let posArr2, nodeIndex;
+          if (isRegion2) {
+            posArr2   = regionPositions;
+            nodeIndex = regionData.indexOf(node);
+          } else if (isCity2) {
+            posArr2   = positions;
+            nodeIndex = cities.indexOf(node);
+          } else {
+            posArr2   = countryPositions;
+            nodeIndex = countries.indexOf(node);
+          }
           let trackRaf    = null;
 
           function trackNode() {
             if (!card.classList.contains("ahVisible") && !line.classList.contains("drawn")) return;
+            if (!posArr2 || nodeIndex < 0) return; // safety guard
             const wv = new THREE.Vector3(
               posArr2[nodeIndex*3], posArr2[nodeIndex*3+1], posArr2[nodeIndex*3+2]
             ).applyQuaternion(scene.quaternion);
