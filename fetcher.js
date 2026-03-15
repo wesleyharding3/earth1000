@@ -31,7 +31,7 @@ function cleanText(text) {
   return text?.replace(/<[^>]*>/g, "").trim();
 }
 
-function truncateAtWord(text, limit = 250) {
+function truncateAtWord(text, limit = 500) {
   if (!text || text.length <= limit) return text;
   const truncated = text.substring(0, limit);
   const lastSpace = truncated.lastIndexOf(" ");
