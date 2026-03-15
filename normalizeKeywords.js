@@ -130,31 +130,23 @@ async function translateKeywords() {
   console.log('  TRANSLATING KEYWORDS');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // Step 1: Get already translated keywords (fast, small table)
+  // Get already translated keywords (fast, small table)
   console.log('Loading already-translated keywords...');
   const { rows: doneRows } = await pool.query(`SELECT original_keyword FROM keyword_translations`);
   const doneSet = new Set(doneRows.map(r => r.original_keyword));
   console.log(`  Already translated: ${doneSet.size.toLocaleString()}`);
 
-  // Step 2: Get ALL high-frequency keywords (no regex in SQL)
-  console.log('Loading high-frequency keywords...');
-  const { rows: allKeywords } = await pool.query(`
-    SELECT keyword, SUM(total_count)::integer AS mentions
-    FROM keyword_daily_stats
-    WHERE source_country_id IS NULL 
-      AND about_country_id IS NULL
-    GROUP BY keyword
-    HAVING SUM(total_count) >= $1
-    ORDER BY mentions DESC
-  `, [CONFIG.MIN_OCCURRENCES]);
-  console.log(`  Found: ${allKeywords.length.toLocaleString()} high-frequency keywords`);
+  // Get distinct keywords - no filtering in SQL (regex is slow on 3GB table)
+  console.log('Loading distinct keywords (may take 1-2 min on 3GB table)...');
+  const { rows: allKeywords } = await pool.query(`SELECT DISTINCT keyword FROM keyword_daily_stats`);
+  console.log(`  Found: ${allKeywords.length.toLocaleString()} distinct keywords`);
 
-  // Step 3: Filter in JS - non-ASCII and not already done (fast!)
+  // Filter in JS: non-ASCII and not already done (instant)
   const nonAsciiRegex = /[^\x00-\x7F]/;
   const toTranslate = allKeywords.filter(r => 
     nonAsciiRegex.test(r.keyword) && !doneSet.has(r.keyword)
   );
-  console.log(`Keywords to translate: ${toTranslate.length.toLocaleString()}`);
+  console.log(`  Non-ASCII to translate: ${toTranslate.length.toLocaleString()}`);
   
   if (toTranslate.length === 0) {
     console.log('Nothing to translate!');
@@ -163,39 +155,31 @@ async function translateKeywords() {
 
   let translated = 0;
   let errors = 0;
-  
-  // Process in batches
-  for (let i = 0; i < toTranslate.length; i += CONFIG.BATCH_SIZE) {
-    const batch = toTranslate.slice(i, i + CONFIG.BATCH_SIZE);
-    
-    for (const row of batch) {
-      const keyword = row.keyword;
-      try {
-        // DeepL auto-detects source language
-        const normalized = await translateText(keyword, 'EN-US');
+
+  for (let i = 0; i < toTranslate.length; i++) {
+    const keyword = toTranslate[i].keyword;
+    try {
+      const normalized = await translateText(keyword, 'EN-US');
+      
+      if (normalized && normalized.trim()) {
+        await pool.query(`
+          INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+          VALUES ($1, $2)
+          ON CONFLICT (original_keyword) DO UPDATE
+          SET normalized_keyword = EXCLUDED.normalized_keyword
+        `, [keyword, normalized.toLowerCase().trim()]);
         
-        if (normalized && normalized.trim()) {
-          await pool.query(`
-            INSERT INTO keyword_translations (original_keyword, normalized_keyword)
-            VALUES ($1, $2)
-            ON CONFLICT (original_keyword) DO UPDATE
-            SET normalized_keyword = EXCLUDED.normalized_keyword
-          `, [keyword, normalized.toLowerCase().trim()]);
-          
-          translated++;
-        }
-      } catch (err) {
-        errors++;
-        if (errors <= 5) {
-          console.warn(`  Error translating "${keyword}": ${err.message}`);
-        }
+        translated++;
+      }
+    } catch (err) {
+      errors++;
+      if (errors <= 5) {
+        console.warn(`  Error translating "${keyword}": ${err.message}`);
       }
     }
-    
-    process.stdout.write(`  Progress: ${Math.min(i + CONFIG.BATCH_SIZE, toTranslate.length)}/${toTranslate.length} (${translated} translated, ${errors} errors)\r`);
-    
-    if (i + CONFIG.BATCH_SIZE < toTranslate.length) {
-      await sleep(CONFIG.BATCH_PAUSE_MS);
+
+    if (i % 100 === 0 || i === toTranslate.length - 1) {
+      process.stdout.write(`  Progress: ${i + 1}/${toTranslate.length} (${translated} translated, ${errors} errors)\r`);
     }
   }
 
