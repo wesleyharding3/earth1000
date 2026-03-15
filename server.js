@@ -430,56 +430,255 @@ app.get("/api/news/search", async (req, res) => {
 });
 
 /* =========================================
-   Flows — aggregated by country
+   Flows — Enhanced with filters + aggregate mode
+   
+   Query params:
+     mode         = 'individual' (default) | 'aggregate'
+     from_date    = YYYY-MM-DD
+     to_date      = YYYY-MM-DD
+     from_country = country ID (source)
+     from_city    = city ID (source)
+     about_country= country ID (destination)
+     about_city   = city ID (destination)
+     keyword      = text search in title/summary
+     limit        = max results (default 500, max 2000 for aggregate)
 ========================================= */
 app.get("/api/flows", async (req, res) => {
   try {
-    const from  = req.query.from  || null;
-    const to    = req.query.to    || null;
-    const limit = Math.min(parseInt(req.query.limit) || 300, 500);
+    const mode = req.query.mode || "individual";
+    const maxLimit = mode === "aggregate" ? 2000 : 1000;
+    const limit = Math.min(parseInt(req.query.limit) || 500, maxLimit);
 
-    const { rows } = await pool.query(`
-      SELECT
-        a.id,
-        a.translated_title                    AS title,
-        a.published_at                        AS "publishedAt",
-        a.sentiment_score                     AS sentiment,
-        ns.name                               AS "sourceName",
-        al.routing_type                       AS "routingType",
-        src_co.latitude                       AS src_lat,
-        src_co.longitude                      AS src_lon,
-        src_co.name                           AS src_place,
-        dst_co.latitude                       AS dst_lat,
-        dst_co.longitude                      AS dst_lon,
-        dst_co.name                           AS dst_place
-      FROM article_locations al
-      JOIN news_articles  a      ON a.id      = al.article_id
-      JOIN news_sources   ns     ON ns.id     = a.source_id
-      LEFT JOIN languages  l  ON l.id = ns.language_id
-      JOIN countries      src_co ON src_co.id = a.country_id
-      JOIN countries      dst_co ON dst_co.id = al.country_id
-      WHERE al.routing_type IN ('content', 'source')
-        AND src_co.id != dst_co.id
-        AND ($1::date IS NULL OR a.published_at >= $1::date)
-        AND ($2::date IS NULL OR a.published_at <  $2::date + interval '1 day')
-      ORDER BY a.published_at DESC
-      LIMIT $3
-    `, [from, to, limit]);
+    // Parse filters (support legacy param names too)
+    const fromDate     = req.query.from_date?.trim()    || req.query.from?.trim() || null;
+    const toDate       = req.query.to_date?.trim()      || req.query.to?.trim()   || null;
+    const fromCountry  = req.query.from_country         ? parseInt(req.query.from_country) : null;
+    const fromCity     = req.query.from_city            ? parseInt(req.query.from_city)    : null;
+    const aboutCountry = req.query.about_country        ? parseInt(req.query.about_country): null;
+    const aboutCity    = req.query.about_city           ? parseInt(req.query.about_city)   : null;
+    const keyword      = req.query.keyword?.trim()      || null;
 
-    const flows = rows.map(r => ({
-      title:       r.title,
-      publishedAt: r.publishedAt,
-      sentiment:   r.sentiment,
-      sourceName:  r.sourceName,
-      routingType: r.routingType,
-      src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon), place: r.src_place },
-      dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon), place: r.dst_place },
-    }));
+    // Build dynamic WHERE conditions
+    const conditions = [];
+    const params = [];
 
-    res.json(flows);
+    // Always: must have routing
+    conditions.push(`al.routing_type IN ('content', 'source')`);
+
+    // Date filters
+    if (fromDate) {
+      params.push(fromDate);
+      conditions.push(`a.published_at >= $${params.length}::date`);
+    }
+    if (toDate) {
+      params.push(toDate);
+      conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`);
+    }
+
+    // Source location filters (from news_articles.country_id / city_id)
+    if (fromCountry) {
+      params.push(fromCountry);
+      conditions.push(`a.country_id = $${params.length}`);
+    }
+    if (fromCity) {
+      params.push(fromCity);
+      conditions.push(`a.city_id = $${params.length}`);
+    }
+
+    // Destination location filters (from article_locations)
+    if (aboutCountry) {
+      params.push(aboutCountry);
+      conditions.push(`al.country_id = $${params.length}`);
+    }
+    if (aboutCity) {
+      params.push(aboutCity);
+      conditions.push(`al.city_id = $${params.length}`);
+    }
+
+    // Keyword filter
+    if (keyword) {
+      params.push(`%${keyword}%`);
+      conditions.push(`(
+        COALESCE(a.translated_title, a.title) ILIKE $${params.length}
+        OR COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
+      )`);
+    }
+
+    // Exclude same-location flows (src country = dst country AND no city differentiation)
+    conditions.push(`(
+      a.country_id != al.country_id
+      OR (a.city_id IS NOT NULL AND al.city_id IS NOT NULL AND a.city_id != al.city_id)
+      OR (a.city_id IS NOT NULL AND al.city_id IS NULL)
+      OR (a.city_id IS NULL AND al.city_id IS NOT NULL)
+    )`);
+
+    const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+
+    if (mode === "aggregate") {
+      // ─────────────────────────────────────────
+      // AGGREGATE MODE: Group by src/dst, return counts
+      // ─────────────────────────────────────────
+      params.push(limit);
+      const limitParam = params.length;
+
+      const { rows } = await pool.query(`
+        WITH flow_counts AS (
+          SELECT
+            COALESCE(a.city_id, 0)                     AS src_city_id,
+            a.country_id                               AS src_country_id,
+            COALESCE(al.city_id, 0)                    AS dst_city_id,
+            al.country_id                              AS dst_country_id,
+            COUNT(*)                                   AS flow_count,
+            AVG(a.sentiment_score)                     AS avg_sentiment,
+            COUNT(*) FILTER (WHERE al.routing_type = 'source')  AS source_routes,
+            COUNT(*) FILTER (WHERE al.routing_type = 'content') AS content_routes
+          FROM article_locations al
+          JOIN news_articles a ON a.id = al.article_id
+          ${whereClause}
+          GROUP BY 
+            COALESCE(a.city_id, 0),
+            a.country_id,
+            COALESCE(al.city_id, 0),
+            al.country_id
+        )
+        SELECT
+          fc.flow_count,
+          fc.avg_sentiment,
+          fc.source_routes,
+          fc.content_routes,
+          CASE WHEN fc.src_city_id > 0 THEN src_city.latitude ELSE src_co.latitude END AS src_lat,
+          CASE WHEN fc.src_city_id > 0 THEN src_city.longitude ELSE src_co.longitude END AS src_lon,
+          CASE WHEN fc.src_city_id > 0 THEN src_city.name ELSE src_co.name END AS src_place,
+          CASE WHEN fc.src_city_id > 0 THEN fc.src_city_id ELSE fc.src_country_id END AS src_id,
+          CASE WHEN fc.src_city_id > 0 THEN 'city' ELSE 'country' END AS src_type,
+          src_co.iso_code AS src_iso,
+          CASE WHEN fc.dst_city_id > 0 THEN dst_city.latitude ELSE dst_co.latitude END AS dst_lat,
+          CASE WHEN fc.dst_city_id > 0 THEN dst_city.longitude ELSE dst_co.longitude END AS dst_lon,
+          CASE WHEN fc.dst_city_id > 0 THEN dst_city.name ELSE dst_co.name END AS dst_place,
+          CASE WHEN fc.dst_city_id > 0 THEN fc.dst_city_id ELSE fc.dst_country_id END AS dst_id,
+          CASE WHEN fc.dst_city_id > 0 THEN 'city' ELSE 'country' END AS dst_type,
+          dst_co.iso_code AS dst_iso,
+          MAX(fc.flow_count) OVER() AS max_count,
+          SUM(fc.flow_count) OVER() AS total_articles
+        FROM flow_counts fc
+        JOIN countries src_co ON src_co.id = fc.src_country_id
+        JOIN countries dst_co ON dst_co.id = fc.dst_country_id
+        LEFT JOIN cities src_city ON src_city.id = fc.src_city_id
+        LEFT JOIN cities dst_city ON dst_city.id = fc.dst_city_id
+        ORDER BY fc.flow_count DESC
+        LIMIT $${limitParam}
+      `, params);
+
+      const maxCount = rows.length ? parseInt(rows[0].max_count) : 1;
+      const totalArticles = rows.length ? parseInt(rows[0].total_articles) : 0;
+
+      const flows = rows.map(r => ({
+        src: {
+          lat: parseFloat(r.src_lat),
+          lon: parseFloat(r.src_lon),
+          place: r.src_place,
+          id: r.src_id,
+          type: r.src_type,
+          iso: r.src_iso
+        },
+        dst: {
+          lat: parseFloat(r.dst_lat),
+          lon: parseFloat(r.dst_lon),
+          place: r.dst_place,
+          id: r.dst_id,
+          type: r.dst_type,
+          iso: r.dst_iso
+        },
+        count: parseInt(r.flow_count),
+        avgSentiment: r.avg_sentiment ? parseFloat(r.avg_sentiment) : null,
+        routingBreakdown: {
+          source: parseInt(r.source_routes),
+          content: parseInt(r.content_routes)
+        }
+      }));
+
+      res.json({
+        mode: "aggregate",
+        totalRoutes: flows.length,
+        totalArticles,
+        maxCount,
+        flows
+      });
+
+    } else {
+      // ─────────────────────────────────────────
+      // INDIVIDUAL MODE: Return each article as a flow
+      // ─────────────────────────────────────────
+      params.push(limit);
+      const limitParam = params.length;
+
+      const { rows } = await pool.query(`
+        SELECT
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.published_at                        AS "publishedAt",
+          a.sentiment_score                     AS sentiment,
+          ns.name                               AS "sourceName",
+          al.routing_type                       AS "routingType",
+          COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
+          COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
+          COALESCE(src_city.name, src_co.name)           AS src_place,
+          CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
+          CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+          src_co.iso_code AS src_iso,
+          COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
+          COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
+          COALESCE(dst_city.name, dst_co.name)           AS dst_place,
+          CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
+          CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
+          dst_co.iso_code AS dst_iso
+        FROM article_locations al
+        JOIN news_articles a   ON a.id = al.article_id
+        JOIN news_sources ns   ON ns.id = a.source_id
+        JOIN countries src_co  ON src_co.id = a.country_id
+        JOIN countries dst_co  ON dst_co.id = al.country_id
+        LEFT JOIN cities src_city ON src_city.id = a.city_id
+        LEFT JOIN cities dst_city ON dst_city.id = al.city_id
+        ${whereClause}
+        ORDER BY a.published_at DESC
+        LIMIT $${limitParam}
+      `, params);
+
+      const flows = rows.map(r => ({
+        id: r.id,
+        title: r.title,
+        publishedAt: r.publishedAt,
+        sentiment: r.sentiment,
+        sourceName: r.sourceName,
+        routingType: r.routingType,
+        src: {
+          lat: parseFloat(r.src_lat),
+          lon: parseFloat(r.src_lon),
+          place: r.src_place,
+          id: r.src_id,
+          type: r.src_type,
+          iso: r.src_iso
+        },
+        dst: {
+          lat: parseFloat(r.dst_lat),
+          lon: parseFloat(r.dst_lon),
+          place: r.dst_place,
+          id: r.dst_id,
+          type: r.dst_type,
+          iso: r.dst_iso
+        }
+      }));
+
+      res.json({
+        mode: "individual",
+        total: flows.length,
+        flows
+      });
+    }
+
   } catch (err) {
     console.error("Flows error:", err.message);
-    res.status(500).json({ error: "Failed to fetch flows" });
+    res.status(500).json({ error: "Failed to fetch flows", detail: err.message });
   }
 });
 
