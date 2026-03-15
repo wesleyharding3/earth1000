@@ -1035,7 +1035,6 @@
   height: 4px;
   background: rgba(255,255,255,0.08);
   border-radius: 4px;
-  overflow: hidden;
   cursor: pointer;
   position: relative;
 }
@@ -1046,6 +1045,75 @@
   width: 0%;
   transition: width 0.1s linear;
   box-shadow: 0 0 6px rgba(0,220,130,0.5);
+  pointer-events: none;
+}
+
+/* Scrubber thumb */
+.flowScrubber {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  transform: translate(-50%, -50%);
+  width: 14px;
+  height: 14px;
+  background: rgba(80,255,160,1);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(0,220,130,0.7), 0 2px 4px rgba(0,0,0,0.3);
+  z-index: 5;
+  transition: transform 0.1s, box-shadow 0.15s;
+}
+.flowScrubber:hover {
+  transform: translate(-50%, -50%) scale(1.15);
+  box-shadow: 0 0 12px rgba(0,220,130,0.9), 0 2px 6px rgba(0,0,0,0.4);
+}
+.flowScrubber.dragging {
+  cursor: grabbing;
+  transform: translate(-50%, -50%) scale(1.25);
+  box-shadow: 0 0 16px rgba(0,220,130,1), 0 2px 8px rgba(0,0,0,0.5);
+}
+
+/* Day tick marks */
+.flowDayTicks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  pointer-events: none;
+}
+.flowDayTick {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 10px;
+  background: rgba(255,255,255,0.25);
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+/* Scrubber tooltip */
+.flowScrubberTip {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(5,7,10,0.95);
+  border: 1px solid rgba(0,220,130,0.4);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 10px;
+  color: rgba(80,255,160,0.95);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 10;
+}
+.flowScrubber:hover .flowScrubberTip,
+.flowScrubber.dragging .flowScrubberTip {
+  opacity: 1;
 }
 
 /* Stats pill */
@@ -4121,6 +4189,10 @@
         <button class="flowBtn" id="flowResetBtn">↺</button>
         <div class="flowProgressWrap" id="flowProgressWrap">
           <div class="flowProgressBar" id="flowProgressBar"></div>
+          <div class="flowDayTicks" id="flowDayTicks"></div>
+          <div class="flowScrubber" id="flowScrubber">
+            <div class="flowScrubberTip" id="flowScrubberTip">—</div>
+          </div>
         </div>
         <span class="flowStats" id="flowStats">—</span>
       </div>
@@ -8283,6 +8355,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let filterAboutCountry = null;
   let countriesCache = [];
 
+  // Day-based scrubbing state
+  let dayBoundaries = [];  // [{startIndex, endIndex, date, label}, ...]
+  let isDragging = false;
+
   /* ── Groups ── */
   const flowGroup     = new THREE.Group();
   const particleGroup = new THREE.Group();
@@ -8603,6 +8679,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     flowProgress = seqIndex / flowData.length;
     document.getElementById("flowProgressBar").style.width = (flowProgress * 100) + "%";
+    updateScrubber(seqIndex);
 
     if (seqIndex >= flowData.length && !arcObjects.length) {
       flowPlaying = false;
@@ -8835,12 +8912,113 @@ const settingsToggle     = document.getElementById("settingsToggle");
         flowData = (data.flows || data || []).map(remapFlowForView);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
+        
+        // Calculate day boundaries for scrubber snapping
+        calculateDayBoundaries();
+        renderDayTicks();
+        updateScrubber(0);
       }
 
     } catch(e) {
       console.error("Flow load error:", e);
       document.getElementById("flowStats").textContent = "Error loading data";
     }
+  }
+
+  /* ── Day boundary calculation ── */
+  function calculateDayBoundaries() {
+    dayBoundaries = [];
+    if (!flowData.length) return;
+
+    let currentDay = null;
+    let startIndex = 0;
+
+    flowData.forEach((flow, i) => {
+      const date = new Date(flow.publishedAt);
+      const dayKey = date.toISOString().slice(0, 10); // YYYY-MM-DD
+
+      if (dayKey !== currentDay) {
+        if (currentDay !== null) {
+          dayBoundaries.push({
+            startIndex,
+            endIndex: i - 1,
+            date: currentDay,
+            label: formatDayLabel(currentDay)
+          });
+        }
+        currentDay = dayKey;
+        startIndex = i;
+      }
+    });
+
+    // Don't forget the last day
+    if (currentDay !== null) {
+      dayBoundaries.push({
+        startIndex,
+        endIndex: flowData.length - 1,
+        date: currentDay,
+        label: formatDayLabel(currentDay)
+      });
+    }
+  }
+
+  function formatDayLabel(dateStr) {
+    const d = new Date(dateStr + "T00:00:00");
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  }
+
+  /* ── Render day tick marks ── */
+  function renderDayTicks() {
+    const container = document.getElementById("flowDayTicks");
+    container.innerHTML = "";
+    
+    if (!flowData.length || dayBoundaries.length <= 1) return;
+
+    dayBoundaries.forEach((day, i) => {
+      if (i === 0) return; // Skip first tick at 0%
+      const pct = (day.startIndex / flowData.length) * 100;
+      const tick = document.createElement("div");
+      tick.className = "flowDayTick";
+      tick.style.left = pct + "%";
+      container.appendChild(tick);
+    });
+  }
+
+  /* ── Update scrubber position and tooltip ── */
+  function updateScrubber(index) {
+    if (!flowData.length) return;
+    
+    const pct = (index / flowData.length) * 100;
+    const scrubber = document.getElementById("flowScrubber");
+    const tip = document.getElementById("flowScrubberTip");
+    
+    scrubber.style.left = pct + "%";
+    
+    // Find current day
+    const day = dayBoundaries.find(d => index >= d.startIndex && index <= d.endIndex);
+    tip.textContent = day ? day.label : "—";
+  }
+
+  /* ── Snap index to nearest day boundary ── */
+  function snapToDay(index) {
+    if (!dayBoundaries.length) return index;
+    
+    // Find which day this index falls into
+    for (const day of dayBoundaries) {
+      if (index >= day.startIndex && index <= day.endIndex) {
+        return day.startIndex;
+      }
+    }
+    
+    // If beyond all days, snap to last day
+    return dayBoundaries[dayBoundaries.length - 1].startIndex;
+  }
+
+  /* ── Get day index from mouse position ── */
+  function getDayFromPosition(e, rect) {
+    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const rawIndex = Math.floor(frac * flowData.length);
+    return snapToDay(rawIndex);
   }
 
   /* ── Date defaults ── */
@@ -8918,21 +9096,97 @@ const settingsToggle     = document.getElementById("settingsToggle");
     clearArcs(); seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
     document.getElementById("flowPlayBtn").textContent = "▶ Play";
     document.getElementById("flowProgressBar").style.width = "0%";
+    updateScrubber(0);
   });
 
   document.getElementById("flowSpeed").addEventListener("input", (e) => {
     flowSpeed = parseFloat(e.target.value);
   });
 
-  document.getElementById("flowProgressWrap").addEventListener("click", (e) => {
+  /* ── Scrubber drag functionality ── */
+  const scrubber = document.getElementById("flowScrubber");
+  const progressWrap = document.getElementById("flowProgressWrap");
+
+  function handleScrubStart(e) {
     if (!flowData.length || flowMode === "aggregate") return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    e.preventDefault();
+    e.stopPropagation();
+    isDragging = true;
+    scrubber.classList.add("dragging");
+    
+    // Pause playback while dragging
+    flowPlaying = false;
+    document.getElementById("flowPlayBtn").textContent = "▶ Play";
+    
+    handleScrubMove(e);
+  }
+
+  function handleScrubMove(e) {
+    if (!isDragging || !flowData.length) return;
+    
+    const rect = progressWrap.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const newIndex = getDayFromPosition({ clientX }, rect);
+    
+    // Update visuals
+    const pct = (newIndex / flowData.length) * 100;
+    document.getElementById("flowProgressBar").style.width = pct + "%";
+    updateScrubber(newIndex);
+  }
+
+  function handleScrubEnd(e) {
+    if (!isDragging) return;
+    isDragging = false;
+    scrubber.classList.remove("dragging");
+    
+    if (!flowData.length) return;
+    
+    const rect = progressWrap.getBoundingClientRect();
+    const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+    const newIndex = getDayFromPosition({ clientX }, rect);
+    
+    // Jump to the new position
     clearArcs();
-    seqIndex = Math.floor(frac * flowData.length);
+    seqIndex = newIndex;
     seqTimer = 0;
-    document.getElementById("flowProgressBar").style.width = (frac * 100) + "%";
-    if (frac < 1) startPlay();
+    
+    const pct = (newIndex / flowData.length) * 100;
+    document.getElementById("flowProgressBar").style.width = pct + "%";
+    updateScrubber(newIndex);
+    
+    // Auto-play from new position
+    if (newIndex < flowData.length) {
+      startPlay();
+    }
+  }
+
+  // Mouse events
+  scrubber.addEventListener("mousedown", handleScrubStart);
+  document.addEventListener("mousemove", handleScrubMove);
+  document.addEventListener("mouseup", handleScrubEnd);
+
+  // Touch events
+  scrubber.addEventListener("touchstart", handleScrubStart, { passive: false });
+  document.addEventListener("touchmove", handleScrubMove, { passive: true });
+  document.addEventListener("touchend", handleScrubEnd);
+
+  // Click on track to jump to day
+  progressWrap.addEventListener("click", (e) => {
+    if (isDragging || !flowData.length || flowMode === "aggregate") return;
+    if (e.target === scrubber || scrubber.contains(e.target)) return;
+    
+    const rect = progressWrap.getBoundingClientRect();
+    const newIndex = getDayFromPosition(e, rect);
+    
+    clearArcs();
+    seqIndex = newIndex;
+    seqTimer = 0;
+    
+    const pct = (newIndex / flowData.length) * 100;
+    document.getElementById("flowProgressBar").style.width = pct + "%";
+    updateScrubber(newIndex);
+    
+    if (newIndex < flowData.length) startPlay();
   });
 
   /* Color mode pills */
