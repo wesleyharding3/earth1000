@@ -6177,12 +6177,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (regionHoverEraseTimer) { clearTimeout(regionHoverEraseTimer); regionHoverEraseTimer = null; }
               card.classList.remove("hcErase");
               card.classList.remove("hcVisible");
+              const storyCount = r.story_count ? parseInt(r.story_count) : 0;
               card.innerHTML = `
                 <div class="hoverCardName">
                   <div class="hoverCardDot" style="background:${r.color || '#ffffff'}"></div>
                   ${r.name}
                 </div>
-                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}`;
+                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}
+                <div class="hoverCardPop" style="margin-top:2px;">${storyCount} ${storyCount === 1 ? 'story' : 'stories'}</div>`;
               positionHoverCard(card, lineEl, sx, sy);
               card.classList.add("hcVisible");
               lineEl.style.opacity = "1";
@@ -6429,30 +6431,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
         card.classList.remove("hcErase");
         card.classList.remove("hcVisible");
-        
-        // For cities with region: show region as title, then "city, country"
-        // For countries or cities without region: show name as title, country below
-        const hasRegion = node.region && node.region !== node.name;
         const showCountryLine = node.country && node.name !== node.country;
-        
-        let titleText, subtitleText;
-        if (hasRegion) {
-          // City with region: Region is title, "City, Country" is subtitle
-          titleText = node.region;
-          subtitleText = showCountryLine ? `${node.name}, ${node.country}` : node.name;
-        } else {
-          // Country or city without region: Name is title, country is subtitle
-          titleText = node.name;
-          subtitleText = showCountryLine ? node.country : null;
-        }
-        
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
-            ${node.flag && !hasRegion ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
-            ${titleText}
+            ${node.flag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
+            ${node.name}
           </div>
-          ${subtitleText ? `<div class="hoverCardCountry">${node.flag && hasRegion ? `<span style="font-size:11px;margin-right:4px;">${node.flag}</span>` : ""}${subtitleText}</div>` : ""}
+          ${showCountryLine ? `<div class="hoverCardCountry">${node.country}</div>` : ""}
           <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
@@ -7226,6 +7212,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panel = document.getElementById("infoPanel");
         const popFormatted = region.population ? formatPopulation(region.population) : null;
         const accentColor = region.color || "#6699cc";
+        const storyCount = region.story_count ? parseInt(region.story_count) : 0;
 
         panel.innerHTML = `
           <div id="panelResizeHandle">
@@ -7241,7 +7228,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div style="width:14px;height:14px;border-radius:50%;background:${accentColor};flex-shrink:0;"></div>
               <div style="min-width:0;">
                 <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${region.name}</h2>
-                ${popFormatted ? `<div style="margin-top:3px;font-size:12px;opacity:0.55;letter-spacing:0.04em;">Population ${popFormatted}</div>` : ""}
+                <div style="margin-top:3px;font-size:12px;opacity:0.55;letter-spacing:0.04em;">
+                  ${popFormatted ? `Population ${popFormatted}` : ""}${popFormatted && storyCount ? " · " : ""}${storyCount ? `${storyCount} ${storyCount === 1 ? 'story' : 'stories'}` : ""}
+                </div>
               </div>
             </div>
           </div>
@@ -7335,8 +7324,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const url = `https://earth-wjr6.onrender.com/api/news/region/${region.id}?feed=${currentFeed}&limit=${limit}&offset=${offset}`;
           fetch(url)
             .then(res => res.ok ? res.json() : Promise.reject(res.status))
-            .then(articles => {
-              if (!Array.isArray(articles) || (!articles.length && offset === 0)) { hasMore = false; loading = false; renderCards(); return; }
+            .then(data => {
+              // Handle both old array format and new { articles, total } format
+              const articles = Array.isArray(data) ? data : (data.articles || []);
+              if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
               if (articles.length < limit) hasMore = false;
               allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
             })
