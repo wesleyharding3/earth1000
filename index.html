@@ -8364,45 +8364,70 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const src = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
     const dst = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
     
-    // Calculate angular distance (dot product of normalized vectors)
+    // Calculate angular distance
     const srcNorm = src.clone().normalize();
     const dstNorm = dst.clone().normalize();
-    const dot = srcNorm.dot(dstNorm);
-    const angularDist = Math.acos(Math.max(-1, Math.min(1, dot))); // radians, 0 to PI
+    const dot = Math.max(-1, Math.min(1, srcNorm.dot(dstNorm)));
+    const angularDist = Math.acos(dot); // 0 to PI radians
     
-    // For nearly antipodal points (> ~150°), the simple midpoint breaks down
-    // Use a perpendicular approach vector instead
-    let mid;
-    if (dot < -0.85) {  // ~148° or more apart
-      // Find a perpendicular vector to create the arc direction
-      // Use cross product with "up" (Y-axis), or X-axis if that fails
-      let perp = new THREE.Vector3(0, 1, 0).cross(srcNorm);
-      if (perp.length() < 0.1) {
-        perp = new THREE.Vector3(1, 0, 0).cross(srcNorm);
-      }
-      perp.normalize();
-      
-      // Spherical midpoint using perpendicular rotation
-      // Rotate src toward dst by half the angle, going "over the top"
-      const halfAngle = angularDist / 2;
-      mid = srcNorm.clone()
-        .multiplyScalar(Math.cos(halfAngle))
-        .add(perp.multiplyScalar(Math.sin(halfAngle)));
-      mid.normalize();
-    } else {
-      // Standard midpoint for normal distances
-      mid = src.clone().add(dst).normalize();
+    // For very short arcs, just use simple quadratic
+    if (angularDist < 0.3) {
+      const mid = src.clone().add(dst).normalize();
+      const lift = GLOBE_RADIUS + ARC_HEIGHT * 0.3;
+      mid.multiplyScalar(lift);
+      return new THREE.QuadraticBezierCurve3(src, mid, dst);
     }
     
-    // Lift scales with angular distance — long arcs get higher lift
-    // angularDist ranges from 0 to PI, so we scale lift accordingly
-    const distanceFactor = angularDist / Math.PI; // 0 to 1
-    const baseLift = ARC_HEIGHT * (0.3 + distanceFactor * 0.7);
-    const lift = GLOBE_RADIUS + baseLift;
+    // For longer arcs, sample points along a true spherical arc
+    // This prevents the curve from dipping inside the globe
+    const numPoints = Math.max(5, Math.ceil(angularDist * 6)); // More points for longer arcs
+    const points = [];
     
-    mid.multiplyScalar(lift);
+    // Cross product gives us the rotation axis
+    const axis = srcNorm.clone().cross(dstNorm);
     
-    return new THREE.QuadraticBezierCurve3(src, mid, dst);
+    // Handle near-antipodal case (axis is near-zero)
+    if (axis.length() < 0.001) {
+      // Pick an arbitrary perpendicular axis
+      axis.set(0, 1, 0).cross(srcNorm);
+      if (axis.length() < 0.001) {
+        axis.set(1, 0, 0).cross(srcNorm);
+      }
+    }
+    axis.normalize();
+    
+    // Lift profile: parabolic, higher in the middle
+    // Scale lift with arc length
+    const maxLift = ARC_HEIGHT * (0.4 + (angularDist / Math.PI) * 0.6);
+    
+    for (let i = 0; i <= numPoints; i++) {
+      const t = i / numPoints;
+      const angle = angularDist * t;
+      
+      // Spherical interpolation (SLERP) along the great circle
+      const sinTotal = Math.sin(angularDist);
+      let point;
+      
+      if (sinTotal < 0.001) {
+        // Nearly coincident points
+        point = srcNorm.clone();
+      } else {
+        const ratioA = Math.sin((1 - t) * angularDist) / sinTotal;
+        const ratioB = Math.sin(t * angularDist) / sinTotal;
+        point = srcNorm.clone().multiplyScalar(ratioA)
+                  .add(dstNorm.clone().multiplyScalar(ratioB));
+      }
+      
+      // Parabolic lift: 4*t*(1-t) peaks at 0.5
+      const liftFactor = 4 * t * (1 - t);
+      const radius = GLOBE_RADIUS + maxLift * liftFactor;
+      
+      point.normalize().multiplyScalar(radius);
+      points.push(point);
+    }
+    
+    // CatmullRomCurve3 passes through all control points
+    return new THREE.CatmullRomCurve3(points, false, 'catmullrom', 0.5);
   }
 
   /* ── Calculate tube radius for aggregate mode ── */
