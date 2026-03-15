@@ -5,7 +5,7 @@ const fs = require("fs");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
-const { countryVarianceRerank } = require("./priorityEngine");
+const { countryVarianceRerank, calculatePriority } = require("./priorityEngine");
 const { translateText } = require("./translator");
 
 const app = express();
@@ -430,7 +430,7 @@ app.get("/api/news/search", async (req, res) => {
 });
 
 /* =========================================
-   Flows — Enhanced with filters + aggregate mode
+   Flows — Priority-scored with sqrt-normalized distribution
    
    Query params:
      mode         = 'individual' (default) | 'aggregate'
@@ -441,13 +441,19 @@ app.get("/api/news/search", async (req, res) => {
      about_country= country ID (destination)
      about_city   = city ID (destination)
      keyword      = text search in title/summary
-     limit        = max results (default 500, max 2000 for aggregate)
+     limit        = max results (default 800, max 2500 for aggregate, max 1500 for individual)
+     normalize    = 'true' (default) | 'false' — sqrt-dampened distribution across destinations
+     
+   Normalization ensures every destination with routed articles is represented,
+   while high-volume destinations still get more flows (but dampened via sqrt).
+   Example: USA with 100 articles → ~10 flows, Luxembourg with 4 → ~2 flows
 ========================================= */
 app.get("/api/flows", async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
-    const maxLimit = mode === "aggregate" ? 2000 : 1000;
-    const limit = Math.min(parseInt(req.query.limit) || 500, maxLimit);
+    const maxLimit = mode === "aggregate" ? 2500 : 1500;
+    const limit = Math.min(parseInt(req.query.limit) || 800, maxLimit);
+    const normalize = req.query.normalize !== "false"; // default true
 
     // Parse filters (support legacy param names too)
     const fromDate     = req.query.from_date?.trim()    || req.query.from?.trim() || null;
@@ -607,9 +613,12 @@ app.get("/api/flows", async (req, res) => {
 
     } else {
       // ─────────────────────────────────────────
-      // INDIVIDUAL MODE: Return each article as a flow
+      // INDIVIDUAL MODE: Priority-scored, sqrt-normalized
       // ─────────────────────────────────────────
-      params.push(limit);
+      
+      // Fetch extra articles for normalization (3x limit, capped at 5000)
+      const fetchLimit = normalize ? Math.min(limit * 3, 5000) : limit;
+      params.push(fetchLimit);
       const limitParam = params.length;
 
       const { rows } = await pool.query(`
@@ -619,7 +628,11 @@ app.get("/api/flows", async (req, res) => {
           a.published_at                        AS "publishedAt",
           a.sentiment_score                     AS sentiment,
           ns.name                               AS "sourceName",
+          ns.popularity_score                   AS "popularityScore",
+          ns.popularity_tier                    AS "popularityTier",
           al.routing_type                       AS "routingType",
+          COALESCE(SUM(at.score), 0)            AS intensity,
+          COALESCE(SUM(stw.weight), 0)          AS "tagWeightSum",
           COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
           COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
           COALESCE(src_city.name, src_co.name)           AS src_place,
@@ -639,18 +652,119 @@ app.get("/api/flows", async (req, res) => {
         JOIN countries dst_co  ON dst_co.id = al.country_id
         LEFT JOIN cities src_city ON src_city.id = a.city_id
         LEFT JOIN cities dst_city ON dst_city.id = al.city_id
+        LEFT JOIN article_tags at ON at.article_id = a.id
+        LEFT JOIN source_tag_weights stw ON stw.source_id = a.source_id AND stw.tag_id = at.tag_id
         ${whereClause}
+        GROUP BY a.id, ns.id, al.id, src_co.id, dst_co.id, src_city.id, dst_city.id
         ORDER BY a.published_at DESC
         LIMIT $${limitParam}
       `, params);
 
-      const flows = rows.map(r => ({
+      // Calculate priority scores
+      const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
+      
+      const scored = rows.map(r => ({
+        ...r,
+        priority: calculatePriority({
+          rawIntensity:    parseFloat(r.intensity) || 0,
+          maxIntensity,
+          tagWeightSum:    parseFloat(r.tagWeightSum) || 0,
+          popularityScore: parseFloat(r.popularityScore) || 1,
+          popularityTier:  parseInt(r.popularityTier) || 1,
+          publishedAt:     r.publishedAt,
+          isCitySource:    false  // No city penalty for flows
+        })
+      }));
+
+      // Sort by priority
+      scored.sort((a, b) => b.priority - a.priority);
+
+      let selected;
+      
+      if (normalize && scored.length > 0) {
+        // ─────────────────────────────────────────
+        // SQRT-NORMALIZED DISTRIBUTION
+        // Group by destination, allocate slots proportional to sqrt(count)
+        // ─────────────────────────────────────────
+        
+        // Group articles by destination (city if present, else country)
+        const byDestination = new Map();
+        for (const article of scored) {
+          const dstKey = article.dst_type === 'city' 
+            ? `city:${article.dst_id}` 
+            : `country:${article.dst_id}`;
+          if (!byDestination.has(dstKey)) {
+            byDestination.set(dstKey, []);
+          }
+          byDestination.get(dstKey).push(article);
+        }
+
+        // Calculate raw sqrt weights for each destination
+        const destinations = [];
+        for (const [key, articles] of byDestination) {
+          destinations.push({
+            key,
+            articles,
+            rawCount: articles.length,
+            sqrtWeight: Math.sqrt(articles.length)
+          });
+        }
+
+        // Sum of all sqrt weights
+        const totalSqrtWeight = destinations.reduce((sum, d) => sum + d.sqrtWeight, 0);
+
+        // Allocate slots: each destination gets at least 1, rest proportional to sqrt
+        // Reserve 1 slot per destination, distribute remaining by sqrt proportion
+        const guaranteedSlots = destinations.length;
+        const remainingSlots = Math.max(0, limit - guaranteedSlots);
+
+        for (const dest of destinations) {
+          const proportionalSlots = totalSqrtWeight > 0 
+            ? Math.floor((dest.sqrtWeight / totalSqrtWeight) * remainingSlots)
+            : 0;
+          dest.allocatedSlots = 1 + proportionalSlots;
+        }
+
+        // If we have leftover slots due to rounding, give them to highest-weight destinations
+        let totalAllocated = destinations.reduce((sum, d) => sum + d.allocatedSlots, 0);
+        destinations.sort((a, b) => b.sqrtWeight - a.sqrtWeight);
+        
+        let i = 0;
+        while (totalAllocated < limit && i < destinations.length) {
+          // Only add if destination has more articles available
+          if (destinations[i].articles.length > destinations[i].allocatedSlots) {
+            destinations[i].allocatedSlots++;
+            totalAllocated++;
+          }
+          i++;
+          if (i >= destinations.length) i = 0; // wrap around
+          // Safety: break if we've cycled through all and none can accept more
+          if (destinations.every(d => d.articles.length <= d.allocatedSlots)) break;
+        }
+
+        // Select top articles from each destination (already sorted by priority)
+        selected = [];
+        for (const dest of destinations) {
+          const toTake = Math.min(dest.allocatedSlots, dest.articles.length);
+          selected.push(...dest.articles.slice(0, toTake));
+        }
+
+        // Final sort by priority so animation order makes sense
+        selected.sort((a, b) => b.priority - a.priority);
+        
+      } else {
+        // No normalization: just take top N by priority
+        selected = scored.slice(0, limit);
+      }
+
+      const flows = selected.map(r => ({
         id: r.id,
         title: r.title,
         publishedAt: r.publishedAt,
         sentiment: r.sentiment,
         sourceName: r.sourceName,
         routingType: r.routingType,
+        priority: r.priority,
         src: {
           lat: parseFloat(r.src_lat),
           lon: parseFloat(r.src_lon),
@@ -671,6 +785,7 @@ app.get("/api/flows", async (req, res) => {
 
       res.json({
         mode: "individual",
+        normalized: normalize,
         total: flows.length,
         flows
       });
