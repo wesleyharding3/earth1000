@@ -7134,7 +7134,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (article.city_name) parts.push(article.city_name);
             if (article.country_name) parts.push(article.country_name);
             else if (article.iso_code) parts.push(article.iso_code.toUpperCase());
-            if (parts.length) originLabel = `<div class="articleCardOrigin">üìç ${parts.join(", ")}</div>`;
+            if (parts.length) originLabel = `<div class="articleCardOrigin">📰 ${parts.join(", ")}</div>`;
           }
 
           return `
@@ -7153,7 +7153,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   </div>
                 </div>
               </a>
-              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">üåê</button>` : ""}
+              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
             </div>`;
         }
 
@@ -9264,7 +9264,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 <polyline points="1.5,5 4,7.5 8.5,2.5"/>
               </svg>
             </div>
-            <span class="nfOptFlag">${c.flag || "üè≥"}</span>
+            <span class="nfOptFlag">${c.flag || "🏳"}</span>
             <span class="nfOptName">${esc(c.name)}</span>
           </div>`).join("");
         listEl.querySelectorAll(".nfDropOpt").forEach(opt => {
@@ -9504,7 +9504,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (a.city_name) parts.push(a.city_name);
       if (a.country_name) parts.push(a.country_name);
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
-      const origin = parts.length ? `<div class="nfCardOrigin">üìç ${esc(parts.join(", "))}</div>` : "";
+      const origin = parts.length ? `<div class="nfCardOrigin">📰 ${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
       return `
       <div style="position:relative">
@@ -9519,7 +9519,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
         </a>
-        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">üåê</button>` : ""}
+        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
       </div>`;
     }
 
