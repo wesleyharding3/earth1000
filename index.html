@@ -3940,7 +3940,7 @@
     let targetZoom = camera.position.z;
     let zoomingOut = false; // true while easing back to preFocusZoom after panel close
     let zoomVelocity = 0;
-    const zoomFriction = 0.75;
+    const zoomFriction = 0.85;
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
@@ -6902,7 +6902,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
         if (window.__currentPage !== 1) return;
         e.preventDefault();
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.000008; return; }
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -6918,7 +6918,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
           const currentDistance = getDistance(e.touches);
-          zoomVelocity += (initialPinchDistance - currentDistance) * 0.000015;
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
@@ -7058,6 +7058,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
+          <div class="panelSortRow">
+            <div class="panelSortSegment">
+              <div class="panelSortOption active" data-sort="local">
+                <div class="panelSortDot"></div>
+                <span class="panelSortLabel">Local</span>
+              </div>
+              <div class="panelSortOption" data-sort="global">
+                <div class="panelSortDot"></div>
+                <span class="panelSortLabel">Global</span>
+              </div>
+            </div>
+          </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
             <span class="panelSearchPillIcon">
@@ -7078,6 +7090,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const viewport = panel.querySelector("#articlesViewport");
         const searchInput = panel.querySelector("#panelSearchInput");
         let allArticles = [], offset = 0, limit = 12, loading = false, hasMore = true, filterQuery = "";
+        let currentFeed = "local";
+
+        // Local/Global toggle
+        const sortOptions = panel.querySelectorAll(".panelSortOption");
+        sortOptions.forEach(opt => {
+          opt.addEventListener("click", () => {
+            const newFeed = opt.dataset.sort;
+            if (newFeed === currentFeed) return;
+            sortOptions.forEach(o => o.classList.remove("active"));
+            opt.classList.add("active");
+            currentFeed = newFeed;
+            // Reset and reload
+            allArticles = []; offset = 0; hasMore = true;
+            track.innerHTML = skeletonCards(6);
+            loadMore();
+          });
+        });
 
         searchInput.addEventListener("input", () => { filterQuery = searchInput.value.trim().toLowerCase(); renderCards(); });
 
@@ -7116,9 +7145,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         function loadMore() {
           if (loading || !hasMore) return;
           loading = true;
-          // Use region slug to query article_locations via country fallback
-          // Region articles come from countries whose centroid falls in the region
-          const url = `https://earth-wjr6.onrender.com/api/news/region/${region.id}?limit=${limit}&offset=${offset}`;
+          const url = `https://earth-wjr6.onrender.com/api/news/region/${region.id}?feed=${currentFeed}&limit=${limit}&offset=${offset}`;
           fetch(url)
             .then(res => res.ok ? res.json() : Promise.reject(res.status))
             .then(articles => {
@@ -7201,7 +7228,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const zoomDelta = targetZoom - camera.position.z;
         // Zoom-out uses a gentler lerp so the camera eases back slowly;
         // zoom-in stays snappy. Clear zoomingOut once camera has settled.
-        const zoomLerp = zoomingOut ? 0.035 : (0.02 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        const zoomLerp = zoomingOut ? 0.04 : (0.035 * Math.min(Math.abs(zoomDelta) * 2, 1));
         camera.position.z += zoomDelta * zoomLerp;
         if (zoomingOut && Math.abs(zoomDelta) < 0.005) zoomingOut = false;
 
