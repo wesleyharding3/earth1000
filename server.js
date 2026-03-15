@@ -933,7 +933,7 @@ app.get("/api/regions/:regionId/cities", async (req, res) => {
       LEFT JOIN news_articles na ON na.city_id = c.id
         AND na.published_at > NOW() - INTERVAL '7 days'
       WHERE c.region_id = $1
-      GROUP BY c.id, co.name, co.iso_code
+      GROUP BY c.id, c.name, c.lat, c.lon, c.population, co.name, co.iso_code
       ORDER BY c.population DESC NULLS LAST
     `, [req.params.regionId]);
     res.json(rows);
@@ -953,7 +953,7 @@ app.get("/api/regions", async (req, res) => {
       LEFT JOIN cities c ON c.region_id = r.id
       LEFT JOIN news_articles na ON na.city_id = c.id
         AND na.published_at > NOW() - INTERVAL '7 days'
-      GROUP BY r.id
+      GROUP BY r.id, r.name, r.slug, r.continent_id, r.color, r.centroid_lng, r.centroid_lat, r.population
       ORDER BY r.name ASC
     `);
     res.json(rows);
