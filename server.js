@@ -322,10 +322,17 @@ app.get("/api/news/search", async (req, res) => {
 
     if (keyword) {
       params.push(`%${keyword}%`);
+      const kwParam = params.length;
+      params.push(keyword.toLowerCase().trim());
+      const exactKwParam = params.length;
       conditions.push(`(
-        COALESCE(a.translated_title, a.title) ILIKE $${params.length}
-        OR
-        COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
+        COALESCE(a.translated_title, a.title) ILIKE $${kwParam}
+        OR COALESCE(a.translated_summary, a.summary) ILIKE $${kwParam}
+        OR EXISTS (
+          SELECT 1 FROM article_keywords ak
+          WHERE ak.article_id = a.id
+          AND (ak.keyword ILIKE $${kwParam} OR ak.normalized_keyword = $${exactKwParam})
+        )
       )`);
     }
 
@@ -504,9 +511,17 @@ app.get("/api/flows", async (req, res) => {
     // Keyword filter
     if (keyword) {
       params.push(`%${keyword}%`);
+      const kwParam = params.length;
+      params.push(keyword.toLowerCase().trim());
+      const exactKwParam = params.length;
       conditions.push(`(
-        COALESCE(a.translated_title, a.title) ILIKE $${params.length}
-        OR COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
+        COALESCE(a.translated_title, a.title) ILIKE $${kwParam}
+        OR COALESCE(a.translated_summary, a.summary) ILIKE $${kwParam}
+        OR EXISTS (
+          SELECT 1 FROM article_keywords ak
+          WHERE ak.article_id = a.id
+          AND (ak.keyword ILIKE $${kwParam} OR ak.normalized_keyword = $${exactKwParam})
+        )
       )`);
     }
 
