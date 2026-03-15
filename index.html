@@ -1273,6 +1273,31 @@
 #flowControls.aggregate-mode .flowPanelRow:has(#flowSpeed) { display: none; }
 #flowControls.aggregate-mode .flowAggStats { display: block; }
 
+/* Close button */
+.flowCloseBtn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.5);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  z-index: 10;
+}
+.flowCloseBtn:hover {
+  background: rgba(255,100,100,0.2);
+  border-color: rgba(255,100,100,0.4);
+  color: rgba(255,150,150,0.9);
+}
+
 
 
     /* ===============================
@@ -4030,6 +4055,7 @@
   </div>
   <!-- Flow controls panel -->
   <div id="flowControls">
+    <button class="flowCloseBtn" id="flowCloseBtn" title="Close">✕</button>
     <div class="flowPanel">
       <!-- Mode toggle -->
       <div class="flowPanelRow">
@@ -8462,7 +8488,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Skip static arcs (aggregate mode)
       if (arc.isStatic) continue;
 
-      arc.age += delta;
+      // Only age arcs when playing — freeze in place when paused
+      if (flowPlaying) {
+        arc.age += delta;
+      }
+      
       const t = arc.age / arc.totalAge;
 
       let opacity;
@@ -8483,7 +8513,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       arc.ptGeo.attributes.position.needsUpdate = true;
 
-      if (arc.age >= arc.totalAge) {
+      // Only expire arcs when playing
+      if (flowPlaying && arc.age >= arc.totalAge) {
         recycleArc(arc);
         arcObjects.splice(i, 1);
       }
@@ -8536,6 +8567,64 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } catch(e) {
       console.error("Failed to load countries:", e);
     }
+  }
+
+  /* ── Get country coords by ID ── */
+  function getCountryCoords(countryId) {
+    const country = countriesCache.find(c => c.id === countryId);
+    if (country) {
+      return { lat: parseFloat(country.lat), lon: parseFloat(country.lon), place: country.name };
+    }
+    return null;
+  }
+
+  /* ── Get country coords by ISO code ── */
+  function getCountryCoordsByIso(iso) {
+    if (!iso) return null;
+    const country = countriesCache.find(c => c.iso_code?.toLowerCase() === iso.toLowerCase());
+    if (country) {
+      return { lat: parseFloat(country.lat), lon: parseFloat(country.lon), place: country.name };
+    }
+    return null;
+  }
+
+  /* ── Remap flow coordinates based on view mode ── */
+  function remapFlowForView(flow) {
+    const viewMode = window.__currentViewMode || "country";
+    
+    // In country view: funnel city sources through their country's coordinates
+    if (viewMode === "country") {
+      // If source is a city, remap to country coords using ISO
+      if (flow.src.type === "city" && flow.src.iso) {
+        const countryCoords = getCountryCoordsByIso(flow.src.iso);
+        if (countryCoords) {
+          flow.src.lat = countryCoords.lat;
+          flow.src.lon = countryCoords.lon;
+        }
+      }
+      // If destination is a city, remap to country coords using ISO
+      if (flow.dst.type === "city" && flow.dst.iso) {
+        const countryCoords = getCountryCoordsByIso(flow.dst.iso);
+        if (countryCoords) {
+          flow.dst.lat = countryCoords.lat;
+          flow.dst.lon = countryCoords.lon;
+        }
+      }
+    }
+    // In city view: use actual coordinates (no remapping needed)
+    
+    return flow;
+  }
+
+  /* ── Close flow panel helper ── */
+  function closeFlowPanel() {
+    flowModeOpen = false;
+    document.getElementById("flowModeBtn").classList.remove("active");
+    document.getElementById("flowControls").classList.remove("visible");
+    clearArcs();
+    flowPlaying = false;
+    seqIndex = 0; seqTimer = 0; flowProgress = 0;
+    document.getElementById("flowProgressBar").style.width = "0%";
   }
 
   /* ── Autocomplete setup ── */
@@ -8648,6 +8737,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowProgressBar").style.width = "0%";
     document.getElementById("flowStats").innerHTML = `<span style="opacity:0.4">Loading…</span>`;
 
+    // Ensure countries are loaded for view-aware remapping
+    await loadCountries();
+
     // Build query params
     const params = new URLSearchParams();
     params.set("mode", flowMode);
@@ -8664,7 +8756,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
 
       if (flowMode === "aggregate") {
-        flowData = data.flows || [];
+        flowData = (data.flows || []).map(remapFlowForView);
         const maxCount = data.maxCount || 1;
 
         // Render all aggregate arcs immediately
@@ -8679,7 +8771,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById("flowStats").innerHTML = `<span class="flowStatHighlight">${data.totalRoutes}</span> routes`;
 
       } else {
-        flowData = data.flows || data || [];
+        flowData = (data.flows || data || []).map(remapFlowForView);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
       }
@@ -8712,6 +8804,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       seqIndex = 0; seqTimer = 0; flowProgress = 0;
       document.getElementById("flowProgressBar").style.width = "0%";
     }
+  });
+
+  // Close button
+  document.getElementById("flowCloseBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFlowPanel();
   });
 
   // Mode toggle (Time Series vs Aggregate)
