@@ -116,7 +116,7 @@
       transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
     }    
 
-    .articlesViewport {
+    #articlesViewport {
       display:flex;
       flex: 1;
       overflow-y: auto;
@@ -137,6 +137,19 @@
       box-sizing: border-box;
       overflow-y: auto;
     }
+
+    #aggRouteArticles {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+
+    #aggRouteArticles::-webkit-scrollbar { width: 5px; }
+    #aggRouteArticles::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
+    #aggRouteArticles::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
+    #aggRouteArticles::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
 
     #infoPanel.active { bottom: 0; }
     #infoPanel a { color: #4da6ff; text-decoration: none; display: block; margin-bottom: 8px; }
@@ -1479,9 +1492,12 @@
     .panelSlide {
       min-width: 100%;
       height: 100%;
-      overflow: hidden;
       box-sizing: border-box;
       flex-shrink: 0;
+    }
+    
+    .panelSlide:not(#articlesViewport) {
+      overflow: hidden;
     }  
 
     .panelSlide::-webkit-scrollbar { width: 5px; }
@@ -1572,7 +1588,7 @@
     .articlesGrid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
+      gap: 12px;
       padding: 4px 2px 20px;
     }
 
@@ -1589,7 +1605,7 @@
       flex-direction: column;
       text-decoration: none;
       color: inherit;
-      height: 310px;
+      height: 320px;
     }
 
     .articleCard:hover {
@@ -1602,7 +1618,7 @@
 
     .articleCardImage {
       width: 100%;
-      height: 120px;
+      height: 130px;
       object-fit: cover;
       background: rgba(255,255,255,0.05);
       display: block;
@@ -1611,7 +1627,7 @@
 
     .articleCardImagePlaceholder {
       width: 100%;
-      height: 120px;
+      height: 130px;
       background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
       display: flex;
       align-items: center;
@@ -3603,8 +3619,8 @@
 
     #nfGrid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
     }
 
     /* Cards */
@@ -3616,17 +3632,18 @@
       transition: background 0.2s, border-color 0.2s, transform 0.14s;
       display: flex; flex-direction: column;
       text-decoration: none; color: inherit;
+      height: 320px;
     }
     .nfCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfCard:active { transform: translateY(0); }
 
     .nfCardImg {
-      width: 100%; aspect-ratio: 16/9;
+      width: 100%; height: 130px;
       object-fit: cover; background: rgba(255,255,255,0.04);
       display: block; flex-shrink: 0;
     }
     .nfCardImgPh {
-      width: 100%; aspect-ratio: 16/9;
+      width: 100%; height: 130px;
       background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
@@ -3668,8 +3685,8 @@
     }
 
     /* Skeletons */
-    .nfSkel { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; overflow: hidden; }
-    .nfSkel .si { width: 100%; aspect-ratio: 16/9; background: rgba(255,255,255,0.05); }
+    .nfSkel { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; overflow: hidden; height: 320px; }
+    .nfSkel .si { width: 100%; height: 130px; background: rgba(255,255,255,0.05); }
     .nfSkel .sl { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.055); margin: 11px 13px 5px; }
     .nfSkel .sl.s { width: 48%; margin-bottom: 13px; }
 
@@ -9897,12 +9914,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ${flow.count.toLocaleString()} articles · Avg sentiment: ${flow.avgSentiment?.toFixed(2) || "—"}
         </div>
       </div>
-      <div id="aggRouteArticles" style="padding:10px 0;">
-        <div style="color:#888;text-align:center;padding:20px;">Loading articles...</div>
+      <div id="aggRouteArticles">
+        <div class="articlesGrid">
+          <div style="grid-column:1/-1;color:#888;text-align:center;padding:20px;">Loading articles...</div>
+        </div>
       </div>
     `;
     
     panel.classList.add("active");
+    applySnapHeight("default", true);
+    attachPanelResizeHandle();
     
     // Close handler
     panel.querySelector(".closePanel").onclick = () => {
@@ -9916,13 +9937,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       
       const container = document.getElementById("aggRouteArticles");
       if (!data.flows || data.flows.length === 0) {
-        container.innerHTML = `<div style="color:#888;text-align:center;padding:20px;">No articles found</div>`;
+        container.innerHTML = `<div class="articlesGrid"><div style="grid-column:1/-1;color:#888;text-align:center;padding:20px;">No articles found</div></div>`;
         return;
       }
       
       // Map flow data to article format and render using standard card HTML
       const FLAG_CDN = "https://flagcdn.com/w80/";
-      container.innerHTML = data.flows.map(f => {
+      const cardsHtml = data.flows.map(f => {
         // Map flow fields to article fields
         const article = {
           id: f.id,
@@ -9971,9 +9992,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
       }).join('');
       
+      container.innerHTML = `<div class="articlesGrid">${cardsHtml}</div>`;
+      
     } catch (err) {
       console.error("Failed to load aggregate route articles:", err);
-      document.getElementById("aggRouteArticles").innerHTML = `<div style="color:#f66;text-align:center;padding:20px;">Failed to load articles</div>`;
+      document.getElementById("aggRouteArticles").innerHTML = `<div class="articlesGrid"><div style="grid-column:1/-1;color:#f66;text-align:center;padding:20px;">Failed to load articles</div></div>`;
     }
   }
 
