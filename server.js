@@ -5,7 +5,7 @@ const fs = require("fs");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
-const { countryVarianceRerank, calculatePriority } = require("./priorityEngine");
+const { countryVarianceRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 
 const app = express();
@@ -667,7 +667,8 @@ app.get("/api/flows", async (req, res) => {
           popularityScore: parseFloat(r.popularityScore) || 1,
           popularityTier:  parseInt(r.popularityTier) || 1,
           publishedAt:     r.publishedAt,
-          isCitySource:    false  // No city penalty for flows
+          isCitySource:    r.src_type === 'city',  // National sources get priority
+          cityPenaltyOverride: FLOW_CITY_PENALTY   // Gentler penalty - city articles can still compete
         })
       }));
 
