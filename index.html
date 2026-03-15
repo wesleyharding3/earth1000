@@ -7649,7 +7649,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (gdpMask && !gdpMask[i]) continue;
             const wv = new THREE.Vector3(posArr[i*3], posArr[i*3+1], posArr[i*3+2]).applyQuaternion(quat);
             const facing = -cDir.dot(wv.clone().normalize());
-            if (facing < 0.12) continue;
+            if (facing < 0.25) continue; // Only nodes facing camera (not near horizon)
             const p  = wv.clone().project(camera);
             const sx = (p.x+1)/2 * window.innerWidth;
             const sy = (-p.y+1)/2 * window.innerHeight;
@@ -7669,14 +7669,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const CY = window.innerHeight / 2;
           const maxDist = Math.min(window.innerWidth, window.innerHeight) * 0.38;
 
+          // Only use nodes that are well within view and facing camera
           const safe = arr.filter(v => {
             const dx = v.sx - CX;
             const dy = v.sy - CY;
             const screenDist = Math.sqrt(dx * dx + dy * dy);
-            return screenDist <= maxDist && v.facing >= 0.18;
+            return screenDist <= maxDist && v.facing >= 0.35;
           });
 
-          const pool = safe.length >= 2 ? safe : arr;
+          // Don't fall back to non-safe nodes - only show headlines for clearly visible nodes
+          if (!safe.length) return null;
+          const pool = safe;
 
           const w = pool.map(v => {
             const fame  = v.node.fame_index || v.node.fame || 1;
@@ -7826,26 +7829,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ‚îÄ‚îÄ Try cache first, skipping recently shown ‚îÄ‚îÄ
           if (cachedStories.length) {
             const vis    = getVisibleNodes();
-            const visIds = new Set(vis.map(v => v.node.id));
-            const cands  = cachedStories.filter(s =>
-              visIds.has(s.nodeEntry.node.id) &&
-              !wasRecentlyShown(s.nodeEntry.node.id, s.article)
-            );
+            // Build map of currently visible nodes with fresh coordinates
+            const visMap = new Map(vis.map(v => [v.node.id, v]));
+            const cands  = cachedStories.filter(s => {
+              const freshEntry = visMap.get(s.nodeEntry.node.id);
+              // Must be visible AND facing camera (>0.3) AND not recently shown
+              return freshEntry && freshEntry.facing > 0.3 && !wasRecentlyShown(s.nodeEntry.node.id, s.article);
+            }).map(s => {
+              // Use fresh coordinates from current visibility check
+              const freshEntry = visMap.get(s.nodeEntry.node.id);
+              return { ...s, nodeEntry: freshEntry };
+            });
             if (cands.length) {
               pick = cands[Math.floor(Math.random() * cands.length)];
-              cachedStories = cachedStories.filter(s => s !== pick);
+              cachedStories = cachedStories.filter(s => s.nodeEntry.node.id !== pick.nodeEntry.node.id);
             }
           }
 
           // ‚îÄ‚îÄ Live fetch fallback, also skipping recent nodes ‚îÄ‚îÄ
           if (!pick) {
-            const vis = getVisibleNodes();
+            const vis = getVisibleNodes().filter(v => v.facing > 0.3); // Only front-facing nodes
             if (!vis.length) { gapTimer = setTimeout(startCycle, 2000); return; }
 
             // exclude recently shown node IDs from weighted pick
             const freshVis = vis.filter(v => !recentNodeIds.includes(v.node.id));
             const pool     = freshVis.length >= 2 ? freshVis : vis; // fallback if too few
             const chosen   = pickWeighted(pool);
+            if (!chosen) { gapTimer = setTimeout(startCycle, 2000); return; }
             const article  = await fetchStory(chosen.node);
             if (!article || wasRecentlyShown(chosen.node.id, article)) {
               gapTimer = setTimeout(startCycle, 1500); return;
