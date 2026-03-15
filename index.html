@@ -9426,7 +9426,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const arc = createArc(flow, maxCount);
           arcObjects.push(arc);
         });
-        console.log("[AggLoad] Created", arcObjects.length, "aggregate arcs");
 
         // Update stats
         document.getElementById("aggRouteCount").textContent = data.totalRoutes || 0;
@@ -9779,12 +9778,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (xs.length) {
         const flow = arc.flow;
         
-        // SHIFT+hover opens aggregate panel
-        if (e.shiftKey && flow && flow.count) {
-          openAggregateRoutePanel(flow);
-          return;
-        }
-        
         if (flow.count) {
           // Aggregate mode tooltip
           ftTitle.textContent = `${flow.count.toLocaleString()} articles`;
@@ -9810,19 +9803,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.addEventListener("click", (e) => {
     if (!flowModeOpen) return;
     
-    // DEBUG: Log state on every click
-    console.log("[FlowClick] === CLICK DEBUG ===");
-    console.log("[FlowClick] flowMode:", flowMode);
-    console.log("[FlowClick] arcObjects.length:", arcObjects.length);
-    console.log("[FlowClick] First arc visible?", arcObjects[0]?.mesh?.visible);
-    console.log("[FlowClick] First arc has flow?", !!arcObjects[0]?.flow);
-    console.log("[FlowClick] First arc flow.count:", arcObjects[0]?.flow?.count);
-    
     mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
     mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
     raycasterFlow.setFromCamera(mousePosFlow, camera);
 
-    let hitAny = false;
     for (const arc of arcObjects) {
       // Ensure geometry is ready for raycasting
       arc.mesh.updateMatrixWorld(true);
@@ -9830,10 +9814,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         arc.mesh.geometry.computeBoundingSphere();
       }
       const xs = raycasterFlow.intersectObject(arc.mesh);
-      if (xs.length) {
-        hitAny = true;
-        console.log("[FlowClick] HIT! arc.flow:", arc.flow?.src?.place, "→", arc.flow?.dst?.place, "count:", arc.flow?.count);
-      }
       if (xs.length && arc.flow) {
         const flow = arc.flow;
         
@@ -9869,7 +9849,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         break;
       }
     }
-    if (!hitAny) console.log("[FlowClick] No intersections found");
   });
 
   /* Open panel showing articles for an aggregate route */
@@ -9937,25 +9916,56 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       
-      container.innerHTML = data.flows.map(f => `
-        <div class="aggRouteCard" style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.08);cursor:pointer;" data-url="${f.articleUrl || ''}">
-          <div style="display:flex;gap:10px;">
-            ${f.imageUrl ? `<img src="${f.imageUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;flex-shrink:0;">` : ''}
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:0.9rem;font-weight:500;color:#fff;line-height:1.3;margin-bottom:4px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${f.title || '(no title)'}</div>
-              <div style="font-size:0.75rem;color:#888;">${f.sourceName || ''} · ${new Date(f.publishedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+      // Map flow data to article format and render using standard card HTML
+      const FLAG_CDN = "https://flagcdn.com/w80/";
+      container.innerHTML = data.flows.map(f => {
+        // Map flow fields to article fields
+        const article = {
+          id: f.id,
+          title: f.title,
+          translated_title: f.title,
+          summary: f.summary || '',
+          translated_summary: f.summary || '',
+          image_url: f.imageUrl,
+          source_name: f.sourceName,
+          published_at: f.publishedAt,
+          article_url: f.articleUrl,
+          iso_code: f.src?.iso || f.dst?.iso,
+          country_name: f.dst?.place,
+          sentiment_score: f.sentiment
+        };
+        
+        // Build image field
+        let imageField;
+        if (article.image_url && article.image_url.trim()) {
+          imageField = `<img class="articleCardImage" src="${article.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN}${(article.iso_code || '').toLowerCase()}.png'">`;
+        } else if (article.iso_code) {
+          imageField = `<img class="articleCardImage" src="${FLAG_CDN}${article.iso_code.toLowerCase()}.png" alt="" loading="lazy">`;
+        } else {
+          imageField = `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+        }
+        
+        // Origin label showing the route
+        const originLabel = `<div class="articleCardOrigin">📰 ${f.src?.place || ''} → ${f.dst?.place || ''}</div>`;
+        
+        return `
+          <div style="position:relative">
+            <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
+              ${imageField}
+              <div class="articleCardBody">
+                <div>
+                  <div class="articleCardSource">${article.source_name || ""}</div>
+                  <div class="articleCardTitle">${article.title || ""}</div>
+                  <div class="articleCardSummary">${article.summary || ""}</div>
+                </div>
+                <div class="articleCardFooter">
+                  ${originLabel}
+                  <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      `).join('');
-      
-      // Add click handlers
-      container.querySelectorAll(".aggRouteCard").forEach(card => {
-        card.addEventListener("click", () => {
-          const url = card.dataset.url;
-          if (url) window.open(url, "_blank");
-        });
-      });
+          </div>`;
+      }).join('');
       
     } catch (err) {
       console.error("Failed to load aggregate route articles:", err);
@@ -9966,27 +9976,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* Stop globe interaction bubbling into flow controls */
   document.getElementById("flowControls").addEventListener("mousedown", e => e.stopPropagation());
   document.getElementById("flowControls").addEventListener("touchstart", e => e.stopPropagation(), {passive:true});
-
-  // DEBUG: Press 'D' to dump arc state
-  window.addEventListener("keydown", (e) => {
-    if (e.key === 'd' || e.key === 'D') {
-      console.log("=== ARC DEBUG ===");
-      console.log("flowModeOpen:", flowModeOpen);
-      console.log("flowMode:", flowMode);
-      console.log("arcObjects.length:", arcObjects.length);
-      console.log("flowGroup.children.length:", flowGroup.children.length);
-      if (arcObjects.length > 0) {
-        const arc = arcObjects[0];
-        console.log("First arc:");
-        console.log("  mesh.visible:", arc.mesh.visible);
-        console.log("  mesh.parent:", arc.mesh.parent?.type);
-        console.log("  flow:", arc.flow?.src?.place, "→", arc.flow?.dst?.place);
-        console.log("  flow.count:", arc.flow?.count);
-        console.log("  geometry.boundingSphere:", arc.mesh.geometry.boundingSphere);
-        console.log("  matrixWorld:", arc.mesh.matrixWorld.elements.slice(0, 4));
-      }
-    }
-  });
 
 })(); 
 
