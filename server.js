@@ -810,65 +810,73 @@ app.get("/api/news/region/:regionId", async (req, res) => {
     const limit  = Math.min(parseInt(req.query.limit)  || 12, 50);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const regionId = parseInt(req.params.regionId);
+    const feed = req.query.feed || "local"; // "local" or "global"
 
-    // Aggregate articles from:
-    // 1. article_locations routed to this region
-    // 2. articles from cities that belong to this region
-    // 3. articles from sources whose city belongs to this region
-    const { rows } = await pool.query(`
-      WITH region_articles AS (
-        -- Articles routed to region via article_locations
-        SELECT DISTINCT a.id
+    let query;
+    if (feed === "global") {
+      // Global: articles that MENTION cities in this region (via article_locations)
+      query = `
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          a.title,
+          a.translated_title,
+          a.url,
+          a.article_url,
+          a.summary,
+          a.translated_summary,
+          a.image_url,
+          a.published_at,
+          ns.name         AS source_name,
+          ns.site_url,
+          ns.popularity_score,
+          l.iso_code_2    AS language,
+          co.iso_code,
+          co.name         AS country_name,
+          ci_mention.name AS city_name
         FROM article_locations al
-        JOIN news_articles a ON a.id = al.article_id
-        WHERE al.region_id = $1
+        JOIN news_articles  a   ON a.id  = al.article_id
+        JOIN news_sources   ns  ON ns.id = a.source_id
+        JOIN cities ci_mention  ON ci_mention.id = al.city_id
+        LEFT JOIN languages l   ON l.id  = ns.language_id
+        LEFT JOIN countries co  ON co.id = a.country_id
+        WHERE ci_mention.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
-
-        UNION
-
-        -- Articles from cities in this region
-        SELECT DISTINCT a.id
+        ORDER BY a.id, a.published_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+    } else {
+      // Local: articles FROM cities in this region (source-based, city_id not null)
+      query = `
+        SELECT
+          a.id,
+          a.title,
+          a.translated_title,
+          a.url,
+          a.article_url,
+          a.summary,
+          a.translated_summary,
+          a.image_url,
+          a.published_at,
+          ns.name         AS source_name,
+          ns.site_url,
+          ns.popularity_score,
+          l.iso_code_2    AS language,
+          co.iso_code,
+          co.name         AS country_name,
+          ci.name         AS city_name
         FROM news_articles a
-        JOIN cities ci ON ci.id = a.city_id
+        JOIN news_sources   ns  ON ns.id = a.source_id
+        JOIN cities         ci  ON ci.id = a.city_id
+        LEFT JOIN languages l   ON l.id  = ns.language_id
+        LEFT JOIN countries co  ON co.id = a.country_id
         WHERE ci.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
+        ORDER BY a.published_at DESC
+        LIMIT $2 OFFSET $3
+      `;
+    }
 
-        UNION
-
-        -- Articles from sources whose city is in this region
-        SELECT DISTINCT a.id
-        FROM news_articles a
-        JOIN news_sources ns ON ns.id = a.source_id
-        JOIN cities ci ON ci.id = ns.city_id
-        WHERE ci.region_id = $1
-          AND a.published_at > NOW() - INTERVAL '7 days'
-      )
-      SELECT
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        a.image_url,
-        a.published_at,
-        ns.name         AS source_name,
-        ns.site_url,
-        ns.popularity_score,
-        l.iso_code_2    AS language,
-        co.iso_code,
-        co.name         AS country_name,
-        ci.name         AS city_name
-      FROM region_articles ra
-      JOIN news_articles  a   ON a.id  = ra.id
-      JOIN news_sources   ns  ON ns.id = a.source_id
-      LEFT JOIN languages l   ON l.id  = ns.language_id
-      LEFT JOIN countries co  ON co.id = a.country_id
-      LEFT JOIN cities    ci  ON ci.id = a.city_id
-      ORDER BY a.published_at DESC
-      LIMIT $2 OFFSET $3
-    `, [regionId, limit, offset]);
+    const { rows } = await pool.query(query, [regionId, limit, offset]);
     res.json(rows);
   } catch (err) {
     console.warn("[region news]", err.message);
