@@ -30,14 +30,17 @@ app.get("/api/cities", async (req, res) => {
         c.name, 
         c.timezone, 
         c.country_id,
+        c.region_id,
         c.latitude AS lat, 
         c.longitude AS lon,
         c.fame_index,
         c.population,
         c.gdp,
-        co.name AS country
+        co.name AS country,
+        r.name AS region
       FROM cities c
       LEFT JOIN countries co ON c.country_id = co.id
+      LEFT JOIN regions r ON c.region_id = r.id
       WHERE c.is_active = true
       ORDER BY c.name ASC
     `);
@@ -921,19 +924,14 @@ app.get("/api/land/geojson", (req, res) => {
   });
 });
 
-// Get cities in a region with story counts
+// Get cities in a region
 app.get("/api/regions/:regionId/cities", async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT c.id, c.name, c.lat, c.lon, c.population, 
-             co.name AS country_name, co.iso_code,
-             COUNT(DISTINCT na.id) AS story_count
+      SELECT c.id, c.name, c.lat, c.lon, c.population, co.name AS country_name, co.iso_code
       FROM cities c
       LEFT JOIN countries co ON co.id = c.country_id
-      LEFT JOIN news_articles na ON na.city_id = c.id
-        AND na.published_at > NOW() - INTERVAL '7 days'
       WHERE c.region_id = $1
-      GROUP BY c.id, c.name, c.lat, c.lon, c.population, co.name, co.iso_code
       ORDER BY c.population DESC NULLS LAST
     `, [req.params.regionId]);
     res.json(rows);
@@ -946,15 +944,10 @@ app.get("/api/regions/:regionId/cities", async (req, res) => {
 app.get("/api/regions", async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT r.id, r.name, r.slug, r.continent_id, r.color,
-             r.centroid_lng, r.centroid_lat, r.population,
-             COUNT(DISTINCT na.id) AS story_count
-      FROM regions r
-      LEFT JOIN cities c ON c.region_id = r.id
-      LEFT JOIN news_articles na ON na.city_id = c.id
-        AND na.published_at > NOW() - INTERVAL '7 days'
-      GROUP BY r.id, r.name, r.slug, r.continent_id, r.color, r.centroid_lng, r.centroid_lat, r.population
-      ORDER BY r.name ASC
+      SELECT id, name, slug, continent_id, color,
+             centroid_lng, centroid_lat, population
+      FROM regions
+      ORDER BY name ASC
     `);
     res.json(rows);
   } catch (err) {
