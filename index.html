@@ -11440,6 +11440,12 @@ grmClockTick();
     panel.style.transform = '';
   });
   
+  // ── Stop globe interactions when using panel ─────────────────────────────────
+  panel.addEventListener('wheel', (e) => { e.stopPropagation(); }, { passive: true });
+  panel.addEventListener('mousedown', (e) => { e.stopPropagation(); });
+  panel.addEventListener('touchstart', (e) => { e.stopPropagation(); }, { passive: true });
+  panel.addEventListener('touchmove', (e) => { e.stopPropagation(); }, { passive: true });
+  
   // ── Expose for external use ────────────────────────────────────────────────
   window.closeArticleDetail = closeArticlePanel;
   
