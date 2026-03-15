@@ -802,8 +802,9 @@ app.get("/api/keywords/cooccurrence", async (req, res) => {
 
 /* =========================================
    Region News Feed
-   Articles from countries whose centroid_lat/lng falls within the region's
-   bounding area, proxied via article_locations with region_id
+   City-level articles only - aggregated via cities.region_id
+   Local: articles FROM cities in this region (source-based)
+   Global: articles that MENTION cities in this region (via article_locations)
 ========================================= */
 app.get("/api/news/region/:regionId", async (req, res) => {
   try {
@@ -877,10 +878,34 @@ app.get("/api/news/region/:regionId", async (req, res) => {
     }
 
     const { rows } = await pool.query(query, [regionId, limit, offset]);
-    res.json(rows);
+    
+    // Get total count for pagination
+    let countQuery;
+    if (feed === "global") {
+      countQuery = `
+        SELECT COUNT(DISTINCT a.id) AS total
+        FROM article_locations al
+        JOIN news_articles a ON a.id = al.article_id
+        JOIN cities ci_mention ON ci_mention.id = al.city_id
+        WHERE ci_mention.region_id = $1
+          AND a.published_at > NOW() - INTERVAL '7 days'
+      `;
+    } else {
+      countQuery = `
+        SELECT COUNT(*) AS total
+        FROM news_articles a
+        JOIN cities ci ON ci.id = a.city_id
+        WHERE ci.region_id = $1
+          AND a.published_at > NOW() - INTERVAL '7 days'
+      `;
+    }
+    const countResult = await pool.query(countQuery, [regionId]);
+    const total = parseInt(countResult.rows[0]?.total || 0);
+    
+    res.json({ articles: rows, total });
   } catch (err) {
     console.warn("[region news]", err.message);
-    res.json([]);
+    res.json({ articles: [], total: 0 });
   }
 });
 
@@ -896,14 +921,19 @@ app.get("/api/land/geojson", (req, res) => {
   });
 });
 
-// Get cities in a region
+// Get cities in a region with story counts
 app.get("/api/regions/:regionId/cities", async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT c.id, c.name, c.lat, c.lon, c.population, co.name AS country_name, co.iso_code
+      SELECT c.id, c.name, c.lat, c.lon, c.population, 
+             co.name AS country_name, co.iso_code,
+             COUNT(DISTINCT na.id) AS story_count
       FROM cities c
       LEFT JOIN countries co ON co.id = c.country_id
+      LEFT JOIN news_articles na ON na.city_id = c.id
+        AND na.published_at > NOW() - INTERVAL '7 days'
       WHERE c.region_id = $1
+      GROUP BY c.id, co.name, co.iso_code
       ORDER BY c.population DESC NULLS LAST
     `, [req.params.regionId]);
     res.json(rows);
@@ -916,13 +946,19 @@ app.get("/api/regions/:regionId/cities", async (req, res) => {
 app.get("/api/regions", async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT id, name, slug, continent_id, color,
-             centroid_lng, centroid_lat, population
-      FROM regions
-      ORDER BY name ASC
+      SELECT r.id, r.name, r.slug, r.continent_id, r.color,
+             r.centroid_lng, r.centroid_lat, r.population,
+             COUNT(DISTINCT na.id) AS story_count
+      FROM regions r
+      LEFT JOIN cities c ON c.region_id = r.id
+      LEFT JOIN news_articles na ON na.city_id = c.id
+        AND na.published_at > NOW() - INTERVAL '7 days'
+      GROUP BY r.id
+      ORDER BY r.name ASC
     `);
     res.json(rows);
   } catch (err) {
+    console.error("[regions]", err.message);
     res.status(500).json({ error: "Failed to fetch regions" });
   }
 });
