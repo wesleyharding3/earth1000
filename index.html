@@ -3940,7 +3940,7 @@
     let targetZoom = camera.position.z;
     let zoomingOut = false; // true while easing back to preFocusZoom after panel close
     let zoomVelocity = 0;
-    const zoomFriction = 0.92;
+    const zoomFriction = 0.94;
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
@@ -6900,7 +6900,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
         if (window.__currentPage !== 1) return;
         e.preventDefault();
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0006; return; }
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00025; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -6916,7 +6916,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
           const currentDistance = getDistance(e.touches);
-          zoomVelocity += (initialPinchDistance - currentDistance) * 0.0008;
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
@@ -7189,7 +7189,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
-        targetZoom = Math.max(1.5, Math.min(5, targetZoom));
+        targetZoom = Math.max(1.3, Math.min(6, targetZoom));
         const zoomDelta = targetZoom - camera.position.z;
         // Zoom-out uses a gentler lerp so the camera eases back slowly;
         // zoom-in stays snappy. Clear zoomingOut once camera has settled.
