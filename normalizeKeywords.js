@@ -125,79 +125,72 @@ async function analyze() {
 
 async function translateKeywords() {
   console.log('\n═══════════════════════════════════════════════════════════');
-  console.log('  TRANSLATING KEYWORDS');
+  console.log('  TRANSLATING KEYWORDS (high-frequency first)');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // Get already translated keywords (should be small enough)
+  // Get already translated keywords
   console.log('Loading already-translated keywords...');
   const { rows: doneRows } = await pool.query(`SELECT original_keyword FROM keyword_translations`);
   const doneSet = new Set(doneRows.map(r => r.original_keyword));
   console.log(`  Already translated: ${doneSet.size.toLocaleString()}`);
 
-  // Use keyset pagination (much faster than LIMIT/OFFSET)
-  const BATCH_SIZE = 5000;
+  // Get all non-ASCII keywords with counts, ordered by frequency
+  console.log('Loading keywords by frequency...');
   const nonAsciiRegex = /[^\x00-\x7F]/;
-  let lastKeyword = '';
+  const MIN_KEYWORD_LENGTH = 3;
+  
+  const { rows: allKeywords } = await pool.query(`
+    SELECT keyword, SUM(total_count)::integer AS mentions
+    FROM keyword_daily_stats
+    GROUP BY keyword
+    HAVING SUM(total_count) >= $1
+    ORDER BY SUM(total_count) DESC
+  `, [CONFIG.MIN_OCCURRENCES]);
+
+  // Filter: non-ASCII, min length, not already done
+  const toTranslate = allKeywords.filter(r =>
+    r.keyword.length >= MIN_KEYWORD_LENGTH &&
+    nonAsciiRegex.test(r.keyword) &&
+    !doneSet.has(r.keyword)
+  );
+
+  console.log(`  Total high-frequency keywords: ${allKeywords.length.toLocaleString()}`);
+  console.log(`  To translate: ${toTranslate.length.toLocaleString()}`);
+  console.log('\nTranslating (highest frequency first)...\n');
+
   let translated = 0;
   let errors = 0;
-  let scanned = 0;
 
-  console.log('Processing keywords in batches (keyset pagination)...\n');
-
-  while (true) {
-    // Fetch batch using keyset pagination (faster than OFFSET)
-    const { rows: batch } = await pool.query(`
-      SELECT DISTINCT keyword 
-      FROM keyword_daily_stats
-      WHERE keyword > $1
-      ORDER BY keyword
-      LIMIT $2
-    `, [lastKeyword, BATCH_SIZE]);
-
-    if (batch.length === 0) break;
-
-    scanned += batch.length;
-    lastKeyword = batch[batch.length - 1].keyword;
-
-    // Filter: non-ASCII, not already done, and minimum length (skip 1-2 char fragments)
-    const MIN_KEYWORD_LENGTH = 3;
-    const toTranslate = batch.filter(r => 
-      r.keyword.length >= MIN_KEYWORD_LENGTH &&
-      nonAsciiRegex.test(r.keyword) && 
-      !doneSet.has(r.keyword)
-    );
-
-    // Translate this batch
-    for (const row of toTranslate) {
-      try {
-        const normalized = await translateText(row.keyword, 'EN-US');
+  for (const row of toTranslate) {
+    try {
+      const normalized = await translateText(row.keyword, 'EN-US');
+      
+      if (normalized && normalized.trim()) {
+        await pool.query(`
+          INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+          VALUES ($1, $2)
+          ON CONFLICT (original_keyword) DO NOTHING
+        `, [row.keyword, normalized.toLowerCase().trim()]);
         
-        if (normalized && normalized.trim()) {
-          await pool.query(`
-            INSERT INTO keyword_translations (original_keyword, normalized_keyword)
-            VALUES ($1, $2)
-            ON CONFLICT (original_keyword) DO NOTHING
-          `, [row.keyword, normalized.toLowerCase().trim()]);
-          
-          doneSet.add(row.keyword);
-          translated++;
-        }
-      } catch (err) {
-        errors++;
-        if (errors <= 5) {
-          console.warn(`  Error translating "${row.keyword}": ${err.message}`);
+        translated++;
+        
+        // Progress every 50
+        if (translated % 50 === 0) {
+          console.log(`  Translated: ${translated} / ${toTranslate.length} (${row.mentions.toLocaleString()} mentions: "${row.keyword}" → "${normalized.trim()}")`);
         }
       }
+    } catch (err) {
+      errors++;
+      if (errors <= 5) {
+        console.warn(`  Error translating "${row.keyword}": ${err.message}`);
+      }
     }
-
-    process.stdout.write(`  Scanned: ${scanned.toLocaleString()}, translated: ${translated}, errors: ${errors}\r`);
     
-    // Small pause to avoid overwhelming DB
-    if (toTranslate.length > 0) await sleep(100);
+    // Small pause every 100 to avoid rate limits
+    if ((translated + errors) % 100 === 0) await sleep(200);
   }
 
-  console.log(`\n\n────────────────────────────────────────────────────────────`);
-  console.log(`Total scanned: ${scanned.toLocaleString()}`);
+  console.log(`\n────────────────────────────────────────────────────────────`);
   console.log(`Translated: ${translated.toLocaleString()}`);
   console.log(`Errors:     ${errors.toLocaleString()}`);
   console.log('═══════════════════════════════════════════════════════════\n');
