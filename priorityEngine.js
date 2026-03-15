@@ -210,6 +210,7 @@ const CONFIG = {
   MAX_TAG_MULTIPLIER:  1.20,
   MIN_TAG_MULTIPLIER:  1.00,
   CITY_SOURCE_PENALTY: 0.01,
+  FLOW_CITY_PENALTY:   0.50,   // Gentler penalty for flows - city articles can still compete
   TIER_BONUS: {
     4: 6.0,
     3: 1.0,
@@ -286,7 +287,8 @@ function calculatePriority({
   popularityScore,
   popularityTier,
   publishedAt,
-  isCitySource
+  isCitySource,
+  cityPenaltyOverride
 }) {
   // Recency: exponential decay score, 0→1 (fresh = 1.0, old = MIN_DECAY)
   const recencyScore = computeDecay(publishedAt);
@@ -306,7 +308,10 @@ function calculatePriority({
   // Tier bonus and city penalty are applied after blending so they can still
   // meaningfully separate articles within the same recency band.
   const tierBonus   = getTierBonus(popularityTier);
-  const cityPenalty = isCitySource ? CONFIG.CITY_SOURCE_PENALTY : 1.0;
+  const defaultPenalty = CONFIG.CITY_SOURCE_PENALTY;
+  const cityPenalty = isCitySource 
+    ? (cityPenaltyOverride !== undefined ? cityPenaltyOverride : defaultPenalty) 
+    : 1.0;
 
   const finalScore = blended * tierBonus * cityPenalty;
 
@@ -521,5 +526,6 @@ module.exports = {
   rankArticles,
   diversityRerank,
   countryVarianceRerank,
-  detectTierInflation
+  detectTierInflation,
+  FLOW_CITY_PENALTY: CONFIG.FLOW_CITY_PENALTY
 };
