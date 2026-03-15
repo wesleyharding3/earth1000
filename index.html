@@ -6431,14 +6431,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
         card.classList.remove("hcErase");
         card.classList.remove("hcVisible");
+        
+        // For cities with region: show region as title, then "city, country"
+        const hasRegion = node.region && node.region !== node.name;
         const showCountryLine = node.country && node.name !== node.country;
+        
+        let titleText, subtitleText;
+        if (hasRegion) {
+          titleText = node.region;
+          subtitleText = showCountryLine ? `${node.name}, ${node.country}` : node.name;
+        } else {
+          titleText = node.name;
+          subtitleText = showCountryLine ? node.country : null;
+        }
+        
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
-            ${node.flag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
-            ${node.name}
+            ${node.flag && !hasRegion ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
+            ${titleText}
           </div>
-          ${showCountryLine ? `<div class="hoverCardCountry">${node.country}</div>` : ""}
+          ${subtitleText ? `<div class="hoverCardCountry">${node.flag && hasRegion ? `<span style="font-size:11px;margin-right:4px;">${node.flag}</span>` : ""}${subtitleText}</div>` : ""}
           <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
@@ -7722,6 +7735,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           let i = 0;
           function tick() {
             if (token !== _typeCancel) { cursor.remove(); return; }
+            if (!cursor.parentNode) return; // cursor removed from DOM, abort
             if (i < chars.length) { el.insertBefore(document.createTextNode(chars[i++]), cursor); setTimeout(tick, delay); }
             else { cursor.remove(); onDone?.(); }
           }
