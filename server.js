@@ -441,7 +441,7 @@ app.get("/api/news/search", async (req, res) => {
      about_country= country ID (destination)
      about_city   = city ID (destination)
      keyword      = text search in title/summary
-     limit        = max results (default 800, max 2500 for aggregate, max 1500 for individual)
+     limit        = max results (default 800, max 2500)
      normalize    = 'true' (default) | 'false' — sqrt-dampened distribution across destinations
      
    Normalization ensures every destination with routed articles is represented,
@@ -451,7 +451,7 @@ app.get("/api/news/search", async (req, res) => {
 app.get("/api/flows", async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
-    const maxLimit = mode === "aggregate" ? 2500 : 1500;
+    const maxLimit = mode === "aggregate" ? 2500 : 2500;
     const limit = Math.min(parseInt(req.query.limit) || 800, maxLimit);
     const normalize = req.query.normalize !== "false"; // default true
 
