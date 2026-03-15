@@ -8125,13 +8125,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const summary = a.translated_summary || a.summary || "";
             const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
             const cityTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
-            return `<div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
+            const needsTranslation = !a.translated_title && a.title;
+            const translateBtn = needsTranslation 
+              ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` 
+              : "";
+            return `<div style="position:relative">
+              <div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
               <div class="articleCardBody">
                 <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${cityTag}</div>
-                <div class="articleCardTitle">${title}</div>
-                ${summary ? `<div class="articleCardSummary">${summary}</div>` : ""}
+                <div class="articleCardTitle" data-aid="${a.id}">${title}</div>
+                ${summary ? `<div class="articleCardSummary" data-aid="${a.id}">${summary}</div>` : ""}
               </div>
+            </div>
+            ${translateBtn}
             </div>`;
           }).join("");
         }
@@ -9944,13 +9951,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Map flow data to article format and render using standard card HTML
       const FLAG_CDN = "https://flagcdn.com/w80/";
       const cardsHtml = data.flows.map(f => {
+        // Check if translation is needed (has original title but no translated title)
+        const needsTranslation = f.originalTitle && !f.translatedTitle;
+        
         // Map flow fields to article fields
         const article = {
           id: f.id,
           title: f.title,
-          translated_title: f.title,
+          translated_title: f.translatedTitle || null,
           summary: f.summary || '',
-          translated_summary: f.summary || '',
+          translated_summary: f.translatedSummary || null,
           image_url: f.imageUrl,
           source_name: f.sourceName,
           published_at: f.publishedAt,
@@ -9973,6 +9983,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Origin label showing the route
         const originLabel = `<div class="articleCardOrigin">📰 ${f.src?.place || ''} → ${f.dst?.place || ''}</div>`;
         
+        // Translate button (only if needed)
+        const translateBtn = needsTranslation 
+          ? `<button class="articleTranslateBtn" data-id="${f.id}" data-title="${(f.originalTitle||'').replace(/"/g,'&quot;')}" data-summary="${(f.originalSummary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` 
+          : "";
+        
         return `
           <div style="position:relative">
             <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
@@ -9980,8 +9995,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="articleCardBody">
                 <div>
                   <div class="articleCardSource">${article.source_name || ""}</div>
-                  <div class="articleCardTitle">${article.title || ""}</div>
-                  <div class="articleCardSummary">${article.summary || ""}</div>
+                  <div class="articleCardTitle" data-aid="${f.id}">${article.title || ""}</div>
+                  <div class="articleCardSummary" data-aid="${f.id}">${article.summary || ""}</div>
                 </div>
                 <div class="articleCardFooter">
                   ${originLabel}
@@ -9989,6 +10004,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 </div>
               </div>
             </div>
+            ${translateBtn}
           </div>`;
       }).join('');
       
