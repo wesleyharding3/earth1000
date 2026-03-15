@@ -6177,14 +6177,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (regionHoverEraseTimer) { clearTimeout(regionHoverEraseTimer); regionHoverEraseTimer = null; }
               card.classList.remove("hcErase");
               card.classList.remove("hcVisible");
-              const storyCount = r.story_count ? parseInt(r.story_count) : 0;
               card.innerHTML = `
                 <div class="hoverCardName">
                   <div class="hoverCardDot" style="background:${r.color || '#ffffff'}"></div>
                   ${r.name}
                 </div>
-                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}
-                <div class="hoverCardPop" style="margin-top:2px;">${storyCount} ${storyCount === 1 ? 'story' : 'stories'}</div>`;
+                ${r.population ? `<div class="hoverCardPop">${formatPopulation(r.population)}</div>` : ""}`;
               positionHoverCard(card, lineEl, sx, sy);
               card.classList.add("hcVisible");
               lineEl.style.opacity = "1";
@@ -7225,7 +7223,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panel = document.getElementById("infoPanel");
         const popFormatted = region.population ? formatPopulation(region.population) : null;
         const accentColor = region.color || "#6699cc";
-        const storyCount = region.story_count ? parseInt(region.story_count) : 0;
 
         panel.innerHTML = `
           <div id="panelResizeHandle">
@@ -7241,9 +7238,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div style="width:14px;height:14px;border-radius:50%;background:${accentColor};flex-shrink:0;"></div>
               <div style="min-width:0;">
                 <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${region.name}</h2>
-                <div style="margin-top:3px;font-size:12px;opacity:0.55;letter-spacing:0.04em;">
-                  ${popFormatted ? `Population ${popFormatted}` : ""}${popFormatted && storyCount ? " · " : ""}${storyCount ? `${storyCount} ${storyCount === 1 ? 'story' : 'stories'}` : ""}
-                </div>
+                ${popFormatted ? `<div style="margin-top:3px;font-size:12px;opacity:0.55;letter-spacing:0.04em;">Population ${popFormatted}</div>` : ""}
               </div>
             </div>
           </div>
