@@ -159,9 +159,12 @@ async function translateKeywords() {
     scanned += batch.length;
     lastKeyword = batch[batch.length - 1].keyword;
 
-    // Filter: non-ASCII and not already done
+    // Filter: non-ASCII, not already done, and minimum length (skip 1-2 char fragments)
+    const MIN_KEYWORD_LENGTH = 3;
     const toTranslate = batch.filter(r => 
-      nonAsciiRegex.test(r.keyword) && !doneSet.has(r.keyword)
+      r.keyword.length >= MIN_KEYWORD_LENGTH &&
+      nonAsciiRegex.test(r.keyword) && 
+      !doneSet.has(r.keyword)
     );
 
     // Translate this batch
