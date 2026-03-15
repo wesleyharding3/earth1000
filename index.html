@@ -8908,8 +8908,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Materials ── */
   function makeArcMaterial(color, opacity) {
-    return new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity,
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(color) },
+        uOpacity: { value: opacity },
+        uPulsePos: { value: 0.0 },  // 0-1 position along arc
+        uPulseWidth: { value: 0.15 }, // width of pulse glow
+        uPulseIntensity: { value: 0.5 } // extra brightness at pulse
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uOpacity;
+        uniform float uPulsePos;
+        uniform float uPulseWidth;
+        uniform float uPulseIntensity;
+        varying vec2 vUv;
+        
+        void main() {
+          // vUv.y goes along the tube (0 = start, 1 = end)
+          float dist = abs(vUv.y - uPulsePos);
+          // Wrap around for smooth looping
+          dist = min(dist, 1.0 - dist);
+          
+          // Soft gaussian-like falloff
+          float pulse = exp(-dist * dist / (uPulseWidth * uPulseWidth * 0.5));
+          
+          // Base opacity + pulse boost
+          float finalOpacity = uOpacity * (1.0 + pulse * uPulseIntensity);
+          
+          // Slightly brighter color at pulse
+          vec3 finalColor = uColor * (1.0 + pulse * 0.3);
+          
+          gl_FragColor = vec4(finalColor, finalOpacity);
+        }
+      `,
+      transparent: true,
       side: THREE.DoubleSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending
@@ -9114,13 +9154,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.mesh.geometry = new THREE.TubeGeometry(arc.curve, ARC_SEGMENTS, tubeRadius, TUBE_RADIAL, false);
 
     const color = pickColor(flow);
-    arc.tubeMat.color.set(color);
+    arc.tubeMat.uniforms.uColor.value.copy(color);
 
     // Set static opacity for aggregate mode
     if (arc.isStatic) {
       const opacityScale = 0.3 + 0.5 * (flow.count / (maxCount || 1));
-      arc.tubeMat.opacity = Math.min(opacityScale, 0.75);
+      arc.tubeMat.uniforms.uOpacity.value = Math.min(opacityScale, 0.75);
+      arc.tubeMat.uniforms.uPulseIntensity.value = 0.6;  // Pulse visible on aggregate arcs
       arc.ptMat.opacity = 0;  // no particles for static arcs
+      arc.pulsePhase = Math.random();  // Random starting phase for staggered pulses
+    } else {
+      arc.tubeMat.uniforms.uPulseIntensity.value = 0.3;  // Subtle pulse on animated arcs
+      arc.pulsePhase = 0;
     }
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
@@ -9156,14 +9201,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Animate individual arcs ── */
   let lastTimestamp = performance.now();
+  let globalPulseTime = 0;
+  const PULSE_SPEED = 0.4;  // How fast pulse travels (cycles per second)
 
   function tickArcs(delta) {
     delta *= flowSpeed;
+    globalPulseTime += delta * PULSE_SPEED;
 
     for (let i = arcObjects.length - 1; i >= 0; i--) {
       const arc = arcObjects[i];
       
-      // Skip static arcs (aggregate mode)
+      // Update pulse position for all arcs (including static)
+      const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
+      arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+      
+      // Skip the rest for static arcs (aggregate mode)
       if (arc.isStatic) continue;
 
       // Only age arcs when playing — freeze in place when paused
@@ -9178,7 +9230,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       else if (t < 1 - FADE_DURATION)  opacity = 1;
       else                             opacity = Math.max(0, (1 - t) / FADE_DURATION);
 
-      arc.tubeMat.opacity = opacity * 0.55;
+      arc.tubeMat.uniforms.uOpacity.value = opacity * 0.55;
       arc.ptMat.opacity   = opacity;
 
       const ptPos = arc.ptGeo.attributes.position.array;
@@ -9767,7 +9819,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Rebuild colors on live arcs
       arcObjects.forEach(arc => {
         const c = pickColor(arc.flow);
-        arc.tubeMat.color.set(c);
+        arc.tubeMat.uniforms.uColor.value.copy(c);
         for (let i = 0; i < PARTICLE_COUNT; i++) {
           arc.ptGeo.attributes.color.array[i*3]   = c.r;
           arc.ptGeo.attributes.color.array[i*3+1] = c.g;
