@@ -5241,10 +5241,18 @@ function computeCityTiers(cities) {
         
         pauseAmbientRotation();
         dragging = true;
+        dragStartX = e.clientX; dragStartY = e.clientY;  // Track start for threshold
+        dragThresholdMet = false;  // Reset threshold flag
         prevX = e.clientX; prevY = e.clientY;
       });
 
       window.addEventListener("mouseup", () => { dragging = false; });
+      
+      const DRAG_THRESHOLD = 3;  // pixels - ignore movement smaller than this (click/tap jitter)
+      
+      let touchStartX = 0, touchStartY = 0;
+      let touchThresholdMet = false;
+      
       window.addEventListener("touchstart", e => {
         if (e.touches.length !== 1) return;
         const touchTarget = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
@@ -5269,6 +5277,9 @@ function computeCityTiers(cities) {
         pauseAmbientRotation();
         touchDragging = true;
         touchTapMoved = false;
+        touchThresholdMet = false;  // Reset threshold flag
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
         touchPrevX = e.touches[0].clientX;
         touchPrevY = e.touches[0].clientY;
       }, { passive: true });
@@ -5276,7 +5287,14 @@ function computeCityTiers(cities) {
       window.addEventListener("touchmove", e => {
         if (!touchDragging || e.touches.length !== 1) return;
         
-        // On first drag movement, sync yaw/pitch from current globeQuat to prevent snap
+        // Check if we've moved enough to be considered a real drag (not tap jitter)
+        if (!touchThresholdMet) {
+          const totalMoved = Math.abs(e.touches[0].clientX - touchStartX) + Math.abs(e.touches[0].clientY - touchStartY);
+          if (totalMoved < DRAG_THRESHOLD) return;  // Ignore small movements
+          touchThresholdMet = true;
+        }
+        
+        // On first real drag movement, sync yaw/pitch from current globeQuat to prevent snap
         if (focusLocked) {
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; globePitch = pitch;
@@ -5297,10 +5315,20 @@ function computeCityTiers(cities) {
         touchDragging = false;
       });
 
+      let dragStartX = 0, dragStartY = 0;
+      let dragThresholdMet = false;
+
       window.addEventListener("mousemove", e => {
         if (!dragging) return;
         
-        // On first drag movement, sync yaw/pitch from current globeQuat to prevent snap
+        // Check if we've moved enough to be considered a real drag (not click jitter)
+        if (!dragThresholdMet) {
+          const totalMoved = Math.abs(e.clientX - dragStartX) + Math.abs(e.clientY - dragStartY);
+          if (totalMoved < DRAG_THRESHOLD) return;  // Ignore small movements
+          dragThresholdMet = true;
+        }
+        
+        // On first real drag movement, sync yaw/pitch from current globeQuat to prevent snap
         if (focusLocked) {
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; globePitch = pitch;
