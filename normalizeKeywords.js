@@ -38,10 +38,6 @@ const CONFIG = {
   
   // Pause between batches (ms) to avoid rate limits
   BATCH_PAUSE_MS: 1000,
-  
-  // Languages to translate (non-English)
-  // These are the source languages we'll translate FROM
-  TRANSLATE_LANGS: ['ar', 'ru', 'zh', 'ja', 'ko', 'es', 'fr', 'de', 'pt', 'it', 'tr', 'pl', 'uk', 'nl', 'th', 'vi', 'id', 'he', 'fa', 'hi'],
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -49,17 +45,19 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // ─── Setup ─────────────────────────────────────────────────────────────────
 
 async function setup() {
-  console.log('Creating keyword_translations table...');
+  console.log('Setting up keyword_translations table...');
+  
+  // Drop old table if it exists (schema changed)
+  await pool.query(`DROP TABLE IF EXISTS keyword_translations`);
   
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS keyword_translations (
+    CREATE TABLE keyword_translations (
       id SERIAL PRIMARY KEY,
-      original_keyword TEXT NOT NULL,
-      source_language TEXT NOT NULL,
+      original_keyword TEXT NOT NULL UNIQUE,
+      source_language TEXT DEFAULT 'auto',
       normalized_keyword TEXT NOT NULL,
       confidence REAL DEFAULT 1.0,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      UNIQUE(original_keyword, source_language)
+      created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
   
@@ -89,63 +87,37 @@ async function analyze() {
   console.log('  KEYWORD LANGUAGE ANALYSIS');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // Language distribution
-  const { rows: langRows } = await pool.query(`
-    SELECT 
-      source_language,
-      COUNT(DISTINCT keyword) AS unique_keywords,
-      COUNT(*) AS total_rows
-    FROM article_keywords
-    GROUP BY source_language
-    ORDER BY total_rows DESC
-  `);
+  // Get stats from keyword_daily_stats (aggregated, faster)
+  console.log('Loading keyword stats...');
+  const { rows: allKeywords } = await pool.query(`
+    SELECT keyword, SUM(total_count)::integer AS mentions
+    FROM keyword_daily_stats
+    WHERE source_country_id IS NULL AND about_country_id IS NULL
+    GROUP BY keyword
+    HAVING SUM(total_count) >= $1
+  `, [CONFIG.MIN_OCCURRENCES]);
   
-  console.log('Language    Unique Keywords    Total Rows');
-  console.log('─────────────────────────────────────────────');
-  for (const r of langRows) {
-    const lang = (r.source_language || 'NULL').padEnd(10);
-    console.log(`${lang} ${parseInt(r.unique_keywords).toLocaleString().padStart(15)}    ${parseInt(r.total_rows).toLocaleString().padStart(12)}`);
-  }
+  // Filter in JS
+  const nonAsciiRegex = /[^\x00-\x7F]/;
+  const nonAscii = allKeywords.filter(r => nonAsciiRegex.test(r.keyword));
+  const ascii = allKeywords.filter(r => !nonAsciiRegex.test(r.keyword));
 
-  // Non-English keywords needing translation
-  console.log('\n── Keywords needing translation ────────────────────────────\n');
-  
-  const { rows: [needsTranslation] } = await pool.query(`
-    SELECT COUNT(DISTINCT keyword) AS cnt
-    FROM article_keywords
-    WHERE source_language != 'en' 
-      AND source_language IS NOT NULL
-      AND source_language = ANY($1)
-      AND keyword IN (
-        SELECT keyword FROM article_keywords 
-        GROUP BY keyword HAVING COUNT(*) >= $2
-      )
-  `, [CONFIG.TRANSLATE_LANGS, CONFIG.MIN_OCCURRENCES]);
-  
-  console.log(`Unique non-English keywords (>= ${CONFIG.MIN_OCCURRENCES} occurrences): ${parseInt(needsTranslation.cnt).toLocaleString()}`);
+  console.log(`Total keywords (>= ${CONFIG.MIN_OCCURRENCES} mentions): ${allKeywords.length.toLocaleString()}`);
+  console.log(`  ASCII (English/numbers):  ${ascii.length.toLocaleString()}`);
+  console.log(`  Non-ASCII (to translate): ${nonAscii.length.toLocaleString()}`);
 
   // Already translated
   const { rows: [alreadyDone] } = await pool.query(`
     SELECT COUNT(*) AS cnt FROM keyword_translations
   `);
-  console.log(`Already translated: ${parseInt(alreadyDone.cnt).toLocaleString()}`);
+  console.log(`\nAlready translated: ${parseInt(alreadyDone.cnt).toLocaleString()}`);
+  console.log(`Remaining to translate: ${Math.max(0, nonAscii.length - parseInt(alreadyDone.cnt)).toLocaleString()}`);
 
-  // Sample non-English high-frequency keywords
-  console.log('\n── Sample non-English keywords to translate ────────────────\n');
-  const { rows: samples } = await pool.query(`
-    SELECT keyword, source_language, COUNT(*) AS occurrences
-    FROM article_keywords
-    WHERE source_language != 'en' 
-      AND source_language IS NOT NULL
-      AND source_language = ANY($1)
-    GROUP BY keyword, source_language
-    HAVING COUNT(*) >= $2
-    ORDER BY occurrences DESC
-    LIMIT 20
-  `, [CONFIG.TRANSLATE_LANGS, CONFIG.MIN_OCCURRENCES]);
-  
+  // Sample non-ASCII keywords (already in memory, just sort/slice)
+  console.log('\n── Top non-ASCII keywords ──────────────────────────────────\n');
+  const samples = nonAscii.sort((a, b) => b.mentions - a.mentions).slice(0, 20);
   for (const r of samples) {
-    console.log(`  "${r.keyword}" (${r.source_language}) - ${parseInt(r.occurrences).toLocaleString()} occurrences`);
+    console.log(`  "${r.keyword}" - ${r.mentions.toLocaleString()} mentions`);
   }
   
   console.log('\n═══════════════════════════════════════════════════════════\n');
@@ -158,24 +130,30 @@ async function translateKeywords() {
   console.log('  TRANSLATING KEYWORDS');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // Get keywords that need translation (not already in keyword_translations)
-  const { rows: toTranslate } = await pool.query(`
-    SELECT DISTINCT ak.keyword, ak.source_language
-    FROM article_keywords ak
-    LEFT JOIN keyword_translations kt 
-      ON kt.original_keyword = ak.keyword 
-      AND kt.source_language = ak.source_language
-    WHERE ak.source_language != 'en' 
-      AND ak.source_language IS NOT NULL
-      AND ak.source_language = ANY($1)
-      AND kt.id IS NULL
-      AND ak.keyword IN (
-        SELECT keyword FROM article_keywords 
-        GROUP BY keyword HAVING COUNT(*) >= $2
-      )
-    ORDER BY ak.source_language
-  `, [CONFIG.TRANSLATE_LANGS, CONFIG.MIN_OCCURRENCES]);
+  // Step 1: Get already translated keywords (fast, small table)
+  console.log('Loading already-translated keywords...');
+  const { rows: doneRows } = await pool.query(`SELECT original_keyword FROM keyword_translations`);
+  const doneSet = new Set(doneRows.map(r => r.original_keyword));
+  console.log(`  Already translated: ${doneSet.size.toLocaleString()}`);
 
+  // Step 2: Get ALL high-frequency keywords (no regex in SQL)
+  console.log('Loading high-frequency keywords...');
+  const { rows: allKeywords } = await pool.query(`
+    SELECT keyword, SUM(total_count)::integer AS mentions
+    FROM keyword_daily_stats
+    WHERE source_country_id IS NULL 
+      AND about_country_id IS NULL
+    GROUP BY keyword
+    HAVING SUM(total_count) >= $1
+    ORDER BY mentions DESC
+  `, [CONFIG.MIN_OCCURRENCES]);
+  console.log(`  Found: ${allKeywords.length.toLocaleString()} high-frequency keywords`);
+
+  // Step 3: Filter in JS - non-ASCII and not already done (fast!)
+  const nonAsciiRegex = /[^\x00-\x7F]/;
+  const toTranslate = allKeywords.filter(r => 
+    nonAsciiRegex.test(r.keyword) && !doneSet.has(r.keyword)
+  );
   console.log(`Keywords to translate: ${toTranslate.length.toLocaleString()}`);
   
   if (toTranslate.length === 0) {
@@ -186,52 +164,42 @@ async function translateKeywords() {
   let translated = 0;
   let errors = 0;
   
-  // Process in batches by language
-  const byLang = {};
-  for (const row of toTranslate) {
-    if (!byLang[row.source_language]) byLang[row.source_language] = [];
-    byLang[row.source_language].push(row.keyword);
-  }
-
-  for (const [lang, keywords] of Object.entries(byLang)) {
-    console.log(`\nTranslating ${keywords.length} ${lang} keywords...`);
+  // Process in batches
+  for (let i = 0; i < toTranslate.length; i += CONFIG.BATCH_SIZE) {
+    const batch = toTranslate.slice(i, i + CONFIG.BATCH_SIZE);
     
-    for (let i = 0; i < keywords.length; i += CONFIG.BATCH_SIZE) {
-      const batch = keywords.slice(i, i + CONFIG.BATCH_SIZE);
-      
-      for (const keyword of batch) {
-        try {
-          // DeepL auto-detects source language, just specify target
-          const normalized = await translateText(keyword, 'EN-US');
+    for (const row of batch) {
+      const keyword = row.keyword;
+      try {
+        // DeepL auto-detects source language
+        const normalized = await translateText(keyword, 'EN-US');
+        
+        if (normalized && normalized.trim()) {
+          await pool.query(`
+            INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+            VALUES ($1, $2)
+            ON CONFLICT (original_keyword) DO UPDATE
+            SET normalized_keyword = EXCLUDED.normalized_keyword
+          `, [keyword, normalized.toLowerCase().trim()]);
           
-          if (normalized && normalized.trim()) {
-            await pool.query(`
-              INSERT INTO keyword_translations (original_keyword, source_language, normalized_keyword)
-              VALUES ($1, $2, $3)
-              ON CONFLICT (original_keyword, source_language) DO UPDATE
-              SET normalized_keyword = EXCLUDED.normalized_keyword
-            `, [keyword, lang, normalized.toLowerCase().trim()]);
-            
-            translated++;
-          }
-        } catch (err) {
-          errors++;
-          if (errors <= 5) {
-            console.warn(`  Error translating "${keyword}": ${err.message}`);
-          }
+          translated++;
+        }
+      } catch (err) {
+        errors++;
+        if (errors <= 5) {
+          console.warn(`  Error translating "${keyword}": ${err.message}`);
         }
       }
-      
-      process.stdout.write(`  Progress: ${Math.min(i + CONFIG.BATCH_SIZE, keywords.length)}/${keywords.length} (${translated} translated, ${errors} errors)\r`);
-      
-      if (i + CONFIG.BATCH_SIZE < keywords.length) {
-        await sleep(CONFIG.BATCH_PAUSE_MS);
-      }
     }
-    console.log();
+    
+    process.stdout.write(`  Progress: ${Math.min(i + CONFIG.BATCH_SIZE, toTranslate.length)}/${toTranslate.length} (${translated} translated, ${errors} errors)\r`);
+    
+    if (i + CONFIG.BATCH_SIZE < toTranslate.length) {
+      await sleep(CONFIG.BATCH_PAUSE_MS);
+    }
   }
 
-  console.log(`\n────────────────────────────────────────────────────────────`);
+  console.log(`\n\n────────────────────────────────────────────────────────────`);
   console.log(`Translated: ${translated.toLocaleString()}`);
   console.log(`Errors:     ${errors.toLocaleString()}`);
   console.log('═══════════════════════════════════════════════════════════\n');
@@ -244,7 +212,7 @@ async function backfill() {
   console.log('  BACKFILLING NORMALIZED KEYWORDS');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // For English keywords, normalized = original
+  // For English keywords, normalized = original (lowercase)
   console.log('Setting normalized_keyword = keyword for English...');
   const { rowCount: enCount } = await pool.query(`
     UPDATE article_keywords
@@ -253,17 +221,26 @@ async function backfill() {
   `);
   console.log(`  Updated: ${enCount.toLocaleString()} rows`);
 
-  // For non-English, use translation table
+  // For non-English, use translation table (join on keyword only)
   console.log('\nApplying translations to non-English keywords...');
   const { rowCount: transCount } = await pool.query(`
     UPDATE article_keywords ak
     SET normalized_keyword = kt.normalized_keyword
     FROM keyword_translations kt
     WHERE ak.keyword = kt.original_keyword
-      AND ak.source_language = kt.source_language
       AND ak.normalized_keyword IS NULL
   `);
   console.log(`  Updated: ${transCount.toLocaleString()} rows`);
+
+  // For remaining ASCII keywords without translation, just lowercase them
+  console.log('\nLowercasing remaining ASCII keywords...');
+  const { rowCount: asciiCount } = await pool.query(`
+    UPDATE article_keywords
+    SET normalized_keyword = LOWER(keyword)
+    WHERE normalized_keyword IS NULL
+      AND keyword !~ '[^\\x00-\\x7F]'  -- ASCII only
+  `);
+  console.log(`  Updated: ${asciiCount.toLocaleString()} rows`);
 
   // Stats
   const { rows: [stats] } = await pool.query(`
