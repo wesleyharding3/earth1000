@@ -631,8 +631,7 @@ app.get("/api/flows", async (req, res) => {
           ns.popularity_score                   AS "popularityScore",
           ns.popularity_tier                    AS "popularityTier",
           al.routing_type                       AS "routingType",
-          COALESCE(SUM(at.score), 0)            AS intensity,
-          COALESCE(SUM(stw.weight), 0)          AS "tagWeightSum",
+          COALESCE(a.base_priority, 0)          AS intensity,
           COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
           COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
           COALESCE(src_city.name, src_co.name)           AS src_place,
@@ -652,15 +651,12 @@ app.get("/api/flows", async (req, res) => {
         JOIN countries dst_co  ON dst_co.id = al.country_id
         LEFT JOIN cities src_city ON src_city.id = a.city_id
         LEFT JOIN cities dst_city ON dst_city.id = al.city_id
-        LEFT JOIN article_tags at ON at.article_id = a.id
-        LEFT JOIN source_tag_weights stw ON stw.source_id = a.source_id AND stw.tag_id = at.tag_id
         ${whereClause}
-        GROUP BY a.id, ns.id, al.id, src_co.id, dst_co.id, src_city.id, dst_city.id
         ORDER BY a.published_at DESC
         LIMIT $${limitParam}
       `, params);
 
-      // Calculate priority scores
+      // Calculate priority scores using simplified scoring
       const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
       
       const scored = rows.map(r => ({
@@ -668,7 +664,7 @@ app.get("/api/flows", async (req, res) => {
         priority: calculatePriority({
           rawIntensity:    parseFloat(r.intensity) || 0,
           maxIntensity,
-          tagWeightSum:    parseFloat(r.tagWeightSum) || 0,
+          tagWeightSum:    0,  // Skip tag weight for performance
           popularityScore: parseFloat(r.popularityScore) || 1,
           popularityTier:  parseInt(r.popularityTier) || 1,
           publishedAt:     r.publishedAt,
