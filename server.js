@@ -510,12 +510,11 @@ app.get("/api/flows", async (req, res) => {
       )`);
     }
 
-    // Exclude same-location flows (src country = dst country AND no city differentiation)
+    // Exclude same-location flows and city-to-own-country flows (stubby lines)
+    // Allow: different countries (any combo), or same country with different cities
     conditions.push(`(
       a.country_id != al.country_id
       OR (a.city_id IS NOT NULL AND al.city_id IS NOT NULL AND a.city_id != al.city_id)
-      OR (a.city_id IS NOT NULL AND al.city_id IS NULL)
-      OR (a.city_id IS NULL AND al.city_id IS NOT NULL)
     )`);
 
     const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
