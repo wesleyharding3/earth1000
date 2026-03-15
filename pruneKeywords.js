@@ -140,21 +140,6 @@ async function analyze() {
     console.log(`  ${(r.source_language || 'NULL').padEnd(6)} ${parseInt(r.cnt).toLocaleString().padStart(12)} rows`);
   }
 
-  // Sample singletons (keywords appearing only once)
-  console.log('\n── Sample singleton keywords (noise) ───────────────────────\n');
-  const { rows: singletonSamples } = await pool.query(`
-    SELECT keyword, source_language
-    FROM article_keywords
-    WHERE keyword IN (
-      SELECT keyword FROM article_keywords GROUP BY keyword HAVING COUNT(*) = 1
-    )
-    ORDER BY RANDOM()
-    LIMIT 20
-  `);
-  for (const r of singletonSamples) {
-    console.log(`  "${r.keyword}" (${r.source_language})`);
-  }
-
   console.log('\n═══════════════════════════════════════════════════════════\n');
 }
 
