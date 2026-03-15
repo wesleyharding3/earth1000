@@ -5226,11 +5226,15 @@ function computeCityTiers(cities) {
         // Don't start dragging or clear focus if panel is active - let click handler close it first
         if (isPanelActive()) return;
         
-        // If zooming out after panel close, stop zoom immediately at current level
-        if (zoomingOut) {
+        // If any camera animation is in progress, stop it immediately
+        if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
+          if (focusTargetQuat) {
+            focusTargetQuat = null;
+            focusPendingPanel = null;
+          }
         }
         
         pauseAmbientRotation();
@@ -5254,11 +5258,15 @@ function computeCityTiers(cities) {
         // Don't start dragging if panel is active - let touch handler close it first
         if (isPanelActive()) return;
         
-        // If zooming out after panel close, stop zoom immediately at current level
-        if (zoomingOut) {
+        // If any camera animation is in progress, stop it immediately
+        if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
+          if (focusTargetQuat) {
+            focusTargetQuat = null;
+            focusPendingPanel = null;
+          }
         }
         
         pauseAmbientRotation();
@@ -6438,17 +6446,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return; // Either way, don't process node selection while panel is active
         }
         
-        // If zooming out after panel close, stop zoom immediately at current level
-        if (zoomingOut) {
+        // If any camera animation is in progress (zoom-in focus or zoom-out), stop it immediately
+        if (zoomingOut || (isFocused && focusTargetQuat)) {
+          // Stop zoom animation
           zoomingOut = false;
-          targetZoom = camera.position.z;  // Freeze at current zoom level
+          targetZoom = camera.position.z;
           zoomVelocity = 0;
-          // Clear focusLocked so controls are freed
-          if (focusLocked) {
-            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-            globeYaw = yaw; globePitch = pitch;
-            focusLocked = false;
+          // Stop focus/rotation animation - freeze camera where it is
+          if (focusTargetQuat) {
+            focusTargetQuat = null;
+            focusPendingPanel = null;
           }
+          // Extract current orientation and lock it
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
+          focusLocked = true;  // Keep camera frozen
+          isFocused = false;
+          selectedNodeIndex = null;
         }
         
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
@@ -6523,17 +6537,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
         
-        // If zooming out after panel close, stop zoom immediately at current level
-        if (zoomingOut) {
+        // If any camera animation is in progress (zoom-in focus or zoom-out), stop it immediately
+        if (zoomingOut || (isFocused && focusTargetQuat)) {
+          // Stop zoom animation
           zoomingOut = false;
-          targetZoom = camera.position.z;  // Freeze at current zoom level
+          targetZoom = camera.position.z;
           zoomVelocity = 0;
-          // Clear focusLocked so controls are freed
-          if (focusLocked) {
-            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-            globeYaw = yaw; globePitch = pitch;
-            focusLocked = false;
+          // Stop focus/rotation animation - freeze camera where it is
+          if (focusTargetQuat) {
+            focusTargetQuat = null;
+            focusPendingPanel = null;
           }
+          // Extract current orientation and lock it
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
+          focusLocked = true;  // Keep camera frozen
+          isFocused = false;
+          selectedNodeIndex = null;
         }
         
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
@@ -6978,11 +6998,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__currentPage !== 1) return;
         e.preventDefault();
         
-        // If zooming out after panel close, stop zoom immediately at current level
-        if (zoomingOut) {
+        // If any camera animation is in progress, stop it immediately
+        if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
+          if (focusTargetQuat) {
+            focusTargetQuat = null;
+            focusPendingPanel = null;
+            isFocused = false;
+            selectedNodeIndex = null;
+          }
         }
         
         if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
@@ -7006,11 +7032,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("touchmove",  e => {
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
-          // If zooming out after panel close, stop zoom immediately at current level
-          if (zoomingOut) {
+          // If any camera animation is in progress, stop it immediately
+          if (zoomingOut || focusTargetQuat) {
             zoomingOut = false;
             targetZoom = camera.position.z;
             zoomVelocity = 0;
+            if (focusTargetQuat) {
+              focusTargetQuat = null;
+              focusPendingPanel = null;
+              isFocused = false;
+              selectedNodeIndex = null;
+            }
           }
           const currentDistance = getDistance(e.touches);
           zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
