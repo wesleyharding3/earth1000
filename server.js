@@ -809,8 +809,41 @@ app.get("/api/news/region/:regionId", async (req, res) => {
   try {
     const limit  = Math.min(parseInt(req.query.limit)  || 12, 50);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
+    const regionId = parseInt(req.params.regionId);
+
+    // Aggregate articles from:
+    // 1. article_locations routed to this region
+    // 2. articles from cities that belong to this region
+    // 3. articles from sources whose city belongs to this region (international sources)
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
+      WITH region_articles AS (
+        -- Articles routed to region via article_locations
+        SELECT DISTINCT a.id
+        FROM article_locations al
+        JOIN news_articles a ON a.id = al.article_id
+        WHERE al.region_id = $1
+          AND a.published_at > NOW() - INTERVAL '7 days'
+
+        UNION
+
+        -- Articles from cities in this region
+        SELECT DISTINCT a.id
+        FROM news_articles a
+        JOIN cities ci ON ci.id = a.city_id
+        WHERE ci.region_id = $1
+          AND a.published_at > NOW() - INTERVAL '7 days'
+
+        UNION
+
+        -- Articles from sources whose city is in this region
+        SELECT DISTINCT a.id
+        FROM news_articles a
+        JOIN news_sources ns ON ns.id = a.source_id
+        JOIN cities ci ON ci.id = ns.city_id
+        WHERE ci.region_id = $1
+          AND a.published_at > NOW() - INTERVAL '7 days'
+      )
+      SELECT
         a.id,
         a.title,
         a.translated_title,
@@ -825,20 +858,19 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         ns.popularity_score,
         l.iso_code_2    AS language,
         co.iso_code,
-        co.name         AS country_name
-      FROM article_locations al
-      JOIN news_articles  a   ON a.id  = al.article_id
+        co.name         AS country_name,
+        ci.name         AS city_name
+      FROM region_articles ra
+      JOIN news_articles  a   ON a.id  = ra.id
       JOIN news_sources   ns  ON ns.id = a.source_id
       LEFT JOIN languages l   ON l.id  = ns.language_id
       LEFT JOIN countries co  ON co.id = a.country_id
-      WHERE al.region_id = $1
-        AND a.published_at > NOW() - INTERVAL '7 days'
-      ORDER BY a.id, a.published_at DESC
+      LEFT JOIN cities    ci  ON ci.id = a.city_id
+      ORDER BY a.published_at DESC
       LIMIT $2 OFFSET $3
-    `, [req.params.regionId, limit, offset]);
+    `, [regionId, limit, offset]);
     res.json(rows);
   } catch (err) {
-    // Fallback: region_id column may not exist yet — return empty array gracefully
     console.warn("[region news]", err.message);
     res.json([]);
   }
@@ -854,6 +886,23 @@ app.get("/api/land/geojson", (req, res) => {
       if (!res.headersSent) res.status(404).json({ error: "ne_50m_land.geojson not found" });
     }
   });
+});
+
+// Get cities in a region
+app.get("/api/regions/:regionId/cities", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT c.id, c.name, c.lat, c.lon, c.population, co.name AS country_name, co.iso_code
+      FROM cities c
+      LEFT JOIN countries co ON co.id = c.country_id
+      WHERE c.region_id = $1
+      ORDER BY c.population DESC NULLS LAST
+    `, [req.params.regionId]);
+    res.json(rows);
+  } catch (err) {
+    console.error("[region cities]", err.message);
+    res.status(500).json({ error: "Failed to fetch region cities" });
+  }
 });
 
 app.get("/api/regions", async (req, res) => {
