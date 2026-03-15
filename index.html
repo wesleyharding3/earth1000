@@ -5007,6 +5007,15 @@ function computeCityTiers(cities) {
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
+      // ── Node Twinkle System (cities, countries, regions) ──────────────────────
+      // Random twinkling for ALL nodes always, slightly stronger when selected
+      const nodeTwinkleChance = 0.004;        // base chance per frame to start twinkle
+      const nodeTwinkleDurMin = 0.12;         // min duration in seconds
+      const nodeTwinkleDurMax = 0.35;         // max duration in seconds  
+      const nodeTwinkleIntensity = 0.45;      // base glow boost (0-1)
+      const nodeTwinkleSelectedChance = 0.012; // higher chance when selected
+      const nodeTwinkleSelectedBoost = 0.25;  // additional intensity when selected
+
       // ───────────────────────────────────────────────────────────────
       // SHOOTING STARS
       // Exist in world space (not scene), so globe rotation doesn't
@@ -5254,6 +5263,11 @@ function computeCityTiers(cities) {
           cityLayerLookup[gi] = { li, localIdx };
         });
       });
+
+      // ── Node Twinkle State Arrays ───────────────────────────────────────────────
+      // Each node has: timer (countdown), duration (total), intensity (random multiplier)
+      const cityTwinkle = cities.map(() => ({ timer: 0, duration: 0, intensity: 0 }));
+      const countryTwinkle = countries.map(() => ({ timer: 0, duration: 0, intensity: 0 }));
 
       const cityMat = raycastMat;
 
@@ -5870,13 +5884,16 @@ function computeCityTiers(cities) {
               const gi = layer.globalIndices[li];
 
               // Global ambient pulse for ALL visible nodes - subtle breathing effect
-              const ambientPulse = 1 + 0.25 * Math.sin(ambientPulseTime * Math.PI * 2 + gi * 0.1);
+              const ambientPulse = 1 + 0.15 * Math.sin(ambientPulseTime * Math.PI * 2 + gi * 0.1);
               glow *= ambientPulse;
 
-              if (glowPulseActive && gi === selectedNodeIndex) {
-                // Dramatic continuous pulsing for selected node - much stronger
-                const pulse = 1 + 2.5 * Math.sin(glowPulseTime * Math.PI * 2);
-                glow *= Math.max(0.2, pulse);
+              // Random twinkle effect - always active, stronger when selected
+              const twk = cityTwinkle[gi];
+              if (twk && twk.timer > 0) {
+                const fade = Math.sin((twk.timer / twk.duration) * Math.PI);
+                const isSelected = (gi === selectedNodeIndex);
+                const boost = twk.intensity * (isSelected ? (1 + nodeTwinkleSelectedBoost) : 1);
+                glow *= (1 + boost * fade);
               }
 
               // Population filter mask
@@ -5911,13 +5928,16 @@ function computeCityTiers(cities) {
               Math.pow(normalized, 2.8);
 
             // Global ambient pulse for ALL visible nodes - subtle breathing effect
-            const ambientPulse = 1 + 0.25 * Math.sin(ambientPulseTime * Math.PI * 2 + i * 0.15);
+            const ambientPulse = 1 + 0.15 * Math.sin(ambientPulseTime * Math.PI * 2 + i * 0.15);
             glow *= ambientPulse;
 
-            // Dramatic pulsing for selected country node
-            if (glowPulseActive && i === selectedNodeIndex) {
-              const pulse = 1 + 2.5 * Math.sin(glowPulseTime * Math.PI * 2);
-              glow *= Math.max(0.2, pulse);
+            // Random twinkle effect - always active, stronger when selected
+            const twk = countryTwinkle[i];
+            if (twk && twk.timer > 0) {
+              const fade = Math.sin((twk.timer / twk.duration) * Math.PI);
+              const isSelected = (i === selectedNodeIndex);
+              const boost = twk.intensity * (isSelected ? (1 + nodeTwinkleSelectedBoost) : 1);
+              glow *= (1 + boost * fade);
             }
 
             // Population filter mask
@@ -7093,8 +7113,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       });
 
-      let glowPulseTime = 0;
-      let glowPulseActive = false;
       let ambientPulseTime = 0;  // Global ambient pulse for all nodes
 
       const compass = document.getElementById("compass");
@@ -7954,8 +7972,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
-        glowPulseActive = true;
-        glowPulseTime = 0;
       }
 
       function focusCountry(country) {
@@ -7971,8 +7987,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
-        glowPulseActive = true;
-        glowPulseTime = 0;
       }
 
       function focusRegion(region) {
@@ -7988,8 +8002,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
-        glowPulseActive = true;
-        glowPulseTime = 0;
       }
 
       function openRegionPanel(region) {
@@ -8271,10 +8283,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ambientPulseTime += 0.012;
         if (ambientPulseTime >= 2) ambientPulseTime = 0;
 
-        // Continuous dramatic pulsing for selected node - loops while focused
-        if (glowPulseActive) { 
-          glowPulseTime += 0.08;  // Fast pulse speed
-          if (glowPulseTime >= 2) glowPulseTime = 0;  // Loop continuously
+        // ── Node Twinkle Updates (cities, countries) ──────────────────────────
+        // Random twinkles for all nodes, higher chance when selected
+        const dt = 0.016;
+        for (let i = 0; i < cityTwinkle.length; i++) {
+          const twk = cityTwinkle[i];
+          if (twk.timer > 0) {
+            twk.timer -= dt;
+          } else {
+            // Chance to start new twinkle - higher if selected
+            const chance = (i === selectedNodeIndex && currentViewMode !== 'country') 
+              ? nodeTwinkleSelectedChance : nodeTwinkleChance;
+            if (Math.random() < chance) {
+              twk.duration = nodeTwinkleDurMin + Math.random() * (nodeTwinkleDurMax - nodeTwinkleDurMin);
+              twk.timer = twk.duration;
+              twk.intensity = nodeTwinkleIntensity * (0.6 + Math.random() * 0.8); // vary intensity
+            }
+          }
+        }
+        for (let i = 0; i < countryTwinkle.length; i++) {
+          const twk = countryTwinkle[i];
+          if (twk.timer > 0) {
+            twk.timer -= dt;
+          } else {
+            const chance = (i === selectedNodeIndex && currentViewMode === 'country') 
+              ? nodeTwinkleSelectedChance : nodeTwinkleChance;
+            if (Math.random() < chance) {
+              twk.duration = nodeTwinkleDurMin + Math.random() * (nodeTwinkleDurMax - nodeTwinkleDurMin);
+              twk.timer = twk.duration;
+              twk.intensity = nodeTwinkleIntensity * (0.6 + Math.random() * 0.8);
+            }
+          }
         }
 
         const earthColorAttr = earthPoints.geometry.attributes.color;
