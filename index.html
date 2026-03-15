@@ -8913,8 +8913,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uColor: { value: new THREE.Color(color) },
         uOpacity: { value: opacity },
         uPulsePos: { value: 0.0 },  // 0-1 position along arc
-        uPulseWidth: { value: 0.15 }, // width of pulse glow
-        uPulseIntensity: { value: 0.5 } // extra brightness at pulse
+        uPulseWidth: { value: 0.12 }, // width of pulse glow
+        uPulseIntensity: { value: 1.2 } // extra brightness at pulse
       },
       vertexShader: `
         varying vec2 vUv;
@@ -8931,20 +8931,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uniform float uPulseIntensity;
         varying vec2 vUv;
         
-        void main() {
-          // vUv.y goes along the tube (0 = start, 1 = end)
-          float dist = abs(vUv.y - uPulsePos);
-          // Wrap around for smooth looping
+        float getPulse(float pos, float center) {
+          float dist = abs(pos - center);
           dist = min(dist, 1.0 - dist);
+          return exp(-dist * dist / (uPulseWidth * uPulseWidth * 0.5));
+        }
+        
+        void main() {
+          // Multiple pulses for clearer direction
+          float pulse1 = getPulse(vUv.y, uPulsePos);
+          float pulse2 = getPulse(vUv.y, fract(uPulsePos + 0.33));
+          float pulse3 = getPulse(vUv.y, fract(uPulsePos + 0.66));
           
-          // Soft gaussian-like falloff
-          float pulse = exp(-dist * dist / (uPulseWidth * uPulseWidth * 0.5));
+          // Combine pulses with slight falloff for trailing ones
+          float pulse = pulse1 + pulse2 * 0.6 + pulse3 * 0.3;
           
           // Base opacity + pulse boost
           float finalOpacity = uOpacity * (1.0 + pulse * uPulseIntensity);
           
-          // Slightly brighter color at pulse
-          vec3 finalColor = uColor * (1.0 + pulse * 0.3);
+          // Brighter color at pulse
+          vec3 finalColor = uColor * (1.0 + pulse * 0.5);
           
           gl_FragColor = vec4(finalColor, finalOpacity);
         }
@@ -9160,11 +9166,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (arc.isStatic) {
       const opacityScale = 0.3 + 0.5 * (flow.count / (maxCount || 1));
       arc.tubeMat.uniforms.uOpacity.value = Math.min(opacityScale, 0.75);
-      arc.tubeMat.uniforms.uPulseIntensity.value = 0.6;  // Pulse visible on aggregate arcs
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.5;  // Strong pulse on aggregate arcs
       arc.ptMat.opacity = 0;  // no particles for static arcs
       arc.pulsePhase = Math.random();  // Random starting phase for staggered pulses
     } else {
-      arc.tubeMat.uniforms.uPulseIntensity.value = 0.3;  // Subtle pulse on animated arcs
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.0;  // Clear pulse on animated arcs
       arc.pulsePhase = 0;
     }
 
@@ -9202,7 +9208,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Animate individual arcs ── */
   let lastTimestamp = performance.now();
   let globalPulseTime = 0;
-  const PULSE_SPEED = 0.4;  // How fast pulse travels (cycles per second)
+  const PULSE_SPEED = 0.3;  // How fast pulse travels (cycles per second) - slower for clearer direction
 
   function tickArcs(delta) {
     delta *= flowSpeed;
