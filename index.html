@@ -4022,7 +4022,7 @@ const loader = new THREE.TextureLoader();
       snapState = state;
       const h = typeof SNAP[state] === "function" ? SNAP[state]() : SNAP[state];
       infoPanel.style.transition = animate
-        ? "bottom 0.4s ease, height 0.3s cubic-bezier(0.32,0.72,0,1)"
+        ? "bottom 0.55s cubic-bezier(0.22, 1, 0.36, 1), height 0.4s cubic-bezier(0.22, 1, 0.36, 1)"
         : "none";
       infoPanel.style.height = h + "px";
       updateArrow();
@@ -6005,7 +6005,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           blending: THREE.AdditiveBlending,
           depthWrite: false,
           opacity: 0.0,
-          color: new THREE.Color(1.0, 1.0, 1.0),
+          vertexColors: true,
           sizeAttenuation: true
         });
         regionPoints = new THREE.Points(geo, mat);
@@ -6614,7 +6614,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
 
         panel.classList.add("active");
-        applySnapHeight("default", false);
+        applySnapHeight("default", true);
         attachPanelResizeHandle();
 
         // ‚îÄ‚îÄ Slides ‚îÄ‚îÄ
@@ -6875,12 +6875,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
+          // Extract yaw/pitch BEFORE clearing isFocused to prevent snap
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
           isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
-          requestAnimationFrame(() => {
-            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-            globeYaw = yaw; globePitch = pitch;
-            focusLocked = false;
-          });
+          focusLocked = false;
           // Kill any in-flight zoom velocity so it can't push targetZoom after we freeze it
           zoomVelocity = 0;
           targetZoom = camera.position.z;
@@ -6900,7 +6899,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
         if (window.__currentPage !== 1) return;
         e.preventDefault();
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00003; return; }
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.000015; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -6916,7 +6915,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
           const currentDistance = getDistance(e.touches);
-          zoomVelocity += (initialPinchDistance - currentDistance) * 0.00006;
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.00003;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
@@ -7069,7 +7068,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
 
         panel.classList.add("active");
-        applySnapHeight("default", false);
+        applySnapHeight("default", true);
         attachPanelResizeHandle();
 
         const track    = panel.querySelector("#articlesTrack");
@@ -7137,12 +7136,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
+          // Extract yaw/pitch BEFORE clearing isFocused to prevent snap
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
           isFocused = false; focusPendingPanel = null;
-          requestAnimationFrame(() => {
-            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-            globeYaw = yaw; globePitch = pitch;
-            focusLocked = false;
-          });
+          focusLocked = false;
           zoomVelocity = 0;
           targetZoom = camera.position.z;
           zoomingOut = false;
