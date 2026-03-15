@@ -912,7 +912,7 @@
   gap: 10px;
   pointer-events: all;
   user-select: none;
-  min-width: 460px;
+  min-width: 520px;
 }
 #flowControls.visible { display: flex; }
 
@@ -1107,7 +1107,171 @@
 #flowTooltip .ftMeta   { font-size: 10px; color: rgba(255,255,255,0.45); line-height: 1.6; }
 #flowTooltip .ftRoute  { font-size: 10px; color: rgba(80,255,160,0.75); margin-top: 4px; font-weight: 600; }
 
+/* ─── Flow Filter Enhancements ─── */
+.flowModeToggle {
+  display: flex;
+  gap: 4px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 12px;
+  padding: 3px;
+}
+.flowModeToggle .flowModePill {
+  flex: 1;
+  height: 22px;
+  font-size: 9px;
+  border: none;
+  background: transparent;
+}
+.flowModeToggle .flowModePill.active {
+  background: rgba(0,180,100,0.22);
+  border: 1px solid rgba(0,220,130,0.35);
+}
 
+.flowFilterRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.flowFilterField {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  position: relative;
+}
+
+.flowFilterLabel {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.28);
+  padding-left: 2px;
+}
+
+.flowFilterInput {
+  height: 28px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 11px;
+  padding: 0 10px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+.flowFilterInput:focus { border-color: rgba(0,220,130,0.5); }
+.flowFilterInput::placeholder { color: rgba(255,255,255,0.25); }
+.flowFilterInput.has-value {
+  border-color: rgba(0,220,130,0.35);
+  background: rgba(0,180,100,0.08);
+}
+
+/* Autocomplete dropdown */
+.flowAC {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: rgba(5,7,10,0.98);
+  border: 1px solid rgba(0,220,130,0.25);
+  border-radius: 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  z-index: 300;
+  display: none;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.flowAC.open { display: block; }
+.flowAC-item {
+  padding: 8px 12px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  transition: background 0.12s;
+}
+.flowAC-item:last-child { border-bottom: none; }
+.flowAC-item:hover, .flowAC-item.selected {
+  background: rgba(0,180,100,0.15);
+  color: #fff;
+}
+.flowAC-flag {
+  width: 18px;
+  height: 13px;
+  border-radius: 2px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.flowAC-name { flex: 1; }
+.flowAC-type {
+  font-size: 9px;
+  color: rgba(255,255,255,0.3);
+  text-transform: uppercase;
+}
+
+/* Selected chip display */
+.flowSelectedChip {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px 0 10px;
+  background: rgba(0,180,100,0.15);
+  border: 1px solid rgba(0,220,130,0.35);
+  border-radius: 8px;
+  font-size: 11px;
+  color: rgba(80,255,160,0.9);
+}
+.flowSelectedChip.visible { display: flex; }
+.flowSelectedChip .chipFlag {
+  width: 16px;
+  height: 12px;
+  border-radius: 2px;
+}
+.flowSelectedChip .chipName {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+.flowSelectedChip .chipX {
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 12px;
+  transition: opacity 0.15s;
+}
+.flowSelectedChip .chipX:hover { opacity: 1; }
+
+/* Aggregate stats bar */
+.flowAggStats {
+  display: none;
+  background: rgba(0,180,100,0.08);
+  border: 1px solid rgba(0,220,130,0.18);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.5);
+  text-align: center;
+}
+.flowAggStats.visible { display: block; }
+.flowAggStats .aggNum {
+  color: rgba(80,255,160,0.9);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* Hide playback controls in aggregate mode */
+#flowControls.aggregate-mode .flowPlaybackRow { display: none; }
+#flowControls.aggregate-mode .flowPanelRow:has(#flowSpeed) { display: none; }
+#flowControls.aggregate-mode .flowAggStats { display: block; }
 
 
 
@@ -3867,13 +4031,48 @@
   <!-- Flow controls panel -->
   <div id="flowControls">
     <div class="flowPanel">
+      <!-- Mode toggle -->
       <div class="flowPanelRow">
-        <span class="flowLabel">From</span>
-        <input type="date" class="flowDateInput" id="flowFrom" />
-        <span class="flowLabel" style="text-align:center;">To</span>
-        <input type="date" class="flowDateInput" id="flowTo" />
+        <span class="flowLabel">Mode</span>
+        <div class="flowModeToggle" style="flex:1;">
+          <div class="flowModePill active" data-fmode="individual">Time Series</div>
+          <div class="flowModePill" data-fmode="aggregate">Aggregate</div>
+        </div>
+      </div>
+
+      <!-- Location filters -->
+      <div class="flowFilterRow">
+        <div class="flowFilterField">
+          <span class="flowFilterLabel">From (source)</span>
+          <input type="text" class="flowFilterInput" id="flowFromLoc" placeholder="Any country…" autocomplete="off" />
+          <div class="flowSelectedChip" id="flowFromChip">
+            <img class="chipFlag" src="" alt="" />
+            <span class="chipName"></span>
+            <span class="chipX" onclick="clearFlowFilter('from')">✕</span>
+          </div>
+          <div class="flowAC" id="flowFromAC"></div>
+        </div>
+        <div class="flowFilterField">
+          <span class="flowFilterLabel">About (destination)</span>
+          <input type="text" class="flowFilterInput" id="flowAboutLoc" placeholder="Any country…" autocomplete="off" />
+          <div class="flowSelectedChip" id="flowAboutChip">
+            <img class="chipFlag" src="" alt="" />
+            <span class="chipName"></span>
+            <span class="chipX" onclick="clearFlowFilter('about')">✕</span>
+          </div>
+          <div class="flowAC" id="flowAboutAC"></div>
+        </div>
+      </div>
+
+      <!-- Keyword + dates -->
+      <div class="flowPanelRow">
+        <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" style="flex:1;" />
+        <input type="date" class="flowDateInput" id="flowFrom" style="width:105px;" />
+        <input type="date" class="flowDateInput" id="flowTo" style="width:105px;" />
         <button class="flowBtn primary" id="flowLoadBtn">Load</button>
       </div>
+
+      <!-- Color mode -->
       <div class="flowPanelRow">
         <span class="flowLabel">Color</span>
         <div class="flowModeRow" style="flex:1;">
@@ -3882,18 +4081,28 @@
           <div class="flowModePill" data-cmode="uniform">Uniform</div>
         </div>
       </div>
+
+      <!-- Speed (individual mode only) -->
       <div class="flowPanelRow">
         <span class="flowLabel">Speed</span>
         <input type="range" class="flowSpeedSlider" id="flowSpeed"
                min="0.2" max="4" step="0.1" value="1" />
       </div>
+
+      <!-- Playback (individual mode only) -->
       <div class="flowPlaybackRow">
-        <button class="flowBtn" id="flowPlayBtn">‚ñ∂ Play</button>
-        <button class="flowBtn" id="flowResetBtn">‚Ü∫</button>
+        <button class="flowBtn" id="flowPlayBtn">▶ Play</button>
+        <button class="flowBtn" id="flowResetBtn">↺</button>
         <div class="flowProgressWrap" id="flowProgressWrap">
           <div class="flowProgressBar" id="flowProgressBar"></div>
         </div>
-        <span class="flowStats" id="flowStats">‚Äî</span>
+        <span class="flowStats" id="flowStats">—</span>
+      </div>
+
+      <!-- Aggregate stats (aggregate mode only) -->
+      <div class="flowAggStats" id="flowAggStats">
+        <span class="aggNum" id="aggRouteCount">0</span> routes · 
+        <span class="aggNum" id="aggArticleCount">0</span> articles
       </div>
     </div>
   </div>
@@ -8018,35 +8227,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 (function setupFlowAnimation() {
 
-  /* ‚îÄ‚îÄ Config ‚îÄ‚îÄ */
-  const GLOBE_RADIUS   = radius;          // already in scope
-  const ARC_HEIGHT     = 0.45;            // bezier lift above globe
-  const ARC_SEGMENTS   = 64;              // tube path resolution
-  const TUBE_RADIUS    = 0.003;           // arc tube thickness
-  const TUBE_RADIAL    = 4;              // tube cross-section segments
-  const PARTICLE_COUNT = 3;              // moving dots per arc
-  const PARTICLE_SIZE  = 0.016;          // dot billboard size
-  const FADE_DURATION  = 0.35;           // arc fade-in secs
-  const MAX_VISIBLE    = 120;            // max simultaneous arcs
+  /* ── Config ── */
+  const GLOBE_RADIUS   = radius;
+  const ARC_HEIGHT     = 0.45;
+  const ARC_SEGMENTS   = 64;
+  const TUBE_RADIUS_BASE = 0.003;
+  const TUBE_RADIUS_MIN  = 0.002;
+  const TUBE_RADIUS_MAX  = 0.018;
+  const TUBE_RADIAL    = 6;
+  const PARTICLE_COUNT = 3;
+  const PARTICLE_SIZE  = 0.016;
+  const FADE_DURATION  = 0.35;
+  const MAX_VISIBLE    = 120;
+  const FLAG_CDN       = "https://flagcdn.com/w40/";
 
-  /* ‚îÄ‚îÄ State ‚îÄ‚îÄ */
+  /* ── State ── */
   let flowData        = [];
-  let arcObjects      = [];  
-  let arcPool = [];            // {mesh, particleMesh, state, flow}
+  let arcObjects      = [];
+  let arcPool         = [];
   let flowPlaying     = false;
-  let flowProgress    = 0;              // 0‚Üí1 over all flows
+  let flowProgress    = 0;
   let flowSpeed       = 1.0;
   let colorMode       = "routing";
-  let flowAnimId      = null;
-  let particlePool    = [];
+  let flowMode        = "individual";   // "individual" | "aggregate"
+  let flowModeOpen    = false;
 
-  /* ‚îÄ‚îÄ Groups ‚îÄ‚îÄ */
-  const flowGroup    = new THREE.Group();
+  // Filter state
+  let filterFromCountry = null;   // { id, name, iso }
+  let filterAboutCountry = null;
+  let countriesCache = [];
+
+  /* ── Groups ── */
+  const flowGroup     = new THREE.Group();
   const particleGroup = new THREE.Group();
   scene.add(flowGroup);
   scene.add(particleGroup);
 
-  /* ‚îÄ‚îÄ Materials ‚îÄ‚îÄ */
+  /* ── Materials ── */
   function makeArcMaterial(color, opacity) {
     return new THREE.MeshBasicMaterial({
       color, transparent: true, opacity,
@@ -8073,19 +8290,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   const particleTex = makeParticleTexture();
 
-  /* ‚îÄ‚îÄ Colour helpers ‚îÄ‚îÄ */
-  function routingColor(routingType) {
-    return routingType === "source"
-      ? new THREE.Color(0.2, 0.8, 1.0)   // cyan ‚Äî source routing
-      : new THREE.Color(0.3, 1.0, 0.55); // green ‚Äî content routing
+  /* ── Colour helpers ── */
+  function routingColor(flow) {
+    // For aggregate, use breakdown
+    if (flow.routingBreakdown) {
+      const src = flow.routingBreakdown.source || 0;
+      const cnt = flow.routingBreakdown.content || 0;
+      const t = cnt / (src + cnt + 0.001);
+      return new THREE.Color(0.2 + 0.1*t, 0.8 + 0.2*t, 1.0 - 0.45*t);
+    }
+    return flow.routingType === "source"
+      ? new THREE.Color(0.2, 0.8, 1.0)
+      : new THREE.Color(0.3, 1.0, 0.55);
   }
 
   function sentimentColor(score) {
     if (score == null) return new THREE.Color(0.6, 0.6, 0.7);
-    const t = (score + 1) / 2; // -1..1 ‚Üí 0..1
+    const t = (score + 1) / 2;
     return new THREE.Color(
-      t < 0.5 ? 1 : 2*(1-t),       // R: high when negative
-      t > 0.5 ? 1 : 2*t,           // G: high when positive
+      t < 0.5 ? 1 : 2*(1-t),
+      t > 0.5 ? 1 : 2*t,
       0.3
     );
   }
@@ -8093,12 +8317,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function uniformColor() { return new THREE.Color(0.9, 0.85, 1.0); }
 
   function pickColor(flow) {
-    if (colorMode === "sentiment") return sentimentColor(flow.sentiment);
+    if (colorMode === "sentiment") return sentimentColor(flow.sentiment || flow.avgSentiment);
     if (colorMode === "uniform")   return uniformColor();
-    return routingColor(flow.routingType);
+    return routingColor(flow);
   }
 
-  /* ‚îÄ‚îÄ Lat/lon ‚Üí Vector3 ‚îÄ‚îÄ */
+  /* ── Lat/lon → Vector3 ── */
   function latLonToV3(lat, lon, r) {
     const phi   = (90 - lat) * (Math.PI / 180);
     const theta = (lon + 180) * (Math.PI / 180);
@@ -8109,7 +8333,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     );
   }
 
-  /* ‚îÄ‚îÄ Build great-circle arc curve ‚îÄ‚îÄ */
+  /* ── Build great-circle arc curve ── */
   function buildArcCurve(srcLat, srcLon, dstLat, dstLon) {
     const src  = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
     const dst  = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
@@ -8119,55 +8343,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return new THREE.QuadraticBezierCurve3(src, mid, dst);
   }
 
-  /* ‚îÄ‚îÄ Create arc mesh from flow data ‚îÄ‚îÄ */
-  function createArc(flow) {
+  /* ── Calculate tube radius for aggregate mode ── */
+  function calcTubeRadius(count, maxCount) {
+    if (!maxCount || maxCount <= 1) return TUBE_RADIUS_BASE;
+    // Log scale normalization
+    const logCount = Math.log10(count + 1);
+    const logMax   = Math.log10(maxCount + 1);
+    const t = logCount / logMax;
+    return TUBE_RADIUS_MIN + t * (TUBE_RADIUS_MAX - TUBE_RADIUS_MIN);
+  }
 
+  /* ── Create arc mesh from flow data ── */
+  function createArc(flow, maxCount = 1) {
     let arc;
+    const tubeRadius = flow.count ? calcTubeRadius(flow.count, maxCount) : TUBE_RADIUS_BASE;
 
-        if (arcPool.length > 0) {
-
-          arc = arcPool.pop();
-
-          arc.curve = buildArcCurve(
-            flow.src.lat, flow.src.lon,
-            flow.dst.lat, flow.dst.lon
-          );
-
-          arc.mesh.geometry.dispose();
-          arc.mesh.geometry = new THREE.TubeGeometry(
-            arc.curve,
-            ARC_SEGMENTS,
-            TUBE_RADIUS,
-            TUBE_RADIAL,
-            false
-          );
-
-          arc.mesh.visible   = true;
-          arc.ptMesh.visible = true;
-
-        } else {
-
+    if (arcPool.length > 0) {
+      arc = arcPool.pop();
+      arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon);
+      arc.mesh.geometry.dispose();
+      arc.mesh.geometry = new THREE.TubeGeometry(arc.curve, ARC_SEGMENTS, tubeRadius, TUBE_RADIAL, false);
+      arc.mesh.visible = true;
+      arc.ptMesh.visible = true;
+    } else {
       const dummyCurve = new THREE.QuadraticBezierCurve3(
-        new THREE.Vector3(),
-        new THREE.Vector3(),
-        new THREE.Vector3()
+        new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
       );
-
-      const tubeGeo = new THREE.TubeGeometry(dummyCurve, ARC_SEGMENTS, TUBE_RADIUS, TUBE_RADIAL, false);
+      const tubeGeo = new THREE.TubeGeometry(dummyCurve, ARC_SEGMENTS, tubeRadius, TUBE_RADIAL, false);
       const tubeMat = makeArcMaterial(new THREE.Color(1,1,1), 0);
       const mesh    = new THREE.Mesh(tubeGeo, tubeMat);
       mesh.renderOrder = 1;
 
       const ptPositions = new Float32Array(PARTICLE_COUNT * 3);
       const ptColors    = new Float32Array(PARTICLE_COUNT * 3);
-
       const ptGeo = new THREE.BufferGeometry();
       ptGeo.setAttribute("position", new THREE.Float32BufferAttribute(ptPositions, 3));
       ptGeo.setAttribute("color",    new THREE.Float32BufferAttribute(ptColors, 3));
 
-      const ptMat  = new THREE.PointsMaterial({
+      const ptMat = new THREE.PointsMaterial({
         size: PARTICLE_SIZE,
-       map: particleTex,
+        map: particleTex,
         vertexColors: true,
         transparent: true,
         opacity: 0,
@@ -8179,21 +8394,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const ptMesh = new THREE.Points(ptGeo, ptMat);
       ptMesh.renderOrder = 2;
 
-      arc = { mesh, ptMesh, tubeMat, ptMat, ptGeo, ptColors };
+      arc = { mesh, ptMesh, tubeMat, ptMat, ptGeo, ptColors: ptColors };
     }
 
-    // RESET ARC STATE
+    // Reset arc state
     arc.flow = flow;
     arc.age  = 0;
-    arc.totalAge = 3.5 + Math.random() * 1.5;
+    arc.isStatic = !!flow.count;  // aggregate arcs don't expire
+    arc.totalAge = arc.isStatic ? Infinity : (3.5 + Math.random() * 1.5);
 
-    arc.curve = buildArcCurve(
-      flow.src.lat, flow.src.lon,
-      flow.dst.lat, flow.dst.lon
-    );
+    arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon);
+
+    // Update geometry with correct radius
+    arc.mesh.geometry.dispose();
+    arc.mesh.geometry = new THREE.TubeGeometry(arc.curve, ARC_SEGMENTS, tubeRadius, TUBE_RADIAL, false);
 
     const color = pickColor(flow);
     arc.tubeMat.color.set(color);
+
+    // Set static opacity for aggregate mode
+    if (arc.isStatic) {
+      const opacityScale = 0.3 + 0.5 * (flow.count / (maxCount || 1));
+      arc.tubeMat.opacity = Math.min(opacityScale, 0.75);
+      arc.ptMat.opacity = 0;  // no particles for static arcs
+    }
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       arc.ptGeo.attributes.color.array[i*3]   = color.r;
@@ -8203,10 +8427,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.ptGeo.attributes.color.needsUpdate = true;
 
     arc.mesh.visible = true;
-    arc.ptMesh.visible = true;
+    arc.ptMesh.visible = !arc.isStatic;
 
     flowGroup.add(arc.mesh);
-    particleGroup.add(arc.ptMesh);
+    if (!arc.isStatic) particleGroup.add(arc.ptMesh);
 
     return arc;
   }
@@ -8214,43 +8438,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function recycleArc(arc) {
     flowGroup.remove(arc.mesh);
     particleGroup.remove(arc.ptMesh);
-
     arc.mesh.visible = false;
     arc.ptMesh.visible = false;
-
-    arcPool.push(arc);  
+    arcPool.push(arc);
   }
 
-  /* ‚îÄ‚îÄ Reset all arcs ‚îÄ‚îÄ */
-function clearArcs() {
-  for (let i = 0; i < arcObjects.length; i++) {
-    recycleArc(arcObjects[i]);
+  function clearArcs() {
+    for (let i = 0; i < arcObjects.length; i++) {
+      recycleArc(arcObjects[i]);
+    }
+    arcObjects.length = 0;
   }
-  arcObjects.length = 0;   // fully clear references
-}
 
-  /* ‚îÄ‚îÄ Animate all live arcs (called per frame) ‚îÄ‚îÄ */
+  /* ── Animate individual arcs ── */
   let lastTimestamp = performance.now();
 
   function tickArcs(delta) {
     delta *= flowSpeed;
 
-
     for (let i = arcObjects.length - 1; i >= 0; i--) {
       const arc = arcObjects[i];
-      arc.age += delta;
-      const t   = arc.age / arc.totalAge;
+      
+      // Skip static arcs (aggregate mode)
+      if (arc.isStatic) continue;
 
-      /* fade in ‚Üí hold ‚Üí fade out */
+      arc.age += delta;
+      const t = arc.age / arc.totalAge;
+
       let opacity;
-      if (t < FADE_DURATION)            opacity = t / FADE_DURATION;
+      if (t < FADE_DURATION)           opacity = t / FADE_DURATION;
       else if (t < 1 - FADE_DURATION)  opacity = 1;
-      else                              opacity = Math.max(0, (1 - t) / FADE_DURATION);
+      else                             opacity = Math.max(0, (1 - t) / FADE_DURATION);
 
       arc.tubeMat.opacity = opacity * 0.55;
       arc.ptMat.opacity   = opacity;
 
-      /* move particles along curve */
       const ptPos = arc.ptGeo.attributes.position.array;
       for (let p = 0; p < PARTICLE_COUNT; p++) {
         const frac  = ((t + p / PARTICLE_COUNT) % 1);
@@ -8261,7 +8483,6 @@ function clearArcs() {
       }
       arc.ptGeo.attributes.position.needsUpdate = true;
 
-      /* retire expired arcs */
       if (arc.age >= arc.totalAge) {
         recycleArc(arc);
         arcObjects.splice(i, 1);
@@ -8269,13 +8490,13 @@ function clearArcs() {
     }
   }
 
-  /* ‚îÄ‚îÄ Sequential playback ‚îÄ‚îÄ */
-  let seqIndex  = 0;
-  let seqTimer  = 0;
-  let seqDelay  = 0.08;   // secs between arc spawns
+  /* ── Sequential playback ── */
+  let seqIndex = 0;
+  let seqTimer = 0;
+  let seqDelay = 0.08;
 
   function tickPlayback(delta) {
-    if (!flowPlaying || !flowData.length) return;
+    if (!flowPlaying || !flowData.length || flowMode === "aggregate") return;
 
     seqTimer += delta * flowSpeed;
 
@@ -8291,17 +8512,13 @@ function clearArcs() {
     flowProgress = seqIndex / flowData.length;
     document.getElementById("flowProgressBar").style.width = (flowProgress * 100) + "%";
 
-    if (seqIndex >= flowData.length) {
-      // all launched ‚Äî wait for last arcs to finish then stop
-      if (!arcObjects.length) {
-        flowPlaying = false;
-        document.getElementById("flowPlayBtn").textContent = "‚ñ∂ Play";
-      }
+    if (seqIndex >= flowData.length && !arcObjects.length) {
+      flowPlaying = false;
+      document.getElementById("flowPlayBtn").textContent = "▶ Play";
     }
   }
 
-  /* ‚îÄ‚îÄ Main animation loop (injected into THREE animate()) ‚îÄ‚îÄ */
-  // We hook into the existing animate() via a global tickable
+  /* ── Main animation loop ── */
   window.__flowTick = function() {
     const now   = performance.now();
     const delta = Math.min((now - lastTimestamp) / 1000, 0.05);
@@ -8310,55 +8527,204 @@ function clearArcs() {
     tickPlayback(delta);
   };
 
-  /* ‚îÄ‚îÄ Load flows from API ‚îÄ‚îÄ */
+  /* ── Load countries for autocomplete ── */
+  async function loadCountries() {
+    if (countriesCache.length) return;
+    try {
+      const res = await fetch("https://earth-wjr6.onrender.com/api/countries");
+      countriesCache = await res.json();
+    } catch(e) {
+      console.error("Failed to load countries:", e);
+    }
+  }
+
+  /* ── Autocomplete setup ── */
+  function setupAutocomplete(inputId, acId, chipId, filterKey) {
+    const input = document.getElementById(inputId);
+    const ac    = document.getElementById(acId);
+    const chip  = document.getElementById(chipId);
+    let acIndex = -1;
+
+    input.addEventListener("focus", loadCountries);
+
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      acIndex = -1;
+      if (!q) { ac.classList.remove("open"); ac.innerHTML = ""; return; }
+
+      const matches = countriesCache
+        .filter(c => c.name.toLowerCase().includes(q))
+        .slice(0, 8);
+
+      if (!matches.length) { ac.classList.remove("open"); return; }
+
+      ac.innerHTML = matches.map((c, i) => `
+        <div class="flowAC-item" data-idx="${i}" data-id="${c.id}" data-name="${c.name}" data-iso="${c.iso_code}">
+          <img class="flowAC-flag" src="${FLAG_CDN}${c.iso_code?.toLowerCase()}.png" alt="" />
+          <span class="flowAC-name">${c.name}</span>
+          <span class="flowAC-type">country</span>
+        </div>
+      `).join("");
+
+      ac.querySelectorAll(".flowAC-item").forEach(item => {
+        item.addEventListener("click", () => selectCountry(item, input, ac, chip, filterKey));
+      });
+
+      ac.classList.add("open");
+    });
+
+    input.addEventListener("keydown", (e) => {
+      const items = ac.querySelectorAll(".flowAC-item");
+      if (!items.length) return;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        acIndex = Math.min(acIndex + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle("selected", i === acIndex));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        acIndex = Math.max(acIndex - 1, 0);
+        items.forEach((el, i) => el.classList.toggle("selected", i === acIndex));
+      } else if (e.key === "Enter" && acIndex >= 0) {
+        e.preventDefault();
+        selectCountry(items[acIndex], input, ac, chip, filterKey);
+      } else if (e.key === "Escape") {
+        ac.classList.remove("open");
+      }
+    });
+
+    // Close on outside click
+    document.addEventListener("click", (e) => {
+      if (!ac.contains(e.target) && e.target !== input) {
+        ac.classList.remove("open");
+      }
+    });
+  }
+
+  function selectCountry(item, input, ac, chip, filterKey) {
+    const country = {
+      id: parseInt(item.dataset.id),
+      name: item.dataset.name,
+      iso: item.dataset.iso
+    };
+
+    if (filterKey === "from") {
+      filterFromCountry = country;
+    } else {
+      filterAboutCountry = country;
+    }
+
+    // Update UI
+    input.style.display = "none";
+    chip.querySelector(".chipFlag").src = `${FLAG_CDN}${country.iso?.toLowerCase()}.png`;
+    chip.querySelector(".chipName").textContent = country.name;
+    chip.classList.add("visible");
+    ac.classList.remove("open");
+  }
+
+  window.clearFlowFilter = function(filterKey) {
+    if (filterKey === "from") {
+      filterFromCountry = null;
+      document.getElementById("flowFromLoc").style.display = "";
+      document.getElementById("flowFromLoc").value = "";
+      document.getElementById("flowFromChip").classList.remove("visible");
+    } else {
+      filterAboutCountry = null;
+      document.getElementById("flowAboutLoc").style.display = "";
+      document.getElementById("flowAboutLoc").value = "";
+      document.getElementById("flowAboutChip").classList.remove("visible");
+    }
+  };
+
+  /* ── Load flows from API ── */
   async function loadFlows() {
-    const from = document.getElementById("flowFrom").value;
-    const to   = document.getElementById("flowTo").value;
-    if (!from || !to) return;
+    const fromDate = document.getElementById("flowFrom").value;
+    const toDate   = document.getElementById("flowTo").value;
+    const keyword  = document.getElementById("flowKeyword").value.trim();
 
     clearArcs();
     seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
-    document.getElementById("flowPlayBtn").textContent = "‚ñ∂ Play";
+    document.getElementById("flowPlayBtn").textContent = "▶ Play";
     document.getElementById("flowProgressBar").style.width = "0%";
-    document.getElementById("flowStats").innerHTML = `<span style="opacity:0.4">Loading‚Ä¶</span>`;
+    document.getElementById("flowStats").innerHTML = `<span style="opacity:0.4">Loading…</span>`;
+
+    // Build query params
+    const params = new URLSearchParams();
+    params.set("mode", flowMode);
+    params.set("limit", flowMode === "aggregate" ? "500" : "800");
+
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate)   params.set("to_date", toDate);
+    if (keyword)  params.set("keyword", keyword);
+    if (filterFromCountry)  params.set("from_country", filterFromCountry.id);
+    if (filterAboutCountry) params.set("about_country", filterAboutCountry.id);
 
     try {
-      const res   = await fetch(`https://earth-wjr6.onrender.com/api/flows?from=${from}&to=${to}&limit=300`);
-      flowData    = await res.json();
-      const stats = document.getElementById("flowStats");
-      stats.innerHTML = `<span class="flowStatHighlight">${flowData.length}</span> flows ¬∑ ${from} ‚Üí ${to}`;
+      const res  = await fetch(`https://earth-wjr6.onrender.com/api/flows?${params}`);
+      const data = await res.json();
+
+      if (flowMode === "aggregate") {
+        flowData = data.flows || [];
+        const maxCount = data.maxCount || 1;
+
+        // Render all aggregate arcs immediately
+        flowData.forEach(flow => {
+          const arc = createArc(flow, maxCount);
+          arcObjects.push(arc);
+        });
+
+        // Update stats
+        document.getElementById("aggRouteCount").textContent = data.totalRoutes || 0;
+        document.getElementById("aggArticleCount").textContent = (data.totalArticles || 0).toLocaleString();
+        document.getElementById("flowStats").innerHTML = `<span class="flowStatHighlight">${data.totalRoutes}</span> routes`;
+
+      } else {
+        flowData = data.flows || data || [];
+        document.getElementById("flowStats").innerHTML = 
+          `<span class="flowStatHighlight">${flowData.length}</span> flows`;
+      }
+
     } catch(e) {
       console.error("Flow load error:", e);
       document.getElementById("flowStats").textContent = "Error loading data";
     }
   }
 
-  /* ‚îÄ‚îÄ Date defaults ‚îÄ‚îÄ */
+  /* ── Date defaults ── */
   function isoDate(d) { return d.toISOString().slice(0,10); }
   const now = new Date();
   const ago = new Date(now - 7*24*60*60*1000);
   document.getElementById("flowFrom").value = isoDate(ago);
   document.getElementById("flowTo").value   = isoDate(now);
 
-  /* ‚îÄ‚îÄ UI wiring ‚îÄ‚îÄ */
+  /* ── UI wiring ── */
   const flowModeBtn  = document.getElementById("flowModeBtn");
   const flowControls = document.getElementById("flowControls");
-  let flowModeOpen   = false;
 
   flowModeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     flowModeOpen = !flowModeOpen;
     flowModeBtn.classList.toggle("active", flowModeOpen);
     flowControls.classList.toggle("visible", flowModeOpen);
-    if (!flowModeOpen) { 
-      clearArcs(); 
-      flowPlaying = false; 
-      seqIndex = 0;
-      seqTimer = 0;
-      flowProgress = 0;
+    if (!flowModeOpen) {
+      clearArcs();
+      flowPlaying = false;
+      seqIndex = 0; seqTimer = 0; flowProgress = 0;
       document.getElementById("flowProgressBar").style.width = "0%";
     }
+  });
 
+  // Mode toggle (Time Series vs Aggregate)
+  document.querySelectorAll(".flowModeToggle .flowModePill").forEach(pill => {
+    pill.addEventListener("click", (e) => {
+      e.stopPropagation();
+      flowMode = pill.dataset.fmode;
+      document.querySelectorAll(".flowModeToggle .flowModePill").forEach(p => p.classList.remove("active"));
+      pill.classList.add("active");
+      flowControls.classList.toggle("aggregate-mode", flowMode === "aggregate");
+      clearArcs();
+      flowData = [];
+    });
   });
 
   document.getElementById("flowLoadBtn").addEventListener("click", (e) => {
@@ -8368,28 +8734,30 @@ function clearArcs() {
 
   document.getElementById("flowPlayBtn").addEventListener("click", (e) => {
     e.stopPropagation();
+    if (flowMode === "aggregate") return;  // No playback in aggregate mode
     if (!flowData.length) { loadFlows().then(() => startPlay()); return; }
     if (flowPlaying) {
       flowPlaying = false;
-      e.target.textContent = "‚ñ∂ Play";
+      e.target.textContent = "▶ Play";
     } else {
       startPlay();
     }
   });
 
   function startPlay() {
+    if (flowMode === "aggregate") return;
     if (seqIndex >= flowData.length) {
       clearArcs(); seqIndex = 0; seqTimer = 0; flowProgress = 0;
     }
     flowPlaying = true;
     lastTimestamp = performance.now();
-    document.getElementById("flowPlayBtn").textContent = "‚è∏ Pause";
+    document.getElementById("flowPlayBtn").textContent = "⏸ Pause";
   }
 
   document.getElementById("flowResetBtn").addEventListener("click", (e) => {
     e.stopPropagation();
     clearArcs(); seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
-    document.getElementById("flowPlayBtn").textContent = "‚ñ∂ Play";
+    document.getElementById("flowPlayBtn").textContent = "▶ Play";
     document.getElementById("flowProgressBar").style.width = "0%";
   });
 
@@ -8398,7 +8766,7 @@ function clearArcs() {
   });
 
   document.getElementById("flowProgressWrap").addEventListener("click", (e) => {
-    if (!flowData.length) return;
+    if (!flowData.length || flowMode === "aggregate") return;
     const rect = e.currentTarget.getBoundingClientRect();
     const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     clearArcs();
@@ -8409,26 +8777,30 @@ function clearArcs() {
   });
 
   /* Color mode pills */
-  document.querySelectorAll(".flowModePill").forEach(pill => {
+  document.querySelectorAll(".flowModeRow .flowModePill").forEach(pill => {
     pill.addEventListener("click", (e) => {
       e.stopPropagation();
+      if (!pill.dataset.cmode) return;  // Skip if not a color mode pill
       colorMode = pill.dataset.cmode;
-      document.querySelectorAll(".flowModePill").forEach(p => p.classList.remove("active"));
+      document.querySelectorAll(".flowModeRow .flowModePill").forEach(p => p.classList.remove("active"));
       pill.classList.add("active");
       // Rebuild colors on live arcs
       arcObjects.forEach(arc => {
         const c = pickColor(arc.flow);
         arc.tubeMat.color.set(c);
         for (let i = 0; i < PARTICLE_COUNT; i++) {
-          arc.ptColors[i*3]   = c.r;
-          arc.ptColors[i*3+1] = c.g;
-          arc.ptColors[i*3+2] = c.b;
+          arc.ptGeo.attributes.color.array[i*3]   = c.r;
+          arc.ptGeo.attributes.color.array[i*3+1] = c.g;
+          arc.ptGeo.attributes.color.array[i*3+2] = c.b;
         }
         arc.ptGeo.attributes.color.needsUpdate = true;
       });
     });
   });
 
+  /* Setup autocomplete for filters */
+  setupAutocomplete("flowFromLoc", "flowFromAC", "flowFromChip", "from");
+  setupAutocomplete("flowAboutLoc", "flowAboutAC", "flowAboutChip", "about");
 
   /* Tooltip on hover */
   const tooltip  = document.getElementById("flowTooltip");
@@ -8448,9 +8820,18 @@ function clearArcs() {
     for (const arc of arcObjects) {
       const xs = raycasterFlow.intersectObject(arc.mesh);
       if (xs.length) {
-        ftTitle.textContent = arc.flow.title || "(no title)";
-        ftMeta.textContent  = `${arc.flow.sourceName || ""} ¬∑ ${new Date(arc.flow.publishedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
-        ftRoute.textContent = `${arc.flow.src.place || "?"} ‚Üí ${arc.flow.dst.place || "?"} (${arc.flow.routingType})`;
+        const flow = arc.flow;
+        if (flow.count) {
+          // Aggregate mode tooltip
+          ftTitle.textContent = `${flow.count.toLocaleString()} articles`;
+          ftMeta.textContent  = `Avg sentiment: ${flow.avgSentiment?.toFixed(2) || "—"}`;
+          ftRoute.textContent = `${flow.src.place} → ${flow.dst.place}`;
+        } else {
+          // Individual mode tooltip
+          ftTitle.textContent = flow.title || "(no title)";
+          ftMeta.textContent  = `${flow.sourceName || ""} · ${new Date(flow.publishedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
+          ftRoute.textContent = `${flow.src.place || "?"} → ${flow.dst.place || "?"} (${flow.routingType})`;
+        }
         tooltip.style.left    = (e.clientX + 14) + "px";
         tooltip.style.top     = (e.clientY - 10) + "px";
         tooltip.style.display = "block";
