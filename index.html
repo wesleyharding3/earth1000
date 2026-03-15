@@ -3940,7 +3940,7 @@
     let targetZoom = camera.position.z;
     let zoomingOut = false; // true while easing back to preFocusZoom after panel close
     let zoomVelocity = 0;
-    const zoomFriction = 0.82;
+    const zoomFriction = 0.75;
 
     let yawVelocity = 0;
     let tiltVelocity = 0;
@@ -4022,7 +4022,7 @@ const loader = new THREE.TextureLoader();
       snapState = state;
       const h = typeof SNAP[state] === "function" ? SNAP[state]() : SNAP[state];
       infoPanel.style.transition = animate
-        ? "bottom 0.55s cubic-bezier(0.22, 1, 0.36, 1), height 0.4s cubic-bezier(0.22, 1, 0.36, 1)"
+        ? "bottom 0.5s cubic-bezier(0.22, 1, 0.36, 1), height 0.45s cubic-bezier(0.22, 1, 0.36, 1)"
         : "none";
       infoPanel.style.height = h + "px";
       updateArrow();
@@ -6875,19 +6875,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
-          // Extract yaw/pitch BEFORE clearing isFocused to prevent snap
+          
+          // Extract yaw/pitch BEFORE clearing isFocused to prevent camera snap
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-          globeYaw = yaw; globePitch = pitch;
-          isFocused = false; selectedNodeIndex = null; focusPendingPanel = null;
+          globeYaw = yaw; 
+          globePitch = pitch;
           focusLocked = false;
-          // Kill any in-flight zoom velocity so it can't push targetZoom after we freeze it
+          
+          isFocused = false; 
+          selectedNodeIndex = null; 
+          focusPendingPanel = null;
+          
+          // Smooth zoom-out: start immediately, no delay
           zoomVelocity = 0;
-          targetZoom = camera.position.z;
-          zoomingOut = false;
-          setTimeout(() => {
-            targetZoom = preFocusZoom;
-            zoomingOut = true;
-          }, 450);
+          targetZoom = preFocusZoom;
+          zoomingOut = true;
+          
           scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
@@ -6899,7 +6902,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
         if (window.__currentPage !== 1) return;
         e.preventDefault();
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.000015; return; }
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.000008; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -6915,7 +6918,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
           const currentDistance = getDistance(e.touches);
-          zoomVelocity += (initialPinchDistance - currentDistance) * 0.00003;
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.000015;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
@@ -7098,11 +7101,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const title = a.translated_title || a.title || "";
             const summary = a.translated_summary || a.summary || "";
             const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
-            const locationTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
+            const cityTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
             return `<a class="articleCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener">
               ${img}
               <div class="articleCardBody">
-                <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${locationTag}</div>
+                <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${cityTag}</div>
                 <div class="articleCardTitle">${title}</div>
                 ${summary ? `<div class="articleCardSummary">${summary}</div>` : ""}
               </div>
@@ -7136,15 +7139,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("click", () => {
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
-          // Extract yaw/pitch BEFORE clearing isFocused to prevent snap
+          
+          // Extract yaw/pitch BEFORE clearing isFocused to prevent camera snap
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-          globeYaw = yaw; globePitch = pitch;
-          isFocused = false; focusPendingPanel = null;
+          globeYaw = yaw; 
+          globePitch = pitch;
           focusLocked = false;
+          
+          isFocused = false; 
+          focusPendingPanel = null;
+          
+          // Smooth zoom-out: start immediately, no delay
           zoomVelocity = 0;
-          targetZoom = camera.position.z;
-          zoomingOut = false;
-          setTimeout(() => { targetZoom = preFocusZoom; zoomingOut = true; }, 450);
+          targetZoom = preFocusZoom;
+          zoomingOut = true;
+          
           scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
@@ -7192,7 +7201,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const zoomDelta = targetZoom - camera.position.z;
         // Zoom-out uses a gentler lerp so the camera eases back slowly;
         // zoom-in stays snappy. Clear zoomingOut once camera has settled.
-        const zoomLerp = zoomingOut ? 0.015 : (0.025 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        const zoomLerp = zoomingOut ? 0.035 : (0.02 * Math.min(Math.abs(zoomDelta) * 2, 1));
         camera.position.z += zoomDelta * zoomLerp;
         if (zoomingOut && Math.abs(zoomDelta) < 0.005) zoomingOut = false;
 
