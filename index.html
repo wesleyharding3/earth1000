@@ -6909,11 +6909,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           
-          // Extract yaw/pitch BEFORE clearing isFocused to prevent camera snap
+          // Extract yaw/pitch for when focusLocked is eventually cleared by user drag
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; 
           globePitch = pitch;
-          focusLocked = false;
+          // Keep focusLocked = true to prevent camera snap - holds globeQuat exactly as-is
+          // User's next drag will clear focusLocked naturally
           
           isFocused = false; 
           selectedNodeIndex = null; 
@@ -6937,6 +6938,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__currentPage !== 1) return;
         e.preventDefault();
         if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
+        // Clear focusLocked on wheel rotation so yaw/tilt velocities can be processed
+        if (focusLocked) {
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
+          focusLocked = false;
+        }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -7201,11 +7208,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           
-          // Extract yaw/pitch BEFORE clearing isFocused to prevent camera snap
+          // Extract yaw/pitch for when focusLocked is eventually cleared by user drag
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; 
           globePitch = pitch;
-          focusLocked = false;
+          // Keep focusLocked = true to prevent camera snap - holds globeQuat exactly as-is
+          // User's next drag will clear focusLocked naturally
           
           isFocused = false; 
           focusPendingPanel = null;
