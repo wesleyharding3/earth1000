@@ -4251,45 +4251,6 @@ function computeCityTiers(cities) {
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
-      // ═══ Node Pulse System ═══════════════════════════════════════════════
-      // Random pulsing for city, country, and region nodes
-      const NODE_PULSE_CHANCE = 0.008;        // Chance per frame to start pulse
-      const NODE_PULSE_DURATION_MIN = 0.4;    // Min pulse duration in seconds
-      const NODE_PULSE_DURATION_MAX = 1.2;    // Max pulse duration in seconds
-      const NODE_PULSE_INTENSITY_MIN = 0.15;  // Min brightness boost
-      const NODE_PULSE_INTENSITY_MAX = 0.6;   // Max brightness boost
-
-      // City pulse state: { timer, duration, intensity } for each city
-      const cityPulseState = cities.map(() => ({ timer: 0, duration: 0, intensity: 0 }));
-      // Country pulse state
-      const countryPulseState = countries.map(() => ({ timer: 0, duration: 0, intensity: 0 }));
-      // Region pulse state (will be resized when regions load)
-      let regionPulseState = [];
-
-      function updateNodePulse(pulseState) {
-        for (let i = 0; i < pulseState.length; i++) {
-          const state = pulseState[i];
-          if (state.timer <= 0) {
-            // Chance to start a new pulse
-            if (Math.random() < NODE_PULSE_CHANCE) {
-              state.duration = NODE_PULSE_DURATION_MIN + Math.random() * (NODE_PULSE_DURATION_MAX - NODE_PULSE_DURATION_MIN);
-              state.intensity = NODE_PULSE_INTENSITY_MIN + Math.random() * (NODE_PULSE_INTENSITY_MAX - NODE_PULSE_INTENSITY_MIN);
-              state.timer = state.duration;
-            }
-          } else {
-            state.timer -= 0.016; // ~60fps
-          }
-        }
-      }
-
-      function getPulseMultiplier(state) {
-        if (state.timer <= 0) return 1.0;
-        // Smooth sine wave pulse
-        const progress = 1 - (state.timer / state.duration);
-        const pulse = Math.sin(progress * Math.PI);
-        return 1.0 + state.intensity * pulse;
-      }
-
       // ‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê‚ïê
       // SHOOTING STARS
       // Exist in world space (not scene), so globe rotation doesn't
@@ -5096,11 +5057,6 @@ function computeCityTiers(cities) {
       }      
 
       function updateNodeGlow() {
-        // Update pulse timers for all node types
-        updateNodePulse(cityPulseState);
-        updateNodePulse(countryPulseState);
-        if (regionPulseState.length) updateNodePulse(regionPulseState);
-
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeMaterial = currentViewMode === "country" ? countryMat : cityMat;
         const inactivePoints = currentViewMode === "country" ? cityPoints : countryPoints;
@@ -5157,11 +5113,6 @@ function computeCityTiers(cities) {
 
               const gi = layer.globalIndices[li];
 
-              // Random node pulse
-              if (cityPulseState[gi]) {
-                glow *= getPulseMultiplier(cityPulseState[gi]);
-              }
-
               if (glowPulseActive && gi === selectedNodeIndex) {
                 const pulse = 1 + 0.4 * Math.sin(glowPulseTime * Math.PI);
                 glow *= pulse;
@@ -5198,48 +5149,12 @@ function computeCityTiers(cities) {
               0.85 *
               Math.pow(normalized, 2.8);
 
-            // Random node pulse
-            if (countryPulseState[i]) {
-              glow *= getPulseMultiplier(countryPulseState[i]);
-            }
-
             // Population filter mask
             if (countryPopMask && !countryPopMask[i]) glow = 0;
             // GDP filter mask
             if (countryGdpMask && !countryGdpMask[i]) glow = 0;
 
             colArr.setXYZ(i, glow, glow * 0.6, glow * 0.25);
-          }
-
-          colArr.needsUpdate = true;
-        }
-
-        // Region nodes pulse update
-        if (regionPoints && regionData.length && regionPulseState.length) {
-          const posArr = regionPoints.geometry.attributes.position;
-          const colArr = regionPoints.geometry.attributes.color;
-          const tempVec = new THREE.Vector3();
-
-          for (let i = 0; i < posArr.count; i++) {
-            tempVec.fromBufferAttribute(posArr, i);
-            tempVec.applyMatrix4(regionPoints.matrixWorld);
-            tempVec.normalize();
-
-            const dot = -cameraDir.dot(tempVec);
-            const normalized = (dot + 1) / 2;
-
-            // Base glow from camera facing
-            let glow = 0.2 + 0.8 * Math.pow(normalized, 2.5);
-
-            // Apply pulse multiplier
-            if (regionPulseState[i]) {
-              glow *= getPulseMultiplier(regionPulseState[i]);
-            }
-
-            // Get the region's base color and modulate by glow
-            const region = regionData[i];
-            const baseColor = new THREE.Color(region?.color || "#ffffff");
-            colArr.setXYZ(i, baseColor.r * glow, baseColor.g * glow, baseColor.b * glow);
           }
 
           colArr.needsUpdate = true;
@@ -5307,6 +5222,10 @@ function computeCityTiers(cities) {
 
       window.addEventListener("mousedown", e => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
+        
+        // Don't start dragging or clear focus if panel is active - let click handler close it first
+        if (isPanelActive()) return;
+        
         pauseAmbientRotation();
         if (focusLocked) {
           // Sync from current globeQuat now — user motion will mask any discontinuity
@@ -5322,6 +5241,12 @@ function computeCityTiers(cities) {
       window.addEventListener("mouseup", () => { dragging = false; });
       window.addEventListener("touchstart", e => {
         if (e.touches.length !== 1) return;
+        const touchTarget = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+        if (touchTarget?.tagName === "INPUT" || touchTarget?.tagName === "BUTTON" || touchTarget?.closest("#settingsSidebar") || touchTarget?.closest("#infoPanel")) return;
+        
+        // Don't start dragging if panel is active - let touch handler close it first
+        if (isPanelActive()) return;
+        
         pauseAmbientRotation();
         if (focusLocked) {
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
@@ -6096,8 +6021,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         regionPoints = new THREE.Points(geo, mat);
         regionPoints.renderOrder = 2;
         scene.add(regionPoints);
-        // Initialize region pulse state
-        regionPulseState = regionData.map(() => ({ timer: 0, duration: 0, intensity: 0 }));
       }
 
       async function loadRegions() {
@@ -6489,7 +6412,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("click", event => {
         if (event.target.closest(".closePanel")) return;
-        if (isPanelActive() && event.target.closest("#infoPanel")) return;
+        
+        // If panel is active and click is outside panel, close it and don't select new node
+        if (isPanelActive()) {
+          if (!event.target.closest("#infoPanel")) {
+            // Close the panel
+            const panel = document.getElementById("infoPanel");
+            const closeBtn = panel.querySelector(".closePanel");
+            if (closeBtn) closeBtn.click();
+          }
+          return; // Either way, don't process node selection while panel is active
+        }
+        
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -6549,8 +6483,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("touchstart", (event) => {
         if (event.touches.length !== 1) return;
-        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
+        
+        // If panel is active and touch is outside panel, close it and don't select new node
         const touch = event.touches[0];
+        const touchTarget = document.elementFromPoint(touch.clientX, touch.clientY);
+        if (isPanelActive()) {
+          if (!touchTarget?.closest("#infoPanel")) {
+            const panel = document.getElementById("infoPanel");
+            const closeBtn = panel.querySelector(".closePanel");
+            if (closeBtn) closeBtn.click();
+          }
+          return;
+        }
+        
+        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
@@ -6981,6 +6927,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+        closeBtn.addEventListener("click", (e) => { e.stopPropagation(); });
       }
 
       window.addEventListener("wheel", e => {
@@ -7271,6 +7218,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
+        closeBtn.addEventListener("click", (e) => { e.stopPropagation(); });
       }
 
       let targetCityOpacity = 0.0;
@@ -7281,10 +7229,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let panelScrolling = false, panelStartY, panelScrollStart;
 
       infoPanel.addEventListener("mousedown", (e) => { 
+        e.stopPropagation();
         panelScrolling = true; 
         panelStartY = e.clientY; 
         panelScrollStart = infoPanel.scrollTop; 
         infoPanel.style.cursor = "grabbing"; });
+      infoPanel.addEventListener("click", (e) => { e.stopPropagation(); });
       window.addEventListener("mousemove", (e) => { if (!panelScrolling) return; infoPanel.scrollTop = panelScrollStart - (e.clientY - panelStartY); });
       window.addEventListener("mouseup", () => { panelScrolling = false; infoPanel.style.cursor = "grab"; });
       infoPanel.style.cursor = "grab";
@@ -7315,7 +7265,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const zoomDelta = targetZoom - camera.position.z;
         // Zoom-out uses a gentler lerp so the camera eases back slowly;
         // zoom-in stays snappy. Clear zoomingOut once camera has settled.
-        const zoomLerp = zoomingOut ? 0.04 : (0.035 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        const zoomLerp = zoomingOut ? 0.018 : (0.015 * Math.min(Math.abs(zoomDelta) * 2, 1));
         camera.position.z += zoomDelta * zoomLerp;
         if (zoomingOut && Math.abs(zoomDelta) < 0.005) zoomingOut = false;
 
@@ -7336,7 +7286,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             focusPendingPanel = null;
             cb();
             // Fixed close-up depth — consistent regardless of starting zoom
-            targetZoom = 1.85;
+            targetZoom = 2.3;
           }
 
           if (angleLeft < 0.0008) {
