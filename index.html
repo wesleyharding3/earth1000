@@ -5226,6 +5226,13 @@ function computeCityTiers(cities) {
         // Don't start dragging or clear focus if panel is active - let click handler close it first
         if (isPanelActive()) return;
         
+        // If zooming out after panel close, stop zoom immediately at current level
+        if (zoomingOut) {
+          zoomingOut = false;
+          targetZoom = camera.position.z;
+          zoomVelocity = 0;
+        }
+        
         pauseAmbientRotation();
         if (focusLocked) {
           // Sync from current globeQuat now — user motion will mask any discontinuity
@@ -5246,6 +5253,13 @@ function computeCityTiers(cities) {
         
         // Don't start dragging if panel is active - let touch handler close it first
         if (isPanelActive()) return;
+        
+        // If zooming out after panel close, stop zoom immediately at current level
+        if (zoomingOut) {
+          zoomingOut = false;
+          targetZoom = camera.position.z;
+          zoomVelocity = 0;
+        }
         
         pauseAmbientRotation();
         if (focusLocked) {
@@ -6424,6 +6438,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return; // Either way, don't process node selection while panel is active
         }
         
+        // If zooming out after panel close, stop zoom immediately at current level
+        if (zoomingOut) {
+          zoomingOut = false;
+          targetZoom = camera.position.z;  // Freeze at current zoom level
+          zoomVelocity = 0;
+          // Clear focusLocked so controls are freed
+          if (focusLocked) {
+            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+            globeYaw = yaw; globePitch = pitch;
+            focusLocked = false;
+          }
+        }
+        
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -6494,6 +6521,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (closeBtn) closeBtn.click();
           }
           return;
+        }
+        
+        // If zooming out after panel close, stop zoom immediately at current level
+        if (zoomingOut) {
+          zoomingOut = false;
+          targetZoom = camera.position.z;  // Freeze at current zoom level
+          zoomVelocity = 0;
+          // Clear focusLocked so controls are freed
+          if (focusLocked) {
+            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+            globeYaw = yaw; globePitch = pitch;
+            focusLocked = false;
+          }
         }
         
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
@@ -6937,6 +6977,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
         if (window.__currentPage !== 1) return;
         e.preventDefault();
+        
+        // If zooming out after panel close, stop zoom immediately at current level
+        if (zoomingOut) {
+          zoomingOut = false;
+          targetZoom = camera.position.z;
+          zoomVelocity = 0;
+        }
+        
         if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
         // Clear focusLocked on wheel rotation so yaw/tilt velocities can be processed
         if (focusLocked) {
@@ -6958,6 +7006,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("touchmove",  e => {
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
+          // If zooming out after panel close, stop zoom immediately at current level
+          if (zoomingOut) {
+            zoomingOut = false;
+            targetZoom = camera.position.z;
+            zoomVelocity = 0;
+          }
           const currentDistance = getDistance(e.touches);
           zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
           initialPinchDistance = currentDistance;
