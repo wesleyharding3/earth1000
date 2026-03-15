@@ -1708,6 +1708,306 @@
 .articleTranslateBtn.done  { color: rgba(100,220,130,0.7);  border-color: rgba(100,220,130,0.3); cursor: default; }
 .articleTranslateBtn.error { color: rgba(220,100,100,0.7);  border-color: rgba(220,100,100,0.3); cursor: default; }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ARTICLE DETAIL VIEW - Full article panel
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#articleDetailPanel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 75vh;
+  max-height: 700px;
+  background: rgba(8,8,12,0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  border-radius: 24px 24px 0 0;
+  z-index: 800;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#articleDetailPanel.visible {
+  transform: translateY(0);
+}
+
+.adpHandle {
+  width: 36px;
+  height: 5px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 3px;
+  margin: 12px auto 8px;
+  flex-shrink: 0;
+}
+
+.adpHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+
+.adpBackBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.6);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: all 0.15s;
+}
+
+.adpBackBtn:hover {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.9);
+}
+
+.adpBackBtn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.adpCloseBtn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  transition: all 0.15s;
+}
+
+.adpCloseBtn:hover {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.9);
+}
+
+.adpContent {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.adpContent::-webkit-scrollbar { width: 6px; }
+.adpContent::-webkit-scrollbar-track { background: transparent; }
+.adpContent::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+.adpImage {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-bottom: 20px;
+}
+
+.adpImagePlaceholder {
+  width: 100%;
+  height: 180px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 12px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.adpImagePlaceholder svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.1;
+}
+
+.adpSource {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.adpSourceLogo {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: rgba(255,255,255,0.05);
+}
+
+.adpSourceInfo {
+  flex: 1;
+}
+
+.adpSourceName {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.9);
+}
+
+.adpSourceMeta {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+}
+
+.adpTitle {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #fff;
+  margin-bottom: 16px;
+}
+
+.adpSummary {
+  font-size: 15px;
+  line-height: 1.7;
+  color: rgba(255,255,255,0.75);
+  margin-bottom: 24px;
+}
+
+.adpMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.adpMetaTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+}
+
+.adpMetaTag.location {
+  background: rgba(74,158,255,0.1);
+  border-color: rgba(74,158,255,0.2);
+  color: rgba(74,158,255,0.9);
+}
+
+.adpMetaTag.sentiment-positive {
+  background: rgba(100,220,130,0.1);
+  border-color: rgba(100,220,130,0.2);
+  color: rgba(100,220,130,0.9);
+}
+
+.adpMetaTag.sentiment-negative {
+  background: rgba(255,100,100,0.1);
+  border-color: rgba(255,100,100,0.2);
+  color: rgba(255,100,100,0.9);
+}
+
+.adpContext {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.adpContextTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 12px;
+}
+
+.adpContextGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.adpContextStat {
+  text-align: center;
+}
+
+.adpContextStatValue {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.adpContextStatLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  margin-top: 2px;
+}
+
+.adpMiniMap {
+  height: 120px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 12px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255,255,255,0.3);
+  font-size: 12px;
+}
+
+.adpReadOriginal {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(74,158,255,0.2), rgba(74,158,255,0.1));
+  border: 1px solid rgba(74,158,255,0.3);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.adpReadOriginal:hover {
+  background: linear-gradient(135deg, rgba(74,158,255,0.3), rgba(74,158,255,0.2));
+  border-color: rgba(74,158,255,0.5);
+  transform: translateY(-2px);
+}
+
+.adpReadOriginal span {
+  opacity: 0.7;
+  font-weight: 400;
+  margin-left: 8px;
+}
+
+/* In-panel article detail (replaces feed content) */
+.panelArticleDetail {
+  padding: 16px;
+}
+
+.panelArticleDetail .adpImage {
+  max-height: 200px;
+}
+
+.panelArticleDetail .adpTitle {
+  font-size: 18px;
+}
+
+.panelArticleDetail .adpSummary {
+  font-size: 14px;
+}
+
     .articleCardImage.flag {
       object-fit: contain;
       padding: 12px;
@@ -7360,7 +7660,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           return `
             <div style="position:relative">
-              <a class="articleCard" href="${article.article_url || article.url}" target="_blank" rel="noopener">
+              <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
                 <div class="articleCardBody">
                   <div>
@@ -7373,10 +7673,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
                     <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
                   </div>
                 </div>
-              </a>
+              </div>
               ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
             </div>`;
         }
+
+        // Handler for panel article card clicks
+        window.openPanelArticle = function(el) {
+          try {
+            const article = JSON.parse(el.dataset.article);
+            if (article && window.openArticleDetail) {
+              window.openArticleDetail(article, { type: 'panel' });
+            }
+          } catch(e) {
+            console.warn('Failed to open article:', e);
+          }
+        };
 
         async function translateCard(e, btn) {
           e.preventDefault(); e.stopPropagation();
@@ -7776,16 +8088,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const summary = a.translated_summary || a.summary || "";
             const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
             const cityTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
-            return `<a class="articleCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener">
+            return `<div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
               <div class="articleCardBody">
                 <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${cityTag}</div>
                 <div class="articleCardTitle">${title}</div>
                 ${summary ? `<div class="articleCardSummary">${summary}</div>` : ""}
               </div>
-            </a>`;
+            </div>`;
           }).join("");
         }
+
+        // Handler for region panel article card clicks
+        window.openRegionArticle = function(el) {
+          try {
+            const article = JSON.parse(el.dataset.article);
+            if (article && window.openArticleDetail) {
+              window.openArticleDetail(article, { type: 'panel' });
+            }
+          } catch(e) {
+            console.warn('Failed to open article:', e);
+          }
+        };
 
         function loadMore() {
           if (loading || !hasMore) return;
@@ -9152,6 +9476,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowPlayBtn").textContent = "⏸ Pause";
   }
 
+  // Expose pause/resume for article detail panel
+  window.pauseFlowAnimation = function() {
+    if (flowPlaying) {
+      flowPlaying = false;
+      document.getElementById("flowPlayBtn").textContent = "▶ Play";
+    }
+  };
+
+  window.resumeFlowAnimation = function(state) {
+    if (state) {
+      seqIndex = state.seqIndex || seqIndex;
+      flowProgress = state.flowProgress || flowProgress;
+      if (state.flowPlaying) {
+        startPlay();
+      }
+    }
+  };
+
   document.getElementById("flowResetBtn").addEventListener("click", (e) => {
     e.stopPropagation();
     clearArcs(); seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
@@ -9407,6 +9749,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
     if (!hit) tooltip.style.display = "none";
+  });
+
+  /* Click on flow arc to open article detail */
+  window.addEventListener("click", (e) => {
+    if (!flowModeOpen || flowMode === "aggregate") return;
+    
+    mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
+    mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
+    raycasterFlow.setFromCamera(mousePosFlow, camera);
+
+    for (const arc of arcObjects) {
+      const xs = raycasterFlow.intersectObject(arc.mesh);
+      if (xs.length && arc.flow && !arc.flow.count) {
+        // Individual flow - open article detail
+        const flow = arc.flow;
+        const article = {
+          id: flow.id,
+          title: flow.title,
+          translated_title: flow.title,
+          summary: flow.summary || '',
+          translated_summary: flow.summary || '',
+          source_name: flow.sourceName,
+          published_at: flow.publishedAt,
+          article_url: flow.articleUrl,
+          image_url: flow.imageUrl,
+          iso_code: flow.src?.iso || flow.dst?.iso,
+          country_name: flow.dst?.place,
+          sentiment_score: flow.sentiment
+        };
+        
+        // Save flow state for return
+        window.__flowSeqIndex = seqIndex;
+        window.__flowProgress = flowProgress;
+        window.__flowPlaying = flowPlaying;
+        
+        if (window.openArticleDetail) {
+          window.openArticleDetail(article, { type: 'flow' });
+        }
+        break;
+      }
+    }
   });
 
   /* Stop globe interaction bubbling into flow controls */
@@ -9916,7 +10299,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
       return `
       <div style="position:relative">
-        <a class="nfCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener noreferrer">
+        <div class="nfCard" onclick="openFeedArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
           ${img}
           <div class="nfCardBody">
             <div>
@@ -9926,10 +10309,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
             <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
-        </a>
+        </div>
         ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">🌐</button>` : ""}
       </div>`;
     }
+
+    // Handler for news feed article card clicks
+    window.openFeedArticle = function(el) {
+      try {
+        const article = JSON.parse(el.dataset.article);
+        if (article && window.openArticleDetail) {
+          window.openArticleDetail(article, { type: 'feed' });
+        }
+      } catch(e) {
+        console.warn('Failed to open article:', e);
+      }
+    };
 
     viewport.addEventListener("scroll", () => {
       if (!searched || loading || !hasMore) return;
@@ -9957,6 +10352,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
   </script>
 </div><!-- /pageNews -->
 </div><!-- /pageTrack -->
+
+<!-- ── Article Detail Panel ── -->
+<div id="articleDetailPanel">
+  <div class="adpHandle"></div>
+  <div class="adpHeader">
+    <button class="adpBackBtn" id="adpBackBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      <span>Back</span>
+    </button>
+    <button class="adpCloseBtn" id="adpCloseBtn">✕</button>
+  </div>
+  <div class="adpContent" id="adpContent">
+    <!-- Filled dynamically -->
+  </div>
+</div>
 
 <!-- ── Nav Dots ── -->
 <div id="pageNav">
@@ -10824,6 +11236,213 @@ grmClockTick();
   // ── Expose globally ───────────────────────────────────────────────────────
   // (all onclick handlers already use window.kwi* so nothing extra needed)
 
+})();
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// ARTICLE DETAIL PANEL
+// ═══════════════════════════════════════════════════════════════════════════
+(function() {
+  const panel = document.getElementById('articleDetailPanel');
+  const content = document.getElementById('adpContent');
+  const backBtn = document.getElementById('adpBackBtn');
+  const closeBtn = document.getElementById('adpCloseBtn');
+  
+  let currentArticle = null;
+  let returnContext = null; // { type: 'flow'|'feed'|'panel', state: any }
+  let flowStateBeforeOpen = null; // For flow animation return
+  
+  // ── Render article detail content ──────────────────────────────────────────
+  function renderArticleDetail(article) {
+    const FLAG_CDN = 'https://flagcdn.com/w80/';
+    
+    // Image
+    let imageHTML = '';
+    if (article.image_url && article.image_url.trim()) {
+      imageHTML = `<img class="adpImage" src="${article.image_url}" alt="" onerror="this.style.display='none'">`;
+    } else if (article.iso_code) {
+      imageHTML = `<img class="adpImage" src="${FLAG_CDN}${article.iso_code.toLowerCase()}.png" alt="" style="object-fit:contain;background:#111;padding:40px;">`;
+    } else {
+      imageHTML = `<div class="adpImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+    }
+    
+    // Source logo (use flag as fallback)
+    const sourceLogo = article.iso_code 
+      ? `<img class="adpSourceLogo" src="${FLAG_CDN}${article.iso_code.toLowerCase()}.png" alt="">`
+      : `<div class="adpSourceLogo" style="display:flex;align-items:center;justify-content:center;font-size:16px;">📰</div>`;
+    
+    // Date formatting
+    const pubDate = article.published_at ? new Date(article.published_at) : null;
+    const dateStr = pubDate ? pubDate.toLocaleDateString('en-US', { 
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+    }) : '';
+    const timeStr = pubDate ? pubDate.toLocaleTimeString('en-US', { 
+      hour: 'numeric', minute: '2-digit' 
+    }) : '';
+    
+    // Location tags
+    const locationTags = [];
+    if (article.city_name) locationTags.push(article.city_name);
+    if (article.country_name) locationTags.push(article.country_name);
+    else if (article.iso_code) locationTags.push(article.iso_code.toUpperCase());
+    
+    // Sentiment tag
+    let sentimentTag = '';
+    if (article.sentiment_score !== undefined && article.sentiment_score !== null) {
+      const score = parseFloat(article.sentiment_score);
+      if (score > 0.2) {
+        sentimentTag = `<span class="adpMetaTag sentiment-positive">😊 Positive (${(score * 100).toFixed(0)}%)</span>`;
+      } else if (score < -0.2) {
+        sentimentTag = `<span class="adpMetaTag sentiment-negative">😟 Negative (${(Math.abs(score) * 100).toFixed(0)}%)</span>`;
+      }
+    }
+    
+    // Mini-map placeholder (location context)
+    const miniMapHTML = locationTags.length 
+      ? `<div class="adpMiniMap">📍 ${locationTags.join(', ')}</div>`
+      : '';
+    
+    // Context section (placeholder for future metrics)
+    const contextHTML = `
+      <div class="adpContext">
+        <div class="adpContextTitle">Story Context</div>
+        <div class="adpContextGrid">
+          <div class="adpContextStat">
+            <div class="adpContextStatValue">—</div>
+            <div class="adpContextStatLabel">Related stories</div>
+          </div>
+          <div class="adpContextStat">
+            <div class="adpContextStatValue">—</div>
+            <div class="adpContextStatLabel">Sources covering</div>
+          </div>
+          <div class="adpContextStat">
+            <div class="adpContextStatValue">—</div>
+            <div class="adpContextStatLabel">Hours trending</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    content.innerHTML = `
+      ${imageHTML}
+      
+      <div class="adpSource">
+        ${sourceLogo}
+        <div class="adpSourceInfo">
+          <div class="adpSourceName">${article.source_name || 'Unknown Source'}</div>
+          <div class="adpSourceMeta">${dateStr}${timeStr ? ' · ' + timeStr : ''}</div>
+        </div>
+      </div>
+      
+      <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
+      
+      <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
+      
+      <div class="adpMeta">
+        ${locationTags.map(loc => `<span class="adpMetaTag location">📍 ${loc}</span>`).join('')}
+        ${sentimentTag}
+      </div>
+      
+      ${miniMapHTML}
+      ${contextHTML}
+      
+      <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
+        Read Full Article <span>↗ ${article.source_name || 'Source'}</span>
+      </a>
+    `;
+  }
+  
+  // ── Open article detail panel ──────────────────────────────────────────────
+  window.openArticleDetail = function(article, context) {
+    currentArticle = article;
+    returnContext = context || null;
+    
+    // Save flow state if coming from flow animation
+    if (context?.type === 'flow') {
+      flowStateBeforeOpen = {
+        seqIndex: window.__flowSeqIndex,
+        flowProgress: window.__flowProgress,
+        flowPlaying: window.__flowPlaying
+      };
+      // Pause flow while viewing article
+      if (window.pauseFlowAnimation) window.pauseFlowAnimation();
+    }
+    
+    renderArticleDetail(article);
+    panel.classList.add('visible');
+    
+    // Update back button text based on context
+    const backLabel = backBtn.querySelector('span');
+    if (context?.type === 'panel') {
+      backLabel.textContent = 'Back to Feed';
+    } else if (context?.type === 'flow') {
+      backLabel.textContent = 'Back to Flow';
+    } else if (context?.type === 'feed') {
+      backLabel.textContent = 'Back';
+    } else {
+      backLabel.textContent = 'Back';
+    }
+  };
+  
+  // ── Close article detail panel ─────────────────────────────────────────────
+  function closeArticlePanel() {
+    panel.classList.remove('visible');
+    
+    // Restore flow state if returning to flow animation
+    if (returnContext?.type === 'flow' && flowStateBeforeOpen) {
+      if (window.resumeFlowAnimation) {
+        window.resumeFlowAnimation(flowStateBeforeOpen);
+      }
+      flowStateBeforeOpen = null;
+    }
+    
+    currentArticle = null;
+    returnContext = null;
+  }
+  
+  // ── Back button (return to previous context) ───────────────────────────────
+  backBtn.addEventListener('click', () => {
+    closeArticlePanel();
+  });
+  
+  closeBtn.addEventListener('click', () => {
+    closeArticlePanel();
+  });
+  
+  // ── Swipe down to close ────────────────────────────────────────────────────
+  let touchStartY = 0;
+  let touchCurrentY = 0;
+  let isDragging = false;
+  
+  panel.addEventListener('touchstart', (e) => {
+    if (e.target.closest('.adpContent') && content.scrollTop > 0) return;
+    touchStartY = e.touches[0].clientY;
+    isDragging = true;
+  }, { passive: true });
+  
+  panel.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    touchCurrentY = e.touches[0].clientY;
+    const diff = touchCurrentY - touchStartY;
+    if (diff > 0) {
+      panel.style.transform = `translateY(${diff}px)`;
+    }
+  }, { passive: true });
+  
+  panel.addEventListener('touchend', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    const diff = touchCurrentY - touchStartY;
+    if (diff > 100) {
+      closeArticlePanel();
+    }
+    panel.style.transform = '';
+  });
+  
+  // ── Expose for external use ────────────────────────────────────────────────
+  window.closeArticleDetail = closeArticlePanel;
+  
 })();
 </script>
 
