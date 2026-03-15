@@ -7099,10 +7099,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const title = a.translated_title || a.title || "";
             const summary = a.translated_summary || a.summary || "";
             const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+            const locationTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
             return `<a class="articleCard" href="${a.article_url||a.url||'#'}" target="_blank" rel="noopener">
               ${img}
               <div class="articleCardBody">
-                <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""}</div>
+                <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${locationTag}</div>
                 <div class="articleCardTitle">${title}</div>
                 ${summary ? `<div class="articleCardSummary">${summary}</div>` : ""}
               </div>
