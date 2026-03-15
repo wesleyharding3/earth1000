@@ -130,60 +130,71 @@ async function translateKeywords() {
   console.log('  TRANSLATING KEYWORDS');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // Get already translated keywords (fast, small table)
+  // Get already translated keywords (should be small enough)
   console.log('Loading already-translated keywords...');
   const { rows: doneRows } = await pool.query(`SELECT original_keyword FROM keyword_translations`);
   const doneSet = new Set(doneRows.map(r => r.original_keyword));
   console.log(`  Already translated: ${doneSet.size.toLocaleString()}`);
 
-  // Get distinct keywords - no filtering in SQL (regex is slow on 3GB table)
-  console.log('Loading distinct keywords (may take 1-2 min on 3GB table)...');
-  const { rows: allKeywords } = await pool.query(`SELECT DISTINCT keyword FROM keyword_daily_stats`);
-  console.log(`  Found: ${allKeywords.length.toLocaleString()} distinct keywords`);
-
-  // Filter in JS: non-ASCII and not already done (instant)
+  // Stream through keywords in batches using LIMIT/OFFSET
+  const BATCH_SIZE = 10000;
   const nonAsciiRegex = /[^\x00-\x7F]/;
-  const toTranslate = allKeywords.filter(r => 
-    nonAsciiRegex.test(r.keyword) && !doneSet.has(r.keyword)
-  );
-  console.log(`  Non-ASCII to translate: ${toTranslate.length.toLocaleString()}`);
-  
-  if (toTranslate.length === 0) {
-    console.log('Nothing to translate!');
-    return;
-  }
-
+  let offset = 0;
   let translated = 0;
   let errors = 0;
+  let scanned = 0;
 
-  for (let i = 0; i < toTranslate.length; i++) {
-    const keyword = toTranslate[i].keyword;
-    try {
-      const normalized = await translateText(keyword, 'EN-US');
-      
-      if (normalized && normalized.trim()) {
-        await pool.query(`
-          INSERT INTO keyword_translations (original_keyword, normalized_keyword)
-          VALUES ($1, $2)
-          ON CONFLICT (original_keyword) DO UPDATE
-          SET normalized_keyword = EXCLUDED.normalized_keyword
-        `, [keyword, normalized.toLowerCase().trim()]);
+  console.log('Processing keywords in batches...\n');
+
+  while (true) {
+    // Fetch batch using simple pagination
+    const { rows: batch } = await pool.query(`
+      SELECT DISTINCT keyword 
+      FROM keyword_daily_stats
+      ORDER BY keyword
+      LIMIT $1 OFFSET $2
+    `, [BATCH_SIZE, offset]);
+
+    if (batch.length === 0) break;
+
+    scanned += batch.length;
+
+    // Filter: non-ASCII and not already done
+    const toTranslate = batch.filter(r => 
+      nonAsciiRegex.test(r.keyword) && !doneSet.has(r.keyword)
+    );
+
+    // Translate this batch
+    for (const row of toTranslate) {
+      try {
+        const normalized = await translateText(row.keyword, 'EN-US');
         
-        translated++;
-      }
-    } catch (err) {
-      errors++;
-      if (errors <= 5) {
-        console.warn(`  Error translating "${keyword}": ${err.message}`);
+        if (normalized && normalized.trim()) {
+          await pool.query(`
+            INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+            VALUES ($1, $2)
+            ON CONFLICT (original_keyword) DO UPDATE
+            SET normalized_keyword = EXCLUDED.normalized_keyword
+          `, [row.keyword, normalized.toLowerCase().trim()]);
+          
+          doneSet.add(row.keyword);
+          translated++;
+        }
+      } catch (err) {
+        errors++;
+        if (errors <= 5) {
+          console.warn(`  Error translating "${row.keyword}": ${err.message}`);
+        }
       }
     }
 
-    if (i % 100 === 0 || i === toTranslate.length - 1) {
-      process.stdout.write(`  Progress: ${i + 1}/${toTranslate.length} (${translated} translated, ${errors} errors)\r`);
-    }
+    process.stdout.write(`  Scanned: ${scanned.toLocaleString()}, translated: ${translated}, errors: ${errors}\r`);
+    
+    offset += BATCH_SIZE;
   }
 
   console.log(`\n\n────────────────────────────────────────────────────────────`);
+  console.log(`Total scanned: ${scanned.toLocaleString()}`);
   console.log(`Translated: ${translated.toLocaleString()}`);
   console.log(`Errors:     ${errors.toLocaleString()}`);
   console.log('═══════════════════════════════════════════════════════════\n');
