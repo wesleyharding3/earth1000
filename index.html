@@ -5226,27 +5226,22 @@ function computeCityTiers(cities) {
         // Don't start dragging or clear focus if panel is active - let click handler close it first
         if (isPanelActive()) return;
         
-        // If any camera animation is in progress, stop it immediately
+        // Stop any in-progress animations but keep camera frozen
         if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
-          if (focusTargetQuat) {
-            focusTargetQuat = null;
-            focusPendingPanel = null;
-          }
+          focusTargetQuat = null;
+          focusPendingPanel = null;
+          isFocused = false;
+          selectedNodeIndex = null;
+          // Keep focusLocked = true (or set it) - camera stays frozen until actual drag movement
+          focusLocked = true;
         }
         
         pauseAmbientRotation();
-        if (focusLocked) {
-          // Sync from current globeQuat now — user motion will mask any discontinuity
-          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-          globeYaw = yaw; globePitch = pitch;
-          focusLocked = false;
-        }
         dragging = true;
         prevX = e.clientX; prevY = e.clientY;
-        selectedNodeIndex = null; isFocused = false; focusPendingPanel = null;
       });
 
       window.addEventListener("mouseup", () => { dragging = false; });
@@ -5258,23 +5253,20 @@ function computeCityTiers(cities) {
         // Don't start dragging if panel is active - let touch handler close it first
         if (isPanelActive()) return;
         
-        // If any camera animation is in progress, stop it immediately
+        // Stop any in-progress animations but keep camera frozen
         if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
-          if (focusTargetQuat) {
-            focusTargetQuat = null;
-            focusPendingPanel = null;
-          }
+          focusTargetQuat = null;
+          focusPendingPanel = null;
+          isFocused = false;
+          selectedNodeIndex = null;
+          // Keep focusLocked = true - camera stays frozen until actual drag movement
+          focusLocked = true;
         }
         
         pauseAmbientRotation();
-        if (focusLocked) {
-          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-          globeYaw = yaw; globePitch = pitch;
-          focusLocked = false;
-        }
         touchDragging = true;
         touchTapMoved = false;
         touchPrevX = e.touches[0].clientX;
@@ -5283,6 +5275,14 @@ function computeCityTiers(cities) {
 
       window.addEventListener("touchmove", e => {
         if (!touchDragging || e.touches.length !== 1) return;
+        
+        // On first drag movement, sync yaw/pitch from current globeQuat to prevent snap
+        if (focusLocked) {
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
+          focusLocked = false;
+        }
+        
         const dx = (e.touches[0].clientX - touchPrevX) * 0.005;
         const dy = (e.touches[0].clientY - touchPrevY) * 0.005;
         if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) touchTapMoved = true;
@@ -5299,6 +5299,14 @@ function computeCityTiers(cities) {
 
       window.addEventListener("mousemove", e => {
         if (!dragging) return;
+        
+        // On first drag movement, sync yaw/pitch from current globeQuat to prevent snap
+        if (focusLocked) {
+          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+          globeYaw = yaw; globePitch = pitch;
+          focusLocked = false;
+        }
+        
         const deltaX = (e.clientX - prevX) * 0.005;
         const deltaY = (e.clientY - prevY) * 0.005;
         applyYaw(deltaX); applyTilt(deltaY);
@@ -6446,23 +6454,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return; // Either way, don't process node selection while panel is active
         }
         
-        // If any camera animation is in progress (zoom-in focus or zoom-out), stop it immediately
-        if (zoomingOut || (isFocused && focusTargetQuat)) {
-          // Stop zoom animation
+        // Stop any in-progress camera animation - freeze at current position
+        if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
-          // Stop focus/rotation animation - freeze camera where it is
-          if (focusTargetQuat) {
-            focusTargetQuat = null;
-            focusPendingPanel = null;
-          }
-          // Extract current orientation and lock it
-          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-          globeYaw = yaw; globePitch = pitch;
-          focusLocked = true;  // Keep camera frozen
+          focusTargetQuat = null;
+          focusPendingPanel = null;
           isFocused = false;
           selectedNodeIndex = null;
+          focusLocked = true;  // Keep camera frozen until drag or new focus
         }
         
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
@@ -6537,23 +6538,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
         
-        // If any camera animation is in progress (zoom-in focus or zoom-out), stop it immediately
-        if (zoomingOut || (isFocused && focusTargetQuat)) {
-          // Stop zoom animation
+        // Stop any in-progress camera animation - freeze at current position
+        if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
-          // Stop focus/rotation animation - freeze camera where it is
-          if (focusTargetQuat) {
-            focusTargetQuat = null;
-            focusPendingPanel = null;
-          }
-          // Extract current orientation and lock it
-          const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-          globeYaw = yaw; globePitch = pitch;
-          focusLocked = true;  // Keep camera frozen
+          focusTargetQuat = null;
+          focusPendingPanel = null;
           isFocused = false;
           selectedNodeIndex = null;
+          focusLocked = true;  // Keep camera frozen until drag or new focus
         }
         
         if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
@@ -6973,8 +6967,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; 
           globePitch = pitch;
-          // Keep focusLocked = true to prevent camera snap - holds globeQuat exactly as-is
-          // User's next drag will clear focusLocked naturally
+          // Explicitly set focusLocked = true to prevent camera snap during zoom-out
+          focusLocked = true;
           
           isFocused = false; 
           selectedNodeIndex = null; 
@@ -6998,26 +6992,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__currentPage !== 1) return;
         e.preventDefault();
         
-        // If any camera animation is in progress, stop it immediately
+        // Stop any in-progress camera animation
         if (zoomingOut || focusTargetQuat) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
-          if (focusTargetQuat) {
-            focusTargetQuat = null;
-            focusPendingPanel = null;
-            isFocused = false;
-            selectedNodeIndex = null;
-          }
+          focusTargetQuat = null;
+          focusPendingPanel = null;
+          isFocused = false;
+          selectedNodeIndex = null;
         }
         
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
-        // Clear focusLocked on wheel rotation so yaw/tilt velocities can be processed
+        // Extract yaw/pitch from current globeQuat before any rotation
         if (focusLocked) {
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; globePitch = pitch;
           focusLocked = false;
         }
+        
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -7032,18 +7025,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("touchmove",  e => {
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
-          // If any camera animation is in progress, stop it immediately
+          
+          // Stop any in-progress camera animation
           if (zoomingOut || focusTargetQuat) {
             zoomingOut = false;
             targetZoom = camera.position.z;
             zoomVelocity = 0;
-            if (focusTargetQuat) {
-              focusTargetQuat = null;
-              focusPendingPanel = null;
-              isFocused = false;
-              selectedNodeIndex = null;
-            }
+            focusTargetQuat = null;
+            focusPendingPanel = null;
+            isFocused = false;
+            selectedNodeIndex = null;
           }
+          
+          // Extract yaw/pitch from current globeQuat before pinch zoom
+          if (focusLocked) {
+            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
+            globeYaw = yaw; globePitch = pitch;
+            focusLocked = false;
+          }
+          
           const currentDistance = getDistance(e.touches);
           zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
           initialPinchDistance = currentDistance;
@@ -7298,8 +7298,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
           globeYaw = yaw; 
           globePitch = pitch;
-          // Keep focusLocked = true to prevent camera snap - holds globeQuat exactly as-is
-          // User's next drag will clear focusLocked naturally
+          // Explicitly set focusLocked = true to prevent camera snap during zoom-out
+          focusLocked = true;
           
           isFocused = false; 
           focusPendingPanel = null;
