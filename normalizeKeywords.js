@@ -47,11 +47,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function setup() {
   console.log('Setting up keyword_translations table...');
   
-  // Drop old table if it exists (schema changed)
-  await pool.query(`DROP TABLE IF EXISTS keyword_translations`);
-  
+  // Create table only if it doesn't exist (preserve existing data)
   await pool.query(`
-    CREATE TABLE keyword_translations (
+    CREATE TABLE IF NOT EXISTS keyword_translations (
       id SERIAL PRIMARY KEY,
       original_keyword TEXT NOT NULL UNIQUE,
       source_language TEXT DEFAULT 'auto',
@@ -136,28 +134,30 @@ async function translateKeywords() {
   const doneSet = new Set(doneRows.map(r => r.original_keyword));
   console.log(`  Already translated: ${doneSet.size.toLocaleString()}`);
 
-  // Stream through keywords in batches using LIMIT/OFFSET
-  const BATCH_SIZE = 10000;
+  // Use keyset pagination (much faster than LIMIT/OFFSET)
+  const BATCH_SIZE = 5000;
   const nonAsciiRegex = /[^\x00-\x7F]/;
-  let offset = 0;
+  let lastKeyword = '';
   let translated = 0;
   let errors = 0;
   let scanned = 0;
 
-  console.log('Processing keywords in batches...\n');
+  console.log('Processing keywords in batches (keyset pagination)...\n');
 
   while (true) {
-    // Fetch batch using simple pagination
+    // Fetch batch using keyset pagination (faster than OFFSET)
     const { rows: batch } = await pool.query(`
       SELECT DISTINCT keyword 
       FROM keyword_daily_stats
+      WHERE keyword > $1
       ORDER BY keyword
-      LIMIT $1 OFFSET $2
-    `, [BATCH_SIZE, offset]);
+      LIMIT $2
+    `, [lastKeyword, BATCH_SIZE]);
 
     if (batch.length === 0) break;
 
     scanned += batch.length;
+    lastKeyword = batch[batch.length - 1].keyword;
 
     // Filter: non-ASCII and not already done
     const toTranslate = batch.filter(r => 
@@ -173,8 +173,7 @@ async function translateKeywords() {
           await pool.query(`
             INSERT INTO keyword_translations (original_keyword, normalized_keyword)
             VALUES ($1, $2)
-            ON CONFLICT (original_keyword) DO UPDATE
-            SET normalized_keyword = EXCLUDED.normalized_keyword
+            ON CONFLICT (original_keyword) DO NOTHING
           `, [row.keyword, normalized.toLowerCase().trim()]);
           
           doneSet.add(row.keyword);
@@ -190,7 +189,8 @@ async function translateKeywords() {
 
     process.stdout.write(`  Scanned: ${scanned.toLocaleString()}, translated: ${translated}, errors: ${errors}\r`);
     
-    offset += BATCH_SIZE;
+    // Small pause to avoid overwhelming DB
+    if (toTranslate.length > 0) await sleep(100);
   }
 
   console.log(`\n\n────────────────────────────────────────────────────────────`);
@@ -204,38 +204,78 @@ async function translateKeywords() {
 
 async function backfill() {
   console.log('\n═══════════════════════════════════════════════════════════');
-  console.log('  BACKFILLING NORMALIZED KEYWORDS');
+  console.log('  BACKFILLING NORMALIZED KEYWORDS (batched)');
   console.log('═══════════════════════════════════════════════════════════\n');
 
-  // For English keywords, normalized = original (lowercase)
-  console.log('Setting normalized_keyword = keyword for English...');
-  const { rowCount: enCount } = await pool.query(`
-    UPDATE article_keywords
-    SET normalized_keyword = LOWER(keyword)
-    WHERE source_language = 'en' AND normalized_keyword IS NULL
-  `);
-  console.log(`  Updated: ${enCount.toLocaleString()} rows`);
+  const BATCH_SIZE = 10000;
 
-  // For non-English, use translation table (join on keyword only)
-  console.log('\nApplying translations to non-English keywords...');
-  const { rowCount: transCount } = await pool.query(`
-    UPDATE article_keywords ak
-    SET normalized_keyword = kt.normalized_keyword
-    FROM keyword_translations kt
-    WHERE ak.keyword = kt.original_keyword
-      AND ak.normalized_keyword IS NULL
+  // Get ID range
+  const { rows: [range] } = await pool.query(`
+    SELECT MIN(id) AS min_id, MAX(id) AS max_id FROM article_keywords
   `);
-  console.log(`  Updated: ${transCount.toLocaleString()} rows`);
+  const minId = parseInt(range.min_id) || 0;
+  const maxId = parseInt(range.max_id) || 0;
+  console.log(`ID range: ${minId.toLocaleString()} - ${maxId.toLocaleString()}`);
 
-  // For remaining ASCII keywords without translation, just lowercase them
-  console.log('\nLowercasing remaining ASCII keywords...');
-  const { rowCount: asciiCount } = await pool.query(`
-    UPDATE article_keywords
-    SET normalized_keyword = LOWER(keyword)
-    WHERE normalized_keyword IS NULL
-      AND keyword !~ '[^\\x00-\\x7F]'  -- ASCII only
-  `);
-  console.log(`  Updated: ${asciiCount.toLocaleString()} rows`);
+  let totalUpdated = 0;
+  let currentId = minId;
+
+  // Step 1: English keywords (batched by ID range)
+  console.log('\n[1/3] Setting normalized_keyword = keyword for English...');
+  currentId = minId;
+  while (currentId <= maxId) {
+    const endId = currentId + BATCH_SIZE;
+    const { rowCount } = await pool.query(`
+      UPDATE article_keywords
+      SET normalized_keyword = LOWER(keyword)
+      WHERE id >= $1 AND id < $2
+        AND source_language = 'en' 
+        AND normalized_keyword IS NULL
+    `, [currentId, endId]);
+    totalUpdated += rowCount;
+    process.stdout.write(`  Progress: ${Math.min(currentId, maxId).toLocaleString()} / ${maxId.toLocaleString()} (updated: ${totalUpdated.toLocaleString()})\r`);
+    currentId = endId;
+  }
+  console.log(`\n  English done: ${totalUpdated.toLocaleString()} rows`);
+
+  // Step 2: Non-English with translations (batched)
+  console.log('\n[2/3] Applying translations to non-English keywords...');
+  let transUpdated = 0;
+  currentId = minId;
+  while (currentId <= maxId) {
+    const endId = currentId + BATCH_SIZE;
+    const { rowCount } = await pool.query(`
+      UPDATE article_keywords ak
+      SET normalized_keyword = kt.normalized_keyword
+      FROM keyword_translations kt
+      WHERE ak.id >= $1 AND ak.id < $2
+        AND ak.keyword = kt.original_keyword
+        AND ak.normalized_keyword IS NULL
+    `, [currentId, endId]);
+    transUpdated += rowCount;
+    process.stdout.write(`  Progress: ${Math.min(currentId, maxId).toLocaleString()} / ${maxId.toLocaleString()} (updated: ${transUpdated.toLocaleString()})\r`);
+    currentId = endId;
+  }
+  console.log(`\n  Translations applied: ${transUpdated.toLocaleString()} rows`);
+
+  // Step 3: Remaining ASCII keywords (batched)
+  console.log('\n[3/3] Lowercasing remaining ASCII keywords...');
+  let asciiUpdated = 0;
+  currentId = minId;
+  while (currentId <= maxId) {
+    const endId = currentId + BATCH_SIZE;
+    const { rowCount } = await pool.query(`
+      UPDATE article_keywords
+      SET normalized_keyword = LOWER(keyword)
+      WHERE id >= $1 AND id < $2
+        AND normalized_keyword IS NULL
+        AND keyword ~ '^[\\x00-\\x7F]+$'
+    `, [currentId, endId]);
+    asciiUpdated += rowCount;
+    process.stdout.write(`  Progress: ${Math.min(currentId, maxId).toLocaleString()} / ${maxId.toLocaleString()} (updated: ${asciiUpdated.toLocaleString()})\r`);
+    currentId = endId;
+  }
+  console.log(`\n  ASCII done: ${asciiUpdated.toLocaleString()} rows`);
 
   // Stats
   const { rows: [stats] } = await pool.query(`
