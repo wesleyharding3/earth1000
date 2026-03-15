@@ -8938,10 +8938,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         
         void main() {
+          // vUv.x goes along the tube length (0 = start, 1 = end)
           // Multiple pulses for clearer direction
-          float pulse1 = getPulse(vUv.y, uPulsePos);
-          float pulse2 = getPulse(vUv.y, fract(uPulsePos + 0.33));
-          float pulse3 = getPulse(vUv.y, fract(uPulsePos + 0.66));
+          float pulse1 = getPulse(vUv.x, uPulsePos);
+          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33));
+          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66));
           
           // Combine pulses with slight falloff for trailing ones
           float pulse = pulse1 + pulse2 * 0.6 + pulse3 * 0.3;
@@ -9219,7 +9220,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       
       // Update pulse position for all arcs (including static)
       const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
-      arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+      if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
+        arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+      }
+      
+      // Debug: log once per second
+      if (i === 0 && Math.floor(globalPulseTime) !== Math.floor(globalPulseTime - delta * PULSE_SPEED)) {
+        console.log("[Pulse Debug] pulsePos:", pulsePos.toFixed(2), "arcCount:", arcObjects.length, "hasUniforms:", !!arc.tubeMat.uniforms);
+      }
       
       // Skip the rest for static arcs (aggregate mode)
       if (arc.isStatic) continue;
