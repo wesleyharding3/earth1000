@@ -9336,8 +9336,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function remapFlowForView(flow) {
     const viewMode = window.__currentViewMode || "country";
     
-    // In country view: funnel city sources through their country's coordinates
     if (viewMode === "country") {
+      // Country view: funnel city sources through their country's coordinates
       // If source is a city, remap to country coords using ISO
       if (flow.src.type === "city" && flow.src.iso) {
         const countryCoords = getCountryCoordsByIso(flow.src.iso);
@@ -9354,8 +9354,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
           flow.dst.lon = countryCoords.lon;
         }
       }
+    } else if (viewMode === "regions") {
+      // Region view: funnel city sources through their region's coordinates
+      // Use regionLat/regionLon from API response if available
+      if (flow.src.regionLat != null && flow.src.regionLon != null) {
+        flow.src.lat = flow.src.regionLat;
+        flow.src.lon = flow.src.regionLon;
+      }
+      if (flow.dst.regionLat != null && flow.dst.regionLon != null) {
+        flow.dst.lat = flow.dst.regionLat;
+        flow.dst.lon = flow.dst.regionLon;
+      }
     }
-    // In city view: use actual coordinates (no remapping needed)
+    // City view: use actual city coordinates (no remapping needed)
+    // Server already filters to city-to-city flows only
     
     return flow;
   }
@@ -9476,6 +9488,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const fromDate = document.getElementById("flowFrom").value;
     const toDate   = document.getElementById("flowTo").value;
     const keyword  = document.getElementById("flowKeyword").value.trim();
+    const viewMode = window.__currentViewMode || "country";
 
     clearArcs();
     seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
@@ -9489,6 +9502,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Build query params
     const params = new URLSearchParams();
     params.set("mode", flowMode);
+    params.set("view_mode", viewMode);  // Pass current view mode to server
     params.set("limit", flowMode === "aggregate" ? "500" : "2000");
 
     if (fromDate) params.set("from_date", fromDate);
