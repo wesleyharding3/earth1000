@@ -10013,7 +10013,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const mousePosFlow  = new THREE.Vector2();
 
   window.addEventListener("mousemove", (e) => {
-    if (!flowModeOpen) return;
+    // Hide tooltip if not on globe page or flow mode not open
+    if (!flowModeOpen || window.__currentPage !== 1) {
+      tooltip.style.display = "none";
+      return;
+    }
     mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
     mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
     raycasterFlow.setFromCamera(mousePosFlow, camera);
@@ -10051,7 +10055,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* Click on flow arc to open article detail */
   window.addEventListener("click", (e) => {
-    if (!flowModeOpen) return;
+    if (!flowModeOpen || window.__currentPage !== 1) return;
     
     mousePosFlow.x = (e.clientX / window.innerWidth)  *  2 - 1;
     mousePosFlow.y = -(e.clientY / window.innerHeight) *  2 + 1;
