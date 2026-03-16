@@ -1401,6 +1401,100 @@
   color: rgba(255,150,150,0.9);
 }
 
+/* Minimize button */
+.flowMinBtn {
+  position: absolute;
+  top: 8px;
+  right: 38px;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.5);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  z-index: 10;
+}
+.flowMinBtn:hover {
+  background: rgba(255,200,50,0.15);
+  border-color: rgba(255,200,50,0.4);
+  color: rgba(255,220,100,0.9);
+}
+
+/* Minimized state */
+#flowControls.minimized .flowPanel {
+  display: none;
+}
+#flowControls.minimized .flowMinBar {
+  display: flex;
+}
+.flowMinBar {
+  display: none;
+  background: rgba(5, 7, 10, 0.9);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 30px;
+  padding: 8px 16px;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  backdrop-filter: blur(10px);
+}
+.flowMinBar .flowMinLabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.5);
+}
+.flowMinBar .flowMinStats {
+  font-size: 12px;
+  color: rgba(0,220,130,0.9);
+  font-weight: 600;
+}
+.flowMinBar .flowExpandBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  background: rgba(0,220,130,0.15);
+  border: 1px solid rgba(0,220,130,0.3);
+  color: rgba(0,220,130,0.9);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.flowMinBar .flowExpandBtn:hover {
+  background: rgba(0,220,130,0.25);
+  border-color: rgba(0,220,130,0.5);
+  transform: scale(1.05);
+}
+.flowMinBar .flowMinCloseBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.flowMinBar .flowMinCloseBtn:hover {
+  background: rgba(255,100,100,0.2);
+  border-color: rgba(255,100,100,0.4);
+  color: rgba(255,150,150,0.9);
+}
+
 
 
     /* ===============================
@@ -1605,7 +1699,7 @@
       flex-direction: column;
       text-decoration: none;
       color: inherit;
-      height: 320px;
+      height: 330px;
     }
 
     .articleCard:hover {
@@ -1618,8 +1712,9 @@
 
     .articleCardImage {
       width: 100%;
-      height: 130px;
+      height: 140px;
       object-fit: cover;
+      object-position: center top;
       background: rgba(255,255,255,0.05);
       display: block;
       flex-shrink: 0;
@@ -1627,7 +1722,7 @@
 
     .articleCardImagePlaceholder {
       width: 100%;
-      height: 130px;
+      height: 140px;
       background: linear-gradient(135deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
       display: flex;
       align-items: center;
@@ -3632,18 +3727,19 @@
       transition: background 0.2s, border-color 0.2s, transform 0.14s;
       display: flex; flex-direction: column;
       text-decoration: none; color: inherit;
-      height: 320px;
+      height: 330px;
     }
     .nfCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfCard:active { transform: translateY(0); }
 
     .nfCardImg {
-      width: 100%; height: 130px;
-      object-fit: cover; background: rgba(255,255,255,0.04);
+      width: 100%; height: 140px;
+      object-fit: cover; object-position: center top;
+      background: rgba(255,255,255,0.04);
       display: block; flex-shrink: 0;
     }
     .nfCardImgPh {
-      width: 100%; height: 130px;
+      width: 100%; height: 140px;
       background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
@@ -3685,8 +3781,8 @@
     }
 
     /* Skeletons */
-    .nfSkel { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; overflow: hidden; height: 320px; }
-    .nfSkel .si { width: 100%; height: 130px; background: rgba(255,255,255,0.05); }
+    .nfSkel { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; overflow: hidden; height: 330px; }
+    .nfSkel .si { width: 100%; height: 140px; background: rgba(255,255,255,0.05); }
     .nfSkel .sl { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.055); margin: 11px 13px 5px; }
     .nfSkel .sl.s { width: 48%; margin-bottom: 13px; }
 
@@ -4587,7 +4683,17 @@
   </div>
   <!-- Flow controls panel -->
   <div id="flowControls">
+    <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
     <button class="flowCloseBtn" id="flowCloseBtn" title="Close">✕</button>
+    
+    <!-- Minimized bar (shown when minimized) -->
+    <div class="flowMinBar">
+      <span class="flowMinLabel">Flow</span>
+      <span class="flowMinStats" id="flowMinStats">0 flows</span>
+      <button class="flowExpandBtn" id="flowExpandBtn" title="Expand">↑</button>
+      <button class="flowMinCloseBtn" id="flowMinCloseBtn" title="Close">✕</button>
+    </div>
+    
     <div class="flowPanel">
       <!-- Mode toggle -->
       <div class="flowPanelRow">
@@ -9376,7 +9482,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function closeFlowPanel() {
     flowModeOpen = false;
     document.getElementById("flowModeBtn").classList.remove("active");
-    document.getElementById("flowControls").classList.remove("visible");
+    const flowControls = document.getElementById("flowControls");
+    flowControls.classList.remove("visible");
+    flowControls.classList.remove("minimized");
     clearArcs();
     flowPlaying = false;
     seqIndex = 0; seqTimer = 0; flowProgress = 0;
@@ -9539,6 +9647,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById("aggRouteCount").textContent = data.totalRoutes || 0;
         document.getElementById("aggArticleCount").textContent = (data.totalArticles || 0).toLocaleString();
         document.getElementById("flowStats").innerHTML = `<span class="flowStatHighlight">${data.totalRoutes}</span> routes`;
+        updateMinimizedStats();
 
       } else {
         // Handle both { flows: [...] } and direct array responses
@@ -9546,6 +9655,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         flowData = flows.map(remapFlowForView);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
+        updateMinimizedStats();
         
         // Generate date ticks for the timeline
         generateDateTicks();
@@ -9586,6 +9696,38 @@ const settingsToggle     = document.getElementById("settingsToggle");
     e.stopPropagation();
     closeFlowPanel();
   });
+
+  // Minimize button
+  document.getElementById("flowMinBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const flowControls = document.getElementById("flowControls");
+    flowControls.classList.add("minimized");
+    // Update minimized stats display
+    updateMinimizedStats();
+  });
+
+  // Expand button (in minimized bar)
+  document.getElementById("flowExpandBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.getElementById("flowControls").classList.remove("minimized");
+  });
+
+  // Close button in minimized bar
+  document.getElementById("flowMinCloseBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeFlowPanel();
+  });
+
+  // Update minimized stats display
+  function updateMinimizedStats() {
+    const statsEl = document.getElementById("flowMinStats");
+    if (flowMode === "aggregate") {
+      const routeCount = document.getElementById("aggRouteCount")?.textContent || "0";
+      statsEl.textContent = `${routeCount} routes`;
+    } else {
+      statsEl.textContent = `${flowData.length} flows`;
+    }
+  }
 
   // Mode toggle (Time Series vs Aggregate)
   document.querySelectorAll(".flowModeToggle .flowModePill").forEach(pill => {
@@ -10031,8 +10173,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Map flow data to article format and render using standard card HTML
       const FLAG_CDN = "https://flagcdn.com/w80/";
       const cardsHtml = data.flows.map(f => {
-        // Check if translation is needed (has original title but no translated title)
-        const needsTranslation = f.originalTitle && !f.translatedTitle;
+        // Check if translation is needed (no translated title yet, but has a title)
+        const needsTranslation = !f.translatedTitle && f.title;
         
         // Map flow fields to article fields
         const article = {
