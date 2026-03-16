@@ -458,6 +458,9 @@ app.get("/api/news/search", async (req, res) => {
 app.get("/api/flows", async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
+    let viewMode = req.query.view_mode || "country";  // country, city, region/regions
+    // Normalize "regions" to "region"
+    if (viewMode === "regions") viewMode = "region";
     const maxLimit = mode === "aggregate" ? 2500 : 2500;
     const limit = Math.min(parseInt(req.query.limit) || 800, maxLimit);
     const normalize = req.query.normalize !== "false"; // default true
@@ -525,9 +528,23 @@ app.get("/api/flows", async (req, res) => {
       )`);
     }
 
-    // Exclude all same-country flows (stubby lines)
-    // Only allow: different countries
-    conditions.push(`a.country_id != al.country_id`);
+    // View-mode specific filtering
+    if (viewMode === "city") {
+      // City view: both source AND destination must be cities
+      conditions.push(`a.city_id IS NOT NULL`);
+      conditions.push(`al.city_id IS NOT NULL`);
+      // Different cities (can be same or different country)
+      conditions.push(`a.city_id != al.city_id`);
+    } else if (viewMode === "region") {
+      // Region view: both must be cities, different regions
+      conditions.push(`a.city_id IS NOT NULL`);
+      conditions.push(`al.city_id IS NOT NULL`);
+      conditions.push(`a.city_id != al.city_id`);
+      // Will add region exclusion after JOINs are defined
+    } else {
+      // Country view (default): exclude same-country flows
+      conditions.push(`a.country_id != al.country_id`);
+    }
 
     const whereClause = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
 
@@ -538,53 +555,156 @@ app.get("/api/flows", async (req, res) => {
       params.push(limit);
       const limitParam = params.length;
 
-      const { rows } = await pool.query(`
-        WITH flow_counts AS (
+      // Build region-aware query for aggregate mode
+      let aggregateQuery;
+      
+      if (viewMode === "region") {
+        // Region view: group by region, exclude same-region flows
+        aggregateQuery = `
+          WITH flow_counts AS (
+            SELECT
+              src_city.region_id                           AS src_region_id,
+              dst_city.region_id                           AS dst_region_id,
+              COUNT(*)                                     AS flow_count,
+              AVG(a.sentiment_score)                       AS avg_sentiment,
+              COUNT(*) FILTER (WHERE al.routing_type = 'source')  AS source_routes,
+              COUNT(*) FILTER (WHERE al.routing_type = 'content') AS content_routes
+            FROM article_locations al
+            JOIN news_articles a ON a.id = al.article_id
+            JOIN cities src_city ON src_city.id = a.city_id
+            JOIN cities dst_city ON dst_city.id = al.city_id
+            ${whereClause}
+            AND src_city.region_id IS NOT NULL
+            AND dst_city.region_id IS NOT NULL
+            AND src_city.region_id != dst_city.region_id
+            GROUP BY src_city.region_id, dst_city.region_id
+          )
           SELECT
-            COALESCE(a.city_id, 0)                     AS src_city_id,
-            a.country_id                               AS src_country_id,
-            COALESCE(al.city_id, 0)                    AS dst_city_id,
-            al.country_id                              AS dst_country_id,
-            COUNT(*)                                   AS flow_count,
-            AVG(a.sentiment_score)                     AS avg_sentiment,
-            COUNT(*) FILTER (WHERE al.routing_type = 'source')  AS source_routes,
-            COUNT(*) FILTER (WHERE al.routing_type = 'content') AS content_routes
-          FROM article_locations al
-          JOIN news_articles a ON a.id = al.article_id
-          ${whereClause}
-          GROUP BY 
-            COALESCE(a.city_id, 0),
-            a.country_id,
-            COALESCE(al.city_id, 0),
-            al.country_id
-        )
-        SELECT
-          fc.flow_count,
-          fc.avg_sentiment,
-          fc.source_routes,
-          fc.content_routes,
-          CASE WHEN fc.src_city_id > 0 THEN src_city.latitude ELSE src_co.latitude END AS src_lat,
-          CASE WHEN fc.src_city_id > 0 THEN src_city.longitude ELSE src_co.longitude END AS src_lon,
-          CASE WHEN fc.src_city_id > 0 THEN src_city.name ELSE src_co.name END AS src_place,
-          CASE WHEN fc.src_city_id > 0 THEN fc.src_city_id ELSE fc.src_country_id END AS src_id,
-          CASE WHEN fc.src_city_id > 0 THEN 'city' ELSE 'country' END AS src_type,
-          src_co.iso_code AS src_iso,
-          CASE WHEN fc.dst_city_id > 0 THEN dst_city.latitude ELSE dst_co.latitude END AS dst_lat,
-          CASE WHEN fc.dst_city_id > 0 THEN dst_city.longitude ELSE dst_co.longitude END AS dst_lon,
-          CASE WHEN fc.dst_city_id > 0 THEN dst_city.name ELSE dst_co.name END AS dst_place,
-          CASE WHEN fc.dst_city_id > 0 THEN fc.dst_city_id ELSE fc.dst_country_id END AS dst_id,
-          CASE WHEN fc.dst_city_id > 0 THEN 'city' ELSE 'country' END AS dst_type,
-          dst_co.iso_code AS dst_iso,
-          MAX(fc.flow_count) OVER() AS max_count,
-          SUM(fc.flow_count) OVER() AS total_articles
-        FROM flow_counts fc
-        JOIN countries src_co ON src_co.id = fc.src_country_id
-        JOIN countries dst_co ON dst_co.id = fc.dst_country_id
-        LEFT JOIN cities src_city ON src_city.id = fc.src_city_id
-        LEFT JOIN cities dst_city ON dst_city.id = fc.dst_city_id
-        ORDER BY fc.flow_count DESC
-        LIMIT $${limitParam}
-      `, params);
+            fc.flow_count,
+            fc.avg_sentiment,
+            fc.source_routes,
+            fc.content_routes,
+            src_r.centroid_lat AS src_lat,
+            src_r.centroid_lng AS src_lon,
+            src_r.name AS src_place,
+            fc.src_region_id AS src_id,
+            'region' AS src_type,
+            NULL AS src_iso,
+            fc.src_region_id AS src_region_id,
+            dst_r.centroid_lat AS dst_lat,
+            dst_r.centroid_lng AS dst_lon,
+            dst_r.name AS dst_place,
+            fc.dst_region_id AS dst_id,
+            'region' AS dst_type,
+            NULL AS dst_iso,
+            fc.dst_region_id AS dst_region_id,
+            MAX(fc.flow_count) OVER() AS max_count,
+            SUM(fc.flow_count) OVER() AS total_articles
+          FROM flow_counts fc
+          JOIN regions src_r ON src_r.id = fc.src_region_id
+          JOIN regions dst_r ON dst_r.id = fc.dst_region_id
+          ORDER BY fc.flow_count DESC
+          LIMIT $${limitParam}
+        `;
+      } else if (viewMode === "city") {
+        // City view: city to city only
+        aggregateQuery = `
+          WITH flow_counts AS (
+            SELECT
+              a.city_id                                    AS src_city_id,
+              al.city_id                                   AS dst_city_id,
+              COUNT(*)                                     AS flow_count,
+              AVG(a.sentiment_score)                       AS avg_sentiment,
+              COUNT(*) FILTER (WHERE al.routing_type = 'source')  AS source_routes,
+              COUNT(*) FILTER (WHERE al.routing_type = 'content') AS content_routes
+            FROM article_locations al
+            JOIN news_articles a ON a.id = al.article_id
+            ${whereClause}
+            GROUP BY a.city_id, al.city_id
+          )
+          SELECT
+            fc.flow_count,
+            fc.avg_sentiment,
+            fc.source_routes,
+            fc.content_routes,
+            src_city.latitude AS src_lat,
+            src_city.longitude AS src_lon,
+            src_city.name AS src_place,
+            fc.src_city_id AS src_id,
+            'city' AS src_type,
+            src_co.iso_code AS src_iso,
+            src_city.region_id AS src_region_id,
+            dst_city.latitude AS dst_lat,
+            dst_city.longitude AS dst_lon,
+            dst_city.name AS dst_place,
+            fc.dst_city_id AS dst_id,
+            'city' AS dst_type,
+            dst_co.iso_code AS dst_iso,
+            dst_city.region_id AS dst_region_id,
+            MAX(fc.flow_count) OVER() AS max_count,
+            SUM(fc.flow_count) OVER() AS total_articles
+          FROM flow_counts fc
+          JOIN cities src_city ON src_city.id = fc.src_city_id
+          JOIN cities dst_city ON dst_city.id = fc.dst_city_id
+          JOIN countries src_co ON src_co.id = src_city.country_id
+          JOIN countries dst_co ON dst_co.id = dst_city.country_id
+          ORDER BY fc.flow_count DESC
+          LIMIT $${limitParam}
+        `;
+      } else {
+        // Country view (default): country to country
+        aggregateQuery = `
+          WITH flow_counts AS (
+            SELECT
+              COALESCE(a.city_id, 0)                     AS src_city_id,
+              a.country_id                               AS src_country_id,
+              COALESCE(al.city_id, 0)                    AS dst_city_id,
+              al.country_id                              AS dst_country_id,
+              COUNT(*)                                   AS flow_count,
+              AVG(a.sentiment_score)                     AS avg_sentiment,
+              COUNT(*) FILTER (WHERE al.routing_type = 'source')  AS source_routes,
+              COUNT(*) FILTER (WHERE al.routing_type = 'content') AS content_routes
+            FROM article_locations al
+            JOIN news_articles a ON a.id = al.article_id
+            ${whereClause}
+            GROUP BY 
+              COALESCE(a.city_id, 0),
+              a.country_id,
+              COALESCE(al.city_id, 0),
+              al.country_id
+          )
+          SELECT
+            fc.flow_count,
+            fc.avg_sentiment,
+            fc.source_routes,
+            fc.content_routes,
+            CASE WHEN fc.src_city_id > 0 THEN src_city.latitude ELSE src_co.latitude END AS src_lat,
+            CASE WHEN fc.src_city_id > 0 THEN src_city.longitude ELSE src_co.longitude END AS src_lon,
+            CASE WHEN fc.src_city_id > 0 THEN src_city.name ELSE src_co.name END AS src_place,
+            CASE WHEN fc.src_city_id > 0 THEN fc.src_city_id ELSE fc.src_country_id END AS src_id,
+            CASE WHEN fc.src_city_id > 0 THEN 'city' ELSE 'country' END AS src_type,
+            src_co.iso_code AS src_iso,
+            CASE WHEN fc.src_city_id > 0 THEN src_city.region_id ELSE NULL END AS src_region_id,
+            CASE WHEN fc.dst_city_id > 0 THEN dst_city.latitude ELSE dst_co.latitude END AS dst_lat,
+            CASE WHEN fc.dst_city_id > 0 THEN dst_city.longitude ELSE dst_co.longitude END AS dst_lon,
+            CASE WHEN fc.dst_city_id > 0 THEN dst_city.name ELSE dst_co.name END AS dst_place,
+            CASE WHEN fc.dst_city_id > 0 THEN fc.dst_city_id ELSE fc.dst_country_id END AS dst_id,
+            CASE WHEN fc.dst_city_id > 0 THEN 'city' ELSE 'country' END AS dst_type,
+            dst_co.iso_code AS dst_iso,
+            CASE WHEN fc.dst_city_id > 0 THEN dst_city.region_id ELSE NULL END AS dst_region_id,
+            MAX(fc.flow_count) OVER() AS max_count,
+            SUM(fc.flow_count) OVER() AS total_articles
+          FROM flow_counts fc
+          JOIN countries src_co ON src_co.id = fc.src_country_id
+          JOIN countries dst_co ON dst_co.id = fc.dst_country_id
+          LEFT JOIN cities src_city ON src_city.id = fc.src_city_id
+          LEFT JOIN cities dst_city ON dst_city.id = fc.dst_city_id
+          ORDER BY fc.flow_count DESC
+          LIMIT $${limitParam}
+        `;
+      }
+
+      const { rows } = await pool.query(aggregateQuery, params);
 
       const maxCount = rows.length ? parseInt(rows[0].max_count) : 1;
       const totalArticles = rows.length ? parseInt(rows[0].total_articles) : 0;
@@ -596,7 +716,8 @@ app.get("/api/flows", async (req, res) => {
           place: r.src_place,
           id: r.src_id,
           type: r.src_type,
-          iso: r.src_iso
+          iso: r.src_iso,
+          regionId: r.src_region_id || null
         },
         dst: {
           lat: parseFloat(r.dst_lat),
@@ -604,7 +725,8 @@ app.get("/api/flows", async (req, res) => {
           place: r.dst_place,
           id: r.dst_id,
           type: r.dst_type,
-          iso: r.dst_iso
+          iso: r.dst_iso,
+          regionId: r.dst_region_id || null
         },
         count: parseInt(r.flow_count),
         avgSentiment: r.avg_sentiment ? parseFloat(r.avg_sentiment) : null,
@@ -632,6 +754,16 @@ app.get("/api/flows", async (req, res) => {
       params.push(fetchLimit);
       const limitParam = params.length;
 
+      // For region view, add region exclusion
+      let regionExclusionClause = "";
+      if (viewMode === "region") {
+        regionExclusionClause = `
+          AND src_city.region_id IS NOT NULL
+          AND dst_city.region_id IS NOT NULL
+          AND src_city.region_id != dst_city.region_id
+        `;
+      }
+
       const { rows } = await pool.query(`
         SELECT
           a.id,
@@ -656,12 +788,18 @@ app.get("/api/flows", async (req, res) => {
           CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
           CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
           src_co.iso_code AS src_iso,
+          src_city.region_id AS src_region_id,
+          src_r.centroid_lat AS src_region_lat,
+          src_r.centroid_lng AS src_region_lon,
           COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
           COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
           COALESCE(dst_city.name, dst_co.name)           AS dst_place,
           CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
           CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
-          dst_co.iso_code AS dst_iso
+          dst_co.iso_code AS dst_iso,
+          dst_city.region_id AS dst_region_id,
+          dst_r.centroid_lat AS dst_region_lat,
+          dst_r.centroid_lng AS dst_region_lon
         FROM article_locations al
         JOIN news_articles a   ON a.id = al.article_id
         JOIN news_sources ns   ON ns.id = a.source_id
@@ -669,7 +807,10 @@ app.get("/api/flows", async (req, res) => {
         JOIN countries dst_co  ON dst_co.id = al.country_id
         LEFT JOIN cities src_city ON src_city.id = a.city_id
         LEFT JOIN cities dst_city ON dst_city.id = al.city_id
+        LEFT JOIN regions src_r ON src_r.id = src_city.region_id
+        LEFT JOIN regions dst_r ON dst_r.id = dst_city.region_id
         ${whereClause}
+        ${regionExclusionClause}
         ORDER BY a.published_at DESC
         LIMIT $${limitParam}
       `, params);
@@ -789,7 +930,10 @@ app.get("/api/flows", async (req, res) => {
           place: r.src_place,
           id: r.src_id,
           type: r.src_type,
-          iso: r.src_iso
+          iso: r.src_iso,
+          regionId: r.src_region_id || null,
+          regionLat: r.src_region_lat ? parseFloat(r.src_region_lat) : null,
+          regionLon: r.src_region_lon ? parseFloat(r.src_region_lon) : null
         },
         dst: {
           lat: parseFloat(r.dst_lat),
@@ -797,7 +941,10 @@ app.get("/api/flows", async (req, res) => {
           place: r.dst_place,
           id: r.dst_id,
           type: r.dst_type,
-          iso: r.dst_iso
+          iso: r.dst_iso,
+          regionId: r.dst_region_id || null,
+          regionLat: r.dst_region_lat ? parseFloat(r.dst_region_lat) : null,
+          regionLon: r.dst_region_lon ? parseFloat(r.dst_region_lon) : null
         }
       }));
 
