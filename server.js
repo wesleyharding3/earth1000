@@ -1176,6 +1176,7 @@ app.get("/api/keywords/trending", async (req, res) => {
          COUNT(DISTINCT date) AS days_active
        FROM keyword_daily_stats
        ${where}
+         AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword_daily_stats.keyword)
        GROUP BY keyword
        HAVING SUM(total_count) >= 3
        ORDER BY mentions DESC
@@ -1206,6 +1207,7 @@ app.get("/api/keywords/rising", async (req, res) => {
          FROM keyword_daily_stats
          WHERE date >= NOW() - ($1 || ' days')::INTERVAL
            AND source_country_id IS NULL AND about_country_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword_daily_stats.keyword)
          GROUP BY keyword
          HAVING SUM(total_count) >= 2
        ),
@@ -1215,6 +1217,7 @@ app.get("/api/keywords/rising", async (req, res) => {
          WHERE date >= NOW() - ($2 || ' days')::INTERVAL
            AND date < NOW() - ($1 || ' days')::INTERVAL
            AND source_country_id IS NULL AND about_country_id IS NULL
+           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword_daily_stats.keyword)
          GROUP BY keyword
        )
        SELECT
@@ -1250,6 +1253,7 @@ app.get("/api/keywords/autocomplete", async (req, res) => {
       `SELECT DISTINCT keyword
        FROM article_keywords
        WHERE keyword ILIKE $1
+         AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = article_keywords.keyword)
        ORDER BY keyword ASC
        LIMIT 10`,
       [q + "%"]
