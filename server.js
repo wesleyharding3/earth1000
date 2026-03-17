@@ -1369,32 +1369,6 @@ app.get("/api/keywords/trend", async (req, res) => {
   }
 });
 
-// GET /api/keywords/cooccurrence?keyword=ukraine&days=30&limit=15
-// Returns keywords most frequently mentioned alongside the given keyword
-app.get("/api/keywords/cooccurrence", async (req, res) => {
-  const { keyword, days = 30, limit = 15 } = req.query;
-  if (!keyword) return res.status(400).json({ error: "keyword required" });
-
-  try {
-    const kw = keyword.toLowerCase().trim();
-    const { rows } = await pool.query(
-      `SELECT
-         CASE WHEN keyword_a = $1 THEN keyword_b ELSE keyword_a END AS related_keyword,
-         COUNT(*) AS co_mentions
-       FROM keyword_cooccurrence
-       WHERE (keyword_a = $1 OR keyword_b = $1)
-         AND date >= NOW() - ($2 || ' days')::INTERVAL
-       GROUP BY related_keyword
-       ORDER BY co_mentions DESC
-       LIMIT $3`,
-      [kw, parseInt(days), parseInt(limit)]
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error("[keywords/cooccurrence]", err.message);
-    res.status(500).json({ error: "cooccurrence failed" });
-  }
-});
 
 // GET /api/keywords/articles?keyword=ukraine&days=7&limit=20
 // Returns recent articles containing the keyword
