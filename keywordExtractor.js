@@ -182,7 +182,7 @@ function extractKeywords(article, lang, cache) {
  * saveKeywords(articleId, keywords, lang, client?)
  *
  * Inserts extracted keywords into article_keywords.
- * Also updates keyword_daily_stats and keyword_cooccurrence.
+ * Also updates keyword_daily_stats.
  * Pass an existing pg client for transaction support (backfill),
  * or omit to use the pool directly (fetcher).
  *
@@ -201,8 +201,7 @@ async function saveKeywords(
   publishedAt,
   sourceCountryId   = null,
   aboutCountryId    = null,
-  client            = undefined,
-  skipCooccurrence  = false
+  client            = undefined
 ) {
   if (!keywords || keywords.length === 0) return;
   const db   = client || pool;
@@ -256,47 +255,6 @@ async function saveKeywords(
     );
   }
 
-  // ── 4. Bulk insert keyword_cooccurrence pairs (skipped if skipCooccurrence=true)
-  if (skipCooccurrence) return;
-  // Dedupe keywords first (bigrams + unigrams can overlap), then pair
-  const words = [...new Set(keywords.map(k => k.keyword))];
-  const pairs = [];
-  const seenPairs = new Set();
-  for (let i = 0; i < words.length; i++) {
-    for (let j = i + 1; j < words.length; j++) {
-      if (words[i] === words[j]) continue;  // skip identical
-      const [a, b] = words[i] < words[j] ? [words[i], words[j]] : [words[j], words[i]];
-      const key = `${a}||${b}`;
-      if (seenPairs.has(key)) continue;     // skip duplicate pairs
-      seenPairs.add(key);
-      pairs.push([a, b]);
-    }
-  }
-  if (pairs.length > 0) {
-    // Use LEAST/GREATEST in SQL to guarantee keyword_a < keyword_b
-    // regardless of JS vs Postgres collation differences
-    const pVals   = pairs.map((_, i) => `(LEAST($${i*4+1},$${i*4+2}), GREATEST($${i*4+1},$${i*4+2}), $${i*4+3}, $${i*4+4})`).join(',');
-    const pParams = [];
-    for (const [a, b] of pairs) {
-      if (a === b) continue;  // final safety: skip identical
-      pParams.push(a, b, articleId, date);
-    }
-    // Rebuild vals to match filtered pParams
-    const filteredCount = pParams.length / 4;
-    if (filteredCount > 0) {
-      const fVals = Array.from({length: filteredCount}, (_, i) =>
-        `(LEAST($${i*4+1},$${i*4+2}), GREATEST($${i*4+1},$${i*4+2}), $${i*4+3}::integer, $${i*4+4}::date)`
-      ).join(',');
-      await db.query(
-        `INSERT INTO keyword_cooccurrence (keyword_a, keyword_b, article_id, date)
-         SELECT v.a, v.b, v.article_id, v.date
-         FROM (VALUES ${fVals}) AS v(a, b, article_id, date)
-         WHERE v.a < v.b
-         ON CONFLICT DO NOTHING`,
-        pParams
-      );
-    }
-  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
