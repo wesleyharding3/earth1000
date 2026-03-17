@@ -4868,16 +4868,41 @@
       ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 8000);
     }
 
+// ── Retry helper for Render cold starts ──
+    async function fetchWithRetry(url, retries = 3, delay = 1500) {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const res = await fetch(url);
+          const data = await res.json();
+          if (Array.isArray(data)) return data;
+          // API returned error object — treat as failure
+          console.warn(`[fetchWithRetry] ${url} returned non-array:`, data);
+          if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+        } catch (err) {
+          console.warn(`[fetchWithRetry] ${url} attempt ${i+1} failed:`, err.message);
+          if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
+        }
+      }
+      return []; // fallback to empty array
+    }
+
 const loader = new THREE.TextureLoader();
     const earthTexture = loader.load(
       "https://threejs.org/examples/textures/land_ocean_ice_cloud_2048.jpg",
-      () => {
-        Promise.all([
-          fetch("https://earth-wjr6.onrender.com/api/cities").then(res => res.json()),
-          fetch("https://earth-wjr6.onrender.com/api/countries").then(res => res.json())
-        ])
-        .then(([cities, countries]) => { init(cities, countries); })
-        .catch(err => { console.error("Failed to load initial data:", err); });
+      async () => {
+        try {
+          const [cities, countries] = await Promise.all([
+            fetchWithRetry("https://earth-wjr6.onrender.com/api/cities"),
+            fetchWithRetry("https://earth-wjr6.onrender.com/api/countries")
+          ]);
+          if (!cities.length || !countries.length) {
+            console.error("Failed to load initial data after retries");
+          }
+          init(cities, countries);
+        } catch (err) {
+          console.error("Failed to load initial data:", err);
+          init([], []); // init with empty to avoid undefined errors
+        }
       }
     );
 
@@ -7003,7 +7028,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (regionLoading || regionPoints) return;
         regionLoading = true;
         try {
-          const meta = await fetch("https://earth-wjr6.onrender.com/api/regions").then(r => r.json());
+          const res = await fetch("https://earth-wjr6.onrender.com/api/regions");
+          const meta = await res.json();
+          if (!Array.isArray(meta)) {
+            console.warn("Regions returned non-array:", meta);
+            return;
+          }
           buildRegionNodes(meta);
           console.log(`Regions loaded — ${regionData.length} nodes`);
         } catch (err) {
@@ -10480,8 +10510,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       fetch(`${API}/api/countries`).then(r => r.json()),
       fetch(`${API}/api/tags`).then(r => r.json())
     ]).then(([c, t]) => {
-      countries = c.sort((a, b) => a.name.localeCompare(b.name));
-      tags = t;
+      countries = Array.isArray(c) ? c.sort((a, b) => a.name.localeCompare(b.name)) : [];
+      tags = Array.isArray(t) ? t : [];
+      if (!countries.length) console.warn("Bootstrap: countries empty or invalid");
       initMulti("from"); initMulti("about"); initTags();
       const now = new Date(), past = new Date(now - 7 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
