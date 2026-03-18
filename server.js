@@ -145,7 +145,10 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
           l.iso_code_2 AS language,
         co.iso_code,
         co.name          AS country_name,
-        ci.name          AS city_name
+        ci.name          AS city_name,
+        a.media_type,
+        a.video_id,
+        a.duration_seconds
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
       JOIN news_sources  ns  ON ns.id = a.source_id
@@ -246,7 +249,10 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
           l.iso_code_2 AS language,
         co.iso_code,
         co.name          AS country_name,
-        ci.name          AS city_name
+        ci.name          AS city_name,
+        a.media_type,
+        a.video_id,
+        a.duration_seconds
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
       JOIN news_sources  ns  ON ns.id = a.source_id
@@ -383,7 +389,10 @@ app.get("/api/news/search", async (req, res) => {
           GREATEST(
             POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
             0.02
-          ) AS recency_decay
+          ) AS recency_decay,
+          a.media_type,
+          a.video_id,
+          a.duration_seconds
           ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
         FROM news_articles a
         JOIN news_sources ns      ON ns.id      = a.source_id
@@ -1443,7 +1452,10 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           l.iso_code_2    AS language,
           co.iso_code,
           co.name         AS country_name,
-          ci_mention.name AS city_name
+          ci_mention.name AS city_name,
+          a.media_type,
+          a.video_id,
+          a.duration_seconds
         FROM article_locations al
         JOIN news_articles  a   ON a.id  = al.article_id
         JOIN news_sources   ns  ON ns.id = a.source_id
@@ -1474,7 +1486,10 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           l.iso_code_2    AS language,
           co.iso_code,
           co.name         AS country_name,
-          ci.name         AS city_name
+          ci.name         AS city_name,
+        a.media_type,
+        a.video_id,
+        a.duration_seconds
         FROM news_articles a
         JOIN news_sources   ns  ON ns.id = a.source_id
         JOIN cities         ci  ON ci.id = a.city_id
