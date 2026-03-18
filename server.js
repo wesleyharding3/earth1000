@@ -89,13 +89,14 @@ app.get("/api/news/city/:cityId", async (req, res) => {
           a.translated_summary,
           a.image_url,
           a.published_at,
-          ns.name         AS source_name,
-          ns.site_url,
-          ns.popularity_score,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2 AS language,
           co.iso_code
         FROM news_articles a
-        JOIN news_sources  ns  ON ns.id = a.source_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN languages  l  ON l.id = ns.language_id
         LEFT JOIN countries co ON co.id = a.country_id
@@ -139,9 +140,9 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         a.translated_summary,
         a.image_url,
         a.published_at,
-        ns.name          AS source_name,
-        ns.site_url,
-        ns.popularity_score,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.site_url, ys.site_url) AS site_url,
+        COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2 AS language,
         co.iso_code,
         co.name          AS country_name,
@@ -151,7 +152,8 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         a.duration_seconds
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
-      JOIN news_sources  ns  ON ns.id = a.source_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       LEFT JOIN languages  l  ON l.id = ns.language_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities    ci ON ci.id = a.city_id
@@ -192,13 +194,14 @@ app.get("/api/news/country/:countryId", async (req, res) => {
           a.translated_summary,
           a.image_url,
           a.published_at,
-          ns.name         AS source_name,
-          ns.site_url,
-          ns.popularity_score,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2 AS language,
           co.iso_code
         FROM news_articles a
-        JOIN news_sources  ns  ON ns.id = a.source_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN languages  l  ON l.id = ns.language_id
         LEFT JOIN countries co ON co.id = a.country_id
@@ -243,9 +246,9 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         a.translated_summary,
         a.image_url,
         a.published_at,
-        ns.name          AS source_name,
-        ns.site_url,
-        ns.popularity_score,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.site_url, ys.site_url) AS site_url,
+        COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2 AS language,
         co.iso_code,
         co.name          AS country_name,
@@ -255,7 +258,8 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         a.duration_seconds
       FROM article_locations al
       JOIN news_articles a   ON a.id  = al.article_id
-      JOIN news_sources  ns  ON ns.id = a.source_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       LEFT JOIN languages  l  ON l.id = ns.language_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities    ci ON ci.id = a.city_id
@@ -377,8 +381,8 @@ app.get("/api/news/search", async (req, res) => {
           a.sentiment_score,
           l.iso_code_2 AS language,
           a.base_priority,
-          ns.name            AS source_name,
-          ns.site_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
           src_co.iso_code,
           src_co.name        AS country_name,
           src_co.flag        AS country_flag,
@@ -395,7 +399,8 @@ app.get("/api/news/search", async (req, res) => {
           a.duration_seconds
           ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
         FROM news_articles a
-        JOIN news_sources ns      ON ns.id      = a.source_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN languages  l  ON l.id = ns.language_id
         JOIN countries src_co    ON src_co.id   = a.country_id
         LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
@@ -811,7 +816,8 @@ app.get("/api/flows", async (req, res) => {
           dst_r.centroid_lng AS dst_region_lon
         FROM article_locations al
         JOIN news_articles a   ON a.id = al.article_id
-        JOIN news_sources ns   ON ns.id = a.source_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN countries src_co  ON src_co.id = a.country_id
         JOIN countries dst_co  ON dst_co.id = al.country_id
         LEFT JOIN cities src_city ON src_city.id = a.city_id
@@ -1396,14 +1402,15 @@ app.get("/api/keywords/articles", async (req, res) => {
          a.article_url,
          a.published_at,
          a.sentiment_score,
-         ns.name AS source_name,
+         COALESCE(ns.name, ys.name) AS source_name,
          ns.site_url AS source_url,
          co.name AS country_name,
          co.iso_code,
          ak.frequency
        FROM article_keywords ak
        JOIN news_articles a ON a.id = ak.article_id
-       JOIN news_sources ns ON ns.id = a.source_id
+       LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
        LEFT JOIN countries co ON co.id = a.country_id
        WHERE ak.keyword = $1
          AND a.published_at >= NOW() - ($2 || ' days')::INTERVAL
@@ -1446,9 +1453,9 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           a.translated_summary,
           a.image_url,
           a.published_at,
-          ns.name         AS source_name,
-          ns.site_url,
-          ns.popularity_score,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2    AS language,
           co.iso_code,
           co.name         AS country_name,
@@ -1458,7 +1465,8 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           a.duration_seconds
         FROM article_locations al
         JOIN news_articles  a   ON a.id  = al.article_id
-        JOIN news_sources   ns  ON ns.id = a.source_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN cities ci_mention  ON ci_mention.id = al.city_id
         LEFT JOIN languages l   ON l.id  = ns.language_id
         LEFT JOIN countries co  ON co.id = a.country_id
@@ -1480,9 +1488,9 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           a.translated_summary,
           a.image_url,
           a.published_at,
-          ns.name         AS source_name,
-          ns.site_url,
-          ns.popularity_score,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2    AS language,
           co.iso_code,
           co.name         AS country_name,
@@ -1491,7 +1499,8 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         a.video_id,
         a.duration_seconds
         FROM news_articles a
-        JOIN news_sources   ns  ON ns.id = a.source_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN cities         ci  ON ci.id = a.city_id
         LEFT JOIN languages l   ON l.id  = ns.language_id
         LEFT JOIN countries co  ON co.id = a.country_id
