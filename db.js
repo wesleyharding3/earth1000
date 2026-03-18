@@ -7,7 +7,7 @@ const pool = new Pool({
   },
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: 15  // increased from 5 — need headroom for listener + fetcher + web requests
+  max: 25  // increased from 5 — need headroom for listener + fetcher + web requests
 });
 
 pool.on('error', (err) => {
