@@ -1,7 +1,6 @@
 require("dotenv").config();
 const Parser = require("rss-parser");
 const pool = require("./db");
-const crypto = require("crypto");
 const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtractor");
 
 /* =========================================
@@ -43,13 +42,6 @@ function truncateAtWord(text, limit = 500) {
   const lastSpace = truncated.lastIndexOf(" ");
   if (lastSpace === -1) return truncated + "...";
   return truncated.substring(0, lastSpace) + "...";
-}
-
-function buildFingerprint(videoId, channelId) {
-  return crypto
-    .createHash("sha256")
-    .update(`yt:${videoId}:${channelId}`)
-    .digest("hex");
 }
 
 // Extract best thumbnail URL from YouTube feed item
@@ -152,12 +144,10 @@ async function fetchChannel(source, stopwordCache) {
       continue;
     }
 
-    const fingerprint = buildFingerprint(videoId, source.channel_id);
-    
-    // Check for duplicate
+    // Check for duplicate by video_id
     const { rows: existing } = await pool.query(
-      `SELECT id FROM news_articles WHERE fingerprint = $1 LIMIT 1`,
-      [fingerprint]
+      `SELECT id FROM news_articles WHERE video_id = $1 LIMIT 1`,
+      [videoId]
     );
     
     if (existing.length > 0) {
@@ -177,17 +167,16 @@ async function fetchChannel(source, stopwordCache) {
         `INSERT INTO news_articles (
            title, summary, url, article_url, image_url,
            source_name, source_url, source_id,
-           fingerprint, published_at, fetched_at,
+           published_at, fetched_at,
            country_id, city_id, language,
            media_type, video_id
          ) VALUES (
            $1, $2, $3, $4, $5,
            $6, $7, $8,
-           $9, $10, NOW(),
-           $11, $12, $13,
-           'video', $14
+           $9, NOW(),
+           $10, $11, $12,
+           'video', $13
          )
-         ON CONFLICT (fingerprint) DO NOTHING
          RETURNING id`,
         [
           title,
@@ -198,7 +187,6 @@ async function fetchChannel(source, stopwordCache) {
           source.name,
           source.site_url || `https://www.youtube.com/channel/${source.channel_id}`,
           null, // source_id — these are from youtube_sources, not news_sources
-          fingerprint,
           publishedAt,
           source.country_id,
           source.city_id,
