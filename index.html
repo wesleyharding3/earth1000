@@ -1927,6 +1927,23 @@
   margin-bottom: 20px;
 }
 
+.adpVideoWrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  margin-bottom: 20px;
+}
+
+.adpVideoFrame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
 .adpImagePlaceholder {
   width: 100%;
   height: 180px;
@@ -12270,7 +12287,19 @@ grmClockTick();
     
     // Image
     let imageHTML = '';
-    if (article.image_url && article.image_url.trim()) {
+    if (isVideo && article.video_id) {
+      const safeTitle = (article.translated_title || article.title || 'Video').replace(/"/g, '&quot;');
+      imageHTML = `
+        <div class="adpVideoWrap">
+          <iframe
+            class="adpVideoFrame"
+            src="https://www.youtube.com/embed/${article.video_id}?autoplay=1&rel=0"
+            title="${safeTitle}"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+          ></iframe>
+        </div>`;
+    } else if (article.image_url && article.image_url.trim()) {
       imageHTML = `<img class="adpImage" src="${article.image_url}" alt="" onerror="this.style.display='none'">`;
     } else if (article.iso_code) {
       imageHTML = `<img class="adpImage" src="${FLAG_CDN}${article.iso_code.toLowerCase()}.png" alt="" style="object-fit:contain;background:#111;padding:40px;">`;
@@ -12359,7 +12388,7 @@ grmClockTick();
       ${contextHTML}
       
       <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
-        ${isVideo ? 'Watch Video' : 'Read Full Article'} <span>↗ ${article.source_name || 'Source'}</span>
+        ${isVideo ? 'Watch on YouTube' : 'Read Full Article'} <span>↗ ${article.source_name || 'Source'}</span>
       </a>
     `;
   }
