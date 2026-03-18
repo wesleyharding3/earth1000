@@ -9283,7 +9283,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const ARC_LANE_SPACING = 0.018;
   const INDIVIDUAL_TRAVEL_MIN = 0.85;
   const INDIVIDUAL_TRAVEL_MAX = 1.15;
-  const INDIVIDUAL_HOLD = 0.24;
+  const INDIVIDUAL_HOLD = 0.55;
   const INDIVIDUAL_ERASE = 0.9;
   const AGGREGATE_TRAVEL = 1.55;
   const AGGREGATE_HOLD = 0.36;
@@ -9634,7 +9634,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const color = pickColor(flow);
     arc.tubeMat.uniforms.uColor.value.copy(color);
     arc.tubeMat.uniforms.uVisibleStart.value = 0.0;
-    arc.tubeMat.uniforms.uVisibleEnd.value = 1.0;
+    arc.tubeMat.uniforms.uVisibleEnd.value = arc.isStatic ? 1.0 : 0.001;
 
     // Set static opacity for aggregate mode
     if (arc.isStatic) {
@@ -9716,15 +9716,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       if (arc.isStatic) {
-        arc.age += delta;
+        arc.tubeMat.uniforms.uVisibleStart.value = 0;
+        arc.tubeMat.uniforms.uVisibleEnd.value = 1;
+        arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+        arc.orb.material.opacity = 0;
+        arc.orb.visible = false;
+        continue;
       } else if (flowPlaying) {
         // Only age arcs when playing — freeze in place when paused
         arc.age += delta;
       }
 
-      const localTime = arc.isStatic
-        ? ((arc.age + arc.phaseOffset) % arc.totalAge)
-        : Math.min(arc.age, arc.totalAge);
+      const localTime = Math.min(arc.age, arc.totalAge);
 
       let visibleStart = 0;
       let visibleEnd = 1;
