@@ -21,7 +21,7 @@ const ARTICLE_FIELDS = `
   a.published_at,
   COALESCE(ns.name, ys.name)               AS source_name,
   COALESCE(ns.site_url, ys.site_url)       AS site_url,
-  COALESCE(ns.popularity_score, 1.0)       AS popularity_score,
+  COALESCE(ns.popularity_score, ys.popularity_score, 1.0) AS popularity_score,
   COALESCE(ns.popularity_tier, 1)          AS popularity_tier,
   a.language,
   co.iso_code,
