@@ -136,22 +136,29 @@ const DATE_FIELDS = [
 function parseRobustDate(raw) {
   if (!raw) return null;
   const cleaned = raw.trim().replace(/\s+/g, " ");
+  const now = new Date();
+
+  // Cap future dates to today
+  function capToToday(d) {
+    if (d > now) return now;
+    return d;
+  }
 
   const d1 = new Date(cleaned);
-  if (!isNaN(d1.getTime()) && d1.getFullYear() >= 2000 && d1.getFullYear() <= 2100) return d1;
+  if (!isNaN(d1.getTime()) && d1.getFullYear() >= 2000 && d1.getFullYear() <= 2100) return capToToday(d1);
 
   const stripped = cleaned.replace(/^[A-Za-z]{3},\s*/, "");
   const d2 = new Date(stripped);
-  if (!isNaN(d2.getTime()) && d2.getFullYear() >= 2000 && d2.getFullYear() <= 2100) return d2;
+  if (!isNaN(d2.getTime()) && d2.getFullYear() >= 2000 && d2.getFullYear() <= 2100) return capToToday(d2);
 
   const normalised = cleaned.replace(/\bGMT\b/, "+0000").replace(/\bUTC\b/, "+0000");
   const d3 = new Date(normalised);
-  if (!isNaN(d3.getTime()) && d3.getFullYear() >= 2000 && d3.getFullYear() <= 2100) return d3;
+  if (!isNaN(d3.getTime()) && d3.getFullYear() >= 2000 && d3.getFullYear() <= 2100) return capToToday(d3);
 
   const match = cleaned.match(/(\d{4}-\d{2}-\d{2}|\d{1,2}\s+\w{3,}\s+\d{4})/);
   if (match) {
     const d4 = new Date(match[0]);
-    if (!isNaN(d4.getTime()) && d4.getFullYear() >= 2000 && d4.getFullYear() <= 2100) return d4;
+    if (!isNaN(d4.getTime()) && d4.getFullYear() >= 2000 && d4.getFullYear() <= 2100) return capToToday(d4);
   }
 
   return null;
