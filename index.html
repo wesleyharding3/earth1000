@@ -7478,26 +7478,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
         card.classList.remove("hcErase");
         card.classList.remove("hcVisible");
         
-        // For cities with region: show region as title, then "city, country"
-        const hasRegion = node.region && node.region !== node.name;
+        const viewMode = window.__currentViewMode || "country";
         const showCountryLine = node.country && node.name !== node.country;
         
         let titleText, subtitleText;
-        if (hasRegion) {
+        // Only show region as title in regions view mode
+        if (viewMode === "regions" && node.region) {
           titleText = node.region;
           subtitleText = showCountryLine ? `${node.name}, ${node.country}` : node.name;
         } else {
+          // City/country view: always show node name (city or country) as title
           titleText = node.name;
           subtitleText = showCountryLine ? node.country : null;
         }
         
+        const showFlag = node.flag && viewMode !== "regions";
+        
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
-            ${node.flag && !hasRegion ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
+            ${showFlag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
             ${titleText}
           </div>
-          ${subtitleText ? `<div class="hoverCardCountry">${node.flag && hasRegion ? `<span style="font-size:11px;margin-right:4px;">${node.flag}</span>` : ""}${subtitleText}</div>` : ""}
+          ${subtitleText ? `<div class="hoverCardCountry">${node.flag && viewMode === "regions" ? `<span style="font-size:11px;margin-right:4px;">${node.flag}</span>` : ""}${subtitleText}</div>` : ""}
           <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
