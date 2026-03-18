@@ -7,6 +7,7 @@
     :root {
       --app-height: 100vh;
       --app-width: 100vw;
+      --app-bottom-inset: 0px;
       --mobile-control-scale: 1;
       --touch-control-min-height: 26px;
       --touch-icon-size: 40px;
@@ -923,7 +924,7 @@
 /* ── Flow Controls Panel ── */
 #flowControls {
   position: absolute;
-  bottom: 32px;
+  bottom: calc(32px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 50;
@@ -3290,7 +3291,7 @@
     /* ── Nav Dots ── */
     #pageNav {
       position: fixed;
-      bottom: 28px;
+      bottom: calc(28px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       left: 50%;
       transform: translateX(-50%);
       z-index: 999;
@@ -5098,10 +5099,16 @@
     }
 
     function syncAppViewport() {
+      const vv = window.visualViewport;
       const { width, height } = getViewportMetrics();
+      const bottomInset = Math.max(
+        0,
+        Math.round((window.innerHeight || height) - ((vv?.height || height) + (vv?.offsetTop || 0)))
+      );
       const root = document.documentElement;
       root.style.setProperty("--app-width", `${width}px`);
       root.style.setProperty("--app-height", `${height}px`);
+      root.style.setProperty("--app-bottom-inset", `${bottomInset}px`);
       renderer.setSize(width, height, false);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       camera.aspect = width / Math.max(height, 1);
