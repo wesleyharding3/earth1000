@@ -9279,7 +9279,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const TUBE_RADIAL    = 6;
   const PARTICLE_COUNT = 3;
   const PARTICLE_SIZE  = 0.016;
-  const FADE_DURATION  = 0.35;
+  const ARC_EDGE_SOFTNESS = 0.06;
+  const ARC_LANE_SPACING = 0.018;
+  const INDIVIDUAL_TRAVEL_MIN = 0.85;
+  const INDIVIDUAL_TRAVEL_MAX = 1.15;
+  const INDIVIDUAL_HOLD = 0.24;
+  const INDIVIDUAL_ERASE = 0.9;
+  const AGGREGATE_TRAVEL = 1.55;
+  const AGGREGATE_HOLD = 0.36;
+  const AGGREGATE_ERASE = 1.2;
+  const AGGREGATE_GAP = 0.48;
+  const ORB_TWINKLE_SPEED = 7.5;
   const MAX_VISIBLE    = 120;
   const FLAG_CDN       = "https://flagcdn.com/w40/";
 
@@ -9314,7 +9324,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uOpacity: { value: opacity },
         uPulsePos: { value: 0.0 },  // 0-1 position along arc
         uPulseWidth: { value: 0.12 }, // width of pulse glow
-        uPulseIntensity: { value: 1.2 } // extra brightness at pulse
+        uPulseIntensity: { value: 1.2 }, // extra brightness at pulse
+        uVisibleStart: { value: 0.0 },
+        uVisibleEnd: { value: 1.0 },
+        uEdgeSoftness: { value: ARC_EDGE_SOFTNESS }
       },
       vertexShader: `
         varying vec2 vUv;
@@ -9329,6 +9342,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uniform float uPulsePos;
         uniform float uPulseWidth;
         uniform float uPulseIntensity;
+        uniform float uVisibleStart;
+        uniform float uVisibleEnd;
+        uniform float uEdgeSoftness;
         varying vec2 vUv;
         
         float getPulse(float pos, float center) {
@@ -9346,9 +9362,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           
           // Combine pulses with slight falloff for trailing ones
           float pulse = pulse1 + pulse2 * 0.6 + pulse3 * 0.3;
+
+          float startMask = smoothstep(uVisibleStart - uEdgeSoftness, uVisibleStart, vUv.x);
+          float endMask = 1.0 - smoothstep(uVisibleEnd, uVisibleEnd + uEdgeSoftness, vUv.x);
+          float visibleMask = clamp(startMask * endMask, 0.0, 1.0);
           
           // Base opacity + pulse boost
-          float finalOpacity = uOpacity * (1.0 + pulse * uPulseIntensity);
+          float finalOpacity = uOpacity * visibleMask * (1.0 + pulse * uPulseIntensity);
           
           // Brighter color at pulse
           vec3 finalColor = uColor * (1.0 + pulse * 0.5);
@@ -9379,6 +9399,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   const particleTex = makeParticleTexture();
+
+  function makeOrbMaterial(color) {
+    return new THREE.SpriteMaterial({
+      map: particleTex,
+      color,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+  }
 
   /* ── Colour helpers ── */
   function routingColor(flow) {
@@ -9423,8 +9454,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     );
   }
 
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
   /* ── Build great-circle arc curve ── */
-  function buildArcCurve(srcLat, srcLon, dstLat, dstLon) {
+  function buildArcCurve(srcLat, srcLon, dstLat, dstLon, laneOffset = 0) {
     const src = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
     const dst = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
     
@@ -9436,10 +9471,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
     
     // For very short arcs, just use simple quadratic
     if (angularDist < 0.3) {
+      const shortAxis = srcNorm.clone().cross(dstNorm);
+      if (shortAxis.length() < 0.001) {
+        shortAxis.set(0, 1, 0).cross(srcNorm);
+        if (shortAxis.length() < 0.001) {
+          shortAxis.set(1, 0, 0).cross(srcNorm);
+        }
+      }
+      shortAxis.normalize();
+      const laneVector = shortAxis.multiplyScalar(laneOffset);
       const mid = src.clone().add(dst).normalize();
       const lift = GLOBE_RADIUS + ARC_HEIGHT * 0.3;
       mid.multiplyScalar(lift);
-      return new THREE.QuadraticBezierCurve3(src, mid, dst);
+      return new THREE.QuadraticBezierCurve3(
+        src.clone().add(laneVector),
+        mid.add(laneVector),
+        dst.clone().add(laneVector)
+      );
     }
     
     // For longer arcs, sample points along a true spherical arc
@@ -9459,6 +9507,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
     axis.normalize();
+    const laneVector = axis.clone().multiplyScalar(laneOffset);
     
     // Lift profile: parabolic, higher in the middle
     // Scale lift with arc length
@@ -9486,7 +9535,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const liftFactor = 4 * t * (1 - t);
       const radius = GLOBE_RADIUS + maxLift * liftFactor;
       
-      point.normalize().multiplyScalar(radius);
+      point.normalize().multiplyScalar(radius).add(laneVector);
       points.push(point);
     }
     
@@ -9508,14 +9557,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function createArc(flow, maxCount = 1) {
     let arc;
     const tubeRadius = flow.count ? calcTubeRadius(flow.count, maxCount) : TUBE_RADIUS_BASE;
+    const laneOffset = flow.__laneOffset || 0;
 
     if (arcPool.length > 0) {
       arc = arcPool.pop();
-      arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon);
+      arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon, laneOffset);
       arc.mesh.geometry.dispose();
       arc.mesh.geometry = new THREE.TubeGeometry(arc.curve, ARC_SEGMENTS, tubeRadius, TUBE_RADIAL, false);
       arc.mesh.visible = true;
       arc.ptMesh.visible = true;
+      arc.orb.visible = true;
     } else {
       const dummyCurve = new THREE.QuadraticBezierCurve3(
         new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()
@@ -9545,16 +9596,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const ptMesh = new THREE.Points(ptGeo, ptMat);
       ptMesh.renderOrder = 2;
 
-      arc = { mesh, ptMesh, tubeMat, ptMat, ptGeo, ptColors: ptColors };
+      const orbMat = makeOrbMaterial(0xffffff);
+      const orb = new THREE.Sprite(orbMat);
+      orb.visible = false;
+      orb.renderOrder = 3;
+
+      arc = { mesh, ptMesh, tubeMat, ptMat, ptGeo, ptColors: ptColors, orb, orbMat };
     }
 
     // Reset arc state
     arc.flow = flow;
     arc.age  = 0;
     arc.isStatic = !!flow.count;  // aggregate arcs don't expire
-    arc.totalAge = arc.isStatic ? Infinity : (3.5 + Math.random() * 1.5);
+    arc.laneOffset = laneOffset;
+    arc.travelDuration = arc.isStatic
+      ? AGGREGATE_TRAVEL * (0.92 + Math.random() * 0.18)
+      : (INDIVIDUAL_TRAVEL_MIN + Math.random() * (INDIVIDUAL_TRAVEL_MAX - INDIVIDUAL_TRAVEL_MIN));
+    arc.holdDuration = arc.isStatic ? AGGREGATE_HOLD : INDIVIDUAL_HOLD;
+    arc.eraseDuration = arc.isStatic
+      ? AGGREGATE_ERASE * (0.92 + Math.random() * 0.18)
+      : INDIVIDUAL_ERASE;
+    arc.gapDuration = arc.isStatic ? AGGREGATE_GAP : 0;
+    arc.totalAge = arc.travelDuration + arc.holdDuration + arc.eraseDuration + arc.gapDuration;
+    arc.phaseOffset = arc.isStatic ? Math.random() * arc.totalAge : 0;
+    arc.twinkleOffset = Math.random() * Math.PI * 2;
+    arc.baseOpacity = arc.isStatic
+      ? Math.min(0.34 + 0.42 * (flow.count / (maxCount || 1)), 0.76)
+      : 0.55;
+    arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.8, tubeRadius * 3.4);
 
-    arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon);
+    arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon, laneOffset);
 
     // Update geometry with correct radius
     arc.mesh.geometry.dispose();
@@ -9562,18 +9633,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const color = pickColor(flow);
     arc.tubeMat.uniforms.uColor.value.copy(color);
+    arc.tubeMat.uniforms.uVisibleStart.value = 0.0;
+    arc.tubeMat.uniforms.uVisibleEnd.value = 1.0;
 
     // Set static opacity for aggregate mode
     if (arc.isStatic) {
-      const opacityScale = 0.3 + 0.5 * (flow.count / (maxCount || 1));
-      arc.tubeMat.uniforms.uOpacity.value = Math.min(opacityScale, 0.75);
+      arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
       arc.tubeMat.uniforms.uPulseIntensity.value = 1.5;  // Strong pulse on aggregate arcs
-      arc.ptMat.opacity = 0;  // no particles for static arcs
       arc.pulsePhase = Math.random();  // Random starting phase for staggered pulses
     } else {
+      arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
       arc.tubeMat.uniforms.uPulseIntensity.value = 1.0;  // Clear pulse on animated arcs
       arc.pulsePhase = 0;
     }
+
+    arc.ptMat.opacity = 0;
+    arc.orb.material.color.set(0xffffff);
+    arc.orb.material.opacity = 0;
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       arc.ptGeo.attributes.color.array[i*3]   = color.r;
@@ -9583,10 +9659,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.ptGeo.attributes.color.needsUpdate = true;
 
     arc.mesh.visible = true;
-    arc.ptMesh.visible = !arc.isStatic;
+    arc.ptMesh.visible = false;
+    arc.orb.visible = false;
 
     flowGroup.add(arc.mesh);
-    if (!arc.isStatic) particleGroup.add(arc.ptMesh);
+    particleGroup.add(arc.orb);
 
     return arc;
   }
@@ -9594,8 +9671,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function recycleArc(arc) {
     flowGroup.remove(arc.mesh);
     particleGroup.remove(arc.ptMesh);
+    particleGroup.remove(arc.orb);
     arc.mesh.visible = false;
     arc.ptMesh.visible = false;
+    arc.orb.visible = false;
     arcPool.push(arc);
   }
 
@@ -9611,6 +9690,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let globalPulseTime = 0;
   const PULSE_SPEED = 0.3;  // How fast pulse travels (cycles per second) - slower for clearer direction
 
+  function setArcOrb(arc, positionT, color, opacityScale = 1) {
+    const point = arc.curve.getPoint(clamp01(positionT));
+    const twinkle = 0.82 + 0.18 * (0.5 + 0.5 * Math.sin(globalPulseTime * ORB_TWINKLE_SPEED + arc.twinkleOffset));
+    const scale = arc.orbBaseScale * twinkle;
+
+    arc.orb.position.copy(point);
+    arc.orb.scale.set(scale, scale, scale);
+    arc.orb.material.color.set(color);
+    arc.orb.material.opacity = opacityScale * (0.72 + 0.22 * twinkle);
+    arc.orb.visible = arc.orb.material.opacity > 0.02;
+  }
+
   function tickArcs(delta) {
     delta *= flowSpeed;
     globalPulseTime += delta * PULSE_SPEED;
@@ -9623,39 +9714,58 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
         arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
       }
-      
-      // Debug: log once per second
-      if (i === 0 && Math.floor(globalPulseTime) !== Math.floor(globalPulseTime - delta * PULSE_SPEED)) {
-        console.log("[Pulse Debug] pulsePos:", pulsePos.toFixed(2), "arcCount:", arcObjects.length, "hasUniforms:", !!arc.tubeMat.uniforms);
-      }
-      
-      // Skip the rest for static arcs (aggregate mode)
-      if (arc.isStatic) continue;
 
-      // Only age arcs when playing — freeze in place when paused
-      if (flowPlaying) {
+      if (arc.isStatic) {
+        arc.age += delta;
+      } else if (flowPlaying) {
+        // Only age arcs when playing — freeze in place when paused
         arc.age += delta;
       }
-      
-      const t = arc.age / arc.totalAge;
 
-      let opacity;
-      if (t < FADE_DURATION)           opacity = t / FADE_DURATION;
-      else if (t < 1 - FADE_DURATION)  opacity = 1;
-      else                             opacity = Math.max(0, (1 - t) / FADE_DURATION);
+      const localTime = arc.isStatic
+        ? ((arc.age + arc.phaseOffset) % arc.totalAge)
+        : Math.min(arc.age, arc.totalAge);
 
-      arc.tubeMat.uniforms.uOpacity.value = opacity * 0.55;
-      arc.ptMat.opacity   = opacity;
+      let visibleStart = 0;
+      let visibleEnd = 1;
+      let arcOpacity = arc.baseOpacity;
+      let orbMode = "hidden";
+      let orbPosition = 0;
 
-      const ptPos = arc.ptGeo.attributes.position.array;
-      for (let p = 0; p < PARTICLE_COUNT; p++) {
-        const frac  = ((t + p / PARTICLE_COUNT) % 1);
-        const point = arc.curve.getPoint(frac);
-        ptPos[p*3]   = point.x;
-        ptPos[p*3+1] = point.y;
-        ptPos[p*3+2] = point.z;
+      if (localTime < arc.travelDuration) {
+        const travelT = clamp01(localTime / arc.travelDuration);
+        visibleStart = 0;
+        visibleEnd = Math.max(0.001, travelT);
+        orbMode = "incoming";
+        orbPosition = visibleEnd;
+      } else if (localTime < arc.travelDuration + arc.holdDuration) {
+        visibleStart = 0;
+        visibleEnd = 1;
+      } else if (localTime < arc.travelDuration + arc.holdDuration + arc.eraseDuration) {
+        const eraseT = clamp01((localTime - arc.travelDuration - arc.holdDuration) / arc.eraseDuration);
+        visibleStart = eraseT;
+        visibleEnd = 1;
+        orbMode = "outgoing";
+        orbPosition = visibleStart;
+      } else {
+        visibleStart = 1;
+        visibleEnd = 1;
+        arcOpacity = 0;
       }
-      arc.ptGeo.attributes.position.needsUpdate = true;
+
+      arc.tubeMat.uniforms.uVisibleStart.value = visibleStart;
+      arc.tubeMat.uniforms.uVisibleEnd.value = visibleEnd;
+      arc.tubeMat.uniforms.uOpacity.value = arcOpacity;
+      arc.ptMat.opacity = 0;
+
+      if (orbMode === "incoming") {
+        setArcOrb(arc, orbPosition, 0xffffff);
+      } else if (orbMode === "outgoing") {
+        setArcOrb(arc, orbPosition, 0x0f5f3c, 0.95);
+      } else {
+        arc.orb.material.opacity = 0;
+        arc.orb.visible = false;
+      }
 
       // Only expire arcs when playing
       if (flowPlaying && arc.age >= arc.totalAge) {
@@ -9770,6 +9880,51 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Server already filters to city-to-city flows only
     
     return flow;
+  }
+
+  function getFlowNodeKey(node) {
+    if (!node) return "unknown";
+    const lat = Number.isFinite(Number(node.lat)) ? Number(node.lat).toFixed(2) : "na";
+    const lon = Number.isFinite(Number(node.lon)) ? Number(node.lon).toFixed(2) : "na";
+    const label = node.place || node.name || node.iso || node.id || "node";
+    return `${node.type || "node"}:${label}:${lat}:${lon}`;
+  }
+
+  function assignFlowLaneOffsets(flows) {
+    const pairDirections = new Map();
+
+    flows.forEach(flow => {
+      const srcKey = getFlowNodeKey(flow.src);
+      const dstKey = getFlowNodeKey(flow.dst);
+      if (srcKey === dstKey) {
+        flow.__laneOffset = 0;
+        return;
+      }
+
+      const isForward = srcKey < dstKey;
+      const pairKey = isForward ? `${srcKey}|${dstKey}` : `${dstKey}|${srcKey}`;
+      const bucket = pairDirections.get(pairKey) || { forward: 0, reverse: 0 };
+      if (isForward) bucket.forward += 1;
+      else bucket.reverse += 1;
+      pairDirections.set(pairKey, bucket);
+    });
+
+    flows.forEach(flow => {
+      const srcKey = getFlowNodeKey(flow.src);
+      const dstKey = getFlowNodeKey(flow.dst);
+      if (srcKey === dstKey) {
+        flow.__laneOffset = 0;
+        return;
+      }
+
+      const isForward = srcKey < dstKey;
+      const pairKey = isForward ? `${srcKey}|${dstKey}` : `${dstKey}|${srcKey}`;
+      const bucket = pairDirections.get(pairKey);
+      const hasOpposingRoute = bucket && bucket.forward > 0 && bucket.reverse > 0;
+      flow.__laneOffset = hasOpposingRoute
+        ? (isForward ? 1 : -1) * (ARC_LANE_SPACING * 0.5)
+        : 0;
+    });
   }
 
   /* ── Close flow panel helper ── */
@@ -9929,6 +10084,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (flowMode === "aggregate") {
         const flows = Array.isArray(data.flows) ? data.flows : [];
         flowData = flows.map(remapFlowForView);
+        assignFlowLaneOffsets(flowData);
         const maxCount = data.maxCount || 1;
 
         // Render all aggregate arcs immediately
@@ -9947,6 +10103,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Handle both { flows: [...] } and direct array responses
         const flows = Array.isArray(data.flows) ? data.flows : (Array.isArray(data) ? data : []);
         flowData = flows.map(remapFlowForView);
+        assignFlowLaneOffsets(flowData);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
         updateMinimizedStats();
