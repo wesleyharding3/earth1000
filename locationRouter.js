@@ -52,14 +52,14 @@ async function routeArticle(articleId) {
       `SELECT
          a.id,
          a.source_id,
-         a.country_id                              AS source_country_id,
-         a.city_id                                 AS source_city_id,
-         ns.city_id                                AS ns_city_id,
-         ns.country_id                             AS ns_country_id,
+         a.youtube_source_id,
+         COALESCE(a.country_id, ns.country_id, ys.country_id) AS source_country_id,
+         COALESCE(a.city_id, ns.city_id, ys.city_id)          AS source_city_id,
          COALESCE(a.translated_title, a.title)     AS search_title,
          COALESCE(a.translated_summary, a.summary) AS search_summary
        FROM news_articles a
-       JOIN news_sources ns ON ns.id = a.source_id
+       LEFT JOIN news_sources ns ON ns.id = a.source_id
+       LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
        WHERE a.id = $1`,
       [articleId]
     );
@@ -79,15 +79,15 @@ async function routeArticle(articleId) {
     //    International (both null)      → skip source routing entirely;
     //                                     content routing (steps 3+4) handles all placement
     // ─────────────────────────────────────────
-    if (article.ns_city_id) {
+    if (article.source_city_id) {
       await client.query(
         `INSERT INTO article_locations
            (article_id, country_id, city_id, routing_type)
          VALUES ($1, $2, $3, 'source')
          ON CONFLICT DO NOTHING`,
-        [articleId, article.source_country_id, article.ns_city_id]
+        [articleId, article.source_country_id, article.source_city_id]
       );
-    } else if (article.ns_country_id) {
+    } else if (article.source_country_id) {
       // National source — local feed reads directly from a.country_id, nothing to do here
     } else {
       // International source — content routing only, will not appear in any local feed

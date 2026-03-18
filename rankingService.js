@@ -4,6 +4,13 @@ const { rankArticles } = require("./priorityEngine");
 
 const ARTICLE_FIELDS = `
   a.id,
+  a.source_id,
+  a.youtube_source_id,
+  CASE
+    WHEN a.youtube_source_id IS NOT NULL THEN 'youtube:' || a.youtube_source_id::text
+    ELSE 'news:' || a.source_id::text
+  END                AS source_key,
+  a.city_id,
   a.title,
   a.translated_title,
   a.url,
@@ -12,22 +19,26 @@ const ARTICLE_FIELDS = `
   a.translated_summary,
   a.image_url,
   a.published_at,
-  ns.name            AS source_name,
-  ns.site_url,
-  ns.popularity_score,
-  ns.popularity_tier,
+  COALESCE(ns.name, ys.name)               AS source_name,
+  COALESCE(ns.site_url, ys.site_url)       AS site_url,
+  COALESCE(ns.popularity_score, 1.0)       AS popularity_score,
+  COALESCE(ns.popularity_tier, 1)          AS popularity_tier,
   a.language,
   co.iso_code,
   COALESCE(SUM(at.score), 0)   AS intensity,
-  COALESCE(SUM(stw.weight), 0) AS "tagWeightSum"
+  COALESCE(SUM(COALESCE(stw.weight, ystw.weight, 0)), 0) AS "tagWeightSum"
 `;
 
 const ARTICLE_JOINS = `
-  JOIN news_sources ns      ON ns.id = a.source_id
+  LEFT JOIN news_sources ns      ON ns.id = a.source_id
+  LEFT JOIN youtube_sources ys   ON ys.id = a.youtube_source_id
   LEFT JOIN article_tags at ON at.article_id = a.id
   LEFT JOIN source_tag_weights stw
                             ON stw.source_id = a.source_id
                             AND stw.tag_id = at.tag_id
+  LEFT JOIN youtube_source_tag_weights ystw
+                            ON ystw.youtube_source_id = a.youtube_source_id
+                            AND ystw.tag_id = at.tag_id
   LEFT JOIN countries co    ON co.id = a.country_id
 `;
 
@@ -39,7 +50,7 @@ async function getRankedArticles(countryId) {
     ${ARTICLE_JOINS}
     WHERE a.country_id = $1
       AND a.city_id IS NULL  
-    GROUP BY a.id, ns.id, a.language, co.iso_code
+    GROUP BY a.id, ns.id, ys.id, a.language, co.iso_code
   `, [countryId]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
@@ -53,7 +64,7 @@ async function getRankedCityArticles(cityId) {
     FROM news_articles a
     ${ARTICLE_JOINS}
     WHERE a.city_id = $1
-    GROUP BY a.id, ns.id, a.language, co.iso_code
+    GROUP BY a.id, ns.id, ys.id, a.language, co.iso_code
   `, [cityId]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);

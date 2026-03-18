@@ -92,14 +92,20 @@ app.get("/api/news/city/:cityId", async (req, res) => {
           COALESCE(ns.name, ys.name) AS source_name,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
           COALESCE(ns.popularity_score, 0) AS popularity_score,
-          l.iso_code_2 AS language,
-          co.iso_code
+          COALESCE(l.iso_code_2, UPPER(ys.language)) AS language,
+          co.iso_code,
+          co.name AS country_name,
+          c.name AS city_name,
+          a.media_type,
+          a.video_id,
+          a.duration_seconds
         FROM news_articles a
         LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN languages  l  ON l.id = ns.language_id
         LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities c ON c.id = a.city_id
         WHERE a.city_id      = $1
           AND at.tag_id      = $2
         ORDER BY at.score DESC
@@ -197,14 +203,20 @@ app.get("/api/news/country/:countryId", async (req, res) => {
           COALESCE(ns.name, ys.name) AS source_name,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
           COALESCE(ns.popularity_score, 0) AS popularity_score,
-          l.iso_code_2 AS language,
-          co.iso_code
+          COALESCE(l.iso_code_2, UPPER(ys.language)) AS language,
+          co.iso_code,
+          co.name AS country_name,
+          c.name AS city_name,
+          a.media_type,
+          a.video_id,
+          a.duration_seconds
         FROM news_articles a
         LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN article_tags  at  ON at.article_id = a.id
         LEFT JOIN languages  l  ON l.id = ns.language_id
         LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities c ON c.id = a.city_id
         WHERE a.country_id     = $1
           AND a.city_id IS NULL   
           AND at.tag_id        = $2
@@ -791,9 +803,9 @@ app.get("/api/flows", async (req, res) => {
           a.image_url,
           a.published_at                        AS "publishedAt",
           a.sentiment_score                     AS sentiment,
-          ns.name                               AS "sourceName",
-          ns.popularity_score                   AS "popularityScore",
-          ns.popularity_tier                    AS "popularityTier",
+          COALESCE(ns.name, ys.name)            AS "sourceName",
+          COALESCE(ns.popularity_score, 1.0)    AS "popularityScore",
+          COALESCE(ns.popularity_tier, 1)       AS "popularityTier",
           al.routing_type                       AS "routingType",
           COALESCE(a.base_priority, 0)          AS intensity,
           COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
@@ -817,7 +829,7 @@ app.get("/api/flows", async (req, res) => {
         FROM article_locations al
         JOIN news_articles a   ON a.id = al.article_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         JOIN countries src_co  ON src_co.id = a.country_id
         JOIN countries dst_co  ON dst_co.id = al.country_id
         LEFT JOIN cities src_city ON src_city.id = a.city_id

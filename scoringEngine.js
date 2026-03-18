@@ -47,7 +47,7 @@ async function classifyArticle(articleId) {
     //    fall back to original for English sources
     // ─────────────────────────────────────────
     const articleRes = await client.query(
-      `SELECT id, source_id,
+      `SELECT id, source_id, youtube_source_id,
               COALESCE(translated_title, title)     AS translated_title,
               COALESCE(translated_summary, summary) AS translated_summary
        FROM news_articles
@@ -68,13 +68,17 @@ async function classifyArticle(articleId) {
     const priorRes = await client.query(
       `SELECT tag_id, weight
        FROM source_tag_weights
-       WHERE source_id = $1`,
-      [article.source_id]
+       WHERE source_id = $1
+       UNION ALL
+       SELECT tag_id, weight
+       FROM youtube_source_tag_weights
+       WHERE youtube_source_id = $2`,
+      [article.source_id, article.youtube_source_id]
     );
 
     const sourcePriors = {};
     priorRes.rows.forEach(r => {
-      sourcePriors[r.tag_id] = parseFloat(r.weight);
+      sourcePriors[r.tag_id] = (sourcePriors[r.tag_id] || 0) + parseFloat(r.weight);
     });
 
     // ─────────────────────────────────────────

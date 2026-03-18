@@ -335,12 +335,17 @@ function diversityRerank(articles) {
   const result    = [];
   const penalties = {};
 
+  const getSourceKey = (article) =>
+    article.source_key
+    || (article.youtube_source_id != null ? `youtube:${article.youtube_source_id}` : null)
+    || (article.source_id != null ? `news:${article.source_id}` : "unknown");
+
   while (pool.length) {
     const blockedSources = new Set();
     if (result.length >= MAX_CONSECUTIVE) {
       const tail       = result.slice(-MAX_CONSECUTIVE);
-      const tailSource = tail[0].source_id;
-      if (tail.every(a => a.source_id === tailSource)) {
+      const tailSource = getSourceKey(tail[0]);
+      if (tail.every(a => getSourceKey(a) === tailSource)) {
         blockedSources.add(tailSource);
       }
     }
@@ -350,8 +355,9 @@ function diversityRerank(articles) {
 
     for (let i = 0; i < pool.length; i++) {
       const candidate = pool[i];
-      if (blockedSources.has(candidate.source_id)) continue;
-      const penalty  = penalties[candidate.source_id] || 0;
+      const sourceKey = getSourceKey(candidate);
+      if (blockedSources.has(sourceKey)) continue;
+      const penalty  = penalties[sourceKey] || 0;
       const effScore = candidate.priority * (1 - penalty);
       if (effScore > bestEffScore) {
         bestEffScore = effScore;
@@ -368,13 +374,14 @@ function diversityRerank(articles) {
 
     const chosen = pool.splice(bestIdx, 1)[0];
     result.push(chosen);
+    const chosenSourceKey = getSourceKey(chosen);
 
     for (const src of Object.keys(penalties)) {
       penalties[src] = penalties[src] * (1 - DECAY_PER_SLOT);
       if (penalties[src] < 0.001) delete penalties[src];
     }
-    penalties[chosen.source_id] =
-      Math.min(MAX_PENALTY, (penalties[chosen.source_id] || 0) + MAX_PENALTY);
+    penalties[chosenSourceKey] =
+      Math.min(MAX_PENALTY, (penalties[chosenSourceKey] || 0) + MAX_PENALTY);
   }
 
   return result;

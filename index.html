@@ -12266,6 +12266,7 @@ grmClockTick();
   // ── Render article detail content ──────────────────────────────────────────
   function renderArticleDetail(article) {
     const FLAG_CDN = 'https://flagcdn.com/w80/';
+    const isVideo = article.media_type === 'video' || !!article.video_id;
     
     // Image
     let imageHTML = '';
@@ -12280,7 +12281,7 @@ grmClockTick();
     // Source logo (use flag as fallback)
     const sourceLogo = article.iso_code 
       ? `<img class="adpSourceLogo" src="${FLAG_CDN}${article.iso_code.toLowerCase()}.png" alt="">`
-      : `<div class="adpSourceLogo" style="display:flex;align-items:center;justify-content:center;font-size:16px;">📰</div>`;
+      : `<div class="adpSourceLogo" style="display:flex;align-items:center;justify-content:center;font-size:16px;">${isVideo ? '▶' : '📰'}</div>`;
     
     // Date formatting
     const pubDate = article.published_at ? new Date(article.published_at) : null;
@@ -12358,7 +12359,7 @@ grmClockTick();
       ${contextHTML}
       
       <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
-        Read Full Article <span>↗ ${article.source_name || 'Source'}</span>
+        ${isVideo ? 'Watch Video' : 'Read Full Article'} <span>↗ ${article.source_name || 'Source'}</span>
       </a>
     `;
   }
