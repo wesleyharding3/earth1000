@@ -1681,7 +1681,7 @@
 
     .articlesGrid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 12px;
       padding: 4px 2px 20px;
     }
@@ -2147,9 +2147,10 @@
       border: 1px solid rgba(255,255,255,0.06);
       border-radius: 16px;
       overflow: hidden;
+      height: 440px;
     }
 
-    .skeletonCard .skImg { width: 100%; aspect-ratio: 16/9; background: rgba(255,255,255,0.05); }
+    .skeletonCard .skImg { width: 100%; height: 200px; background: rgba(255,255,255,0.05); }
 
     .skeletonCard .skLine {
       height: 10px;
@@ -3717,7 +3718,7 @@
 
     #nfGrid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 12px;
     }
 
@@ -7861,7 +7862,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             sortOptions.forEach(o => o.classList.remove("active"));
             opt.classList.add("active");
             allArticles = []; offset = 0; hasMore = true;
-            track.innerHTML = skeletonCards(6);
+            track.innerHTML = skeletonCards(8);
             loadMore();
           });
         });
@@ -7903,7 +7904,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   tagDropOpen = false;
                   tagDropdown.classList.remove("open");
                   allArticles = []; offset = 0; hasMore = true;
-                  track.innerHTML = skeletonCards(6);
+                  track.innerHTML = skeletonCards(8);
                   loadMore();
                 });
               });
@@ -8036,7 +8037,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         let offset = 0, limit = 12, loading = false, hasMore = true;
-        track.innerHTML = skeletonCards(6);
+        track.innerHTML = skeletonCards(8);
 
         function loadMore() {
           if (loading || !hasMore) return;
@@ -8344,7 +8345,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             currentFeed = newFeed;
             // Reset and reload
             allArticles = []; offset = 0; hasMore = true;
-            track.innerHTML = skeletonCards(6);
+            track.innerHTML = skeletonCards(8);
             loadMore();
           });
         });
@@ -8418,7 +8419,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             .catch(() => { loading = false; renderCards(); });
         }
 
-        track.innerHTML = skeletonCards(6);
+        track.innerHTML = skeletonCards(8);
         loadMore();
 
         viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
