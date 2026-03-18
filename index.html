@@ -1675,64 +1675,6 @@
 }
 .panelSortOption.active .panelSortLabel { color: rgba(255,200,100,0.9); }
 
-.panelMediaRow {
-  display: flex;
-  justify-content: flex-start;
-  padding: 2px 0 8px 16px;
-  flex-shrink: 0;
-}
-
-.panelMediaSegment {
-  display: inline-flex;
-  border-radius: 20px;
-  overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(0,0,0,0.45);
-}
-
-.panelMediaOption {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 90px;
-  padding: 7px 12px;
-  cursor: pointer;
-  user-select: none;
-  opacity: 0.5;
-  transition: opacity 0.2s, background 0.2s, color 0.2s;
-}
-
-.panelMediaOption.active {
-  opacity: 1;
-  background: rgba(255,255,255,0.07);
-}
-
-.panelMediaDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.16);
-  transition: background 0.2s, box-shadow 0.2s;
-}
-
-.panelMediaOption.active .panelMediaDot {
-  background: rgba(255,180,80,1);
-  box-shadow: 0 0 8px rgba(255,150,40,0.9);
-}
-
-.panelMediaLabel {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: rgba(255,255,255,0.6);
-}
-
-.panelMediaOption.active .panelMediaLabel {
-  color: rgba(255,200,100,0.9);
-}
-
     /* ===============================
        Panel Article Cards
     =============================== */
@@ -7961,18 +7903,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="tagDropdown" id="tagDropdown"></div>
             </div>
           </div>
-          <div class="panelMediaRow">
-            <div class="panelMediaSegment">
-              <div class="panelMediaOption active" data-media="article">
-                <div class="panelMediaDot"></div>
-                <span class="panelMediaLabel">Article</span>
-              </div>
-              <div class="panelMediaOption active" data-media="video">
-                <div class="panelMediaDot"></div>
-                <span class="panelMediaLabel">Video</span>
-              </div>
-            </div>
-          </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
             <span class="panelSearchPillIcon">
@@ -8057,9 +7987,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // ── Sort ──
         const sortOptions = panel.querySelectorAll(".panelSortOption");
         let currentSort = "local";
-        const mediaOptions = panel.querySelectorAll(".panelMediaOption");
-        const activeMediaTypes = new Set(["article", "video"]);
-
         sortOptions.forEach(opt => {
           opt.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -8071,24 +7998,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             allArticles = []; offset = 0; hasMore = true;
             track.innerHTML = skeletonCards(8);
             loadMore();
-          });
-        });
-
-        mediaOptions.forEach(opt => {
-          opt.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const mediaType = opt.dataset.media;
-            const willDisable = activeMediaTypes.has(mediaType) && activeMediaTypes.size > 1;
-
-            if (willDisable) {
-              activeMediaTypes.delete(mediaType);
-              opt.classList.remove("active");
-            } else if (!activeMediaTypes.has(mediaType)) {
-              activeMediaTypes.add(mediaType);
-              opt.classList.add("active");
-            }
-
-            renderCards();
           });
         });
 
@@ -8251,15 +8160,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         function renderCards() {
-          const mediaFiltered = allArticles.filter(a => {
-            const mediaType = (a.media_type === "video" || a.video_id) ? "video" : "article";
-            return activeMediaTypes.has(mediaType);
-          });
           const filtered = filterQuery
-            ? mediaFiltered.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
-            : mediaFiltered;
+            ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
+            : allArticles;
           if (!filtered.length && !loading) {
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching items." : "No recent items for this media filter."}</div>`;
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`;
             return;
           }
           track.innerHTML = filtered.map(articleCardHTML).join("");
@@ -8541,18 +8446,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
-          <div class="panelMediaRow">
-            <div class="panelMediaSegment">
-              <div class="panelMediaOption active" data-media="article">
-                <div class="panelMediaDot"></div>
-                <span class="panelMediaLabel">Article</span>
-              </div>
-              <div class="panelMediaOption active" data-media="video">
-                <div class="panelMediaDot"></div>
-                <span class="panelMediaLabel">Video</span>
-              </div>
-            </div>
-          </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
             <span class="panelSearchPillIcon">
@@ -8572,10 +8465,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
         const searchInput = panel.querySelector("#panelSearchInput");
-        const mediaOptions = panel.querySelectorAll(".panelMediaOption");
         let allArticles = [], offset = 0, limit = 12, loading = false, hasMore = true, filterQuery = "";
         let currentFeed = "local";
-        const activeMediaTypes = new Set(["article", "video"]);
 
         // Local/Global toggle
         const sortOptions = panel.querySelectorAll(".panelSortOption");
@@ -8593,23 +8484,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           });
         });
 
-        mediaOptions.forEach(opt => {
-          opt.addEventListener("click", () => {
-            const mediaType = opt.dataset.media;
-            const willDisable = activeMediaTypes.has(mediaType) && activeMediaTypes.size > 1;
-
-            if (willDisable) {
-              activeMediaTypes.delete(mediaType);
-              opt.classList.remove("active");
-            } else if (!activeMediaTypes.has(mediaType)) {
-              activeMediaTypes.add(mediaType);
-              opt.classList.add("active");
-            }
-
-            renderCards();
-          });
-        });
-
         searchInput.addEventListener("input", () => { filterQuery = searchInput.value.trim().toLowerCase(); renderCards(); });
 
         function skeletonCards(n) {
@@ -8617,15 +8491,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         function renderCards() {
-          const mediaFiltered = allArticles.filter(a => {
-            const mediaType = (a.media_type === "video" || a.video_id) ? "video" : "article";
-            return activeMediaTypes.has(mediaType);
-          });
           const filtered = filterQuery
-            ? mediaFiltered.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
-            : mediaFiltered;
+            ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
+            : allArticles;
           if (!filtered.length && !loading) {
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">No recent items for this media filter.</div>`;
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">No recent articles for this region.</div>`;
             return;
           }
           track.innerHTML = filtered.map(a => {
