@@ -387,7 +387,7 @@ function diversityRerank(articles) {
 function countryVarianceRerank(articles) {
   if (!articles.length) return articles;
 
-  const MAX_PENALTY = 0.80;
+  const MAX_PENALTY = 0.90;
   const DECAY       = 0.25;
   const MAX_REPEAT  = 2;
 
