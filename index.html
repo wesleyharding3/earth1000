@@ -10541,6 +10541,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }
 
+      // 🔥 densify helper
+      densify(points, segments = 5) {
+        const result = [];
+        for (let i = 0; i < points.length - 1; i++) {
+          const a = points[i];
+          const b = points[i + 1];
+          for (let t = 0; t < segments; t++) {
+            const k = t / segments;
+            result.push([
+              a[0] + (b[0] - a[0]) * k,
+              a[1] + (b[1] - a[1]) * k
+            ]);
+          }
+        }
+        return result;
+      }
+
       loadGeoJSON(geojson) {
         geojson.features.forEach(feature => {
           const geometry = feature.geometry;
@@ -10552,7 +10569,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       drawPolygon(polygon) {
         polygon.forEach(ring => {
           const points = [];
-          ring.forEach(coord => { const [lon, lat] = coord; points.push(this.latLonToVector3(lat, lon)); });
+
+          // 🔥 densify BEFORE conversion
+          const denseRing = this.densify(ring, 5);
+
+          denseRing.forEach(coord => {
+            const [lon, lat] = coord;
+            points.push(this.latLonToVector3(lat, lon));
+          });
+
           const geometry = new THREE.BufferGeometry().setFromPoints(points);
           const material = new THREE.ShaderMaterial({
             transparent: true,
@@ -10589,10 +10614,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
           this.group.add(line);
         });
       }
-      setVisible(value) { this.group.visible = value; }
-      setColor(color) { this.group.children.forEach(child => { child.material.uniforms.color.value.set(color); }); }
-    }
 
+      setVisible(value) { this.group.visible = value; }
+
+      setColor(color) {
+        this.group.children.forEach(child => {
+          child.material.uniforms.color.value.set(color);
+        });
+      }
+    }
+    
   </script>
 
   </div><!-- end #pageGlobe -->
