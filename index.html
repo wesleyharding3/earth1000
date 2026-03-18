@@ -2505,13 +2505,15 @@
       background: #10141c;
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 14px;
-      overflow: hidden;
+      overflow: visible;
       box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
       font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
       margin-top: 0;
       display: flex;
       flex-direction: column;
+      position: relative
     }
+
     .kwi-header {
       display: flex;
       align-items: center;
@@ -2538,7 +2540,7 @@
       display: flex;
       flex-direction: column;
     }
-    
+
     .kwi-search-input {
       width: 100%;
       background: #161b26;
@@ -2562,14 +2564,11 @@
     }
     .kwi-search-go:hover { color: #4a9eff; }
     .kwi-autocomplete {
-      position: relative;
-      top: 0;
-      left: 0;
-      right: 0;
-      margin: 6px 16px 0;
-
-      flex: 1;                 /* KEY */
-      max-height: none;
+      position: absolute;
+      top: 110px;
+      left: 16px;
+      right: 16px;
+      bottom: 50px;
       overflow-y: auto;
     }
 
@@ -2633,6 +2632,7 @@
       min-height: 180px;
       display: flex;
       flex-direction: column;
+      overflow: visible
     }
     .kwi-empty {
       flex: 1;
@@ -4266,7 +4266,7 @@
         <div class="kwi-trending-list" id="kwiTrendingList"></div>
 
         <!-- Search (hidden by default) -->
-        <div class="kwi-search-wrap" id="kwiSearchWrap" style="display:none;position:relative;">
+        <div class="kwi-search-wrap" id="kwiSearchWrap" style="display:none;">
           <input class="kwi-search-input" id="kwiInput" type="text"
             placeholder="Search keyword or phrase…"
             autocomplete="off"
