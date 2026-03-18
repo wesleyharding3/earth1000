@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <title>Population Globe with Zoom</title>
   <style>
+    :root {
+      --app-height: 100vh;
+      --app-width: 100vw;
+      --mobile-control-scale: 1;
+      --touch-control-min-height: 26px;
+      --touch-icon-size: 40px;
+    }
+
     body { 
       margin: 0; 
       overflow: hidden; 
@@ -20,7 +28,7 @@
 
     #cityList {
       display: none;
-      position: absolute; top: 5px; right: -500px; width: 250px; max-height: 85vh; overflow-y: auto;
+      position: absolute; top: 5px; right: -500px; width: 250px; max-height: calc(var(--app-height, 100vh) * 0.85); overflow-y: auto;
       background: rgba(0,0,0,0.75); color: #fff; padding: 8px; font-size: 10px; border-radius: 8px;
     }
     #cityList ul { list-style: none; padding: 0; margin: 0; }
@@ -377,8 +385,8 @@
     }
 
     .iconBtn {
-      width: 40px;
-      height: 40px;
+      width: var(--touch-icon-size);
+      height: var(--touch-icon-size);
       border-radius: 50%;
       background: rgba(0, 0, 0, 0.70);
       border: 1px solid rgba(255, 255, 255, 0.20);
@@ -405,7 +413,7 @@
       box-shadow: 0 0 16px rgba(255, 255, 255, 0.12);
     }
 
-    .iconBtn svg { width: 17px; height: 17px; flex-shrink: 0; }
+    .iconBtn svg { width: calc(17px * var(--mobile-control-scale)); height: calc(17px * var(--mobile-control-scale)); flex-shrink: 0; }
 
     #settingsToggle.active svg {
       transform: rotate(60deg);
@@ -550,13 +558,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: 20px;
+  height: max(40px, calc(40px * var(--mobile-control-scale)));
+  padding: 0 calc(12px * var(--mobile-control-scale));
+  border-radius: calc(20px * var(--mobile-control-scale));
   background: rgba(0, 0, 0, 0.70);
   border: 1px solid rgba(255, 255, 255, 0.20);
   color: rgba(255, 255, 255, 0.80);
-  font-size: 12px;
+  font-size: calc(12px * var(--mobile-control-scale));
   font-weight: 600;
   letter-spacing: 0.04em;
   cursor: pointer;
@@ -674,7 +682,7 @@
       box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
       transition: left 0.36s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.28s ease;
       opacity: 0;
-      max-height: calc(100vh - 100px);
+      max-height: calc(var(--app-height, 100vh) - 100px);
       overflow-y: auto;
     }
 
@@ -1006,13 +1014,13 @@
 }
 
 .flowBtn {
-  height: 28px;
-  padding: 0 12px;
-  border-radius: 14px;
+  min-height: max(28px, calc(28px * var(--mobile-control-scale)));
+  padding: 0 calc(12px * var(--mobile-control-scale));
+  border-radius: calc(14px * var(--mobile-control-scale));
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.12);
   color: rgba(255,255,255,0.72);
-  font-size: 11px;
+  font-size: calc(11px * var(--mobile-control-scale));
   font-weight: 600;
   letter-spacing: 0.06em;
   cursor: pointer;
@@ -1381,13 +1389,13 @@
   position: absolute;
   top: 8px;
   right: 8px;
-  width: 24px;
-  height: 24px;
-  border-radius: 12px;
+  width: calc(24px * var(--mobile-control-scale));
+  height: calc(24px * var(--mobile-control-scale));
+  border-radius: calc(12px * var(--mobile-control-scale));
   background: rgba(255,255,255,0.08);
   border: 1px solid rgba(255,255,255,0.15);
   color: rgba(255,255,255,0.5);
-  font-size: 12px;
+  font-size: calc(12px * var(--mobile-control-scale));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1405,14 +1413,14 @@
 .flowMinBtn {
   position: absolute;
   top: 8px;
-  right: 38px;
-  width: 24px;
-  height: 24px;
-  border-radius: 12px;
+  right: calc(38px * var(--mobile-control-scale));
+  width: calc(24px * var(--mobile-control-scale));
+  height: calc(24px * var(--mobile-control-scale));
+  border-radius: calc(12px * var(--mobile-control-scale));
   background: rgba(255,255,255,0.08);
   border: 1px solid rgba(255,255,255,0.15);
   color: rgba(255,255,255,0.5);
-  font-size: 14px;
+  font-size: calc(14px * var(--mobile-control-scale));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1457,13 +1465,13 @@
   font-weight: 600;
 }
 .flowMinBar .flowExpandBtn {
-  width: 28px;
-  height: 28px;
-  border-radius: 14px;
+  width: calc(28px * var(--mobile-control-scale));
+  height: calc(28px * var(--mobile-control-scale));
+  border-radius: calc(14px * var(--mobile-control-scale));
   background: rgba(0,220,130,0.15);
   border: 1px solid rgba(0,220,130,0.3);
   color: rgba(0,220,130,0.9);
-  font-size: 14px;
+  font-size: calc(14px * var(--mobile-control-scale));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1476,13 +1484,13 @@
   transform: scale(1.05);
 }
 .flowMinBar .flowMinCloseBtn {
-  width: 24px;
-  height: 24px;
-  border-radius: 12px;
+  width: calc(24px * var(--mobile-control-scale));
+  height: calc(24px * var(--mobile-control-scale));
+  border-radius: calc(12px * var(--mobile-control-scale));
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.12);
   color: rgba(255,255,255,0.4);
-  font-size: 11px;
+  font-size: calc(11px * var(--mobile-control-scale));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2443,9 +2451,9 @@
     .pop-subtitle { font-size: 11px; color: rgba(255,255,255,0.35); margin-left: 4px; }
     .pop-scope-tabs { display: flex; gap: 4px; }
     .pop-scope-btn {
-      padding: 4px 12px; font-size: 11px; font-weight: 500;
+      padding: calc(4px * var(--mobile-control-scale)) calc(12px * var(--mobile-control-scale)); font-size: calc(11px * var(--mobile-control-scale)); font-weight: 500;
       background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 6px; color: rgba(255,255,255,0.5); cursor: pointer;
+      border-radius: calc(6px * var(--mobile-control-scale)); color: rgba(255,255,255,0.5); cursor: pointer;
       transition: all 0.15s;
     }
     .pop-scope-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
@@ -2610,13 +2618,13 @@
     .kwi-range-btn {
       background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 5px;
+      border-radius: calc(5px * var(--mobile-control-scale));
       color: rgba(255,255,255,0.5);
       font-family: inherit;
-      font-size: 10px;
+      font-size: calc(10px * var(--mobile-control-scale));
       font-weight: 600;
       letter-spacing: 0.06em;
-      padding: 4px 9px;
+      padding: calc(4px * var(--mobile-control-scale)) calc(9px * var(--mobile-control-scale));
       cursor: pointer;
       transition: all 0.15s;
     }
@@ -2630,13 +2638,13 @@
     .kwi-view-btn {
       background: rgba(255,255,255,0.05);
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 5px;
+      border-radius: calc(5px * var(--mobile-control-scale));
       color: rgba(255,255,255,0.4);
       font-family: inherit;
-      font-size: 10px;
+      font-size: calc(10px * var(--mobile-control-scale));
       font-weight: 600;
       letter-spacing: 0.05em;
-      padding: 4px 9px;
+      padding: calc(4px * var(--mobile-control-scale)) calc(9px * var(--mobile-control-scale));
       cursor: pointer;
       transition: all 0.15s;
     }
@@ -2869,12 +2877,12 @@
     }
     .kwi-mode-tab {
       flex: 1;
-      padding: 6px 8px;
+      padding: calc(6px * var(--mobile-control-scale)) calc(8px * var(--mobile-control-scale));
       background: transparent;
       border: none;
-      border-radius: 6px;
+      border-radius: calc(6px * var(--mobile-control-scale));
       color: rgba(255,255,255,0.45);
-      font-size: 10px;
+      font-size: calc(10px * var(--mobile-control-scale));
       font-weight: 600;
       letter-spacing: 0.06em;
       text-transform: uppercase;
@@ -3046,12 +3054,12 @@
       border: 1px solid rgba(74,158,255,0.25);
       color: var(--grm-accent);
       font-family: inherit;
-      font-size: 10px;
+      font-size: calc(10px * var(--mobile-control-scale));
       font-weight: 600;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      padding: 5px 10px;
-      border-radius: 6px;
+      padding: calc(5px * var(--mobile-control-scale)) calc(10px * var(--mobile-control-scale));
+      border-radius: calc(6px * var(--mobile-control-scale));
       cursor: pointer;
       transition: all 0.2s;
     }
@@ -3163,10 +3171,10 @@
     }
     .grm-sub:hover .grm-sw-mode { opacity: 1; }
     .grm-sw-mbtn {
-      width: 18px; height: 18px;
+      width: calc(18px * var(--mobile-control-scale)); height: calc(18px * var(--mobile-control-scale));
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 4px;
+      border-radius: calc(4px * var(--mobile-control-scale));
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
       transition: all 0.15s;
@@ -3228,8 +3236,8 @@
     }
     .grm-chart-range { display: flex; gap: 3px; padding: 0 16px 6px; }
     .grm-rbtn {
-      font-family: inherit; font-size: 8px; font-weight: 600;
-      letter-spacing: 0.08em; padding: 2px 6px; border-radius: 3px;
+      font-family: inherit; font-size: calc(8px * var(--mobile-control-scale)); font-weight: 600;
+      letter-spacing: 0.08em; padding: calc(2px * var(--mobile-control-scale)) calc(6px * var(--mobile-control-scale)); border-radius: calc(3px * var(--mobile-control-scale));
       border: 1px solid var(--grm-border);
       background: transparent; color: var(--grm-muted); cursor: pointer;
       transition: all 0.15s;
@@ -3337,7 +3345,7 @@
     #newsFeedPage {
       display: flex;
       flex-direction: column;
-      height: 100vh;
+      height: var(--app-height, 100vh);
       overflow: hidden;
       min-height: 0;
     }
@@ -3560,15 +3568,15 @@
     .nfMultiWrap { position: relative; z-index: 2; }
 
     .nfMultiBtn {
-      width: 100%; min-height: 26px;
+      width: 100%; min-height: max(26px, calc(26px * var(--mobile-control-scale)));
       min-width: 0;
       overflow: hidden;
-      padding: 3px 22px 3px 8px;
-      border-radius: 10px;
+      padding: calc(3px * var(--mobile-control-scale)) calc(22px * var(--mobile-control-scale)) calc(3px * var(--mobile-control-scale)) calc(8px * var(--mobile-control-scale));
+      border-radius: calc(10px * var(--mobile-control-scale));
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.11);
       color: rgba(255,255,255,0.70);
-      font-size: 11px; font-family: inherit;
+      font-size: calc(11px * var(--mobile-control-scale)); font-family: inherit;
       cursor: pointer; user-select: none;
       display: flex; align-items: center;
       flex-wrap: wrap; gap: 4px;
@@ -3747,12 +3755,12 @@
 
     /* ── Search + Clear buttons ── */
     .nfSearchBtn {
-      height: 26px; padding: 0 14px;
-      border-radius: 8px;
+      min-height: max(26px, calc(26px * var(--mobile-control-scale))); padding: 0 calc(14px * var(--mobile-control-scale));
+      border-radius: calc(8px * var(--mobile-control-scale));
       background: rgba(255,180,80,0.13);
       border: 1px solid rgba(255,180,80,0.35);
       color: rgba(255,210,120,0.95);
-      font-size: 11px; font-weight: 700;
+      font-size: calc(11px * var(--mobile-control-scale)); font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
       cursor: pointer; flex-shrink: 0; white-space: nowrap;
       display: flex; align-items: center; gap: 7px;
@@ -3766,15 +3774,15 @@
     }
     .nfSearchBtn:active { transform: translateY(0); }
     .nfSearchBtn.busy { opacity: 0.55; pointer-events: none; }
-    .nfSearchBtn svg { width: 13px; height: 13px; flex-shrink: 0; }
+    .nfSearchBtn svg { width: calc(13px * var(--mobile-control-scale)); height: calc(13px * var(--mobile-control-scale)); flex-shrink: 0; }
 
     .nfClearBtn {
-      height: 26px; padding: 0 10px;
-      border-radius: 8px;
+      min-height: max(26px, calc(26px * var(--mobile-control-scale))); padding: 0 calc(10px * var(--mobile-control-scale));
+      border-radius: calc(8px * var(--mobile-control-scale));
       background: transparent;
       border: 1px solid rgba(255,255,255,0.09);
       color: rgba(255,255,255,0.26);
-      font-size: 10px; font-weight: 700;
+      font-size: calc(10px * var(--mobile-control-scale)); font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
       cursor: pointer; flex-shrink: 0;
       transition: border-color 0.15s, color 0.15s;
@@ -4017,7 +4025,7 @@
       top: 0;
       left: -300px;
       width: 260px;
-      height: 100vh;
+      height: var(--app-height, 100vh);
       background: rgba(6,8,12,0.94);
       border-right: 1px solid rgba(255,255,255,0.08);
       z-index: 34;
@@ -4197,6 +4205,21 @@
       font-weight: 500;
     }
 
+    @media (max-width: 900px), (pointer: coarse) {
+      :root {
+        --mobile-control-scale: 1.12;
+        --touch-control-min-height: 32px;
+        --touch-icon-size: 46px;
+      }
+    }
+
+    @media (max-width: 640px), (pointer: coarse) {
+      :root {
+        --mobile-control-scale: 1.24;
+        --touch-control-min-height: 36px;
+        --touch-icon-size: 50px;
+      }
+    }
   </style>
 </head>
 
@@ -5059,22 +5082,40 @@
     camera.position.z = 3;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
     document.getElementById("pageGlobe").appendChild(renderer.domElement);
     renderer.domElement.style.position = "absolute";
     renderer.domElement.style.top = "0";
     renderer.domElement.style.left = "0";
+    renderer.domElement.style.width = "100%";
+    renderer.domElement.style.height = "100%";
+
+    function getViewportMetrics() {
+      const vv = window.visualViewport;
+      return {
+        width: Math.round(vv?.width || window.innerWidth || document.documentElement.clientWidth || 0),
+        height: Math.round(vv?.height || window.innerHeight || document.documentElement.clientHeight || 0)
+      };
+    }
+
+    function syncAppViewport() {
+      const { width, height } = getViewportMetrics();
+      const root = document.documentElement;
+      root.style.setProperty("--app-width", `${width}px`);
+      root.style.setProperty("--app-height", `${height}px`);
+      renderer.setSize(width, height, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      camera.aspect = width / Math.max(height, 1);
+      camera.updateProjectionMatrix();
+    }
+
+    syncAppViewport();
 
     const maxTilt = Math.PI / 2.2;
 
-    window.addEventListener("resize", () => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
-      renderer.setSize(width, height);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-    });
+    window.addEventListener("resize", syncAppViewport);
+    window.addEventListener("orientationchange", syncAppViewport);
+    window.visualViewport?.addEventListener("resize", syncAppViewport);
+    window.visualViewport?.addEventListener("scroll", syncAppViewport);
 
     const radius = 1;
 
