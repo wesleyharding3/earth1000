@@ -165,31 +165,29 @@ async function fetchChannel(source, stopwordCache) {
     try {
       const { rows } = await pool.query(
         `INSERT INTO news_articles (
-           title, summary, url, article_url, image_url,
-           source_name, source_url, source_id,
-           published_at, fetched_at,
-           country_id, city_id, language,
+           source_id, youtube_source_id, city_id, country_id,
+           title, url, article_url,
+           summary, published_at, ingested_at,
+           image_url, language,
            media_type, video_id
          ) VALUES (
-           $1, $2, $3, $4, $5,
-           $6, $7, $8,
-           $9, NOW(),
-           $10, $11, $12,
-           'video', $13
+           NULL, $1, $2, $3,
+           $4, $5, $6,
+           $7, $8, NOW(),
+           $9, $10,
+           'video', $11
          )
          RETURNING id`,
         [
-          title,
-          summary,
-          videoUrl,
-          videoUrl,
-          thumbnail,
-          source.name,
-          source.site_url || `https://www.youtube.com/channel/${source.channel_id}`,
-          null, // source_id — these are from youtube_sources, not news_sources
-          publishedAt,
-          source.country_id,
+          source.id, // youtube_source_id
           source.city_id,
+          source.country_id,
+          title,
+          videoUrl,
+          videoUrl,
+          summary,
+          publishedAt,
+          thumbnail,
           source.language || "en",
           videoId
         ]
