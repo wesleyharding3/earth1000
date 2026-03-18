@@ -3777,6 +3777,68 @@
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
 
+    /* Video card overlay */
+    .nfCardImgWrap {
+      position: relative;
+      width: 100%;
+      height: 200px;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .nfCardImgWrap .nfCardImg {
+      height: 100%;
+    }
+    .nfCardPlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 56px;
+      height: 56px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s, background 0.15s;
+      pointer-events: none;
+    }
+    .nfCard:hover .nfCardPlay {
+      background: rgba(255, 0, 0, 0.9);
+      transform: translate(-50%, -50%) scale(1.08);
+    }
+    .nfCardPlay svg {
+      width: 24px;
+      height: 24px;
+      fill: #fff;
+      margin-left: 3px; /* optical centering for play triangle */
+    }
+    .nfCardDuration {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: rgba(0, 0, 0, 0.85);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-variant-numeric: tabular-nums;
+    }
+    .nfCardTypeBadge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: rgba(255, 0, 0, 0.85);
+      color: #fff;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 3px 6px;
+      border-radius: 3px;
+    }
+
     mark {
       background: rgba(255,210,80,0.22);
       color: rgba(255,235,140,1);
@@ -10809,13 +10871,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function cardHTML(a) {
       const hasImg = a.image_url && a.image_url.trim();
-      let img;
+      const isVideo = a.media_type === 'video' || a.video_id;
+      let imgContent;
       if (hasImg) {
-        img = `<img class="nfCardImg" src="${a.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN}${(a.iso_code||"").trim().toLowerCase()}.png'">`;
+        imgContent = `<img class="nfCardImg" src="${a.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN}${(a.iso_code||"").trim().toLowerCase()}.png'">`;
       } else if (a.iso_code) {
-        img = `<img class="nfCardImg" src="${FLAG_CDN}${a.iso_code.trim().toLowerCase()}.png" alt="" loading="lazy" style="object-fit:contain;padding:16px;background:#080808;">`;
+        imgContent = `<img class="nfCardImg" src="${FLAG_CDN}${a.iso_code.trim().toLowerCase()}.png" alt="" loading="lazy" style="object-fit:contain;padding:16px;background:#080808;">`;
       } else {
-        img = `<div class="nfCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+        imgContent = `<div class="nfCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+      }
+      let img;
+      if (isVideo) {
+        const dur = a.duration_seconds ? `<div class="nfCardDuration">${Math.floor(a.duration_seconds/60)}:${String(a.duration_seconds%60).padStart(2,'0')}</div>` : '';
+        img = `<div class="nfCardImgWrap">${imgContent}<div class="nfCardPlay"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>${dur}</div>`;
+      } else {
+        img = imgContent;
       }
       const rawTitle = a.translated_title || a.title || "";
       const rawSummary = a.translated_summary || a.summary || "";
@@ -10825,7 +10895,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (a.city_name) parts.push(a.city_name);
       if (a.country_name) parts.push(a.country_name);
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
-      const origin = parts.length ? `<div class="nfCardOrigin">📰 ${esc(parts.join(", "))}</div>` : "";
+      const originIcon = isVideo ? "▶" : "📰";
+      const origin = parts.length ? `<div class="nfCardOrigin">${originIcon} ${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
       return `
       <div style="position:relative">
@@ -10840,7 +10911,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
           </div>
         </div>
-        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}
+        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}
       </div>`;
     }
 
