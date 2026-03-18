@@ -135,10 +135,17 @@ async function fetchChannel(source, stopwordCache) {
     return { inserted: 0, skipped: 0 };
   }
 
+  // Limit to 5 videos per source per fetch cycle
+  const FETCH_LIMIT = 5;
+  const limitedItems = items.slice(0, FETCH_LIMIT);
+  if (items.length > FETCH_LIMIT) {
+    console.log(`${tag} Processing ${FETCH_LIMIT} of ${items.length} items`);
+  }
+
   let inserted = 0;
   let skipped = 0;
 
-  for (const item of items) {
+  for (const item of limitedItems) {
     const videoId = item.videoId || item.id?.split(":").pop();
     if (!videoId) {
       skipped++;
