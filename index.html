@@ -10755,7 +10755,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
       constructor(scene, radius) {
         this.scene = scene; this.radius = radius;
         this.group = new THREE.Group();
+        this.material = this.makeBoundaryMaterial();
         this.scene.add(this.group);
+      }
+
+      makeBoundaryMaterial() {
+        return new THREE.ShaderMaterial({
+          transparent: true,
+          uniforms: {
+            color:   { value: new THREE.Color(1.5, 1.5, 1.5) },
+            opacity: { value: 0.99 }
+          },
+          vertexShader: `
+            varying float vDot;
+            void main() {
+              vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+              vec3 normal = normalize(worldPosition.xyz);
+              vec3 cameraDir = normalize(cameraPosition - worldPosition.xyz);
+              vDot = dot(normal, cameraDir);
+              gl_Position = projectionMatrix * viewMatrix * worldPosition;
+            }`,
+          fragmentShader: `
+            uniform vec3 color;
+            uniform float opacity;
+            varying float vDot;
+            void main() {
+              float facing = clamp(vDot, 0.0, 1.0);
+              float backsideDark = 0.01;
+              float electricBoost = 1.2 + (facing * 1.8);
+              float coreIntensity = pow(facing, 2.0) * 1.2;
+              float horizonFade = smoothstep(0.0, 0.12, facing);
+              float finalShade = mix(backsideDark, electricBoost + coreIntensity, horizonFade);
+              float shimmer = sin(facing * 40.0) * 0.05;
+              finalShade += shimmer * horizonFade;
+              gl_FragColor = vec4(color * finalShade, opacity * horizonFade);
+            }`
+        });
       }
 
       latLonToVector3(lat, lon, altitude = 0.01) {
@@ -10767,6 +10802,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
            r * Math.cos(phi),
            r * Math.sin(phi) * Math.sin(theta)
         );
+      }
+
+      coordKey(coord) {
+        return `${Number(coord[0]).toFixed(6)},${Number(coord[1]).toFixed(6)}`;
       }
 
       // 🔥 densify helper
@@ -10786,69 +10825,78 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return result;
       }
 
-      loadGeoJSON(geojson) {
-        geojson.features.forEach(feature => {
-          const geometry = feature.geometry;
-          if (geometry.type === "Polygon") this.drawPolygon(geometry.coordinates);
-          if (geometry.type === "MultiPolygon") geometry.coordinates.forEach(polygon => this.drawPolygon(polygon));
+      buildEdgeSegments(edgeCoords) {
+        const positions = [];
+        edgeCoords.forEach(([start, end]) => {
+          const denseEdge = [...this.densify([start, end], 5), end];
+          for (let i = 1; i < denseEdge.length; i++) {
+            const [lon0, lat0] = denseEdge[i - 1];
+            const [lon1, lat1] = denseEdge[i];
+            const a = this.latLonToVector3(lat0, lon0);
+            const b = this.latLonToVector3(lat1, lon1);
+            positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+          }
         });
+        return positions;
       }
 
-      drawPolygon(polygon) {
-        polygon.forEach(ring => {
-          const points = [];
+      collectUniqueEdges(geojson) {
+        const edgeMap = new Map();
 
-          // 🔥 densify BEFORE conversion
-          const denseRing = this.densify(ring, 5);
+        geojson.features.forEach(feature => {
+          const geometry = feature.geometry;
+          if (!geometry) return;
+          const polygons = geometry.type === "Polygon"
+            ? [geometry.coordinates]
+            : geometry.type === "MultiPolygon"
+              ? geometry.coordinates
+              : [];
 
-          denseRing.forEach(coord => {
-            const [lon, lat] = coord;
-            points.push(this.latLonToVector3(lat, lon));
+          polygons.forEach(polygon => {
+            polygon.forEach(ring => {
+              if (!Array.isArray(ring) || ring.length < 2) return;
+              for (let i = 1; i < ring.length; i++) {
+                const start = ring[i - 1];
+                const end = ring[i];
+                if (!start || !end) continue;
+                const startKey = this.coordKey(start);
+                const endKey = this.coordKey(end);
+                if (startKey === endKey) continue;
+                const edgeKey = startKey < endKey
+                  ? `${startKey}|${endKey}`
+                  : `${endKey}|${startKey}`;
+                if (!edgeMap.has(edgeKey)) edgeMap.set(edgeKey, [start, end]);
+              }
+            });
           });
-
-          const geometry = new THREE.BufferGeometry().setFromPoints(points);
-          const material = new THREE.ShaderMaterial({
-            transparent: true,
-            uniforms: {
-              color:   { value: new THREE.Color(1.5, 1.5, 1.5) },
-              opacity: { value: 0.99 }
-            },
-            vertexShader: `
-              varying float vDot;
-              void main() {
-                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-                vec3 normal = normalize(worldPosition.xyz);
-                vec3 cameraDir = normalize(cameraPosition - worldPosition.xyz);
-                vDot = dot(normal, cameraDir);
-                gl_Position = projectionMatrix * viewMatrix * worldPosition;
-              }`,
-            fragmentShader: `
-              uniform vec3 color;
-              uniform float opacity;
-              varying float vDot;
-              void main() {
-                float facing = clamp(vDot, 0.0, 1.0);
-                float backsideDark = 0.01;
-                float electricBoost = 1.2 + (facing * 1.8);
-                float coreIntensity = pow(facing, 2.0) * 1.2;
-                float horizonFade = smoothstep(0.0, 0.12, facing);
-                float finalShade = mix(backsideDark, electricBoost + coreIntensity, horizonFade);
-                float shimmer = sin(facing * 40.0) * 0.05;
-                finalShade += shimmer * horizonFade;
-                gl_FragColor = vec4(color * finalShade, opacity * horizonFade);
-              }`
-          });
-          const line = new THREE.Line(geometry, material);
-          this.group.add(line);
         });
+
+        return Array.from(edgeMap.values());
+      }
+
+      clear() {
+        this.group.children.forEach(child => {
+          child.geometry?.dispose?.();
+        });
+        this.group.clear();
+      }
+
+      loadGeoJSON(geojson) {
+        this.clear();
+        const edgeCoords = this.collectUniqueEdges(geojson);
+        const positions = this.buildEdgeSegments(edgeCoords);
+        if (!positions.length) return;
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+        const lines = new THREE.LineSegments(geometry, this.material);
+        this.group.add(lines);
       }
 
       setVisible(value) { this.group.visible = value; }
 
       setColor(color) {
-        this.group.children.forEach(child => {
-          child.material.uniforms.color.value.set(color);
-        });
+        this.material.uniforms.color.value.set(color);
       }
     }
 
