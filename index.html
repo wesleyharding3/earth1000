@@ -43,7 +43,7 @@
       z-index: 100;
       left: 0;
       width: 100%;
-      height: 420px;
+      height: min(420px, calc(var(--app-height, 100vh) - 24px));
       background: rgba(0,0,0,0.97);
       color: white;
       padding: 20px;
@@ -60,6 +60,12 @@
     #infoPanel.active {
       pointer-events: all; 
       border: 1.5px solid rgba(255, 255, 255, 0.25);
+    }
+
+    #infoPanel.maximized {
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
+      border-radius: 0;
+      padding-top: max(20px, calc(env(safe-area-inset-top, 0px) + 8px));
     }
 
     .panelHeader {
@@ -1684,6 +1690,49 @@
 }
 .panelSortOption.active .panelSortLabel { color: rgba(255,200,100,0.9); }
 
+    .panelMediaRow {
+      display: flex;
+      justify-content: flex-start;
+      padding: 0 16px 10px;
+      flex-shrink: 0;
+    }
+
+    .panelMediaSegment {
+      display: flex;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.02);
+    }
+
+    .panelMediaOption {
+      min-width: 84px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 12px;
+      cursor: pointer;
+      opacity: 0.45;
+      transition: opacity 0.18s, background 0.18s, color 0.18s;
+      color: rgba(255,255,255,0.7);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      user-select: none;
+    }
+
+    .panelMediaOption.active {
+      opacity: 1;
+      background: rgba(74,158,255,0.14);
+      color: rgba(160,215,255,0.98);
+    }
+
+    .panelMediaOption + .panelMediaOption {
+      border-left: 1px solid rgba(255,255,255,0.08);
+    }
+
     /* ===============================
        Panel Article Cards
     =============================== */
@@ -1840,19 +1889,21 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 75vh;
-  max-height: 700px;
+  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
+  max-height: none;
   background: rgba(8,8,12,0.98);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid rgba(255,255,255,0.08);
-  border-radius: 24px 24px 0 0;
+  border-radius: 0;
   z-index: 800;
   transform: translateY(100%);
   transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
 }
 
 #articleDetailPanel.visible {
@@ -1920,7 +1971,7 @@
 .adpContent {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 20px 20px calc(20px + var(--app-bottom-inset, 0px));
   -webkit-overflow-scrolling: touch;
 }
 
@@ -5304,10 +5355,16 @@ const loader = new THREE.TextureLoader();
 // ===============================
     // Panel Resize / Snap System
     // ===============================
+    function getAppViewportHeight() {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue("--app-height").trim();
+      const parsed = parseFloat(raw);
+      return Number.isFinite(parsed) ? parsed : window.innerHeight;
+    }
+
     const SNAP = {
-      min: 260, 
+      min: 260,
       default: 420,
-      max:     () => window.innerHeight - 60
+      max:     () => getAppViewportHeight()
     };
     let snapState = "default";  // "default" | "max"
     let resizeDragging = false;
@@ -5321,6 +5378,7 @@ const loader = new THREE.TextureLoader();
         ? "bottom 0.5s cubic-bezier(0.22, 1, 0.36, 1), height 0.45s cubic-bezier(0.22, 1, 0.36, 1)"
         : "none";
       infoPanel.style.height = h + "px";
+      infoPanel.classList.toggle("maximized", state === "max");
       updateArrow();
     }
 
@@ -6468,7 +6526,37 @@ function computeCityTiers(cities) {
       function isPanelActive() {
         const panel = document.getElementById("infoPanel");
         return !!(panel && panel.classList.contains("active"));
-      }      
+      }
+
+      function isArticleDetailVisible() {
+        const panel = document.getElementById("articleDetailPanel");
+        return !!(panel && panel.classList.contains("visible"));
+      }
+
+      function isArticleDetailTarget(target) {
+        return !!(target && typeof target.closest === "function" && target.closest("#articleDetailPanel"));
+      }
+
+      function matchesPanelMediaFilter(article, mediaFilter) {
+        const isVideo = article.media_type === "video" || !!article.video_id;
+        return isVideo ? mediaFilter.video : mediaFilter.article;
+      }
+
+      function bindPanelMediaFilter(panel, mediaFilter, onChange) {
+        const options = panel.querySelectorAll(".panelMediaOption");
+        options.forEach(opt => {
+          opt.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const key = opt.dataset.media;
+            if (!key) return;
+            const activeCount = Object.values(mediaFilter).filter(Boolean).length;
+            if (mediaFilter[key] && activeCount === 1) return;
+            mediaFilter[key] = !mediaFilter[key];
+            opt.classList.toggle("active", mediaFilter[key]);
+            onChange();
+          });
+        });
+      }
 
       function updateNodeGlow() {
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
@@ -7980,6 +8068,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (flowControls && flowControls.classList.contains("visible")) return;
         
         if (event.target.closest(".closePanel")) return;
+        if (isArticleDetailTarget(event.target)) return;
         
         // If panel is active and click is outside panel, close it and don't select new node
         if (isPanelActive()) {
@@ -8067,6 +8156,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // If panel is active and touch is outside panel, close it and don't select new node
         const touch = event.touches[0];
         const touchTarget = document.elementFromPoint(touch.clientX, touch.clientY);
+        if (isArticleDetailTarget(touchTarget)) return;
         if (isPanelActive()) {
           if (!touchTarget?.closest("#infoPanel")) {
             const panel = document.getElementById("infoPanel");
@@ -8197,6 +8287,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="tagDropdown" id="tagDropdown"></div>
             </div>
           </div>
+          <div class="panelMediaRow">
+            <div class="panelMediaSegment">
+              <div class="panelMediaOption active" data-media="article">Article</div>
+              <div class="panelMediaOption active" data-media="video">Video</div>
+            </div>
+          </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
             <span class="panelSearchPillIcon">
@@ -8277,6 +8373,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panelSearchInput = panel.querySelector("#panelSearchInput");
         let filterQuery = "";
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
+        const mediaFilter = { article: true, video: true };
+        bindPanelMediaFilter(panel, mediaFilter, renderCards);
 
         // ── Sort ──
         const sortOptions = panel.querySelectorAll(".panelSortOption");
@@ -8454,11 +8552,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         function renderCards() {
-          const filtered = filterQuery
-            ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
-            : allArticles;
+          const hasMediaNarrowing = !mediaFilter.article || !mediaFilter.video;
+          const filtered = allArticles.filter(a => {
+            if (!matchesPanelMediaFilter(a, mediaFilter)) return false;
+            if (!filterQuery) return true;
+            return (
+              (a.title || "").toLowerCase().includes(filterQuery) ||
+              (a.translated_title || "").toLowerCase().includes(filterQuery) ||
+              (a.summary || "").toLowerCase().includes(filterQuery) ||
+              (a.translated_summary || "").toLowerCase().includes(filterQuery) ||
+              (a.source_name || "").toLowerCase().includes(filterQuery)
+            );
+          });
           if (!filtered.length && !loading) {
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${filterQuery ? "No matching articles." : "No recent articles."}</div>`;
+            const emptyLabel = (filterQuery || hasMediaNarrowing) ? "No matching items." : "No recent articles.";
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}</div>`;
             return;
           }
           track.innerHTML = filtered.map(articleCardHTML).join("");
@@ -8508,6 +8616,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Close
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
+          if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
@@ -8740,6 +8849,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
+          <div class="panelMediaRow">
+            <div class="panelMediaSegment">
+              <div class="panelMediaOption active" data-media="article">Article</div>
+              <div class="panelMediaOption active" data-media="video">Video</div>
+            </div>
+          </div>
           <div class="panelSearchPill">
             <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
             <span class="panelSearchPillIcon">
@@ -8761,6 +8876,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const searchInput = panel.querySelector("#panelSearchInput");
         let allArticles = [], offset = 0, limit = 12, loading = false, hasMore = true, filterQuery = "";
         let currentFeed = "local";
+        const mediaFilter = { article: true, video: true };
+        bindPanelMediaFilter(panel, mediaFilter, renderCards);
 
         // Local/Global toggle
         const sortOptions = panel.querySelectorAll(".panelSortOption");
@@ -8785,11 +8902,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         function renderCards() {
-          const filtered = filterQuery
-            ? allArticles.filter(a => (a.title||"").toLowerCase().includes(filterQuery)||(a.summary||"").toLowerCase().includes(filterQuery)||(a.source_name||"").toLowerCase().includes(filterQuery))
-            : allArticles;
+          const hasMediaNarrowing = !mediaFilter.article || !mediaFilter.video;
+          const filtered = allArticles.filter(a => {
+            if (!matchesPanelMediaFilter(a, mediaFilter)) return false;
+            if (!filterQuery) return true;
+            return (
+              (a.title || "").toLowerCase().includes(filterQuery) ||
+              (a.translated_title || "").toLowerCase().includes(filterQuery) ||
+              (a.summary || "").toLowerCase().includes(filterQuery) ||
+              (a.translated_summary || "").toLowerCase().includes(filterQuery) ||
+              (a.source_name || "").toLowerCase().includes(filterQuery)
+            );
+          });
           if (!filtered.length && !loading) {
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">No recent articles for this region.</div>`;
+            const emptyLabel = (filterQuery || hasMediaNarrowing) ? "No matching items." : "No recent articles for this region.";
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}</div>`;
             return;
           }
           track.innerHTML = filtered.map(a => {
@@ -8855,6 +8982,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const closeBtn = panel.querySelector(".closePanel");
         closeBtn.addEventListener("click", () => {
+          if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
           document.getElementById("pageNav").style.pointerEvents = "all";
           
@@ -10890,6 +11018,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     
     // Close handler
     panel.querySelector(".closePanel").onclick = () => {
+      if (window.closeArticleDetail) window.closeArticleDetail();
       panel.classList.remove("active");
     };
     
@@ -12922,6 +13051,15 @@ grmClockTick();
   let currentArticle = null;
   let returnContext = null; // { type: 'flow'|'feed'|'panel', state: any }
   let flowStateBeforeOpen = null; // For flow animation return
+  let contentCleanupTimer = null;
+
+  function stopArticlePlayback() {
+    content.querySelectorAll('.adpVideoFrame').forEach(frame => {
+      try {
+        frame.src = 'about:blank';
+      } catch (_) {}
+    });
+  }
   
   // ── Render article detail content ──────────────────────────────────────────
   function renderArticleDetail(article) {
@@ -13038,6 +13176,10 @@ grmClockTick();
   
   // ── Open article detail panel ──────────────────────────────────────────────
   window.openArticleDetail = function(article, context) {
+    if (contentCleanupTimer) {
+      clearTimeout(contentCleanupTimer);
+      contentCleanupTimer = null;
+    }
     currentArticle = article;
     returnContext = context || null;
     
@@ -13070,7 +13212,9 @@ grmClockTick();
   
   // ── Close article detail panel ─────────────────────────────────────────────
   function closeArticlePanel() {
+    stopArticlePlayback();
     panel.classList.remove('visible');
+    panel.style.transform = '';
     
     // Restore flow state if returning to flow animation
     if (returnContext?.type === 'flow' && flowStateBeforeOpen) {
@@ -13082,14 +13226,24 @@ grmClockTick();
     
     currentArticle = null;
     returnContext = null;
+    if (contentCleanupTimer) clearTimeout(contentCleanupTimer);
+    contentCleanupTimer = setTimeout(() => {
+      if (!panel.classList.contains('visible')) {
+        content.innerHTML = '';
+      }
+    }, 360);
   }
   
   // ── Back button (return to previous context) ───────────────────────────────
-  backBtn.addEventListener('click', () => {
+  backBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     closeArticlePanel();
   });
   
-  closeBtn.addEventListener('click', () => {
+  closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     closeArticlePanel();
   });
   
@@ -13124,6 +13278,7 @@ grmClockTick();
   });
   
   // ── Stop globe interactions when using panel ─────────────────────────────────
+  panel.addEventListener('click', (e) => { e.stopPropagation(); });
   panel.addEventListener('wheel', (e) => { e.stopPropagation(); }, { passive: true });
   panel.addEventListener('mousedown', (e) => { e.stopPropagation(); });
   panel.addEventListener('touchstart', (e) => { e.stopPropagation(); }, { passive: true });
