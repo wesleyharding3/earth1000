@@ -5416,6 +5416,9 @@ function computeCityTiers(cities) {
       const earthPositions = [];
       const earthColors = [];
       const earthBaseBrightness = [];
+      let landMask = null; // Uint8Array, 1 = land, 0 = ocean
+      const SURFACE_MASK_W = 512;
+      const SURFACE_MASK_H = 256;
 
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
@@ -5443,12 +5446,25 @@ function computeCityTiers(cities) {
         return [h, s, l];
       }
 
-      function classifySurfaceColor(r, g, b, latDeg) {
+      function isSurfaceLand(px, py) {
+        if (!landMask) return null;
+        const mx = Math.max(0, Math.min(SURFACE_MASK_W - 1, Math.floor((px / surfaceCanvas.width) * SURFACE_MASK_W)));
+        const my = Math.max(0, Math.min(SURFACE_MASK_H - 1, Math.floor((py / surfaceCanvas.height) * SURFACE_MASK_H)));
+        return landMask[my * SURFACE_MASK_W + mx] === 1;
+      }
+
+      function classifySurfaceColor(r, g, b, latDeg, isLand) {
         const [h, s, l] = rgbToHsl(r, g, b);
         const absLat = Math.abs(latDeg);
+        const oceanBlue = absLat > 70 ? [84, 124, 194, 128] : [44, 88, 168, 132];
 
-        if ((absLat > 68 && l > 0.55) || (l > 0.80 && s < 0.16)) return [245, 248, 255, 150];
-        if (b > r * 1.08 && b > g * 1.02) return [44, 88, 168, 132];
+        if (isLand === false) {
+          if (absLat > 79 && l > 0.62) return [226, 236, 248, 142];
+          return oceanBlue;
+        }
+
+        if ((latDeg < -58 && isLand !== false) || (absLat > 69 && l > 0.50 && s < 0.20)) return [245, 248, 255, 154];
+        if (isLand === null && b > r * 1.08 && b > g * 1.02) return oceanBlue;
         if (l < 0.25 && s < 0.16) return [78, 88, 62, 126];
         if ((h > 0.08 && h < 0.16 && s > 0.18 && l > 0.34) || (r > 140 && g > 115 && b < 100)) return [196, 168, 102, 138];
         if (g > r * 1.05 && g > b * 1.15) {
@@ -5466,24 +5482,28 @@ function computeCityTiers(cities) {
       const surfaceCtx = surfaceCanvas.getContext("2d");
       const surfaceImg = surfaceCtx.createImageData(surfaceCanvas.width, surfaceCanvas.height);
 
-      for (let py = 0; py < surfaceCanvas.height; py++) {
-        const latDeg = 90 - (py / surfaceCanvas.height) * 180;
-        for (let px = 0; px < surfaceCanvas.width; px++) {
-          const idx = (py * surfaceCanvas.width + px) * 4;
-          const r = imageData[idx];
-          const g = imageData[idx + 1];
-          const b = imageData[idx + 2];
-          const [sr, sg, sb, sa] = classifySurfaceColor(r, g, b, latDeg);
-          surfaceImg.data[idx] = sr;
-          surfaceImg.data[idx + 1] = sg;
-          surfaceImg.data[idx + 2] = sb;
-          surfaceImg.data[idx + 3] = sa;
+      function repaintSurfaceOverlay() {
+        for (let py = 0; py < surfaceCanvas.height; py++) {
+          const latDeg = 90 - (py / surfaceCanvas.height) * 180;
+          for (let px = 0; px < surfaceCanvas.width; px++) {
+            const idx = (py * surfaceCanvas.width + px) * 4;
+            const r = imageData[idx];
+            const g = imageData[idx + 1];
+            const b = imageData[idx + 2];
+            const isLand = isSurfaceLand(px, py);
+            const [sr, sg, sb, sa] = classifySurfaceColor(r, g, b, latDeg, isLand);
+            surfaceImg.data[idx] = sr;
+            surfaceImg.data[idx + 1] = sg;
+            surfaceImg.data[idx + 2] = sb;
+            surfaceImg.data[idx + 3] = sa;
+          }
         }
+        surfaceCtx.putImageData(surfaceImg, 0, 0);
+        surfaceTexture.needsUpdate = true;
       }
 
-      surfaceCtx.putImageData(surfaceImg, 0, 0);
       const surfaceTexture = new THREE.CanvasTexture(surfaceCanvas);
-      surfaceTexture.needsUpdate = true;
+      repaintSurfaceOverlay();
       const surfaceGeo = new THREE.SphereGeometry(radius + 0.003, 64, 32);
       const surfaceMat = new THREE.MeshBasicMaterial({
         map: surfaceTexture,
@@ -5498,6 +5518,7 @@ function computeCityTiers(cities) {
 
       window.__surfaceOverlayEnabled = false;
       window.__surfaceOverlayOpacity = 0.36;
+      window.__repaintSurfaceOverlay = repaintSurfaceOverlay;
 
       function syncSurfaceOverlayVisibility() {
         const mode = window.__currentViewMode || currentViewMode;
@@ -6295,8 +6316,6 @@ function computeCityTiers(cities) {
         .catch(err => console.warn("land/geojson load failed:", err));
 
       // ── Land mask for ocean heatmap ──────────────────────────────
-      let landMask = null; // Uint8Array, 1 = land, 0 = ocean
-
       function buildLandMask(geojson) {
         const W = OCEAN_W, H = OCEAN_H;
         const mask = new Uint8Array(W * H);
@@ -6341,6 +6360,7 @@ function computeCityTiers(cities) {
         .then(data => {
           boundaryLayer.loadGeoJSON(data);
           buildLandMask(data);
+          if (window.__repaintSurfaceOverlay) window.__repaintSurfaceOverlay();
         });
 
       function isCityVisible(pointPos, camera) {
