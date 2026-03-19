@@ -10755,16 +10755,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       constructor(scene, radius) {
         this.scene = scene; this.radius = radius;
         this.group = new THREE.Group();
-        this.material = this.makeBoundaryMaterial();
+        this.coastMaterial = this.makeBoundaryMaterial(0.99, 1.0);
+        this.borderMaterial = this.makeBoundaryMaterial(0.42, 0.55);
         this.scene.add(this.group);
       }
 
-      makeBoundaryMaterial() {
+      makeBoundaryMaterial(opacity, intensity = 1.0) {
         return new THREE.ShaderMaterial({
           transparent: true,
           uniforms: {
             color:   { value: new THREE.Color(1.5, 1.5, 1.5) },
-            opacity: { value: 0.99 }
+            opacity: { value: opacity },
+            intensity: { value: intensity }
           },
           vertexShader: `
             varying float vDot;
@@ -10778,15 +10780,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
           fragmentShader: `
             uniform vec3 color;
             uniform float opacity;
+            uniform float intensity;
             varying float vDot;
             void main() {
               float facing = clamp(vDot, 0.0, 1.0);
               float backsideDark = 0.01;
-              float electricBoost = 1.2 + (facing * 1.8);
-              float coreIntensity = pow(facing, 2.0) * 1.2;
+              float electricBoost = (1.2 + (facing * 1.8)) * intensity;
+              float coreIntensity = pow(facing, 2.0) * 1.2 * intensity;
               float horizonFade = smoothstep(0.0, 0.12, facing);
               float finalShade = mix(backsideDark, electricBoost + coreIntensity, horizonFade);
-              float shimmer = sin(facing * 40.0) * 0.05;
+              float shimmer = sin(facing * 40.0) * 0.05 * intensity;
               finalShade += shimmer * horizonFade;
               gl_FragColor = vec4(color * finalShade, opacity * horizonFade);
             }`
@@ -10865,7 +10868,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 const edgeKey = startKey < endKey
                   ? `${startKey}|${endKey}`
                   : `${endKey}|${startKey}`;
-                if (!edgeMap.has(edgeKey)) edgeMap.set(edgeKey, [start, end]);
+                const existing = edgeMap.get(edgeKey);
+                if (existing) {
+                  existing.count += 1;
+                } else {
+                  edgeMap.set(edgeKey, { start, end, count: 1 });
+                }
               }
             });
           });
@@ -10883,20 +10891,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       loadGeoJSON(geojson) {
         this.clear();
-        const edgeCoords = this.collectUniqueEdges(geojson);
-        const positions = this.buildEdgeSegments(edgeCoords);
-        if (!positions.length) return;
+        const edges = this.collectUniqueEdges(geojson);
+        if (!edges.length) return;
 
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-        const lines = new THREE.LineSegments(geometry, this.material);
-        this.group.add(lines);
+        const coastEdges = edges.filter(edge => edge.count === 1).map(edge => [edge.start, edge.end]);
+        const borderEdges = edges.filter(edge => edge.count > 1).map(edge => [edge.start, edge.end]);
+
+        const coastPositions = this.buildEdgeSegments(coastEdges);
+        if (coastPositions.length) {
+          const coastGeometry = new THREE.BufferGeometry();
+          coastGeometry.setAttribute("position", new THREE.Float32BufferAttribute(coastPositions, 3));
+          const coastLines = new THREE.LineSegments(coastGeometry, this.coastMaterial);
+          this.group.add(coastLines);
+        }
+
+        const borderPositions = this.buildEdgeSegments(borderEdges);
+        if (borderPositions.length) {
+          const borderGeometry = new THREE.BufferGeometry();
+          borderGeometry.setAttribute("position", new THREE.Float32BufferAttribute(borderPositions, 3));
+          const borderLines = new THREE.LineSegments(borderGeometry, this.borderMaterial);
+          this.group.add(borderLines);
+        }
       }
 
       setVisible(value) { this.group.visible = value; }
 
       setColor(color) {
-        this.material.uniforms.color.value.set(color);
+        this.coastMaterial.uniforms.color.value.set(color);
+        this.borderMaterial.uniforms.color.value.set(color);
       }
     }
 
