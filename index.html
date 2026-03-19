@@ -10790,18 +10790,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
             void main() {
               float facing = clamp(vDot, 0.0, 1.0);
               float visibility = smoothstep(0.0, 0.05, facing);
-              float horizon = 1.0 - smoothstep(0.08, 0.26, facing);
-              float haloBand = smoothstep(0.04, 0.22, facing) * (1.0 - smoothstep(0.22, 0.64, facing));
-              float centerMask = smoothstep(0.12, 0.88, facing);
+              float horizon = 1.0 - smoothstep(0.10, 0.34, facing);
+              float haloBand = smoothstep(0.03, 0.20, facing) * (1.0 - smoothstep(0.24, 0.74, facing));
+              float centerMask = smoothstep(0.18, 0.86, facing);
+              float edgeMix = clamp(horizon * 1.15 + haloBand * 0.95, 0.0, 1.0);
               float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.018 * intensity;
 
-              vec3 whiteCore = mix(color, vec3(1.0), 0.72) * (0.94 + 0.24 * centerMask);
-              vec3 edgeHalo = rimColor * (1.55 * horizon + 0.34 * haloBand)
-                            + glowColor * (1.18 * haloBand + 0.30 * horizon);
-              vec3 finalColor = (whiteCore + edgeHalo) * intensity;
-              finalColor += shimmer * (rimColor * 0.40 + glowColor * 0.46 + vec3(1.0) * 0.20);
+              vec3 whiteCore = mix(color, vec3(1.0), 0.82) * (0.92 + 0.18 * centerMask);
+              vec3 edgeHalo = rimColor * (1.95 * horizon + 0.48 * haloBand)
+                            + glowColor * (1.55 * haloBand + 0.42 * horizon);
+              vec3 finalColor = mix(whiteCore, whiteCore * 0.22 + edgeHalo, edgeMix) * intensity;
+              finalColor += shimmer * mix(vec3(1.0), rimColor + glowColor, edgeMix * 0.85) * 0.34;
 
-              float alpha = opacity * visibility * clamp(0.82 + haloBand * 0.22 + horizon * 0.18, 0.0, 1.0);
+              float alpha = opacity * visibility * clamp(0.78 + haloBand * 0.28 + horizon * 0.26, 0.0, 1.0);
               if (alpha < 0.01) discard;
               gl_FragColor = vec4(finalColor, alpha);
             }`
