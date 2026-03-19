@@ -10756,7 +10756,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         this.scene = scene; this.radius = radius;
         this.group = new THREE.Group();
         this.coastMaterial = this.makeBoundaryMaterial(0.99, 1.0);
-        this.borderMaterial = this.makeBoundaryMaterial(0.42, 0.55);
+        this.borderMaterial = this.makeBoundaryMaterial(0.72, 0.86);
         this.scene.add(this.group);
       }
 
@@ -10764,7 +10764,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return new THREE.ShaderMaterial({
           transparent: true,
           uniforms: {
-            color:   { value: new THREE.Color(1.5, 1.5, 1.5) },
+            color:   { value: new THREE.Color("#9fb2ff") },
+            rimColor: { value: new THREE.Color("#9b5cff") },
+            glowColor: { value: new THREE.Color("#59ff9b") },
             opacity: { value: opacity },
             intensity: { value: intensity }
           },
@@ -10779,19 +10781,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }`,
           fragmentShader: `
             uniform vec3 color;
+            uniform vec3 rimColor;
+            uniform vec3 glowColor;
             uniform float opacity;
             uniform float intensity;
             varying float vDot;
             void main() {
               float facing = clamp(vDot, 0.0, 1.0);
-              float backsideDark = 0.01;
-              float electricBoost = (1.2 + (facing * 1.8)) * intensity;
-              float coreIntensity = pow(facing, 2.0) * 1.2 * intensity;
-              float horizonFade = smoothstep(0.0, 0.12, facing);
-              float finalShade = mix(backsideDark, electricBoost + coreIntensity, horizonFade);
-              float shimmer = sin(facing * 40.0) * 0.05 * intensity;
-              finalShade += shimmer * horizonFade;
-              gl_FragColor = vec4(color * finalShade, opacity * horizonFade);
+              float horizon = 1.0 - smoothstep(0.02, 0.22, facing);
+              float haloBand = smoothstep(0.03, 0.20, facing) * (1.0 - smoothstep(0.18, 0.58, facing));
+              float innerGlow = smoothstep(0.18, 0.78, facing);
+              float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.02 * intensity;
+
+              vec3 rim = rimColor * (1.7 * horizon + 0.25 * haloBand);
+              vec3 glow = glowColor * (1.15 * haloBand + 0.30 * innerGlow);
+              vec3 tint = color * (0.30 * innerGlow + 0.14 * horizon);
+              vec3 finalColor = (rim + glow + tint) * intensity;
+              finalColor += shimmer * (rimColor * 0.45 + glowColor * 0.55);
+
+              float alpha = opacity * clamp(horizon * 0.92 + haloBand * 0.72 + innerGlow * 0.16, 0.0, 1.0);
+              if (alpha < 0.01) discard;
+              gl_FragColor = vec4(finalColor, alpha);
             }`
         });
       }
