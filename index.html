@@ -10765,9 +10765,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return new THREE.ShaderMaterial({
           transparent: true,
           uniforms: {
-            color:   { value: new THREE.Color("#b9c7ff") },
-            rimColor: { value: new THREE.Color("#7c3dff") },
-            glowColor: { value: new THREE.Color("#2fff95") },
+            color:   { value: new THREE.Color("#8faeff") },
+            rimColor: { value: new THREE.Color("#6a2cff") },
+            glowColor: { value: new THREE.Color("#23ffb4") },
             opacity: { value: opacity },
             intensity: { value: intensity }
           },
@@ -10790,19 +10790,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             void main() {
               float facing = clamp(vDot, 0.0, 1.0);
               float visibility = smoothstep(0.0, 0.05, facing);
-              float horizon = 1.0 - smoothstep(0.10, 0.34, facing);
-              float haloBand = smoothstep(0.03, 0.20, facing) * (1.0 - smoothstep(0.24, 0.74, facing));
-              float centerMask = smoothstep(0.18, 0.86, facing);
-              float edgeMix = clamp(horizon * 1.15 + haloBand * 0.95, 0.0, 1.0);
+              float horizon = 1.0 - smoothstep(0.12, 0.38, facing);
+              float haloBand = smoothstep(0.03, 0.19, facing) * (1.0 - smoothstep(0.22, 0.72, facing));
+              float centerMask = smoothstep(0.28, 0.82, facing);
+              float edgeMix = clamp(horizon * 1.35 + haloBand * 1.10, 0.0, 1.0);
               float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.018 * intensity;
 
-              vec3 whiteCore = mix(color, vec3(1.0), 0.82) * (0.92 + 0.18 * centerMask);
-              vec3 edgeHalo = rimColor * (1.95 * horizon + 0.48 * haloBand)
-                            + glowColor * (1.55 * haloBand + 0.42 * horizon);
+              vec3 whiteCore = mix(color, vec3(1.0), 0.58) * (0.86 + 0.14 * centerMask);
+              vec3 edgeHalo = rimColor * (2.10 * horizon + 0.58 * haloBand)
+                            + glowColor * (1.72 * haloBand + 0.52 * horizon)
+                            + color * (0.26 * haloBand);
               vec3 finalColor = mix(whiteCore, whiteCore * 0.22 + edgeHalo, edgeMix) * intensity;
-              finalColor += shimmer * mix(vec3(1.0), rimColor + glowColor, edgeMix * 0.85) * 0.34;
+              finalColor += shimmer * mix(vec3(1.0), rimColor + glowColor + color * 0.8, edgeMix * 0.9) * 0.32;
 
-              float alpha = opacity * visibility * clamp(0.78 + haloBand * 0.28 + horizon * 0.26, 0.0, 1.0);
+              float alpha = opacity * visibility * clamp(0.74 + haloBand * 0.32 + horizon * 0.30, 0.0, 1.0);
               if (alpha < 0.01) discard;
               gl_FragColor = vec4(finalColor, alpha);
             }`
