@@ -2394,6 +2394,7 @@
       align-items: stretch;
       justify-content: flex-start;
       overflow-y: auto;
+      min-height: 0;
       padding: 0;
     }
     #statsHeader {
@@ -2412,11 +2413,18 @@
     .stats-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: auto auto;
+      grid-template-rows: repeat(2, minmax(0, 1fr));
       gap: 16px;
       width: 100%;
+      flex: 1 1 auto;
+      min-height: 0;
       padding: 16px 20px 80px;
       box-sizing: border-box;
+      align-content: stretch;
+    }
+    .stats-row > * {
+      min-height: 0 !important;
+      height: 100%;
     }
     .stats-row .grm-widget {
       width: 100% !important;
@@ -2527,11 +2535,11 @@
     .kwi-widget {
       flex: 1 1 0;
       min-width: 320px;
-      min-height: 420px;
+      min-height: 0;
       background: #10141c;
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 14px;
-      overflow: visible;
+      overflow: hidden;
       box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
       font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
       margin-top: 0;
@@ -2565,6 +2573,10 @@
     .kwi-search-wrap {
       display: flex;
       flex-direction: column;
+      position: relative;
+      padding: 0 16px;
+      gap: 8px;
+      flex-shrink: 0;
     }
 
     .kwi-search-input {
@@ -2591,11 +2603,16 @@
     .kwi-search-go:hover { color: #4a9eff; }
     .kwi-autocomplete {
       position: absolute;
-      top: 110px;
+      top: calc(100% + 4px);
       left: 16px;
       right: 16px;
-      bottom: 50px;
+      display: none;
+      max-height: 220px;
       overflow-y: auto;
+      background: #1a2030;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px;
+      z-index: 200;
     }
 
     .kwi-autocomplete.open { display: block; }
@@ -2655,10 +2672,10 @@
       flex: 1;
       padding: 14px 16px 10px;
       position: relative;
-      min-height: 180px;
+      min-height: 0;
       display: flex;
       flex-direction: column;
-      overflow: visible
+      overflow: hidden;
     }
     .kwi-empty {
       flex: 1;
@@ -2763,9 +2780,18 @@
       gap: 10px;
       flex: 1;
       min-height: 0;
+      overflow: hidden;
     }
     .kwi-graph-search {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .kwi-graph-input-wrap {
       position: relative;
+      flex: 1;
+      min-width: 0;
     }
     .kwi-graph-input {
       width: 100%;
@@ -2780,6 +2806,27 @@
     }
     .kwi-graph-input:focus { border-color: rgba(74,158,255,0.5); }
     .kwi-graph-input::placeholder { color: rgba(255,255,255,0.3); }
+    .kwi-graph-go {
+      flex-shrink: 0;
+      min-width: 64px;
+      padding: 0 12px;
+      background: rgba(74,158,255,0.14);
+      border: 1px solid rgba(74,158,255,0.35);
+      border-radius: 8px;
+      color: #4a9eff;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .kwi-graph-go:hover {
+      background: rgba(74,158,255,0.2);
+      border-color: rgba(74,158,255,0.5);
+      color: #8cc7ff;
+    }
     .kwi-graph-ac {
       position: absolute;
       top: 100%;
@@ -2802,7 +2849,8 @@
       cursor: pointer;
       transition: all 0.1s;
     }
-    .kwi-graph-ac-item:hover { background: rgba(74,158,255,0.15); color: #4a9eff; }
+    .kwi-graph-ac-item:hover,
+    .kwi-graph-ac-item.selected { background: rgba(74,158,255,0.15); color: #4a9eff; }
     .kwi-graph-chips {
       display: flex;
       flex-wrap: wrap;
@@ -4326,12 +4374,15 @@
         <!-- Graph view (hidden by default) -->
         <div class="kwi-graph-wrap" id="kwiGraphWrap" style="display:none;">
           <div class="kwi-graph-search">
-            <input class="kwi-graph-input" id="kwiGraphInput" type="text"
-              placeholder="Add keyword to track…"
-              autocomplete="off"
-              oninput="kwiGraphOnInput(this.value)"
-              onkeydown="kwiGraphOnKey(event)"/>
-            <div class="kwi-graph-ac" id="kwiGraphAC"></div>
+            <div class="kwi-graph-input-wrap">
+              <input class="kwi-graph-input" id="kwiGraphInput" type="text"
+                placeholder="Add keyword to track…"
+                autocomplete="off"
+                oninput="kwiGraphOnInput(this.value)"
+                onkeydown="kwiGraphOnKey(event)"/>
+              <div class="kwi-graph-ac" id="kwiGraphAC"></div>
+            </div>
+            <button class="kwi-graph-go" type="button" onclick="kwiGraphSubmit()">Enter</button>
           </div>
           <div class="kwi-graph-chips" id="kwiGraphChips"></div>
           <div class="kwi-graph-controls">
@@ -12016,22 +12067,69 @@ grmClockTick();
   let kwiAcTimer  = null;
   let kwiTrendCtx = null;
   let kwiChart    = null;      // drawn via native canvas — no chart lib needed
+  let kwiListRequestId = 0;
+  let kwiSearchAcRequestId = 0;
+  let kwiGraphAcRequestId = 0;
+  let kwiGraphRenderRaf = 0;
+
+  function normalizeArrayPayload(payload, keys = ['data', 'rows', 'items', 'results']) {
+    if (Array.isArray(payload)) return payload;
+    if (payload && typeof payload === 'object') {
+      for (const key of keys) {
+        if (Array.isArray(payload[key])) return payload[key];
+      }
+    }
+    return [];
+  }
+
+  function normalizeKeywordList(payload) {
+    return normalizeArrayPayload(payload)
+      .map(item => typeof item === 'string' ? item : item?.keyword)
+      .filter(Boolean);
+  }
+
+  function normalizeTrendSeries(payload) {
+    return normalizeArrayPayload(payload)
+      .map(item => ({
+        date: item?.date ? String(item.date) : '',
+        mentions: Number(item?.mentions ?? item?.count ?? 0) || 0
+      }))
+      .filter(item => item.date);
+  }
+
+  function escapeForSingleQuotedJs(value) {
+    return String(value)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'");
+  }
+
+  function scheduleKwiGraphRender() {
+    cancelAnimationFrame(kwiGraphRenderRaf);
+    kwiGraphRenderRaf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (kwiMode === 'graph') kwiGraphRender();
+      });
+    });
+  }
 
   // ── Autocomplete ──────────────────────────────────────────────────────────
 
   async function fetchAC(q) {
     try {
       const r = await fetch(`https://earth-wjr6.onrender.com/api/keywords/autocomplete?q=${encodeURIComponent(q)}`);
-      return await r.json();
+      return normalizeKeywordList(await r.json());
     } catch { return []; }
   }
 
   window.kwiOnInput = function(val) {
     clearTimeout(kwiAcTimer);
     const q = val.trim();
+    const requestId = ++kwiSearchAcRequestId;
     if (q.length < 2) { kwiCloseAC(); return; }
     kwiAcTimer = setTimeout(async () => {
-      kwiAcList = await fetchAC(q);
+      const nextList = await fetchAC(q);
+      if (requestId !== kwiSearchAcRequestId) return;
+      kwiAcList = nextList;
       kwiAcIdx  = -1;
       renderAC();
     }, 200);
@@ -12093,30 +12191,29 @@ grmClockTick();
 
   window.kwiClear = function() {
     kwiKeyword = null;
-    kwiMode = 'trending';
     document.getElementById('kwiInput').value = '';
     document.getElementById('kwiChip').classList.remove('visible');
-    kwiLoadTrending();  // Return to trending view instead of empty
+    kwiSetMode('trending');
   };
 
   function kwiDoSearch(word) {
     kwiKeyword = word.toLowerCase().trim();
-    kwiMode = 'search';
     document.getElementById('kwiChipLabel').textContent = kwiKeyword;
-    document.getElementById('kwiChip').classList.add('visible');
-    kwiLoad();
+    document.getElementById('kwiInput').value = kwiKeyword;
+    kwiSetMode('search');
   }
 
   // ── Range / View ───────────────────────────────────────────────────────────
 
   window.kwiSetRange = function(days) {
     kwiDays = days;
-    document.querySelectorAll('.kwi-range-btn').forEach(b => {
+    document.querySelectorAll('#kwiControls .kwi-range-btn').forEach(b => {
       b.classList.toggle('active', parseInt(b.dataset.days) === days);
     });
-    // Refresh trending or search depending on mode
-    if (kwiKeyword) {
+    if (kwiMode === 'search' && kwiKeyword) {
       kwiLoad();
+    } else if (kwiMode === 'rising') {
+      kwiLoadRising();
     } else {
       kwiLoadTrending();
     }
@@ -12127,11 +12224,8 @@ grmClockTick();
     document.querySelectorAll('.kwi-view-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.view === view);
     });
-    // Refresh based on current mode
-    if (kwiKeyword) {
+    if (kwiMode === 'search' && kwiKeyword) {
       kwiLoad();
-    } else {
-      kwiLoadTrending();
     }
   };
 
@@ -12155,9 +12249,12 @@ grmClockTick();
     } else {
       ctx.classList.remove('visible');
     }
-    // Reload current view with new context
     if (kwiMode === 'trending') kwiLoadTrending();
     else if (kwiMode === 'rising') kwiLoadRising();
+    else if (kwiMode === 'search' && kwiKeyword) kwiLoad();
+    else if (kwiMode === 'graph' && kwiGraphKeywords.length) {
+      Promise.all(kwiGraphKeywords.map(k => fetchGraphData(k.keyword))).then(scheduleKwiGraphRender);
+    }
   };
 
   window.kwiClearLocation = function() {
@@ -12167,6 +12264,8 @@ grmClockTick();
   // ── Mode switching ──────────────────────────────────────────────────────────
   window.kwiSetMode = function(mode) {
     kwiMode = mode;
+    kwiListRequestId += 1;
+    kwiSetLoading(false);
     
     // Update tab active state
     document.querySelectorAll('.kwi-mode-tab').forEach(t => 
@@ -12191,13 +12290,14 @@ grmClockTick();
     if (mode === 'search') {
       searchWrap.style.display = 'block';
       controls.style.display = kwiKeyword ? 'flex' : 'none';
-      chartArea.style.display = 'block';
+      chartArea.style.display = 'flex';
+      chip.classList.toggle('visible', !!kwiKeyword);
       if (kwiKeyword) {
         kwiLoad();
       }
     } else if (mode === 'graph') {
       graphWrap.style.display = 'flex';
-      kwiGraphRender();
+      scheduleKwiGraphRender();
     } else {
       trendingList.style.display = 'flex';
       
@@ -12211,6 +12311,7 @@ grmClockTick();
 
   // ── Load rising keywords ────────────────────────────────────────────────────
   async function kwiLoadRising() {
+    const requestId = ++kwiListRequestId;
     kwiSetLoading(true);
     
     try {
@@ -12220,17 +12321,19 @@ grmClockTick();
       }
       
       const res = await fetch(url);
-      const rising = await res.json();
+      const rising = normalizeArrayPayload(await res.json());
+      if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
       
       renderRisingList(rising);
       document.getElementById('kwiFooterText').textContent = 
         `Rapidly rising · last 3 days vs. baseline`;
     } catch (err) {
+      if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
       console.warn('[kwi] rising load error:', err.message);
       document.getElementById('kwiTrendingList').innerHTML = 
         '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">No rising keywords found</div>';
     } finally {
-      kwiSetLoading(false);
+      if (requestId === kwiListRequestId && kwiMode === 'rising') kwiSetLoading(false);
     }
   }
 
@@ -12245,14 +12348,17 @@ grmClockTick();
     }
     
     container.innerHTML = rising.map((r, i) => {
-      const growth = r.growth_pct ? `+${Math.round(r.growth_pct)}%` : 'NEW';
-      const badgeClass = r.is_new ? 'kwi-badge-new' : 'kwi-badge-rising';
+      const recentMentions = parseInt(r.recent_count ?? r.recent_mentions ?? 0, 10) || 0;
+      const baselineCount = parseInt(r.baseline_count ?? 0, 10) || 0;
+      const momentum = Number(r.momentum ?? 0);
+      const growth = baselineCount > 0 ? `${momentum >= 10 ? momentum.toFixed(0) : momentum.toFixed(1)}x` : 'NEW';
+      const badgeClass = baselineCount > 0 ? 'kwi-badge-rising' : 'kwi-badge-new';
       return `
-        <div class="kwi-trending-item" onclick="kwiTrendingClick('${r.keyword.replace(/'/g,"\\'")}')">
+        <div class="kwi-trending-item" onclick="kwiTrendingClick('${escapeForSingleQuotedJs(r.keyword)}')">
           <div class="kwi-trending-rank">${i + 1}</div>
           <div class="kwi-trending-keyword">${r.keyword}</div>
           <span class="kwi-trending-badge ${badgeClass}">${growth}</span>
-          <div class="kwi-trending-mentions">${parseInt(r.recent_mentions || 0).toLocaleString()}</div>
+          <div class="kwi-trending-mentions">${recentMentions.toLocaleString()}</div>
         </div>
       `;
     }).join('');
@@ -12263,12 +12369,17 @@ grmClockTick();
     const container = document.getElementById('kwiTrendingList');
     container.style.display = 'flex';
     
+    if (!trending.length) {
+      container.innerHTML = '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">No trending keywords found</div>';
+      return;
+    }
+    
     const risingSet = new Set(rising.map(r => r.keyword));
     
     container.innerHTML = trending.map((t, i) => {
       const isRising = risingSet.has(t.keyword);
       return `
-        <div class="kwi-trending-item" onclick="kwiTrendingClick('${t.keyword.replace(/'/g,"\\'")}')">
+        <div class="kwi-trending-item" onclick="kwiTrendingClick('${escapeForSingleQuotedJs(t.keyword)}')">
           <div class="kwi-trending-rank">${i + 1}</div>
           <div class="kwi-trending-keyword">${t.keyword}${isRising ? ' 🔥' : ''}</div>
           <div class="kwi-trending-mentions">${parseInt(t.mentions).toLocaleString()}</div>
@@ -12278,13 +12389,12 @@ grmClockTick();
   }
 
   window.kwiTrendingClick = function(keyword) {
-    kwiSetMode('search');
-    document.getElementById('kwiInput').value = keyword;
     kwiDoSearch(keyword);
   };
 
   // ── Load trending keywords (default view) ─────────────────────────────────
   async function kwiLoadTrending() {
+    const requestId = ++kwiListRequestId;
     kwiSetLoading(true);
     document.getElementById('kwiChip').classList.remove('visible');
     
@@ -12301,8 +12411,9 @@ grmClockTick();
         fetch(trendingUrl),
         fetch(risingUrl)
       ]);
-      const trending = await trendingRes.json();
-      const rising   = await risingRes.json();
+      const trending = normalizeArrayPayload(await trendingRes.json());
+      const rising   = normalizeArrayPayload(await risingRes.json());
+      if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
       
       renderTrendingList(trending, rising);
       
@@ -12310,11 +12421,12 @@ grmClockTick();
       document.getElementById('kwiFooterText').textContent = 
         `${locationLabel} · last ${kwiDays} days`;
     } catch (err) {
+      if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
       console.warn('[kwi] trending load error:', err.message);
       document.getElementById('kwiTrendingList').innerHTML = 
         '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">Failed to load trends</div>';
     } finally {
-      kwiSetLoading(false);
+      if (requestId === kwiListRequestId && kwiMode === 'trending') kwiSetLoading(false);
     }
   }
 
@@ -12330,21 +12442,25 @@ grmClockTick();
 
   window.kwiGraphOnInput = async function(val) {
     const ac = document.getElementById('kwiGraphAC');
-    if (!val || val.length < 2) {
+    const q = val.trim();
+    const requestId = ++kwiGraphAcRequestId;
+    if (!q || q.length < 2) {
       ac.classList.remove('open');
       kwiGraphAcItems = [];
+      kwiGraphAcIndex = -1;
       return;
     }
     
     try {
-      const res = await fetch(`https://earth-wjr6.onrender.com/api/keywords/autocomplete?q=${encodeURIComponent(val)}`);
-      const items = await res.json();
+      const res = await fetch(`https://earth-wjr6.onrender.com/api/keywords/autocomplete?q=${encodeURIComponent(q)}`);
+      const items = normalizeKeywordList(await res.json());
+      if (requestId !== kwiGraphAcRequestId) return;
       kwiGraphAcItems = items.slice(0, 8);
       kwiGraphAcIndex = -1;
       
       if (kwiGraphAcItems.length) {
-        ac.innerHTML = kwiGraphAcItems.map((k, i) => 
-          `<div class="kwi-graph-ac-item" onclick="kwiGraphAddKeyword('${k.keyword}')">${k.keyword}</div>`
+        ac.innerHTML = kwiGraphAcItems.map((keyword, i) => 
+          `<div class="kwi-graph-ac-item${i === kwiGraphAcIndex ? ' selected' : ''}" onmousedown="kwiGraphAddKeyword('${escapeForSingleQuotedJs(keyword)}')">${keyword}</div>`
         ).join('');
         ac.classList.add('open');
       } else {
@@ -12355,17 +12471,22 @@ grmClockTick();
     }
   };
 
+  window.kwiGraphSubmit = function() {
+    const ac = document.getElementById('kwiGraphAC');
+    if (kwiGraphAcIndex >= 0 && kwiGraphAcItems[kwiGraphAcIndex]) {
+      kwiGraphAddKeyword(kwiGraphAcItems[kwiGraphAcIndex]);
+    } else {
+      const val = document.getElementById('kwiGraphInput').value.trim();
+      if (val) kwiGraphAddKeyword(val);
+    }
+    ac.classList.remove('open');
+  };
+
   window.kwiGraphOnKey = function(e) {
     const ac = document.getElementById('kwiGraphAC');
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (kwiGraphAcIndex >= 0 && kwiGraphAcItems[kwiGraphAcIndex]) {
-        kwiGraphAddKeyword(kwiGraphAcItems[kwiGraphAcIndex].keyword);
-      } else {
-        const val = document.getElementById('kwiGraphInput').value.trim();
-        if (val) kwiGraphAddKeyword(val);
-      }
-      ac.classList.remove('open');
+      kwiGraphSubmit();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       kwiGraphAcIndex = Math.min(kwiGraphAcIndex + 1, kwiGraphAcItems.length - 1);
@@ -12391,20 +12512,20 @@ grmClockTick();
     if (kwiGraphKeywords.length >= 8) return; // Max 8 keywords
     
     const color = GRAPH_COLORS[kwiGraphKeywords.length % GRAPH_COLORS.length];
-    kwiGraphKeywords.push({ keyword, color, data: null });
+    kwiGraphKeywords.push({ keyword, color, data: [] });
     
     document.getElementById('kwiGraphInput').value = '';
     document.getElementById('kwiGraphAC').classList.remove('open');
     
     renderGraphChips();
     await fetchGraphData(keyword);
-    kwiGraphRender();
+    scheduleKwiGraphRender();
   };
 
   window.kwiGraphRemoveKeyword = function(keyword) {
     kwiGraphKeywords = kwiGraphKeywords.filter(k => k.keyword !== keyword);
     renderGraphChips();
-    kwiGraphRender();
+    scheduleKwiGraphRender();
   };
 
   function renderGraphChips() {
@@ -12413,7 +12534,7 @@ grmClockTick();
       <div class="kwi-graph-chip">
         <div class="kwi-graph-chip-dot" style="background:${k.color}"></div>
         <span>${k.keyword}</span>
-        <span class="kwi-graph-chip-x" onclick="kwiGraphRemoveKeyword('${k.keyword}')">✕</span>
+        <span class="kwi-graph-chip-x" onclick="kwiGraphRemoveKeyword('${escapeForSingleQuotedJs(k.keyword)}')">✕</span>
       </div>
     `).join('');
   }
@@ -12425,7 +12546,7 @@ grmClockTick();
         url += `&about_country=${kwiLocationCountry.iso}`;
       }
       const res = await fetch(url);
-      const data = await res.json();
+      const data = normalizeTrendSeries(await res.json());
       
       const entry = kwiGraphKeywords.find(k => k.keyword === keyword);
       if (entry) entry.data = data;
@@ -12441,16 +12562,18 @@ grmClockTick();
     
     // Refetch all data
     await Promise.all(kwiGraphKeywords.map(k => fetchGraphData(k.keyword)));
-    kwiGraphRender();
+    scheduleKwiGraphRender();
   };
 
   function kwiGraphRender() {
     const canvas = document.getElementById('kwiGraphCanvas');
+    if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const wrap = canvas.parentElement;
     
     // Set canvas size
     const rect = wrap.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
@@ -12473,7 +12596,11 @@ grmClockTick();
       </div>
     `).join('');
     
-    if (!kwiGraphKeywords.length || !kwiGraphKeywords.some(k => k.data)) {
+    kwiGraphKeywords.forEach(k => {
+      k.data = normalizeTrendSeries(k.data);
+    });
+
+    if (!kwiGraphKeywords.length || !kwiGraphKeywords.some(k => k.data.length)) {
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
       ctx.font = '12px system-ui';
       ctx.textAlign = 'center';
@@ -12485,7 +12612,7 @@ grmClockTick();
     let maxVal = 0;
     let allDates = [];
     kwiGraphKeywords.forEach(k => {
-      if (!k.data) return;
+      if (!k.data.length) return;
       k.data.forEach(d => {
         maxVal = Math.max(maxVal, d.mentions);
         if (!allDates.includes(d.date)) allDates.push(d.date);
@@ -12528,9 +12655,10 @@ grmClockTick();
     // Draw X axis labels
     ctx.textAlign = 'center';
     const labelStep = Math.ceil(allDates.length / 6);
+    const xDivisor = Math.max(1, allDates.length - 1);
     allDates.forEach((date, i) => {
       if (i % labelStep === 0 || i === allDates.length - 1) {
-        const x = PAD.left + (i / (allDates.length - 1)) * chartW;
+        const x = PAD.left + (i / xDivisor) * chartW;
         const d = new Date(date);
         ctx.fillText(d.toLocaleDateString('en-US', {month:'short', day:'numeric'}), x, H - 8);
       }
@@ -12538,7 +12666,7 @@ grmClockTick();
     
     // Draw lines for each keyword
     kwiGraphKeywords.forEach(k => {
-      if (!k.data || !k.data.length) return;
+      if (!k.data.length) return;
       
       ctx.strokeStyle = k.color;
       ctx.lineWidth = 2;
@@ -12548,7 +12676,7 @@ grmClockTick();
       
       k.data.forEach((d, i) => {
         const dateIdx = allDates.indexOf(d.date);
-        const x = PAD.left + (dateIdx / (allDates.length - 1)) * chartW;
+        const x = PAD.left + (dateIdx / xDivisor) * chartW;
         const y = PAD.top + chartH - (d.mentions / maxVal) * chartH;
         
         if (i === 0) ctx.moveTo(x, y);
@@ -12561,7 +12689,7 @@ grmClockTick();
       ctx.fillStyle = k.color;
       k.data.forEach((d, i) => {
         const dateIdx = allDates.indexOf(d.date);
-        const x = PAD.left + (dateIdx / (allDates.length - 1)) * chartW;
+        const x = PAD.left + (dateIdx / xDivisor) * chartW;
         const y = PAD.top + chartH - (d.mentions / maxVal) * chartH;
         
         ctx.beginPath();
@@ -12572,40 +12700,75 @@ grmClockTick();
   }
 
   // Initialize with trending keywords on page load
-  setTimeout(kwiLoadTrending, 1500);
+  requestAnimationFrame(() => {
+    if (kwiMode === 'trending') kwiLoadTrending();
+  });
 
   async function kwiLoad() {
     if (!kwiKeyword) return;
+    const requestId = ++kwiListRequestId;
+    const activeKeyword = kwiKeyword;
+    const activeView = kwiView;
+    const activeDays = kwiDays;
     kwiSetLoading(true);
 
     try {
-      if (kwiView === 'bar') {
+      if (activeView === 'bar') {
         // Fetch top co-occurring keywords for bar chart
         const [topRes, coRes] = await Promise.all([
-          fetch(`https://earth-wjr6.onrender.com/api/keywords/top?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}&limit=1`),
-          fetch(`https://earth-wjr6.onrender.com/api/keywords/cooccurrence?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}&limit=12`)
+          fetch(`https://earth-wjr6.onrender.com/api/keywords/top?keyword=${encodeURIComponent(activeKeyword)}&days=${activeDays}&limit=1`),
+          fetch(`https://earth-wjr6.onrender.com/api/keywords/cooccurrence?keyword=${encodeURIComponent(activeKeyword)}&days=${activeDays}&limit=12`)
         ]);
-        const topData = await topRes.json();
-        const coData  = await coRes.json();
+        const topData = normalizeArrayPayload(await topRes.json());
+        const coData  = normalizeArrayPayload(await coRes.json());
+        if (
+          requestId !== kwiListRequestId ||
+          kwiMode !== 'search' ||
+          kwiKeyword !== activeKeyword ||
+          kwiView !== activeView ||
+          kwiDays !== activeDays
+        ) return;
         const total   = topData[0] ? parseInt(topData[0].total_mentions) : 0;
-        renderBars(kwiKeyword, total, coData);
+        renderBars(activeKeyword, total, coData);
         const d = new Date();
         document.getElementById('kwiFooterText').textContent =
           `${total.toLocaleString()} mentions · updated ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;
 
       } else {
         // Trend line chart
-        const r = await fetch(`https://earth-wjr6.onrender.com/api/keywords/trend?keyword=${encodeURIComponent(kwiKeyword)}&days=${kwiDays}`);
-        const data = await r.json();
+        const r = await fetch(`https://earth-wjr6.onrender.com/api/keywords/trend?keyword=${encodeURIComponent(activeKeyword)}&days=${activeDays}`);
+        const data = normalizeTrendSeries(await r.json());
+        if (
+          requestId !== kwiListRequestId ||
+          kwiMode !== 'search' ||
+          kwiKeyword !== activeKeyword ||
+          kwiView !== activeView ||
+          kwiDays !== activeDays
+        ) return;
         renderTrend(data);
         const total = data.reduce((s, d) => s + parseInt(d.mentions), 0);
         document.getElementById('kwiFooterText').textContent =
-          `${total.toLocaleString()} mentions over ${kwiDays}d`;
+          `${total.toLocaleString()} mentions over ${activeDays}d`;
       }
     } catch (err) {
+      if (
+        requestId !== kwiListRequestId ||
+        kwiMode !== 'search' ||
+        kwiKeyword !== activeKeyword ||
+        kwiView !== activeView ||
+        kwiDays !== activeDays
+      ) return;
       console.warn('[kwi] load error:', err.message);
     } finally {
-      kwiSetLoading(false);
+      if (
+        requestId === kwiListRequestId &&
+        kwiMode === 'search' &&
+        kwiKeyword === activeKeyword &&
+        kwiView === activeView &&
+        kwiDays === activeDays
+      ) {
+        kwiSetLoading(false);
+      }
     }
   }
 
@@ -12626,7 +12789,7 @@ grmClockTick();
     container.innerHTML = rows.map(row => {
       const pct = Math.round((row.count / maxCount) * 100);
       const col = row.isPrimary ? 'linear-gradient(90deg,#4a9eff,#7bc8ff)' : 'linear-gradient(90deg,rgba(74,158,255,0.5),rgba(123,200,255,0.5))';
-      return `<div class="kwi-bar-row" onclick="kwiBarClick('${row.label.replace(/'/g,"\'")}')">
+      return `<div class="kwi-bar-row" onclick="kwiBarClick('${escapeForSingleQuotedJs(row.label)}')">
         <div class="kwi-bar-label" title="${row.label}">${row.label}</div>
         <div class="kwi-bar-track">
           <div class="kwi-bar-fill" style="width:${pct}%;background:${col};"></div>
@@ -12649,6 +12812,7 @@ grmClockTick();
     const wrap = document.getElementById('kwiCanvasWrap');
     wrap.style.display = 'block';
     const canvas = document.getElementById('kwiCanvas');
+    const series = normalizeTrendSeries(data);
 
     // Size canvas to wrapper
     const W = wrap.clientWidth  || 400;
@@ -12663,10 +12827,18 @@ grmClockTick();
 
     ctx.clearRect(0, 0, W, H);
 
-    const values = data.map(d => parseInt(d.mentions));
+    if (!series.length) {
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = '12px Chakra Petch, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('No keyword activity found for this range', W / 2, H / 2);
+      return;
+    }
+
+    const values = series.map(d => parseInt(d.mentions));
     const maxV   = Math.max(...values, 1);
     const minV   = 0;
-    const n      = data.length;
+    const n      = series.length;
 
     const xOf = i  => PAD.left + (i / Math.max(n - 1, 1)) * cW;
     const yOf = v  => PAD.top  + cH - ((v - minV) / (maxV - minV)) * cH;
@@ -12693,7 +12865,7 @@ grmClockTick();
     ctx.textAlign = 'center';
     const step = Math.max(1, Math.floor(n / 5));
     for (let i = 0; i < n; i += step) {
-      const d = new Date(data[i].date);
+      const d = new Date(series[i].date);
       const label = `${d.getMonth()+1}/${d.getDate()}`;
       ctx.fillText(label, xOf(i), H - PAD.bottom + 14);
     }
