@@ -2,6 +2,16 @@
 const pool = require("./db");
 const { rankArticles } = require("./priorityEngine");
 
+function clampPositiveInt(value, fallback) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getCandidateLimit(limit, offset) {
+  const requested = Math.max(limit + offset, limit, 1);
+  return Math.min(Math.max(requested * 25, 400), 2500);
+}
+
 const ARTICLE_FIELDS = `
   a.id,
   a.source_id,
@@ -32,6 +42,10 @@ const ARTICLE_FIELDS = `
   COALESCE(SUM(COALESCE(stw.weight, ystw.weight, 0)), 0) AS "tagWeightSum"
 `;
 
+const ARTICLE_GROUP_BY = `
+  a.id, ns.id, ys.id, a.language, co.iso_code
+`;
+
 const ARTICLE_JOINS = `
   LEFT JOIN news_sources ns      ON ns.id = a.source_id
   LEFT JOIN youtube_sources ys   ON ys.id = a.youtube_source_id
@@ -46,32 +60,56 @@ const ARTICLE_JOINS = `
 `;
 
 // National feed
-async function getRankedArticles(countryId) {
+async function getRankedArticles(countryId, options = {}) {
+  const limit = clampPositiveInt(options.limit, 50);
+  const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
+  const candidateLimit = getCandidateLimit(limit, offset);
+
   const { rows } = await pool.query(`
+    WITH candidate_articles AS (
+      SELECT a.id
+      FROM news_articles a
+      WHERE a.country_id = $1
+        AND a.city_id IS NULL
+      ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+      LIMIT $2
+    )
     SELECT ${ARTICLE_FIELDS}
-    FROM news_articles a
+    FROM candidate_articles ca
+    JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
-    WHERE a.country_id = $1
-      AND a.city_id IS NULL  
-    GROUP BY a.id, ns.id, ys.id, a.language, co.iso_code
-  `, [countryId]);
+    GROUP BY ${ARTICLE_GROUP_BY}
+  `, [countryId, candidateLimit]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
-  return rankArticles(rows, maxIntensity);
+  const ranked = rankArticles(rows, maxIntensity);
+  return ranked.slice(offset, offset + limit);
 }
 
 // City feed
-async function getRankedCityArticles(cityId) {
+async function getRankedCityArticles(cityId, options = {}) {
+  const limit = clampPositiveInt(options.limit, 50);
+  const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
+  const candidateLimit = getCandidateLimit(limit, offset);
+
   const { rows } = await pool.query(`
+    WITH candidate_articles AS (
+      SELECT a.id
+      FROM news_articles a
+      WHERE a.city_id = $1
+      ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+      LIMIT $2
+    )
     SELECT ${ARTICLE_FIELDS}
-    FROM news_articles a
+    FROM candidate_articles ca
+    JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
-    WHERE a.city_id = $1
-    GROUP BY a.id, ns.id, ys.id, a.language, co.iso_code
-  `, [cityId]);
+    GROUP BY ${ARTICLE_GROUP_BY}
+  `, [cityId, candidateLimit]);
 
   const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
-  return rankArticles(rows, maxIntensity, { skipCityPenalty: true });
+  const ranked = rankArticles(rows, maxIntensity, { skipCityPenalty: true });
+  return ranked.slice(offset, offset + limit);
 }
 
 module.exports = { getRankedArticles, getRankedCityArticles };

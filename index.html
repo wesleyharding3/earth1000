@@ -8379,6 +8379,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // ── Sort ──
         const sortOptions = panel.querySelectorAll(".panelSortOption");
         let currentSort = "local";
+        let initialLoadStarted = false;
+
+        function resetPanelFeed() {
+          allArticles = [];
+          offset = 0;
+          hasMore = true;
+          track.innerHTML = skeletonCards(8);
+        }
+
+        function startPanelFeedLoad() {
+          initialLoadStarted = true;
+          resetPanelFeed();
+          loadMore();
+        }
+
         sortOptions.forEach(opt => {
           opt.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -8387,9 +8402,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             currentSort = newSort;
             sortOptions.forEach(o => o.classList.remove("active"));
             opt.classList.add("active");
-            allArticles = []; offset = 0; hasMore = true;
-            track.innerHTML = skeletonCards(8);
-            loadMore();
+            startPanelFeedLoad();
           });
         });
 
@@ -8429,13 +8442,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   tagFilterBtn.classList.toggle("active", currentTag !== null);
                   tagDropOpen = false;
                   tagDropdown.classList.remove("open");
-                  allArticles = []; offset = 0; hasMore = true;
-                  track.innerHTML = skeletonCards(8);
-                  loadMore();
+                  startPanelFeedLoad();
                 });
               });
+              startPanelFeedLoad();
             })
-            .catch(err => console.error("Failed to load tags:", err));
+            .catch(err => {
+              console.error("Failed to load tags:", err);
+              if (!initialLoadStarted) startPanelFeedLoad();
+            });
 
         tagFilterBtn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -8592,7 +8607,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             })
             .catch(err => { console.error("Panel article load error:", err); loading = false; renderCards(); });
         }
-        loadMore();
 
         viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
         viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });

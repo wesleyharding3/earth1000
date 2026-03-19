@@ -114,8 +114,8 @@ app.get("/api/news/city/:cityId", async (req, res) => {
       return res.json(rows);
     }
 
-    const ranked = await getRankedCityArticles(parseInt(req.params.cityId));
-    res.json(ranked.slice(offset, offset + limit));
+    const ranked = await getRankedCityArticles(parseInt(req.params.cityId), { limit, offset });
+    res.json(ranked);
   } catch (err) {
     console.error("City news error:", err.message);
     res.status(500).json({ error: "Failed to fetch city news" });
@@ -226,8 +226,8 @@ app.get("/api/news/country/:countryId", async (req, res) => {
       return res.json(rows);
     }
 
-    const ranked = await getRankedArticles(parseInt(req.params.countryId));
-    res.json(ranked.slice(offset, offset + limit));
+    const ranked = await getRankedArticles(parseInt(req.params.countryId), { limit, offset });
+    res.json(ranked);
   } catch (err) {
     console.error("Country news error:", err.message);
     res.status(500).json({ error: "Failed to fetch country news" });
