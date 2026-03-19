@@ -10756,7 +10756,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         this.scene = scene; this.radius = radius;
         this.group = new THREE.Group();
         this.coastMaterial = this.makeBoundaryMaterial(0.99, 1.0);
-        this.borderMaterial = this.makeBoundaryMaterial(0.92, 0.96);
+        this.borderMaterial = this.makeBoundaryMaterial(0.88, 0.92);
+        this.shellAltitudes = [0.010, 0.013];
         this.scene.add(this.group);
       }
 
@@ -10788,19 +10789,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
             varying float vDot;
             void main() {
               float facing = clamp(vDot, 0.0, 1.0);
-              float visibility = smoothstep(0.0, 0.06, facing);
-              float horizon = 1.0 - smoothstep(0.08, 0.24, facing);
-              float haloBand = smoothstep(0.04, 0.22, facing) * (1.0 - smoothstep(0.20, 0.56, facing));
-              float centerMask = smoothstep(0.18, 0.82, facing);
-              float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.016 * intensity;
+              float visibility = smoothstep(0.0, 0.05, facing);
+              float horizon = 1.0 - smoothstep(0.08, 0.26, facing);
+              float haloBand = smoothstep(0.04, 0.22, facing) * (1.0 - smoothstep(0.22, 0.64, facing));
+              float centerMask = smoothstep(0.12, 0.88, facing);
+              float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.018 * intensity;
 
-              vec3 whiteCore = mix(color, vec3(1.0), 0.78) * (0.92 + 0.22 * centerMask);
-              vec3 edgeHalo = rimColor * (1.28 * horizon + 0.18 * haloBand)
-                            + glowColor * (0.88 * haloBand + 0.20 * horizon);
+              vec3 whiteCore = mix(color, vec3(1.0), 0.72) * (0.94 + 0.24 * centerMask);
+              vec3 edgeHalo = rimColor * (1.55 * horizon + 0.34 * haloBand)
+                            + glowColor * (1.18 * haloBand + 0.30 * horizon);
               vec3 finalColor = (whiteCore + edgeHalo) * intensity;
-              finalColor += shimmer * (rimColor * 0.38 + glowColor * 0.46 + vec3(1.0) * 0.22);
+              finalColor += shimmer * (rimColor * 0.40 + glowColor * 0.46 + vec3(1.0) * 0.20);
 
-              float alpha = opacity * visibility * clamp(0.88 + haloBand * 0.12 + horizon * 0.08, 0.0, 1.0);
+              float alpha = opacity * visibility * clamp(0.82 + haloBand * 0.22 + horizon * 0.18, 0.0, 1.0);
               if (alpha < 0.01) discard;
               gl_FragColor = vec4(finalColor, alpha);
             }`
@@ -10839,17 +10840,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return result;
       }
 
-      buildEdgeSegments(edgeCoords) {
+      buildEdgeSegments(edgeCoords, altitudes = this.shellAltitudes) {
         const positions = [];
         edgeCoords.forEach(([start, end]) => {
           const denseEdge = [...this.densify([start, end], 5), end];
-          for (let i = 1; i < denseEdge.length; i++) {
-            const [lon0, lat0] = denseEdge[i - 1];
-            const [lon1, lat1] = denseEdge[i];
-            const a = this.latLonToVector3(lat0, lon0);
-            const b = this.latLonToVector3(lat1, lon1);
-            positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-          }
+          altitudes.forEach(altitude => {
+            for (let i = 1; i < denseEdge.length; i++) {
+              const [lon0, lat0] = denseEdge[i - 1];
+              const [lon1, lat1] = denseEdge[i];
+              const a = this.latLonToVector3(lat0, lon0, altitude);
+              const b = this.latLonToVector3(lat1, lon1, altitude);
+              positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+            }
+          });
         });
         return positions;
       }
