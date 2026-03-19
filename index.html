@@ -4671,7 +4671,20 @@
         <div class="sidebarDivider"></div>
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Appearance</div>
-          <div class="sidebarPlaceholder">More options coming soon</div>
+          <div class="layerList">
+            <div class="layerOpt" id="biomeOverlayToggleCountry">
+              <div class="layerDot"></div>
+              <span class="layerLabel">Natural Surface Overlay</span>
+            </div>
+          </div>
+          <div class="sliderRow" style="margin-top:10px;">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Overlay Opacity</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValCountry">36%</span>
+            </div>
+            <input class="settingsSlider" type="range" id="biomeOverlayOpacityCountry"
+                   min="0" max="1" step="0.01" value="0.36" />
+          </div>
         </div>
         <div class="sidebarDivider"></div>
         <div class="sidebarSection">
@@ -4744,6 +4757,24 @@
             </div>
             <input class="settingsSlider" type="range" id="ambientSliderCity"
                    min="0" max="0.0020" step="0.00005" value="0.0004" />
+          </div>
+        </div>
+        <div class="sidebarDivider"></div>
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">Appearance</div>
+          <div class="layerList">
+            <div class="layerOpt" id="biomeOverlayToggleCity">
+              <div class="layerDot"></div>
+              <span class="layerLabel">Natural Surface Overlay</span>
+            </div>
+          </div>
+          <div class="sliderRow" style="margin-top:10px;">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Overlay Opacity</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValCity">36%</span>
+            </div>
+            <input class="settingsSlider" type="range" id="biomeOverlayOpacityCity"
+                   min="0" max="1" step="0.01" value="0.36" />
           </div>
         </div>
         <div class="sidebarDivider"></div>
@@ -5392,6 +5423,90 @@ function computeCityTiers(cities) {
       canvas.height = earthTexture.image.height;
       ctx.drawImage(earthTexture.image, 0, 0);
       const imageData = ctx.getImageData(0,0,canvas.width,canvas.height).data;
+
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h = 0, s = 0;
+        const l = (max + min) / 2;
+        const d = max - min;
+        if (d !== 0) {
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = ((g - b) / d + (g < b ? 6 : 0)); break;
+            case g: h = ((b - r) / d + 2); break;
+            default: h = ((r - g) / d + 4); break;
+          }
+          h /= 6;
+        }
+        return [h, s, l];
+      }
+
+      function classifySurfaceColor(r, g, b, latDeg) {
+        const [h, s, l] = rgbToHsl(r, g, b);
+        const absLat = Math.abs(latDeg);
+
+        if ((absLat > 68 && l > 0.55) || (l > 0.80 && s < 0.16)) return [245, 248, 255, 150];
+        if (b > r * 1.08 && b > g * 1.02) return [44, 88, 168, 132];
+        if (l < 0.25 && s < 0.16) return [78, 88, 62, 126];
+        if ((h > 0.08 && h < 0.16 && s > 0.18 && l > 0.34) || (r > 140 && g > 115 && b < 100)) return [196, 168, 102, 138];
+        if (g > r * 1.05 && g > b * 1.15) {
+          if (g > 95 && l < 0.28) return [22, 92, 46, 144];
+          if (g > 90 && l < 0.42) return [56, 128, 66, 136];
+          return [132, 184, 88, 128];
+        }
+        if (s < 0.14 && l < 0.42) return [92, 86, 62, 124];
+        return [116, 150, 88, 116];
+      }
+
+      const surfaceCanvas = document.createElement("canvas");
+      surfaceCanvas.width = canvas.width;
+      surfaceCanvas.height = canvas.height;
+      const surfaceCtx = surfaceCanvas.getContext("2d");
+      const surfaceImg = surfaceCtx.createImageData(surfaceCanvas.width, surfaceCanvas.height);
+
+      for (let py = 0; py < surfaceCanvas.height; py++) {
+        const latDeg = 90 - (py / surfaceCanvas.height) * 180;
+        for (let px = 0; px < surfaceCanvas.width; px++) {
+          const idx = (py * surfaceCanvas.width + px) * 4;
+          const r = imageData[idx];
+          const g = imageData[idx + 1];
+          const b = imageData[idx + 2];
+          const [sr, sg, sb, sa] = classifySurfaceColor(r, g, b, latDeg);
+          surfaceImg.data[idx] = sr;
+          surfaceImg.data[idx + 1] = sg;
+          surfaceImg.data[idx + 2] = sb;
+          surfaceImg.data[idx + 3] = sa;
+        }
+      }
+
+      surfaceCtx.putImageData(surfaceImg, 0, 0);
+      const surfaceTexture = new THREE.CanvasTexture(surfaceCanvas);
+      surfaceTexture.needsUpdate = true;
+      const surfaceGeo = new THREE.SphereGeometry(radius + 0.003, 64, 32);
+      const surfaceMat = new THREE.MeshBasicMaterial({
+        map: surfaceTexture,
+        transparent: true,
+        opacity: 0.36,
+        depthWrite: false,
+        side: THREE.FrontSide
+      });
+      const surfaceOverlayMesh = new THREE.Mesh(surfaceGeo, surfaceMat);
+      surfaceOverlayMesh.visible = false;
+      scene.add(surfaceOverlayMesh);
+
+      window.__surfaceOverlayEnabled = false;
+      window.__surfaceOverlayOpacity = 0.36;
+
+      function syncSurfaceOverlayVisibility() {
+        const mode = window.__currentViewMode || currentViewMode;
+        const allowed = mode === "country" || mode === "city" || mode === "regions";
+        surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
+        surfaceMat.opacity = window.__surfaceOverlayOpacity ?? 0.36;
+      }
+
+      window.__syncSurfaceOverlayVisibility = syncSurfaceOverlayVisibility;
 
       for(let i=0;i<earthPointCount;i++){
         const u=Math.random(), v=Math.random();
@@ -6640,6 +6755,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (v) v.textContent = formatSpeed(parseFloat(document.getElementById("ambientSlider").value));
       });
 
+      const biomeOverlayToggles = [
+        document.getElementById("biomeOverlayToggleCountry"),
+        document.getElementById("biomeOverlayToggleCity")
+      ].filter(Boolean);
+      const biomeOverlaySliders = [
+        document.getElementById("biomeOverlayOpacityCountry"),
+        document.getElementById("biomeOverlayOpacityCity")
+      ].filter(Boolean);
+      const biomeOverlayVals = [
+        document.getElementById("biomeOverlayOpacityValCountry"),
+        document.getElementById("biomeOverlayOpacityValCity")
+      ].filter(Boolean);
+
+      function syncBiomeOverlayControls() {
+        biomeOverlayToggles.forEach(el => el.classList.toggle("active", !!window.__surfaceOverlayEnabled));
+        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.36; });
+        biomeOverlayVals.forEach(el => {
+          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.36) * 100) + "%";
+        });
+      }
+
+      biomeOverlayToggles.forEach(el => {
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          window.__surfaceOverlayEnabled = !window.__surfaceOverlayEnabled;
+          syncBiomeOverlayControls();
+          if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
+        });
+      });
+
+      biomeOverlaySliders.forEach(el => {
+        el.addEventListener("input", () => {
+          window.__surfaceOverlayOpacity = parseFloat(el.value);
+          syncBiomeOverlayControls();
+          if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
+        });
+        el.addEventListener("pointerdown", (e) => e.stopPropagation());
+      });
+
+      syncBiomeOverlayControls();
+
       // Ocean-specific controls
       const oceanOpacitySlider = document.getElementById("oceanOpacitySlider");
       const oceanOpacityVal    = document.getElementById("oceanOpacityVal");
@@ -7542,6 +7698,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (window.__syncOceanVisibility) window.__syncOceanVisibility();
           if (window.__syncTransportationVisibility) window.__syncTransportationVisibility();
           if (window.__syncRegionsVisibility) window.__syncRegionsVisibility();
+          if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
           viewDropOpen = false;
           viewDropdown.classList.remove("open");
           viewToggle.classList.remove("active");
