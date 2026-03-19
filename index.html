@@ -12858,12 +12858,16 @@ grmClockTick();
     try {
       if (activeView === 'bar') {
         // Fetch top co-occurring keywords for bar chart
-        const [topRes, coRes] = await Promise.all([
+        const [topRes, coRes] = await Promise.allSettled([
           fetch(`https://earth-wjr6.onrender.com/api/keywords/top?keyword=${encodeURIComponent(activeKeyword)}&days=${activeDays}&limit=1`),
           fetch(`https://earth-wjr6.onrender.com/api/keywords/cooccurrence?keyword=${encodeURIComponent(activeKeyword)}&days=${activeDays}&limit=12`)
         ]);
-        const topData = normalizeArrayPayload(await topRes.json());
-        const coData  = normalizeArrayPayload(await coRes.json());
+        const topData = topRes.status === 'fulfilled' && topRes.value.ok
+          ? normalizeArrayPayload(await topRes.value.json())
+          : [];
+        const coData = coRes.status === 'fulfilled' && coRes.value.ok
+          ? normalizeArrayPayload(await coRes.value.json())
+          : [];
         if (
           requestId !== kwiListRequestId ||
           kwiMode !== 'search' ||

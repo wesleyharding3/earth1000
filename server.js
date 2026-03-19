@@ -1161,6 +1161,132 @@ app.get("/api/commodities", (req, res) => {
    Keyword Routes
 ========================================= */
 
+const KEYWORD_ROUTE_TTLS = Object.freeze({
+  trending: 90 * 1000,
+  rising: 90 * 1000,
+  autocomplete: 30 * 1000,
+  top: 60 * 1000,
+  trend: 60 * 1000,
+  articles: 45 * 1000,
+});
+
+const keywordResponseCache = new Map();
+const keywordInFlight = new Map();
+const keywordCountryIdCache = new Map();
+
+function clampQueryInt(value, fallback, min, max) {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function normalizeLowerString(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized || null;
+}
+
+function appendKeywordCountryClauses(clauses, params, {
+  sourceCountryId = null,
+  aboutCountryId = null,
+  defaultGlobal = false,
+  alias = "",
+} = {}) {
+  const prefix = alias ? `${alias}.` : "";
+  if (sourceCountryId != null || aboutCountryId != null) {
+    if (sourceCountryId != null) {
+      params.push(sourceCountryId);
+      clauses.push(`${prefix}source_country_id = $${params.length}`);
+    }
+    if (aboutCountryId != null) {
+      params.push(aboutCountryId);
+      clauses.push(`${prefix}about_country_id = $${params.length}`);
+    }
+    return;
+  }
+
+  if (defaultGlobal) {
+    clauses.push(`${prefix}source_country_id IS NULL`);
+    clauses.push(`${prefix}about_country_id IS NULL`);
+  }
+}
+
+function makeKeywordCacheKey(route, parts) {
+  return `${route}:${parts.join(":")}`;
+}
+
+async function getCachedKeywordPayload(cacheKey, ttlMs, loader) {
+  const now = Date.now();
+  const cached = keywordResponseCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.value;
+  if (keywordInFlight.has(cacheKey)) return keywordInFlight.get(cacheKey);
+
+  const pending = (async () => {
+    try {
+      const value = await loader();
+      keywordResponseCache.set(cacheKey, {
+        value,
+        expiresAt: Date.now() + ttlMs,
+      });
+      return value;
+    } finally {
+      keywordInFlight.delete(cacheKey);
+    }
+  })();
+
+  keywordInFlight.set(cacheKey, pending);
+  return pending;
+}
+
+function setKeywordCacheHeaders(res, ttlMs) {
+  res.set("Cache-Control", `public, max-age=${Math.max(0, Math.floor(ttlMs / 1000))}`);
+}
+
+function pruneKeywordRouteCache() {
+  const now = Date.now();
+  for (const [key, entry] of keywordResponseCache.entries()) {
+    if (entry.expiresAt <= now) keywordResponseCache.delete(key);
+  }
+}
+
+setInterval(pruneKeywordRouteCache, 10 * 60 * 1000).unref?.();
+
+async function resolveCountryIdByIso(rawIso) {
+  const iso = normalizeLowerString(rawIso);
+  if (!iso) return null;
+  if (keywordCountryIdCache.has(iso)) return keywordCountryIdCache.get(iso);
+
+  const { rows } = await pool.query(
+    `SELECT id
+     FROM countries
+     WHERE LOWER(COALESCE(iso_code, '')) = $1
+        OR LOWER(COALESCE(iso_code_2, '')) = $1
+     LIMIT 1`,
+    [iso]
+  );
+
+  const id = rows[0]?.id ?? null;
+  keywordCountryIdCache.set(iso, id);
+  return id;
+}
+
+async function resolveKeywordCountryFilters(sourceCountry, aboutCountry) {
+  const requestedSource = normalizeLowerString(sourceCountry);
+  const requestedAbout = normalizeLowerString(aboutCountry);
+  const [sourceCountryId, aboutCountryId] = await Promise.all([
+    resolveCountryIdByIso(requestedSource),
+    resolveCountryIdByIso(requestedAbout),
+  ]);
+
+  return {
+    sourceCountryId,
+    aboutCountryId,
+    invalid:
+      (requestedSource && sourceCountryId == null) ||
+      (requestedAbout && aboutCountryId == null),
+  };
+}
+
 /* =========================================
    Keyword Intelligence API
 ========================================= */
@@ -1176,40 +1302,50 @@ app.get("/api/keywords/trending", async (req, res) => {
   } = req.query;
 
   try {
-    const params = [parseInt(days)];
-    let where = `WHERE date >= NOW() - ($1 || ' days')::INTERVAL
-                 AND source_country_id IS NULL AND about_country_id IS NULL`;
+    const daysInt = clampQueryInt(days, 7, 1, 365);
+    const limitInt = clampQueryInt(limit, 20, 1, 100);
+    const { sourceCountryId, aboutCountryId, invalid } =
+      await resolveKeywordCountryFilters(source_country, about_country);
 
-    // If filtering by country, query those specific rows instead
-    if (source_country || about_country) {
-      where = `WHERE date >= NOW() - ($1 || ' days')::INTERVAL`;
-      if (source_country) {
-        params.push(source_country.toLowerCase());
-        where += ` AND source_country_id = (SELECT id FROM countries WHERE LOWER(iso_code) = $${params.length} LIMIT 1)`;
-      }
-      if (about_country) {
-        params.push(about_country.toLowerCase());
-        where += ` AND about_country_id = (SELECT id FROM countries WHERE LOWER(iso_code) = $${params.length} LIMIT 1)`;
-      }
-    }
+    if (invalid) return res.json([]);
 
-    params.push(parseInt(limit));
-    const limitIdx = params.length;
+    const cacheKey = makeKeywordCacheKey("trending", [
+      daysInt,
+      limitInt,
+      sourceCountryId ?? "global",
+      aboutCountryId ?? "global",
+    ]);
 
-    const { rows } = await pool.query(
-      `SELECT
-         keyword,
-         SUM(total_count) AS mentions,
-         COUNT(DISTINCT date) AS days_active
-       FROM keyword_daily_stats
-       ${where}
-         AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword_daily_stats.keyword)
-       GROUP BY keyword
-       HAVING SUM(total_count) >= 3
-       ORDER BY mentions DESC
-       LIMIT $${limitIdx}`,
-      params
-    );
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
+    const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.trending, async () => {
+      const params = [daysInt];
+      const clauses = ["k.date >= CURRENT_DATE - $1::int"];
+      appendKeywordCountryClauses(clauses, params, {
+        sourceCountryId,
+        aboutCountryId,
+        defaultGlobal: true,
+        alias: "k",
+      });
+      params.push(limitInt);
+      const limitIdx = params.length;
+
+      const result = await pool.query(
+        `SELECT
+           k.keyword,
+           SUM(k.total_count)::bigint AS mentions,
+           COUNT(DISTINCT k.date)::int AS days_active
+         FROM keyword_daily_stats k
+         WHERE ${clauses.join("\n           AND ")}
+           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+         GROUP BY k.keyword
+         HAVING SUM(k.total_count) >= 3
+         ORDER BY mentions DESC, k.keyword ASC
+         LIMIT $${limitIdx}`,
+        params
+      );
+
+      return result.rows;
+    });
 
     res.json(rows);
   } catch (err) {
@@ -1225,43 +1361,86 @@ app.get("/api/keywords/rising", async (req, res) => {
     days          = 3,    // Recent window
     baseline_days = 14,   // Baseline comparison window
     limit         = 15,
+    source_country = null,
+    about_country  = null,
   } = req.query;
 
   try {
-    const { rows } = await pool.query(
-      `WITH recent AS (
-         SELECT keyword, SUM(total_count) AS recent_count
-         FROM keyword_daily_stats
-         WHERE date >= NOW() - ($1 || ' days')::INTERVAL
-           AND source_country_id IS NULL AND about_country_id IS NULL
-           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword_daily_stats.keyword)
-         GROUP BY keyword
-         HAVING SUM(total_count) >= 2
-       ),
-       baseline AS (
-         SELECT keyword, SUM(total_count) AS baseline_count
-         FROM keyword_daily_stats
-         WHERE date >= NOW() - ($2 || ' days')::INTERVAL
-           AND date < NOW() - ($1 || ' days')::INTERVAL
-           AND source_country_id IS NULL AND about_country_id IS NULL
-           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword_daily_stats.keyword)
-         GROUP BY keyword
-       )
-       SELECT
-         r.keyword,
-         r.recent_count,
-         COALESCE(b.baseline_count, 0) AS baseline_count,
-         CASE
-           WHEN COALESCE(b.baseline_count, 0) = 0 THEN r.recent_count * 10
-           ELSE ROUND((r.recent_count::numeric / NULLIF(b.baseline_count, 0)::numeric * ($2::numeric / $1::numeric)) * 100) / 100
-         END AS momentum
-       FROM recent r
-       LEFT JOIN baseline b ON b.keyword = r.keyword
-       WHERE r.recent_count >= 2
-       ORDER BY momentum DESC, r.recent_count DESC
-       LIMIT $3`,
-      [parseInt(days), parseInt(baseline_days), parseInt(limit)]
-    );
+    const daysInt = clampQueryInt(days, 3, 1, 90);
+    const baselineDaysInt = clampQueryInt(baseline_days, 14, daysInt + 1, 365);
+    const limitInt = clampQueryInt(limit, 15, 1, 100);
+    const { sourceCountryId, aboutCountryId, invalid } =
+      await resolveKeywordCountryFilters(source_country, about_country);
+
+    if (invalid) return res.json([]);
+
+    const cacheKey = makeKeywordCacheKey("rising", [
+      daysInt,
+      baselineDaysInt,
+      limitInt,
+      sourceCountryId ?? "global",
+      aboutCountryId ?? "global",
+    ]);
+
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
+    const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.rising, async () => {
+      const params = [daysInt, baselineDaysInt];
+      const recentClauses = ["k.date >= CURRENT_DATE - $1::int"];
+      const baselineClauses = [
+        "k.date >= CURRENT_DATE - ($1::int + $2::int)",
+        "k.date < CURRENT_DATE - $1::int",
+      ];
+
+      appendKeywordCountryClauses(recentClauses, params, {
+        sourceCountryId,
+        aboutCountryId,
+        defaultGlobal: true,
+        alias: "k",
+      });
+      appendKeywordCountryClauses(baselineClauses, params, {
+        sourceCountryId,
+        aboutCountryId,
+        defaultGlobal: true,
+        alias: "k",
+      });
+
+      params.push(limitInt);
+      const limitIdx = params.length;
+
+      const result = await pool.query(
+        `WITH recent AS (
+           SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
+           FROM keyword_daily_stats k
+           WHERE ${recentClauses.join("\n             AND ")}
+             AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+           GROUP BY k.keyword
+           HAVING SUM(k.total_count) >= 2
+         ),
+         baseline AS (
+           SELECT k.keyword, SUM(k.total_count)::bigint AS baseline_count
+           FROM keyword_daily_stats k
+           WHERE ${baselineClauses.join("\n             AND ")}
+             AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+           GROUP BY k.keyword
+         )
+         SELECT
+           r.keyword,
+           r.recent_count,
+           COALESCE(b.baseline_count, 0) AS baseline_count,
+           CASE
+             WHEN COALESCE(b.baseline_count, 0) = 0 THEN r.recent_count * 10
+             ELSE ROUND((r.recent_count::numeric / NULLIF(b.baseline_count, 0)::numeric * ($2::numeric / $1::numeric)) * 100) / 100
+           END AS momentum
+         FROM recent r
+         LEFT JOIN baseline b ON b.keyword = r.keyword
+         WHERE r.recent_count >= 2
+         ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
+         LIMIT $${limitIdx}`,
+        params
+      );
+
+      return result.rows;
+    });
 
     res.json(rows);
   } catch (err) {
@@ -1273,22 +1452,56 @@ app.get("/api/keywords/rising", async (req, res) => {
 // GET /api/keywords/autocomplete?q=clim
 // Returns up to 10 distinct keywords matching the prefix
 app.get("/api/keywords/autocomplete", async (req, res) => {
-  const q = (req.query.q || "").trim();
+  const q = normalizeLowerString(req.query.q) || "";
   if (q.length < 2) return res.json([]);
   try {
-    const { rows } = await pool.query(
-      `SELECT DISTINCT keyword
-       FROM article_keywords
-       WHERE keyword ILIKE $1
-         AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = article_keywords.keyword)
-       ORDER BY keyword ASC
-       LIMIT 10`,
-      [q + "%"]
-    );
-    res.json(rows.map(r => r.keyword));
+    const cacheKey = makeKeywordCacheKey("autocomplete", [q]);
+
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.autocomplete);
+    const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.autocomplete, async () => {
+      const result = await pool.query(
+        `SELECT DISTINCT LOWER(keyword) AS keyword
+         FROM article_keywords
+         WHERE LOWER(keyword) LIKE $1
+           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = LOWER(article_keywords.keyword))
+         ORDER BY keyword ASC
+         LIMIT 10`,
+        [`${q}%`]
+      );
+      return result.rows.map(r => r.keyword);
+    });
+
+    res.json(rows);
   } catch (err) {
     console.error("[keywords/autocomplete]", err.message);
     res.status(500).json({ error: "autocomplete failed" });
+  }
+});
+
+// GET /api/keywords/cooccurrence?keyword=climate&days=7&limit=12
+// Co-occurrence storage was intentionally removed, so keep this endpoint as a
+// fast empty response instead of letting the widget fail on a 404/500.
+app.get("/api/keywords/cooccurrence", async (req, res) => {
+  const keyword = normalizeLowerString(req.query.keyword);
+  const daysInt = clampQueryInt(req.query.days, 7, 1, 365);
+  const limitInt = clampQueryInt(req.query.limit, 12, 1, 50);
+  const cacheKey = makeKeywordCacheKey("cooccurrence-disabled", [
+    keyword || "none",
+    daysInt,
+    limitInt,
+  ]);
+
+  try {
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.autocomplete);
+    const rows = await getCachedKeywordPayload(
+      cacheKey,
+      KEYWORD_ROUTE_TTLS.autocomplete,
+      async () => []
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("[keywords/cooccurrence]", err.message);
+    res.status(500).json({ error: "cooccurrence failed" });
   }
 });
 
@@ -1306,33 +1519,55 @@ app.get("/api/keywords/top", async (req, res) => {
   if (!keyword) return res.status(400).json({ error: "keyword required" });
 
   try {
-    const params = [keyword.toLowerCase().trim(), parseInt(days)];
-    let   where  = `WHERE keyword = $1 AND date >= NOW() - ($2 || ' days')::INTERVAL`;
+    const normalizedKeyword = normalizeLowerString(keyword);
+    const daysInt = clampQueryInt(days, 7, 1, 365);
+    const limitInt = clampQueryInt(limit, 20, 1, 100);
+    const { sourceCountryId, aboutCountryId, invalid } =
+      await resolveKeywordCountryFilters(source_country, about_country);
 
-    if (source_country) {
-      params.push(source_country.toLowerCase());
-      where += ` AND source_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
-    }
-    if (about_country) {
-      params.push(about_country.toLowerCase());
-      where += ` AND about_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
-    }
+    if (!normalizedKeyword || invalid) return res.json([]);
 
-    const limitIdx = params.push(parseInt(limit));
-    const { rows } = await pool.query(
-      `SELECT
-         keyword,
-         SUM(total_count)          AS total_mentions,
-         SUM(language_group_count) AS language_groups,
-         MIN(date)                 AS first_seen,
-         MAX(date)                 AS last_seen
-       FROM keyword_daily_stats
-       ${where}
-       GROUP BY keyword
-       ORDER BY total_mentions DESC
-       LIMIT $${limitIdx}`,
-      params
-    );
+    const cacheKey = makeKeywordCacheKey("top", [
+      normalizedKeyword,
+      daysInt,
+      limitInt,
+      sourceCountryId ?? "any",
+      aboutCountryId ?? "any",
+    ]);
+
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.top);
+    const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.top, async () => {
+      const params = [normalizedKeyword, daysInt];
+      const clauses = [
+        "k.keyword = $1",
+        "k.date >= CURRENT_DATE - $2::int",
+      ];
+      appendKeywordCountryClauses(clauses, params, {
+        sourceCountryId,
+        aboutCountryId,
+        alias: "k",
+      });
+
+      params.push(limitInt);
+      const limitIdx = params.length;
+
+      const result = await pool.query(
+        `SELECT
+           k.keyword,
+           SUM(k.total_count)::bigint AS total_mentions,
+           SUM(k.language_group_count)::bigint AS language_groups,
+           MIN(k.date) AS first_seen,
+           MAX(k.date) AS last_seen
+         FROM keyword_daily_stats k
+         WHERE ${clauses.join("\n           AND ")}
+         GROUP BY k.keyword
+         ORDER BY total_mentions DESC
+         LIMIT $${limitIdx}`,
+        params
+      );
+
+      return result.rows;
+    });
 
     res.json(rows);
   } catch (err) {
@@ -1354,40 +1589,58 @@ app.get("/api/keywords/trend", async (req, res) => {
   if (!keyword) return res.status(400).json({ error: "keyword required" });
 
   try {
-    const params = [keyword.toLowerCase().trim(), parseInt(days)];
-    let   where  = `WHERE keyword = $1 AND date >= NOW() - ($2 || ' days')::INTERVAL`;
+    const normalizedKeyword = normalizeLowerString(keyword);
+    const daysInt = clampQueryInt(days, 30, 1, 365);
+    const { sourceCountryId, aboutCountryId, invalid } =
+      await resolveKeywordCountryFilters(source_country, about_country);
 
-    if (source_country) {
-      params.push(source_country.toLowerCase());
-      where += ` AND source_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
-    }
-    if (about_country) {
-      params.push(about_country.toLowerCase());
-      where += ` AND about_country_id = (SELECT id FROM countries WHERE LOWER(iso_code_2) = $${params.length})`;
-    }
+    if (!normalizedKeyword || invalid) return res.json([]);
 
-    const { rows } = await pool.query(
-      `WITH date_series AS (
-         SELECT generate_series(
-           (NOW() - ($2 || ' days')::INTERVAL)::date,
-           NOW()::date,
-           '1 day'::interval
-         )::date AS date
-       ),
-       counts AS (
-         SELECT date, SUM(total_count) AS mentions
-         FROM keyword_daily_stats
-         ${where}
-         GROUP BY date
-       )
-       SELECT
-         ds.date,
-         COALESCE(c.mentions, 0) AS mentions
-       FROM date_series ds
-       LEFT JOIN counts c ON c.date = ds.date
-       ORDER BY ds.date ASC`,
-      params
-    );
+    const cacheKey = makeKeywordCacheKey("trend", [
+      normalizedKeyword,
+      daysInt,
+      sourceCountryId ?? "any",
+      aboutCountryId ?? "any",
+    ]);
+
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trend);
+    const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.trend, async () => {
+      const params = [normalizedKeyword, daysInt];
+      const clauses = [
+        "k.keyword = $1",
+        "k.date >= CURRENT_DATE - $2::int",
+      ];
+      appendKeywordCountryClauses(clauses, params, {
+        sourceCountryId,
+        aboutCountryId,
+        alias: "k",
+      });
+
+      const result = await pool.query(
+        `WITH date_series AS (
+           SELECT generate_series(
+             CURRENT_DATE - $2::int,
+             CURRENT_DATE,
+             '1 day'::interval
+           )::date AS date
+         ),
+         counts AS (
+           SELECT k.date, SUM(k.total_count)::bigint AS mentions
+           FROM keyword_daily_stats k
+           WHERE ${clauses.join("\n             AND ")}
+           GROUP BY k.date
+         )
+         SELECT
+           ds.date,
+           COALESCE(c.mentions, 0) AS mentions
+         FROM date_series ds
+         LEFT JOIN counts c ON c.date = ds.date
+         ORDER BY ds.date ASC`,
+        params
+      );
+
+      return result.rows;
+    });
 
     res.json(rows);
   } catch (err) {
@@ -1404,32 +1657,43 @@ app.get("/api/keywords/articles", async (req, res) => {
   if (!keyword) return res.status(400).json({ error: "keyword required" });
 
   try {
-    const kw = keyword.toLowerCase().trim();
-    const { rows } = await pool.query(
-      `SELECT
-         a.id,
-         COALESCE(a.translated_title, a.title) AS title,
-         COALESCE(a.translated_summary, a.summary) AS summary,
-         a.image_url,
-         a.article_url,
-         a.published_at,
-         a.sentiment_score,
-         COALESCE(ns.name, ys.name) AS source_name,
-         ns.site_url AS source_url,
-         co.name AS country_name,
-         co.iso_code,
-         ak.frequency
-       FROM article_keywords ak
-       JOIN news_articles a ON a.id = ak.article_id
-       LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-       LEFT JOIN countries co ON co.id = a.country_id
-       WHERE ak.keyword = $1
-         AND a.published_at >= NOW() - ($2 || ' days')::INTERVAL
-       ORDER BY ak.frequency DESC, a.published_at DESC
-       LIMIT $3`,
-      [kw, parseInt(days), parseInt(limit)]
-    );
+    const kw = normalizeLowerString(keyword);
+    const daysInt = clampQueryInt(days, 7, 1, 365);
+    const limitInt = clampQueryInt(limit, 20, 1, 100);
+
+    if (!kw) return res.json([]);
+
+    const cacheKey = makeKeywordCacheKey("articles", [kw, daysInt, limitInt]);
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.articles);
+    const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.articles, async () => {
+      const result = await pool.query(
+        `SELECT
+           a.id,
+           COALESCE(a.translated_title, a.title) AS title,
+           COALESCE(a.translated_summary, a.summary) AS summary,
+           a.image_url,
+           a.article_url,
+           a.published_at,
+           a.sentiment_score,
+           COALESCE(ns.name, ys.name) AS source_name,
+           ns.site_url AS source_url,
+           co.name AS country_name,
+           co.iso_code,
+           ak.frequency
+         FROM article_keywords ak
+         JOIN news_articles a ON a.id = ak.article_id
+         LEFT JOIN news_sources ns ON ns.id = a.source_id
+         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+         LEFT JOIN countries co ON co.id = a.country_id
+         WHERE ak.keyword = $1
+           AND a.published_at >= NOW() - ($2 || ' days')::INTERVAL
+         ORDER BY ak.frequency DESC, a.published_at DESC
+         LIMIT $3`,
+        [kw, daysInt, limitInt]
+      );
+
+      return result.rows;
+    });
 
     res.json(rows);
   } catch (err) {
