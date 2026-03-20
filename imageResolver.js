@@ -349,11 +349,20 @@ async function resolveImagesForArticles(articleIds, options = {}) {
   if (!ids.length) return [];
 
   const surface = options.surface || "feed";
+  const CONCURRENCY = options.concurrency || 5;
   const results = [];
 
-  for (const articleId of ids) {
-    const resolved = await resolveImageForArticle(articleId, { surface });
-    if (resolved) results.push(resolved);
+  // Process in concurrent batches instead of sequentially
+  for (let i = 0; i < ids.length; i += CONCURRENCY) {
+    const batch = ids.slice(i, i + CONCURRENCY);
+    const settled = await Promise.allSettled(
+      batch.map(articleId => resolveImageForArticle(articleId, { surface }))
+    );
+    for (const outcome of settled) {
+      if (outcome.status === "fulfilled" && outcome.value) {
+        results.push(outcome.value);
+      }
+    }
   }
 
   return results;
