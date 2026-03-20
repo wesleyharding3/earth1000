@@ -7,6 +7,7 @@ const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
 const { countryVarianceRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
+const { resolveImagesForArticles } = require("./imageResolver");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -65,6 +66,26 @@ app.get("/api/countries", async (req, res) => {
   } catch (err) {
     console.error("Countries error:", err);
     res.status(500).json({ error: "Failed to fetch countries" });
+  }
+});
+
+/* =========================================
+   Image Resolution
+========================================= */
+app.post("/api/images/resolve", async (req, res) => {
+  try {
+    const articleIds = Array.isArray(req.body?.articleIds) ? req.body.articleIds.slice(0, 100) : [];
+    const surface = typeof req.body?.surface === "string" && req.body.surface.trim()
+      ? req.body.surface.trim().slice(0, 32)
+      : "feed";
+
+    if (!articleIds.length) return res.json({ images: [] });
+
+    const images = await resolveImagesForArticles(articleIds, { surface });
+    res.json({ images });
+  } catch (err) {
+    console.error("Image resolve error:", err.message);
+    res.status(500).json({ error: "Failed to resolve images" });
   }
 });
 
