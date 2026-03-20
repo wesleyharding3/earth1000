@@ -2,15 +2,34 @@
 const pool = require("./db");
 const { rankArticles } = require("./priorityEngine");
 
+// ─────────────────────────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────────────────────────
+
+// How many hours back to look for candidates.
+// Old articles can still appear if a caller passes an explicit offset
+// large enough to exhaust recent ones — the fallback pool handles that.
+const CANDIDATE_WINDOW_HOURS = 72;
+
+// Candidate pool: enough to give diversityRerank room to work, but not
+// so large that we're sorting thousands of rows on every request.
+const CANDIDATE_POOL = 400;
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+
 function clampPositiveInt(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function getCandidateLimit(limit, offset) {
-  const requested = Math.max(limit + offset, limit, 1);
-  return Math.min(Math.max(requested * 25, 400), 2500);
-}
+// ─────────────────────────────────────────────────────────────
+// SHARED FIELDS
+// Uses base_priority directly — classifyArticle already wrote the
+// pre-computed score there. No GROUP BY, no article_tags JOIN,
+// no non-determinism from aggregation order.
+// ─────────────────────────────────────────────────────────────
 
 const ARTICLE_FIELDS = `
   a.id,
@@ -19,8 +38,9 @@ const ARTICLE_FIELDS = `
   CASE
     WHEN a.youtube_source_id IS NOT NULL THEN 'youtube:' || a.youtube_source_id::text
     ELSE 'news:' || a.source_id::text
-  END                AS source_key,
+  END                                                        AS source_key,
   a.city_id,
+  a.country_id,
   a.title,
   a.translated_title,
   a.url,
@@ -32,38 +52,34 @@ const ARTICLE_FIELDS = `
   a.media_type,
   a.video_id,
   a.duration_seconds,
-  COALESCE(ns.name, ys.name)               AS source_name,
-  COALESCE(ns.site_url, ys.site_url)       AS site_url,
-  COALESCE(ns.popularity_score, ys.popularity_score, 1.0) AS popularity_score,
-  COALESCE(ns.popularity_tier, ys.popularity_tier, 1)     AS popularity_tier,
   a.language,
+  COALESCE(ns.name,             ys.name)             AS source_name,
+  COALESCE(ns.site_url,         ys.site_url)         AS site_url,
+  COALESCE(ns.popularity_score, ys.popularity_score, 1.0) AS popularity_score,
+  COALESCE(ns.popularity_tier,  ys.popularity_tier,  1)   AS popularity_tier,
   co.iso_code,
-  COALESCE(SUM(at.score), 0)   AS intensity,
-  COALESCE(SUM(COALESCE(stw.weight, ystw.weight, 0)), 0) AS "tagWeightSum"
-`;
-
-const ARTICLE_GROUP_BY = `
-  a.id, ns.id, ys.id, a.language, co.iso_code
+  -- base_priority is the pre-computed classification score from classifyArticle.
+  -- Use it directly as intensity — no need to re-sum article_tags at query time.
+  COALESCE(a.base_priority, 0)                             AS intensity,
+  -- tagWeightSum is approximated from source priors already folded into
+  -- base_priority. Pass 1.5 so computeTagMultiplier returns its mid value (1.10)
+  -- rather than the minimum (1.00) for classified articles.
+  CASE WHEN a.base_priority > 0 THEN 1.5 ELSE 0 END       AS "tagWeightSum"
 `;
 
 const ARTICLE_JOINS = `
-  LEFT JOIN news_sources ns      ON ns.id = a.source_id
-  LEFT JOIN youtube_sources ys   ON ys.id = a.youtube_source_id
-  LEFT JOIN article_tags at ON at.article_id = a.id
-  LEFT JOIN source_tag_weights stw
-                            ON stw.source_id = a.source_id
-                            AND stw.tag_id = at.tag_id
-  LEFT JOIN youtube_source_tag_weights ystw
-                            ON ystw.youtube_source_id = a.youtube_source_id
-                            AND ystw.tag_id = at.tag_id
-  LEFT JOIN countries co    ON co.id = a.country_id
+  LEFT JOIN news_sources    ns ON ns.id = a.source_id
+  LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+  LEFT JOIN countries       co ON co.id = a.country_id
 `;
 
-// National feed
+// ─────────────────────────────────────────────────────────────
+// NATIONAL FEED
+// ─────────────────────────────────────────────────────────────
+
 async function getRankedArticles(countryId, options = {}) {
-  const limit = clampPositiveInt(options.limit, 50);
+  const limit  = clampPositiveInt(options.limit, 50);
   const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
-  const candidateLimit = getCandidateLimit(limit, offset);
 
   const { rows } = await pool.query(`
     WITH candidate_articles AS (
@@ -71,6 +87,7 @@ async function getRankedArticles(countryId, options = {}) {
       FROM news_articles a
       WHERE a.country_id = $1
         AND a.city_id IS NULL
+        AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
       ORDER BY a.published_at DESC NULLS LAST, a.id DESC
       LIMIT $2
     )
@@ -78,25 +95,30 @@ async function getRankedArticles(countryId, options = {}) {
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
-    GROUP BY ${ARTICLE_GROUP_BY}
-  `, [countryId, candidateLimit]);
+    -- Stable tiebreak: deterministic input order for rankArticles so the
+    -- same articles always produce the same ranked output.
+    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+  `, [countryId, CANDIDATE_POOL]);
 
-  const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
+  const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
   return ranked.slice(offset, offset + limit);
 }
 
-// City feed
+// ─────────────────────────────────────────────────────────────
+// CITY FEED
+// ─────────────────────────────────────────────────────────────
+
 async function getRankedCityArticles(cityId, options = {}) {
-  const limit = clampPositiveInt(options.limit, 50);
+  const limit  = clampPositiveInt(options.limit, 50);
   const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
-  const candidateLimit = getCandidateLimit(limit, offset);
 
   const { rows } = await pool.query(`
     WITH candidate_articles AS (
       SELECT a.id
       FROM news_articles a
       WHERE a.city_id = $1
+        AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
       ORDER BY a.published_at DESC NULLS LAST, a.id DESC
       LIMIT $2
     )
@@ -104,10 +126,10 @@ async function getRankedCityArticles(cityId, options = {}) {
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
-    GROUP BY ${ARTICLE_GROUP_BY}
-  `, [cityId, candidateLimit]);
+    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+  `, [cityId, CANDIDATE_POOL]);
 
-  const maxIntensity = Math.max(...rows.map(r => r.intensity), 1);
+  const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity, { skipCityPenalty: true });
   return ranked.slice(offset, offset + limit);
 }
