@@ -98,44 +98,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
-    if (tagId) {
-      const { rows } = await pool.query(`
-        SELECT
-          a.id,
-          a.title,
-          a.translated_title,
-          a.url,
-          a.article_url,
-          a.summary,
-          a.translated_summary,
-          a.image_url,
-          a.published_at,
-          COALESCE(ns.name, ys.name) AS source_name,
-          COALESCE(ns.site_url, ys.site_url) AS site_url,
-          COALESCE(ns.popularity_score, 0) AS popularity_score,
-          COALESCE(l.iso_code_2, UPPER(ys.language)) AS language,
-          co.iso_code,
-          co.name AS country_name,
-          c.name AS city_name,
-          a.media_type,
-          a.video_id,
-          a.duration_seconds
-        FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        JOIN article_tags  at  ON at.article_id = a.id
-        LEFT JOIN languages  l  ON l.id = ns.language_id
-        LEFT JOIN countries co ON co.id = a.country_id
-        LEFT JOIN cities c ON c.id = a.city_id
-        WHERE a.city_id      = $1
-          AND at.tag_id      = $2
-        ORDER BY at.score DESC
-        LIMIT $3 OFFSET $4
-      `, [req.params.cityId, tagId, limit, offset]);
-      return res.json(rows);
-    }
-
-    const ranked = await getRankedCityArticles(parseInt(req.params.cityId), { limit, offset });
+    const ranked = await getRankedCityArticles(parseInt(req.params.cityId), { limit, offset, tagId });
     res.json(ranked);
   } catch (err) {
     console.error("City news error:", err.message);
@@ -209,45 +172,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
-    if (tagId) {
-      const { rows } = await pool.query(`
-        SELECT
-          a.id,
-          a.title,
-          a.translated_title,
-          a.url,
-          a.article_url,
-          a.summary,
-          a.translated_summary,
-          a.image_url,
-          a.published_at,
-          COALESCE(ns.name, ys.name) AS source_name,
-          COALESCE(ns.site_url, ys.site_url) AS site_url,
-          COALESCE(ns.popularity_score, 0) AS popularity_score,
-          COALESCE(l.iso_code_2, UPPER(ys.language)) AS language,
-          co.iso_code,
-          co.name AS country_name,
-          c.name AS city_name,
-          a.media_type,
-          a.video_id,
-          a.duration_seconds
-        FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        JOIN article_tags  at  ON at.article_id = a.id
-        LEFT JOIN languages  l  ON l.id = ns.language_id
-        LEFT JOIN countries co ON co.id = a.country_id
-        LEFT JOIN cities c ON c.id = a.city_id
-        WHERE a.country_id     = $1
-          AND a.city_id IS NULL   
-          AND at.tag_id        = $2
-        ORDER BY at.score DESC
-        LIMIT $3 OFFSET $4
-      `, [req.params.countryId, tagId, limit, offset]);
-      return res.json(rows);
-    }
-
-    const ranked = await getRankedArticles(parseInt(req.params.countryId), { limit, offset });
+    const ranked = await getRankedArticles(parseInt(req.params.countryId), { limit, offset, tagId });
     res.json(ranked);
   } catch (err) {
     console.error("Country news error:", err.message);
