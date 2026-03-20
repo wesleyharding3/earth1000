@@ -15,6 +15,12 @@ const CANDIDATE_WINDOW_HOURS = 72;
 // so large that we're sorting thousands of rows on every request.
 const CANDIDATE_POOL = 400;
 
+// Hard cap on how many articles any single source can contribute to the
+// candidate pool. Prevents NBC/BBC/Reuters from flooding 350 of 400 slots
+// and making diversityRerank's job impossible.
+// At COOLDOWN_SLOTS=5, a source appears every 6 slots max — so 60 is generous.
+const MAX_PER_SOURCE = 60;
+
 // ─────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────
@@ -80,14 +86,20 @@ const ARTICLE_JOINS = `
 async function getRankedArticles(countryId, options = {}) {
   const limit  = clampPositiveInt(options.limit, 50);
   const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
+  const tagId  = options.tagId ? parseInt(options.tagId) : null;
+
+  const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
+  const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
 
   const { rows } = await pool.query(`
     WITH candidate_articles AS (
       SELECT a.id
       FROM news_articles a
+      ${tagJoin}
       WHERE a.country_id = $1
         AND a.city_id IS NULL
         AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
+        ${tagWhere}
       ORDER BY a.published_at DESC NULLS LAST, a.id DESC
       LIMIT $2
     )
@@ -95,8 +107,6 @@ async function getRankedArticles(countryId, options = {}) {
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
-    -- Stable tiebreak: deterministic input order for rankArticles so the
-    -- same articles always produce the same ranked output.
     ORDER BY a.published_at DESC NULLS LAST, a.id DESC
   `, [countryId, CANDIDATE_POOL]);
 
@@ -112,13 +122,19 @@ async function getRankedArticles(countryId, options = {}) {
 async function getRankedCityArticles(cityId, options = {}) {
   const limit  = clampPositiveInt(options.limit, 50);
   const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
+  const tagId  = options.tagId ? parseInt(options.tagId) : null;
+
+  const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
+  const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
 
   const { rows } = await pool.query(`
     WITH candidate_articles AS (
       SELECT a.id
       FROM news_articles a
+      ${tagJoin}
       WHERE a.city_id = $1
         AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
+        ${tagWhere}
       ORDER BY a.published_at DESC NULLS LAST, a.id DESC
       LIMIT $2
     )
