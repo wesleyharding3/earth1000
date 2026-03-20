@@ -158,7 +158,10 @@ async function findBestCandidate(context, client) {
          OR ia.generic_category = ANY($7::text[])
        )
      GROUP BY ia.id
-     ORDER BY ia.priority DESC, ia.usage_count ASC, ia.last_used_at ASC NULLS FIRST, ia.id ASC
+     ORDER BY ia.priority DESC,
+              ia.usage_count ASC,
+              ia.last_used_at ASC NULLS FIRST,
+              RANDOM()
      LIMIT 250`,
     [
       context.article.city_id,
