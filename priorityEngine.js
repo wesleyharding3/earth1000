@@ -221,16 +221,17 @@ const CONFIG = {
     HALF_LIFE_HOURS: 24,
     MIN_DECAY:       0.05
   },
-  // Blend weights: recency is the dominant signal (~75%), quality fills the rest.
-  // Raise RECENCY toward 1.0 to make freshness nearly everything.
+  // Blend: variation enforced by diversityRerank, recency dominates within
+  // eligible set, quality (base_priority × popularity × tags) is a tiebreaker.
   SCORE_BLEND: {
-    RECENCY:  0.75,
-    QUALITY:  0.25
+    RECENCY:  0.85,
+    QUALITY:  0.15
   },
   DIVERSITY: {
-    MAX_PENALTY:     0.97,   // was 0.80 — repeated source is nearly invisible
-    DECAY_PER_SLOT:  0.05,   // was 0.15 — penalty lingers much longer
-    MAX_CONSECUTIVE: 2
+    // Hard cooldown: a source is completely blocked for this many slots after
+    // appearing. Deterministic — no soft-penalty math that dominant sources
+    // can overpower. Tune up to tighten mixing, down to allow more repeats.
+    COOLDOWN_SLOTS: 5
   },
   CITY_FEED: {
     CAP_PER_WINDOW: 1,
@@ -325,63 +326,59 @@ function calculatePriority({
 function diversityRerank(articles) {
   if (!articles.length) return articles;
 
-  const {
-    MAX_PENALTY,
-    DECAY_PER_SLOT,
-    MAX_CONSECUTIVE
-  } = CONFIG.DIVERSITY;
+  const { COOLDOWN_SLOTS } = CONFIG.DIVERSITY;
 
-  const pool      = articles.map((a, originalIndex) => ({ ...a, originalIndex }));
-  const result    = [];
-  const penalties = {};
+  const pool   = articles.map((a, i) => ({ ...a, _origIdx: i }));
+  const result = [];
+
+  // cooldowns[sourceKey] = number of slots remaining before this source
+  // is eligible again. Counts down by 1 each slot regardless of what's picked.
+  const cooldowns = {};
 
   const getSourceKey = (article) =>
     article.source_key
     || (article.youtube_source_id != null ? `youtube:${article.youtube_source_id}` : null)
-    || (article.source_id != null ? `news:${article.source_id}` : "unknown");
+    || (article.source_id != null         ? `news:${article.source_id}`             : "unknown");
 
   while (pool.length) {
-    const blockedSources = new Set();
-    if (result.length >= MAX_CONSECUTIVE) {
-      const tail       = result.slice(-MAX_CONSECUTIVE);
-      const tailSource = getSourceKey(tail[0]);
-      if (tail.every(a => getSourceKey(a) === tailSource)) {
-        blockedSources.add(tailSource);
-      }
+    // Tick all cooldowns down by 1
+    for (const src of Object.keys(cooldowns)) {
+      cooldowns[src]--;
+      if (cooldowns[src] <= 0) delete cooldowns[src];
     }
 
-    let bestIdx      = -1;
-    let bestEffScore = -Infinity;
+    // Pick best eligible article (not on cooldown).
+    // Within eligible set: priority is already recency-dominant so this
+    // naturally gives variation > recency > base_priority ordering.
+    let bestIdx   = -1;
+    let bestScore = -Infinity;
 
     for (let i = 0; i < pool.length; i++) {
-      const candidate = pool[i];
-      const sourceKey = getSourceKey(candidate);
-      if (blockedSources.has(sourceKey)) continue;
-      const penalty  = penalties[sourceKey] || 0;
-      const effScore = candidate.priority * (1 - penalty);
-      if (effScore > bestEffScore) {
-        bestEffScore = effScore;
-        bestIdx      = i;
+      const src = getSourceKey(pool[i]);
+      if (cooldowns[src]) continue;
+      if (pool[i].priority > bestScore) {
+        bestScore = pool[i].priority;
+        bestIdx   = i;
       }
     }
 
+    // Fallback: every remaining source is on cooldown (feed has very few sources).
+    // Pick the one whose cooldown expires soonest, break tie by priority.
     if (bestIdx === -1) {
-      bestIdx = pool.reduce(
-        (best, a, i) => (a.priority > pool[best].priority ? i : best),
-        0
-      );
+      let minCooldown = Infinity;
+      for (let i = 0; i < pool.length; i++) {
+        const src = getSourceKey(pool[i]);
+        const cd  = cooldowns[src] || 0;
+        if (cd < minCooldown || (cd === minCooldown && pool[i].priority > pool[bestIdx]?.priority)) {
+          minCooldown = cd;
+          bestIdx     = i;
+        }
+      }
     }
 
     const chosen = pool.splice(bestIdx, 1)[0];
     result.push(chosen);
-    const chosenSourceKey = getSourceKey(chosen);
-
-    for (const src of Object.keys(penalties)) {
-      penalties[src] = penalties[src] * (1 - DECAY_PER_SLOT);
-      if (penalties[src] < 0.001) delete penalties[src];
-    }
-    penalties[chosenSourceKey] =
-      Math.min(MAX_PENALTY, (penalties[chosenSourceKey] || 0) + MAX_PENALTY);
+    cooldowns[getSourceKey(chosen)] = COOLDOWN_SLOTS;
   }
 
   return result;
