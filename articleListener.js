@@ -2,6 +2,8 @@
 const pool = require("./db");
 const { classifyArticle } = require("./scoringEngine");
 const { routeArticle } = require("./locationRouter");
+const { resolveImageForArticle } = require("./imageResolver");
+const { resolveImageForArticle } = require("./imageResolver");
 
 // Track scoring results across the current fetch run
 const scoringStats = {
@@ -71,6 +73,17 @@ async function startArticleListener() {
       const result = await classifyArticle(articleId);
       await routeArticle(articleId);
 
+      // Resolve image after classify+route so article_tags and article_locations
+      // are already written — the resolver depends on both.
+      // Fire-and-forget so image failures never block scoring stats.
+      resolveImageForArticle(articleId, { surface: "feed" })
+        .then(r => {
+          if (r?.source === "fallback" || r?.source === "assignment") {
+            console.log(`🖼️  Image resolved [${articleId}]: ${r.source} (score: ${r.score ?? "—"})`);
+          }
+        })
+        .catch(err => console.warn(`⚠️  Image resolution failed [${articleId}]: ${err.message}`));
+
       if (result.success) {
         scoringStats.succeeded++;
       } else {
@@ -102,4 +115,3 @@ module.exports = {
   logScoringVerification,
   resetStats
 };
-
