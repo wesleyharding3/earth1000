@@ -283,24 +283,6 @@ async function findBestCandidate(context, client) {
 
   return { ...scored[0], _tier: usedTier };
 
-  const scored = rows
-    .map(candidate => scoreCandidate(candidate, {
-      cityId: context.article.city_id,
-      countryId: context.article.country_id,
-      primaryCategories,
-      genericCategories,
-      keywords,
-    }))
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      if ((a.usage_count || 0) !== (b.usage_count || 0)) return (a.usage_count || 0) - (b.usage_count || 0);
-      const aLast = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
-      const bLast = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
-      if (aLast !== bLast) return aLast - bLast;
-      return a.id - b.id;
-    });
-
-  return scored[0];
 }
 
 async function persistAssignment(articleId, candidate, context, surface, client) {
