@@ -18,50 +18,121 @@ const pool = require("./db");
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
-// ─── Adjective → country name map ──────────────────────────────
-// For filenames like "Chinese_navy", "Turkish_jets", "Russian_..."
+// ─── Demonym → country map ─────────────────────────────────────
+// Single-word demonyms (first token of filename, lowercased, digits stripped)
+// e.g. "Indian_military_jets2.jpg" → first token "indian" → "India"
 const ADJECTIVE_TO_COUNTRY = {
-  afghan: "Afghanistan", african: null, albanian: "Albania",
-  algerian: "Algeria", american: "United States", angolan: "Angola",
-  argentinian: "Argentina", armenian: "Armenia", australian: "Australia",
-  austrian: "Austria", azerbaijani: "Azerbaijan", bahraini: "Bahrain",
-  bangladeshi: "Bangladesh", belarusian: "Belarus", belgian: "Belgium",
-  bolivian: "Bolivia", bosnian: "Bosnia and Herzegovina",
-  brazilian: "Brazil", british: "United Kingdom", bulgarian: "Bulgaria",
-  burmese: "Myanmar", cambodian: "Cambodia", cameroonian: "Cameroon",
-  canadian: "Canada", chilean: "Chile", chinese: "China",
+  // A
+  afghan: "Afghanistan", albanian: "Albania", algerian: "Algeria",
+  american: "United States", angolan: "Angola", argentinian: "Argentina",
+  argentine: "Argentina", armenian: "Armenia", australian: "Australia",
+  austrian: "Austria", azerbaijani: "Azerbaijan",
+  // B
+  bahraini: "Bahrain", bangladeshi: "Bangladesh", belarusian: "Belarus",
+  belgian: "Belgium", belizean: "Belize", beninese: "Benin",
+  bhutanese: "Bhutan", bolivian: "Bolivia", bosnian: "Bosnia and Herzegovina",
+  botswanan: "Botswana", brazilian: "Brazil", british: "United Kingdom",
+  bruneian: "Brunei", bulgarian: "Bulgaria", burkinabe: "Burkina Faso",
+  burundian: "Burundi", burmese: "Myanmar",
+  // C
+  cambodian: "Cambodia", cameroonian: "Cameroon", canadian: "Canada",
+  chadian: "Chad", chilean: "Chile", chinese: "China",
   colombian: "Colombia", congolese: "Congo", croatian: "Croatia",
-  cuban: "Cuba", czech: "Czech Republic", danish: "Denmark",
-  dutch: "Netherlands", ecuadorian: "Ecuador", egyptian: "Egypt",
-  emirati: "United Arab Emirates", eritrean: "Eritrea",
-  estonian: "Estonia", ethiopian: "Ethiopia", finnish: "Finland",
-  french: "France", georgian: "Georgia", german: "Germany",
-  ghanaian: "Ghana", greek: "Greece", guatemalan: "Guatemala",
-  honduran: "Honduras", hungarian: "Hungary", indian: "India",
-  indonesian: "Indonesia", iranian: "Iran", iraqi: "Iraq",
-  irish: "Ireland", israeli: "Israel", italian: "Italy",
-  japanese: "Japan", jordanian: "Jordan", kazakh: "Kazakhstan",
-  kenyan: "Kenya", korean: "South Korea", kuwaiti: "Kuwait",
-  kyrgyz: "Kyrgyzstan", latvian: "Latvia", lebanese: "Lebanon",
-  libyan: "Libya", lithuanian: "Lithuania", macedonian: "North Macedonia",
-  malaysian: "Malaysia", mexican: "Mexico", moldovan: "Moldova",
-  mongolian: "Mongolia", moroccan: "Morocco", mozambican: "Mozambique",
-  myanmar: "Myanmar", namibian: "Namibia", nepali: "Nepal",
-  nigerian: "Nigeria", norwegian: "Norway", omani: "Oman",
+  cuban: "Cuba", cypriot: "Cyprus", czech: "Czech Republic",
+  // D
+  danish: "Denmark", djiboutian: "Djibouti", dominican: "Dominican Republic",
+  dutch: "Netherlands",
+  // E
+  ecuadorian: "Ecuador", egyptian: "Egypt", emirati: "United Arab Emirates",
+  eritrean: "Eritrea", estonian: "Estonia", ethiopian: "Ethiopia",
+  // F
+  fijian: "Fiji", filipino: "Philippines", finnish: "Finland",
+  french: "France",
+  // G
+  gabonese: "Gabon", gambian: "Gambia", georgian: "Georgia",
+  german: "Germany", ghanaian: "Ghana", greek: "Greece",
+  guatemalan: "Guatemala", guinean: "Guinea",
+  // H
+  haitian: "Haiti", honduran: "Honduras", hungarian: "Hungary",
+  // I
+  icelandic: "Iceland", indian: "India", indonesian: "Indonesia",
+  iranian: "Iran", iraqi: "Iraq", irish: "Ireland",
+  israeli: "Israel", italian: "Italy", ivorian: "Ivory Coast",
+  // J
+  jamaican: "Jamaica", japanese: "Japan", jordanian: "Jordan",
+  // K
+  kazakh: "Kazakhstan", kenyan: "Kenya", korean: "South Korea",
+  kuwaiti: "Kuwait", kyrgyz: "Kyrgyzstan",
+  // L
+  lao: "Laos", laotian: "Laos", latvian: "Latvia", lebanese: "Lebanon",
+  liberian: "Liberia", libyan: "Libya", lithuanian: "Lithuania",
+  // M
+  macedonian: "North Macedonia", malagasy: "Madagascar",
+  malawian: "Malawi", malaysian: "Malaysia", maldivian: "Maldives",
+  malian: "Mali", maltese: "Malta", mauritanian: "Mauritania",
+  mauritian: "Mauritius", mexican: "Mexico", moldovan: "Moldova",
+  mongolian: "Mongolia", montenegrin: "Montenegro", moroccan: "Morocco",
+  mozambican: "Mozambique", myanmar: "Myanmar",
+  // N
+  namibian: "Namibia", nepali: "Nepal", nepalese: "Nepal",
+  nicaraguan: "Nicaragua", nigerien: "Niger", nigerian: "Nigeria",
+  norwegian: "Norway",
+  // O
+  omani: "Oman",
+  // P
   pakistani: "Pakistan", palestinian: "Palestine", panamanian: "Panama",
-  peruvian: "Peru", philippine: "Philippines", filipino: "Philippines",
-  polish: "Poland", portuguese: "Portugal", qatari: "Qatar",
+  paraguayan: "Paraguay", peruvian: "Peru", philippine: "Philippines",
+  polish: "Poland", portuguese: "Portugal",
+  // Q
+  qatari: "Qatar",
+  // R
   romanian: "Romania", russian: "Russia", rwandan: "Rwanda",
-  saudi: "Saudi Arabia", serbian: "Serbia", singaporean: "Singapore",
+  // S
+  salvadoran: "El Salvador", samoan: "Samoa", saudi: "Saudi Arabia",
+  senegalese: "Senegal", serbian: "Serbia", singaporean: "Singapore",
   slovak: "Slovakia", slovenian: "Slovenia", somali: "Somalia",
-  southafrican: "South Africa", spanish: "Spain", sri: "Sri Lanka",
-  sudanese: "Sudan", swedish: "Sweden", swiss: "Switzerland",
-  syrian: "Syria", taiwanese: "Taiwan", tajik: "Tajikistan",
-  tanzanian: "Tanzania", thai: "Thailand", tunisian: "Tunisia",
-  turkish: "Turkey", turkmen: "Turkmenistan", ugandan: "Uganda",
-  ukrainian: "Ukraine", uruguayan: "Uruguay", uzbek: "Uzbekistan",
-  venezuelan: "Venezuela", vietnamese: "Vietnam", yemeni: "Yemen",
+  spanish: "Spain", sudanese: "Sudan", surinamese: "Suriname",
+  swedish: "Sweden", swiss: "Switzerland", syrian: "Syria",
+  // T
+  taiwanese: "Taiwan", tajik: "Tajikistan", tanzanian: "Tanzania",
+  thai: "Thailand", togolese: "Togo", tunisian: "Tunisia",
+  turkish: "Turkey", turkmen: "Turkmenistan",
+  // U
+  ugandan: "Uganda", ukrainian: "Ukraine", uruguayan: "Uruguay",
+  uzbek: "Uzbekistan",
+  // V
+  venezuelan: "Venezuela", vietnamese: "Vietnam",
+  // Y
+  yemeni: "Yemen",
+  // Z
   zambian: "Zambia", zimbabwean: "Zimbabwe",
+};
+
+// Two-word demonyms — checked BEFORE single-word map
+// e.g. "South_African_troops" → "south african" → "South Africa"
+const TWO_WORD_DEMONYMS = {
+  "south african":    "South Africa",
+  "south korean":     "South Korea",
+  "north korean":     "North Korea",
+  "sri lankan":       "Sri Lanka",
+  "new zealander":    "New Zealand",
+  "new zealand":      "New Zealand",
+  "costa rican":      "Costa Rica",
+  "puerto rican":     "Puerto Rico",
+  "saudi arabian":    "Saudi Arabia",
+  "united states":    "United States",
+  "el salvadoran":    "El Salvador",
+  "ivory coast":      "Ivory Coast",
+  "north macedonian": "North Macedonia",
+  "central african":  "Central African Republic",
+  "sierra leonean":   "Sierra Leone",
+  "papua new guinean":"Papua New Guinea",
+  "equatorial guinean":"Equatorial Guinea",
+  "dominican republic":"Dominican Republic",
+  "trinidad tobago":  "Trinidad and Tobago",
+  "hong kong":        "Hong Kong",
+  "czech republic":   "Czech Republic",
+  "bosnian herzegovinian": "Bosnia and Herzegovina",
 };
 
 // ─── Parse filename into location candidates ────────────────────
@@ -99,8 +170,16 @@ function parseFilename(fileName) {
     }
   }
 
-  // Pattern 4: "Adjective_topic_..." e.g. "Chinese_navy19"
-  const firstToken = stem.split(/[_\s]/)[0].toLowerCase().replace(/\d+$/, "");
+  // Pattern 4a: two-word demonym e.g. "South_African_troops3"
+  const tokens = stem.split(/[_\s]/).map(t => t.toLowerCase().replace(/\d+$/, ""));
+  if (tokens.length >= 2) {
+    const twoWord = tokens.slice(0, 2).join(" ");
+    const twoWordCountry = TWO_WORD_DEMONYMS[twoWord];
+    if (twoWordCountry) return { city: null, country: twoWordCountry };
+  }
+
+  // Pattern 4b: single-word demonym e.g. "Chinese_navy19", "Indian_military"
+  const firstToken = tokens[0];
   const mappedCountry = ADJECTIVE_TO_COUNTRY[firstToken];
   if (mappedCountry) {
     return { city: null, country: mappedCountry };
@@ -154,8 +233,9 @@ async function lookupCity(name, countryId, client) {
 
   const { rows } = await client.query(
     `SELECT id FROM cities
-     WHERE LOWER(name) = LOWER($1)
+     WHERE (LOWER(name) = LOWER($1) OR LOWER(name) LIKE LOWER($1) || '%')
      ${countryClause}
+     ORDER BY LENGTH(name) ASC
      LIMIT 1`,
     params
   );
@@ -191,10 +271,30 @@ async function main() {
         continue;
       }
 
-      const countryId = await lookupCountry(parsed.country, client);
-      const cityId    = parsed.city
+      let countryId = await lookupCountry(parsed.country, client);
+      let cityId    = parsed.city
         ? await lookupCity(parsed.city, countryId, client)
         : null;
+
+      // Cross-lookup: if the "country" token didn't match a country,
+      // try it as a city (e.g. "Mumbai1.jpg" → parsed as country="Mumbai"
+      // but Mumbai is a city, not a country).
+      if (!countryId && !cityId && parsed.country) {
+        cityId = await lookupCity(parsed.country, null, client);
+        if (cityId) {
+          // Found it as a city — also pull its country
+          const { rows: cityRows } = await client.query(
+            `SELECT country_id FROM cities WHERE id = $1`, [cityId]
+          );
+          countryId = cityRows[0]?.country_id || null;
+        }
+      }
+
+      // Cross-lookup: if the "city" token didn't match a city,
+      // try it as a country (e.g. label swapped in filename).
+      if (!cityId && parsed.city && !countryId) {
+        countryId = await lookupCountry(parsed.city, client);
+      }
 
       if (!countryId && !cityId) {
         console.log(`  ⚠️  [${img.id}] "${img.file_name}" → parsed "${parsed.city ?? ""}/${parsed.country ?? ""}" but no DB match`);
