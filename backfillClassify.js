@@ -22,22 +22,20 @@ function sleep(ms) {
 async function backfillClassify() {
   console.log("🚀 Starting classification backfill...", new Date().toISOString());
 
-  // Target articles that have been translated but whose classification
-  // was computed before translation existed (title matches suggest
-  // classification ran on raw/untranslated text, or no tags at all).
+  // Target ALL articles with no article_tags row — covers English articles,
+  // YouTube sources, and non-English articles regardless of translation status.
   const countRes = await pool.query(`
     SELECT COUNT(*) AS total
     FROM news_articles a
-    WHERE a.translated_title IS NOT NULL
-      AND a.translated_title != a.title
-      AND a.language NOT ILIKE 'en%'
+    LEFT JOIN article_tags at ON at.article_id = a.id
+    WHERE at.article_id IS NULL
   `);
 
   const total = parseInt(countRes.rows[0].total);
-  console.log(`📋 Translated articles to reclassify: ${total}`);
+  console.log(`📋 Untagged articles to classify: ${total}`);
 
   if (total === 0) {
-    console.log("✅ Nothing to reclassify. Exiting.");
+    console.log("✅ All articles already tagged. Exiting.");
     await pool.end();
     return;
   }
@@ -48,14 +46,20 @@ async function backfillClassify() {
   const startTime = Date.now();
 
   while (true) {
+    // Fetch untagged articles ordered by tier (best sources first),
+    // then recency. LEFT JOIN both source types so YouTube articles are included.
+    // OFFSET advances past permanently-erroring articles only — successfully
+    // tagged articles drop out of the WHERE clause naturally on the next batch.
     const batchRes = await pool.query(`
-      SELECT a.id, a.language, ns.popularity_tier
+      SELECT a.id, COALESCE(a.language, 'en') AS language,
+             COALESCE(ns.popularity_tier, ys.popularity_tier, 1) AS popularity_tier
       FROM news_articles a
-      JOIN news_sources ns ON ns.id = a.source_id
-      WHERE a.translated_title IS NOT NULL
-        AND a.translated_title != a.title
-        AND a.language NOT ILIKE 'en%'
-      ORDER BY ns.popularity_tier DESC NULLS LAST, a.ingested_at DESC
+      LEFT JOIN article_tags at ON at.article_id = a.id
+      LEFT JOIN news_sources    ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE at.article_id IS NULL
+      ORDER BY COALESCE(ns.popularity_tier, ys.popularity_tier, 1) DESC NULLS LAST,
+               a.published_at DESC
       LIMIT $1 OFFSET $2
     `, [BATCH_SIZE, offset]);
 
@@ -78,6 +82,8 @@ async function backfillClassify() {
 
       await sleep(DELAY_MS);
 
+      // Only advance offset for articles that errored — successfully classified
+      // articles are no longer untagged, so they disappear from the query.
       if (MAX_ARTICLES && progress >= MAX_ARTICLES) {
         console.log(`\n🛑 Reached MAX_ARTICLES cap (${MAX_ARTICLES}). Stopping.`);
         break;
@@ -86,7 +92,8 @@ async function backfillClassify() {
 
     if (MAX_ARTICLES && (totalDone + totalFailed) >= MAX_ARTICLES) break;
 
-    offset += BATCH_SIZE;
+    // Offset advances only by failed count — successes naturally vanish from the query
+    offset = totalFailed;
   }
 
   const totalTime = Math.round((Date.now() - startTime) / 1000);
