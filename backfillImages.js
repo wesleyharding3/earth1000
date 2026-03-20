@@ -123,13 +123,24 @@ async function main() {
       for (let j = 0; j < settled.length; j++) {
         const outcome = settled[j];
         const articleId = chunk[j].id;
-        if (outcome.status === "fulfilled" && outcome.value?.source !== "none") {
-          totalDone++;
-        } else {
-          totalFailed++;
-          if (outcome.status === "rejected") {
-            console.warn(`  ❌ [${articleId}] ${outcome.reason?.message}`);
+        if (outcome.status === "fulfilled") {
+          const r = outcome.value;
+          if (r?.source === "article") {
+            console.log(`  ⏭️  [${articleId}] skipped — has own image_url`);
+            totalDone++;
+          } else if (r?.source === "assignment") {
+            console.log(`  ♻️  [${articleId}] already assigned — ${r.imageUrl}`);
+            totalDone++;
+          } else if (r?.source === "fallback") {
+            console.log(`  🖼️  [${articleId}] → image ${r.imageId} (score: ${r.score?.toFixed(2)}) ${r.imageUrl}`);
+            totalDone++;
+          } else {
+            console.warn(`  ⚠️  [${articleId}] no image found (source: ${r?.source})`);
+            totalFailed++;
           }
+        } else {
+          console.warn(`  ❌ [${articleId}] ${outcome.reason?.message}`);
+          totalFailed++;
         }
         lastId = Math.max(lastId, articleId);
       }
