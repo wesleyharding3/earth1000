@@ -3,7 +3,6 @@ const pool = require("./db");
 const { classifyArticle } = require("./scoringEngine");
 const { routeArticle } = require("./locationRouter");
 const { resolveImageForArticle } = require("./imageResolver");
-const { resolveImageForArticle } = require("./imageResolver");
 
 // Track scoring results across the current fetch run
 const scoringStats = {
