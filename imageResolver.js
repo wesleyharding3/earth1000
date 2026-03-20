@@ -121,17 +121,49 @@ async function fetchFallbackCategories(primaryCategories, client) {
   return normalizeStringList(rows.map(row => row.fallback_category));
 }
 
-async function findBestCandidate(context, client) {
-  const defaultGenericCategories = ["general", "world", "global"];
-  const primaryCategories = normalizeStringList(context.tags.map(tag => tag.name));
-  const fallbackCategories = await fetchFallbackCategories(primaryCategories, client);
-  const genericCategories = normalizeStringList([
-    ...fallbackCategories,
-    ...defaultGenericCategories,
-  ]);
-  const keywords = normalizeStringList(context.keywords);
-  const tagIds = context.tags.map(tag => tag.id);
+// ─── Saturation check ─────────────────────────────────────────────────────────
+// A location pool is "saturated" when all its images have been used recently
+// enough that showing them again would look redundant.
+//
+// Saturation threshold: if the least-used image in the pool has been used
+// more than (SATURATION_MULTIPLIER × pool_size) times total, the pool is
+// considered exhausted and we overflow to the next level.
+//
+// Example: 10 Cartagena images, multiplier 3 → saturated after ~30 combined uses.
+// At that point overflow to Colombia images, then to tag/generic.
+const SATURATION_MULTIPLIER = 3;
+const SATURATION_WINDOW_HOURS = 24; // only count uses in last 24h for recency check
 
+async function getPoolSaturation(locationClause, params, client) {
+  const { rows } = await client.query(
+    `SELECT
+       COUNT(*)                                    AS pool_size,
+       MIN(ia.usage_count)                         AS min_usage,
+       COUNT(*) FILTER (
+         WHERE ia.last_used_at > NOW() - INTERVAL '${SATURATION_WINDOW_HOURS} hours'
+       )                                           AS used_recently
+     FROM image_assets ia
+     WHERE ia.is_active = TRUE
+       AND ${locationClause}`,
+    params
+  );
+  const row = rows[0];
+  const poolSize    = parseInt(row.pool_size) || 0;
+  const minUsage    = parseInt(row.min_usage) || 0;
+  const usedRecently = parseInt(row.used_recently) || 0;
+
+  if (poolSize === 0) return { saturated: true, poolSize: 0, reason: "empty" };
+
+  // Saturated if: all images used recently AND min usage exceeds threshold
+  const threshold = poolSize * SATURATION_MULTIPLIER;
+  const saturated = usedRecently >= poolSize && minUsage >= threshold;
+
+  return { saturated, poolSize, minUsage, usedRecently, threshold };
+}
+
+// ─── Tiered pool query ─────────────────────────────────────────────────────────
+// Queries a specific pool (city, country, or tag/generic) and scores results.
+async function queryPool(poolWhere, poolParams, scoringContext, tagIds, client) {
   const { rows } = await client.query(
     `SELECT
        ia.id,
@@ -144,37 +176,112 @@ async function findBestCandidate(context, client) {
        ia.priority,
        ia.usage_count,
        ia.last_used_at,
-       COALESCE(MAX(CASE WHEN iat.tag_id = ANY($3::int[]) THEN iat.weight ELSE 0 END), 0) AS tag_weight
+       COALESCE(MAX(CASE WHEN iat.tag_id = ANY($1::int[]) THEN iat.weight ELSE 0 END), 0) AS tag_weight
      FROM image_assets ia
      LEFT JOIN image_asset_tags iat ON iat.image_id = ia.id
      WHERE ia.is_active = TRUE
-       AND (
-         ($1::int IS NOT NULL AND ia.city_id = $1)
-         OR ($2::int IS NOT NULL AND ia.country_id = $2)
-         OR (COALESCE(array_length($3::int[], 1), 0) > 0 AND iat.tag_id = ANY($3::int[]))
-         OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND ia.keywords && $4::text[])
-         OR (COALESCE(array_length($5::text[], 1), 0) > 0 AND ia.primary_category = ANY($5::text[]))
-         OR (COALESCE(array_length($6::text[], 1), 0) > 0 AND ia.generic_category = ANY($6::text[]))
-         OR ia.generic_category = ANY($7::text[])
-       )
+       AND (${poolWhere})
      GROUP BY ia.id
      ORDER BY ia.priority DESC,
               ia.usage_count ASC,
               ia.last_used_at ASC NULLS FIRST,
               RANDOM()
      LIMIT 250`,
-    [
-      context.article.city_id,
-      context.article.country_id,
-      tagIds,
-      keywords,
+    [tagIds, ...poolParams]
+  );
+  return rows;
+}
+
+async function findBestCandidate(context, client) {
+  const defaultGenericCategories = ["general", "world", "global"];
+  const primaryCategories = normalizeStringList(context.tags.map(tag => tag.name));
+  const fallbackCategories = await fetchFallbackCategories(primaryCategories, client);
+  const genericCategories = normalizeStringList([
+    ...fallbackCategories,
+    ...defaultGenericCategories,
+  ]);
+  const keywords = normalizeStringList(context.keywords);
+  const tagIds   = context.tags.map(tag => tag.id);
+
+  const cityId    = context.article.city_id;
+  const countryId = context.article.country_id;
+
+  // ── Tier 1: city pool ────────────────────────────────────────
+  let usedTier = "generic";
+  let poolRows  = [];
+
+  if (cityId) {
+    const sat = await getPoolSaturation(`ia.city_id = $1`, [cityId], client);
+    if (!sat.saturated && sat.poolSize > 0) {
+      poolRows = await queryPool(`ia.city_id = $2`, [cityId], {}, tagIds, client);
+      if (poolRows.length) usedTier = "city";
+    } else if (sat.poolSize > 0) {
+      console.log(`  🔄 City pool saturated (city:${cityId}, pool:${sat.poolSize}, minUse:${sat.minUsage}) → overflow to country`);
+    }
+  }
+
+  // ── Tier 2: country pool (if city saturated or no city) ──────
+  if (!poolRows.length && countryId) {
+    const sat = await getPoolSaturation(
+      `ia.country_id = $1 AND ia.city_id IS NULL`, [countryId], client
+    );
+    if (!sat.saturated && sat.poolSize > 0) {
+      poolRows = await queryPool(
+        `ia.country_id = $2 AND ia.city_id IS NULL`, [countryId], {}, tagIds, client
+      );
+      if (poolRows.length) usedTier = "country";
+    } else if (sat.poolSize > 0) {
+      console.log(`  🔄 Country pool saturated (country:${countryId}, pool:${sat.poolSize}) → overflow to tags`);
+    }
+  }
+
+  // ── Tier 3: tag/keyword/generic (final fallback) ─────────────
+  if (!poolRows.length) {
+    const { rows } = await client.query(
+      `SELECT
+         ia.id, ia.public_url, ia.city_id, ia.country_id,
+         ia.primary_category, ia.generic_category,
+         ia.keywords, ia.priority, ia.usage_count, ia.last_used_at,
+         COALESCE(MAX(CASE WHEN iat.tag_id = ANY($1::int[]) THEN iat.weight ELSE 0 END), 0) AS tag_weight
+       FROM image_assets ia
+       LEFT JOIN image_asset_tags iat ON iat.image_id = ia.id
+       WHERE ia.is_active = TRUE
+         AND (
+           (COALESCE(array_length($1::int[], 1), 0) > 0 AND iat.tag_id = ANY($1::int[]))
+           OR (COALESCE(array_length($2::text[], 1), 0) > 0 AND ia.keywords && $2::text[])
+           OR (COALESCE(array_length($3::text[], 1), 0) > 0 AND ia.primary_category = ANY($3::text[]))
+           OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND ia.generic_category = ANY($4::text[]))
+           OR ia.generic_category = ANY($5::text[])
+         )
+       GROUP BY ia.id
+       ORDER BY ia.priority DESC, ia.usage_count ASC, ia.last_used_at ASC NULLS FIRST, RANDOM()
+       LIMIT 250`,
+      [tagIds, keywords, primaryCategories, genericCategories, defaultGenericCategories]
+    );
+    poolRows = rows;
+    usedTier = "generic";
+  }
+
+  if (!poolRows.length) return null;
+
+  // ── Score the winning pool ────────────────────────────────────
+  const scored = poolRows
+    .map(candidate => scoreCandidate(candidate, {
+      cityId,
+      countryId,
       primaryCategories,
       genericCategories,
-      defaultGenericCategories,
-    ]
-  );
+      keywords,
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if ((a.usage_count || 0) !== (b.usage_count || 0)) return (a.usage_count || 0) - (b.usage_count || 0);
+      const aLast = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
+      const bLast = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
+      return aLast - bLast;
+    });
 
-  if (!rows.length) return null;
+  return { ...scored[0], _tier: usedTier };
 
   const scored = rows
     .map(candidate => scoreCandidate(candidate, {
@@ -197,6 +304,9 @@ async function findBestCandidate(context, client) {
 }
 
 async function persistAssignment(articleId, candidate, context, surface, client) {
+  if (candidate._tier) {
+    console.log(`  📍 [${articleId}] assigned from ${candidate._tier} pool (score: ${candidate.score?.toFixed(2)})`);
+  }
   const matchedTagId = context.tags[0]?.id || null;
   const matchedKeyword = context.keywords[0] || null;
   const matchedCategory =
@@ -231,7 +341,7 @@ async function persistAssignment(articleId, candidate, context, surface, client)
     [
       articleId,
       candidate.id,
-      "location-tag-keyword",
+      `${candidate._tier || "generic"}-overflow`,
       matchedTagId,
       matchedKeyword,
       matchedCategory,
@@ -256,7 +366,7 @@ async function persistAssignment(articleId, candidate, context, surface, client)
       candidate.id,
       surface,
       JSON.stringify({
-        matchStrategy: "location-tag-keyword",
+        matchStrategy: `${candidate._tier || "generic"}-overflow`,
         matchedTagId,
         matchedKeyword,
         matchedCategory,
@@ -352,20 +462,11 @@ async function resolveImagesForArticles(articleIds, options = {}) {
   if (!ids.length) return [];
 
   const surface = options.surface || "feed";
-  const CONCURRENCY = options.concurrency || 5;
   const results = [];
 
-  // Process in concurrent batches instead of sequentially
-  for (let i = 0; i < ids.length; i += CONCURRENCY) {
-    const batch = ids.slice(i, i + CONCURRENCY);
-    const settled = await Promise.allSettled(
-      batch.map(articleId => resolveImageForArticle(articleId, { surface }))
-    );
-    for (const outcome of settled) {
-      if (outcome.status === "fulfilled" && outcome.value) {
-        results.push(outcome.value);
-      }
-    }
+  for (const articleId of ids) {
+    const resolved = await resolveImageForArticle(articleId, { surface });
+    if (resolved) results.push(resolved);
   }
 
   return results;
