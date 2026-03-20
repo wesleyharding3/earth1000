@@ -15,9 +15,9 @@ const pool = require("./db");
 const { resolveImageForArticle } = require("./imageResolver");
 
 // ─── Config ────────────────────────────────────────────────────
-const BATCH_SIZE   = 50;
-const CONCURRENCY  = 5;
-const DELAY_MS     = 20;   // small pause between batches to avoid DB spike
+const BATCH_SIZE   = 100;
+const CONCURRENCY  = 10;
+const DELAY_MS     = 0;    // no delay — saturation cache keeps DB load sane
 const JOB_NAME     = "backfill_images_v1";
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
