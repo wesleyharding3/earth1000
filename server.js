@@ -5,7 +5,7 @@ const fs = require("fs");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
-const { countryVarianceRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
+const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 const { resolveImagesForArticles } = require("./imageResolver");
 
@@ -389,6 +389,12 @@ app.get("/api/news/search", async (req, res) => {
       conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`);
     }
 
+    // Default time gate: no explicit date filter → cap at 72 hours.
+    // Prevents week-old articles from outranking today's news via country_boost.
+    if (!fromDate && !toDate) {
+      conditions.push(`a.published_at > NOW() - INTERVAL '72 hours'`);
+    }
+
     const whereClause = conditions.length
       ? "WHERE " + conditions.join(" AND ")
       : "";
@@ -446,7 +452,7 @@ app.get("/api/news/search", async (req, res) => {
         ORDER BY a.id
       ) sub
       ORDER BY (
-        (sub.base_priority * 0.10 + sub.recency_decay * 0.90)
+        (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
         * POWER(sub.country_boost, 2.0)
       ) DESC
       LIMIT $${limitParam} OFFSET $${offsetParam}
@@ -454,15 +460,22 @@ app.get("/api/news/search", async (req, res) => {
 
     let results = rows.map(r => ({
       ...r,
-      final_priority: (r.base_priority || 0) * 0.10
-                    + (r.recency_decay  || 1) * 0.90
-                    * Math.pow(r.country_boost || 1, 2.0)
+      // Fix: boost² applied to the whole blended score, not just recency
+      final_priority: (
+        (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
+      ) * Math.pow(r.country_boost || 1, 2.0)
     }));
+
+    // Variation first: source diversity before country variance
+    results = diversityRerank(results.map(r => ({
+      ...r,
+      priority: r.final_priority
+    })));
 
     results = countryVarianceRerank(results);
 
-    // Final pass: re-sort ensuring recency is respected within close priority bands
-    const PRIORITY_BAND = 0.15; // articles within 15% of each other sort by date
+    // Final pass: only tiebreak by date within a very tight band (3%)
+    const PRIORITY_BAND = 0.03;
     results.sort((a, b) => {
       const pa = a.final_priority || 0;
       const pb = b.final_priority || 0;
