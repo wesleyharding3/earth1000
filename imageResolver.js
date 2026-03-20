@@ -132,9 +132,23 @@ async function fetchFallbackCategories(primaryCategories, client) {
 // Example: 10 Cartagena images, multiplier 3 → saturated after ~30 combined uses.
 // At that point overflow to Colombia images, then to tag/generic.
 const SATURATION_MULTIPLIER = 3;
-const SATURATION_WINDOW_HOURS = 24; // only count uses in last 24h for recency check
+const SATURATION_WINDOW_HOURS = 24;
 
-async function getPoolSaturation(locationClause, params, client) {
+// In-process saturation cache — keyed by "city:ID" or "country:ID".
+// Avoids re-querying the DB for every article during bulk operations.
+// TTL of 60 seconds: fresh enough for live use, cheap enough for backfill.
+const _satCache = new Map();
+const SAT_CACHE_TTL_MS = 60_000;
+
+function _satCacheKey(type, id) { return `${type}:${id}`; }
+
+async function getPoolSaturation(locationClause, params, client, cacheKey) {
+  if (cacheKey) {
+    const cached = _satCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < SAT_CACHE_TTL_MS) {
+      return cached.value;
+    }
+  }
   const { rows } = await client.query(
     `SELECT
        COUNT(*)                                    AS pool_size,
@@ -158,7 +172,9 @@ async function getPoolSaturation(locationClause, params, client) {
   const threshold = poolSize * SATURATION_MULTIPLIER;
   const saturated = usedRecently >= poolSize && minUsage >= threshold;
 
-  return { saturated, poolSize, minUsage, usedRecently, threshold };
+  const result = { saturated, poolSize, minUsage, usedRecently, threshold };
+  if (cacheKey) _satCache.set(cacheKey, { value: result, ts: Date.now() });
+  return result;
 }
 
 // ─── Tiered pool query ─────────────────────────────────────────────────────────
@@ -211,7 +227,7 @@ async function findBestCandidate(context, client) {
   let poolRows  = [];
 
   if (cityId) {
-    const sat = await getPoolSaturation(`ia.city_id = $1`, [cityId], client);
+    const sat = await getPoolSaturation(`ia.city_id = $1`, [cityId], client, _satCacheKey("city", cityId));
     if (!sat.saturated && sat.poolSize > 0) {
       poolRows = await queryPool(`ia.city_id = $2`, [cityId], {}, tagIds, client);
       if (poolRows.length) usedTier = "city";
@@ -223,7 +239,8 @@ async function findBestCandidate(context, client) {
   // ── Tier 2: country pool (if city saturated or no city) ──────
   if (!poolRows.length && countryId) {
     const sat = await getPoolSaturation(
-      `ia.country_id = $1 AND ia.city_id IS NULL`, [countryId], client
+      `ia.country_id = $1 AND ia.city_id IS NULL`, [countryId], client,
+      _satCacheKey("country", countryId)
     );
     if (!sat.saturated && sat.poolSize > 0) {
       poolRows = await queryPool(
