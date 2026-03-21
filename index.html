@@ -44,9 +44,7 @@
       left: 0;
       width: 100%;
       height: min(420px, calc(var(--app-height, 100vh) - 24px));
-      background: rgba(8, 14, 24, 0.48);
-      backdrop-filter: blur(22px) saturate(160%);
-      -webkit-backdrop-filter: blur(22px) saturate(160%);
+      background: transparent;
       color: white;
       padding: 20px;
       box-sizing: border-box;
@@ -60,7 +58,10 @@
     }
 
     #infoPanel.active {
-      pointer-events: all; 
+      pointer-events: all;
+      background: rgba(8, 14, 24, 0.48);
+      backdrop-filter: blur(22px) saturate(160%);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
       border: 1.5px solid rgba(255, 255, 255, 0.25);
     }
 
@@ -79,8 +80,6 @@
       padding-bottom: 10px;
       margin-bottom: 8px;
       background: rgba(8, 14, 24, 0.60);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
       z-index: 5;
     }
 
@@ -1900,9 +1899,7 @@
   right: 0;
   height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
   max-height: none;
-  background: rgba(8, 14, 24, 0.48);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  background: transparent;
   border-top: 1px solid rgba(255,255,255,0.08);
   border-radius: 0;
   z-index: 800;
@@ -1917,6 +1914,9 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
+  background: rgba(8, 14, 24, 0.48);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
 }
 
 .adpHandle {
@@ -6929,8 +6929,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const sidebarTab         = document.getElementById("sidebarTab");
       let sidebarOpen          = false;
 
-      function openSidebar()  { sidebarOpen = true;  viewSidebar.classList.add("open");    settingsToggle.classList.add("active"); }
-      function closeSidebar() { sidebarOpen = false; viewSidebar.classList.remove("open"); settingsToggle.classList.remove("active"); }
+      function openSidebar()  { sidebarOpen = true;  viewSidebar.classList.add("open");    settingsToggle.classList.add("active"); if(window.startPulse) window.startPulse(viewSidebar); }
+      function closeSidebar() { sidebarOpen = false; viewSidebar.classList.remove("open"); settingsToggle.classList.remove("active"); if(window.stopPulse) window.stopPulse(viewSidebar); }
 
       settingsToggle.addEventListener("click", (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
       sidebarTab.addEventListener("click",     (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
@@ -8391,6 +8391,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
 
         panel.classList.add("active");
+        if(window.startPulse) window.startPulse(panel);
         applySnapHeight("default", true);
         attachPanelResizeHandle();
 
@@ -8683,6 +8684,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("click", () => {
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
+          if(window.stopPulse) window.stopPulse(panel);
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           
@@ -8933,6 +8935,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
 
         panel.classList.add("active");
+        if(window.startPulse) window.startPulse(panel);
         applySnapHeight("default", true);
         attachPanelResizeHandle();
 
@@ -9049,6 +9052,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("click", () => {
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
+          if(window.stopPulse) window.stopPulse(panel);
           document.getElementById("pageNav").style.pointerEvents = "all";
           
           // Extract yaw/pitch for when focusLocked is eventually cleared by user drag
@@ -10609,6 +10613,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     flowModeOpen = !flowModeOpen;
     flowModeBtn.classList.toggle("active", flowModeOpen);
     flowControls.classList.toggle("visible", flowModeOpen);
+    var fp=document.querySelector('.flowPanel'); if(fp){flowModeOpen?window.startPulse&&window.startPulse(fp):window.stopPulse&&window.stopPulse(fp);}
     if (!flowModeOpen) {
       clearArcs();
       flowPlaying = false;
@@ -11075,6 +11080,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     `;
     
     panel.classList.add("active");
+    if(window.startPulse) window.startPulse(panel);
     applySnapHeight("default", true);
     attachPanelResizeHandle();
     
@@ -11082,6 +11088,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     panel.querySelector(".closePanel").onclick = () => {
       if (window.closeArticleDetail) window.closeArticleDetail();
       panel.classList.remove("active");
+      if(window.stopPulse) window.stopPulse(panel);
     };
     
     // Fetch articles
@@ -13280,6 +13287,7 @@ grmClockTick();
   function closeArticlePanel() {
     stopArticlePlayback();
     panel.classList.remove('visible');
+    if(window.stopPulse) window.stopPulse(panel);
     panel.style.transform = '';
     
     // Restore flow state if returning to flow animation
@@ -13626,104 +13634,68 @@ grmClockTick();
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <script>
-  /* ── Panel pulse: canvas comet tail along border ── */
+  /* ── Panel pulse: comet — only runs while panel is open ── */
   (function() {
-    var SPEED = 0.00035;
-    var TAIL  = 0.20;
-    var STEPS = 120;
-    var CR = [110, 200, 255];
-
-    function perimOf(w, h, r) {
-      return 2*(w-2*r) + 2*(h-2*r) + 2*Math.PI*r;
-    }
-
-    function pointAt(w, h, r, d) {
-      var P = perimOf(w, h, r);
-      d = ((d % P) + P) % P;
-      var arc = 0.5 * Math.PI * r;
-      var segs = [
-        { len: arc,       fn: function(t) { return { x: r - r*Math.cos(t*Math.PI/2), y: r - r*Math.sin(t*Math.PI/2) }; } },
-        { len: w - 2*r,   fn: function(t) { return { x: r + t*(w-2*r), y: 0 }; } },
-        { len: arc,       fn: function(t) { return { x: w-r + r*Math.sin(t*Math.PI/2), y: r - r*Math.cos(t*Math.PI/2) }; } },
-        { len: h - 2*r,   fn: function(t) { return { x: w, y: r + t*(h-2*r) }; } },
-        { len: arc,       fn: function(t) { return { x: w-r + r*Math.cos(t*Math.PI/2), y: h-r + r*Math.sin(t*Math.PI/2) }; } },
-        { len: w - 2*r,   fn: function(t) { return { x: w-r - t*(w-2*r), y: h }; } },
-        { len: arc,       fn: function(t) { return { x: r - r*Math.sin(t*Math.PI/2), y: h-r + r*Math.cos(t*Math.PI/2) }; } },
-        { len: h - 2*r,   fn: function(t) { return { x: 0, y: h-r - t*(h-2*r) }; } }
+    var SPEED=0.00030, TAIL=0.22, STEPS=140, CR=[100,200,255];
+    function perimOf(w,h,r){return 2*(w-2*r)+2*(h-2*r)+2*Math.PI*r;}
+    function pointAt(w,h,r,d){
+      var P=perimOf(w,h,r); d=((d%P)+P)%P; var arc=0.5*Math.PI*r;
+      var segs=[
+        {len:arc,fn:function(t){return{x:r-r*Math.cos(t*Math.PI/2),y:r-r*Math.sin(t*Math.PI/2)};}},
+        {len:w-2*r,fn:function(t){return{x:r+t*(w-2*r),y:0};}},
+        {len:arc,fn:function(t){return{x:w-r+r*Math.sin(t*Math.PI/2),y:r-r*Math.cos(t*Math.PI/2)};}},
+        {len:h-2*r,fn:function(t){return{x:w,y:r+t*(h-2*r)};}},
+        {len:arc,fn:function(t){return{x:w-r+r*Math.cos(t*Math.PI/2),y:h-r+r*Math.sin(t*Math.PI/2)};}},
+        {len:w-2*r,fn:function(t){return{x:w-r-t*(w-2*r),y:h};}},
+        {len:arc,fn:function(t){return{x:r-r*Math.sin(t*Math.PI/2),y:h-r+r*Math.cos(t*Math.PI/2)};}},
+        {len:h-2*r,fn:function(t){return{x:0,y:h-r-t*(h-2*r)};}}
       ];
-      for (var i = 0; i < segs.length; i++) {
-        if (d <= segs[i].len) return segs[i].fn(segs[i].len > 0 ? d/segs[i].len : 0);
-        d -= segs[i].len;
+      for(var i=0;i<segs.length;i++){if(d<=segs[i].len)return segs[i].fn(segs[i].len>0?d/segs[i].len:0);d-=segs[i].len;}
+      return{x:0,y:0};
+    }
+    var reg=new Map();
+    function getEntry(el){
+      if(reg.has(el))return reg.get(el);
+      var c=document.createElement('canvas');
+      c.className='panelPulseCanvas';
+      c.style.cssText='position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+      el.appendChild(c);
+      var e={el:el,c:c,ctx:c.getContext('2d'),prog:Math.random(),raf:null};
+      reg.set(el,e); return e;
+    }
+    function tick(e){
+      var el=e.el,w=el.offsetWidth,h=el.offsetHeight;
+      e.c.width=w; e.c.height=h; e.ctx.clearRect(0,0,w,h);
+      if(!w||!h){e.raf=requestAnimationFrame(function(){tick(e);});return;}
+      var r=Math.min(parseFloat(getComputedStyle(el).borderRadius)||0,w/2,h/2);
+      var P=perimOf(w,h,r),tL=P*TAIL,hD=e.prog*P;
+      for(var i=0;i<STEPS;i++){
+        var t=i/STEPS,pt=pointAt(w,h,r,hD-(1-t)*tL);
+        var alpha=t<0.85?(t/0.85)*0.55:0.55+(t-0.85)/0.15*0.35;
+        e.ctx.beginPath();e.ctx.arc(pt.x,pt.y,0.4+t*2.0,0,6.283);
+        e.ctx.fillStyle='rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')';
+        e.ctx.fill();
       }
-      return { x: 0, y: 0 };
+      var hp=pointAt(w,h,r,hD),g=e.ctx.createRadialGradient(hp.x,hp.y,0,hp.x,hp.y,10);
+      g.addColorStop(0,'rgba(220,248,255,0.98)');
+      g.addColorStop(0.3,'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.55)');
+      g.addColorStop(1,'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0)');
+      e.ctx.beginPath();e.ctx.arc(hp.x,hp.y,10,0,6.283);e.ctx.fillStyle=g;e.ctx.fill();
+      e.prog=(e.prog+SPEED)%1;
+      e.raf=requestAnimationFrame(function(){tick(e);});
     }
-
-    function attachPulse(el) {
-      if (!el || el.querySelector('.panelPulseCanvas')) return;
-      var canvas = document.createElement('canvas');
-      canvas.className = 'panelPulseCanvas';
-      var cp = getComputedStyle(el).position;
-      if (cp === 'static') el.style.position = 'relative';
-      el.insertBefore(canvas, el.firstChild);
-      var ctx = canvas.getContext('2d');
-      var prog = Math.random();
-
-      function frame() {
-        var w = el.offsetWidth, h = el.offsetHeight;
-        canvas.width  = w;
-        canvas.height = h;
-        ctx.clearRect(0, 0, w, h);
-        if (!w || !h) { requestAnimationFrame(frame); return; }
-
-        var r  = Math.min(parseFloat(getComputedStyle(el).borderRadius) || 0, w/2, h/2);
-        var P  = perimOf(w, h, r);
-        var tL = P * TAIL;
-        var hD = prog * P;
-
-        for (var i = 0; i < STEPS; i++) {
-          var t = i / STEPS;
-          var d = hD - (1 - t) * tL;
-          var pt = pointAt(w, h, r, d);
-          var alpha = t < 0.85 ? (t/0.85)*0.60 : 0.60 + (t-0.85)/0.15*0.30;
-          var sz = 0.5 + t * 1.8;
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, sz, 0, 6.283);
-          ctx.fillStyle = 'rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')';
-          ctx.fill();
-        }
-
-        var hp = pointAt(w, h, r, hD);
-        var g = ctx.createRadialGradient(hp.x, hp.y, 0, hp.x, hp.y, 9);
-        g.addColorStop(0,    'rgba(210,245,255,0.95)');
-        g.addColorStop(0.35, 'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.50)');
-        g.addColorStop(1,    'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0)');
-        ctx.beginPath();
-        ctx.arc(hp.x, hp.y, 9, 0, 6.283);
-        ctx.fillStyle = g;
-        ctx.fill();
-
-        prog = (prog + SPEED) % 1;
-        requestAnimationFrame(frame);
-      }
-      frame();
-    }
-
-    function initAll() {
-      ['viewSidebar','infoPanel','articleDetailPanel'].forEach(function(id) {
-        attachPulse(document.getElementById(id));
-      });
-      var obs = new MutationObserver(function() {
-        document.querySelectorAll('.flowPanel,.ahCard').forEach(attachPulse);
-      });
-      obs.observe(document.body, { childList: true, subtree: true });
-      document.querySelectorAll('.flowPanel,.ahCard').forEach(attachPulse);
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initAll);
-    } else {
-      initAll();
-    }
+    window.startPulse=function(el){
+      if(!el)return;
+      var e=getEntry(el);
+      if(e.raf)return;
+      tick(e);
+    };
+    window.stopPulse=function(el){
+      if(!el)return;
+      var e=reg.get(el); if(!e)return;
+      if(e.raf){cancelAnimationFrame(e.raf);e.raf=null;}
+      e.ctx.clearRect(0,0,e.c.width,e.c.height);
+    };
   })();
 
   </script>
