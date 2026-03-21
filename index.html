@@ -240,6 +240,8 @@
       padding-right: 10px;
       box-sizing: border-box;
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
     }
 
     #aggRouteArticles {
@@ -1835,6 +1837,28 @@
       grid-template-columns: repeat(4, 1fr);
       gap: 12px;
       padding: 4px 2px 20px;
+    }
+
+    /* ── Mobile article grid ── */
+    @media (pointer: coarse), (max-width: 700px) {
+      .articlesGrid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+      .articleCard { height: auto; min-height: 320px; }
+      .articleCardImage,
+      .articleCardImagePlaceholder { height: 140px; }
+      .articleCardTitle  { font-size: 14px; -webkit-line-clamp: 3; }
+      .articleCardSummary { font-size: 12px; }
+      .articleCardSource { font-size: 10px; }
+      .articleCardDate   { font-size: 11px; }
+      .articleCardBody   { padding: 10px 12px 12px; }
+    }
+    @media (max-width: 420px) {
+      .articlesGrid { grid-template-columns: 1fr; }
+      .articleCard { min-height: 280px; }
+      .articleCardImage,
+      .articleCardImagePlaceholder { height: 160px; }
     }
 
 
@@ -4529,6 +4553,46 @@
     }
   
 /* ── Border pulse animation ─────────────────────────────────── */
+
+/* ── Mobile controls: bigger touch targets, better visibility ── */
+@media (pointer: coarse) {
+  /* Panel resize handle / snap buttons */
+  .snapBtn {
+    width: 34px; height: 34px;
+  }
+  .snapBtn svg { width: 13px; height: 13px; }
+
+  /* Sort bar */
+  .panelSortOption { padding: 12px 0; }
+  .panelSortLabel  { font-size: 12px; }
+
+  /* Media type toggle (Article / Video) */
+  .panelMediaOption {
+    min-height: 42px;
+    min-width: 96px;
+    padding: 0 14px;
+  }
+
+  /* Tag filter dropdown rows */
+  .tagOption { padding: 13px 16px; font-size: 13px; }
+
+  /* KWI mode tabs & range buttons */
+  .kwi-mode-tab  { padding: 10px 12px; font-size: 12px; }
+  .kwi-range-btn { padding: 8px 16px;  font-size: 12px; }
+
+  /* Population scope buttons */
+  .pop-scope-btn { padding: 8px 16px; font-size: 12px; }
+
+  /* All iconBtns: prevent double-tap zoom delay */
+  .iconBtn { touch-action: manipulation; }
+
+  /* Extra scroll-friendliness on inner panel lists */
+  .articlePage,
+  #aggRouteArticles {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+}
 
 </style>
 </head>
@@ -8310,6 +8374,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // ────────────────────────────────────────────────────────────────
 
       function updateHoverLabels() {
+        // Never show hover labels on touch/coarse-pointer devices
+        if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         raycaster.params.Points.threshold = currentViewMode === "country"
         ? Math.max(0.018, camera.position.z * 0.018)
         : Math.max(0.013, camera.position.z * 0.015);
@@ -8461,11 +8527,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       raycaster.params.Points.threshold = 0.03;
       const mouse = new THREE.Vector2();
 
+      // Prevents the synthetic click that fires after touchstart from
+      // resetting the camera animation that touchstart just started.
+      let touchNodeSelectTime = 0;
+
       window.addEventListener("click", event => {
+        // If a touch-initiated node selection just happened, skip this click
+        if (Date.now() - touchNodeSelectTime < 600) return;
+
         // Skip this handler when flow mode is active
         const flowControls = document.getElementById("flowControls");
         if (flowControls && flowControls.classList.contains("visible")) return;
-        
+
         if (event.target.closest(".closePanel")) return;
         if (isArticleDetailTarget(event.target)) return;
         
@@ -8606,6 +8679,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 const td = rayTransvDist(raycaster.ray, nodePos);
                 if (td > perNodeThresh(raycaster.params.Points.threshold, regionNearestDist[index])) return;
               }
+              touchNodeSelectTime = Date.now();
               lockAmbientRotation();
               isFocused = true; preFocusZoom = camera.position.z;
               const r = regionData[index];
@@ -8635,6 +8709,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
               const td = rayTransvDist(raycaster.ray, nodePos);
               if (td > perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) return;
+              touchNodeSelectTime = Date.now();
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
               preFocusZoom = camera.position.z;
