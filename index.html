@@ -6042,6 +6042,23 @@ function computeCityTiers(cities) {
       // ── Compute tier for each city ────────────────────────────────
       const cityTierIndices = computeCityTiers(cities);
 
+      // ── Nearest-neighbour distances for spatial-aware hover ───────
+      // O(N²) over ~500 cities — runs once at startup, negligible cost
+      const cityNearestDist = (() => {
+        const n = cities.length;
+        const d = new Float32Array(n).fill(Infinity);
+        for (let i = 0; i < n; i++) {
+          const ix = positions[i*3], iy = positions[i*3+1], iz = positions[i*3+2];
+          for (let j = i+1; j < n; j++) {
+            const dx = positions[j*3]-ix, dy = positions[j*3+1]-iy, dz = positions[j*3+2]-iz;
+            const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
+            if (dist < d[i]) d[i] = dist;
+            if (dist < d[j]) d[j] = dist;
+          }
+        }
+        return d;
+      })();
+
       // ── Invisible raycaster geometry ──────────────────────────────
       const cityGeo = new THREE.BufferGeometry();
       cityGeo.setAttribute(
@@ -6544,6 +6561,22 @@ function computeCityTiers(cities) {
         const y =  radius * Math.cos(phi);
         countryPositions.push(x, y, z);
       });
+
+      // ── Nearest-neighbour distances for countries ─────────────────
+      const countryNearestDist = (() => {
+        const n = countries.length;
+        const d = new Float32Array(n).fill(Infinity);
+        for (let i = 0; i < n; i++) {
+          const ix = countryPositions[i*3], iy = countryPositions[i*3+1], iz = countryPositions[i*3+2];
+          for (let j = i+1; j < n; j++) {
+            const dx = countryPositions[j*3]-ix, dy = countryPositions[j*3+1]-iy, dz = countryPositions[j*3+2]-iz;
+            const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
+            if (dist < d[i]) d[i] = dist;
+            if (dist < d[j]) d[j] = dist;
+          }
+        }
+        return d;
+      })();
 
       const countryGeo = new THREE.BufferGeometry();
       countryGeo.setAttribute("position", new THREE.Float32BufferAttribute(countryPositions, 3));
@@ -7774,6 +7807,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let regionPoints    = null;   // THREE.Points — centroid nodes
       let regionData      = [];     // array of region meta rows from /api/regions
       let regionPositions = null;   // Float32Array of centroid xyz positions
+      let regionNearestDist = null; // Float32Array — nearest-neighbour distance per region node
       let regionLoading   = false;
 
       // Project [lng, lat] → THREE.Vector3 on globe surface
@@ -7801,6 +7835,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
           regionData.push(r);
         });
         regionPositions = new Float32Array(pos);
+
+        // Nearest-neighbour distances for spatial-aware hover
+        const n = regionData.length;
+        regionNearestDist = new Float32Array(n).fill(Infinity);
+        for (let i = 0; i < n; i++) {
+          const ix = regionPositions[i*3], iy = regionPositions[i*3+1], iz = regionPositions[i*3+2];
+          for (let j = i+1; j < n; j++) {
+            const dx = regionPositions[j*3]-ix, dy = regionPositions[j*3+1]-iy, dz = regionPositions[j*3+2]-iz;
+            const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
+            if (dist < regionNearestDist[i]) regionNearestDist[i] = dist;
+            if (dist < regionNearestDist[j]) regionNearestDist[j] = dist;
+          }
+        }
         const geo = new THREE.BufferGeometry();
         geo.setAttribute("position", new THREE.Float32BufferAttribute(regionPositions, 3));
         geo.setAttribute("color",    new THREE.Float32BufferAttribute(new Float32Array(cols), 3));
@@ -7896,6 +7943,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ).applyMatrix4(regionPoints.matrixWorld);
 
           if (isCityVisible(nodePos, camera)) {
+            // Spatial-aware: reject if cursor bleeds past this node's half-gap
+            if (regionNearestDist) {
+              const td = rayTransvDist(raycaster.ray, nodePos);
+              if (td > perNodeThresh(raycaster.params.Points.threshold, regionNearestDist[index])) {
+                if (regionHoveredIndex !== null) { regionHoveredIndex = null; hideHoverCard(); }
+                return;
+              }
+            }
             const projected = nodePos.clone().project(camera);
             const rect = renderer.domElement.getBoundingClientRect();
             const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
@@ -8092,6 +8147,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let lastHoveredIndex = null;
       let hoverEraseTimer = null;
 
+      // ── Spatial-aware hover helpers ──────────────────────────────
+      // Perpendicular (transverse) distance from a ray to a world-space point.
+      // Uses the cross-product identity: |transverse| = |(P-O) × D|
+      function rayTransvDist(ray, worldPt) {
+        const vx = worldPt.x - ray.origin.x;
+        const vy = worldPt.y - ray.origin.y;
+        const vz = worldPt.z - ray.origin.z;
+        const dx = ray.direction.x, dy = ray.direction.y, dz = ray.direction.z;
+        const cx = vy*dz - vz*dy;
+        const cy = vz*dx - vx*dz;
+        const cz = vx*dy - vy*dx;
+        return Math.sqrt(cx*cx + cy*cy + cz*cz);
+      }
+
+      // Per-node effective threshold.
+      // When neighbours are crowded (nearDist < 2.5 × baseThresh) tighten to
+      // 40% of the gap so the cursor can't bleed into an adjacent node.
+      // In sparse space use the full baseThresh.
+      // Floor: never shrink below 25% of baseThresh so tiny nodes stay clickable.
+      function perNodeThresh(baseThresh, nearDist) {
+        if (nearDist < baseThresh * 2.5) {
+          return Math.max(nearDist * 0.40, baseThresh * 0.25);
+        }
+        return baseThresh;
+      }
+      // ────────────────────────────────────────────────────────────────
+
       function updateHoverLabels() {
         raycaster.params.Points.threshold = currentViewMode === "country"
         ? Math.max(0.012, camera.position.z * 0.014)
@@ -8121,7 +8203,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             // Suppress hover for pop/gdp-filter-masked nodes
             const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
             const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
-            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) hoveredIndex = index;
+            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
+              // ── Spatial-aware threshold: reject if cursor is too far from this
+              //    specific node relative to its nearest neighbour distance ──
+              const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
+              const td = rayTransvDist(raycaster.ray, nodePos);
+              if (td <= perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) {
+                hoveredIndex = index;
+              }
+            }
           }
         }
 
@@ -8284,6 +8374,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
               regionPositions[index*3], regionPositions[index*3+1], regionPositions[index*3+2]
             ).applyMatrix4(regionPoints.matrixWorld);
             if (isCityVisible(nodePos, camera)) {
+              if (regionNearestDist) {
+                const td = rayTransvDist(raycaster.ray, nodePos);
+                if (td > perNodeThresh(raycaster.params.Points.threshold, regionNearestDist[index])) return;
+              }
               lockAmbientRotation();
               isFocused = true; preFocusZoom = camera.position.z;
               const r = regionData[index];
@@ -8309,6 +8403,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
             const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
             if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
+              // Spatial-aware: tighten threshold for crowded nodes
+              const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
+              const td = rayTransvDist(raycaster.ray, nodePos);
+              if (td > perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) return;
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
               preFocusZoom = camera.position.z;
@@ -8369,6 +8467,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
               regionPositions[index*3], regionPositions[index*3+1], regionPositions[index*3+2]
             ).applyMatrix4(regionPoints.matrixWorld);
             if (isCityVisible(nodePos, camera)) {
+              if (regionNearestDist) {
+                const td = rayTransvDist(raycaster.ray, nodePos);
+                if (td > perNodeThresh(raycaster.params.Points.threshold, regionNearestDist[index])) return;
+              }
               lockAmbientRotation();
               isFocused = true; preFocusZoom = camera.position.z;
               const r = regionData[index];
@@ -8394,6 +8496,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
             const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
             if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
+              // Spatial-aware: tighten threshold for crowded nodes
+              const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
+              const td = rayTransvDist(raycaster.ray, nodePos);
+              if (td > perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) return;
               lockAmbientRotation();
               selectedNodeIndex = index; isFocused = true;
               preFocusZoom = camera.position.z;
