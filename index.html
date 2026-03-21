@@ -52,11 +52,16 @@
     }
     .el-grid ellipse:first-child { stroke: rgba(255,160,40,0.35); stroke-width: 1.1; }
 
-    /* Trailing blur effect behind star */
+    /* Tapered trail blur effect behind star */
     .el-trail-blur {
       fill: none;
-      stroke: rgba(255,210,80,0.75);
-      stroke-width: 9; stroke-linecap: round;
+      stroke: rgba(255,180,60,0.15);
+      stroke-width: 1; stroke-linecap: round;
+      filter: url(#elTrailBlur);
+    }
+    .el-trail-seg {
+      fill: none;
+      stroke-linecap: round;
       filter: url(#elTrailBlur);
     }
 
@@ -4623,6 +4628,7 @@
         <!-- Shooting star trail + star, tilted -32deg -->
         <g transform="rotate(-32)">
           <path class="el-trail-blur" d=""/>
+          <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
           <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
         </g>
       </svg>
@@ -4641,12 +4647,13 @@
       <stop offset="60%"  stop-color="rgba(255,150,40,0.5)" />
       <stop offset="100%" stop-color="rgba(255,210,80,1)" />
     </linearGradient>
-    <filter id="elTrailBlur" x="-50%" y="-300%" width="200%" height="700%">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="14" result="wideGlow"/>
-      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="coreGlow"/>
+    <filter id="elTrailBlur" x="-50%" y="-100%" width="200%" height="300%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur2"/>
       <feMerge>
-        <feMergeNode in="wideGlow"/>
-        <feMergeNode in="coreGlow"/>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
   </defs>
@@ -9142,6 +9149,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 </g>
                 <g transform="rotate(-32)">
                   <path class="el-trail-blur" d=""/>
+                  <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
                   <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
                 </g>
               </svg>
@@ -9580,6 +9588,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 </g>
                 <g transform="rotate(-32)">
                   <path class="el-trail-blur" d=""/>
+                  <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
                   <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
                 </g>
               </svg>
@@ -14267,6 +14276,16 @@ grmClockTick();
   <script>
   (function(){
     const CYCLE = 4000, RX = 112, RY = 36, TRAIL_FRAC = 0.22;
+    const NUM_LAYERS = 6;
+    // Each layer: [lengthFrac, strokeWidth, opacity] - shorter & thicker near head
+    const LAYER_CFG = [
+      [1.00, 1.0, 0.12],  // full tail, thinnest
+      [0.75, 1.8, 0.18],
+      [0.50, 2.8, 0.28],
+      [0.35, 4.0, 0.40],
+      [0.20, 5.5, 0.55],
+      [0.08, 7.0, 0.75],  // near head, thickest
+    ];
     // Depth opacity keyframes: [orbitFrac, opacity]
     const DKF = [
       [0.000,0.92],[0.253,1.00],[0.427,0.45],
@@ -14299,6 +14318,7 @@ grmClockTick();
     function initLoaderAnim(svgEl) {
       const star=svgEl.querySelector('.el-star');
       const trailBlur=svgEl.querySelector('.el-trail-blur');
+      const trailSegs=Array.from(svgEl.querySelectorAll('.el-trail-seg'));
       if (!star||!trailBlur) return;
       let t0=null, raf;
       function frame(ts) {
@@ -14319,11 +14339,23 @@ grmClockTick();
         const op=depthOp(of>=1?0:of);
         star.style.opacity=op;
         if (tl>0) {
+          // Draw base blur (thinnest, full length)
           trailBlur.setAttribute('d', buildTrailLayer(nf, tl, 1.0));
-          trailBlur.style.opacity=(op*0.85).toFixed(2);
+          trailBlur.style.opacity=(op*0.12).toFixed(2);
+          // Draw tapered layers
+          trailSegs.forEach((seg,i)=>{
+            if (i < LAYER_CFG.length) {
+              const [lenFrac, sw, baseOp] = LAYER_CFG[i];
+              seg.setAttribute('d', buildTrailLayer(nf, tl, lenFrac));
+              seg.style.strokeWidth = sw;
+              seg.style.stroke = `rgba(255,${180+i*12},${60+i*15},${baseOp})`;
+              seg.style.opacity = (op * baseOp).toFixed(2);
+            }
+          });
         } else {
           trailBlur.setAttribute('d','');
           trailBlur.style.opacity='0';
+          trailSegs.forEach(seg=>{ seg.setAttribute('d',''); seg.style.opacity='0'; });
         }
         if (glow>0) {
           star.style.filter=`drop-shadow(0 0 ${(glow*14).toFixed(0)}px rgba(255,240,68,1)) drop-shadow(0 0 ${(glow*30).toFixed(0)}px rgba(255,158,26,1)) drop-shadow(0 0 ${(glow*52).toFixed(0)}px rgba(255,82,10,.78))`;
