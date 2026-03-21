@@ -56,25 +56,13 @@
       fill: none; stroke: rgba(255,150,40,0.16); stroke-width: 1.1; stroke-dasharray: 4 6;
     }
 
-    /* Trail locked to star's leading edge.
-       P≈496, L=80. dashoffset = starPos - L + 496 (positive throughout).
-       GROW  0→6%:  dashoffset 496→456, dasharray 0→80.  leading edge = star
-       TRAVEL 6→75%: dasharray=80, dashoffset 456→912.   leading edge = star
-       SHRINK 75→85%: dashoffset 912→992, dasharray 80→0. leading edge frozen at home
-       PAUSE  85→100%: hold, nothing visible, star bursts */
+    /* Trail animated via SMIL <animate> so it shares the same clock
+       as the star's <animateMotion> and stays perfectly locked to it. */
     .el-trail {
       fill: none;
       stroke: rgba(255,205,65,0.82);
       stroke-width: 2.2; stroke-linecap: round;
       stroke-dasharray: 0 496; stroke-dashoffset: 496;
-      animation: elOrbit 4s linear infinite;
-    }
-    @keyframes elOrbit {
-      0%   { stroke-dasharray:  0 496; stroke-dashoffset: 496; }
-      6%   { stroke-dasharray: 80 416; stroke-dashoffset: 456; }
-      75%  { stroke-dasharray: 80 416; stroke-dashoffset: 912; }
-      85%  { stroke-dasharray:  0 496; stroke-dashoffset: 992; }
-      100% { stroke-dasharray:  0 496; stroke-dashoffset: 992; }
     }
 
     /* Star position driven by animateMotion in HTML.
@@ -4601,7 +4589,12 @@
         </g>
         <!-- Orbit ring + star, tilted -32deg -->
         <g transform="rotate(-32)">
-          <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0"/>
+          <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0">
+            <animate attributeName="stroke-dashoffset" dur="4s" repeatCount="indefinite" calcMode="linear"
+              keyTimes="0;0.06;0.75;0.85;1" values="496;456;912;992;992"/>
+            <animate attributeName="stroke-dasharray" dur="4s" repeatCount="indefinite" calcMode="linear"
+              keyTimes="0;0.06;0.75;0.85;1" values="0 496;80 416;80 416;0 496;0 496"/>
+          </path>
           <!-- Star driven by animateMotion on exact same ellipse arc as the trail.
                Home = (112,0) = top-right visually. CCW: top-back(19%), left-back(37%),
                bottom-front(56%), home(75%). Holds 75%-100% while trail glows. -->
@@ -9109,7 +9102,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
                 <g transform="rotate(-32)">
-                  <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0"/>
+                  <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0">
+            <animate attributeName="stroke-dashoffset" dur="4s" repeatCount="indefinite" calcMode="linear"
+              keyTimes="0;0.06;0.75;0.85;1" values="496;456;912;992;992"/>
+            <animate attributeName="stroke-dasharray" dur="4s" repeatCount="indefinite" calcMode="linear"
+              keyTimes="0;0.06;0.75;0.85;1" values="0 496;80 416;80 416;0 496;0 496"/>
+          </path>
                   <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
                     <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
                       keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
@@ -9552,7 +9550,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
                 <g transform="rotate(-32)">
-                  <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0"/>
+                  <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0">
+            <animate attributeName="stroke-dashoffset" dur="4s" repeatCount="indefinite" calcMode="linear"
+              keyTimes="0;0.06;0.75;0.85;1" values="496;456;912;992;992"/>
+            <animate attributeName="stroke-dasharray" dur="4s" repeatCount="indefinite" calcMode="linear"
+              keyTimes="0;0.06;0.75;0.85;1" values="0 496;80 416;80 416;0 496;0 496"/>
+          </path>
                   <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
                     <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
                       keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
