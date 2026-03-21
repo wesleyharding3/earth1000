@@ -1837,12 +1837,13 @@
 
     .articleCardFooter {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
+      flex-direction: column;
+      align-items: flex-start;
       margin-top: auto;
       padding-top: 8px;
-      gap: 6px;
+      gap: 4px;
       flex-shrink: 0;
+      min-height: 32px;
     }
 
 .articleCardOrigin {
@@ -5098,12 +5099,30 @@
         </div>
       </div>
 
+      <!-- Default panel shown before any view mode is selected -->
+      <div class="sidebarPanel active" id="sidebarPanelDefault">
+        <div class="sidebarViewBadge">
+          <div class="sidebarViewBadgeDot"></div>
+          <span class="sidebarViewBadgeLabel">Globe</span>
+        </div>
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">Globe Motion</div>
+          <div class="sliderRow">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Ambient Rotation</span>
+              <span class="sliderValue" id="ambientValDefault">—</span>
+            </div>
+            <input class="settingsSlider" type="range" id="ambientSliderDefault"
+                   min="0" max="0.0020" step="0.00005" value="0.0004" />
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
-    <button class="flowCloseBtn" id="flowCloseBtn" title="Close">✕</button>
     
     <!-- Minimized bar (shown when minimized) -->
     <div class="flowMinBar">
@@ -6888,14 +6907,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.querySelectorAll(".sidebarPanel").forEach(p => p.classList.remove("active"));
         const panel = document.getElementById("sidebarPanel" + mode.charAt(0).toUpperCase() + mode.slice(1));
         if (panel) panel.classList.add("active");
+        else document.getElementById("sidebarPanelDefault")?.classList.add("active");
         if (window.__popFilterResetOnModeSwitch) window.__popFilterResetOnModeSwitch(mode);
       }
 
       // All ambient sliders stay in sync
       function formatSpeed(v) { return v === 0 ? "Off" : (v * 10000).toFixed(1) + "√ó"; }
 
-      const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderOcean","ambientSliderTransportation"];
-      const ambientVals    = ["ambientVal","ambientValCity","ambientValOcean","ambientValTransportation"];
+      const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderOcean","ambientSliderTransportation","ambientSliderDefault"];
+      const ambientVals    = ["ambientVal","ambientValCity","ambientValOcean","ambientValTransportation","ambientValDefault"];
 
       ambientSliders.forEach(id => {
         const el = document.getElementById(id);
@@ -8416,18 +8436,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         fetch("https://earth-wjr6.onrender.com/api/tags")
             .then(res => res.json())
             .then(tags => {
-              const generalTag = tags.find(t => t.name.toLowerCase() === "general");
               const allTags = [
                 { id: null, name: "All" },
                 ...tags
               ];
-              if (generalTag) {
-                currentTag = generalTag.id;
-                tagFilterLabel.textContent = "General";
-                tagFilterBtn.classList.add("active");
-              }
+              // Default to All — currentTag stays null
               tagDropdown.innerHTML = allTags.map(t => `
-                <div class="tagOption ${t.id === (generalTag?.id ?? null) ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
+                <div class="tagOption ${t.id === null ? "active" : ""}" data-tag-id="${t.id === null ? "" : t.id}">
                   <span class="tagOptionDot"></span>
                   ${t.name.charAt(0).toUpperCase() + t.name.slice(1)}
                 </div>`).join("");
@@ -13139,7 +13154,7 @@ grmClockTick();
     
     // Mini-map placeholder (location context)
     const miniMapHTML = locationTags.length 
-      ? `<div class="adpMiniMap">📍 ${locationTags.join(', ')}</div>`
+      ? `<div class="adpMiniMap"><svg width="10" height="12" viewBox="0 0 10 12" fill="none" style="display:inline;vertical-align:middle;margin-right:3px;opacity:.7"><path d="M5 0C2.79 0 1 1.79 1 4c0 3 4 8 4 8s4-5 4-8c0-2.21-1.79-4-4-4zm0 5.5A1.5 1.5 0 1 1 5 2.5a1.5 1.5 0 0 1 0 3z" fill="currentColor"/></svg>${locationTags.join(', ')}</div>`
       : '';
     
     // Context section (placeholder for future metrics)
@@ -13179,7 +13194,7 @@ grmClockTick();
       <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
       
       <div class="adpMeta">
-        ${locationTags.map(loc => `<span class="adpMetaTag location">📍 ${loc}</span>`).join('')}
+        ${locationTags.map(loc => `<span class="adpMetaTag location"><svg width="9" height="11" viewBox="0 0 10 12" fill="none" style="display:inline;vertical-align:middle;margin-right:2px;opacity:.8"><path d="M5 0C2.79 0 1 1.79 1 4c0 3 4 8 4 8s4-5 4-8c0-2.21-1.79-4-4-4zm0 5.5A1.5 1.5 0 1 1 5 2.5a1.5 1.5 0 0 1 0 3z" fill="currentColor"/></svg>${loc}</span>`).join('')}
         ${sentimentTag}
       </div>
       
