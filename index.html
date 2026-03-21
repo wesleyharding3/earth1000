@@ -59,12 +59,12 @@
 
     #infoPanel.active {
       pointer-events: all;
-      background: rgba(10, 18, 32, 0.80);
-      backdrop-filter: blur(28px) saturate(180%);
-      -webkit-backdrop-filter: blur(28px) saturate(180%);
-      border-top: 1px solid rgba(255,255,255,0.12);
-      border-left: 1px solid rgba(255,255,255,0.12);
-      border-right: 1px solid rgba(255,255,255,0.12);
+      background: rgba(8, 14, 28, 0.93);
+      backdrop-filter: blur(30px) saturate(200%);
+      -webkit-backdrop-filter: blur(30px) saturate(200%);
+      border-top: 1px solid rgba(255,255,255,0.14);
+      border-left: 1px solid rgba(255,255,255,0.14);
+      border-right: 1px solid rgba(255,255,255,0.14);
       border-bottom: none;
       overflow: hidden;
       border-radius: 22px 22px 0 0;
@@ -958,8 +958,8 @@
 #flowControls.visible { display: flex; }
 
 .flowPanel {
-  background: rgba(10, 18, 32, 0.80);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(8, 14, 28, 0.93);
+  border: 1px solid rgba(255,255,255,0.14);
   border-radius: 20px;
   padding: 14px 18px;
   display: flex;
@@ -1910,7 +1910,7 @@
   height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
   max-height: none;
   background: transparent;
-  border-top: 1px solid rgba(255,255,255,0.08);
+  border: none;
   border-radius: 0;
   z-index: 800;
   transform: translateY(100%);
@@ -1924,13 +1924,13 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
-  background: rgba(10, 18, 32, 0.80);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  background: rgba(8, 14, 28, 0.93);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
   border-radius: 20px 20px 0 0;
-  border-top: 1px solid rgba(255,255,255,0.10);
-  border-left: 1px solid rgba(255,255,255,0.10);
-  border-right: 1px solid rgba(255,255,255,0.10);
+  border-top: 1px solid rgba(255,255,255,0.14);
+  border-left: 1px solid rgba(255,255,255,0.14);
+  border-right: 1px solid rgba(255,255,255,0.14);
   border-bottom: none;
   overflow: hidden;
 }
@@ -4157,7 +4157,7 @@
       left: -300px;
       width: 260px;
       height: var(--app-height, 100vh);
-      background: rgba(10, 18, 32, 0.80);
+      background: rgba(8, 14, 28, 0.93);
       border-right: 1px solid rgba(255,255,255,0.11);
       z-index: 34;
       display: flex;
@@ -13771,8 +13771,10 @@ grmClockTick();
     window.startPulse = function(el) {
       if (!el) return;
       var e = getEntry(el);
+      // Always cancel any lingering RAF before restarting
+      if (e.raf) { cancelAnimationFrame(e.raf); e.raf = null; }
       e.active = true;
-      if (!e.raf) tick(e);
+      tick(e);
     };
 
     window.stopPulse = function(el) {
