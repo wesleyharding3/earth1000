@@ -59,10 +59,10 @@
 
     #infoPanel.active {
       pointer-events: all;
-      background: rgba(8, 14, 24, 0.82);
-      backdrop-filter: blur(24px) saturate(160%);
-      -webkit-backdrop-filter: blur(24px) saturate(160%);
-      border: 1.5px solid rgba(255, 255, 255, 0.18);
+      background: rgba(10, 18, 32, 0.62);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid rgba(255,255,255,0.12);
       overflow: hidden;
       border-radius: 22px 22px 0 0;
     }
@@ -950,8 +950,8 @@
 #flowControls.visible { display: flex; }
 
 .flowPanel {
-  background: rgba(8, 12, 20, 0.80);
-  border: 1px solid rgba(255,255,255,0.13);
+  background: rgba(10, 18, 32, 0.62);
+  border: 1px solid rgba(255,255,255,0.12);
   border-radius: 20px;
   padding: 14px 18px;
   display: flex;
@@ -1916,9 +1916,9 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
-  background: rgba(8, 14, 24, 0.82);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  background: rgba(10, 18, 32, 0.62);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
   border-radius: 20px 20px 0 0;
   overflow: hidden;
 }
@@ -4145,7 +4145,7 @@
       left: -300px;
       width: 260px;
       height: var(--app-height, 100vh);
-      background: rgba(8, 12, 22, 0.82);
+      background: rgba(10, 18, 32, 0.62);
       border-right: 1px solid rgba(255,255,255,0.11);
       z-index: 34;
       display: flex;
@@ -13660,20 +13660,20 @@ grmClockTick();
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <script>
-  /* ── Panel pulse: single Gaussian light sweep, top + sides only ── */
+  /* ── Panel pulse: smooth glow sweep, top + sides, no segments ── */
   (function() {
-    var SPEED = 0.00018;   // ~80s per full loop
-    var SIGMA = 0.10;      // Gaussian width as fraction of path length
-    var CR    = [120, 215, 255];
+    var SPEED = 0.00055;  // ~25s per loop — faster
+    var SIGMA = 0.22;     // wide pulse — 22% of path length
+    var CR    = [110, 220, 255];
 
     function buildPath(w, h, r) {
-      var arc  = 0.5 * Math.PI * r;
+      var arc = 0.5 * Math.PI * r;
       var segs = [
-        { len: h-2*r, fn: function(t){ return {x:0,       y:h-r-t*(h-2*r)}; } },
-        { len: arc,   fn: function(t){ return {x:r-r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2)}; } },
-        { len: w-2*r, fn: function(t){ return {x:r+t*(w-2*r), y:0}; } },
-        { len: arc,   fn: function(t){ return {x:w-r+r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2)}; } },
-        { len: h-2*r, fn: function(t){ return {x:w, y:r+t*(h-2*r)}; } }
+        { len: h-2*r, fn: function(t){ return {x:0,                                          y:h-r-t*(h-2*r)}; } },
+        { len: arc,   fn: function(t){ return {x:r-r*Math.sin(t*Math.PI/2),                  y:r-r*Math.cos(t*Math.PI/2)}; } },
+        { len: w-2*r, fn: function(t){ return {x:r+t*(w-2*r),                                y:0}; } },
+        { len: arc,   fn: function(t){ return {x:w-r+r*Math.sin(t*Math.PI/2),                y:r-r*Math.cos(t*Math.PI/2)}; } },
+        { len: h-2*r, fn: function(t){ return {x:w,                                          y:r+t*(h-2*r)}; } }
       ];
       var total = segs.reduce(function(s,sg){ return s+sg.len; }, 0);
       return { segs:segs, total:total };
@@ -13682,10 +13682,22 @@ grmClockTick();
     function pointAt(path, d) {
       d = ((d % path.total) + path.total) % path.total;
       for (var i=0; i<path.segs.length; i++) {
-        if (d <= path.segs[i].len) return path.segs[i].fn(path.segs[i].len>0 ? d/path.segs[i].len : 0);
+        if (d <= path.segs[i].len) return path.segs[i].fn(path.segs[i].len > 0 ? d/path.segs[i].len : 0);
         d -= path.segs[i].len;
       }
       return {x:0, y:0};
+    }
+
+    // Build a single SVG-like path string for the 3-sided border outline
+    function buildStrokePath(ctx, path, w, h) {
+      ctx.beginPath();
+      var first = pointAt(path, 0);
+      ctx.moveTo(first.x, first.y);
+      var N = 160;
+      for (var i = 1; i <= N; i++) {
+        var pt = pointAt(path, (i / N) * path.total);
+        ctx.lineTo(pt.x, pt.y);
+      }
     }
 
     var reg = new Map();
@@ -13694,65 +13706,69 @@ grmClockTick();
       if (reg.has(el)) return reg.get(el);
       var c = document.createElement('canvas');
       c.className = 'panelPulseCanvas';
-      c.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;border-radius:inherit;';
+      c.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;';
       el.appendChild(c);
-      var e = { el:el, c:c, ctx:c.getContext('2d'), prog:Math.random(), raf:null };
+      var e = { el:el, c:c, ctx:c.getContext('2d'), prog:Math.random(), raf:null, active:false };
       reg.set(el, e);
       return e;
     }
 
     function tick(e) {
+      // active flag is the source of truth — stops the loop cleanly
+      if (!e.active) { e.raf = null; return; }
+
       var el = e.el;
       var w  = el.offsetWidth, h = el.offsetHeight;
+      if (!w || !h) { e.raf = requestAnimationFrame(function(){ tick(e); }); return; }
+
       e.c.width = w; e.c.height = h;
       e.ctx.clearRect(0, 0, w, h);
-      if (!w || !h) { e.raf = requestAnimationFrame(function(){ tick(e); }); return; }
 
       var r    = Math.min(parseFloat(getComputedStyle(el).borderRadius)||0, w/2, h/2);
       var path = buildPath(w, h, r);
       var P    = path.total;
-      var ctr  = e.prog * P;   // centre of the Gaussian pulse
       var sig  = SIGMA * P;
+      var ctr  = e.prog * P;
 
-      // Sample the path in small steps, draw a stroked segment coloured by Gaussian weight
-      var STEPS = 300;
-      var step  = P / STEPS;
+      // ── Dim rail: full 3-sided border at very low opacity ──
+      buildStrokePath(e.ctx, path, w, h);
+      e.ctx.lineWidth   = 1;
+      e.ctx.strokeStyle = 'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.08)';
+      e.ctx.stroke();
 
-      e.ctx.lineWidth   = 1.5;
-      e.ctx.lineCap     = 'round';
-      e.ctx.lineJoin    = 'round';
+      // ── Gaussian glow: sample points along path, paint radial blobs ──
+      // No line segments = no end-cap dots. Just overlapping soft circles.
+      var SAMPLES = 80;
+      var halfRange = sig * 2.8; // 2.8 sigma covers 99.7% of Gaussian
+      for (var i = 0; i < SAMPLES; i++) {
+        var t    = (i / (SAMPLES-1)) - 0.5;      // -0.5 to 0.5
+        var dist = t * halfRange * 2;
+        var d    = ctr + dist;
+        var g    = Math.exp(-(dist*dist) / (2*sig*sig));
+        if (g < 0.01) continue;
 
-      for (var i = 0; i < STEPS; i++) {
-        var d0 = i * step;
-        var d1 = d0 + step;
-        // Gaussian centred on ctr, wraps around
-        var dist = d0 - ctr;
-        // wrap to [-P/2, P/2]
-        if (dist >  P/2) dist -= P;
-        if (dist < -P/2) dist += P;
-        var g     = Math.exp(-(dist*dist) / (2*sig*sig));
-        if (g < 0.005) continue;  // skip invisible segments
+        var pt    = pointAt(path, d);
+        var alpha = g * 0.55;
+        var radius = 4 + g * 8;  // larger at peak, smaller at tails
 
-        var alpha = g * 0.90;
-        var pt0   = pointAt(path, d0);
-        var pt1   = pointAt(path, d1);
-
+        var grd = e.ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, radius);
+        grd.addColorStop(0,   'rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')');
+        grd.addColorStop(1,   'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0)');
         e.ctx.beginPath();
-        e.ctx.moveTo(pt0.x, pt0.y);
-        e.ctx.lineTo(pt1.x, pt1.y);
-        e.ctx.strokeStyle = 'rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')';
-        e.ctx.stroke();
+        e.ctx.arc(pt.x, pt.y, radius, 0, 6.283);
+        e.ctx.fillStyle = grd;
+        e.ctx.fill();
       }
 
-      // Bright centre glow at peak
+      // ── Hard bright spot at peak ──
       var peak = pointAt(path, ctr);
-      var grd  = e.ctx.createRadialGradient(peak.x, peak.y, 0, peak.x, peak.y, 10);
-      grd.addColorStop(0,    'rgba(235,252,255,0.95)');
-      grd.addColorStop(0.3,  'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.50)');
-      grd.addColorStop(1,    'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.00)');
+      var pgrd = e.ctx.createRadialGradient(peak.x, peak.y, 0, peak.x, peak.y, 12);
+      pgrd.addColorStop(0,    'rgba(240,252,255,1.00)');
+      pgrd.addColorStop(0.2,  'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.70)');
+      pgrd.addColorStop(1,    'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.00)');
       e.ctx.beginPath();
-      e.ctx.arc(peak.x, peak.y, 10, 0, 6.283);
-      e.ctx.fillStyle = grd;
+      e.ctx.arc(peak.x, peak.y, 12, 0, 6.283);
+      e.ctx.fillStyle = pgrd;
       e.ctx.fill();
 
       e.prog = (e.prog + SPEED) % 1;
@@ -13762,14 +13778,15 @@ grmClockTick();
     window.startPulse = function(el) {
       if (!el) return;
       var e = getEntry(el);
-      if (e.raf) return;
-      tick(e);
+      e.active = true;        // set flag first
+      if (!e.raf) tick(e);    // only start loop if not already running
     };
 
     window.stopPulse = function(el) {
       if (!el) return;
       var e = reg.get(el);
       if (!e) return;
+      e.active = false;       // flag stops the loop at next frame
       if (e.raf) { cancelAnimationFrame(e.raf); e.raf = null; }
       e.ctx.clearRect(0, 0, e.c.width, e.c.height);
     };
