@@ -59,12 +59,12 @@
 
     #infoPanel.active {
       pointer-events: all;
-      background: rgba(6, 10, 20, 0.30);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-      border-top: 1px solid rgba(255,255,255,0.15);
-      border-left: 1px solid rgba(255,255,255,0.10);
-      border-right: 1px solid rgba(255,255,255,0.10);
+      background: rgba(10, 18, 32, 0.80);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border-top: 1px solid rgba(255,255,255,0.12);
+      border-left: 1px solid rgba(255,255,255,0.12);
+      border-right: 1px solid rgba(255,255,255,0.12);
       border-bottom: none;
       overflow: hidden;
       border-radius: 22px 22px 0 0;
@@ -84,10 +84,7 @@
       align-items: center;
       padding-bottom: 10px;
       margin-bottom: 8px;
-      background: rgba(10, 18, 32, 0.55);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border-radius: 20px 20px 0 0;
+      background: transparent;
       z-index: 5;
     }
 
@@ -958,9 +955,7 @@
 #flowControls.visible { display: flex; }
 
 .flowPanel {
-  background: rgba(6, 10, 20, 0.30);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(10, 18, 32, 0.80);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 20px;
   padding: 14px 18px;
@@ -1912,7 +1907,7 @@
   height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
   max-height: none;
   background: transparent;
-  border: none;
+  border-top: 1px solid rgba(255,255,255,0.08);
   border-radius: 0;
   z-index: 800;
   transform: translateY(100%);
@@ -1926,11 +1921,11 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
-  background: rgba(6, 10, 20, 0.30);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgba(10, 18, 32, 0.80);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
   border-radius: 20px 20px 0 0;
-  border-top: 1px solid rgba(255,255,255,0.15);
+  border-top: 1px solid rgba(255,255,255,0.10);
   border-left: 1px solid rgba(255,255,255,0.10);
   border-right: 1px solid rgba(255,255,255,0.10);
   border-bottom: none;
@@ -4159,9 +4154,7 @@
       left: -300px;
       width: 260px;
       height: var(--app-height, 100vh);
-      background: rgba(6, 10, 20, 0.30);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
+      background: rgba(10, 18, 32, 0.80);
       border-right: 1px solid rgba(255,255,255,0.11);
       z-index: 34;
       display: flex;
@@ -8348,7 +8341,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </svg>
             </div>
           </div>
-          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(8,12,20,0.75);backdrop-filter:blur(12px);padding-bottom:10px;flex-shrink:0;">
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:transparent;padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
@@ -8936,7 +8929,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </svg>
             </div>
           </div>
-          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(8,12,20,0.75);backdrop-filter:blur(12px);padding-bottom:10px;flex-shrink:0;">
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:transparent;padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
             <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
               <div style="width:14px;height:14px;border-radius:50%;background:${accentColor};flex-shrink:0;"></div>
@@ -11105,7 +11098,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </svg>
         </div>
       </div>
-      <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(8,12,20,0.75);backdrop-filter:blur(12px);padding-bottom:10px;flex-shrink:0;">
+      <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:transparent;padding-bottom:10px;flex-shrink:0;">
         <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
         <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
           <div style="font-size:1.15rem;font-weight:600;color:#fff;">${routeLabel}</div>
@@ -13735,13 +13728,6 @@ grmClockTick();
       var ctr  = e.prog * P;
       var step = P / SEG;
 
-      // Dim base rail
-      ctx.beginPath();
-      var p0 = pointAt(path, 0);
-      ctx.moveTo(p0.x, p0.y);
-      for (var j=1; j<=SEG; j++) { var rp=pointAt(path,j*step); ctx.lineTo(rp.x,rp.y); }
-      ctx.lineWidth=1; ctx.lineCap='butt'; ctx.lineJoin='round';
-      ctx.strokeStyle='rgba(255,255,255,0.10)'; ctx.stroke();
 
       // Gaussian wave — each micro-segment gets opacity from path-space Gaussian
       // lineCap='butt' + lineJoin='round' + enough segments = seamless glow
