@@ -44,7 +44,9 @@
       left: 0;
       width: 100%;
       height: min(420px, calc(var(--app-height, 100vh) - 24px));
-      background: rgba(0,0,0,0.97);
+      background: rgba(8, 14, 24, 0.48);
+      backdrop-filter: blur(22px) saturate(160%);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
       color: white;
       padding: 20px;
       box-sizing: border-box;
@@ -76,7 +78,9 @@
       align-items: center;
       padding-bottom: 10px;
       margin-bottom: 8px;
-      background: rgba(0,0,0,0.97);
+      background: rgba(8, 14, 24, 0.60);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       z-index: 5;
     }
 
@@ -1896,9 +1900,9 @@
   right: 0;
   height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
   max-height: none;
-  background: rgba(8,8,12,0.98);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: rgba(8, 14, 24, 0.48);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
   border-top: 1px solid rgba(255,255,255,0.08);
   border-radius: 0;
   z-index: 800;
@@ -2283,7 +2287,9 @@
   position: absolute;
   max-width: 272px;
   min-width: 190px;
-  background: rgba(4,5,9,0.97);
+  background: rgba(8, 14, 24, 0.48);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255,200,100,0.20);
   border-radius: 15px;
   padding: 13px 15px 12px;
@@ -3461,7 +3467,9 @@
     #nfQueryBar {
       flex-shrink: 0;
       padding: 14px 20px 14px;
-      background: rgba(0,0,0,0.97);
+      background: rgba(8, 14, 24, 0.48);
+      backdrop-filter: blur(22px) saturate(160%);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
       border-bottom: 1px solid rgba(255,255,255,0.07);
       display: flex;
       flex-direction: column;
@@ -3904,7 +3912,9 @@
       flex-shrink: 0;
       padding: 6px 20px 5px;
       display: flex; align-items: center; gap: 7px;
-      background: rgba(0,0,0,0.97);
+      background: rgba(8, 14, 24, 0.55);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       min-height: 28px;
     }
@@ -4330,18 +4340,19 @@
     }
   
 /* ── Border pulse animation ─────────────────────────────────── */
-.panelPulseSvg {
+.panelPulseCanvas {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
   pointer-events: none;
   z-index: 0;
-  overflow: visible;
-  border-radius: inherit;
 }
-.flowPanel > *:not(.panelPulseSvg),
-#viewSidebar > *:not(.panelPulseSvg) {
+.flowPanel > *:not(.panelPulseCanvas),
+#viewSidebar > *:not(.panelPulseCanvas),
+#infoPanel > *:not(.panelPulseCanvas),
+#articleDetailPanel > *:not(.panelPulseCanvas),
+.ahCard > *:not(.panelPulseCanvas) {
   position: relative;
   z-index: 1;
 }
@@ -13615,96 +13626,102 @@ grmClockTick();
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <script>
-  /* ── Border pulse: SVG stroke-dashoffset animation ── */
+  /* ── Panel pulse: canvas comet tail along border ── */
   (function() {
-    const NS = 'http://www.w3.org/2000/svg';
+    var SPEED = 0.00035;
+    var TAIL  = 0.20;
+    var STEPS = 120;
+    var CR = [110, 200, 255];
 
-    function createPulseSvg(el) {
-      const svg = document.createElementNS(NS, 'svg');
-      svg.setAttribute('class', 'panelPulseSvg');
-      svg.setAttribute('aria-hidden', 'true');
-      el.insertBefore(svg, el.firstChild);
-
-      const ro = new ResizeObserver(() => update());
-      ro.observe(el);
-
-      function update() {
-        const w = el.offsetWidth;
-        const h = el.offsetHeight;
-        if (!w || !h) return;
-
-        svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-        svg.setAttribute('width', w);
-        svg.setAttribute('height', h);
-        svg.innerHTML = '';
-
-        const r = parseFloat(getComputedStyle(el).borderRadius) || 0;
-        const inset = 0.5; // sit right on the border
-        const rx = Math.min(r, w / 2, h / 2);
-
-        // Build rounded-rect path
-        const x = inset, y = inset;
-        const W = w - inset * 2, H = h - inset * 2;
-        const d = `M${x+rx},${y} H${x+W-rx} Q${x+W},${y} ${x+W},${y+rx} V${y+H-rx} Q${x+W},${y+H} ${x+W-rx},${y+H} H${x+rx} Q${x},${y+H} ${x},${y+H-rx} V${y+rx} Q${x},${y} ${x+rx},${y} Z`;
-
-        // Compute perimeter approx (rect perimeter + corner arcs)
-        const perim = 2*(W + H) - (8 - 2*Math.PI) * rx;
-        const dashLen = Math.max(perim * 0.12, 40); // pulse = 12% of perimeter
-        const gap = perim - dashLen;
-
-        function makePulse(offset, color, dur, delay) {
-          const path = document.createElementNS(NS, 'path');
-          path.setAttribute('d', d);
-          path.setAttribute('fill', 'none');
-          path.setAttribute('stroke', color);
-          path.setAttribute('stroke-width', '1.5');
-          path.setAttribute('stroke-linecap', 'round');
-          path.setAttribute('stroke-dasharray', `${dashLen} ${gap}`);
-          path.setAttribute('stroke-dashoffset', offset);
-
-          const anim = document.createElementNS(NS, 'animateTransform');
-          // Use animate on stroke-dashoffset instead
-          const animDash = document.createElementNS(NS, 'animate');
-          animDash.setAttribute('attributeName', 'stroke-dashoffset');
-          animDash.setAttribute('from', `${offset}`);
-          animDash.setAttribute('to', `${offset - perim}`);
-          animDash.setAttribute('dur', `${dur}s`);
-          animDash.setAttribute('begin', `${delay}s`);
-          animDash.setAttribute('repeatCount', 'indefinite');
-          animDash.setAttribute('calcMode', 'linear');
-
-          path.appendChild(animDash);
-          return path;
-        }
-
-        // Two pulses — same speed, opposite starting positions (180° = perim/2 apart)
-        svg.appendChild(makePulse(0,          'rgba(120,220,255,0.7)', 5, 0));
-        svg.appendChild(makePulse(-perim/2,   'rgba(80,190,255,0.5)',  5, 0));
-      }
-
-      update();
+    function perimOf(w, h, r) {
+      return 2*(w-2*r) + 2*(h-2*r) + 2*Math.PI*r;
     }
 
-    function initPulses() {
-      const sidebar = document.getElementById('viewSidebar');
-      if (sidebar && !sidebar.querySelector('.panelPulseSvg')) {
-        createPulseSvg(sidebar);
+    function pointAt(w, h, r, d) {
+      var P = perimOf(w, h, r);
+      d = ((d % P) + P) % P;
+      var arc = 0.5 * Math.PI * r;
+      var segs = [
+        { len: arc,       fn: function(t) { return { x: r - r*Math.cos(t*Math.PI/2), y: r - r*Math.sin(t*Math.PI/2) }; } },
+        { len: w - 2*r,   fn: function(t) { return { x: r + t*(w-2*r), y: 0 }; } },
+        { len: arc,       fn: function(t) { return { x: w-r + r*Math.sin(t*Math.PI/2), y: r - r*Math.cos(t*Math.PI/2) }; } },
+        { len: h - 2*r,   fn: function(t) { return { x: w, y: r + t*(h-2*r) }; } },
+        { len: arc,       fn: function(t) { return { x: w-r + r*Math.cos(t*Math.PI/2), y: h-r + r*Math.sin(t*Math.PI/2) }; } },
+        { len: w - 2*r,   fn: function(t) { return { x: w-r - t*(w-2*r), y: h }; } },
+        { len: arc,       fn: function(t) { return { x: r - r*Math.sin(t*Math.PI/2), y: h-r + r*Math.cos(t*Math.PI/2) }; } },
+        { len: h - 2*r,   fn: function(t) { return { x: 0, y: h-r - t*(h-2*r) }; } }
+      ];
+      for (var i = 0; i < segs.length; i++) {
+        if (d <= segs[i].len) return segs[i].fn(segs[i].len > 0 ? d/segs[i].len : 0);
+        d -= segs[i].len;
       }
+      return { x: 0, y: 0 };
+    }
 
-      const tryFlow = () => {
-        const fp = document.querySelector('.flowPanel');
-        if (fp && !fp.querySelector('.panelPulseSvg')) createPulseSvg(fp);
-      };
+    function attachPulse(el) {
+      if (!el || el.querySelector('.panelPulseCanvas')) return;
+      var canvas = document.createElement('canvas');
+      canvas.className = 'panelPulseCanvas';
+      if (!el.style.position || el.style.position === 'static') el.style.position = 'relative';
+      el.insertBefore(canvas, el.firstChild);
+      var ctx = canvas.getContext('2d');
+      var prog = Math.random();
 
-      const obs = new MutationObserver(tryFlow);
+      function frame() {
+        var w = el.offsetWidth, h = el.offsetHeight;
+        canvas.width  = w;
+        canvas.height = h;
+        ctx.clearRect(0, 0, w, h);
+        if (!w || !h) { requestAnimationFrame(frame); return; }
+
+        var r  = Math.min(parseFloat(getComputedStyle(el).borderRadius) || 0, w/2, h/2);
+        var P  = perimOf(w, h, r);
+        var tL = P * TAIL;
+        var hD = prog * P;
+
+        for (var i = 0; i < STEPS; i++) {
+          var t = i / STEPS;
+          var d = hD - (1 - t) * tL;
+          var pt = pointAt(w, h, r, d);
+          var alpha = t < 0.85 ? (t/0.85)*0.60 : 0.60 + (t-0.85)/0.15*0.30;
+          var sz = 0.5 + t * 1.8;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, sz, 0, 6.283);
+          ctx.fillStyle = 'rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')';
+          ctx.fill();
+        }
+
+        var hp = pointAt(w, h, r, hD);
+        var g = ctx.createRadialGradient(hp.x, hp.y, 0, hp.x, hp.y, 9);
+        g.addColorStop(0,    'rgba(210,245,255,0.95)');
+        g.addColorStop(0.35, 'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.50)');
+        g.addColorStop(1,    'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0)');
+        ctx.beginPath();
+        ctx.arc(hp.x, hp.y, 9, 0, 6.283);
+        ctx.fillStyle = g;
+        ctx.fill();
+
+        prog = (prog + SPEED) % 1;
+        requestAnimationFrame(frame);
+      }
+      frame();
+    }
+
+    function initAll() {
+      ['viewSidebar','infoPanel','articleDetailPanel'].forEach(function(id) {
+        attachPulse(document.getElementById(id));
+      });
+      var obs = new MutationObserver(function() {
+        document.querySelectorAll('.flowPanel,.ahCard').forEach(attachPulse);
+      });
       obs.observe(document.body, { childList: true, subtree: true });
-      tryFlow();
+      document.querySelectorAll('.flowPanel,.ahCard').forEach(attachPulse);
     }
 
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initPulses);
+      document.addEventListener('DOMContentLoaded', initAll);
     } else {
-      initPulses();
+      initAll();
     }
   })();
 
