@@ -5435,12 +5435,18 @@
     // Extract yaw/pitch from a quaternion by analyzing the forward vector direction.
     // This avoids Euler decomposition issues when the quaternion has a roll component.
     function extractYawPitchFromQuat(quat) {
-      // Get where the forward vector (0,0,1) points after rotation
+      // rebuildGlobeQuat applies (qPitch * qYaw) to (0,0,1), producing:
+      //   forward = (sin(yaw), -cos(yaw)*sin(pitch), cos(yaw)*cos(pitch))
+      // We invert this exactly:
+      //   |cos(yaw)| = sqrt(fy² + fz²)
+      //   sign(cos(yaw)) = sign(fz), because cos(pitch) > 0 always (MAX_PITCH < 90°)
+      //   yaw   = atan2(fx,  cos(yaw))
+      //   pitch = atan2(-fy * sign, fz * sign)   where sign = signCosYaw
       const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quat);
-      // Yaw: angle in the XZ plane (atan2 gives us the horizontal rotation)
-      const yaw = Math.atan2(-forward.x, forward.z);
-      // Pitch: vertical angle (clamp to avoid asin domain errors)
-      const pitch = Math.asin(Math.max(-1, Math.min(1, -forward.y)));
+      const cosYaw     = Math.sqrt(forward.y * forward.y + forward.z * forward.z);
+      const signCosYaw = forward.z >= 0 ? 1 : -1;
+      const yaw   = Math.atan2(forward.x, signCosYaw * cosYaw);
+      const pitch = Math.atan2(-forward.y * signCosYaw, forward.z * signCosYaw);
       return { yaw, pitch };
     }
 
