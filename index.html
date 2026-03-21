@@ -56,41 +56,15 @@
       fill: none; stroke: rgba(255,150,40,0.16); stroke-width: 1.1; stroke-dasharray: 4 6;
     }
 
-    /* Trail animated via SMIL <animate> so it shares the same clock
-       as the star's <animateMotion> and stays perfectly locked to it. */
+    /* Trail + star both driven by JS rAF for guaranteed sync */
     .el-trail {
       fill: none;
       stroke: rgba(255,205,65,0.82);
       stroke-width: 2.2; stroke-linecap: round;
-      stroke-dasharray: 0 496; stroke-dashoffset: 496;
     }
 
-    /* Star position driven by animateMotion in HTML.
-       CSS: depth glow — bright front, dim behind globe. */
     .el-star {
       fill: rgba(255,222,75,1);
-      transform-origin: 0 0;
-      animation: elStarGlow 4s linear infinite;
-    }
-    @keyframes elStarGlow {
-      0%   { opacity:.92; transform:scale(1.05);
-             filter:drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65)); }
-      19%  { opacity:1.0; transform:scale(1.08);
-             filter:drop-shadow(0 0 10px rgba(255,225,65,1)) drop-shadow(0 0 22px rgba(255,155,25,.9)); }
-      32%  { opacity:.45; transform:scale(.88);
-             filter:drop-shadow(0 0 4px rgba(255,175,40,.45)); }
-      46%  { opacity:.11; transform:scale(.64); filter:none; }
-      62%  { opacity:.08; transform:scale(.58); filter:none; }
-      70%  { opacity:.42; transform:scale(.86);
-             filter:drop-shadow(0 0 4px rgba(255,175,40,.42)); }
-      76%  { opacity:.90; transform:scale(1.0);
-             filter:drop-shadow(0 0 7px rgba(255,205,60,.9)); }
-      86%  { opacity:1.0; transform:scale(1.0);
-             filter:drop-shadow(0 0 14px rgba(255,240,68,1)) drop-shadow(0 0 30px rgba(255,158,26,1)) drop-shadow(0 0 52px rgba(255,82,10,.78)); }
-      93%  { opacity:1.0; transform:scale(1.0);
-             filter:drop-shadow(0 0 10px rgba(255,215,58,1)) drop-shadow(0 0 22px rgba(255,138,22,.88)); }
-      100% { opacity:.92; transform:scale(1.05);
-             filter:drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65)); }
     }
 
     .el-e {
@@ -4589,20 +4563,8 @@
         </g>
         <!-- Orbit ring + star, tilted -32deg -->
         <g transform="rotate(-32)">
-          <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0">
-            <animate attributeName="stroke-dashoffset" dur="4s" repeatCount="indefinite" calcMode="linear"
-              keyTimes="0;0.06;0.75;0.85;1" values="496;456;912;992;992"/>
-            <animate attributeName="stroke-dasharray" dur="4s" repeatCount="indefinite" calcMode="linear"
-              keyTimes="0;0.06;0.75;0.85;1" values="0 496;80 416;80 416;0 496;0 496"/>
-          </path>
-          <!-- Star driven by animateMotion on exact same ellipse arc as the trail.
-               Home = (112,0) = top-right visually. CCW: top-back(19%), left-back(37%),
-               bottom-front(56%), home(75%). Holds 75%-100% while trail glows. -->
-          <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
-            <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
-              keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
-              path="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0"/>
-          </polygon>
+          <path class="el-trail" d=""/>
+          <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
         </g>
       </svg>
       <div class="el-e">e</div>
@@ -9102,17 +9064,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
                 <g transform="rotate(-32)">
-                  <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0">
-            <animate attributeName="stroke-dashoffset" dur="4s" repeatCount="indefinite" calcMode="linear"
-              keyTimes="0;0.06;0.75;0.85;1" values="496;456;912;992;992"/>
-            <animate attributeName="stroke-dasharray" dur="4s" repeatCount="indefinite" calcMode="linear"
-              keyTimes="0;0.06;0.75;0.85;1" values="0 496;80 416;80 416;0 496;0 496"/>
-          </path>
-                  <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
-                    <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
-                      keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
-                      path="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0"/>
-                  </polygon>
+                  <path class="el-trail" d=""/>
+                  <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
                 </g>
               </svg>
               <div class="el-e">e</div>
@@ -9550,17 +9503,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
                 <g transform="rotate(-32)">
-                  <path class="el-trail" d="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0">
-            <animate attributeName="stroke-dashoffset" dur="4s" repeatCount="indefinite" calcMode="linear"
-              keyTimes="0;0.06;0.75;0.85;1" values="496;456;912;992;992"/>
-            <animate attributeName="stroke-dasharray" dur="4s" repeatCount="indefinite" calcMode="linear"
-              keyTimes="0;0.06;0.75;0.85;1" values="0 496;80 416;80 416;0 496;0 496"/>
-          </path>
-                  <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
-                    <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
-                      keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
-                      path="M 112,0 A 112,36 0 0,0 -112,0 A 112,36 0 0,0 112,0"/>
-                  </polygon>
+                  <path class="el-trail" d=""/>
+                  <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
                 </g>
               </svg>
               <div class="el-e">e</div>
@@ -14245,7 +14189,90 @@ grmClockTick();
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <script>
-
+  (function(){
+    const CYCLE = 4000, RX = 112, RY = 36, TRAIL_FRAC = 0.18;
+    // Depth opacity keyframes: [orbitFrac, opacity]
+    const DKF = [
+      [0.000,0.92],[0.253,1.00],[0.427,0.45],
+      [0.613,0.11],[0.827,0.08],[0.933,0.42],[1.000,0.90]
+    ];
+    function depthOp(f) {
+      for (let i=1;i<DKF.length;i++) {
+        if (f<=DKF[i][0]) {
+          const t=(f-DKF[i-1][0])/(DKF[i][0]-DKF[i-1][0]);
+          return DKF[i-1][1]+(DKF[i][1]-DKF[i-1][1])*t;
+        }
+      }
+      return 0.90;
+    }
+    function orbitPos(frac) {
+      const a = frac * 2 * Math.PI;
+      return [RX*Math.cos(a), -RY*Math.sin(a)];
+    }
+    function buildTrail(headFrac, len) {
+      const N=24; let d='';
+      for (let i=0;i<=N;i++) {
+        const f=((headFrac - len*(1-i/N))%1+1)%1;
+        const [x,y]=orbitPos(f);
+        d += i===0 ? `M${x.toFixed(2)},${y.toFixed(2)}` : `L${x.toFixed(2)},${y.toFixed(2)}`;
+      }
+      return d;
+    }
+    function initLoaderAnim(svgEl) {
+      const star=svgEl.querySelector('.el-star');
+      const trail=svgEl.querySelector('.el-trail');
+      if (!star||!trail) return;
+      let t0=null, raf;
+      function frame(ts) {
+        if (!t0) t0=ts;
+        const ct=((ts-t0)%CYCLE)/CYCLE;
+        let of,tl,glow;
+        if (ct<0.75) {
+          of=ct/0.75; tl=TRAIL_FRAC; glow=0;
+        } else {
+          of=1;
+          const pt=(ct-0.75)/0.25;
+          tl=pt<0.4 ? TRAIL_FRAC*(1-pt/0.4) : 0;
+          glow=pt<0.3?0:pt<0.6?(pt-0.3)/0.3:pt<0.85?1:1-(pt-0.85)/0.15;
+        }
+        const nf=of%1;
+        const [sx,sy]=orbitPos(nf);
+        star.setAttribute('transform',`translate(${sx.toFixed(2)},${sy.toFixed(2)})`);
+        const op=depthOp(of>=1?0:of);
+        star.style.opacity=op;
+        if (tl>0) {
+          trail.setAttribute('d',buildTrail(nf,tl));
+          trail.style.opacity=(op*0.85).toFixed(2);
+        } else {
+          trail.setAttribute('d','');
+          trail.style.opacity='0';
+        }
+        if (glow>0) {
+          star.style.filter=`drop-shadow(0 0 ${(glow*14).toFixed(0)}px rgba(255,240,68,1)) drop-shadow(0 0 ${(glow*30).toFixed(0)}px rgba(255,158,26,1)) drop-shadow(0 0 ${(glow*52).toFixed(0)}px rgba(255,82,10,.78))`;
+        } else {
+          star.style.filter='drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65))';
+        }
+        raf=requestAnimationFrame(frame);
+      }
+      raf=requestAnimationFrame(frame);
+      new MutationObserver(()=>{ if(!svgEl.isConnected) cancelAnimationFrame(raf); })
+        .observe(document.body,{childList:true,subtree:true});
+    }
+    function maybeInit(root) {
+      (root.querySelectorAll ? root.querySelectorAll('.el-globe') : []).forEach(svg=>{
+        if (!svg._elAnim) { svg._elAnim=true; initLoaderAnim(svg); }
+      });
+    }
+    new MutationObserver(muts=>{
+      for (const m of muts)
+        for (const n of m.addedNodes)
+          if (n.nodeType===1) {
+            if (n.classList&&n.classList.contains('el-globe')) { if(!n._elAnim){n._elAnim=true;initLoaderAnim(n);} }
+            else maybeInit(n);
+          }
+    }).observe(document.body,{childList:true,subtree:true});
+    document.addEventListener('DOMContentLoaded',()=>maybeInit(document));
+  })();
   </script>
 </body>
 </html>
