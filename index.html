@@ -32,8 +32,15 @@
       position: fixed; inset: 0; z-index: 9999; background: #000;
       display: flex; align-items: center; justify-content: center;
       transition: opacity 0.6s ease;
+      overflow: hidden;
     }
     #siteLoader.el-fade { opacity: 0; pointer-events: none; }
+
+    #loaderStarfield {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
 
     .el-loader {
       position: relative;
@@ -4606,6 +4613,7 @@
      Also used as the panel article loader via JS cloning
 ════════════════════════════════════════════════════════════════ -->
 <div id="siteLoader">
+  <canvas id="loaderStarfield"></canvas>
   <div class="el-loader">
     <div class="el-globe-wrap">
       <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
@@ -4637,6 +4645,96 @@
     <div class="el-dots"><span></span><span></span><span></span></div>
   </div>
 </div>
+
+<!-- Twinkling starfield for site loader -->
+<script>
+(function() {
+  const canvas = document.getElementById('loaderStarfield');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  
+  const stars = [];
+  const STAR_COUNT = 120;
+  
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  
+  function initStars() {
+    stars.length = 0;
+    for (let i = 0; i < STAR_COUNT; i++) {
+      stars.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        size: Math.random() * 1.5 + 0.5,
+        twinkleSpeed: Math.random() * 0.02 + 0.005,
+        twinklePhase: Math.random() * Math.PI * 2,
+        baseOpacity: Math.random() * 0.4 + 0.3,
+        // Some stars are warmer (orange-ish), some cooler (white-blue)
+        hue: Math.random() < 0.3 ? 35 + Math.random() * 20 : 200 + Math.random() * 60,
+        saturation: Math.random() < 0.3 ? 60 + Math.random() * 40 : 10 + Math.random() * 20
+      });
+    }
+  }
+  
+  let raf;
+  function draw(ts) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    for (const star of stars) {
+      const twinkle = Math.sin(ts * star.twinkleSpeed + star.twinklePhase);
+      const opacity = star.baseOpacity + twinkle * 0.3;
+      const glowSize = star.size + twinkle * 0.5;
+      
+      // Outer glow
+      const gradient = ctx.createRadialGradient(
+        star.x, star.y, 0,
+        star.x, star.y, glowSize * 3
+      );
+      gradient.addColorStop(0, `hsla(${star.hue}, ${star.saturation}%, 90%, ${opacity * 0.8})`);
+      gradient.addColorStop(0.4, `hsla(${star.hue}, ${star.saturation}%, 70%, ${opacity * 0.3})`);
+      gradient.addColorStop(1, `hsla(${star.hue}, ${star.saturation}%, 50%, 0)`);
+      
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, glowSize * 3, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+      
+      // Core
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, glowSize * 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = `hsla(${star.hue}, ${star.saturation}%, 95%, ${opacity})`;
+      ctx.fill();
+    }
+    
+    // Only continue if loader is still visible
+    const loader = document.getElementById('siteLoader');
+    if (loader && !loader.classList.contains('el-fade')) {
+      raf = requestAnimationFrame(draw);
+    }
+  }
+  
+  resize();
+  initStars();
+  raf = requestAnimationFrame(draw);
+  
+  window.addEventListener('resize', () => {
+    resize();
+    initStars();
+  });
+  
+  // Stop animation when loader fades
+  const loader = document.getElementById('siteLoader');
+  if (loader) {
+    new MutationObserver((muts) => {
+      if (loader.classList.contains('el-fade')) {
+        cancelAnimationFrame(raf);
+      }
+    }).observe(loader, { attributes: true, attributeFilter: ['class'] });
+  }
+})();
+</script>
 
 <!-- SVG gradient defs shared by site + panel loaders -->
 <svg width="0" height="0" style="position:absolute;pointer-events:none">
