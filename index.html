@@ -4330,89 +4330,16 @@
     }
   
 /* ── Border pulse animation ─────────────────────────────────── */
-@property --pulse-a {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-@property --pulse-b {
-  syntax: '<angle>';
-  initial-value: 180deg;
-  inherits: false;
-}
-
-@keyframes pulse-spin-a {
-  to { --pulse-a: 360deg; }
-}
-@keyframes pulse-spin-b {
-  to { --pulse-b: 540deg; }
-}
-
-/* Shared pulse wrapper mixin — applied to flowPanel and viewSidebar */
-.flowPanel::before,
-.flowPanel::after,
-#viewSidebar::before,
-#viewSidebar::after {
-  content: '';
+.panelPulseCanvas {
   position: absolute;
-  inset: -1px;
+  inset: 0;
   border-radius: inherit;
   pointer-events: none;
   z-index: 0;
+  opacity: 0.85;
 }
-
-/* Pulse A — clockwise */
-.flowPanel::before,
-#viewSidebar::before {
-  background: conic-gradient(
-    from var(--pulse-a),
-    transparent 0deg,
-    transparent 78deg,
-    rgba(100, 220, 255, 0.0) 80deg,
-    rgba(100, 220, 255, 0.55) 84deg,
-    rgba(200, 255, 255, 0.9) 86deg,
-    rgba(100, 220, 255, 0.55) 88deg,
-    rgba(100, 220, 255, 0.0) 90deg,
-    transparent 92deg,
-    transparent 360deg
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  padding: 1px;
-  animation: pulse-spin-a 4s linear infinite;
-}
-
-/* Pulse B — counter-clockwise, offset start */
-.flowPanel::after,
-#viewSidebar::after {
-  background: conic-gradient(
-    from var(--pulse-b),
-    transparent 0deg,
-    transparent 78deg,
-    rgba(80, 200, 255, 0.0) 80deg,
-    rgba(80, 180, 255, 0.45) 84deg,
-    rgba(180, 240, 255, 0.8) 86deg,
-    rgba(80, 180, 255, 0.45) 88deg,
-    rgba(80, 200, 255, 0.0) 90deg,
-    transparent 92deg,
-    transparent 360deg
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  padding: 1px;
-  animation: pulse-spin-b 4s linear infinite;
-  animation-direction: reverse;
-}
-
-/* Ensure panel content sits above the pulse pseudo-elements */
-.flowPanel > *,
-#viewSidebar > * {
+.flowPanel > *:not(.panelPulseCanvas),
+#viewSidebar > *:not(.panelPulseCanvas) {
   position: relative;
   z-index: 1;
 }
@@ -10673,12 +10600,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   });
 
-  // Close button
-  document.getElementById("flowCloseBtn").addEventListener("click", (e) => {
-    e.stopPropagation();
-    closeFlowPanel();
-  });
-
   // Minimize button
   document.getElementById("flowMinBtn").addEventListener("click", (e) => {
     e.stopPropagation();
@@ -13686,5 +13607,100 @@ grmClockTick();
 
   <div id="hoverCard" class="hoverCard"></div>
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
+
+  /* ── Border pulse: canvas-based, works in all browsers ── */
+  (function() {
+    function createPulseCanvas(el) {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'panelPulseCanvas';
+      el.insertBefore(canvas, el.firstChild);
+
+      const ctx = canvas.getContext('2d');
+      let angle1 = 0, angle2 = Math.PI; // two pulses, 180° apart
+      const SPEED = 0.008;
+      const ARC   = Math.PI / 18; // 10° arc width
+      let raf;
+
+      function resize() {
+        canvas.width  = el.offsetWidth;
+        canvas.height = el.offsetHeight;
+      }
+
+      function drawPulse(angle, r) {
+        const w = canvas.width, h = canvas.height;
+        if (!w || !h) return;
+        const isRounded = parseFloat(getComputedStyle(el).borderRadius) || 0;
+
+        // Convert angle to x,y position along the border perimeter
+        const perimeter = 2 * (w + h);
+        const pos = ((angle % (Math.PI * 2)) / (Math.PI * 2)) * perimeter;
+
+        // Map perimeter position to x,y
+        let x, y;
+        if (pos < w) {
+          x = pos; y = 0;                          // top edge
+        } else if (pos < w + h) {
+          x = w; y = pos - w;                      // right edge
+        } else if (pos < 2 * w + h) {
+          x = w - (pos - w - h); y = h;            // bottom edge
+        } else {
+          x = 0; y = h - (pos - 2 * w - h);       // left edge
+        }
+
+        const arcLen = (ARC / (Math.PI * 2)) * perimeter;
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, arcLen);
+        grad.addColorStop(0,   `rgba(${r}, 1)`);
+        grad.addColorStop(0.4, `rgba(${r}, 0.5)`);
+        grad.addColorStop(1,   `rgba(${r}, 0)`);
+
+        ctx.beginPath();
+        ctx.arc(x, y, arcLen, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
+
+      function frame() {
+        canvas.width  = el.offsetWidth;
+        canvas.height = el.offsetHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        drawPulse(angle1, '100, 220, 255');
+        drawPulse(angle2, '80, 190, 255');
+
+        angle1 += SPEED;
+        angle2 += SPEED;
+        raf = requestAnimationFrame(frame);
+      }
+
+      frame();
+      return () => cancelAnimationFrame(raf);
+    }
+
+    function initPulses() {
+      // Apply to flowPanel (may not exist yet — wait for it)
+      const tryFlow = () => {
+        const fp = document.querySelector('.flowPanel');
+        if (fp && !fp.querySelector('.panelPulseCanvas')) createPulseCanvas(fp);
+      };
+
+      // Apply to sidebar immediately
+      const sidebar = document.getElementById('viewSidebar');
+      if (sidebar && !sidebar.querySelector('.panelPulseCanvas')) {
+        createPulseCanvas(sidebar);
+      }
+
+      // Flow panel appears dynamically — observe for it
+      const obs = new MutationObserver(() => tryFlow());
+      obs.observe(document.body, { childList: true, subtree: true });
+      tryFlow();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initPulses);
+    } else {
+      initPulses();
+    }
+  })();
+
 </body>
 </html>
