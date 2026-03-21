@@ -52,15 +52,17 @@
     }
     .el-grid ellipse:first-child { stroke: rgba(255,160,40,0.35); stroke-width: 1.1; }
 
-    .el-orbit-back {
-      fill: none; stroke: rgba(255,150,40,0.16); stroke-width: 1.1; stroke-dasharray: 4 6;
-    }
-
     /* Trail + star both driven by JS rAF for guaranteed sync */
-    .el-trail {
+    .el-trail-blur {
       fill: none;
-      stroke: rgba(255,205,65,0.82);
-      stroke-width: 2.2; stroke-linecap: round;
+      stroke: rgba(255,200,60,0.45);
+      stroke-width: 6; stroke-linecap: round;
+      filter: url(#elTrailBlur);
+    }
+    .el-trail-seg {
+      fill: none;
+      stroke: rgba(255,215,70,1);
+      stroke-width: 2; stroke-linecap: round;
     }
 
     .el-star {
@@ -4607,8 +4609,6 @@
   <div class="el-loader">
     <div class="el-globe-wrap">
       <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
-        <!-- Static orbit track: drawn FIRST so grid overlaps it (depth illusion) -->
-        <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
         <g class="el-grid">
           <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
           <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
@@ -4625,9 +4625,10 @@
           <path d="M0,-100 Q8,-60 0,100"/>
           <path d="M0,-100 Q-8,-60 0,100"/>
         </g>
-        <!-- Orbit ring + star, tilted -32deg -->
+        <!-- Shooting star trail + star, tilted -32deg -->
         <g transform="rotate(-32)">
-          <path class="el-trail" d=""/>
+          <path class="el-trail-blur" d=""/>
+          <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
           <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
         </g>
       </svg>
@@ -4646,6 +4647,9 @@
       <stop offset="60%"  stop-color="rgba(255,150,40,0.5)" />
       <stop offset="100%" stop-color="rgba(255,210,80,1)" />
     </linearGradient>
+    <filter id="elTrailBlur" x="-20%" y="-80%" width="140%" height="260%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
   </defs>
 </svg>
 
@@ -9123,7 +9127,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return `<div class="el-panel-loader"><div class="el-panel-inner">
             <div class="el-globe-wrap">
               <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
-                <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
                 <g class="el-grid">
                   <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
                   <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
@@ -9139,7 +9142,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
                 <g transform="rotate(-32)">
-                  <path class="el-trail" d=""/>
+                  <path class="el-trail-blur" d=""/>
+                  <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
                   <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
                 </g>
               </svg>
@@ -9562,7 +9566,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return `<div class="el-panel-loader"><div class="el-panel-inner">
             <div class="el-globe-wrap">
               <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
-                <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
                 <g class="el-grid">
                   <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
                   <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
@@ -9578,7 +9581,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
                 <g transform="rotate(-32)">
-                  <path class="el-trail" d=""/>
+                  <path class="el-trail-blur" d=""/>
+                  <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
                   <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
                 </g>
               </svg>
@@ -14266,6 +14270,8 @@ grmClockTick();
   <script>
   (function(){
     const CYCLE = 4000, RX = 112, RY = 36, TRAIL_FRAC = 0.18;
+    const NUM_SEGS = 6;
+    const SEG_OPACITIES = [0.04, 0.13, 0.28, 0.48, 0.72, 1.0];
     // Depth opacity keyframes: [orbitFrac, opacity]
     const DKF = [
       [0.000,0.92],[0.253,1.00],[0.427,0.45],
@@ -14293,10 +14299,21 @@ grmClockTick();
       }
       return d;
     }
+    function buildTrailSeg(headFrac, len, segIdx) {
+      const PTS=5; let d='';
+      for (let i=0;i<=PTS;i++) {
+        const segT=(segIdx + i/PTS)/NUM_SEGS;
+        const f=((headFrac - len*(1-segT))%1+1)%1;
+        const [x,y]=orbitPos(f);
+        d += i===0 ? `M${x.toFixed(2)},${y.toFixed(2)}` : `L${x.toFixed(2)},${y.toFixed(2)}`;
+      }
+      return d;
+    }
     function initLoaderAnim(svgEl) {
       const star=svgEl.querySelector('.el-star');
-      const trail=svgEl.querySelector('.el-trail');
-      if (!star||!trail) return;
+      const trailBlur=svgEl.querySelector('.el-trail-blur');
+      const trailSegs=Array.from(svgEl.querySelectorAll('.el-trail-seg'));
+      if (!star||!trailBlur||!trailSegs.length) return;
       let t0=null, raf;
       function frame(ts) {
         if (!t0) t0=ts;
@@ -14316,11 +14333,16 @@ grmClockTick();
         const op=depthOp(of>=1?0:of);
         star.style.opacity=op;
         if (tl>0) {
-          trail.setAttribute('d',buildTrail(nf,tl));
-          trail.style.opacity=(op*0.85).toFixed(2);
+          trailBlur.setAttribute('d',buildTrail(nf,tl));
+          trailBlur.style.opacity=(op*0.55).toFixed(2);
+          trailSegs.forEach((seg,i)=>{
+            seg.setAttribute('d',buildTrailSeg(nf,tl,i));
+            seg.style.opacity=(op*SEG_OPACITIES[i]).toFixed(2);
+          });
         } else {
-          trail.setAttribute('d','');
-          trail.style.opacity='0';
+          trailBlur.setAttribute('d','');
+          trailBlur.style.opacity='0';
+          trailSegs.forEach(seg=>{ seg.setAttribute('d',''); seg.style.opacity='0'; });
         }
         if (glow>0) {
           star.style.filter=`drop-shadow(0 0 ${(glow*14).toFixed(0)}px rgba(255,240,68,1)) drop-shadow(0 0 ${(glow*30).toFixed(0)}px rgba(255,158,26,1)) drop-shadow(0 0 ${(glow*52).toFixed(0)}px rgba(255,82,10,.78))`;
