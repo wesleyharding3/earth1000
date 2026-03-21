@@ -2265,6 +2265,41 @@
     #panelBorderSVG { display: none; }
     #panelBorderOrb { display: none; }
 
+    /* ── City header meta pills (weather + time) ── */
+    #cityMetaPills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .cityMetaPill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 14px;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      letter-spacing: 0.03em;
+      color: rgba(255,255,255,0.70);
+    }
+    #weatherPill {
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      gap: 5px;
+    }
+    #weatherPill:hover {
+      background: rgba(255,255,255,0.12);
+      border-color: rgba(255,255,255,0.28);
+    }
+    #weatherPill .wIcon { font-size: 14px; line-height: 1; }
+    #weatherPill .wTemp { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
+    #weatherPill .wUnit { font-size: 9px; color: rgba(255,255,255,0.40); letter-spacing: 0.06em; }
+
     /* ── Ambient Headline Spotlight ── */
 .ahPulseDot {
   position: absolute;
@@ -6804,6 +6839,7 @@ function computeCityTiers(cities) {
       let preFocusZoom = 3;           // zoom level before focus, restored on panel close
       let focusLocked = false;        // true after focus lands — skip rebuildGlobeQuat until next drag
       let timeInterval = null;
+      let weatherUseFahrenheit = true; // default °F; click pill to toggle
       let dragging = false;
       let prevX = 0, prevY = 0;
       let touchDragging = false;
@@ -8322,7 +8358,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(6,10,20,0.30);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
       padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:30px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
                 ${node.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${node.flag}</span>` : ""}
                 <div style="min-width:0;">
@@ -8330,7 +8366,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${node.country}</h4>` : ""}
                 </div>
               </div>
-              ${isCity ? `<div id="timePill" style="display:inline-block;margin-top:5px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.14);border-radius:14px;padding:3px 10px;font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:0.03em;color:rgba(255,255,255,0.70);"></div>` : ""}
+              ${isCity ? `
+              <div id="cityMetaPills">
+                <div id="weatherPill" class="cityMetaPill" title="Click to toggle °C / °F">
+                  <span class="wIcon">–</span>
+                  <span class="wTemp">–</span>
+                  <span class="wUnit">°F</span>
+                </div>
+                <div id="timePill" class="cityMetaPill"></div>
+              </div>` : ""}
             </div>
           </div>
           <div class="panelSortRow">
@@ -8680,16 +8724,74 @@ const settingsToggle     = document.getElementById("settingsToggle");
         viewport.addEventListener("touchstart", (e) => { vpTouchStartY = e.touches[0].clientY; vpScrollStart = viewport.scrollTop; }, { passive: true });
         viewport.addEventListener("touchmove",  (e) => { e.stopPropagation(); viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY); }, { passive: true });
 
-        // ── Time pill (city only) ──
+        // ── Weather + Time pills (city only) ──
         if (isCity) {
-          const timeElement  = document.getElementById("timePill");
-          const cityTimezone = resolveTimezone(node);
+          const timeElement    = document.getElementById("timePill");
+          const weatherPill    = document.getElementById("weatherPill");
+          const cityTimezone   = resolveTimezone(node);
+
+          // ── Time ──
           function updateLocalTime() {
             timeElement.textContent = new Date().toLocaleTimeString("en-US", { timeZone: cityTimezone, hour:"2-digit", minute:"2-digit" });
           }
           updateLocalTime();
           if (timeInterval) clearInterval(timeInterval);
           timeInterval = setInterval(updateLocalTime, 1000);
+
+          // ── Weather ──
+          // WMO weather interpretation codes → { emoji, label }
+          function wmoInfo(code) {
+            if (code === 0)                          return { icon:"☀️",  label:"Clear"        };
+            if (code === 1)                          return { icon:"🌤️", label:"Mostly Clear"  };
+            if (code === 2)                          return { icon:"⛅",  label:"Partly Cloudy" };
+            if (code === 3)                          return { icon:"☁️",  label:"Overcast"      };
+            if (code >= 45 && code <= 48)            return { icon:"🌫️", label:"Fog"           };
+            if (code >= 51 && code <= 55)            return { icon:"🌦️", label:"Drizzle"       };
+            if (code >= 56 && code <= 57)            return { icon:"🌧️", label:"Freezing Drizzle" };
+            if (code >= 61 && code <= 65)            return { icon:"🌧️", label:"Rain"          };
+            if (code >= 66 && code <= 67)            return { icon:"🌧️", label:"Freezing Rain" };
+            if (code >= 71 && code <= 77)            return { icon:"❄️",  label:"Snow"          };
+            if (code >= 80 && code <= 82)            return { icon:"🌦️", label:"Showers"       };
+            if (code >= 85 && code <= 86)            return { icon:"🌨️", label:"Snow Showers"  };
+            if (code === 95)                         return { icon:"⛈️",  label:"Thunderstorm"  };
+            if (code >= 96 && code <= 99)            return { icon:"⛈️",  label:"Severe Storm"  };
+            return { icon:"🌡️", label:"Unknown" };
+          }
+
+          function renderWeather(tempC, code) {
+            const { icon } = wmoInfo(code);
+            const useFahr  = weatherUseFahrenheit;
+            const tempDisp = useFahr ? Math.round(tempC * 9/5 + 32) : Math.round(tempC);
+            const unit     = useFahr ? "°F" : "°C";
+            weatherPill.innerHTML =
+              `<span class="wIcon">${icon}</span>` +
+              `<span class="wTemp">${tempDisp}</span>` +
+              `<span class="wUnit">${unit}</span>`;
+          }
+
+          let _lastTempC = null, _lastCode = null;
+
+          async function fetchWeather() {
+            if (!node.lat || !node.lon) return;
+            try {
+              const url = `https://api.open-meteo.com/v1/forecast?latitude=${node.lat}&longitude=${node.lon}&current=temperature_2m,weather_code&wind_speed_unit=mph&timezone=auto`;
+              const r   = await fetch(url);
+              const d   = await r.json();
+              _lastTempC = d.current.temperature_2m;
+              _lastCode  = d.current.weather_code;
+              renderWeather(_lastTempC, _lastCode);
+            } catch(e) {
+              weatherPill.innerHTML = `<span class="wIcon">–</span>`;
+            }
+          }
+
+          fetchWeather();
+
+          weatherPill.addEventListener("click", (e) => {
+            e.stopPropagation();
+            weatherUseFahrenheit = !weatherUseFahrenheit;
+            if (_lastTempC !== null) renderWeather(_lastTempC, _lastCode);
+          });
         }
 
         // Close
