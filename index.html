@@ -63,6 +63,8 @@
       backdrop-filter: blur(24px) saturate(160%);
       -webkit-backdrop-filter: blur(24px) saturate(160%);
       border: 1.5px solid rgba(255, 255, 255, 0.18);
+      overflow: hidden;
+      border-radius: 22px 22px 0 0;
     }
 
     #infoPanel.maximized {
@@ -1917,6 +1919,8 @@
   background: rgba(8, 14, 24, 0.82);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-radius: 20px 20px 0 0;
+  overflow: hidden;
 }
 
 .adpHandle {
@@ -13656,41 +13660,32 @@ grmClockTick();
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <script>
-  /* ── Panel pulse: Gaussian arc-style comet, top + sides only ── */
+  /* ── Panel pulse: single Gaussian light sweep, top + sides only ── */
   (function() {
-    // Matches arc shader: soft Gaussian exp(-dist²/w²) fade in and out
-    var SPEED       = 0.00022;   // slow — ~70s per loop
-    var PULSE_WIDTH = 0.14;      // Gaussian sigma as fraction of perimeter
-    var CR          = [100, 210, 255];  // ice blue, tinted by AdditiveBlending
+    var SPEED = 0.00018;   // ~80s per full loop
+    var SIGMA = 0.10;      // Gaussian width as fraction of path length
+    var CR    = [120, 215, 255];
 
-    // Build the 3-sided perimeter path: left (bottom→top), top, right (top→bottom)
-    // Skips the bottom edge entirely
     function buildPath(w, h, r) {
-      // Total 3-sided length
-      var arc = 0.5 * Math.PI * r;
-      var segs = [];
-      // left edge: bottom-left corner → top-left corner
-      segs.push({ len: h - 2*r, fn: function(t){ return { x:0, y:h-r-t*(h-2*r) }; } });
-      // top-left corner arc
-      segs.push({ len: arc, fn: function(t){ return { x:r-r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2) }; } });
-      // top edge
-      segs.push({ len: w - 2*r, fn: function(t){ return { x:r+t*(w-2*r), y:0 }; } });
-      // top-right corner arc
-      segs.push({ len: arc, fn: function(t){ return { x:w-r+r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2) }; } });
-      // right edge: top-right corner → bottom-right corner
-      segs.push({ len: h - 2*r, fn: function(t){ return { x:w, y:r+t*(h-2*r) }; } });
+      var arc  = 0.5 * Math.PI * r;
+      var segs = [
+        { len: h-2*r, fn: function(t){ return {x:0,       y:h-r-t*(h-2*r)}; } },
+        { len: arc,   fn: function(t){ return {x:r-r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2)}; } },
+        { len: w-2*r, fn: function(t){ return {x:r+t*(w-2*r), y:0}; } },
+        { len: arc,   fn: function(t){ return {x:w-r+r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2)}; } },
+        { len: h-2*r, fn: function(t){ return {x:w, y:r+t*(h-2*r)}; } }
+      ];
       var total = segs.reduce(function(s,sg){ return s+sg.len; }, 0);
       return { segs:segs, total:total };
     }
 
     function pointAt(path, d) {
       d = ((d % path.total) + path.total) % path.total;
-      for (var i = 0; i < path.segs.length; i++) {
-        var seg = path.segs[i];
-        if (d <= seg.len) return seg.fn(seg.len > 0 ? d/seg.len : 0);
-        d -= seg.len;
+      for (var i=0; i<path.segs.length; i++) {
+        if (d <= path.segs[i].len) return path.segs[i].fn(path.segs[i].len>0 ? d/path.segs[i].len : 0);
+        d -= path.segs[i].len;
       }
-      return { x:0, y:0 };
+      return {x:0, y:0};
     }
 
     var reg = new Map();
@@ -13699,7 +13694,7 @@ grmClockTick();
       if (reg.has(el)) return reg.get(el);
       var c = document.createElement('canvas');
       c.className = 'panelPulseCanvas';
-      c.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;';
+      c.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;border-radius:inherit;';
       el.appendChild(c);
       var e = { el:el, c:c, ctx:c.getContext('2d'), prog:Math.random(), raf:null };
       reg.set(el, e);
@@ -13708,50 +13703,56 @@ grmClockTick();
 
     function tick(e) {
       var el = e.el;
-      var w = el.offsetWidth, h = el.offsetHeight;
+      var w  = el.offsetWidth, h = el.offsetHeight;
       e.c.width = w; e.c.height = h;
       e.ctx.clearRect(0, 0, w, h);
-
       if (!w || !h) { e.raf = requestAnimationFrame(function(){ tick(e); }); return; }
 
       var r    = Math.min(parseFloat(getComputedStyle(el).borderRadius)||0, w/2, h/2);
       var path = buildPath(w, h, r);
       var P    = path.total;
-      var headD = e.prog * P;
-      var sigma = PULSE_WIDTH * P;
+      var ctr  = e.prog * P;   // centre of the Gaussian pulse
+      var sig  = SIGMA * P;
 
-      // Sample N points, compute Gaussian alpha for each
-      var N = 200;
-      for (var i = 0; i < N; i++) {
-        // Sample backwards from head (head = i=N-1, tail = i=0)
-        var t    = i / (N - 1);            // 0=tail, 1=head
-        var dist = (1 - t) * sigma * 3.5;  // distance behind head
-        var d    = headD - dist;
-        var pt   = pointAt(path, d);
+      // Sample the path in small steps, draw a stroked segment coloured by Gaussian weight
+      var STEPS = 300;
+      var step  = P / STEPS;
 
-        // Gaussian: brightest at head, fades symmetrically
-        var norm  = dist / sigma;
-        var alpha = Math.exp(-norm * norm * 0.5);
-        // Extra boost at the very tip
-        if (t > 0.92) alpha = alpha * (1.0 + (t - 0.92) / 0.08 * 1.5);
-        alpha = Math.min(alpha * 0.85, 1.0);
+      e.ctx.lineWidth   = 1.5;
+      e.ctx.lineCap     = 'round';
+      e.ctx.lineJoin    = 'round';
 
-        var sz = 0.8 + t * 2.2;
+      for (var i = 0; i < STEPS; i++) {
+        var d0 = i * step;
+        var d1 = d0 + step;
+        // Gaussian centred on ctr, wraps around
+        var dist = d0 - ctr;
+        // wrap to [-P/2, P/2]
+        if (dist >  P/2) dist -= P;
+        if (dist < -P/2) dist += P;
+        var g     = Math.exp(-(dist*dist) / (2*sig*sig));
+        if (g < 0.005) continue;  // skip invisible segments
+
+        var alpha = g * 0.90;
+        var pt0   = pointAt(path, d0);
+        var pt1   = pointAt(path, d1);
+
         e.ctx.beginPath();
-        e.ctx.arc(pt.x, pt.y, sz, 0, 6.283);
-        e.ctx.fillStyle = 'rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')';
-        e.ctx.fill();
+        e.ctx.moveTo(pt0.x, pt0.y);
+        e.ctx.lineTo(pt1.x, pt1.y);
+        e.ctx.strokeStyle = 'rgba('+CR[0]+','+CR[1]+','+CR[2]+','+alpha.toFixed(3)+')';
+        e.ctx.stroke();
       }
 
-      // Hard bright head glow
-      var hp = pointAt(path, headD);
-      var g  = e.ctx.createRadialGradient(hp.x, hp.y, 0, hp.x, hp.y, 11);
-      g.addColorStop(0,    'rgba(230,250,255,1.00)');
-      g.addColorStop(0.25, 'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.65)');
-      g.addColorStop(1,    'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.00)');
+      // Bright centre glow at peak
+      var peak = pointAt(path, ctr);
+      var grd  = e.ctx.createRadialGradient(peak.x, peak.y, 0, peak.x, peak.y, 10);
+      grd.addColorStop(0,    'rgba(235,252,255,0.95)');
+      grd.addColorStop(0.3,  'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.50)');
+      grd.addColorStop(1,    'rgba('+CR[0]+','+CR[1]+','+CR[2]+',0.00)');
       e.ctx.beginPath();
-      e.ctx.arc(hp.x, hp.y, 11, 0, 6.283);
-      e.ctx.fillStyle = g;
+      e.ctx.arc(peak.x, peak.y, 10, 0, 6.283);
+      e.ctx.fillStyle = grd;
       e.ctx.fill();
 
       e.prog = (e.prog + SPEED) % 1;
