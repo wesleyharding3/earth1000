@@ -59,7 +59,7 @@
 
     #infoPanel.active {
       pointer-events: all;
-      background: rgba(10, 18, 32, 0.62);
+      background: rgba(10, 18, 32, 0.80);
       backdrop-filter: blur(28px) saturate(180%);
       -webkit-backdrop-filter: blur(28px) saturate(180%);
       border-top: 1px solid rgba(255,255,255,0.12);
@@ -953,7 +953,7 @@
 #flowControls.visible { display: flex; }
 
 .flowPanel {
-  background: rgba(10, 18, 32, 0.62);
+  background: rgba(10, 18, 32, 0.80);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 20px;
   padding: 14px 18px;
@@ -1919,7 +1919,7 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
-  background: rgba(10, 18, 32, 0.62);
+  background: rgba(10, 18, 32, 0.80);
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   border-radius: 20px 20px 0 0;
@@ -4152,7 +4152,7 @@
       left: -300px;
       width: 260px;
       height: var(--app-height, 100vh);
-      background: rgba(10, 18, 32, 0.62);
+      background: rgba(10, 18, 32, 0.80);
       border-right: 1px solid rgba(255,255,255,0.11);
       z-index: 34;
       display: flex;
@@ -13667,44 +13667,66 @@ grmClockTick();
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
   <script>
-  /* ── Panel pulse: single Gaussian-weighted stroke, top+sides only ── */
+  /* ── Panel pulse: gradient-masked wave, top+sides only ── */
   (function() {
-    var SPEED = 0.00055;   // ~25s per loop
-    var SIGMA = 0.18;      // Gaussian width — 18% of path length
-    var STEP_COUNT = 500;  // segments — more = smoother stroke, no dot gaps
+    var SPEED = 0.00055;
+    var SIGMA = 0.20;      // wave width — 20% of path length
+    var N     = 300;       // path resolution
 
-    // 3-sided path: left edge (up) + top + right edge (down). No bottom.
+    // 3-sided path: left-up → top-left-arc → top → top-right-arc → right-down
+    // FIXED: correct sin/cos for top-left corner arc
     function buildPath(w, h, r) {
-      var arc  = 0.5 * Math.PI * r;
-      var segs = [
-        { len: h-2*r, fn: function(t){ return {x:0,                              y:h-r-t*(h-2*r)}; } },
-        { len: arc,   fn: function(t){ return {x:r-r*Math.sin(t*Math.PI/2),      y:r-r*Math.cos(t*Math.PI/2)}; } },
-        { len: w-2*r, fn: function(t){ return {x:r+t*(w-2*r),                    y:0}; } },
-        { len: arc,   fn: function(t){ return {x:w-r+r*Math.sin(t*Math.PI/2),    y:r-r*Math.cos(t*Math.PI/2)}; } },
-        { len: h-2*r, fn: function(t){ return {x:w,                              y:r+t*(h-2*r)}; } }
-      ];
-      var total = segs.reduce(function(s,sg){ return s+sg.len; }, 0);
-      return { segs:segs, total:total };
+      var arc = 0.5 * Math.PI * r;
+      return {
+        segs: [
+          // left edge going UP
+          { len: h-2*r, fn: function(t){ return {x:0, y:h-r-t*(h-2*r)}; } },
+          // top-left corner: (0,r) → (r,0)  — cos/sin correct order
+          { len: arc,   fn: function(t){ return {x:r-r*Math.cos(t*Math.PI/2), y:r-r*Math.sin(t*Math.PI/2)}; } },
+          // top edge
+          { len: w-2*r, fn: function(t){ return {x:r+t*(w-2*r), y:0}; } },
+          // top-right corner: (w-r,0) → (w,r)
+          { len: arc,   fn: function(t){ return {x:w-r+r*Math.sin(t*Math.PI/2), y:r-r*Math.cos(t*Math.PI/2)}; } },
+          // right edge going DOWN
+          { len: h-2*r, fn: function(t){ return {x:w, y:r+t*(h-2*r)}; } }
+        ],
+        total: 2*(h-2*r) + 2*arc + (w-2*r)
+      };
     }
 
     function pointAt(path, d) {
       d = ((d % path.total) + path.total) % path.total;
       for (var i=0; i<path.segs.length; i++) {
-        if (d <= path.segs[i].len) return path.segs[i].fn(path.segs[i].len>0 ? d/path.segs[i].len : 0);
-        d -= path.segs[i].len;
+        var seg = path.segs[i];
+        if (d <= seg.len) return seg.fn(seg.len > 0 ? d/seg.len : 0);
+        d -= seg.len;
       }
       return {x:0, y:0};
+    }
+
+    // Trace full 3-sided path onto a context
+    function tracePath(ctx, path) {
+      var step = path.total / N;
+      ctx.beginPath();
+      var p0 = pointAt(path, 0);
+      ctx.moveTo(p0.x, p0.y);
+      for (var i=1; i<=N; i++) {
+        var p = pointAt(path, i * step);
+        ctx.lineTo(p.x, p.y);
+      }
     }
 
     var reg = new Map();
 
     function getEntry(el) {
       if (reg.has(el)) return reg.get(el);
-      var c = document.createElement('canvas');
+      var c   = document.createElement('canvas');
       c.className = 'panelPulseCanvas';
       c.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0;';
       el.appendChild(c);
-      var e = { el:el, c:c, ctx:c.getContext('2d'), prog:Math.random(), raf:null, active:false };
+      // Offscreen for the masked gradient wave
+      var off = document.createElement('canvas');
+      var e = { el:el, c:c, ctx:c.getContext('2d'), off:off, offCtx:off.getContext('2d'), prog:Math.random(), raf:null, active:false };
       reg.set(el, e);
       return e;
     }
@@ -13715,64 +13737,49 @@ grmClockTick();
       var w = el.offsetWidth, h = el.offsetHeight;
       if (!w || !h) { e.raf = requestAnimationFrame(function(){ tick(e); }); return; }
 
-      e.c.width = w; e.c.height = h;
+      e.c.width   = w; e.c.height   = h;
+      e.off.width = w; e.off.height = h;
       e.ctx.clearRect(0, 0, w, h);
+      e.offCtx.clearRect(0, 0, w, h);
 
       var r    = Math.min(parseFloat(getComputedStyle(el).borderRadius)||0, w/2, h/2);
       var path = buildPath(w, h, r);
       var P    = path.total;
       var sig  = SIGMA * P;
       var ctr  = e.prog * P;
-      var step = P / STEP_COUNT;
 
-      // ── Thin dim rail — full border outline at low opacity ──
-      e.ctx.beginPath();
-      e.ctx.moveTo(pointAt(path,0).x, pointAt(path,0).y);
-      for (var j=1; j<=STEP_COUNT; j++) {
-        var rp = pointAt(path, j * step);
-        e.ctx.lineTo(rp.x, rp.y);
-      }
+      // ── Dim rail: full 3-sided border at very low opacity on main canvas ──
+      tracePath(e.ctx, path);
       e.ctx.lineWidth   = 1;
-      e.ctx.lineCap     = 'butt';   // NO end-cap dots
+      e.ctx.lineCap     = 'butt';
       e.ctx.lineJoin    = 'round';
-      e.ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+      e.ctx.strokeStyle = 'rgba(255,255,255,0.08)';
       e.ctx.stroke();
 
-      // ── Gaussian pulse: short butt-capped segments, alpha = Gaussian weight ──
-      // lineCap=butt means zero extension beyond endpoints — no dots, no caps.
-      e.ctx.lineWidth = 1.5;
-      e.ctx.lineCap   = 'butt';
-      e.ctx.lineJoin  = 'round';
-
-      for (var i=0; i<STEP_COUNT; i++) {
-        var d0   = i * step;
-        var dist = d0 - ctr;
-        // Wrap distance to nearest side of the loop
-        if (dist >  P/2) dist -= P;
-        if (dist < -P/2) dist += P;
-        var g = Math.exp(-(dist*dist) / (2*sig*sig));
-        if (g < 0.012) continue; // skip near-invisible
-
-        var pt0 = pointAt(path, d0);
-        var pt1 = pointAt(path, d0 + step);
-
-        e.ctx.beginPath();
-        e.ctx.moveTo(pt0.x, pt0.y);
-        e.ctx.lineTo(pt1.x, pt1.y);
-        e.ctx.strokeStyle = 'rgba(255,255,255,' + (g * 0.85).toFixed(3) + ')';
-        e.ctx.stroke();
-      }
-
-      // ── Soft glow bloom at peak — not a hard dot, just a wide soft circle ──
+      // ── Wave: radial gradient masked by the path stroke ──
+      // Step 1: fill offscreen with Gaussian gradient centred at pulse peak
       var peak = pointAt(path, ctr);
-      var grd  = e.ctx.createRadialGradient(peak.x, peak.y, 0, peak.x, peak.y, 14);
-      grd.addColorStop(0,   'rgba(220,245,255,0.45)');
-      grd.addColorStop(0.5, 'rgba(180,230,255,0.15)');
-      grd.addColorStop(1,   'rgba(140,210,255,0)');
-      e.ctx.beginPath();
-      e.ctx.arc(peak.x, peak.y, 14, 0, 6.283);
-      e.ctx.fillStyle = grd;
-      e.ctx.fill();
+      var gradR = sig * 0.55;  // screen-space radius — tuned to path sigma
+      var grd = e.offCtx.createRadialGradient(peak.x, peak.y, 0, peak.x, peak.y, gradR);
+      grd.addColorStop(0,    'rgba(255,255,255,0.95)');
+      grd.addColorStop(0.35, 'rgba(200,235,255,0.55)');
+      grd.addColorStop(0.70, 'rgba(160,215,255,0.18)');
+      grd.addColorStop(1,    'rgba(130,200,255,0)');
+      e.offCtx.fillStyle = grd;
+      e.offCtx.fillRect(0, 0, w, h);
+
+      // Step 2: cut gradient to path shape using destination-in
+      e.offCtx.globalCompositeOperation = 'destination-in';
+      tracePath(e.offCtx, path);
+      e.offCtx.lineWidth   = 2.5;
+      e.offCtx.lineCap     = 'round';
+      e.offCtx.lineJoin    = 'round';
+      e.offCtx.strokeStyle = 'rgba(255,255,255,1)';
+      e.offCtx.stroke();
+      e.offCtx.globalCompositeOperation = 'source-over';
+
+      // Step 3: composite the masked wave onto main canvas
+      e.ctx.drawImage(e.off, 0, 0);
 
       e.prog = (e.prog + SPEED) % 1;
       e.raf  = requestAnimationFrame(function(){ tick(e); });
