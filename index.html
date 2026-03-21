@@ -945,8 +945,8 @@
 #flowControls.visible { display: flex; }
 
 .flowPanel {
-  background: rgba(5, 7, 10, 0.94);
-  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(8, 12, 20, 0.52);
+  border: 1px solid rgba(255,255,255,0.13);
   border-radius: 20px;
   padding: 14px 18px;
   display: flex;
@@ -954,8 +954,11 @@
   gap: 12px;
   width: 100%;
   box-sizing: border-box;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,200,120,0.06);
-  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  position: relative;
+  overflow: hidden;
 }
 
 .flowPanelRow {
@@ -1450,14 +1453,15 @@
 }
 .flowMinBar {
   display: none;
-  background: rgba(5, 7, 10, 0.9);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(8, 12, 20, 0.52);
+  border: 1px solid rgba(255,255,255,0.14);
   border-radius: 30px;
   padding: 8px 16px;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
 }
 .flowMinBar .flowMinLabel {
   font-size: 11px;
@@ -4127,14 +4131,17 @@
       left: -300px;
       width: 260px;
       height: var(--app-height, 100vh);
-      background: rgba(6,8,12,0.94);
-      border-right: 1px solid rgba(255,255,255,0.08);
+      background: rgba(8, 12, 22, 0.55);
+      border-right: 1px solid rgba(255,255,255,0.11);
       z-index: 34;
       display: flex;
       flex-direction: column;
-      box-shadow: 4px 0 32px rgba(0,0,0,0.60);
+      box-shadow: 4px 0 40px rgba(0,0,0,0.45), inset -1px 0 0 rgba(255,255,255,0.05);
+      backdrop-filter: blur(24px) saturate(160%);
+      -webkit-backdrop-filter: blur(24px) saturate(160%);
       transition: left 0.36s cubic-bezier(0.32,0.72,0,1);
       pointer-events: none;
+      overflow: hidden;
     }
     #viewSidebar.open {
       left: 0;
@@ -4321,7 +4328,95 @@
         --touch-icon-size: 50px;
       }
     }
-  </style>
+  
+/* ── Border pulse animation ─────────────────────────────────── */
+@property --pulse-a {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@property --pulse-b {
+  syntax: '<angle>';
+  initial-value: 180deg;
+  inherits: false;
+}
+
+@keyframes pulse-spin-a {
+  to { --pulse-a: 360deg; }
+}
+@keyframes pulse-spin-b {
+  to { --pulse-b: 540deg; }
+}
+
+/* Shared pulse wrapper mixin — applied to flowPanel and viewSidebar */
+.flowPanel::before,
+.flowPanel::after,
+#viewSidebar::before,
+#viewSidebar::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Pulse A — clockwise */
+.flowPanel::before,
+#viewSidebar::before {
+  background: conic-gradient(
+    from var(--pulse-a),
+    transparent 0deg,
+    transparent 78deg,
+    rgba(100, 220, 255, 0.0) 80deg,
+    rgba(100, 220, 255, 0.55) 84deg,
+    rgba(200, 255, 255, 0.9) 86deg,
+    rgba(100, 220, 255, 0.55) 88deg,
+    rgba(100, 220, 255, 0.0) 90deg,
+    transparent 92deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 1px;
+  animation: pulse-spin-a 4s linear infinite;
+}
+
+/* Pulse B — counter-clockwise, offset start */
+.flowPanel::after,
+#viewSidebar::after {
+  background: conic-gradient(
+    from var(--pulse-b),
+    transparent 0deg,
+    transparent 78deg,
+    rgba(80, 200, 255, 0.0) 80deg,
+    rgba(80, 180, 255, 0.45) 84deg,
+    rgba(180, 240, 255, 0.8) 86deg,
+    rgba(80, 180, 255, 0.45) 88deg,
+    rgba(80, 200, 255, 0.0) 90deg,
+    transparent 92deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  padding: 1px;
+  animation: pulse-spin-b 4s linear infinite;
+  animation-direction: reverse;
+}
+
+/* Ensure panel content sits above the pulse pseudo-elements */
+.flowPanel > *,
+#viewSidebar > * {
+  position: relative;
+  z-index: 1;
+}
+</style>
 </head>
 
 <body>
