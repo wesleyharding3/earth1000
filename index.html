@@ -59,12 +59,12 @@
 
     #infoPanel.active {
       pointer-events: all;
-      background: rgba(8, 14, 28, 0.93);
-      backdrop-filter: blur(30px) saturate(200%);
-      -webkit-backdrop-filter: blur(30px) saturate(200%);
-      border-top: 1px solid rgba(255,255,255,0.14);
-      border-left: 1px solid rgba(255,255,255,0.14);
-      border-right: 1px solid rgba(255,255,255,0.14);
+      background: rgba(6, 10, 20, 0.30);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      border-top: 1px solid rgba(255,255,255,0.15);
+      border-left: 1px solid rgba(255,255,255,0.10);
+      border-right: 1px solid rgba(255,255,255,0.10);
       border-bottom: none;
       overflow: hidden;
       border-radius: 22px 22px 0 0;
@@ -958,8 +958,10 @@
 #flowControls.visible { display: flex; }
 
 .flowPanel {
-  background: rgba(8, 14, 28, 0.93);
-  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(6, 10, 20, 0.30);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.12);
   border-radius: 20px;
   padding: 14px 18px;
   display: flex;
@@ -1924,13 +1926,13 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
-  background: rgba(8, 14, 28, 0.93);
-  backdrop-filter: blur(30px) saturate(200%);
-  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  background: rgba(6, 10, 20, 0.30);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border-radius: 20px 20px 0 0;
-  border-top: 1px solid rgba(255,255,255,0.14);
-  border-left: 1px solid rgba(255,255,255,0.14);
-  border-right: 1px solid rgba(255,255,255,0.14);
+  border-top: 1px solid rgba(255,255,255,0.15);
+  border-left: 1px solid rgba(255,255,255,0.10);
+  border-right: 1px solid rgba(255,255,255,0.10);
   border-bottom: none;
   overflow: hidden;
 }
@@ -4157,7 +4159,9 @@
       left: -300px;
       width: 260px;
       height: var(--app-height, 100vh);
-      background: rgba(8, 14, 28, 0.93);
+      background: rgba(6, 10, 20, 0.30);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
       border-right: 1px solid rgba(255,255,255,0.11);
       z-index: 34;
       display: flex;
@@ -13771,7 +13775,6 @@ grmClockTick();
     window.startPulse = function(el) {
       if (!el) return;
       var e = getEntry(el);
-      // Always cancel any lingering RAF before restarting
       if (e.raf) { cancelAnimationFrame(e.raf); e.raf = null; }
       e.active = true;
       tick(e);
