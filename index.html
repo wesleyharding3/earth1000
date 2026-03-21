@@ -6801,14 +6801,15 @@ function computeCityTiers(cities) {
           focusPendingPanel = null;
           isFocused = false;
           selectedNodeIndex = null;
-          // Keep focusLocked = true (or set it) - camera stays frozen until actual drag movement
           focusLocked = true;
         }
         
         pauseAmbientRotation();
         dragging = true;
-        dragStartX = e.clientX; dragStartY = e.clientY;  // Track start for threshold
-        dragThresholdMet = false;  // Reset threshold flag
+        dragStartX = e.clientX; dragStartY = e.clientY;
+        dragThresholdMet = false;
+        // Always reset prevX/prevY on fresh mousedown — prevents snap when
+        // resuming drag after panel close (stale coords cause huge first delta)
         prevX = e.clientX; prevY = e.clientY;
       });
 
@@ -9649,6 +9650,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const dx2  = ancX-lx, dy2 = ancY-ly;
             const len2 = Math.sqrt(dx2*dx2+dy2*dy2);
             const ang2 = Math.atan2(dy2,dx2)*180/Math.PI;
+            line.style.transition = "opacity 0.3s ease"; // no transform transition during tracking
             line.style.width     = len2+"px";
             line.style.left      = lx+"px";
             line.style.top       = ly+"px";
@@ -9656,7 +9658,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window._ahTrackRaf = requestAnimationFrame(trackNode); // ← was: trackRaf = ...
           }
 
-          line.style.transition = "transform 0.30s cubic-bezier(0.32,0.72,0,1), opacity 0.3s ease";
+          // Transition only for opacity — strip transform transition before tracking
+          // so per-frame angle updates don't trigger eased animations (causes line glitch)
+          line.style.transition = "opacity 0.3s ease";
           line.style.opacity = "1";
           requestAnimationFrame(() => {
             line.classList.add("drawn");
