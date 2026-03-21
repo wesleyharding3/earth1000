@@ -4330,16 +4330,18 @@
     }
   
 /* ── Border pulse animation ─────────────────────────────────── */
-.panelPulseCanvas {
+.panelPulseSvg {
   position: absolute;
   inset: 0;
-  border-radius: inherit;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
   z-index: 0;
-  opacity: 0.85;
+  overflow: visible;
+  border-radius: inherit;
 }
-.flowPanel > *:not(.panelPulseCanvas),
-#viewSidebar > *:not(.panelPulseCanvas) {
+.flowPanel > *:not(.panelPulseSvg),
+#viewSidebar > *:not(.panelPulseSvg) {
   position: relative;
   z-index: 1;
 }
@@ -8292,7 +8294,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </svg>
             </div>
           </div>
-          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(8,12,20,0.75);backdrop-filter:blur(12px);padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:40px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
@@ -8878,7 +8880,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </svg>
             </div>
           </div>
-          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+          <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(8,12,20,0.75);backdrop-filter:blur(12px);padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
             <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
               <div style="width:14px;height:14px;border-radius:50%;background:${accentColor};flex-shrink:0;"></div>
@@ -11041,7 +11043,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </svg>
         </div>
       </div>
-      <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(0,0,0,0.97);padding-bottom:10px;flex-shrink:0;">
+      <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(8,12,20,0.75);backdrop-filter:blur(12px);padding-bottom:10px;flex-shrink:0;">
         <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
         <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
           <div style="font-size:1.15rem;font-weight:600;color:#fff;">${routeLabel}</div>
@@ -13608,89 +13610,89 @@ grmClockTick();
   <div id="hoverCard" class="hoverCard"></div>
   <div id="hoverLineEl" class="hoverLine" style="opacity:0;"></div>
 
-  /* ── Border pulse: canvas-based, works in all browsers ── */
+  <script>
+  /* ── Border pulse: SVG stroke-dashoffset animation ── */
   (function() {
-    function createPulseCanvas(el) {
-      const canvas = document.createElement('canvas');
-      canvas.className = 'panelPulseCanvas';
-      el.insertBefore(canvas, el.firstChild);
+    const NS = 'http://www.w3.org/2000/svg';
 
-      const ctx = canvas.getContext('2d');
-      let angle1 = 0, angle2 = Math.PI; // two pulses, 180° apart
-      const SPEED = 0.008;
-      const ARC   = Math.PI / 18; // 10° arc width
-      let raf;
+    function createPulseSvg(el) {
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('class', 'panelPulseSvg');
+      svg.setAttribute('aria-hidden', 'true');
+      el.insertBefore(svg, el.firstChild);
 
-      function resize() {
-        canvas.width  = el.offsetWidth;
-        canvas.height = el.offsetHeight;
-      }
+      const ro = new ResizeObserver(() => update());
+      ro.observe(el);
 
-      function drawPulse(angle, r) {
-        const w = canvas.width, h = canvas.height;
+      function update() {
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
         if (!w || !h) return;
-        const isRounded = parseFloat(getComputedStyle(el).borderRadius) || 0;
 
-        // Convert angle to x,y position along the border perimeter
-        const perimeter = 2 * (w + h);
-        const pos = ((angle % (Math.PI * 2)) / (Math.PI * 2)) * perimeter;
+        svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+        svg.setAttribute('width', w);
+        svg.setAttribute('height', h);
+        svg.innerHTML = '';
 
-        // Map perimeter position to x,y
-        let x, y;
-        if (pos < w) {
-          x = pos; y = 0;                          // top edge
-        } else if (pos < w + h) {
-          x = w; y = pos - w;                      // right edge
-        } else if (pos < 2 * w + h) {
-          x = w - (pos - w - h); y = h;            // bottom edge
-        } else {
-          x = 0; y = h - (pos - 2 * w - h);       // left edge
+        const r = parseFloat(getComputedStyle(el).borderRadius) || 0;
+        const inset = 0.5; // sit right on the border
+        const rx = Math.min(r, w / 2, h / 2);
+
+        // Build rounded-rect path
+        const x = inset, y = inset;
+        const W = w - inset * 2, H = h - inset * 2;
+        const d = `M${x+rx},${y} H${x+W-rx} Q${x+W},${y} ${x+W},${y+rx} V${y+H-rx} Q${x+W},${y+H} ${x+W-rx},${y+H} H${x+rx} Q${x},${y+H} ${x},${y+H-rx} V${y+rx} Q${x},${y} ${x+rx},${y} Z`;
+
+        // Compute perimeter approx (rect perimeter + corner arcs)
+        const perim = 2*(W + H) - (8 - 2*Math.PI) * rx;
+        const dashLen = Math.max(perim * 0.12, 40); // pulse = 12% of perimeter
+        const gap = perim - dashLen;
+
+        function makePulse(offset, color, dur, delay) {
+          const path = document.createElementNS(NS, 'path');
+          path.setAttribute('d', d);
+          path.setAttribute('fill', 'none');
+          path.setAttribute('stroke', color);
+          path.setAttribute('stroke-width', '1.5');
+          path.setAttribute('stroke-linecap', 'round');
+          path.setAttribute('stroke-dasharray', `${dashLen} ${gap}`);
+          path.setAttribute('stroke-dashoffset', offset);
+
+          const anim = document.createElementNS(NS, 'animateTransform');
+          // Use animate on stroke-dashoffset instead
+          const animDash = document.createElementNS(NS, 'animate');
+          animDash.setAttribute('attributeName', 'stroke-dashoffset');
+          animDash.setAttribute('from', `${offset}`);
+          animDash.setAttribute('to', `${offset - perim}`);
+          animDash.setAttribute('dur', `${dur}s`);
+          animDash.setAttribute('begin', `${delay}s`);
+          animDash.setAttribute('repeatCount', 'indefinite');
+          animDash.setAttribute('calcMode', 'linear');
+
+          path.appendChild(animDash);
+          return path;
         }
 
-        const arcLen = (ARC / (Math.PI * 2)) * perimeter;
-        const grad = ctx.createRadialGradient(x, y, 0, x, y, arcLen);
-        grad.addColorStop(0,   `rgba(${r}, 1)`);
-        grad.addColorStop(0.4, `rgba(${r}, 0.5)`);
-        grad.addColorStop(1,   `rgba(${r}, 0)`);
-
-        ctx.beginPath();
-        ctx.arc(x, y, arcLen, 0, Math.PI * 2);
-        ctx.fillStyle = grad;
-        ctx.fill();
+        // Two pulses — same speed, opposite starting positions (180° = perim/2 apart)
+        svg.appendChild(makePulse(0,          'rgba(120,220,255,0.7)', 5, 0));
+        svg.appendChild(makePulse(-perim/2,   'rgba(80,190,255,0.5)',  5, 0));
       }
 
-      function frame() {
-        canvas.width  = el.offsetWidth;
-        canvas.height = el.offsetHeight;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        drawPulse(angle1, '100, 220, 255');
-        drawPulse(angle2, '80, 190, 255');
-
-        angle1 += SPEED;
-        angle2 += SPEED;
-        raf = requestAnimationFrame(frame);
-      }
-
-      frame();
-      return () => cancelAnimationFrame(raf);
+      update();
     }
 
     function initPulses() {
-      // Apply to flowPanel (may not exist yet — wait for it)
-      const tryFlow = () => {
-        const fp = document.querySelector('.flowPanel');
-        if (fp && !fp.querySelector('.panelPulseCanvas')) createPulseCanvas(fp);
-      };
-
-      // Apply to sidebar immediately
       const sidebar = document.getElementById('viewSidebar');
-      if (sidebar && !sidebar.querySelector('.panelPulseCanvas')) {
-        createPulseCanvas(sidebar);
+      if (sidebar && !sidebar.querySelector('.panelPulseSvg')) {
+        createPulseSvg(sidebar);
       }
 
-      // Flow panel appears dynamically — observe for it
-      const obs = new MutationObserver(() => tryFlow());
+      const tryFlow = () => {
+        const fp = document.querySelector('.flowPanel');
+        if (fp && !fp.querySelector('.panelPulseSvg')) createPulseSvg(fp);
+      };
+
+      const obs = new MutationObserver(tryFlow);
       obs.observe(document.body, { childList: true, subtree: true });
       tryFlow();
     }
@@ -13702,5 +13704,6 @@ grmClockTick();
     }
   })();
 
+  </script>
 </body>
 </html>
