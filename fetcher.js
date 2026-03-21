@@ -757,7 +757,7 @@ async function fetchFeeds() {
 
       for (const item of newItems) {
         const title   = item.title;
-        const summary = item.summary ? truncateAtWord(item.summary, 100) : null;
+        const summary = item.summary ? truncateAtWord(item.summary, 500) : null;
 
         let translatedTitle   = null;
         let translatedSummary = null;
