@@ -29,143 +29,95 @@
        SITE LOADER
     ════════════════════════════════════════════════════════════ */
     #siteLoader {
-      position: fixed;
-      inset: 0;
-      z-index: 9999;
-      background: #000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      position: fixed; inset: 0; z-index: 9999; background: #000;
+      display: flex; align-items: center; justify-content: center;
       transition: opacity 0.6s ease;
     }
-    #siteLoader.el-fade {
-      opacity: 0;
-      pointer-events: none;
-    }
+    #siteLoader.el-fade { opacity: 0; pointer-events: none; }
 
     .el-loader {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0;
+      position: relative;
+      display: flex; flex-direction: column; align-items: center;
       user-select: none;
     }
-
-    /* ── Globe SVG ── */
-    .el-globe {
-      width: 180px;
-      height: 180px;
-      overflow: visible;
+    .el-globe-wrap {
+      position: relative;
+      display: inline-block;
+      line-height: 0;
     }
+    .el-globe { width: 180px; height: 180px; display: block; overflow: visible; }
 
-    /* Latitudes + meridians */
-    .el-grid ellipse,
-    .el-grid path {
-      fill: none;
-      stroke: rgba(255,160,40,0.18);
-      stroke-width: 0.8;
+    .el-grid ellipse, .el-grid path {
+      fill: none; stroke: rgba(255,160,40,0.18); stroke-width: 0.8;
     }
-    /* Outer circle slightly brighter */
-    .el-grid ellipse:first-child {
-      stroke: rgba(255,160,40,0.32);
-      stroke-width: 1.1;
-    }
+    .el-grid ellipse:first-child { stroke: rgba(255,160,40,0.35); stroke-width: 1.1; }
 
-    /* Orbit ring — back half: dim + dashed */
     .el-orbit-back {
-      fill: none;
-      stroke: rgba(255,140,30,0.20);
-      stroke-width: 1;
-      stroke-dasharray: 5 5;
+      fill: none; stroke: rgba(255,150,40,0.16); stroke-width: 1.1; stroke-dasharray: 4 6;
     }
 
-    /* Animated trail: stroke-dashoffset sweeps the glow arc around.
-       Ellipse rx=112 ry=36, perimeter ≈ 2π·√((112²+36²)/2) ≈ 528.
-       We want the 160-unit bright arc to start at the back (left) and
-       end at the front (right) — matching the star's journey. */
+    /* Trail locked to star's leading edge.
+       P≈496, L=80. dashoffset = starPos - L + 496 (positive throughout).
+       GROW  0→6%:  dashoffset 496→456, dasharray 0→80.  leading edge = star
+       TRAVEL 6→75%: dasharray=80, dashoffset 456→912.   leading edge = star
+       SHRINK 75→85%: dashoffset 912→992, dasharray 80→0. leading edge frozen at home
+       PAUSE  85→100%: hold, nothing visible, star bursts */
     .el-trail {
       fill: none;
-      stroke: url(#elTrailGrad);
-      stroke-width: 2.5;
-      stroke-linecap: round;
-      stroke-dasharray: 160 368;
-      stroke-dashoffset: 264; /* start at back */
-      animation: elOrbit 2.8s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+      stroke: rgba(255,205,65,0.82);
+      stroke-width: 2.2; stroke-linecap: round;
+      stroke-dasharray: 0 496; stroke-dashoffset: 496;
+      animation: elOrbit 4s linear infinite;
     }
-
     @keyframes elOrbit {
-      0%   { stroke-dashoffset:  264; }   /* arc tip at back-left  */
-      68%  { stroke-dashoffset: -264; }   /* arc tip at front-right */
-      86%  { stroke-dashoffset: -264; }   /* hold — star glows      */
-      100% { stroke-dashoffset: -264; }
+      0%   { stroke-dasharray:  0 496; stroke-dashoffset: 496; }
+      6%   { stroke-dasharray: 80 416; stroke-dashoffset: 456; }
+      75%  { stroke-dasharray: 80 416; stroke-dashoffset: 912; }
+      85%  { stroke-dasharray:  0 496; stroke-dashoffset: 992; }
+      100% { stroke-dasharray:  0 496; stroke-dashoffset: 992; }
     }
 
-    /* Star group: rotates around the ellipse center (0,0).
-       Star child is already at translate(112,0) in SVG, so CSS rotation
-       carries it around the ellipse perimeter. */
-    .el-star-group {
-      transform-origin: 0 0;
-      animation: elStarOrbit 2.8s cubic-bezier(0.45, 0, 0.2, 1) infinite;
-    }
-
-    /* Star starts at left (behind globe), sweeps round, arrives at right (front) */
-    @keyframes elStarOrbit {
-      0%   { transform: rotate(180deg); }
-      68%  { transform: rotate(360deg); }
-      /* Hold at front for glow burst */
-      86%  { transform: rotate(360deg); }
-      100% { transform: rotate(360deg); }
-    }
-
+    /* Star position driven by animateMotion in HTML.
+       CSS: depth glow — bright front, dim behind globe. */
     .el-star {
-      fill: rgba(255,210,80,1);
-      /* Base glow */
-      filter: drop-shadow(0 0 4px rgba(255,170,40,0.9))
-              drop-shadow(0 0 10px rgba(255,120,20,0.6));
+      fill: rgba(255,222,75,1);
       transform-origin: 0 0;
-      animation: elStarGlow 2.8s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+      animation: elStarGlow 4s linear infinite;
     }
-
     @keyframes elStarGlow {
-      0%   { opacity: 0.45; transform: scale(0.8); 
-             filter: drop-shadow(0 0 2px rgba(255,160,30,0.4)); }
-      60%  { opacity: 0.9;  transform: scale(1.0);
-             filter: drop-shadow(0 0 5px rgba(255,170,40,1)) drop-shadow(0 0 12px rgba(255,120,20,0.7)); }
-      /* Burst on arrival at front */
-      74%  { opacity: 1;    transform: scale(1.8);
-             filter: drop-shadow(0 0 16px rgba(255,200,60,1)) drop-shadow(0 0 32px rgba(255,130,20,1)) drop-shadow(0 0 56px rgba(255,80,10,0.7)); }
-      84%  { opacity: 1;    transform: scale(1.2);
-             filter: drop-shadow(0 0 8px rgba(255,180,50,1)) drop-shadow(0 0 20px rgba(255,120,20,0.8)); }
-      100% { opacity: 0.45; transform: scale(0.8);
-             filter: drop-shadow(0 0 2px rgba(255,160,30,0.4)); }
+      0%   { opacity:.92; transform:scale(1.05);
+             filter:drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65)); }
+      19%  { opacity:1.0; transform:scale(1.08);
+             filter:drop-shadow(0 0 10px rgba(255,225,65,1)) drop-shadow(0 0 22px rgba(255,155,25,.9)); }
+      32%  { opacity:.45; transform:scale(.88);
+             filter:drop-shadow(0 0 4px rgba(255,175,40,.45)); }
+      46%  { opacity:.11; transform:scale(.64); filter:none; }
+      62%  { opacity:.08; transform:scale(.58); filter:none; }
+      70%  { opacity:.42; transform:scale(.86);
+             filter:drop-shadow(0 0 4px rgba(255,175,40,.42)); }
+      76%  { opacity:.90; transform:scale(1.0);
+             filter:drop-shadow(0 0 7px rgba(255,205,60,.9)); }
+      86%  { opacity:1.0; transform:scale(2.15);
+             filter:drop-shadow(0 0 22px rgba(255,240,68,1)) drop-shadow(0 0 46px rgba(255,158,26,1)) drop-shadow(0 0 78px rgba(255,82,10,.78)); }
+      93%  { opacity:1.0; transform:scale(1.28);
+             filter:drop-shadow(0 0 11px rgba(255,215,58,1)) drop-shadow(0 0 28px rgba(255,138,22,.88)); }
+      100% { opacity:.92; transform:scale(1.05);
+             filter:drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65)); }
     }
 
-    /* ── Italic e ── */
     .el-e {
+      position: absolute; bottom: 10px; left: 6px; z-index: 1;
+      pointer-events: none;
       font-family: "Georgia", "Times New Roman", serif;
-      font-style: italic;
-      font-size: 96px;
-      font-weight: 900;
-      line-height: 1;
+      font-style: italic; font-weight: 900; font-size: 96px; line-height: 1;
       color: rgba(255,175,50,1);
-      text-shadow:
-        0 0 20px rgba(255,140,30,0.6),
-        0 0 50px rgba(255,100,20,0.3);
-      margin-top: -8px;
+      text-shadow: 0 0 20px rgba(255,140,30,0.6), 0 0 50px rgba(255,100,20,0.3);
       letter-spacing: -0.04em;
-      /* Match reference: large, bold, italic serif e */
     }
 
-    /* ── Loading dots ── */
-    .el-dots {
-      display: flex;
-      gap: 8px;
-      margin-top: 20px;
-    }
+    .el-dots { display: flex; gap: 8px; margin-top: 14px; }
     .el-dots span {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
+      width: 6px; height: 6px; border-radius: 50%;
       background: rgba(255,160,40,0.7);
       animation: elDotPulse 1.2s ease-in-out infinite;
     }
@@ -173,36 +125,22 @@
     .el-dots span:nth-child(3) { animation-delay: 0.4s; }
     @keyframes elDotPulse {
       0%,80%,100% { transform: scale(0.6); opacity: 0.3; }
-      40%          { transform: scale(1.0); opacity: 1.0; }
+      40%         { transform: scale(1.0); opacity: 1.0; }
     }
 
-    /* ── Panel article loader — smaller version ── */
     .el-panel-loader {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 0;
-      width: 100%;
-      padding: 40px 0 30px;
-      flex-shrink: 0;
+      grid-column: 1 / -1;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 320px;
     }
-    .el-panel-loader .el-globe {
-      width: 88px;
-      height: 88px;
+    .el-panel-inner {
+      position: relative;
+      display: flex; flex-direction: column; align-items: center;
     }
-    .el-panel-loader .el-e {
-      font-size: 46px;
-      margin-top: -4px;
-    }
-    .el-panel-loader .el-dots {
-      margin-top: 12px;
-      gap: 6px;
-    }
-    .el-panel-loader .el-dots span {
-      width: 5px;
-      height: 5px;
-    }
+    .el-panel-loader .el-globe-wrap .el-globe { width: 82px; height: 82px; }
+    .el-panel-loader .el-e { font-size: 42px; bottom: 5px; left: 3px; }
+    .el-panel-loader .el-dots { margin-top: 10px; gap: 5px; }
+    .el-panel-loader .el-dots span { width: 5px; height: 5px; }
 
     canvas { display: block; }
 
@@ -4641,61 +4579,42 @@
 ════════════════════════════════════════════════════════════════ -->
 <div id="siteLoader">
   <div class="el-loader">
-    <!-- Grid globe -->
-    <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
-      <!-- Latitude rings -->
-      <g class="el-grid">
-        <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
-        <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
-        <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
-        <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
-        <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
-        <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
-        <!-- Longitude arcs — 8 meridians -->
-        <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
-        <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
-        <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
-        <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
-        <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
-        <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
-        <path d="M0,-100 Q8,-60 0,100"/>
-        <path d="M0,-100 Q-8,-60 0,100"/>
-      </g>
-
-      <!-- Clip: only the front hemisphere is visible for the grid -->
-      <defs>
-        <clipPath id="frontHemi">
-          <rect x="-105" y="-105" width="210" height="210"/>
-        </clipPath>
-        <!-- Orbit path: tilted ellipse (diagonal ring) -->
-        <!-- This is the track; the animated star runs along it -->
-      </defs>
-
-      <!-- Orbit ring — back half dashed + dim, front half solid glow -->
-      <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36"
-               transform="rotate(-32)"/>
-
-      <!-- Tilted wrapper: trail + star share this -32° tilt -->
-      <g transform="rotate(-32)">
-        <!-- Sweeping light trail along the ellipse -->
-        <ellipse class="el-trail" cx="0" cy="0" rx="112" ry="36"/>
-        <!-- Star: lives at (112,0) in this tilted space;
-             el-star-group rotates to carry it around the ellipse -->
-        <g class="el-star-group">
-          <g transform="translate(112, 0)">
-            <polygon class="el-star" points="0,-7 1.7,-2.3 6.6,-2.3 2.8,0.9 4.1,5.9 0,3.2 -4.1,5.9 -2.8,0.9 -6.6,-2.3 -1.7,-2.3"/>
-          </g>
+    <div class="el-globe-wrap">
+      <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+        <!-- Static orbit track: drawn FIRST so grid overlaps it (depth illusion) -->
+        <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
+        <g class="el-grid">
+          <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+          <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+          <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+          <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+          <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+          <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+          <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+          <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+          <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+          <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+          <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
+          <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
+          <path d="M0,-100 Q8,-60 0,100"/>
+          <path d="M0,-100 Q-8,-60 0,100"/>
         </g>
-      </g>
-    </svg>
-
-    <!-- Italic e -->
-    <div class="el-e">e</div>
-
-    <!-- Loading dots -->
-    <div class="el-dots">
-      <span></span><span></span><span></span>
+        <!-- Orbit ring + star, tilted -32deg -->
+        <g transform="rotate(-32)">
+          <ellipse class="el-trail" cx="0" cy="0" rx="112" ry="36"/>
+          <!-- Star driven by animateMotion on exact same ellipse arc as the trail.
+               Home = (112,0) = top-right visually. CW: bottom-front(19%), left-back(37%),
+               top-back(56%), home(75%). Holds 75%-100% while trail flows in and bursts. -->
+          <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
+            <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
+              keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
+              path="M 112,0 A 112,36 0 0,1 -112,0 A 112,36 0 0,1 112,0"/>
+          </polygon>
+        </g>
+      </svg>
+      <div class="el-e">e</div>
     </div>
+    <div class="el-dots"><span></span><span></span><span></span></div>
   </div>
 </div>
 
@@ -8191,7 +8110,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
 
-        raycaster.params.Points.threshold = Math.max(0.022, camera.position.z * 0.016);
+        raycaster.params.Points.threshold = Math.max(0.028, camera.position.z * 0.020);
         raycaster.setFromCamera(hoverMouse, camera);
         const intersects = raycaster.intersectObject(regionPoints);
 
@@ -8428,17 +8347,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // In sparse space use the full baseThresh.
       // Floor: never shrink below 25% of baseThresh so tiny nodes stay clickable.
       function perNodeThresh(baseThresh, nearDist) {
-        if (nearDist < baseThresh * 2.5) {
-          return Math.max(nearDist * 0.40, baseThresh * 0.25);
+        if (nearDist < baseThresh * 3) {
+          return Math.max(nearDist * 0.45, baseThresh * 0.55);
         }
-        return baseThresh;
+        return baseThresh * 1.15;
       }
       // ────────────────────────────────────────────────────────────────
 
       function updateHoverLabels() {
         raycaster.params.Points.threshold = currentViewMode === "country"
-        ? Math.max(0.012, camera.position.z * 0.014)
-        : Math.max(0.008, camera.position.z * 0.010);
+        ? Math.max(0.018, camera.position.z * 0.018)
+        : Math.max(0.013, camera.position.z * 0.015);
         raycaster.setFromCamera(hoverMouse, camera);
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
@@ -8627,7 +8546,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Region mode — hit-test centroid nodes
         if (currentViewMode === "regions") {
           if (!regionPoints || !regionPositions) return;
-          raycaster.params.Points.threshold = Math.max(0.018, camera.position.z * 0.014);
+          raycaster.params.Points.threshold = Math.max(0.026, camera.position.z * 0.020);
           const hits = raycaster.intersectObject(regionPoints);
           if (hits.length > 0) {
             const index = hits[0].index;
@@ -8650,8 +8569,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         raycaster.params.Points.threshold = currentViewMode === "country"
-          ? Math.max(0.012, camera.position.z * 0.010)
-          : Math.max(0.008, camera.position.z * 0.008);
+          ? Math.max(0.018, camera.position.z * 0.016)
+          : Math.max(0.013, camera.position.z * 0.013);
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
         const intersects   = raycaster.intersectObject(activePoints);
@@ -8720,7 +8639,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Region mode
         if (currentViewMode === "regions") {
           if (!regionPoints || !regionPositions) return;
-          raycaster.params.Points.threshold = Math.max(0.018, camera.position.z * 0.014);
+          raycaster.params.Points.threshold = Math.max(0.026, camera.position.z * 0.020);
           const hits = raycaster.intersectObject(regionPoints);
           if (hits.length > 0) {
             const index = hits[0].index;
@@ -8743,8 +8662,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         raycaster.params.Points.threshold = currentViewMode === "country"
-          ? Math.max(0.012, camera.position.z * 0.010)
-          : Math.max(0.008, camera.position.z * 0.008);  
+          ? Math.max(0.018, camera.position.z * 0.016)
+          : Math.max(0.013, camera.position.z * 0.013);  
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData   = currentViewMode === "country" ? countries : cities;
         const intersects   = raycaster.intersectObject(activePoints);
@@ -9171,35 +9090,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.translateCard = translateCard;
 
         function skeletonCards(n) {
-          return `<div class="el-panel-loader">
-            <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
-              <g class="el-grid">
-                <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
-                <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
-                <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
-                <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
-                <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
-                <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
-                <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
-                <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
-                <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
-                <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
-                <path d="M0,-100 Q8,-60 0,100"/>
-                <path d="M0,-100 Q-8,-60 0,100"/>
-              </g>
-              <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
-              <g transform="rotate(-32)">
-                <ellipse class="el-trail" cx="0" cy="0" rx="112" ry="36"/>
-                <g class="el-star-group">
-                  <g transform="translate(112, 0)">
-                    <polygon class="el-star" points="0,-7 1.7,-2.3 6.6,-2.3 2.8,0.9 4.1,5.9 0,3.2 -4.1,5.9 -2.8,0.9 -6.6,-2.3 -1.7,-2.3"/>
-                  </g>
+          return `<div class="el-panel-loader"><div class="el-panel-inner">
+            <div class="el-globe-wrap">
+              <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+                <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
+                <g class="el-grid">
+                  <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+                  <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+                  <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+                  <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+                  <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+                  <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+                  <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+                  <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+                  <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+                  <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+                  <path d="M0,-100 Q8,-60 0,100"/>
+                  <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
-              </g>
-            </svg>
-            <div class="el-e">e</div>
+                <g transform="rotate(-32)">
+                  <ellipse class="el-trail" cx="0" cy="0" rx="112" ry="36"/>
+                  <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
+                    <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
+                      keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
+                      path="M 112,0 A 112,36 0 0,1 -112,0 A 112,36 0 0,1 112,0"/>
+                  </polygon>
+                </g>
+              </svg>
+              <div class="el-e">e</div>
+            </div>
             <div class="el-dots"><span></span><span></span><span></span></div>
-          </div>`;
+          </div></div>`;
         }
 
         function renderCards() {
@@ -9612,35 +9533,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
         searchInput.addEventListener("input", () => { filterQuery = searchInput.value.trim().toLowerCase(); renderCards(); });
 
         function skeletonCards(n) {
-          return `<div class="el-panel-loader">
-            <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
-              <g class="el-grid">
-                <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
-                <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
-                <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
-                <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
-                <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
-                <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
-                <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
-                <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
-                <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
-                <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
-                <path d="M0,-100 Q8,-60 0,100"/>
-                <path d="M0,-100 Q-8,-60 0,100"/>
-              </g>
-              <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
-              <g transform="rotate(-32)">
-                <ellipse class="el-trail" cx="0" cy="0" rx="112" ry="36"/>
-                <g class="el-star-group">
-                  <g transform="translate(112, 0)">
-                    <polygon class="el-star" points="0,-7 1.7,-2.3 6.6,-2.3 2.8,0.9 4.1,5.9 0,3.2 -4.1,5.9 -2.8,0.9 -6.6,-2.3 -1.7,-2.3"/>
-                  </g>
+          return `<div class="el-panel-loader"><div class="el-panel-inner">
+            <div class="el-globe-wrap">
+              <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+                <ellipse class="el-orbit-back" cx="0" cy="0" rx="112" ry="36" transform="rotate(-32)"/>
+                <g class="el-grid">
+                  <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+                  <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+                  <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+                  <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+                  <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+                  <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+                  <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+                  <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+                  <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+                  <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+                  <path d="M0,-100 Q8,-60 0,100"/>
+                  <path d="M0,-100 Q-8,-60 0,100"/>
                 </g>
-              </g>
-            </svg>
-            <div class="el-e">e</div>
+                <g transform="rotate(-32)">
+                  <ellipse class="el-trail" cx="0" cy="0" rx="112" ry="36"/>
+                  <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1">
+                    <animateMotion dur="4s" repeatCount="indefinite" rotate="none"
+                      keyTimes="0;0.75;1" keyPoints="0;1;1" calcMode="linear"
+                      path="M 112,0 A 112,36 0 0,1 -112,0 A 112,36 0 0,1 112,0"/>
+                  </polygon>
+                </g>
+              </svg>
+              <div class="el-e">e</div>
+            </div>
             <div class="el-dots"><span></span><span></span><span></span></div>
-          </div>`;
+          </div></div>`;
         }
 
         function renderCards() {
