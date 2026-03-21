@@ -5712,7 +5712,26 @@ function computeCityTiers(cities) {
         earthBaseBrightness.push(c);
       }
 
-      const earthGeo = new THREE.BufferGeometry();
+      // Circular radial glow — declared here so earthMat can reference it
+      function createCircleGlowTexture(size) {
+        size = size || 64;
+        var c = document.createElement('canvas');
+        c.width = size; c.height = size;
+        var ctx = c.getContext('2d');
+        var half = size / 2;
+        var grad = ctx.createRadialGradient(half, half, 0, half, half, half);
+        grad.addColorStop(0,    'rgba(255,255,255,1.00)');
+        grad.addColorStop(0.20, 'rgba(255,255,255,0.85)');
+        grad.addColorStop(0.45, 'rgba(255,255,255,0.40)');
+        grad.addColorStop(0.70, 'rgba(255,255,255,0.10)');
+        grad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, size, size);
+        return new THREE.CanvasTexture(c);
+      }
+      const circleGlowTexture = createCircleGlowTexture(64);
+
+            const earthGeo = new THREE.BufferGeometry();
       earthGeo.setAttribute("position", new THREE.Float32BufferAttribute(earthPositions,3));
       earthGeo.setAttribute("color", new THREE.Float32BufferAttribute(earthColors,3));
       const earthMat = new THREE.PointsMaterial({ size:0.009, map:circleGlowTexture, vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, alphaTest:0.001 });
@@ -5925,25 +5944,6 @@ function computeCityTiers(cities) {
 
       const glowTexture = createGlowTexture();
 
-      // Circular radial glow for earth points and stars
-      // Pure white center fading to transparent — vertex colors tint it
-      function createCircleGlowTexture(size) {
-        size = size || 64;
-        var c = document.createElement('canvas');
-        c.width = size; c.height = size;
-        var ctx = c.getContext('2d');
-        var half = size / 2;
-        var grad = ctx.createRadialGradient(half, half, 0, half, half, half);
-        grad.addColorStop(0,    'rgba(255,255,255,1.00)');
-        grad.addColorStop(0.20, 'rgba(255,255,255,0.85)');
-        grad.addColorStop(0.45, 'rgba(255,255,255,0.40)');
-        grad.addColorStop(0.70, 'rgba(255,255,255,0.10)');
-        grad.addColorStop(1.00, 'rgba(255,255,255,0.00)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, size, size);
-        return new THREE.CanvasTexture(c);
-      }
-      const circleGlowTexture = createCircleGlowTexture(64);
       // ── Compute tier for each city ────────────────────────────────
       const cityTierIndices = computeCityTiers(cities);
 
