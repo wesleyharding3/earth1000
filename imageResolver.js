@@ -377,6 +377,7 @@ async function persistAssignment(articleId, candidate, context, surface, client)
 
 async function resolveImageForArticle(articleId, options = {}) {
   const surface = options.surface || "feed";
+  const forceAssign = options.forceAssign || false;
   const client = options.client || await pool.connect();
   const ownsClient = !options.client;
 
@@ -389,7 +390,7 @@ async function resolveImageForArticle(articleId, options = {}) {
       return null;
     }
 
-    if (context.article.image_url) {
+    if (context.article.image_url && !forceAssign) {
       if (ownsClient) await client.query("COMMIT");
       return {
         articleId,

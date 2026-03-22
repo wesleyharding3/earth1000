@@ -18,7 +18,7 @@ const { resolveImageForArticle } = require("./imageResolver");
 const BATCH_SIZE   = 100;
 const CONCURRENCY  = 10;
 const DELAY_MS     = 0;    // no delay — saturation cache keeps DB load sane
-const JOB_NAME     = "backfill_images_v1";
+const JOB_NAME     = "backfill_images_v2";
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -73,13 +73,12 @@ async function main() {
   let totalDone   = parseInt(checkpoint.done);
   let totalFailed = parseInt(checkpoint.failed);
 
-  // Count articles that need images — no image_url AND no assignment yet
+  // Count articles that need catalog assignments — no assignment yet (regardless of article image_url)
   const { rows: countRows } = await pool.query(`
     SELECT COUNT(*) AS total
     FROM news_articles a
     LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-    WHERE a.image_url IS NULL
-      AND aia.article_id IS NULL
+    WHERE aia.article_id IS NULL
       AND a.id > $1
   `, [lastId]);
   const remaining = parseInt(countRows[0].total);
@@ -103,8 +102,7 @@ async function main() {
       SELECT a.id
       FROM news_articles a
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      WHERE a.image_url IS NULL
-        AND aia.article_id IS NULL
+      WHERE aia.article_id IS NULL
         AND a.id > $1
       ORDER BY a.id ASC
       LIMIT $2
