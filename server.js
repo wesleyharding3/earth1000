@@ -8,6 +8,7 @@ const { getRankedArticles, getRankedCityArticles } = require("./rankingService")
 const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 const { resolveImagesForArticles } = require("./imageResolver");
+const jwt = require("jsonwebtoken");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -19,6 +20,97 @@ app.use(cors({
   ]
 }));
 app.use(express.json());
+
+/* =========================================
+   Auth Middleware
+   SUPABASE_JWT_SECRET must be set in .env
+   (Supabase dashboard → Project Settings → API → JWT Secret)
+========================================= */
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+const TIER_ORDER = ["free", "pro", "enterprise"];
+
+// optionalAuth — enriches req.user when a valid Bearer JWT is present.
+// Loads is_admin + active tier from the DB. Falls through silently if no token.
+async function optionalAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ") || !SUPABASE_JWT_SECRET) return next();
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
+    req.user = { id: payload.sub, email: payload.email };
+
+    // Load admin flag and active subscription tier
+    const { rows } = await pool.query(`
+      SELECT p.is_admin, st.name AS tier_name
+      FROM profiles p
+      LEFT JOIN subscriptions s   ON s.user_id  = p.id AND s.status = 'active'
+      LEFT JOIN subscription_tiers st ON st.id = s.tier_id
+      WHERE p.id = $1
+      LIMIT 1
+    `, [req.user.id]);
+
+    if (rows.length) {
+      req.user.is_admin = rows[0].is_admin || false;
+      req.user.tier     = rows[0].tier_name || "free";
+    } else {
+      req.user.is_admin = false;
+      req.user.tier     = "free";
+    }
+  } catch (_) {
+    // Invalid / expired token — treat request as anonymous
+  }
+  next();
+}
+
+// requireAuth — rejects anonymous requests with 401
+function requireAuth(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: "Authentication required" });
+  next();
+}
+
+// requireTier — factory that enforces a minimum subscription level.
+// Admins bypass all tier gates.
+function requireTier(minTier) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: "Authentication required" });
+    if (req.user.is_admin) return next();
+    const userLevel = TIER_ORDER.indexOf(req.user.tier || "free");
+    const reqLevel  = TIER_ORDER.indexOf(minTier);
+    if (userLevel >= reqLevel) return next();
+    return res.status(403).json({
+      error: `A ${minTier} subscription is required for this feature`,
+      requiredTier: minTier
+    });
+  };
+}
+
+// Apply optionalAuth globally — enriches req.user on every request when a token is present
+app.use(optionalAuth);
+
+/* =========================================
+   Auth — Profile (requires valid JWT)
+========================================= */
+app.get("/api/auth/profile", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.is_admin, p.created_at,
+             st.name        AS tier_name,
+             st.display_name AS tier_display_name,
+             s.status       AS subscription_status
+      FROM profiles p
+      LEFT JOIN subscriptions s    ON s.user_id  = p.id AND s.status = 'active'
+      LEFT JOIN subscription_tiers st ON st.id = s.tier_id
+      WHERE p.id = $1
+      LIMIT 1
+    `, [req.user.id]);
+
+    if (!rows.length) return res.status(404).json({ error: "Profile not found" });
+    res.json({ ...rows[0], email: req.user.email });
+  } catch (err) {
+    console.error("[auth/profile]", err.message);
+    res.status(500).json({ error: "Failed to fetch profile" });
+  }
+});
 
 /* =========================================
    Cities
@@ -440,7 +532,7 @@ app.get("/api/news/search", async (req, res) => {
    while high-volume destinations still get more flows (but dampened via sqrt).
    Example: USA with 100 articles → ~10 flows, Luxembourg with 4 → ~2 flows
 ========================================= */
-app.get("/api/flows", async (req, res) => {
+app.get("/api/flows", requireTier("pro"), async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
     let viewMode = req.query.view_mode || "country";  // country, city, region/regions
@@ -999,7 +1091,7 @@ app.get("/api/ocean/temperature", async (req, res) => {
 /* =========================================
    On-demand Translation
 ========================================= */
-app.post("/api/translate", async (req, res) => {
+app.post("/api/translate", requireTier("pro"), async (req, res) => {
   const { title, summary, id } = req.body || {};
   if (!title && !summary) return res.status(400).json({ error: "No text provided" });
   try {

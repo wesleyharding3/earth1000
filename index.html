@@ -4753,6 +4753,13 @@
 .acctDpTier.free       { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.38); }
 .acctDpTier.pro        { background: rgba(255,160,40,0.18);  color: rgba(255,195,70,1); }
 .acctDpTier.enterprise { background: rgba(130,80,255,0.18);  color: rgba(175,135,255,1); }
+.acctAdminBadge {
+  display: inline-block; margin: 2px 16px 4px;
+  padding: 2px 9px; border-radius: 20px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+  background: rgba(255,220,60,0.18); color: rgba(255,215,55,1);
+  border: 1px solid rgba(255,215,55,0.3);
+}
 .acctDpBtn {
   display: flex; align-items: center; gap: 10px; padding: 11px 16px;
   font-size: 13px; color: rgba(255,255,255,0.65); cursor: pointer;
@@ -14743,6 +14750,32 @@ grmClockTick();
 
   let currentUser = null;
 
+  // ── Global auth token + tier state ──────────────────────────
+  window.__authToken = null;
+  window.__isAdmin   = false;
+  window.__userTier  = 'free';
+
+  // Tier order for comparisons
+  const TIER_ORDER = ['free', 'pro', 'enterprise'];
+
+  // Global helper: returns true if user meets or exceeds minTier (admins always pass)
+  window.__checkTier = function(minTier) {
+    if (window.__isAdmin) return true;
+    return TIER_ORDER.indexOf(window.__userTier) >= TIER_ORDER.indexOf(minTier);
+  };
+
+  // ── Fetch interceptor — auto-injects Bearer token for API calls ─
+  (function() {
+    const _orig = window.fetch.bind(window);
+    window.fetch = function(url, opts) {
+      opts = opts ? { ...opts } : {};
+      if (typeof url === 'string' && url.includes('earth-wjr6.onrender.com') && window.__authToken) {
+        opts.headers = Object.assign({ 'Authorization': `Bearer ${window.__authToken}` }, opts.headers || {});
+      }
+      return _orig(url, opts);
+    };
+  })();
+
   // ── Message helpers ──────────────────────────────────────────
   function showMsg(text, type) {
     authMsg.textContent = text;
@@ -14790,7 +14823,7 @@ grmClockTick();
     }
   }
 
-  // ── Load tier from DB ────────────────────────────────────────
+  // ── Load tier from DB + set globals ─────────────────────────
   async function loadUserTier(userId) {
     const { data } = await sb
       .from('subscriptions')
@@ -14801,6 +14834,33 @@ grmClockTick();
     const tier = data?.subscription_tiers;
     acctDpTier.textContent  = tier?.display_name ?? 'Free';
     acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
+    window.__userTier = tier?.name ?? 'free';
+  }
+
+  // ── Load full profile from backend (admin flag + tier) ───────
+  async function loadProfile() {
+    if (!window.__authToken) return;
+    try {
+      const res = await fetch('https://earth-wjr6.onrender.com/api/auth/profile');
+      if (!res.ok) return;
+      const data = await res.json();
+      window.__isAdmin  = data.is_admin  || false;
+      window.__userTier = data.tier_name || 'free';
+      // Update dropdown badge for admin
+      let badge = accountDropdown.querySelector('.acctAdminBadge');
+      if (data.is_admin) {
+        if (!badge) {
+          badge = document.createElement('div');
+          badge.className = 'acctAdminBadge';
+          badge.textContent = '⭐ Admin';
+          acctDpTier.after(badge);
+        }
+      } else if (badge) {
+        badge.remove();
+      }
+    } catch (e) {
+      console.warn('[auth] profile fetch failed:', e.message);
+    }
   }
 
   // ── Ensure new user has a free subscription row ──────────────
@@ -14902,10 +14962,19 @@ grmClockTick();
   // ── Auth state — fires on load + every sign-in/out ───────────
   sb.auth.onAuthStateChange(async (event, session) => {
     const user = session?.user ?? null;
+    // Store JWT so fetch interceptor can attach it to API calls
+    window.__authToken = session?.access_token ?? null;
     updateAccountUI(user);
     if (user) {
       await ensureSubscription(user.id);
       await loadSettings(user.id);
+      await loadProfile();          // loads is_admin + tier from backend
+    } else {
+      window.__isAdmin  = false;
+      window.__userTier = 'free';
+      // Remove admin badge if present
+      const badge = accountDropdown.querySelector('.acctAdminBadge');
+      if (badge) badge.remove();
     }
   });
 })();
