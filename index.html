@@ -113,6 +113,13 @@
     .el-panel-loader .el-dots { margin-top: 10px; gap: 5px; }
     .el-panel-loader .el-dots span { width: 5px; height: 5px; }
 
+    /* Larger globe loader for the news feed grid */
+    #nfGrid .el-panel-loader { min-height: 420px; }
+    #nfGrid .el-panel-loader .el-globe-wrap .el-globe { width: 150px; height: 150px; }
+    #nfGrid .el-panel-loader .el-e { font-size: 78px; bottom: 8px; left: 5px; }
+    #nfGrid .el-panel-loader .el-dots { margin-top: 14px; gap: 8px; }
+    #nfGrid .el-panel-loader .el-dots span { width: 6px; height: 6px; }
+
     canvas { display: block; }
 
     #cityList {
@@ -12456,7 +12463,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function fetchPage() {
       if (loading || !hasMore) return;
-      loading = true; spinRow.classList.add("on");
+      loading = true; if (offset > 0) spinRow.classList.add("on");
       fetch(buildUrl(offset))
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
@@ -14449,45 +14456,23 @@ grmClockTick();
       let t0=null, raf;
       function frame(ts) {
         if (!t0) t0=ts;
-        const ct=((ts-t0)%CYCLE)/CYCLE;
-        let of,tl,glow;
-        if (ct<0.75) {
-          of=ct/0.75; tl=TRAIL_FRAC; glow=0;
-        } else {
-          of=1;
-          const pt=(ct-0.75)/0.25;
-          tl=pt<0.4 ? TRAIL_FRAC*(1-pt/0.4) : 0;
-          glow=pt<0.3?0:pt<0.6?(pt-0.3)/0.3:pt<0.85?1:1-(pt-0.85)/0.15;
-        }
-        const nf=of%1;
+        const nf=((ts-t0)%CYCLE)/CYCLE;
         const [sx,sy]=orbitPos(nf);
         star.setAttribute('transform',`translate(${sx.toFixed(2)},${sy.toFixed(2)})`);
-        const op=depthOp(of>=1?0:of);
+        const op=depthOp(nf);
         star.style.opacity=op;
-        if (tl>0) {
-          // Draw base blur (thinnest, full length)
-          trailBlur.setAttribute('d', buildTrailLayer(nf, tl, 1.0));
-          trailBlur.style.opacity=(op*0.12).toFixed(2);
-          // Draw tapered layers
-          trailSegs.forEach((seg,i)=>{
-            if (i < LAYER_CFG.length) {
-              const [lenFrac, sw, baseOp] = LAYER_CFG[i];
-              seg.setAttribute('d', buildTrailLayer(nf, tl, lenFrac));
-              seg.style.strokeWidth = sw;
-              seg.style.stroke = `rgba(255,${180+i*12},${60+i*15},${baseOp})`;
-              seg.style.opacity = (op * baseOp).toFixed(2);
-            }
-          });
-        } else {
-          trailBlur.setAttribute('d','');
-          trailBlur.style.opacity='0';
-          trailSegs.forEach(seg=>{ seg.setAttribute('d',''); seg.style.opacity='0'; });
-        }
-        if (glow>0) {
-          star.style.filter=`drop-shadow(0 0 ${(glow*14).toFixed(0)}px rgba(255,240,68,1)) drop-shadow(0 0 ${(glow*30).toFixed(0)}px rgba(255,158,26,1)) drop-shadow(0 0 ${(glow*52).toFixed(0)}px rgba(255,82,10,.78))`;
-        } else {
-          star.style.filter='drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65))';
-        }
+        trailBlur.setAttribute('d', buildTrailLayer(nf, TRAIL_FRAC, 1.0));
+        trailBlur.style.opacity=(op*0.12).toFixed(2);
+        trailSegs.forEach((seg,i)=>{
+          if (i < LAYER_CFG.length) {
+            const [lenFrac, sw, baseOp] = LAYER_CFG[i];
+            seg.setAttribute('d', buildTrailLayer(nf, TRAIL_FRAC, lenFrac));
+            seg.style.strokeWidth = sw;
+            seg.style.stroke = `rgba(255,${180+i*12},${60+i*15},${baseOp})`;
+            seg.style.opacity = (op * baseOp).toFixed(2);
+          }
+        });
+        star.style.filter='drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65))';
         raf=requestAnimationFrame(frame);
       }
       raf=requestAnimationFrame(frame);
