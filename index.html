@@ -12590,7 +12590,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
     function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
     function isoDate(d) { return d.toISOString().slice(0,10); }
-    function skels(n) { return Array.from({length:n},()=>`<div class="nfSkel"><div class="si"></div><div class="sl" style="width:36%;margin-top:11px;"></div><div class="sl"></div><div class="sl s"></div></div>`).join(""); }
+    function skels(n) {
+      return `<div class="el-panel-loader"><div class="el-panel-inner">
+        <div class="el-globe-wrap">
+          <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+            <g class="el-grid">
+              <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+              <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+              <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+              <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+              <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+              <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+              <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+              <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+              <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+              <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+              <path d="M0,-100 Q8,-60 0,100"/>
+              <path d="M0,-100 Q-8,-60 0,100"/>
+            </g>
+            <g transform="rotate(-32)">
+              <path class="el-trail-blur" d=""/>
+              <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
+              <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
+            </g>
+          </svg>
+          <div class="el-e">e</div>
+        </div>
+        <div class="el-dots"><span></span><span></span><span></span></div>
+      </div></div>`;
+    }
     function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
   })();
   </script>
