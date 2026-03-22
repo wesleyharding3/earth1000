@@ -15,6 +15,7 @@ console.log("Node version:", process.version);
 app.use(cors({
   origin: [
     "https://wesleyharding3.github.io",
+    "https://earth0.onrender.com",
     "http://localhost:3000",
     "http://localhost:5500"
   ]
