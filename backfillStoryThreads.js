@@ -54,14 +54,17 @@ async function run() {
   const dbOldest = new Date(range[0].oldest);
   const dbNewest = new Date(range[0].newest);
 
-  // Determine start date
+  // Determine start date — default floor is 2026-01-01
+  const FLOOR_DATE = new Date("2026-01-01");
   let startDate;
   if (fromArg) {
     startDate = new Date(fromArg);
   } else {
     const checkpoint = await getState("last_window_end");
-    startDate = checkpoint ? new Date(checkpoint) : dbOldest;
+    startDate = checkpoint ? new Date(checkpoint) : FLOOR_DATE;
   }
+  // Never go earlier than the floor
+  if (startDate < FLOOR_DATE) startDate = FLOOR_DATE;
 
   console.log(`   DB range:  ${fmt(dbOldest)} → ${fmt(dbNewest)}`);
   console.log(`   Starting:  ${fmt(startDate)}`);
