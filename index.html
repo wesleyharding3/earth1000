@@ -9381,7 +9381,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try {
             const article = JSON.parse(el.dataset.article);
             if (article && window.openArticleDetail) {
-              playSFX(SFX.article);
               window.openArticleDetail(article, { type: 'panel' });
             }
           } catch(e) {
@@ -11935,7 +11934,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const xs = raycasterFlow.intersectObject(arc.mesh);
       if (xs.length && arc.flow) {
         const flow = arc.flow;
-        
+        playSFX(SFX.article);
         if (flow.count) {
           // Aggregate mode - fetch articles for this route and show panel
           openAggregateRoutePanel(flow);
@@ -12766,7 +12765,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try {
         const article = JSON.parse(el.dataset.article);
         if (article && window.openArticleDetail) {
-          playSFX(SFX.article);
           window.openArticleDetail(article, { type: 'feed' });
         }
       } catch(e) {
