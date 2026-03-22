@@ -221,7 +221,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         a.article_url,
         a.summary,
         a.translated_summary,
-        a.image_url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
         COALESCE(ns.site_url, ys.site_url) AS site_url,
@@ -240,6 +240,8 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
       LEFT JOIN languages  l  ON l.id = ns.language_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities    ci ON ci.id = a.city_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
       ${tagJoin}
       WHERE al.city_id        = $1
         AND al.routing_type   IN ('content', 'source')
@@ -295,7 +297,7 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         a.article_url,
         a.summary,
         a.translated_summary,
-        a.image_url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
         COALESCE(ns.site_url, ys.site_url) AS site_url,
@@ -314,6 +316,8 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
       LEFT JOIN languages  l  ON l.id = ns.language_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities    ci ON ci.id = a.city_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
       ${tagJoin}
       WHERE al.country_id     = $1
         AND al.routing_type   IN ('content', 'source')
@@ -433,7 +437,7 @@ app.get("/api/news/search", async (req, res) => {
           a.article_url,
           a.summary,
           a.translated_summary,
-          a.image_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
           a.published_at,
           a.sentiment_score,
           l.iso_code_2 AS language,
@@ -462,6 +466,8 @@ app.get("/api/news/search", async (req, res) => {
         JOIN countries src_co    ON src_co.id   = a.country_id
         LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
         LEFT JOIN cities ci       ON ci.id      = a.city_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         ${needsLocJoin ? `
           JOIN article_locations al  ON al.article_id = a.id
           JOIN countries about_co    ON about_co.id   = al.country_id
@@ -852,7 +858,7 @@ app.get("/api/flows", requireTier("pro"), async (req, res) => {
           COALESCE(a.translated_title, a.title) AS title,
           COALESCE(a.translated_summary, a.summary) AS summary,
           a.article_url,
-          a.image_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
           a.published_at                        AS "publishedAt",
           a.sentiment_score                     AS sentiment,
           COALESCE(ns.name, ys.name)            AS "sourceName",
@@ -888,6 +894,8 @@ app.get("/api/flows", requireTier("pro"), async (req, res) => {
         LEFT JOIN cities dst_city ON dst_city.id = al.city_id
         LEFT JOIN regions src_r ON src_r.id = src_city.region_id
         LEFT JOIN regions dst_r ON dst_r.id = dst_city.region_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         ${whereClause}
         ${regionExclusionClause}
         ORDER BY a.published_at DESC
@@ -1723,7 +1731,7 @@ app.get("/api/keywords/articles", async (req, res) => {
            a.id,
            COALESCE(a.translated_title, a.title) AS title,
            COALESCE(a.translated_summary, a.summary) AS summary,
-           a.image_url,
+           COALESCE(a.image_url, img_a.public_url) AS image_url,
            a.article_url,
            a.published_at,
            a.sentiment_score,
@@ -1737,6 +1745,8 @@ app.get("/api/keywords/articles", async (req, res) => {
          LEFT JOIN news_sources ns ON ns.id = a.source_id
          LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
          LEFT JOIN countries co ON co.id = a.country_id
+         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
          WHERE ak.keyword = $1
            AND a.published_at >= NOW() - ($2 || ' days')::INTERVAL
          ORDER BY ak.frequency DESC, a.published_at DESC
@@ -1779,7 +1789,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           a.article_url,
           a.summary,
           a.translated_summary,
-          a.image_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
           a.published_at,
           COALESCE(ns.name, ys.name) AS source_name,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
@@ -1798,6 +1808,8 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         JOIN cities ci_mention  ON ci_mention.id = al.city_id
         LEFT JOIN languages l   ON l.id  = ns.language_id
         LEFT JOIN countries co  ON co.id = a.country_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         WHERE ci_mention.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
         ORDER BY a.id, a.published_at DESC
@@ -1814,7 +1826,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
           a.article_url,
           a.summary,
           a.translated_summary,
-          a.image_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
           a.published_at,
           COALESCE(ns.name, ys.name) AS source_name,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
@@ -1832,6 +1844,8 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         JOIN cities         ci  ON ci.id = a.city_id
         LEFT JOIN languages l   ON l.id  = ns.language_id
         LEFT JOIN countries co  ON co.id = a.country_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         WHERE ci.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
         ORDER BY a.published_at DESC
