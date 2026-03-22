@@ -5243,16 +5243,16 @@
           <div class="layerList">
             <div class="layerOpt" id="biomeOverlayToggleCountry">
               <div class="layerDot"></div>
-              <span class="layerLabel">Natural Surface Overlay</span>
+              <span class="layerLabel">Satellite View</span>
             </div>
           </div>
           <div class="sliderRow" style="margin-top:10px;">
             <div class="sliderLabelRow">
-              <span class="sliderLabel">Overlay Opacity</span>
-              <span class="sliderValue" id="biomeOverlayOpacityValCountry">36%</span>
+              <span class="sliderLabel">Opacity</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValCountry">90%</span>
             </div>
             <input class="settingsSlider" type="range" id="biomeOverlayOpacityCountry"
-                   min="0" max="1" step="0.01" value="0.36" />
+                   min="0" max="1" step="0.01" value="0.90" />
           </div>
         </div>
         <div class="sidebarDivider"></div>
@@ -5334,16 +5334,16 @@
           <div class="layerList">
             <div class="layerOpt" id="biomeOverlayToggleCity">
               <div class="layerDot"></div>
-              <span class="layerLabel">Natural Surface Overlay</span>
+              <span class="layerLabel">Satellite View</span>
             </div>
           </div>
           <div class="sliderRow" style="margin-top:10px;">
             <div class="sliderLabelRow">
-              <span class="sliderLabel">Overlay Opacity</span>
-              <span class="sliderValue" id="biomeOverlayOpacityValCity">36%</span>
+              <span class="sliderLabel">Opacity</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValCity">90%</span>
             </div>
             <input class="settingsSlider" type="range" id="biomeOverlayOpacityCity"
-                   min="0" max="1" step="0.01" value="0.36" />
+                   min="0" max="1" step="0.01" value="0.90" />
           </div>
         </div>
         <div class="sidebarDivider"></div>
@@ -6076,39 +6076,16 @@ function computeCityTiers(cities) {
         return [116, 150, 88, 116];
       }
 
-      const surfaceCanvas = document.createElement("canvas");
-      surfaceCanvas.width = canvas.width;
-      surfaceCanvas.height = canvas.height;
-      const surfaceCtx = surfaceCanvas.getContext("2d");
-      const surfaceImg = surfaceCtx.createImageData(surfaceCanvas.width, surfaceCanvas.height);
-
-      function repaintSurfaceOverlay() {
-        for (let py = 0; py < surfaceCanvas.height; py++) {
-          const latDeg = 90 - (py / surfaceCanvas.height) * 180;
-          for (let px = 0; px < surfaceCanvas.width; px++) {
-            const idx = (py * surfaceCanvas.width + px) * 4;
-            const r = imageData[idx];
-            const g = imageData[idx + 1];
-            const b = imageData[idx + 2];
-            const isLand = isSurfaceLand(px, py);
-            const [sr, sg, sb, sa] = classifySurfaceColor(r, g, b, latDeg, isLand);
-            surfaceImg.data[idx] = sr;
-            surfaceImg.data[idx + 1] = sg;
-            surfaceImg.data[idx + 2] = sb;
-            surfaceImg.data[idx + 3] = sa;
-          }
-        }
-        surfaceCtx.putImageData(surfaceImg, 0, 0);
-        surfaceTexture.needsUpdate = true;
-      }
-
-      const surfaceTexture = new THREE.CanvasTexture(surfaceCanvas);
-      repaintSurfaceOverlay();
-      const surfaceGeo = new THREE.SphereGeometry(radius + 0.003, 64, 32);
+      // ── Satellite View Overlay ──────────────────────────────────────
+      // Use the already-loaded NASA Blue Marble earthTexture directly as
+      // the satellite map — no canvas classification step needed.
+      // A higher-resolution upgrade is attempted in the background; if it
+      // loads successfully it silently replaces the 2048 px base texture.
+      const surfaceGeo = new THREE.SphereGeometry(radius + 0.003, 128, 64);
       const surfaceMat = new THREE.MeshBasicMaterial({
-        map: surfaceTexture,
+        map: earthTexture,
         transparent: true,
-        opacity: 0.36,
+        opacity: 0.90,
         depthWrite: false,
         side: THREE.FrontSide
       });
@@ -6116,15 +6093,31 @@ function computeCityTiers(cities) {
       surfaceOverlayMesh.visible = false;
       scene.add(surfaceOverlayMesh);
 
+      // Attempt to upgrade to a higher-resolution Blue Marble texture.
+      // crossOrigin is intentionally left unset so the request works even
+      // when the server does not send CORS headers (display-only use, no
+      // pixel readback needed). Falls back silently to earthTexture.
+      (function() {
+        const satImg = new Image();
+        satImg.onload = function() {
+          const satTex = new THREE.Texture(satImg);
+          satTex.colorSpace = THREE.SRGBColorSpace;
+          satTex.needsUpdate = true;
+          surfaceMat.map = satTex;
+          surfaceMat.needsUpdate = true;
+        };
+        // NASA Blue Marble 2004 Next Generation — 5400 × 2700 composite
+        satImg.src = "https://eoimages.gsfc.nasa.gov/images/imagerecords/74000/74117/world.200412.3x5400x2700.jpg";
+      })();
+
       window.__surfaceOverlayEnabled = false;
-      window.__surfaceOverlayOpacity = 0.36;
-      window.__repaintSurfaceOverlay = repaintSurfaceOverlay;
+      window.__surfaceOverlayOpacity = 0.90;
 
       function syncSurfaceOverlayVisibility() {
         const mode = window.__currentViewMode || currentViewMode;
         const allowed = mode === "country" || mode === "city" || mode === "regions";
         surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
-        surfaceMat.opacity = window.__surfaceOverlayOpacity ?? 0.36;
+        surfaceMat.opacity = window.__surfaceOverlayOpacity ?? 0.90;
       }
 
       window.__syncSurfaceOverlayVisibility = syncSurfaceOverlayVisibility;
@@ -7483,9 +7476,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncBiomeOverlayControls() {
         biomeOverlayToggles.forEach(el => el.classList.toggle("active", !!window.__surfaceOverlayEnabled));
-        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.36; });
+        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.90; });
         biomeOverlayVals.forEach(el => {
-          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.36) * 100) + "%";
+          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.90) * 100) + "%";
         });
       }
 
