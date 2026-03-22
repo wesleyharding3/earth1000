@@ -10483,6 +10483,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (withGap && ahActive) gapTimer = setTimeout(startCycle, GAP_DURATION);
         }
 
+        // ── Detect non-Latin scripts that need translation ──
+        function ahNeedsTranslation(text) {
+          if (!text) return false;
+          return /[\u0600-\u06FF\u4e00-\u9fff\u3040-\u30ff\uAC00-\uD7AF\u0400-\u04FF\u0900-\u097F\u0E00-\u0E7F\u1F00-\u1FFF]/.test(text);
+        }
+
+        // ── Translate headline if needed; returns English text ──
+        async function ahEnsureEnglish(article) {
+          if (article.translated_title) return article.translated_title;
+          if (!ahNeedsTranslation(article.title)) return article.title;
+          try {
+            const res = await fetch("https://earth-wjr6.onrender.com/api/translate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title: article.title, id: article.id }),
+              signal: AbortSignal.timeout(4000)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.translatedTitle) {
+                article.translated_title = data.translatedTitle; // cache for next time
+                return data.translatedTitle;
+              }
+            }
+          } catch (_) {}
+          return article.title; // fallback to original on timeout/error
+        }
+
         // ── Show one headline ──
         async function showHeadline() {
           if (!canShow()) { gapTimer = setTimeout(startCycle, GAP_DURATION); return; }
@@ -10621,15 +10649,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
             trackNode();
           });
 
-          // Step 2: reveal card + type headline
-// Step 2: reveal card + type headline
-          setTimeout(() => {
+          // Step 2: reveal card + type headline (translate if non-English)
+          setTimeout(async () => {
+            if (!canShow()) { hideAll(true); return; }
+            const headline = await ahEnsureEnglish(article);
             if (!canShow()) { hideAll(true); return; }
             card.classList.remove("ahVanish");
             card.classList.add("ahVisible");
             typeText(
               document.getElementById("ahHeadlineEl"),
-              article.translated_title || article.title || "",
+              headline || "",
               SPAWN_DURATION - 400,
               () => { displayTimer = setTimeout(() => hideAll(true), DISPLAY_DURATION); }
             );
