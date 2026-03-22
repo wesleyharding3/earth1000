@@ -805,9 +805,14 @@ async function fetchFeeds() {
 
         if (insertResult.rowCount > 0) {
           inserted++;
+          const newArticleId = insertResult.rows[0].id;
+
+          // Notify the article listener so it can classify, route, and assign an image.
+          // This fires even if the DB trigger is unavailable.
+          pool.query("SELECT pg_notify('new_article', $1::text)", [String(newArticleId)])
+            .catch(err => console.warn(`  ⚠️  NOTIFY failed [${newArticleId}]: ${err.message}`));
 
           if (stopwordCache) {
-            const newArticleId = insertResult.rows[0].id;
             const lang         = feed.language || "en";
             setImmediate(async () => {
               try {
