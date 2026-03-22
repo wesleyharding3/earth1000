@@ -7470,6 +7470,18 @@ function computeCityTiers(cities) {
       const DRAG_THRESHOLD = 3;  // pixels - ignore movement smaller than this (click/tap jitter)
       let lastTouchTime = 0;     // used to suppress hover labels briefly after touch events
 
+      // ── Sound Effects ────────────────────────────────────────────────────────
+      const SFX = {
+        node:    new Audio('earth00music1.mp3'),
+        article: new Audio('earth00music2.mp3'),
+      };
+      SFX.node.preload    = 'auto';
+      SFX.article.preload = 'auto';
+      function playSFX(sfx) {
+        try { sfx.currentTime = 0; sfx.play(); } catch(e) {}
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
       let touchStartX = 0, touchStartY = 0;
       let touchThresholdMet = false;
       
@@ -9369,6 +9381,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try {
             const article = JSON.parse(el.dataset.article);
             if (article && window.openArticleDetail) {
+              playSFX(SFX.article);
               window.openArticleDetail(article, { type: 'panel' });
             }
           } catch(e) {
@@ -9722,6 +9735,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusTargetQuat = computeFocusQuat(lat, lon);
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
+        playSFX(SFX.node);
       }
 
       function focusCity(city) {
@@ -12752,6 +12766,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try {
         const article = JSON.parse(el.dataset.article);
         if (article && window.openArticleDetail) {
+          playSFX(SFX.article);
           window.openArticleDetail(article, { type: 'feed' });
         }
       } catch(e) {
