@@ -2352,6 +2352,7 @@
       overflow-x: hidden;
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
+      touch-action: pan-y;
     }
 
     #articlesViewport::-webkit-scrollbar { width: 5px; }
@@ -4572,35 +4573,44 @@
 
 /* ── Mobile controls: bigger touch targets, better visibility ── */
 @media (pointer: coarse) {
-  /* Panel resize handle / snap buttons */
-  .snapBtn {
-    width: 34px; height: 34px;
+  /* Icon buttons — stronger contrast and larger targets on touch */
+  .iconBtn {
+    touch-action: manipulation;
+    background: rgba(0, 0, 0, 0.82);
+    border-color: rgba(255, 255, 255, 0.32);
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.60);
   }
-  .snapBtn svg { width: 13px; height: 13px; }
+  .iconBtn:active {
+    background: rgba(40, 40, 40, 0.95);
+    border-color: rgba(255, 255, 255, 0.55);
+    transform: scale(0.94);
+  }
+
+  /* Panel resize handle / snap buttons */
+  .snapBtn { width: 36px; height: 36px; }
+  .snapBtn svg { width: 14px; height: 14px; }
 
   /* Sort bar */
-  .panelSortOption { padding: 12px 0; }
-  .panelSortLabel  { font-size: 12px; }
+  .panelSortOption { padding: 14px 0; }
+  .panelSortLabel  { font-size: 13px; }
 
   /* Media type toggle (Article / Video) */
   .panelMediaOption {
-    min-height: 42px;
-    min-width: 96px;
-    padding: 0 14px;
+    min-height: 46px;
+    min-width: 100px;
+    padding: 0 16px;
+    font-size: 13px;
   }
 
   /* Tag filter dropdown rows */
-  .tagOption { padding: 13px 16px; font-size: 13px; }
+  .tagOption { padding: 14px 18px; font-size: 14px; }
 
   /* KWI mode tabs & range buttons */
-  .kwi-mode-tab  { padding: 10px 12px; font-size: 12px; }
-  .kwi-range-btn { padding: 8px 16px;  font-size: 12px; }
+  .kwi-mode-tab  { padding: 11px 14px; font-size: 13px; }
+  .kwi-range-btn { padding: 10px 18px; font-size: 13px; }
 
   /* Population scope buttons */
-  .pop-scope-btn { padding: 8px 16px; font-size: 12px; }
-
-  /* All iconBtns: prevent double-tap zoom delay */
-  .iconBtn { touch-action: manipulation; }
+  .pop-scope-btn { padding: 10px 18px; font-size: 13px; }
 
   /* Extra scroll-friendliness on inner panel lists */
   .articlePage,
@@ -4608,6 +4618,24 @@
     -webkit-overflow-scrolling: touch;
     touch-action: pan-y;
   }
+}
+
+/* ── News feed grid responsive layout ── */
+@media (pointer: coarse), (max-width: 700px) {
+  #nfGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .nfCard { height: auto; min-height: 320px; }
+  .nfCardImg { height: 140px; }
+  .nfCardTitle { font-size: 14px; -webkit-line-clamp: 3; }
+  .nfCardSummary { font-size: 12px; }
+  .nfCardSource { font-size: 10px; }
+}
+@media (max-width: 420px) {
+  #nfGrid { grid-template-columns: 1fr; }
+  .nfCard { min-height: 280px; }
+  .nfCardImg { height: 160px; }
 }
 
 </style>
@@ -7292,7 +7320,8 @@ function computeCityTiers(cities) {
       window.addEventListener("mouseup", () => { dragging = false; });
       
       const DRAG_THRESHOLD = 3;  // pixels - ignore movement smaller than this (click/tap jitter)
-      
+      let lastTouchTime = 0;     // used to suppress hover labels briefly after touch events
+
       let touchStartX = 0, touchStartY = 0;
       let touchThresholdMet = false;
       
@@ -7304,20 +7333,16 @@ function computeCityTiers(cities) {
         // Don't start dragging if panel is active - let touch handler close it first
         if (isPanelActive()) return;
         
-        // Stop any in-progress animations but keep camera frozen
-        if (zoomingOut || focusTargetQuat) {
+        // Only stop a zoom-out here — focus animation cancellation is deferred to
+        // touchmove so a plain tap never interrupts a node-selection in progress
+        if (zoomingOut) {
           zoomingOut = false;
           targetZoom = camera.position.z;
           zoomVelocity = 0;
-          focusTargetQuat = null;
-          focusPendingPanel = null;
-          isFocused = false;
-          selectedNodeIndex = null;
-          // Keep focusLocked = true - camera stays frozen until actual drag movement
-          focusLocked = true;
         }
-        
+
         pauseAmbientRotation();
+        lastTouchTime = Date.now();
         touchDragging = true;
         touchTapMoved = false;
         touchThresholdMet = false;  // Reset threshold flag
@@ -7335,8 +7360,16 @@ function computeCityTiers(cities) {
           const totalMoved = Math.abs(e.touches[0].clientX - touchStartX) + Math.abs(e.touches[0].clientY - touchStartY);
           if (totalMoved < DRAG_THRESHOLD) return;  // Ignore small movements
           touchThresholdMet = true;
+          // Confirmed real drag — now cancel any in-progress focus animation
+          if (focusTargetQuat) {
+            focusTargetQuat = null;
+            focusPendingPanel = null;
+            isFocused = false;
+            selectedNodeIndex = null;
+            focusLocked = true;
+          }
         }
-        
+
         // On first real drag movement, sync yaw/pitch from current globeQuat to prevent snap
         if (focusLocked) {
           const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
@@ -8489,8 +8522,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // ────────────────────────────────────────────────────────────────
 
       function updateHoverLabels() {
-        // Never show hover labels on touch/coarse-pointer devices
+        // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
+        if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
         raycaster.params.Points.threshold = currentViewMode === "country"
         ? Math.max(0.018, camera.position.z * 0.018)
         : Math.max(0.013, camera.position.z * 0.015);
@@ -9309,9 +9343,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
         viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
 
-        let vpTouchStartY = 0, vpScrollStart = 0;
-        viewport.addEventListener("touchstart", (e) => { vpTouchStartY = e.touches[0].clientY; vpScrollStart = viewport.scrollTop; }, { passive: true });
-        viewport.addEventListener("touchmove",  (e) => { e.stopPropagation(); viewport.scrollTop = vpScrollStart + (vpTouchStartY - e.touches[0].clientY); }, { passive: true });
+        // Native touch scroll — touch-action: pan-y on #articlesViewport handles momentum.
+        // stopPropagation prevents the globe-drag touchmove from also firing.
+        viewport.addEventListener("touchmove", (e) => { e.stopPropagation(); }, { passive: true });
 
         // ── Weather + Time pills (city only) ──
         if (isCity) {
