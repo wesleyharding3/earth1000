@@ -1104,7 +1104,7 @@ app.get("/api/ocean/temperature", async (req, res) => {
 /* =========================================
    On-demand Translation
 ========================================= */
-app.post("/api/translate", requireTier("pro"), async (req, res) => {
+app.post("/api/translate", async (req, res) => {
   const { title, summary, id } = req.body || {};
   if (!title && !summary) return res.status(400).json({ error: "No text provided" });
   try {
