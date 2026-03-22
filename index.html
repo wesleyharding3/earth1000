@@ -4638,8 +4638,136 @@
   .nfCardImg { height: 160px; }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════
+   AUTH SYSTEM
+════════════════════════════════════════════════════════════════ */
+#accountBtn { position: relative; }
+#accountBtn .acct-avatar {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(255,160,40,1); color: #000;
+  font-size: 11px; font-weight: 700; letter-spacing: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+#authOverlay {
+  display: none; position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,0.78); backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  align-items: center; justify-content: center;
+}
+#authOverlay.open { display: flex; }
+#authCard {
+  background: rgba(8,14,26,0.97); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 22px; padding: 34px 30px; width: 370px;
+  max-width: calc(100vw - 32px); box-shadow: 0 28px 90px rgba(0,0,0,0.75);
+  position: relative;
+}
+#authClose {
+  position: absolute; top: 14px; right: 14px; width: 28px; height: 28px;
+  border-radius: 50%; background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12); color: rgba(255,255,255,0.55);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 13px; transition: background 0.2s;
+}
+#authClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.authLogo { text-align: center; margin-bottom: 22px; }
+.authLogo span {
+  font-family: "Georgia","Times New Roman",serif; font-style: italic;
+  font-weight: 900; font-size: 46px; color: rgba(255,175,50,1);
+  text-shadow: 0 0 22px rgba(255,140,30,0.55);
+}
+.authTabs {
+  display: flex; gap: 4px; background: rgba(255,255,255,0.04);
+  border-radius: 11px; padding: 4px; margin-bottom: 24px;
+}
+.authTab {
+  flex: 1; text-align: center; padding: 9px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.4);
+  cursor: pointer; transition: all 0.2s;
+}
+.authTab.active {
+  background: rgba(255,160,40,0.15); color: rgba(255,195,75,1);
+  box-shadow: 0 0 0 1px rgba(255,160,40,0.28);
+}
+.authField { margin-bottom: 14px; }
+.authField label {
+  display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.10em;
+  text-transform: uppercase; color: rgba(255,255,255,0.40); margin-bottom: 7px;
+}
+.authField input {
+  width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.11); border-radius: 10px;
+  padding: 12px 14px; color: #fff; font-size: 14px;
+  outline: none; transition: border-color 0.2s;
+}
+.authField input:focus { border-color: rgba(255,160,40,0.5); }
+.authField input::placeholder { color: rgba(255,255,255,0.18); }
+.authSubmit {
+  width: 100%; padding: 13px; background: rgba(255,160,40,0.92);
+  border: none; border-radius: 10px; color: #000;
+  font-size: 14px; font-weight: 700; cursor: pointer; margin-top: 6px;
+  transition: background 0.2s, transform 0.1s;
+}
+.authSubmit:hover { background: rgba(255,180,55,1); }
+.authSubmit:active { transform: scale(0.98); }
+.authSubmit:disabled { opacity: 0.45; cursor: not-allowed; }
+.authMsg {
+  border-radius: 9px; padding: 10px 13px; font-size: 12px;
+  margin-bottom: 14px; display: none; line-height: 1.5;
+}
+.authMsg.show { display: block; }
+.authMsg.error {
+  background: rgba(255,60,60,0.10); border: 1px solid rgba(255,60,60,0.24);
+  color: rgba(255,120,120,1);
+}
+.authMsg.success {
+  background: rgba(40,200,100,0.10); border: 1px solid rgba(40,200,100,0.24);
+  color: rgba(80,220,140,1);
+}
+.authForgot {
+  text-align: center; margin-top: 15px;
+  font-size: 12px; color: rgba(255,255,255,0.28);
+}
+.authForgot a { color: rgba(255,160,40,0.65); cursor: pointer; text-decoration: none; }
+.authForgot a:hover { color: rgba(255,185,60,1); }
+/* Account dropdown */
+#accountDropdown {
+  display: none; position: absolute; top: calc(100% + 9px); left: 0;
+  width: 238px; background: rgba(8,14,26,0.97);
+  border: 1px solid rgba(255,255,255,0.13); border-radius: 15px;
+  box-shadow: 0 14px 52px rgba(0,0,0,0.72); z-index: 500; overflow: hidden;
+}
+#accountDropdown.open { display: block; }
+.acctDpHeader {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.acctDpEmail {
+  font-size: 12px; color: rgba(255,255,255,0.55);
+  word-break: break-all; margin-bottom: 6px;
+}
+.acctDpTier {
+  display: inline-block; padding: 2px 9px; border-radius: 20px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+}
+.acctDpTier.free       { background: rgba(255,255,255,0.07); color: rgba(255,255,255,0.38); }
+.acctDpTier.pro        { background: rgba(255,160,40,0.18);  color: rgba(255,195,70,1); }
+.acctDpTier.enterprise { background: rgba(130,80,255,0.18);  color: rgba(175,135,255,1); }
+.acctDpBtn {
+  display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+  font-size: 13px; color: rgba(255,255,255,0.65); cursor: pointer;
+  transition: background 0.14s;
+}
+.acctDpBtn:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.acctDpBtn svg { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.55; }
+.acctDpBtn.signout {
+  border-top: 1px solid rgba(255,255,255,0.07);
+  color: rgba(255,100,100,0.75);
+}
+.acctDpBtn.signout:hover { background: rgba(255,50,50,0.08); color: rgba(255,130,130,1); }
 </style>
 </head>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <body>
 
@@ -5160,6 +5288,26 @@
                  l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
                  a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
+    </div>
+    <div class="iconBtn" id="accountBtn" title="Account">
+      <svg id="accountBtnIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8" r="4"/>
+        <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+      </svg>
+      <div id="accountDropdown">
+        <div class="acctDpHeader">
+          <div class="acctDpEmail" id="acctDpEmail">—</div>
+          <span class="acctDpTier free" id="acctDpTier">Free</span>
+        </div>
+        <div class="acctDpBtn signout" id="acctDpSignOut">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+          Sign Out
+        </div>
+      </div>
     </div>
     <div class="iconBtn" id="flowModeBtn" title="Flow animation">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -14522,5 +14670,245 @@ grmClockTick();
     document.addEventListener('DOMContentLoaded',()=>maybeInit(document));
   })();
   </script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     AUTH MODAL
+════════════════════════════════════════════════════════════════ -->
+<div id="authOverlay">
+  <div id="authCard">
+    <div id="authClose">✕</div>
+    <div class="authLogo"><span>e</span></div>
+    <div class="authTabs">
+      <div class="authTab active" data-tab="signin">Sign In</div>
+      <div class="authTab" data-tab="signup">Sign Up</div>
+    </div>
+    <div id="authMsg" class="authMsg"></div>
+    <!-- Sign In form -->
+    <div id="authFormSignin">
+      <div class="authField">
+        <label>Email</label>
+        <input type="email" id="siEmail" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="authField">
+        <label>Password</label>
+        <input type="password" id="siPassword" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+      <button class="authSubmit" id="siSubmit">Sign In</button>
+      <div class="authForgot"><a id="forgotLink">Forgot password?</a></div>
+    </div>
+    <!-- Sign Up form -->
+    <div id="authFormSignup" style="display:none;">
+      <div class="authField">
+        <label>Email</label>
+        <input type="email" id="suEmail" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="authField">
+        <label>Password</label>
+        <input type="password" id="suPassword" placeholder="Min. 8 characters" autocomplete="new-password" />
+      </div>
+      <button class="authSubmit" id="suSubmit">Create Account</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ── Init Supabase client ─────────────────────────────────────
+  const { createClient } = supabase;
+  const sb = createClient(
+    'https://hqzabwjwuszupxwookgx.supabase.co',
+    'sb_publishable_9mT1GessoNyi5cvPN-PSbw_IcTydubW'
+  );
+
+  // ── DOM refs ─────────────────────────────────────────────────
+  const accountBtn      = document.getElementById('accountBtn');
+  const accountBtnIcon  = document.getElementById('accountBtnIcon');
+  const accountDropdown = document.getElementById('accountDropdown');
+  const authOverlay     = document.getElementById('authOverlay');
+  const authClose       = document.getElementById('authClose');
+  const authMsg         = document.getElementById('authMsg');
+  const tabs            = document.querySelectorAll('.authTab');
+  const formSignin      = document.getElementById('authFormSignin');
+  const formSignup      = document.getElementById('authFormSignup');
+  const siEmail         = document.getElementById('siEmail');
+  const siPassword      = document.getElementById('siPassword');
+  const siSubmit        = document.getElementById('siSubmit');
+  const suEmail         = document.getElementById('suEmail');
+  const suPassword      = document.getElementById('suPassword');
+  const suSubmit        = document.getElementById('suSubmit');
+  const forgotLink      = document.getElementById('forgotLink');
+  const acctDpEmail     = document.getElementById('acctDpEmail');
+  const acctDpTier      = document.getElementById('acctDpTier');
+  const acctDpSignOut   = document.getElementById('acctDpSignOut');
+
+  let currentUser = null;
+
+  // ── Message helpers ──────────────────────────────────────────
+  function showMsg(text, type) {
+    authMsg.textContent = text;
+    authMsg.className = `authMsg ${type} show`;
+  }
+  function clearMsg() { authMsg.className = 'authMsg'; }
+
+  // ── Modal open / close ───────────────────────────────────────
+  function openModal(tab = 'signin') {
+    clearMsg();
+    switchTab(tab);
+    authOverlay.classList.add('open');
+  }
+  function closeModal() { authOverlay.classList.remove('open'); }
+
+  function switchTab(tab) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    formSignin.style.display = tab === 'signin' ? '' : 'none';
+    formSignup.style.display = tab === 'signup' ? '' : 'none';
+    clearMsg();
+  }
+
+  // ── Account button UI ────────────────────────────────────────
+  function updateAccountUI(user) {
+    currentUser = user;
+    if (user) {
+      accountBtnIcon.style.display = 'none';
+      let av = accountBtn.querySelector('.acct-avatar');
+      if (!av) {
+        av = document.createElement('div');
+        av.className = 'acct-avatar';
+        accountBtn.insertBefore(av, accountDropdown);
+      }
+      av.textContent = (user.email || '?')[0].toUpperCase();
+      acctDpEmail.textContent = user.email;
+      loadUserTier(user.id);
+    } else {
+      accountBtnIcon.style.display = '';
+      const av = accountBtn.querySelector('.acct-avatar');
+      if (av) av.remove();
+      acctDpEmail.textContent = '—';
+      acctDpTier.textContent = 'Free';
+      acctDpTier.className = 'acctDpTier free';
+      accountDropdown.classList.remove('open');
+    }
+  }
+
+  // ── Load tier from DB ────────────────────────────────────────
+  async function loadUserTier(userId) {
+    const { data } = await sb
+      .from('subscriptions')
+      .select('subscription_tiers(name, display_name)')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .maybeSingle();
+    const tier = data?.subscription_tiers;
+    acctDpTier.textContent  = tier?.display_name ?? 'Free';
+    acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
+  }
+
+  // ── Ensure new user has a free subscription row ──────────────
+  async function ensureSubscription(userId) {
+    const { data: existing } = await sb
+      .from('subscriptions').select('id').eq('user_id', userId).maybeSingle();
+    if (existing) return;
+    const { data: tier } = await sb
+      .from('subscription_tiers').select('id').eq('name', 'free').single();
+    if (tier) {
+      await sb.from('subscriptions').insert({
+        user_id: userId, tier_id: tier.id, status: 'active'
+      });
+    }
+  }
+
+  // ── Load settings and apply to app ──────────────────────────
+  async function loadSettings(userId) {
+    const { data } = await sb
+      .from('user_settings').select('*').eq('id', userId).maybeSingle();
+    if (!data) return;
+    if (data.satellite_enabled != null) {
+      window.__surfaceOverlayEnabled = data.satellite_enabled;
+      window.__surfaceOverlayOpacity = data.satellite_opacity ?? 0.90;
+      if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
+    }
+  }
+
+  // ── Save settings (called by app when user changes a setting)
+  async function saveSettings(patch) {
+    if (!currentUser) return;
+    await sb.from('user_settings').upsert({
+      id: currentUser.id, ...patch, updated_at: new Date().toISOString()
+    });
+  }
+  window.__authSaveSettings = saveSettings;
+
+  // ── Auth actions ─────────────────────────────────────────────
+  async function signIn() {
+    const email = siEmail.value.trim(), pw = siPassword.value;
+    if (!email || !pw) return showMsg('Please fill in all fields.', 'error');
+    siSubmit.disabled = true; siSubmit.textContent = 'Signing in…';
+    const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+    siSubmit.disabled = false; siSubmit.textContent = 'Sign In';
+    if (error) return showMsg(error.message, 'error');
+    closeModal();
+  }
+
+  async function signUp() {
+    const email = suEmail.value.trim(), pw = suPassword.value;
+    if (!email || !pw) return showMsg('Please fill in all fields.', 'error');
+    if (pw.length < 8) return showMsg('Password must be at least 8 characters.', 'error');
+    suSubmit.disabled = true; suSubmit.textContent = 'Creating account…';
+    const { error } = await sb.auth.signUp({ email, password: pw });
+    suSubmit.disabled = false; suSubmit.textContent = 'Create Account';
+    if (error) return showMsg(error.message, 'error');
+    showMsg('Check your email to confirm your account!', 'success');
+  }
+
+  async function signOut() {
+    await sb.auth.signOut();
+  }
+
+  async function forgotPassword() {
+    const email = siEmail.value.trim();
+    if (!email) return showMsg('Enter your email address first.', 'error');
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href
+    });
+    if (error) return showMsg(error.message, 'error');
+    showMsg('Password reset email sent!', 'success');
+  }
+
+  // ── Event listeners ──────────────────────────────────────────
+  accountBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (currentUser) {
+      accountDropdown.classList.toggle('open');
+    } else {
+      openModal('signin');
+    }
+  });
+  document.addEventListener('click', () => accountDropdown.classList.remove('open'));
+
+  authClose.addEventListener('click', closeModal);
+  authOverlay.addEventListener('click', e => { if (e.target === authOverlay) closeModal(); });
+
+  tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+  siSubmit.addEventListener('click', signIn);
+  suSubmit.addEventListener('click', signUp);
+  acctDpSignOut.addEventListener('click', signOut);
+  forgotLink.addEventListener('click', forgotPassword);
+
+  siPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
+  siEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signIn(); });
+  suPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signUp(); });
+  suEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signUp(); });
+
+  // ── Auth state — fires on load + every sign-in/out ───────────
+  sb.auth.onAuthStateChange(async (event, session) => {
+    const user = session?.user ?? null;
+    updateAccountUI(user);
+    if (user) {
+      await ensureSubscription(user.id);
+      await loadSettings(user.id);
+    }
+  });
+})();
+</script>
 </body>
 </html>
