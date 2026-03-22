@@ -91,7 +91,7 @@ app.use(optionalAuth);
 /* =========================================
    Auth — Profile (requires valid JWT)
 ========================================= */
-app.get("/api/auth/profile", requireAuth, async (req, res) => {
+app.get("/api/auth/profile", async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT p.id, p.is_admin, p.created_at,
@@ -542,7 +542,7 @@ app.get("/api/news/search", async (req, res) => {
    while high-volume destinations still get more flows (but dampened via sqrt).
    Example: USA with 100 articles → ~10 flows, Luxembourg with 4 → ~2 flows
 ========================================= */
-app.get("/api/flows", requireTier("pro"), async (req, res) => {
+app.get("/api/flows", async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
     let viewMode = req.query.view_mode || "country";  // country, city, region/regions
