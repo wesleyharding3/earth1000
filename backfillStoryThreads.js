@@ -197,8 +197,8 @@ function sqlCluster(articles) {
 
 async function evaluateWithClaude(articles, existingThreads, tier = "sonnet") {
   const model = tier === "haiku"
-    ? "claude-haiku-3-5"
-    : "claude-sonnet-4-5";
+    ? "claude-3-5-haiku-20241022"
+    : "claude-3-5-sonnet-20241022";
 
   const articleData = articles.map(a => ({
     id:       a.id,

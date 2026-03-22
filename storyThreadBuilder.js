@@ -195,7 +195,7 @@ Return ONLY a valid JSON array, no explanation:
 ]`;
 
   const response = await client.messages.create({
-    model:      "claude-sonnet-4-5",
+    model:      "claude-3-5-sonnet-20241022",
     max_tokens: 4096,
     messages:   [{ role: "user", content: prompt }]
   });
