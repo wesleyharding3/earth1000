@@ -31,46 +31,54 @@ const SKIP_KEYWORDS   = new Set([ // too generic to cluster on
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function run() {
+  const t0 = Date.now();
+  const elapsed = () => `+${((Date.now()-t0)/1000).toFixed(1)}s`;
+
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
-  console.log(`   Lookback: ${LOOKBACK_HOURS}h`);
+  console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: ${ARTICLE_LIMIT}`);
 
+  console.log(`   [${elapsed()}] Querying unthreaded articles...`);
   const articles = await getUnthreadedArticles(LOOKBACK_HOURS, ARTICLE_LIMIT);
-  console.log(`   Unthreaded articles found: ${articles.length}`);
-  if (!articles.length) { console.log("   Nothing to thread. Done."); return; }
+  console.log(`   [${elapsed()}] Found ${articles.length} unthreaded articles`);
+  if (!articles.length) { console.log("   Nothing to thread. Done."); await pool.end(); return; }
 
-  const clusters  = sqlCluster(articles);
-  const singletons = articles.filter(a => !clusters.some(c => c.some(x => x.id === a.id)));
-  console.log(`   SQL clusters: ${clusters.length}  Singletons: ${singletons.length}`);
+  console.log(`   [${elapsed()}] Running SQL keyword clustering...`);
+  const clusters   = sqlCluster(articles);
+  const assigned   = new Set(clusters.flat().map(a => a.id));
+  const singletons = articles.filter(a => !assigned.has(a.id));
+  console.log(`   [${elapsed()}] Clusters: ${clusters.length} | Singletons: ${singletons.length}`);
 
+  console.log(`   [${elapsed()}] Loading existing active threads...`);
   const existingThreads = await getActiveThreads();
-  console.log(`   Existing active threads: ${existingThreads.length}`);
+  console.log(`   [${elapsed()}] Active threads in DB: ${existingThreads.length}`);
 
-  // Process clusters in batches of CLAUDE_BATCH articles
   let created = 0, updated = 0;
   const allGroups = [...clusters, ...chunkSingletons(singletons, 20)];
+  const totalBatches = Math.ceil(allGroups.length / 3);
+  console.log(`   [${elapsed()}] Sending ${totalBatches} batch(es) to Claude...\n`);
 
   for (let i = 0; i < allGroups.length; i += 3) {
+    const batchNum = Math.floor(i/3) + 1;
     const batch = allGroups.slice(i, i + 3).flat().slice(0, CLAUDE_BATCH);
     if (!batch.length) continue;
 
-    process.stdout.write(`   Claude batch ${Math.floor(i/3)+1}/${Math.ceil(allGroups.length/3)} ... `);
+    process.stdout.write(`   [${elapsed()}] Batch ${batchNum}/${totalBatches} (${batch.length} articles) → Claude... `);
     try {
       const defs = await evaluateWithClaude(batch, existingThreads);
       const { c, u } = await persistThreadDefs(defs);
       created += c; updated += u;
-      console.log(`${defs.length} threads (${c} new, ${u} updated)`);
+      console.log(`✓ ${defs.length} threads (${c} new, ${u} updated)`);
     } catch (err) {
-      console.log(`ERROR: ${err.message}`);
+      console.log(`✗ ERROR: ${err.message}`);
     }
 
-    // Respect rate limits
     await sleep(1500);
   }
 
-  // Cool down threads with no recent activity
+  console.log(`\n   [${elapsed()}] Cooling down inactive threads...`);
   await coolDownInactiveThreads();
 
-  console.log(`\n✅ Done — ${created} threads created, ${updated} updated.\n`);
+  console.log(`\n✅ Done in ${((Date.now()-t0)/1000).toFixed(1)}s — ${created} threads created, ${updated} updated.\n`);
   await pool.end();
 }
 
@@ -284,6 +292,7 @@ async function coolDownInactiveThreads() {
 // ─── DB Queries ───────────────────────────────────────────────────────────────
 
 async function getUnthreadedArticles(hours, limit) {
+  await pool.query(`SET statement_timeout = 60000`); // 60s max
   const { rows } = await pool.query(`
     SELECT
       a.id, a.title, a.summary, a.translated_summary,
