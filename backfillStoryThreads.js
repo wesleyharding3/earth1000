@@ -19,7 +19,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const WINDOW_DAYS    = 7;    // process one week of articles at a time
-const CLAUDE_BATCH   = 25;   // articles per Claude call (haiku is fast)
+const CLAUDE_BATCH   = 15;   // articles per Claude call
 const INTER_CALL_MS  = 800;  // delay between Claude calls (rate limit)
 const INTER_WINDOW_MS = 200; // delay between weekly windows
 const MIN_SHARED_KW  = 2;
@@ -250,7 +250,7 @@ Return ONLY valid JSON array:
 
   const response = await client.messages.create({
     model,
-    max_tokens: 3000,
+    max_tokens: 8096,
     messages:   [{ role: "user", content: prompt }]
   });
 
