@@ -287,13 +287,15 @@ async function getUnthreadedArticles(hours, limit) {
   const { rows } = await pool.query(`
     SELECT
       a.id, a.title, a.summary, a.translated_summary,
-      a.published_at, a.source_name,
+      a.published_at, COALESCE(ns.name, ys.name) AS source_name,
       co.name AS country_name,
       ci.name AS city_name,
       ARRAY_AGG(ak.keyword ORDER BY ak.frequency DESC) FILTER (WHERE ak.keyword IS NOT NULL) AS keywords
     FROM news_articles a
     LEFT JOIN countries co ON co.id = a.country_id
     LEFT JOIN cities    ci ON ci.id = a.city_id
+    LEFT JOIN news_sources ns ON ns.id = a.source_id
+    LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
     LEFT JOIN article_keywords ak ON ak.article_id = a.id
     LEFT JOIN story_thread_articles sta ON sta.article_id = a.id
     WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
@@ -301,7 +303,7 @@ async function getUnthreadedArticles(hours, limit) {
       AND sta.article_id IS NULL
       AND a.title IS NOT NULL
     GROUP BY a.id, a.title, a.summary, a.translated_summary,
-             a.published_at, a.source_name, co.name, ci.name
+             a.published_at, ns.name, ys.name, co.name, ci.name
     HAVING COUNT(ak.keyword) > 0
     ORDER BY a.published_at DESC
     LIMIT $1
