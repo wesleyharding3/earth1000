@@ -321,16 +321,20 @@ async function getArticlesInWindow(start, end) {
   const { rows } = await pool.query(`
     SELECT
       a.id, a.title, a.summary, a.translated_summary,
-      a.keywords, a.published_at, a.source_name,
-      co.name AS country_name
+      a.published_at, a.source_name,
+      co.name AS country_name,
+      ARRAY_AGG(ak.keyword ORDER BY ak.frequency DESC) FILTER (WHERE ak.keyword IS NOT NULL) AS keywords
     FROM news_articles a
     LEFT JOIN countries co ON co.id = a.country_id
+    LEFT JOIN article_keywords ak ON ak.article_id = a.id
     LEFT JOIN story_thread_articles sta ON sta.article_id = a.id
     WHERE a.published_at >= $1
       AND a.published_at <  $2
       AND sta.article_id IS NULL
       AND a.title IS NOT NULL
-      AND array_length(a.keywords, 1) > 0
+    GROUP BY a.id, a.title, a.summary, a.translated_summary,
+             a.published_at, a.source_name, co.name
+    HAVING COUNT(ak.keyword) > 0
     ORDER BY a.published_at ASC
     LIMIT 2000
   `, [start.toISOString(), end.toISOString()]);
