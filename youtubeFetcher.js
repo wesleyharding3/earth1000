@@ -2,6 +2,7 @@ require("dotenv").config();
 const Parser = require("rss-parser");
 const pool = require("./db");
 const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtractor");
+const { classifyArticle } = require("./scoringEngine");
 
 /* =========================================
    YouTube RSS Fetcher
@@ -169,13 +170,13 @@ async function fetchChannel(source, stopwordCache) {
            title, url, article_url,
            summary, published_at, ingested_at,
            image_url, language,
-           media_type, video_id
+           media_type, video_id, base_priority
          ) VALUES (
            NULL, $1, $2, $3,
            $4, $5, $6,
            $7, $8, NOW(),
            $9, $10,
-           'video', $11
+           'video', $11, 0.75
          )
          RETURNING id`,
         [
@@ -216,6 +217,13 @@ async function fetchChannel(source, stopwordCache) {
           }
         } catch (kwErr) {
           console.warn(`${tag} Keyword extraction failed for article ${articleId}:`, kwErr.message);
+        }
+
+        // Classify article to get organic base_priority score
+        try {
+          await classifyArticle(articleId);
+        } catch (classErr) {
+          console.warn(`${tag} Classification failed for article ${articleId}:`, classErr.message);
         }
       }
     } catch (insertErr) {

@@ -37,6 +37,10 @@ async function run() {
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: ${ARTICLE_LIMIT}`);
 
+  console.log(`   [${elapsed()}] Normalizing new non-English keywords...`);
+  await normalizeNewKeywords(LOOKBACK_HOURS);
+  console.log(`   [${elapsed()}] Keyword normalization done`);
+
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
   const articles = await getUnthreadedArticles(LOOKBACK_HOURS, ARTICLE_LIMIT);
   console.log(`   [${elapsed()}] Found ${articles.length} unthreaded articles`);
@@ -287,6 +291,50 @@ async function coolDownInactiveThreads() {
     WHERE status = 'cooling'
       AND last_updated_at < NOW() - INTERVAL '14 days'
   `);
+}
+
+// ─── Keyword Normalization (inline, new keywords only) ────────────────────────
+
+function isNonLatin(text) {
+  return /[\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0900-\u097F\u0E00-\u0E7F\u0370-\u03FF]/.test(text);
+}
+
+async function normalizeNewKeywords(hours) {
+  const { translateText } = require("./translator");
+
+  // Find non-Latin keywords from recent articles not yet normalized
+  const { rows } = await pool.query(`
+    SELECT DISTINCT ak.keyword
+    FROM article_keywords ak
+    JOIN news_articles a ON a.id = ak.article_id
+    WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
+      AND ak.normalized_keyword IS NULL
+      AND ak.keyword IS NOT NULL
+  `);
+
+  const toTranslate = rows.map(r => r.keyword).filter(isNonLatin);
+  if (!toTranslate.length) return;
+
+  let done = 0;
+  for (const kw of toTranslate) {
+    try {
+      const translated = await translateText(kw, "EN-US");
+      if (!translated) continue;
+      const norm = translated.toLowerCase().trim();
+      // Write to keyword_translations for future reference
+      await pool.query(`
+        INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+        VALUES ($1, $2) ON CONFLICT (original_keyword) DO NOTHING
+      `, [kw, norm]);
+      // Update article_keywords directly
+      await pool.query(`
+        UPDATE article_keywords SET normalized_keyword = $1
+        WHERE keyword = $2 AND normalized_keyword IS NULL
+      `, [norm, kw]);
+      done++;
+    } catch (_) { /* skip on error, next run will retry */ }
+  }
+  if (done) process.stdout.write(`(${done} new keywords normalized) `);
 }
 
 // ─── DB Queries ───────────────────────────────────────────────────────────────
