@@ -35,6 +35,7 @@ const MAX_CATEGORY_REPEAT  = 3;   // max threads from same category
 const MAX_ENGLISH_DOMINANT = 4;   // max threads where >70% of articles are English-sourced
 const MIN_VIDEO_THREADS    = 3;   // at least this many story segments must have a video
 const THREAD_LOOKBACK_DAYS = 3;   // only threads active in last N days
+const THREAD_MAX_AGE_DAYS  = 21;  // exclude threads whose first article is older than N days
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
@@ -148,8 +149,16 @@ async function run() {
 
 // ─── Thread Selection ──────────────────────────────────────────────────────
 async function selectThreads() {
-  // Step 1: Pull candidate threads with video presence flagged
+  // Step 1: Pull candidate threads with video presence flagged.
+  // CTE computes the earliest article date per thread (across all history)
+  // to exclude threads whose story started more than THREAD_MAX_AGE_DAYS ago.
   const { rows: candidates } = await pool.query(`
+    WITH thread_origin AS (
+      SELECT sta2.thread_id, MIN(a2.published_at) AS first_article_date
+      FROM story_thread_articles sta2
+      JOIN news_articles a2 ON a2.id = sta2.article_id
+      GROUP BY sta2.thread_id
+    )
     SELECT
       st.id, st.title, st.description, st.importance,
       st.primary_category, st.geographic_scope, st.keywords,
@@ -158,10 +167,12 @@ async function selectThreads() {
       COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)             AS video_count
     FROM story_threads st
     JOIN story_thread_articles sta ON sta.thread_id = st.id
-    JOIN news_articles a ON a.id = sta.article_id
+    JOIN news_articles a           ON a.id = sta.article_id
+    JOIN thread_origin  tori       ON tori.thread_id = st.id
     WHERE st.status = 'active'
-      AND st.last_updated_at > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND a.published_at  > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND st.last_updated_at  > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND a.published_at      > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND tori.first_article_date > NOW() - INTERVAL '${THREAD_MAX_AGE_DAYS} days'
     GROUP BY st.id
     HAVING COUNT(sta.article_id) >= 2
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
@@ -261,6 +272,36 @@ async function selectThreads() {
   return selected.slice(0, MAX_THREADS);
 }
 
+// ─── YouTube Playability Check ─────────────────────────────────────────────
+async function isVideoPlayable(videoId) {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+      { signal: AbortSignal.timeout(4000) }
+    );
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Pick best playable video: prefer same-country source, fall back to any available
+async function pickPlayableVideo(articles, primaryCountryId) {
+  const withVideo = articles.filter(a => a.video_id);
+  if (!withVideo.length) return null;
+
+  // Sort: same-country videos first, then by relevance (original article order)
+  const sorted = [
+    ...withVideo.filter(a => primaryCountryId && String(a.country_id) === String(primaryCountryId)),
+    ...withVideo.filter(a => !primaryCountryId || String(a.country_id) !== String(primaryCountryId)),
+  ];
+
+  for (const a of sorted) {
+    if (await isVideoPlayable(a.video_id)) return a;
+  }
+  return null;
+}
+
 // ─── Thread Enrichment ─────────────────────────────────────────────────────
 async function enrichThread(thread) {
   // Pull top articles for this thread
@@ -285,20 +326,41 @@ async function enrichThread(thread) {
     LIMIT $2
   `, [thread.id, MAX_ARTICLES_THREAD]);
 
-  // Pick best video from thread articles
-  const videoArticle = articles.find(a => a.video_id) || null;
-
   // Primary geographic focus — prefer city, fall back to country
   const geoArticle = articles.find(a => a.city_lat || a.lat);
   const globeFocus = geoArticle
     ? { lat: parseFloat(geoArticle.city_lat || geoArticle.lat), lng: parseFloat(geoArticle.city_lon || geoArticle.lon) }
     : null;
 
+  // Determine primary country for geo-relevance filtering
+  const countryFreq = {};
+  for (const a of articles) {
+    if (a.country_id) countryFreq[a.country_id] = (countryFreq[a.country_id] || 0) + 1;
+  }
+  const primaryCountryId = Object.keys(countryFreq).sort((a, b) => countryFreq[b] - countryFreq[a])[0] || null;
+
+  // Pick best video: prefer geo-relevant (matches primary country), then any playable video
+  const videoArticle = await pickPlayableVideo(articles, primaryCountryId);
+
+  // Store primary city / country for globe node selection in briefing player
+  const primaryCityArticle    = geoArticle?.city_name ? geoArticle : null;
+  const primaryCountryArticle = geoArticle?.country_name ? geoArticle : null;
+
   return {
     ...thread,
     articles,
-    videoId:    videoArticle?.video_id || null,
+    videoId:        videoArticle?.video_id || null,
     globeFocus,
+    primaryCity:    primaryCityArticle ? {
+      name: primaryCityArticle.city_name,
+      lat:  parseFloat(primaryCityArticle.city_lat),
+      lon:  parseFloat(primaryCityArticle.city_lon),
+    } : null,
+    primaryCountry: primaryCountryArticle ? {
+      name: primaryCountryArticle.country_name,
+      lat:  parseFloat(primaryCountryArticle.lat),
+      lon:  parseFloat(primaryCountryArticle.lon),
+    } : null,
     articleIds: articles.map(a => a.id),
   };
 }
@@ -430,6 +492,8 @@ function buildSegments(narrative, threadData, allArcs) {
       voiceover_text: ns.voiceover,
       transition:     ns.transition || null,
       globe_focus:    thread.globeFocus,
+      primary_city:   thread.primaryCity   || null,
+      primary_country: thread.primaryCountry || null,
       flow_arcs:      arcs,
     });
   }

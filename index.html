@@ -5860,6 +5860,7 @@
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
 
     const scene = new THREE.Scene();
+    window.scene = scene; // expose for briefing player
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
     camera.position.z = 3;
 
@@ -9783,6 +9784,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ringGroup.lookAt(0, 0, 0);
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
       }
+
+      // ── Expose globe API for briefing player (module scope → global) ──────
+      window.startFocus       = startFocus;
+      window.focusCity        = focusCity;
+      window.focusCountry     = focusCountry;
+      window.buildArcLines    = buildArcLines;
+      window.transPulseMeshes = transPulseMeshes;
 
       function focusRegion(region) {
         const lat = parseFloat(region.centroid_lat);
@@ -15124,18 +15132,8 @@ grmClockTick();
   pointer-events: none;
 }
 
-/* ── Subtitle / voiceover text ── */
-.bSubtitle {
-  position: absolute; bottom: 140px; left: 50%; transform: translateX(-50%);
-  width: min(720px, 90vw);
-  background: rgba(0,0,0,0.72); backdrop-filter: blur(8px);
-  border-radius: 10px; padding: 14px 20px;
-  font-size: 15px; line-height: 1.65; color: #e8e8e8;
-  text-align: center; letter-spacing: 0.01em;
-  opacity: 0; transition: opacity 0.4s ease;
-  pointer-events: none;
-}
-#briefingOverlay.open .bSubtitle { opacity: 1; }
+/* ── Subtitle / voiceover text — hidden by design ── */
+.bSubtitle { display: none; }
 
 /* ── Article cards strip ── */
 .bArticlesWrap {
@@ -15224,7 +15222,6 @@ grmClockTick();
 
 @media (max-width: 600px) {
   .bVideoWrap { display: none; }
-  .bSubtitle { bottom: 160px; font-size: 13px; }
   .bHeaderHeadline { display: none; }
 }
 </style>
@@ -15366,9 +15363,6 @@ grmClockTick();
 
     const seg = episode.segments[idx];
 
-    // Subtitle
-    document.getElementById('bSubtitle').textContent = seg.voiceover_text || '';
-
     // Thread label
     const threadLabel = document.getElementById('bThreadLabel');
     if (seg.type === 'story' && seg.thread_title) {
@@ -15390,9 +15384,15 @@ grmClockTick();
       arcLabel.classList.remove('visible');
     }
 
-    // Globe animation
-    if (seg.globe_focus && typeof startFocus === 'function') {
-      try { startFocus(seg.globe_focus.lat, seg.globe_focus.lng); } catch (_) {}
+    // Globe animation — use focusCity/focusCountry for node ring effect on story segments
+    if (seg.type === 'story') {
+      if (seg.primary_city && typeof focusCity === 'function') {
+        try { focusCity(seg.primary_city); } catch (_) {}
+      } else if (seg.primary_country && typeof focusCountry === 'function') {
+        try { focusCountry(seg.primary_country); } catch (_) {}
+      } else if (seg.globe_focus && typeof startFocus === 'function') {
+        try { startFocus(seg.globe_focus.lat, seg.globe_focus.lng); } catch (_) {}
+      }
     } else if (seg.globe_animate && typeof startFocus === 'function') {
       try { startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0); } catch (_) {}
     }
@@ -15405,11 +15405,20 @@ grmClockTick();
       for (const arc of seg.flow_arcs) {
         if (!arc.from_lat || !arc.to_lat) continue;
         try {
-          const mesh = buildArcLines(
+          const baseMesh = buildArcLines(
             [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
             0xff9900, 0.002, 0.28, 'briefingArc'
           );
-          if (mesh) arcMeshes.push(mesh);
+          if (baseMesh) {
+            baseMesh.visible = true;
+            arcMeshes.push(baseMesh);
+          }
+          // Also make pulse mesh visible and track it for cleanup
+          const pulseMesh = window.transPulseMeshes?.briefingArc;
+          if (pulseMesh) {
+            pulseMesh.visible = true;
+            arcMeshes.push(pulseMesh);
+          }
         } catch (_) {}
       }
     }
@@ -15498,7 +15507,7 @@ grmClockTick();
     } else {
       const seg = episode?.segments[segIdx];
       if (seg) scheduleAdvance(seg);
-      if (audio?.paused) audio.play().catch(() => {});
+      if (audio?.paused) audio.play().catch(err => console.warn('[briefing] audio.play() blocked:', err.message));
     }
     updatePlayBtn();
   }

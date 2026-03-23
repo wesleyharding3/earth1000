@@ -1163,9 +1163,12 @@ app.get("/api/briefing/audio/:id", async (req, res) => {
       [parseInt(req.params.id)]
     );
     if (!rows.length) return res.status(404).json({ error: "Audio not found" });
+    const buf = rows[0].audio_data;
     res.set("Content-Type", "audio/mpeg");
+    res.set("Content-Length", buf.length);
+    res.set("Accept-Ranges", "bytes");
     res.set("Cache-Control", "public, max-age=86400");
-    res.send(rows[0].audio_data);
+    res.send(buf);
   } catch (err) {
     console.error("[briefing/audio]", err.message);
     res.status(500).json({ error: "Failed to stream audio" });
