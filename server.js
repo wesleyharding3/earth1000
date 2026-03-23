@@ -1145,6 +1145,7 @@ app.get("/api/briefing/today", async (req, res) => {
              (audio_data IS NOT NULL) AS has_audio
       FROM briefing_episodes
       WHERE user_id IS NULL AND target_date = $1
+      ORDER BY id DESC
       LIMIT 1
     `, [today]);
     if (!rows.length) return res.status(404).json({ error: "No briefing for today yet" });

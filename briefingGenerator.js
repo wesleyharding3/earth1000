@@ -65,15 +65,29 @@ async function run() {
     }
   }
 
-  // Create/update episode record as 'generating'
-  const { rows: [ep] } = await pool.query(`
-    INSERT INTO briefing_episodes (user_id, target_date, status, segments)
-    VALUES (NULL, $1, 'generating', '[]')
-    ON CONFLICT (user_id, target_date) DO UPDATE SET status = 'generating', generated_at = NOW()
-    RETURNING id
-  `, [targetDate]);
-  const episodeId = ep.id;
-  console.log(`   [${elapsed(t0)}] Episode id=${episodeId} created`);
+  // Create/update episode record as 'generating'.
+  // ON CONFLICT won't match NULL user_id rows (Postgres treats NULLs as distinct),
+  // so we SELECT the latest row and UPDATE it, or INSERT fresh if none exists.
+  const { rows: existingRows } = await pool.query(
+    `SELECT id FROM briefing_episodes WHERE user_id IS NULL AND target_date = $1 ORDER BY id DESC LIMIT 1`,
+    [targetDate]
+  );
+  let episodeId;
+  if (existingRows.length) {
+    episodeId = existingRows[0].id;
+    await pool.query(
+      `UPDATE briefing_episodes SET status = 'generating', segments = '[]', audio_data = NULL, generated_at = NOW() WHERE id = $1`,
+      [episodeId]
+    );
+  } else {
+    const { rows: [ep] } = await pool.query(`
+      INSERT INTO briefing_episodes (user_id, target_date, status, segments)
+      VALUES (NULL, $1, 'generating', '[]')
+      RETURNING id
+    `, [targetDate]);
+    episodeId = ep.id;
+  }
+  console.log(`   [${elapsed(t0)}] Episode id=${episodeId} (${existingRows.length ? 'updated' : 'created'})`);
 
   try {
     // ── 1. Select story threads ───────────────────────────────────────────

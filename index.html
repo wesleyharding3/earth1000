@@ -9752,7 +9752,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusTargetQuat = computeFocusQuat(lat, lon);
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
-        playSFX(SFX.node);
+        if (!window.briefingActive) playSFX(SFX.node);
       }
 
       function focusCity(city) {
@@ -9791,6 +9791,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.focusCountry     = focusCountry;
       window.buildArcLines    = buildArcLines;
       window.transPulseMeshes = transPulseMeshes;
+      window.globeScene       = scene;          // for briefing arc cleanup
 
       function focusRegion(region) {
         const lat = parseFloat(region.centroid_lat);
@@ -15138,22 +15139,45 @@ grmClockTick();
 /* ── Article cards strip ── */
 .bArticlesWrap {
   position: absolute; bottom: 0; left: 0; right: 0;
-  background: linear-gradient(to top, rgba(0,0,0,0.92) 0%, transparent 100%);
-  padding: 16px 20px 20px;
+  background: linear-gradient(to top, rgba(0,0,0,0.95) 70%, transparent 100%);
+  padding: 20px 20px 20px;
   opacity: 0; transform: translateY(20px);
   transition: all 0.5s ease;
+  height: 168px;
 }
 #briefingOverlay.open .bArticlesWrap { opacity: 1; transform: translateY(0); }
 .bArticlesScroll {
-  display: flex; gap: 12px; overflow-x: auto;
-  scrollbar-width: none; padding-bottom: 4px;
+  display: flex; gap: 10px; overflow-x: auto;
+  scrollbar-width: none; height: 100%;
 }
 .bArticlesScroll::-webkit-scrollbar { display: none; }
-.bArticlesScroll .articleCardImage { height: 80px; }
-.bArticlesScroll .articleCardWrap {
-  min-width: 220px; max-width: 220px; flex-shrink: 0;
-  cursor: pointer;
+
+/* ── Briefing article card ── */
+.bCard {
+  min-width: 200px; max-width: 200px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px; overflow: hidden;
+  cursor: pointer; transition: background 0.2s, transform 0.2s;
 }
+.bCard:hover { background: rgba(255,255,255,0.13); transform: translateY(-2px); }
+.bCardImg {
+  width: 100%; height: 72px; object-fit: cover; display: block;
+  background: rgba(255,255,255,0.05);
+}
+.bCardImgNone { width: 100%; height: 72px; background: rgba(255,255,255,0.04); }
+.bCardBody { padding: 7px 8px; display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.bCardSource {
+  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
+  color: #60c8ff; text-transform: uppercase; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.bCardTitle {
+  font-size: 11px; font-weight: 600; color: #fff; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bCardDate { font-size: 9px; color: rgba(255,255,255,0.4); margin-top: auto; }
 
 /* ── Video embed ── */
 .bVideoWrap {
@@ -15171,11 +15195,12 @@ grmClockTick();
   display: block; border: none;
 }
 
-/* ── Controls ── */
+/* ── Controls — sit just above the article strip ── */
 .bControls {
-  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 178px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 16px;
   opacity: 0; transition: opacity 0.5s ease 0.5s;
+  z-index: 2;
 }
 #briefingOverlay.open .bControls { opacity: 1; }
 .bControlBtn {
@@ -15192,25 +15217,10 @@ grmClockTick();
 }
 .bControlBtn.primary:hover { background: rgba(96,200,255,0.35); }
 
-/* ── Thread label ── */
-.bThreadLabel {
-  position: absolute; top: 70px; left: 50%; transform: translateX(-50%);
-  font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
-  color: #60c8ff; opacity: 0; transition: opacity 0.4s ease;
-  white-space: nowrap;
-}
-#briefingOverlay.open .bThreadLabel.visible { opacity: 1; }
-
-/* ── Arc connection labels ── */
-.bArcLabel {
-  position: absolute; top: 90px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; color: rgba(255,255,255,0.55); letter-spacing: 1px;
-  opacity: 0; transition: opacity 0.4s ease;
-  white-space: nowrap;
-}
-.bArcLabel.visible { opacity: 1; }
-.bArcArrow { color: #ff9900; font-size: 14px; }
+/* ── Thread label & arc labels — hidden, visuals speak for themselves ── */
+.bThreadLabel { display: none; }
+.bArcLabel    { display: none; }
+.bArcArrow    { color: #ff9900; font-size: 14px; }
 
 /* ── Skeleton cards ── */
 .bCardSkel {
@@ -15284,6 +15294,7 @@ grmClockTick();
   // ── Open ─────────────────────────────────────────────────────────────────
   function openBriefing() {
     if (!episode) return;
+    window.briefingActive = true;
 
     document.getElementById('bHeadline').textContent = episode.headline;
     document.getElementById('bDate').textContent = new Date(episode.target_date)
@@ -15304,6 +15315,7 @@ grmClockTick();
 
   // ── Close ────────────────────────────────────────────────────────────────
   function closeBriefing() {
+    window.briefingActive = false;
     setPlaying(false);
     clearArcMeshes();
     if (audio) { audio.pause(); audio = null; }
@@ -15423,10 +15435,10 @@ grmClockTick();
       }
     }
 
-    // Video embed
+    // Video embed — autoplay muted so voiceover remains primary audio
     const videoWrap = document.getElementById('bVideoWrap');
     if (seg.video_id) {
-      videoWrap.innerHTML = `<iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=0&controls=1&rel=0&modestbranding=1" allowfullscreen></iframe>`;
+      videoWrap.innerHTML = `<iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
       videoWrap.classList.add('visible');
     } else {
       videoWrap.innerHTML = '';
@@ -15454,6 +15466,28 @@ grmClockTick();
     segTimer = setTimeout(() => goToSegment(segIdx + 1), ms);
   }
 
+  // ── Article card renderer ─────────────────────────────────────────────────
+  function makeBriefingCard(a) {
+    const img  = a.image_url?.trim() || a.catalog_image_url?.trim() || '';
+    const flag = a.iso_code ? `https://flagcdn.com/w80/${a.iso_code.toLowerCase()}.png` : '';
+    const src  = img || flag;
+    const date = a.published_at
+      ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : '';
+    const title = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+    const safe  = (a.url || '').replace(/'/g, '%27');
+    return `<div class="bCard" onclick="window.open('${safe}','_blank')">
+      ${src
+        ? `<img class="bCardImg" src="${src}" onerror="this.style.display='none'" alt="" loading="lazy">`
+        : `<div class="bCardImgNone"></div>`}
+      <div class="bCardBody">
+        <div class="bCardSource">${a.source_name || ''}</div>
+        <div class="bCardTitle">${title}</div>
+        <div class="bCardDate">${date}</div>
+      </div>
+    </div>`;
+  }
+
   // ── Article cards ─────────────────────────────────────────────────────────
   async function loadArticles(ids) {
     const scroll = document.getElementById('bArticlesScroll');
@@ -15462,25 +15496,7 @@ grmClockTick();
       const res = await fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`);
       if (!res.ok) throw new Error('fetch failed');
       const articles = await res.json();
-      if (typeof articleCardHTML === 'function') {
-        scroll.innerHTML = articles.map(a =>
-          `<div class="articleCardWrap bArticleCard">${articleCardHTML(a)}</div>`
-        ).join('');
-      } else {
-        scroll.innerHTML = articles.map(a =>
-          `<div class="bArticleCard" style="min-width:200px;padding:10px;background:rgba(255,255,255,.07);border-radius:8px;font-size:12px;color:#ccc;">
-            <div style="font-weight:600;color:#fff;margin-bottom:4px;">${a.translated_title||a.title||''}</div>
-            <div style="opacity:.6;">${a.source_name||''}</div>
-           </div>`
-        ).join('');
-      }
-      // Click to open article URL
-      scroll.querySelectorAll('.bArticleCard').forEach((card, i) => {
-        if (articles[i]?.url) {
-          card.style.cursor = 'pointer';
-          card.addEventListener('click', () => window.open(articles[i].url, '_blank'));
-        }
-      });
+      scroll.innerHTML = articles.map(a => makeBriefingCard(a)).join('');
     } catch (_) {
       scroll.innerHTML = '';
     }
@@ -15488,9 +15504,10 @@ grmClockTick();
 
   // ── Arc cleanup ───────────────────────────────────────────────────────────
   function clearArcMeshes() {
+    const sc = window.globeScene;
     arcMeshes.forEach(m => {
       try {
-        if (typeof scene !== 'undefined' && scene) scene.remove(m);
+        if (sc) sc.remove(m);
         if (m.geometry) m.geometry.dispose();
         if (m.material) m.material.dispose();
       } catch (_) {}
