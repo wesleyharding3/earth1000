@@ -1102,6 +1102,64 @@ app.get("/api/ocean/temperature", async (req, res) => {
 });
 
 /* =========================================
+   Daily Briefing Endpoints
+========================================= */
+
+// GET /api/briefing/today — returns today's ready episode (no audio binary)
+app.get("/api/briefing/today", async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const { rows } = await pool.query(`
+      SELECT id, target_date, headline, voiceover_script, segments, status, generated_at,
+             (audio_data IS NOT NULL) AS has_audio
+      FROM briefing_episodes
+      WHERE user_id IS NULL AND target_date = $1
+      LIMIT 1
+    `, [today]);
+    if (!rows.length) return res.status(404).json({ error: "No briefing for today yet" });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("[briefing/today]", err.message);
+    res.status(500).json({ error: "Failed to fetch briefing" });
+  }
+});
+
+// GET /api/briefing/audio/:id — streams the MP3 audio for an episode
+app.get("/api/briefing/audio/:id", async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT audio_data FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
+      [parseInt(req.params.id)]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Audio not found" });
+    res.set("Content-Type", "audio/mpeg");
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(rows[0].audio_data);
+  } catch (err) {
+    console.error("[briefing/audio]", err.message);
+    res.status(500).json({ error: "Failed to stream audio" });
+  }
+});
+
+// GET /api/briefing/recent — last 7 days of briefings (for a history panel)
+app.get("/api/briefing/recent", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, target_date, headline, status, generated_at,
+             (audio_data IS NOT NULL) AS has_audio
+      FROM briefing_episodes
+      WHERE user_id IS NULL AND status = 'ready'
+      ORDER BY target_date DESC
+      LIMIT 7
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("[briefing/recent]", err.message);
+    res.status(500).json({ error: "Failed to fetch recent briefings" });
+  }
+});
+
+/* =========================================
    On-demand Translation
 ========================================= */
 app.post("/api/translate", async (req, res) => {
