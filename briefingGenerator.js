@@ -29,10 +29,12 @@ const FORCE     = process.argv.includes('--force');
 const NO_AUDIO  = process.argv.includes('--no-audio');
 
 // ─── Config ────────────────────────────────────────────────────────────────
-const MAX_THREADS         = 5;   // stories in one briefing
-const MAX_ARTICLES_THREAD = 3;   // articles shown per story
-const MAX_CATEGORY_REPEAT = 2;   // max threads from same category
-const THREAD_LOOKBACK_DAYS = 3;  // only threads active in last N days
+const MAX_THREADS          = 10;  // stories in one briefing
+const MAX_ARTICLES_THREAD  = 3;   // articles shown per story
+const MAX_CATEGORY_REPEAT  = 3;   // max threads from same category
+const MAX_ENGLISH_DOMINANT = 4;   // max threads where >70% of articles are English-sourced
+const MIN_VIDEO_THREADS    = 3;   // at least this many story segments must have a video
+const THREAD_LOOKBACK_DAYS = 3;   // only threads active in last N days
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
@@ -146,40 +148,117 @@ async function run() {
 
 // ─── Thread Selection ──────────────────────────────────────────────────────
 async function selectThreads() {
-  // Pull candidate threads — active and recently updated
-  const { rows } = await pool.query(`
+  // Step 1: Pull candidate threads with video presence flagged
+  const { rows: candidates } = await pool.query(`
     SELECT
       st.id, st.title, st.description, st.importance,
       st.primary_category, st.geographic_scope, st.keywords,
       st.article_count,
-      COUNT(sta.article_id) AS recent_articles
+      COUNT(sta.article_id)                                           AS recent_articles,
+      COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)             AS video_count
     FROM story_threads st
     JOIN story_thread_articles sta ON sta.thread_id = st.id
     JOIN news_articles a ON a.id = sta.article_id
     WHERE st.status = 'active'
       AND st.last_updated_at > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND a.published_at > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND a.published_at  > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
     GROUP BY st.id
     HAVING COUNT(sta.article_id) >= 2
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
-    LIMIT 50
+    LIMIT 80
   `);
 
-  if (!rows.length) return [];
+  if (!candidates.length) return [];
 
-  // Enforce diversity: max MAX_CATEGORY_REPEAT per category
-  const selected = [];
-  const categoryCounts = {};
+  // Step 2: Get per-thread language distribution via article_keywords.source_language
+  // Count distinct articles (not keyword rows) to avoid inflating high-keyword articles
+  const threadIds = candidates.map(t => t.id);
+  const { rows: langRows } = await pool.query(`
+    SELECT
+      sta.thread_id,
+      COUNT(DISTINCT CASE WHEN COALESCE(ak.source_language, 'en') = 'en' THEN ak.article_id END) AS english_articles,
+      COUNT(DISTINCT ak.article_id)                                                               AS total_articles
+    FROM story_thread_articles sta
+    JOIN article_keywords ak ON ak.article_id = sta.article_id
+    WHERE sta.thread_id = ANY($1)
+    GROUP BY sta.thread_id
+  `, [threadIds]);
 
-  for (const thread of rows) {
-    if (selected.length >= MAX_THREADS) break;
-    const cat = thread.primary_category || 'general';
-    if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT) continue;
-    selected.push(thread);
-    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+  const langMap = {};
+  for (const row of langRows) {
+    const total = Number(row.total_articles);
+    langMap[row.thread_id] = total > 0
+      ? Number(row.english_articles) / total
+      : 1.0;
   }
 
-  return selected;
+  // Step 3: Compute diversity-adjusted score
+  // English-dominant threads (>70% English sources) get no boost.
+  // Mixed/non-English threads get up to a 50% score lift so they can compete
+  // without being completely buried — but raw importance still leads.
+  const scored = candidates.map(t => {
+    const englishRatio   = langMap[t.id] ?? 1.0;
+    const nonEngRatio    = 1 - englishRatio;
+    const diversityBoost = nonEngRatio > 0.3 ? nonEngRatio * 0.5 : 0;
+    return {
+      ...t,
+      englishRatio,
+      diversityScore: Number(t.importance) * (1 + diversityBoost),
+      hasVideo:       Number(t.video_count) > 0,
+    };
+  });
+
+  scored.sort((a, b) => b.diversityScore - a.diversityScore);
+
+  // Step 4: Select with caps — category diversity + English-dominance cap
+  const selected        = [];
+  const skipped         = [];
+  const categoryCounts  = {};
+  let englishDomCount   = 0;
+
+  for (const thread of scored) {
+    if (selected.length >= MAX_THREADS) break;
+    const cat              = thread.primary_category || 'general';
+    const isEngDominant    = thread.englishRatio > 0.7;
+
+    if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT)         { skipped.push(thread); continue; }
+    if (isEngDominant && englishDomCount >= MAX_ENGLISH_DOMINANT)  { skipped.push(thread); continue; }
+
+    selected.push(thread);
+    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+    if (isEngDominant) englishDomCount++;
+  }
+
+  // If we're still short (few threads overall), fill from skipped without caps
+  if (selected.length < MAX_THREADS) {
+    const selectedIds = new Set(selected.map(t => t.id));
+    for (const t of skipped) {
+      if (selected.length >= MAX_THREADS) break;
+      if (!selectedIds.has(t.id)) selected.push(t);
+    }
+  }
+
+  // Step 5: Enforce minimum video threads
+  // If fewer than MIN_VIDEO_THREADS have video, swap in the best available
+  // video threads from the scored pool that weren't selected yet.
+  const videoCount = selected.filter(t => t.hasVideo).length;
+  if (videoCount < MIN_VIDEO_THREADS) {
+    const needed      = MIN_VIDEO_THREADS - videoCount;
+    const selectedIds = new Set(selected.map(t => t.id));
+    const videoPool   = scored.filter(t => t.hasVideo && !selectedIds.has(t.id));
+
+    for (let i = 0; i < Math.min(needed, videoPool.length); i++) {
+      // Replace the lowest-scored non-video thread
+      let replaceIdx = -1;
+      for (let j = selected.length - 1; j >= 0; j--) {
+        if (!selected[j].hasVideo) { replaceIdx = j; break; }
+      }
+      if (replaceIdx === -1) break; // all already have video
+      selected[replaceIdx] = videoPool[i];
+    }
+  }
+
+  return selected.slice(0, MAX_THREADS);
 }
 
 // ─── Thread Enrichment ─────────────────────────────────────────────────────
@@ -288,12 +367,13 @@ ${JSON.stringify(storySummaries, null, 2)}
 
 REQUIREMENTS:
 - Intro: 2-3 natural, engaging sentences welcoming the listener. 40-50 words.
-- Each story segment: 70-100 words. Factual, clear, with global perspective. No jargon.
-- Transitions: 1 sentence naturally bridging stories. Vary them — don't reuse phrases.
+- Each story segment: 55-75 words. Factual, clear, global perspective. No jargon.
+- Transitions: 1 sentence naturally bridging stories. Vary them — never reuse phrases.
 - Outro: 1-2 warm closing sentences. 20-30 words.
-- Total script should be 350-500 words for a ~3 minute briefing.
+- Total script should be 650-850 words for a ~5-6 minute briefing.
 - Write conversationally — this will be spoken aloud by a professional voice.
 - Connect stories when genuinely related (e.g. economic ripple effects, diplomatic links).
+- This briefing draws from sources in multiple languages and countries. When relevant, surface non-Western or non-English perspectives — e.g. how Beijing, Moscow, Tehran, or Seoul view a story, not just Washington or London. Avoid defaulting to a single national lens.
 
 Return ONLY valid JSON in this exact structure:
 {
@@ -311,7 +391,7 @@ Return ONLY valid JSON in this exact structure:
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
-    max_tokens: 2048,
+    max_tokens: 4096,
     messages:   [{ role: 'user', content: prompt }]
   });
 
