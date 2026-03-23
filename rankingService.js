@@ -92,15 +92,23 @@ async function getRankedArticles(countryId, options = {}) {
   const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
 
   const { rows } = await pool.query(`
-    WITH candidate_articles AS (
-      SELECT a.id
+    WITH ranked_by_source AS (
+      SELECT a.id,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
+          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+        ) AS source_rank
       FROM news_articles a
       ${tagJoin}
       WHERE a.country_id = $1
         AND a.city_id IS NULL
         AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
         ${tagWhere}
-      ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+    ),
+    candidate_articles AS (
+      SELECT id FROM ranked_by_source
+      WHERE source_rank <= $3
+      ORDER BY id DESC
       LIMIT $2
     )
     SELECT ${ARTICLE_FIELDS}
@@ -108,7 +116,7 @@ async function getRankedArticles(countryId, options = {}) {
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
     ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [countryId, CANDIDATE_POOL]);
+  `, [countryId, CANDIDATE_POOL, MAX_PER_SOURCE]);
 
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
@@ -128,14 +136,22 @@ async function getRankedCityArticles(cityId, options = {}) {
   const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
 
   const { rows } = await pool.query(`
-    WITH candidate_articles AS (
-      SELECT a.id
+    WITH ranked_by_source AS (
+      SELECT a.id,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
+          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+        ) AS source_rank
       FROM news_articles a
       ${tagJoin}
       WHERE a.city_id = $1
         AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
         ${tagWhere}
-      ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+    ),
+    candidate_articles AS (
+      SELECT id FROM ranked_by_source
+      WHERE source_rank <= $3
+      ORDER BY id DESC
       LIMIT $2
     )
     SELECT ${ARTICLE_FIELDS}
@@ -143,7 +159,7 @@ async function getRankedCityArticles(cityId, options = {}) {
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
     ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [cityId, CANDIDATE_POOL]);
+  `, [cityId, CANDIDATE_POOL, MAX_PER_SOURCE]);
 
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity, { skipCityPenalty: true });
