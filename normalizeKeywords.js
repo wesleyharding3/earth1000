@@ -29,15 +29,21 @@ const TRANSLATE   = process.argv.includes('--translate');
 const BACKFILL    = process.argv.includes('--backfill');
 
 // ─── Config ────────────────────────────────────────────────────────────────
+const CAP_ARG  = process.argv.indexOf('--cap');
+const CHAR_CAP = CAP_ARG !== -1 ? parseInt(process.argv[CAP_ARG + 1]) : 250_000;
+
 const CONFIG = {
   // Only translate keywords appearing in at least N articles
   MIN_OCCURRENCES: 5,
-  
+
   // Batch size for translation API calls
   BATCH_SIZE: 50,
-  
+
   // Pause between batches (ms) to avoid rate limits
   BATCH_PAUSE_MS: 1000,
+
+  // Hard cap on DeepL characters sent per run (safety valve)
+  CHAR_CAP,
 };
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -155,13 +161,24 @@ async function translateKeywords() {
   );
 
   console.log(`  Total high-frequency keywords: ${allKeywords.length.toLocaleString()}`);
-  console.log(`  To translate: ${toTranslate.length.toLocaleString()}`);
+  // Apply character cap
+  let charCount = 0;
+  const capped = [];
+  for (const row of toTranslate) {
+    if (charCount + row.keyword.length > CONFIG.CHAR_CAP) break;
+    capped.push(row);
+    charCount += row.keyword.length;
+  }
+  const skipped = toTranslate.length - capped.length;
+
+  console.log(`  To translate: ${capped.length.toLocaleString()} (cap: ${CONFIG.CHAR_CAP.toLocaleString()} chars ≈ ${charCount.toLocaleString()} chars)`);
+  if (skipped > 0) console.log(`  ⚠ Skipped (over cap): ${skipped.toLocaleString()} keywords — run with --cap ${CONFIG.CHAR_CAP + 250_000} to continue`);
   console.log('\nTranslating (highest frequency first)...\n');
 
   let translated = 0;
   let errors = 0;
 
-  for (const row of toTranslate) {
+  for (const row of capped) {
     try {
       const normalized = await translateText(row.keyword, 'EN-US');
       

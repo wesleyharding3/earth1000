@@ -320,7 +320,7 @@ async function getUnthreadedArticles(hours, limit) {
   // Step 2: fetch keywords for just those article IDs
   const ids = baseRows.map(r => r.id);
   const { rows: kwRows } = await pool.query(`
-    SELECT article_id, ARRAY_AGG(keyword ORDER BY frequency DESC) AS keywords
+    SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
     FROM article_keywords
     WHERE article_id = ANY($1::int[])
     GROUP BY article_id

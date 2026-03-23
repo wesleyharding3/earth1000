@@ -326,7 +326,10 @@ async function getArticlesInWindow(start, end) {
       a.id, a.title, a.summary, a.translated_summary,
       a.published_at, COALESCE(ns.name, ys.name) AS source_name,
       co.name AS country_name,
-      ARRAY_AGG(ak.keyword ORDER BY ak.frequency DESC) FILTER (WHERE ak.keyword IS NOT NULL) AS keywords
+      ARRAY_AGG(
+        COALESCE(ak.normalized_keyword, ak.keyword)
+        ORDER BY ak.frequency DESC
+      ) FILTER (WHERE ak.keyword IS NOT NULL) AS keywords
     FROM news_articles a
     LEFT JOIN countries co ON co.id = a.country_id
     LEFT JOIN news_sources ns ON ns.id = a.source_id
