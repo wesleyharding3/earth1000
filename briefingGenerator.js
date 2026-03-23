@@ -102,16 +102,21 @@ async function run() {
     console.log(`   [${elapsed(t0)}] Pulling articles for each thread...`);
     const threadData = await Promise.all(threads.map(t => enrichThread(t)));
 
-    // ── 3. Build geographic flow arcs ─────────────────────────────────────
-    const allArcs = buildFlowArcs(threadData);
-
-    // ── 4. Generate Claude narrative ──────────────────────────────────────
+    // ── 3. Generate Claude narrative (includes story entity extraction) ──────
     console.log(`   [${elapsed(t0)}] Generating narrative with Claude...`);
     const narrative = await generateNarrative(threadData);
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}"`);
 
-    // ── 5. Build segments JSON ────────────────────────────────────────────
-    const segments = buildSegments(narrative, threadData, allArcs);
+    // ── 4. Resolve entity coordinates from DB ─────────────────────────────
+    console.log(`   [${elapsed(t0)}] Resolving story entity coordinates...`);
+    const entityCoords = await resolveEntityCoords(narrative.segments);
+    console.log(`   [${elapsed(t0)}] Resolved ${Object.keys(entityCoords).length} entities`);
+
+    // ── 5. Build geographic flow arcs (entity-based, not source-based) ────
+    const allArcs = buildFlowArcs(threadData, narrative, entityCoords);
+
+    // ── 6. Build segments JSON ────────────────────────────────────────────
+    const segments = buildSegments(narrative, threadData, allArcs, entityCoords);
 
     // ── 6. Generate ElevenLabs audio ──────────────────────────────────────
     let audioData = null;
@@ -404,76 +409,117 @@ async function translateMissingTitles(articles) {
   } catch (_) { /* translation is best-effort, don't fail generation */ }
 }
 
+// ─── Entity Coordinate Resolution ─────────────────────────────────────────
+// Look up DB coordinates for every story entity Claude identified.
+// Tries countries first, then cities for anything not matched.
+async function resolveEntityCoords(segments) {
+  const names = new Set();
+  for (const seg of segments) {
+    for (const e of (seg.entities || [])) {
+      if (e.name) names.add(e.name);
+    }
+  }
+  if (!names.size) return {};
+
+  const nameArr  = [...names];
+  const nameLower = nameArr.map(n => n.toLowerCase());
+  const coords   = {};
+
+  // Countries
+  const { rows: cRows } = await pool.query(
+    `SELECT name, latitude AS lat, longitude AS lon FROM countries
+     WHERE LOWER(name) = ANY($1::text[])`,
+    [nameLower]
+  );
+  for (const r of cRows) {
+    const orig = nameArr.find(n => n.toLowerCase() === r.name.toLowerCase());
+    if (orig) coords[orig] = { lat: parseFloat(r.lat), lon: parseFloat(r.lon), type: 'country' };
+  }
+
+  // Cities — only look up names not already matched as a country
+  const remaining = nameArr.filter(n => !coords[n]);
+  if (remaining.length) {
+    const { rows: ciRows } = await pool.query(
+      `SELECT name, latitude AS lat, longitude AS lon FROM cities
+       WHERE LOWER(name) = ANY($1::text[])`,
+      [remaining.map(n => n.toLowerCase())]
+    );
+    for (const r of ciRows) {
+      const orig = remaining.find(n => n.toLowerCase() === r.name.toLowerCase());
+      if (orig) coords[orig] = { lat: parseFloat(r.lat), lon: parseFloat(r.lon), type: 'city' };
+    }
+  }
+
+  return coords;
+}
+
 // ─── Flow Arc Detection ────────────────────────────────────────────────────
-function buildFlowArcs(threadData) {
+function buildFlowArcs(threadData, narrative, entityCoords) {
   const arcs = [];
 
-  for (const thread of threadData) {
-    // Collect unique countries by ID with geo data (country centroid coords)
-    const countryMap = {};
-    const countFreq  = {};
-    for (const a of thread.articles) {
-      if (a.country_id && a.lat != null) {
-        if (!countryMap[a.country_id]) {
-          countryMap[a.country_id] = {
-            id:   a.country_id,
-            name: a.country_name,
-            lat:  parseFloat(a.lat),
-            lng:  parseFloat(a.lon),
-          };
-        }
-        countFreq[a.country_id] = (countFreq[a.country_id] || 0) + 1;
+  for (let ni = 0; ni < narrative.segments.length; ni++) {
+    const ns     = narrative.segments[ni];
+    const thread = threadData.find(t => t.id === ns.thread_id) || threadData[ni];
+    if (!thread) continue;
+
+    // ── PRIMARY PATH: use Claude's story entities ──────────────────────────
+    // These are the countries/cities the story is ABOUT, not source locations.
+    const resolved = (ns.entities || [])
+      .map(e => ({ name: e.name, type: e.type, ...entityCoords[e.name] }))
+      .filter(e => e.lat != null && e.lon != null);
+
+    if (resolved.length >= 2) {
+      // Connect consecutive entity pairs (max 2 arcs per story)
+      const maxArcs = Math.min(resolved.length - 1, 2);
+      for (let i = 0; i < maxArcs; i++) {
+        const from = resolved[i];
+        const to   = resolved[i + 1];
+        arcs.push({
+          thread_id: thread.id,
+          from_name: from.name, from_lat: from.lat, from_lng: from.lon,
+          to_name:   to.name,   to_lat:   to.lat,   to_lng:   to.lon,
+          is_city_arc: from.type === 'city' || to.type === 'city',
+        });
       }
+      continue;
     }
 
-    const geos = Object.values(countryMap);
-
-    // ── Single-country thread with a distinct primary city ──
-    // Draw an arc from the country centroid to the city node
-    if (geos.length === 1 && thread.primaryCity) {
-      const country = geos[0];
-      const city    = thread.primaryCity;
-      const latDiff = Math.abs(city.lat - country.lat);
-      const lonDiff = Math.abs(city.lon - country.lng);
-      if (latDiff > 0.4 || lonDiff > 0.4) {
+    // Single entity + primary city → arc from entity to city
+    if (resolved.length === 1 && thread.primaryCity) {
+      const from = resolved[0];
+      const city = thread.primaryCity;
+      if (Math.abs(from.lat - city.lat) > 0.4 || Math.abs(from.lon - city.lon) > 0.4) {
         arcs.push({
-          thread_id:   thread.id,
-          from_name:   country.name,
-          to_name:     city.name,
-          from_lat:    country.lat,
-          from_lng:    country.lng,
-          to_lat:      city.lat,
-          to_lng:      city.lon,
+          thread_id: thread.id,
+          from_name: from.name, from_lat: from.lat, from_lng: from.lon,
+          to_name:   city.name, to_lat:   city.lat, to_lng:   city.lon,
           is_city_arc: true,
         });
       }
       continue;
     }
 
-    // ── Multi-country thread ──
-    // Sort countries by article frequency so most-mentioned pair connects first
+    // ── FALLBACK: article source countries (old behaviour) ─────────────────
+    const countryMap = {};
+    const countFreq  = {};
+    for (const a of thread.articles) {
+      if (a.country_id && a.lat != null) {
+        if (!countryMap[a.country_id]) {
+          countryMap[a.country_id] = { id: a.country_id, name: a.country_name, lat: parseFloat(a.lat), lng: parseFloat(a.lon) };
+        }
+        countFreq[a.country_id] = (countFreq[a.country_id] || 0) + 1;
+      }
+    }
+    const geos = Object.values(countryMap);
     if (geos.length < 2) continue;
     geos.sort((a, b) => (countFreq[b.id] || 0) - (countFreq[a.id] || 0));
-
-    // Draw at most 2 arcs (top-2 and top-3 countries)
-    const maxArcs = Math.min(geos.length - 1, 2);
-    for (let i = 0; i < maxArcs; i++) {
-      const from = geos[i];
-      const to   = geos[i + 1];
-      // Use city coords for the primary end if this is the primary country
-      const fromLat = (i === 0 && thread.primaryCity && String(from.id) === String(thread.articles[0]?.country_id))
-        ? thread.primaryCity.lat : from.lat;
-      const fromLng = (i === 0 && thread.primaryCity && String(from.id) === String(thread.articles[0]?.country_id))
-        ? thread.primaryCity.lon : from.lng;
-
+    const maxFallback = Math.min(geos.length - 1, 2);
+    for (let i = 0; i < maxFallback; i++) {
+      const from = geos[i], to = geos[i + 1];
       arcs.push({
-        thread_id:   thread.id,
-        from_name:   from.name,
-        to_name:     to.name,
-        from_lat:    fromLat,
-        from_lng:    fromLng,
-        to_lat:      to.lat,
-        to_lng:      to.lng,
+        thread_id: thread.id,
+        from_name: from.name, from_lat: from.lat, from_lng: from.lng,
+        to_name:   to.name,   to_lat:   to.lat,   to_lng:   to.lng,
         is_city_arc: false,
       });
     }
@@ -527,11 +573,25 @@ Return ONLY valid JSON in this exact structure:
     {
       "thread_id": <number>,
       "voiceover": "Story segment text",
-      "transition": "Transition to next story (omit for last segment)"
+      "transition": "Transition to next story (omit for last segment)",
+      "entities": [
+        { "name": "Russia", "type": "country" },
+        { "name": "Kyiv", "type": "city" }
+      ]
     }
   ],
   "outro": "Closing paragraph text"
-}`;
+}
+
+ENTITY RULES (critical for globe arc visualisation):
+- "entities" lists 2–4 geographic locations the story IS ABOUT (not where news sources are from).
+- For a Russia-Ukraine conflict story: entities = Russia + Ukraine.
+- For a Jeddah drone strike story: entities = Saudi Arabia + Jeddah (city).
+- For a US-China trade story: entities = United States + China.
+- For a domestic story (e.g. UK election): entities = just that one country.
+- Use standard English country names that match a world atlas (e.g. "Iran", "South Korea", "Democratic Republic of Congo").
+- Cities must be major, well-known cities — avoid obscure towns.
+- type is "country" or "city" only.`;
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-5',
@@ -547,7 +607,7 @@ Return ONLY valid JSON in this exact structure:
 }
 
 // ─── Segment Builder ───────────────────────────────────────────────────────
-function buildSegments(narrative, threadData, allArcs) {
+function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
   const segments = [];
 
   // Intro segment
@@ -565,15 +625,23 @@ function buildSegments(narrative, threadData, allArcs) {
 
     const arcs = allArcs.filter(a => a.thread_id === thread.id);
 
-    // Collect all distinct geo endpoints from arcs for multi-node pulsing
+    // secondary_locations = all story entities + arc endpoints, deduped by position.
+    // Used by the globe player to pulse all relevant nodes, not just the primary.
     const secondaryLocations = [];
     const seen = new Set();
+    const addLoc = (name, lat, lon) => {
+      if (lat == null || lon == null) return;
+      const key = `${parseFloat(lat).toFixed(2)},${parseFloat(lon).toFixed(2)}`;
+      if (!seen.has(key)) { seen.add(key); secondaryLocations.push({ name, lat: parseFloat(lat), lon: parseFloat(lon) }); }
+    };
+    // Include all Claude-identified story entities first (most semantically correct)
+    for (const e of (ns.entities || [])) {
+      if (entityCoords[e.name]) addLoc(e.name, entityCoords[e.name].lat, entityCoords[e.name].lon);
+    }
+    // Then add arc endpoints (catches any not in entities)
     for (const arc of arcs) {
-      for (const [name, lat, lon] of [[arc.from_name, arc.from_lat, arc.from_lng], [arc.to_name, arc.to_lat, arc.to_lng]]) {
-        if (lat == null || lon == null) continue;
-        const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
-        if (!seen.has(key)) { seen.add(key); secondaryLocations.push({ name, lat, lon }); }
-      }
+      addLoc(arc.from_name, arc.from_lat, arc.from_lng);
+      addLoc(arc.to_name,   arc.to_lat,   arc.to_lng);
     }
 
     segments.push({

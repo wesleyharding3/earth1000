@@ -15479,11 +15479,11 @@ grmClockTick();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
-    // Seek audio to this segment's estimated offset and resume if playing
+    // Stop current audio immediately, seek to this segment's offset, then resume
     if (audio) {
       try {
-        const offset = getSegmentOffset(idx);
-        audio.currentTime = offset;
+        audio.pause();                                      // stop mid-sentence NOW
+        audio.currentTime = Math.max(0, getSegmentOffset(idx));
       } catch (_) {}
       if (playing) audio.play().catch(() => {});
     }
