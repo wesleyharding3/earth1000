@@ -9786,7 +9786,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       // ── Extra pulse rings for briefing secondary nodes ──────────────────
-      const briefingExtraRings = [];
+      const briefingExtraRings    = [];
+      const briefingArcPulseList  = [];   // pulse meshes for briefing arcs — ticked every frame
 
       function briefingPulseAt(lat, lon) {
         const phi = (90 - lat) * (Math.PI / 180);
@@ -9825,14 +9826,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       // ── Expose globe API for briefing player (module scope → global) ──────
-      window.startFocus         = startFocus;
-      window.focusCity          = focusCity;
-      window.focusCountry       = focusCountry;
-      window.buildArcLines      = buildArcLines;
-      window.transPulseMeshes   = transPulseMeshes;
-      window.globeScene         = scene;
-      window.briefingPulseAt    = briefingPulseAt;
-      window.clearBriefingPulses = clearBriefingPulses;
+      window.startFocus           = startFocus;
+      window.focusCity            = focusCity;
+      window.focusCountry         = focusCountry;
+      window.buildArcLines        = buildArcLines;
+      window.transPulseMeshes     = transPulseMeshes;
+      window.globeScene           = scene;
+      window.briefingPulseAt      = briefingPulseAt;
+      window.clearBriefingPulses  = clearBriefingPulses;
+      window.briefingArcPulseList = briefingArcPulseList;
 
       function focusRegion(region) {
         const lat = parseFloat(region.centroid_lat);
@@ -10280,6 +10282,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__transTick) window.__transTick(0.016);
         if (window.__regionsTick) window.__regionsTick(0.016);
         if (window.__flowTick) window.__flowTick();
+        // Briefing arc pulses tick every frame regardless of view mode
+        if (window.briefingActive && briefingArcPulseList.length) {
+          for (const _bm of briefingArcPulseList) {
+            if (_bm?.isObject3D && _bm.visible && _bm.material?.uniforms?.uTime) {
+              _bm.material.uniforms.uTime.value       += 0.016;
+              _bm.material.uniforms.uPulseSpeed.value  = 0.55;
+            }
+          }
+        }
         // Sync ocean heatmap mesh with globe rotation
         if (window.__oceanMeshSync) window.__oceanMeshSync();
         tickShootingStars();
@@ -15448,19 +15459,31 @@ grmClockTick();
     });
   }
 
-  // ── Draw arcs (called after phase-3 delay) ───────────────────────────────
+  // Timing constants for the 3-phase globe narrative sequence
+  const NODE_INTRO_DELAY  = 2200;   // ms — narrator introduces story before globe reacts
+  const ARC_DRAW_DELAY    = 3900;   // ms — arc appears after origin node is established
+  const DEST_FOCUS_DELAY  = 5600;   // ms — camera tours to destination(s)
+  const NODE_TOUR_INTERVAL = 3200;  // ms — interval between node hops in the tour
+
+  // ── Draw arcs — each arc gets a unique pulse key so all can tick ──────────
   function drawSegmentArcs(seg) {
     if (!seg.flow_arcs?.length || !window.buildArcLines) return;
-    for (const arc of seg.flow_arcs) {
+    for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
+      const arc = seg.flow_arcs[ai];
       if (arc.from_lat == null || arc.to_lat == null) continue;
       try {
+        const key      = `briefingArc_${ai}`;
         const baseMesh = window.buildArcLines(
           [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
-          0xff6600, 0.002, 0.28, 'briefingArc'
+          0xff6600, 0.002, 0.28, key
         );
         if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
-        const pulseMesh = window.transPulseMeshes?.briefingArc;
-        if (pulseMesh) { pulseMesh.visible = true; arcMeshes.push(pulseMesh); }
+        const pulseMesh = window.transPulseMeshes?.[key];
+        if (pulseMesh) {
+          pulseMesh.visible = true;
+          arcMeshes.push(pulseMesh);
+          if (window.briefingArcPulseList) window.briefingArcPulseList.push(pulseMesh);
+        }
       } catch (_) {}
     }
   }
@@ -15479,47 +15502,73 @@ grmClockTick();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
-    // Stop current audio immediately, seek to this segment's offset, then resume
+    // Stop audio mid-sentence, seek to this segment's start, resume
     if (audio) {
       try {
-        audio.pause();                                      // stop mid-sentence NOW
+        audio.pause();
         audio.currentTime = Math.max(0, getSegmentOffset(idx));
       } catch (_) {}
       if (playing) audio.play().catch(() => {});
     }
 
-    // ── Globe animation — 3-phase ──────────────────────────────────────────
+    // ── Globe animation — narrator-synced 3-phase sequence ────────────────
     if (seg.type === 'story') {
-
-      // Phase 1 (immediate): primary node focus + ring burst
-      if (seg.primary_city && window.focusCity) {
-        window.focusCity(seg.primary_city);
-      } else if (seg.primary_country && window.focusCountry) {
-        window.focusCountry(seg.primary_country);
-      } else if (seg.globe_focus && window.startFocus) {
-        window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng);
-      }
-
-      // Phase 2 (800ms): secondary node pulses
-      const primary = seg.primary_city || seg.primary_country;
+      const primary   = seg.primary_city || seg.primary_country;
       const secondary = (seg.secondary_locations || []).filter(loc => {
         if (!primary) return true;
-        return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - (primary.lon || primary.lon || 0)) > 0.5;
+        return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - primary.lon) > 0.5;
       });
 
-      if (secondary.length && window.briefingPulseAt) {
-        addBTimer(setTimeout(() => {
-          secondary.forEach((loc, i) => {
-            addBTimer(setTimeout(() => {
-              if (window.briefingPulseAt) window.briefingPulseAt(loc.lat, loc.lon);
-            }, i * 380));
-          });
-        }, 850));
-      }
+      // Build the full node tour order: [origin, dest1, dest2, origin, dest1, …]
+      const tourNodes = [];
+      if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon, name: primary.name });
+      for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon, name: loc.name });
 
-      // Phase 3 (1400ms): draw flow arcs
-      if (seg.flow_arcs?.length) {
-        addBTimer(setTimeout(() => drawSegmentArcs(seg), 1400));
+      // ── Phase 1 (NODE_INTRO_DELAY): Origin node ring burst + camera focus ──
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        if (seg.primary_city && window.focusCity) {
+          window.focusCity(seg.primary_city);
+        } else if (seg.primary_country && window.focusCountry) {
+          window.focusCountry(seg.primary_country);
+        } else if (seg.globe_focus && window.startFocus) {
+          window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
+        }
+      }, NODE_INTRO_DELAY));
+
+      // ── Phase 2 (ARC_DRAW_DELAY): Arcs draw + all destination nodes pulse ──
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        drawSegmentArcs(seg);
+        secondary.forEach((loc, i) => {
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.briefingPulseAt) return;
+            window.briefingPulseAt(loc.lat, loc.lon);
+          }, i * 350));
+        });
+      }, ARC_DRAW_DELAY));
+
+      // ── Phase 3+ (DEST_FOCUS_DELAY, then NODE_TOUR_INTERVAL): camera tours ──
+      // Arcs persist throughout; camera cycles through all story nodes
+      if (tourNodes.length >= 2) {
+        const MAX_TOUR_STEPS = 10;
+        for (let t = 0; t < MAX_TOUR_STEPS; t++) {
+          const node = tourNodes[(t + 1) % tourNodes.length];   // start from dest on step 0
+          const delay = DEST_FOCUS_DELAY + t * NODE_TOUR_INTERVAL;
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.startFocus) return;
+            window.startFocus(node.lat, node.lon);
+            if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
+          }, delay));
+        }
+      } else if (tourNodes.length === 1) {
+        // Single-node story: re-pulse periodically so it stays alive on screen
+        for (let t = 0; t < 4; t++) {
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.briefingPulseAt) return;
+            window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
+          }, DEST_FOCUS_DELAY + t * 5500));
+        }
       }
 
     } else if (seg.globe_animate && window.startFocus) {
@@ -15607,6 +15656,8 @@ grmClockTick();
 
   // ── Arc cleanup ───────────────────────────────────────────────────────────
   function clearArcMeshes() {
+    // Stop pulsing before disposing so the render loop doesn't touch dead objects
+    if (window.briefingArcPulseList) window.briefingArcPulseList.length = 0;
     const sc = window.globeScene;
     arcMeshes.forEach(m => {
       try {
