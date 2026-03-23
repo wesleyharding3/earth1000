@@ -125,8 +125,9 @@ async function processWindow(articles) {
     if (!group.length) continue;
 
     try {
+      const validIdSet = new Set(group.map(a => Number(a.id)));
       const defs = await evaluateWithClaude(group, existingThreads, "haiku");
-      const { c, u } = await persistThreadDefs(defs);
+      const { c, u } = await persistThreadDefs(defs, validIdSet);
       created += c;
       updated += u;
 
@@ -262,7 +263,7 @@ Return ONLY valid JSON array:
 
 // ─── Persist ─────────────────────────────────────────────────────────────────
 
-async function persistThreadDefs(defs) {
+async function persistThreadDefs(defs, validIdSet) {
   let created = 0, updated = 0;
 
   for (const def of defs) {
@@ -278,7 +279,7 @@ async function persistThreadDefs(defs) {
           WHERE id = $4
         `, [def.importance || 5, def.article_ids.length, def.keywords || [], def.existing_thread_id]);
 
-        await insertArticles(def.existing_thread_id, def.article_ids, def.anchor_article_id, def.importance);
+        await insertArticles(def.existing_thread_id, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         updated++;
       } else {
         const { rows } = await pool.query(`
@@ -296,7 +297,7 @@ async function persistThreadDefs(defs) {
           def.article_ids.length
         ]);
 
-        await insertArticles(rows[0].id, def.article_ids, def.anchor_article_id, def.importance);
+        await insertArticles(rows[0].id, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         created++;
       }
     } catch (err) {
@@ -307,9 +308,11 @@ async function persistThreadDefs(defs) {
   return { c: created, u: updated };
 }
 
-async function insertArticles(threadId, articleIds, anchorId, importance) {
+async function insertArticles(threadId, articleIds, anchorId, importance, validIdSet) {
   const score = (importance || 5) / 10;
   for (const articleId of articleIds) {
+    // Skip IDs Claude hallucinated that weren't in the batch
+    if (validIdSet && !validIdSet.has(Number(articleId))) continue;
     await pool.query(`
       INSERT INTO story_thread_articles (thread_id, article_id, relevance_score, is_anchor)
       VALUES ($1, $2, $3, $4)

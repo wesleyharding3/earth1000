@@ -68,8 +68,9 @@ async function run() {
 
     process.stdout.write(`   [${elapsed()}] Batch ${batchNum}/${totalBatches} (${batch.length} articles) → Claude... `);
     try {
+      const validIdSet = new Set(batch.map(a => Number(a.id)));
       const defs = await evaluateWithClaude(batch, existingThreads);
-      const { c, u } = await persistThreadDefs(defs);
+      const { c, u } = await persistThreadDefs(defs, validIdSet);
       created += c; updated += u;
       console.log(`✓ ${defs.length} threads (${c} new, ${u} updated)`);
     } catch (err) {
@@ -212,7 +213,7 @@ Return ONLY a valid JSON array, no explanation:
 
 // ─── Persist ─────────────────────────────────────────────────────────────────
 
-async function persistThreadDefs(defs) {
+async function persistThreadDefs(defs, validIdSet) {
   let created = 0, updated = 0;
 
   for (const def of defs) {
@@ -232,7 +233,7 @@ async function persistThreadDefs(defs) {
           WHERE id = $4
         `, [def.importance, def.article_ids.length, def.keywords || [], def.existing_thread_id]);
 
-        await insertArticles(def.existing_thread_id, def.article_ids, def.anchor_article_id, def.importance);
+        await insertArticles(def.existing_thread_id, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         updated++;
       } else {
         // Create new thread
@@ -252,7 +253,7 @@ async function persistThreadDefs(defs) {
         ]);
 
         const threadId = rows[0].id;
-        await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance);
+        await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         created++;
       }
     } catch (err) {
@@ -263,9 +264,10 @@ async function persistThreadDefs(defs) {
   return { c: created, u: updated };
 }
 
-async function insertArticles(threadId, articleIds, anchorId, importance) {
+async function insertArticles(threadId, articleIds, anchorId, importance, validIdSet) {
   const score = (importance || 5) / 10;
   for (const articleId of articleIds) {
+    if (validIdSet && !validIdSet.has(Number(articleId))) continue;
     await pool.query(`
       INSERT INTO story_thread_articles (thread_id, article_id, relevance_score, is_anchor)
       VALUES ($1, $2, $3, $4)
