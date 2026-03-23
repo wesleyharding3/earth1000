@@ -243,11 +243,15 @@ function buildFlowArcs(threadData) {
     const geos = Object.values(countryGeo);
     for (let i = 0; i < geos.length - 1; i++) {
       arcs.push({
-        thread_id:   thread.id,
+        thread_id:    thread.id,
         from_country: geos[i].id,
         to_country:   geos[i + 1].id,
         from_name:    geos[i].name,
         to_name:      geos[i + 1].name,
+        from_lat:     parseFloat(geos[i].lat),
+        from_lng:     parseFloat(geos[i].lng),
+        to_lat:       parseFloat(geos[i + 1].lat),
+        to_lng:       parseFloat(geos[i + 1].lng),
         label:        thread.title
       });
     }

@@ -1105,6 +1105,37 @@ app.get("/api/ocean/temperature", async (req, res) => {
    Daily Briefing Endpoints
 ========================================= */
 
+// GET /api/articles/by-ids?ids=1,2,3 — fetch specific articles by ID (used by briefing player)
+app.get("/api/articles/by-ids", async (req, res) => {
+  try {
+    const ids = (req.query.ids || "").split(",").map(Number).filter(Boolean).slice(0, 20);
+    if (!ids.length) return res.json([]);
+    const { rows } = await pool.query(`
+      SELECT
+        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+        a.published_at, a.url, a.video_id, a.media_type,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        img_a.public_url AS catalog_image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        co.name AS country_name, co.iso_code,
+        ci.name AS city_name
+      FROM news_articles a
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities ci ON ci.id = a.city_id
+      WHERE a.id = ANY($1::int[])
+      ORDER BY array_position($1::int[], a.id)
+    `, [ids]);
+    res.json(rows);
+  } catch (err) {
+    console.error("[articles/by-ids]", err.message);
+    res.status(500).json({ error: "Failed to fetch articles" });
+  }
+});
+
 // GET /api/briefing/today — returns today's ready episode (no audio binary)
 app.get("/api/briefing/today", async (req, res) => {
   try {
