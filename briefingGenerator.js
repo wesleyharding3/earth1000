@@ -30,7 +30,7 @@ const NO_AUDIO  = process.argv.includes('--no-audio');
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const MAX_THREADS          = 10;  // stories in one briefing
-const MAX_ARTICLES_THREAD  = 3;   // articles shown per story
+const MAX_ARTICLES_THREAD  = 6;   // articles shown per story
 const MAX_CATEGORY_REPEAT  = 3;   // max threads from same category
 const MAX_ENGLISH_DOMINANT = 4;   // max threads where >70% of articles are English-sourced
 const MIN_VIDEO_THREADS    = 3;   // at least this many story segments must have a video
@@ -355,6 +355,8 @@ async function enrichThread(thread) {
 
   // Pick best video: prefer geo-relevant (matches primary country), then any playable video
   const videoArticle = await pickPlayableVideo(articles, primaryCountryId);
+  // Translate any article titles that haven't been translated yet
+  await translateMissingTitles(articles);
 
   // Store primary city / country for globe node selection in briefing player
   const primaryCityArticle    = geoArticle?.city_name ? geoArticle : null;
@@ -379,38 +381,104 @@ async function enrichThread(thread) {
   };
 }
 
+// ─── Batch Title Translation ────────────────────────────────────────────────
+async function translateMissingTitles(articles) {
+  const needsTranslation = articles.filter(a => !a.translated_title && a.title);
+  if (!needsTranslation.length) return;
+  try {
+    const prompt = `Translate these news article titles to English. Return ONLY a valid JSON object where each key is the article ID (as a string) and the value is the English translation. No extra text.\n\n${needsTranslation.map(a => `ID ${a.id}: "${a.title}"`).join('\n')}`;
+    const response = await client.messages.create({
+      model: 'claude-haiku-4-5', max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const match = response.content[0].text.match(/\{[\s\S]*\}/);
+    if (!match) return;
+    const map = JSON.parse(match[0]);
+    for (const a of articles) {
+      if (!a.translated_title && map[String(a.id)]) {
+        a.translated_title = map[String(a.id)];
+        // Persist so we don't re-translate next time
+        await pool.query(`UPDATE news_articles SET translated_title = $1 WHERE id = $2 AND translated_title IS NULL`, [a.translated_title, a.id]).catch(() => {});
+      }
+    }
+  } catch (_) { /* translation is best-effort, don't fail generation */ }
+}
+
 // ─── Flow Arc Detection ────────────────────────────────────────────────────
 function buildFlowArcs(threadData) {
-  // Build arcs for threads involving multiple countries
   const arcs = [];
-  for (const thread of threadData) {
-    const countries = [...new Set(thread.articles.map(a => a.country_id).filter(Boolean))];
-    if (countries.length < 2) continue;
 
-    // Find geo info for each country from articles
-    const countryGeo = {};
+  for (const thread of threadData) {
+    // Collect unique countries by ID with geo data (country centroid coords)
+    const countryMap = {};
+    const countFreq  = {};
     for (const a of thread.articles) {
-      if (a.country_id && a.lat && !countryGeo[a.country_id]) {
-        countryGeo[a.country_id] = { id: a.country_id, name: a.country_name, lat: a.lat, lng: a.lon };
+      if (a.country_id && a.lat != null) {
+        if (!countryMap[a.country_id]) {
+          countryMap[a.country_id] = {
+            id:   a.country_id,
+            name: a.country_name,
+            lat:  parseFloat(a.lat),
+            lng:  parseFloat(a.lon),
+          };
+        }
+        countFreq[a.country_id] = (countFreq[a.country_id] || 0) + 1;
       }
     }
 
-    const geos = Object.values(countryGeo);
-    for (let i = 0; i < geos.length - 1; i++) {
+    const geos = Object.values(countryMap);
+
+    // ── Single-country thread with a distinct primary city ──
+    // Draw an arc from the country centroid to the city node
+    if (geos.length === 1 && thread.primaryCity) {
+      const country = geos[0];
+      const city    = thread.primaryCity;
+      const latDiff = Math.abs(city.lat - country.lat);
+      const lonDiff = Math.abs(city.lon - country.lng);
+      if (latDiff > 0.4 || lonDiff > 0.4) {
+        arcs.push({
+          thread_id:   thread.id,
+          from_name:   country.name,
+          to_name:     city.name,
+          from_lat:    country.lat,
+          from_lng:    country.lng,
+          to_lat:      city.lat,
+          to_lng:      city.lon,
+          is_city_arc: true,
+        });
+      }
+      continue;
+    }
+
+    // ── Multi-country thread ──
+    // Sort countries by article frequency so most-mentioned pair connects first
+    if (geos.length < 2) continue;
+    geos.sort((a, b) => (countFreq[b.id] || 0) - (countFreq[a.id] || 0));
+
+    // Draw at most 2 arcs (top-2 and top-3 countries)
+    const maxArcs = Math.min(geos.length - 1, 2);
+    for (let i = 0; i < maxArcs; i++) {
+      const from = geos[i];
+      const to   = geos[i + 1];
+      // Use city coords for the primary end if this is the primary country
+      const fromLat = (i === 0 && thread.primaryCity && String(from.id) === String(thread.articles[0]?.country_id))
+        ? thread.primaryCity.lat : from.lat;
+      const fromLng = (i === 0 && thread.primaryCity && String(from.id) === String(thread.articles[0]?.country_id))
+        ? thread.primaryCity.lon : from.lng;
+
       arcs.push({
-        thread_id:    thread.id,
-        from_country: geos[i].id,
-        to_country:   geos[i + 1].id,
-        from_name:    geos[i].name,
-        to_name:      geos[i + 1].name,
-        from_lat:     parseFloat(geos[i].lat),
-        from_lng:     parseFloat(geos[i].lng),
-        to_lat:       parseFloat(geos[i + 1].lat),
-        to_lng:       parseFloat(geos[i + 1].lng),
-        label:        thread.title
+        thread_id:   thread.id,
+        from_name:   from.name,
+        to_name:     to.name,
+        from_lat:    fromLat,
+        from_lng:    fromLng,
+        to_lat:      to.lat,
+        to_lng:      to.lng,
+        is_city_arc: false,
       });
     }
   }
+
   return arcs;
 }
 
@@ -497,18 +565,30 @@ function buildSegments(narrative, threadData, allArcs) {
 
     const arcs = allArcs.filter(a => a.thread_id === thread.id);
 
+    // Collect all distinct geo endpoints from arcs for multi-node pulsing
+    const secondaryLocations = [];
+    const seen = new Set();
+    for (const arc of arcs) {
+      for (const [name, lat, lon] of [[arc.from_name, arc.from_lat, arc.from_lng], [arc.to_name, arc.to_lat, arc.to_lng]]) {
+        if (lat == null || lon == null) continue;
+        const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+        if (!seen.has(key)) { seen.add(key); secondaryLocations.push({ name, lat, lon }); }
+      }
+    }
+
     segments.push({
-      type:           'story',
-      thread_id:      thread.id,
-      thread_title:   thread.title,
-      article_ids:    thread.articleIds,
-      video_id:       thread.videoId,
-      voiceover_text: ns.voiceover,
-      transition:     ns.transition || null,
-      globe_focus:    thread.globeFocus,
-      primary_city:   thread.primaryCity   || null,
-      primary_country: thread.primaryCountry || null,
-      flow_arcs:      arcs,
+      type:                'story',
+      thread_id:           thread.id,
+      thread_title:        thread.title,
+      article_ids:         thread.articleIds,
+      video_id:            thread.videoId,
+      voiceover_text:      ns.voiceover,
+      transition:          ns.transition || null,
+      globe_focus:         thread.globeFocus,
+      primary_city:        thread.primaryCity    || null,
+      primary_country:     thread.primaryCountry || null,
+      flow_arcs:           arcs,
+      secondary_locations: secondaryLocations,
     });
   }
 

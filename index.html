@@ -9785,13 +9785,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
       }
 
+      // ── Extra pulse rings for briefing secondary nodes ──────────────────
+      const briefingExtraRings = [];
+
+      function briefingPulseAt(lat, lon) {
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        const rAlt = 0.03;
+        const rx = -(radius + rAlt) * Math.sin(phi) * Math.cos(theta);
+        const rz =  (radius + rAlt) * Math.sin(phi) * Math.sin(theta);
+        const ry =  (radius + rAlt) * Math.cos(phi);
+        const group = new THREE.Group();
+        group.position.set(rx, ry, rz);
+        group.lookAt(0, 0, 0);
+        scene.add(group);
+        const rings = [];
+        const states = [];
+        for (let i = 0; i < 3; i++) {
+          const geo = new THREE.RingGeometry(ringStartRadius, ringStartRadius + ringThickness * ringOuterMultiplier, 64);
+          const mat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(0.2, 0.75, 1.0),
+            transparent: true, opacity: 0,
+            side: THREE.DoubleSide, depthWrite: false, blending: THREE.NormalBlending,
+          });
+          const ring = new THREE.Mesh(geo, mat);
+          group.add(ring);
+          rings.push(ring);
+          states.push({ progress: 0, delay: i * ringBurstDelay, active: true });
+        }
+        briefingExtraRings.push({ group, rings, states });
+      }
+
+      function clearBriefingPulses() {
+        for (const { group, rings } of briefingExtraRings) {
+          rings.forEach(r => { r.geometry.dispose(); r.material.dispose(); group.remove(r); });
+          scene.remove(group);
+        }
+        briefingExtraRings.length = 0;
+      }
+
       // ── Expose globe API for briefing player (module scope → global) ──────
-      window.startFocus       = startFocus;
-      window.focusCity        = focusCity;
-      window.focusCountry     = focusCountry;
-      window.buildArcLines    = buildArcLines;
-      window.transPulseMeshes = transPulseMeshes;
-      window.globeScene       = scene;          // for briefing arc cleanup
+      window.startFocus         = startFocus;
+      window.focusCity          = focusCity;
+      window.focusCountry       = focusCountry;
+      window.buildArcLines      = buildArcLines;
+      window.transPulseMeshes   = transPulseMeshes;
+      window.globeScene         = scene;
+      window.briefingPulseAt    = briefingPulseAt;
+      window.clearBriefingPulses = clearBriefingPulses;
 
       function focusRegion(region) {
         const lat = parseFloat(region.centroid_lat);
@@ -10138,6 +10179,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
           });
         } else if (!isFocused) {
           ringMeshes.forEach(ring => { ring.material.opacity = 0; });
+        }
+
+        // ── Animate extra briefing pulse rings ──────────────────────────────
+        for (let _bi = briefingExtraRings.length - 1; _bi >= 0; _bi--) {
+          const { group: _bg, rings: _brs, states: _bst } = briefingExtraRings[_bi];
+          let _anyActive = false;
+          _bst.forEach((st, i) => {
+            if (!st.active) return;
+            if (st.delay > 0) { st.delay -= ringSpeed; _anyActive = true; return; }
+            st.progress += ringSpeed;
+            const _sc = 1 + st.progress * (ringMultiplierMax - 1);
+            _brs[i].scale.set(_sc, _sc, _sc);
+            _brs[i].material.opacity = Math.pow(1 - st.progress, 1.8);
+            if (st.progress >= 1) { _brs[i].material.opacity = 0; st.active = false; }
+            else _anyActive = true;
+          });
+          if (!_anyActive) {
+            _brs.forEach(r => { r.geometry.dispose(); r.material.dispose(); _bg.remove(r); });
+            scene.remove(_bg);
+            briefingExtraRings.splice(_bi, 1);
+          }
         }
 
         // Global ambient pulse - always running for breathing effect
@@ -15083,7 +15145,7 @@ grmClockTick();
 }
 #briefingOverlay.open {
   pointer-events: all;
-  background: rgba(0,0,0,0.55);
+  background: transparent;
 }
 
 /* ── Header bar ── */
@@ -15263,8 +15325,9 @@ grmClockTick();
 (function () {
   'use strict';
 
-  const API         = 'https://earth-wjr6.onrender.com';
+  const API           = 'https://earth-wjr6.onrender.com';
   const WORDS_PER_MIN = 148;
+  const VIDEO_PAUSE_SECS = 18;   // seconds of video to let play after voiceover timing
 
   let episode       = null;
   let segIdx        = 0;
@@ -15272,6 +15335,23 @@ grmClockTick();
   let segTimer      = null;
   let audio         = null;
   let arcMeshes     = [];
+  let briefingTimers = [];
+
+  function addBTimer(t) { briefingTimers.push(t); return t; }
+  function clearBTimers() { briefingTimers.forEach(clearTimeout); briefingTimers = []; }
+
+  // ── Segment audio offset (word-count estimate) ──────────────────────────
+  function getSegmentOffset(idx) {
+    if (!episode) return 0;
+    let secs = 0;
+    for (let i = 0; i < idx; i++) {
+      const s = episode.segments[i];
+      const words = (s.voiceover_text || '').split(/\s+/).filter(Boolean).length;
+      secs += (words / WORDS_PER_MIN) * 60;
+      if (s.video_id) secs += VIDEO_PAUSE_SECS;
+    }
+    return Math.max(0, secs);
+  }
 
   // ── Init ────────────────────────────────────────────────────────────────
   async function init() {
@@ -15302,7 +15382,6 @@ grmClockTick();
 
     buildDots();
 
-    // Set up audio element
     if (episode.has_audio) {
       audio = new Audio(`${API}/api/briefing/audio/${episode.id}`);
       audio.preload = 'auto';
@@ -15316,8 +15395,10 @@ grmClockTick();
   // ── Close ────────────────────────────────────────────────────────────────
   function closeBriefing() {
     window.briefingActive = false;
+    clearBTimers();
     setPlaying(false);
     clearArcMeshes();
+    if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (audio) { audio.pause(); audio = null; }
     document.getElementById('briefingOverlay').classList.remove('open');
     document.getElementById('bVideoWrap').innerHTML = '';
@@ -15367,75 +15448,85 @@ grmClockTick();
     });
   }
 
+  // ── Draw arcs (called after phase-3 delay) ───────────────────────────────
+  function drawSegmentArcs(seg) {
+    if (!seg.flow_arcs?.length || !window.buildArcLines) return;
+    for (const arc of seg.flow_arcs) {
+      if (arc.from_lat == null || arc.to_lat == null) continue;
+      try {
+        const baseMesh = window.buildArcLines(
+          [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
+          0xff6600, 0.002, 0.28, 'briefingArc'
+        );
+        if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
+        const pulseMesh = window.transPulseMeshes?.briefingArc;
+        if (pulseMesh) { pulseMesh.visible = true; arcMeshes.push(pulseMesh); }
+      } catch (_) {}
+    }
+  }
+
   // ── Go to segment ─────────────────────────────────────────────────────────
   async function goToSegment(idx) {
     clearTimeout(segTimer);
+    clearBTimers();
+
     if (!episode || idx >= episode.segments.length) { closeBriefing(); return; }
     segIdx = idx;
 
     const seg = episode.segments[idx];
 
-    // Thread label
-    const threadLabel = document.getElementById('bThreadLabel');
-    if (seg.type === 'story' && seg.thread_title) {
-      threadLabel.textContent = seg.thread_title;
-      threadLabel.classList.add('visible');
-    } else {
-      threadLabel.textContent = '';
-      threadLabel.classList.remove('visible');
-    }
-
-    // Arc labels
-    const arcLabel = document.getElementById('bArcLabel');
-    if (seg.flow_arcs?.length) {
-      const arc = seg.flow_arcs[0];
-      arcLabel.innerHTML = `<span>${arc.from_name}</span><span class="bArcArrow">→</span><span>${arc.to_name}</span>`;
-      arcLabel.classList.add('visible');
-    } else {
-      arcLabel.innerHTML = '';
-      arcLabel.classList.remove('visible');
-    }
-
-    // Globe animation — use focusCity/focusCountry for node ring effect on story segments
-    if (seg.type === 'story') {
-      if (seg.primary_city && typeof focusCity === 'function') {
-        try { focusCity(seg.primary_city); } catch (_) {}
-      } else if (seg.primary_country && typeof focusCountry === 'function') {
-        try { focusCountry(seg.primary_country); } catch (_) {}
-      } else if (seg.globe_focus && typeof startFocus === 'function') {
-        try { startFocus(seg.globe_focus.lat, seg.globe_focus.lng); } catch (_) {}
-      }
-    } else if (seg.globe_animate && typeof startFocus === 'function') {
-      try { startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0); } catch (_) {}
-    }
-
-    // Clear old arcs
+    // Clear previous globe state immediately
     clearArcMeshes();
+    if (window.clearBriefingPulses) window.clearBriefingPulses();
 
-    // Draw flow arcs
-    if (seg.flow_arcs?.length && typeof buildArcLines === 'function') {
-      for (const arc of seg.flow_arcs) {
-        if (!arc.from_lat || !arc.to_lat) continue;
-        try {
-          const baseMesh = buildArcLines(
-            [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
-            0xff9900, 0.002, 0.28, 'briefingArc'
-          );
-          if (baseMesh) {
-            baseMesh.visible = true;
-            arcMeshes.push(baseMesh);
-          }
-          // Also make pulse mesh visible and track it for cleanup
-          const pulseMesh = window.transPulseMeshes?.briefingArc;
-          if (pulseMesh) {
-            pulseMesh.visible = true;
-            arcMeshes.push(pulseMesh);
-          }
-        } catch (_) {}
-      }
+    // Seek audio to this segment's estimated offset and resume if playing
+    if (audio) {
+      try {
+        const offset = getSegmentOffset(idx);
+        audio.currentTime = offset;
+      } catch (_) {}
+      if (playing) audio.play().catch(() => {});
     }
 
-    // Video embed — autoplay muted so voiceover remains primary audio
+    // ── Globe animation — 3-phase ──────────────────────────────────────────
+    if (seg.type === 'story') {
+
+      // Phase 1 (immediate): primary node focus + ring burst
+      if (seg.primary_city && window.focusCity) {
+        window.focusCity(seg.primary_city);
+      } else if (seg.primary_country && window.focusCountry) {
+        window.focusCountry(seg.primary_country);
+      } else if (seg.globe_focus && window.startFocus) {
+        window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng);
+      }
+
+      // Phase 2 (800ms): secondary node pulses
+      const primary = seg.primary_city || seg.primary_country;
+      const secondary = (seg.secondary_locations || []).filter(loc => {
+        if (!primary) return true;
+        return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - (primary.lon || primary.lon || 0)) > 0.5;
+      });
+
+      if (secondary.length && window.briefingPulseAt) {
+        addBTimer(setTimeout(() => {
+          secondary.forEach((loc, i) => {
+            addBTimer(setTimeout(() => {
+              if (window.briefingPulseAt) window.briefingPulseAt(loc.lat, loc.lon);
+            }, i * 380));
+          });
+        }, 850));
+      }
+
+      // Phase 3 (1400ms): draw flow arcs
+      if (seg.flow_arcs?.length) {
+        addBTimer(setTimeout(() => drawSegmentArcs(seg), 1400));
+      }
+
+    } else if (seg.globe_animate && window.startFocus) {
+      window.startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0);
+    }
+
+    // ── Video embed ────────────────────────────────────────────────────────
     const videoWrap = document.getElementById('bVideoWrap');
     if (seg.video_id) {
       videoWrap.innerHTML = `<iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
@@ -15445,7 +15536,7 @@ grmClockTick();
       videoWrap.classList.remove('visible');
     }
 
-    // Article cards
+    // ── Article cards ──────────────────────────────────────────────────────
     if (seg.article_ids?.length) {
       await loadArticles(seg.article_ids);
     } else {
@@ -15455,15 +15546,27 @@ grmClockTick();
     updateDots();
     updatePlayBtn();
 
-    // Auto-advance timer based on word count
     if (playing) scheduleAdvance(seg);
   }
 
+  // ── Schedule advance ──────────────────────────────────────────────────────
   function scheduleAdvance(seg) {
     clearTimeout(segTimer);
-    const words = (seg.voiceover_text || '').split(/\s+/).length;
-    const ms    = Math.max(8000, (words / WORDS_PER_MIN) * 60000 + 2500);
-    segTimer = setTimeout(() => goToSegment(segIdx + 1), ms);
+    const words  = (seg.voiceover_text || '').split(/\s+/).filter(Boolean).length;
+    const voiceMs = Math.max(5000, (words / WORDS_PER_MIN) * 60000);
+
+    if (seg.video_id) {
+      // After voiceover timing, pause audio and let video play for VIDEO_PAUSE_SECS
+      segTimer = setTimeout(() => {
+        if (audio) { try { audio.pause(); } catch (_) {} }
+        segTimer = setTimeout(() => {
+          if (audio && playing) { try { audio.play().catch(() => {}); } catch (_) {} }
+          goToSegment(segIdx + 1);
+        }, VIDEO_PAUSE_SECS * 1000);
+      }, voiceMs);
+    } else {
+      segTimer = setTimeout(() => goToSegment(segIdx + 1), voiceMs + 2000);
+    }
   }
 
   // ── Article card renderer ─────────────────────────────────────────────────
@@ -15520,11 +15623,14 @@ grmClockTick();
     playing = val;
     if (!playing) {
       clearTimeout(segTimer);
-      if (audio) audio.pause();
+      clearBTimers();
+      if (audio) { try { audio.pause(); } catch (_) {} }
     } else {
       const seg = episode?.segments[segIdx];
       if (seg) scheduleAdvance(seg);
-      if (audio?.paused) audio.play().catch(err => console.warn('[briefing] audio.play() blocked:', err.message));
+      if (audio) {
+        try { audio.play().catch(err => console.warn('[briefing] audio blocked:', err.message)); } catch (_) {}
+      }
     }
     updatePlayBtn();
   }
@@ -15541,16 +15647,14 @@ grmClockTick();
   document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1));
   document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1)));
 
-  // Keyboard shortcuts when briefing is open
   document.addEventListener('keydown', e => {
     if (!document.getElementById('briefingOverlay')?.classList.contains('open')) return;
-    if (e.key === 'Escape')       { closeBriefing(); }
+    if (e.key === 'Escape')          { closeBriefing(); }
     else if (e.key === 'ArrowRight') { goToSegment(segIdx + 1); }
     else if (e.key === 'ArrowLeft')  { goToSegment(Math.max(0, segIdx - 1)); }
     else if (e.key === ' ')          { e.preventDefault(); setPlaying(!playing); }
   });
 
-  // Start after globe is ready
   if (document.readyState === 'complete') {
     setTimeout(init, 2500);
   } else {
