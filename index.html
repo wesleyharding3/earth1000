@@ -9756,7 +9756,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusTargetQuat = computeFocusQuat(lat, lon);
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
-        if (!window.briefingActive) playSFX(SFX.node);
+        if (!window.briefingActive) {
+          playSFX(SFX.node);
+        } else {
+          // Gentle zoom-in toward each briefing node; resets to default on close
+          targetZoom = 2.65;
+        }
       }
 
       function focusCity(city) {
@@ -9833,6 +9838,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.startFocus           = startFocus;
       window.focusCity            = focusCity;
       window.focusCountry         = focusCountry;
+      window._globeResetZoom      = () => { targetZoom = 3.0; zoomingOut = true; };
       window.buildArcLines        = buildArcLines;
       window.transPulseMeshes     = transPulseMeshes;
       window.globeScene           = scene;
@@ -10121,9 +10127,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         targetZoom += zoomVelocity;
         targetZoom = Math.max(1.3, Math.min(6, targetZoom));
         const zoomDelta = targetZoom - camera.position.z;
-        // Zoom-out uses a gentler lerp so the camera eases back slowly;
-        // zoom-in stays snappy. Clear zoomingOut once camera has settled.
-        const zoomLerp = zoomingOut ? 0.018 : (0.015 * Math.min(Math.abs(zoomDelta) * 2, 1));
+        // Briefing: constant slow lerp for all zoom changes (in or out).
+        // Normal: zoom-out gentle, zoom-in proportional to distance.
+        const zoomLerp = window.briefingActive ? 0.012
+          : (zoomingOut ? 0.018 : 0.015 * Math.min(Math.abs(zoomDelta) * 2, 1));
         camera.position.z += zoomDelta * zoomLerp;
         if (zoomingOut && Math.abs(zoomDelta) < 0.005) zoomingOut = false;
 
@@ -10132,9 +10139,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const progress = focusInitialAngle > 0.001
             ? 1 - (angleLeft / focusInitialAngle)
             : 1;
-          // Ease-in-out: snappy arc, ~1–1.5s for a half-globe rotation
+          // Briefing: slow cinematic pan (~3-4s). Normal: snappy (~1-1.5s).
           const easedT = Math.sin(Math.PI * Math.max(0, Math.min(1, progress)));
-          const slerpT = 0.04 + 0.10 * easedT;
+          const slerpT = window.briefingActive
+            ? 0.016 + 0.030 * easedT
+            : 0.040 + 0.100 * easedT;
           globeQuat.slerp(focusTargetQuat, slerpT);
 
           // Fire panel early — at 75% through the rotation, arrives just before center
@@ -15500,6 +15509,8 @@ grmClockTick();
     clearBTimers();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
+    // Ease camera back to default orbit distance
+    if (window._globeResetZoom) window._globeResetZoom();
     if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
     if (audioNext) { try { audioNext.pause(); } catch (_) {} audioNext = null; }
     segIdx = 0;
@@ -15674,14 +15685,22 @@ grmClockTick();
       const curIdx = idx;
       const estDur = getSegmentDuration(idx);
       let timersSet = false;
+      let audioStarted = false;
 
-      sa.addEventListener('loadedmetadata', () => {
-        if (segIdx !== curIdx || !playing) return;
-        // Set globe timers with real duration; fall back to estimate
+      // onMeta: fires when audio metadata is ready — starts playback.
+      // Guards against double-call (preloaded audio already has readyState >= 1).
+      const onMeta = () => {
+        if (segIdx !== curIdx || !playing || audioStarted) return;
+        audioStarted = true;
         const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
         if (!timersSet) { timersSet = true; startGlobeTimers(curIdx, seg, realDur); }
-        sa.play().catch(() => {});
-      }, { once: true });
+        sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
+      };
+
+      sa.addEventListener('loadedmetadata', onMeta, { once: true });
+      // Critical: if this element was preloaded, loadedmetadata already fired.
+      // readyState >= 1 (HAVE_METADATA) means the event won't fire again — call directly.
+      if (sa.readyState >= 1) onMeta();
 
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
