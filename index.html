@@ -8691,8 +8691,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // ────────────────────────────────────────────────────────────────
 
       function updateHoverLabels() {
-        // Disable hover labels during briefing
-        if (window.briefingActive) { hideHoverCard(); return; }
+        // During briefing the player manages its own hover card — don't interfere
+        if (window.briefingActive) return;
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
@@ -9845,6 +9845,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.briefingPulseAt      = briefingPulseAt;
       window.clearBriefingPulses  = clearBriefingPulses;
       window.briefingArcPulseList = briefingArcPulseList;
+
+      // Switch city/country node visibility during briefing without opening the
+      // sidebar or triggering UI animations. Only 'city' and 'country' are used.
+      window.setBriefingViewMode = function(mode) {
+        currentViewMode       = mode;
+        window.__currentViewMode = mode;
+        if (mode === 'city')    { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
+        else                    { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
+        if (window.__clearAmbientCache) window.__clearAmbientCache();
+      };
+
+      // Show hover card for a named node during briefing.
+      // Pass the node object ({name, lat, lon, population, flag, country}) and
+      // whether it is a city (true) or country (false) node.
+      window.briefingShowLabel = function(nodeObj, isCityNode) {
+        if (!nodeObj) return;
+        const arr    = isCityNode ? cities     : countries;
+        const posArr = isCityNode ? positions  : countryPositions;
+        const pts    = isCityNode ? cityPoints : countryPoints;
+        const idx    = arr.findIndex(n => n.name === nodeObj.name);
+        if (idx < 0 || !pts) return;
+        const pos = new THREE.Vector3(
+          posArr[idx * 3], posArr[idx * 3 + 1], posArr[idx * 3 + 2]
+        ).applyMatrix4(pts.matrixWorld);
+        const projected = pos.clone().project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
+        const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+        showHoverCard(nodeObj, sx, sy);
+      };
+
+      // Hide the hover card (briefing cleanup between segments)
+      window.briefingHideLabel = hideHoverCard;
 
       function focusRegion(region) {
         const lat = parseFloat(region.centroid_lat);
@@ -15591,12 +15624,35 @@ grmClockTick();
     });
   }
 
+  // ── Haversine distance (km) ───────────────────────────────────────────────
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const R = 6371, toRad = x => x * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
   // ── Draw arcs ────────────────────────────────────────────────────────────
+  // Arcs shorter than DOMESTIC_KM are intra-country connections — drawing a
+  // curved line inside a single country looks awkward. Replace with ring pulses.
+  const DOMESTIC_KM = 700;
   function drawSegmentArcs(seg) {
     if (!seg.flow_arcs?.length || !window.buildArcLines) return;
     for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
       const arc = seg.flow_arcs[ai];
       if (arc.from_lat == null || arc.to_lat == null) continue;
+      const distKm = haversineKm(arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng);
+      if (distKm < DOMESTIC_KM) {
+        // Domestic: pulse both endpoints, skip the arc line
+        if (window.briefingPulseAt) {
+          window.briefingPulseAt(arc.from_lat, arc.from_lng);
+          addBTimer(setTimeout(() => {
+            if (window.briefingPulseAt) window.briefingPulseAt(arc.to_lat, arc.to_lng);
+          }, 500));
+        }
+        continue;
+      }
       try {
         const key      = `briefingArc_${ai}`;
         const baseMesh = window.buildArcLines(
@@ -15615,10 +15671,14 @@ grmClockTick();
   }
 
   // ── Globe timers for a segment ────────────────────────────────────────────
+  // dur is the REAL audio duration (seconds), so all fractions are accurate.
   function startGlobeTimers(idx, seg, dur) {
     const ms = f => Math.round(dur * f * 1000);
+    const needsCityView = !!(seg.primary_city);
+
     if (seg.type === 'story') {
       const primary   = seg.primary_city || seg.primary_country;
+      const isCityPrimary = !!(seg.primary_city);
       const secondary = (seg.secondary_locations || []).filter(loc => {
         if (!primary) return true;
         return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - primary.lon) > 0.5;
@@ -15627,17 +15687,37 @@ grmClockTick();
       if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon });
       for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon });
 
-      // 18 %: focus camera on primary location
-      addBTimer(setTimeout(() => {
-        if (segIdx !== idx) return;
-        if (seg.primary_city && window.focusCity)            window.focusCity(seg.primary_city);
-        else if (seg.primary_country && window.focusCountry) window.focusCountry(seg.primary_country);
-        else if (seg.globe_focus && window.startFocus)       window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
-      }, ms(0.18)));
+      // t=0: switch to city view if this segment focuses a city node
+      if (needsCityView && window.setBriefingViewMode) {
+        window.setBriefingViewMode('city');
+      }
 
-      // 36 %: draw flow arcs + pulse secondary nodes
+      // 15 %: focus camera on primary location + hover label after globe settles
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
+        if (seg.primary_city && window.focusCity) {
+          window.focusCity(seg.primary_city);
+          // Show hover label once globe finishes panning (~1.2s)
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.briefingShowLabel) return;
+            window.briefingShowLabel(seg.primary_city, true);
+          }, 1200));
+        } else if (seg.primary_country && window.focusCountry) {
+          window.focusCountry(seg.primary_country);
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.briefingShowLabel) return;
+            window.briefingShowLabel(seg.primary_country, false);
+          }, 1200));
+        } else if (seg.globe_focus && window.startFocus) {
+          window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
+        }
+      }, ms(0.15)));
+
+      // 33 %: draw flow arcs + pulse secondary nodes; hide hover label so arcs
+      //        have full visual attention
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        if (window.briefingHideLabel) window.briefingHideLabel();
         drawSegmentArcs(seg);
         secondary.forEach((loc, i) => {
           addBTimer(setTimeout(() => {
@@ -15645,9 +15725,9 @@ grmClockTick();
             window.briefingPulseAt(loc.lat, loc.lon);
           }, i * 350));
         });
-      }, ms(0.36)));
+      }, ms(0.33)));
 
-      // 48 %+ every 12 %: camera tour through all story locations
+      // 46 %+ every 12 %: camera tours all story nodes in cycle
       if (tourNodes.length >= 2) {
         for (let t = 0; t < 8; t++) {
           const node = tourNodes[(t + 1) % tourNodes.length];
@@ -15655,16 +15735,24 @@ grmClockTick();
             if (segIdx !== idx || !window.startFocus) return;
             window.startFocus(node.lat, node.lon);
             if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-          }, ms(0.48 + t * 0.12)));
+          }, ms(0.46 + t * 0.12)));
         }
       } else if (tourNodes.length === 1) {
         for (let t = 0; t < 3; t++) {
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
-          }, ms(0.48 + t * 0.26)));
+          }, ms(0.46 + t * 0.26)));
         }
       }
+
+      // 95 %: return to country view before segment ends, hide hover card
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        if (needsCityView && window.setBriefingViewMode) window.setBriefingViewMode('country');
+        if (window.briefingHideLabel) window.briefingHideLabel();
+      }, ms(0.95)));
+
     } else if (seg.globe_animate && window.startFocus) {
       window.startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0);
     }
@@ -15696,6 +15784,9 @@ grmClockTick();
     }
 
     // ── Per-segment audio ──────────────────────────────────────────────────
+    // Hide hover card from previous segment immediately
+    if (window.briefingHideLabel) window.briefingHideLabel();
+
     const hasTiming = episode.has_audio && seg.start_ms != null;
     if (hasTiming) {
       // Reuse preloaded element if available and matches, else create new
@@ -15710,51 +15801,52 @@ grmClockTick();
       audio = sa;
       const curIdx = idx;
       const estDur = getSegmentDuration(idx);
-      let timersSet = false;
-      let audioStarted = false;
+      let started = false;
 
-      // onMeta: fires when audio metadata is ready — starts playback.
-      // Guards against double-call (preloaded audio already has readyState >= 1).
-      const onMeta = () => {
-        if (segIdx !== curIdx || !playing || audioStarted) return;
-        audioStarted = true;
+      // onReady: called exactly once when metadata (and therefore real duration)
+      // is available. Starts globe timers with REAL duration, then starts playback.
+      // This is the key fix — globe animations are tied to actual audio length,
+      // not a word-count estimate.
+      const onReady = () => {
+        if (segIdx !== curIdx || !playing || started) return;
+        started = true;
         const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
-        if (!timersSet) { timersSet = true; startGlobeTimers(curIdx, seg, realDur); }
+        clearBTimers();  // clear any stale timers before setting new ones
+        startGlobeTimers(curIdx, seg, realDur);
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
       };
 
-      sa.addEventListener('loadedmetadata', onMeta, { once: true });
-      // Critical: if this element was preloaded, loadedmetadata already fired.
-      // readyState >= 1 (HAVE_METADATA) means the event won't fire again — call directly.
-      if (sa.readyState >= 1) onMeta();
+      if (sa.readyState >= 1) {
+        // Preloaded — metadata already available, fire immediately
+        onReady();
+      } else {
+        sa.addEventListener('loadedmetadata', onReady, { once: true });
+      }
 
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
         clearTimeout(segTimer);
-        // Brief pause then advance
         if (seg.video_id) {
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx) return;
             goToSegment(curIdx + 1);
           }, VIDEO_PAUSE_SECS * 1000);
         } else {
+          // Tight transition — 80ms is enough to let final audio frame flush
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx) return;
             goToSegment(curIdx + 1);
-          }, 300);
+          }, 80);
         }
       }, { once: true });
 
-      // Fallback timer in case audio fails or stalls
-      const fallbackMs = Math.round(estDur * 1000) + 5000;
+      // Fallback: advance anyway if audio stalls or never fires ended
+      const fallbackMs = Math.round(estDur * 1000) + 6000;
       segTimer = setTimeout(() => {
         if (segIdx !== curIdx) return;
+        console.warn(`[briefing] fallback advance seg ${curIdx}`);
         goToSegment(curIdx + 1);
       }, fallbackMs);
-
-      // Start globe timers with estimate immediately (refined on loadedmetadata)
-      startGlobeTimers(idx, seg, estDur);
-      timersSet = true;
 
     } else {
       // No per-segment audio — word-count timer only
