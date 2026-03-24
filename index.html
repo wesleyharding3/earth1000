@@ -15346,22 +15346,41 @@ grmClockTick();
   let segTimer      = null;
   let audio         = null;
   let arcMeshes     = [];
-  let briefingTimers = [];
+  let briefingTimers    = [];
+  let activeTUListeners = [];   // { target, event, listener } — removed on clearBTimers
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
-  function clearBTimers() { briefingTimers.forEach(clearTimeout); briefingTimers = []; }
+  function clearBTimers() {
+    briefingTimers.forEach(clearTimeout);
+    briefingTimers = [];
+    for (const { target, event, listener } of activeTUListeners) {
+      try { target.removeEventListener(event, listener); } catch (_) {}
+    }
+    activeTUListeners = [];
+  }
 
-  // ── Segment audio offset (word-count estimate) ──────────────────────────
+  // ── Segment timing — uses accurate start_ms when generator baked it in ──
   function getSegmentOffset(idx) {
     if (!episode) return 0;
+    const seg = episode.segments?.[idx];
+    if (seg?.start_ms != null) return seg.start_ms / 1000;
+    // Fallback: word-count estimate
     let secs = 0;
     for (let i = 0; i < idx; i++) {
       const s = episode.segments[i];
-      const words = (s.voiceover_text || '').split(/\s+/).filter(Boolean).length;
-      secs += (words / WORDS_PER_MIN) * 60;
+      secs += (((s.voiceover_text || '').split(/\s+/).filter(Boolean).length) / WORDS_PER_MIN) * 60;
       if (s.video_id) secs += VIDEO_PAUSE_SECS;
     }
     return Math.max(0, secs);
+  }
+  function getSegmentDuration(idx) {
+    if (!episode) return 10;
+    const seg  = episode.segments?.[idx];
+    const next = episode.segments?.[idx + 1];
+    if (seg?.start_ms != null && next?.start_ms != null)
+      return Math.max(1, (next.start_ms - seg.start_ms) / 1000);
+    const words = (seg?.voiceover_text || '').split(/\s+/).filter(Boolean).length;
+    return Math.max(4, (words / WORDS_PER_MIN) * 60);
   }
 
   // ── Init ────────────────────────────────────────────────────────────────
@@ -15459,12 +15478,6 @@ grmClockTick();
     });
   }
 
-  // Timing constants for the 3-phase globe narrative sequence
-  const NODE_INTRO_DELAY  = 2200;   // ms — narrator introduces story before globe reacts
-  const ARC_DRAW_DELAY    = 3900;   // ms — arc appears after origin node is established
-  const DEST_FOCUS_DELAY  = 5600;   // ms — camera tours to destination(s)
-  const NODE_TOUR_INTERVAL = 3200;  // ms — interval between node hops in the tour
-
   // ── Draw arcs — each arc gets a unique pulse key so all can tick ──────────
   function drawSegmentArcs(seg) {
     if (!seg.flow_arcs?.length || !window.buildArcLines) return;
@@ -15511,63 +15524,93 @@ grmClockTick();
       if (playing) audio.play().catch(() => {});
     }
 
-    // ── Globe animation — narrator-synced 3-phase sequence ────────────────
+    // ── Globe animation — driven by audio.timeupdate for perfect sync ────
     if (seg.type === 'story') {
+      const segStart = getSegmentOffset(idx);
+      const segDur   = getSegmentDuration(idx);
+
+      // Trigger fractions of segment duration:
+      //   0.18 → narrator has introduced the story, origin node fires
+      //   0.36 → arc draws, destination nodes pulse
+      //   0.48+ → camera tours all nodes every 12% of segment
+      const FRAC_ORIGIN = 0.18;
+      const FRAC_ARC    = 0.36;
+      const FRAC_TOUR   = 0.12;
+
+      const phases    = { origin: false, arc: false };
+      const tourFired = new Set();
+
       const primary   = seg.primary_city || seg.primary_country;
       const secondary = (seg.secondary_locations || []).filter(loc => {
         if (!primary) return true;
         return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - primary.lon) > 0.5;
       });
-
-      // Build the full node tour order: [origin, dest1, dest2, origin, dest1, …]
       const tourNodes = [];
-      if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon, name: primary.name });
-      for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon, name: loc.name });
+      if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon });
+      for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon });
 
-      // ── Phase 1 (NODE_INTRO_DELAY): Origin node ring burst + camera focus ──
-      addBTimer(setTimeout(() => {
-        if (segIdx !== idx) return;
-        if (seg.primary_city && window.focusCity) {
-          window.focusCity(seg.primary_city);
-        } else if (seg.primary_country && window.focusCountry) {
-          window.focusCountry(seg.primary_country);
-        } else if (seg.globe_focus && window.startFocus) {
-          window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
-        }
-      }, NODE_INTRO_DELAY));
-
-      // ── Phase 2 (ARC_DRAW_DELAY): Arcs draw + all destination nodes pulse ──
-      addBTimer(setTimeout(() => {
-        if (segIdx !== idx) return;
+      const fireOrigin = () => {
+        if (seg.primary_city && window.focusCity)         window.focusCity(seg.primary_city);
+        else if (seg.primary_country && window.focusCountry) window.focusCountry(seg.primary_country);
+        else if (seg.globe_focus && window.startFocus)    window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
+      };
+      const fireArc = () => {
         drawSegmentArcs(seg);
-        secondary.forEach((loc, i) => {
-          addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.briefingPulseAt) return;
-            window.briefingPulseAt(loc.lat, loc.lon);
-          }, i * 350));
-        });
-      }, ARC_DRAW_DELAY));
+        secondary.forEach((loc, i) => setTimeout(() => {
+          if (segIdx !== idx || !window.briefingPulseAt) return;
+          window.briefingPulseAt(loc.lat, loc.lon);
+        }, i * 350));
+      };
 
-      // ── Phase 3+ (DEST_FOCUS_DELAY, then NODE_TOUR_INTERVAL): camera tours ──
-      // Arcs persist throughout; camera cycles through all story nodes
-      if (tourNodes.length >= 2) {
-        const MAX_TOUR_STEPS = 10;
-        for (let t = 0; t < MAX_TOUR_STEPS; t++) {
-          const node = tourNodes[(t + 1) % tourNodes.length];   // start from dest on step 0
-          const delay = DEST_FOCUS_DELAY + t * NODE_TOUR_INTERVAL;
-          addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.startFocus) return;
-            window.startFocus(node.lat, node.lon);
-            if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-          }, delay));
-        }
-      } else if (tourNodes.length === 1) {
-        // Single-node story: re-pulse periodically so it stays alive on screen
-        for (let t = 0; t < 4; t++) {
-          addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.briefingPulseAt) return;
-            window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
-          }, DEST_FOCUS_DELAY + t * 5500));
+      if (audio) {
+        // Audio-driven: phases fire when audio position crosses the trigger fraction
+        const onUpdate = () => {
+          if (segIdx !== idx) { audio.removeEventListener('timeupdate', onUpdate); return; }
+          const frac = segDur > 0 ? Math.max(0, (audio.currentTime - segStart) / segDur) : 0;
+
+          if (!phases.origin && frac >= FRAC_ORIGIN) { phases.origin = true; fireOrigin(); }
+          if (!phases.arc    && frac >= FRAC_ARC)    { phases.arc    = true; fireArc();   }
+
+          // Camera tour: cycle through all nodes every FRAC_TOUR after the arc phase
+          if (phases.arc && tourNodes.length >= 2) {
+            const tourStart   = FRAC_ARC + FRAC_TOUR;
+            const step        = frac >= tourStart ? Math.floor((frac - tourStart) / FRAC_TOUR) : -1;
+            for (let s = 0; s <= step; s++) {
+              if (!tourFired.has(s)) {
+                tourFired.add(s);
+                const node = tourNodes[(s + 1) % tourNodes.length];
+                if (window.startFocus)      window.startFocus(node.lat, node.lon);
+                if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
+              }
+            }
+          } else if (phases.arc && tourNodes.length === 1 && !tourFired.has(0)) {
+            // Single node: re-pulse at tour start and every FRAC_TOUR after
+            const tourStart = FRAC_ARC + FRAC_TOUR;
+            const step = frac >= tourStart ? Math.floor((frac - tourStart) / (FRAC_TOUR * 3)) : -1;
+            for (let s = 0; s <= step; s++) {
+              if (!tourFired.has(s)) { tourFired.add(s); if (window.briefingPulseAt) window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon); }
+            }
+          }
+        };
+        audio.addEventListener('timeupdate', onUpdate);
+        activeTUListeners.push({ target: audio, event: 'timeupdate', listener: onUpdate });
+
+      } else {
+        // No audio fallback: use setTimeout with estimated durations
+        addBTimer(setTimeout(() => { if (segIdx !== idx) return; fireOrigin(); },
+          segDur * FRAC_ORIGIN * 1000));
+        addBTimer(setTimeout(() => { if (segIdx !== idx) return; fireArc(); },
+          segDur * FRAC_ARC    * 1000));
+        if (tourNodes.length >= 2) {
+          for (let t = 0; t < 8; t++) {
+            const node  = tourNodes[(t + 1) % tourNodes.length];
+            const delay = segDur * (FRAC_ARC + FRAC_TOUR * (t + 1)) * 1000;
+            addBTimer(setTimeout(() => {
+              if (segIdx !== idx || !window.startFocus) return;
+              window.startFocus(node.lat, node.lon);
+              if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
+            }, delay));
+          }
         }
       }
 
@@ -15599,22 +15642,66 @@ grmClockTick();
   }
 
   // ── Schedule advance ──────────────────────────────────────────────────────
+  // When accurate start_ms offsets exist, advance is driven by audio position
+  // (timeupdate fires when audio crosses the next segment's start boundary).
+  // Fallback: word-count setTimeout when no audio or no offsets.
   function scheduleAdvance(seg) {
     clearTimeout(segTimer);
-    const words  = (seg.voiceover_text || '').split(/\s+/).filter(Boolean).length;
-    const voiceMs = Math.max(5000, (words / WORDS_PER_MIN) * 60000);
+    const curIdx = segIdx;
 
-    if (seg.video_id) {
-      // After voiceover timing, pause audio and let video play for VIDEO_PAUSE_SECS
-      segTimer = setTimeout(() => {
-        if (audio) { try { audio.pause(); } catch (_) {} }
-        segTimer = setTimeout(() => {
-          if (audio && playing) { try { audio.play().catch(() => {}); } catch (_) {} }
-          goToSegment(segIdx + 1);
-        }, VIDEO_PAUSE_SECS * 1000);
-      }, voiceMs);
+    if (audio && episode.segments[curIdx]?.start_ms != null) {
+      // Audio-position-driven advance
+      const next = episode.segments[curIdx + 1];
+      const advanceFn = () => {
+        if (segIdx !== curIdx) return;
+        if (seg.video_id) {
+          try { audio.pause(); } catch (_) {}
+          segTimer = setTimeout(() => {
+            if (segIdx !== curIdx) return;
+            try { if (playing) audio.play().catch(() => {}); } catch (_) {}
+            goToSegment(curIdx + 1);
+          }, VIDEO_PAUSE_SECS * 1000);
+        } else {
+          goToSegment(curIdx + 1);
+        }
+      };
+
+      if (next?.start_ms != null) {
+        const targetSec = next.start_ms / 1000;
+        const onAdv = () => {
+          if (segIdx !== curIdx) { audio.removeEventListener('timeupdate', onAdv); return; }
+          if (audio.currentTime >= targetSec - 0.15) {
+            audio.removeEventListener('timeupdate', onAdv);
+            advanceFn();
+          }
+        };
+        audio.addEventListener('timeupdate', onAdv);
+        activeTUListeners.push({ target: audio, event: 'timeupdate', listener: onAdv });
+      } else {
+        // Last segment: advance when audio ends
+        const onEnd = () => {
+          audio.removeEventListener('ended', onEnd);
+          if (segIdx === curIdx) goToSegment(curIdx + 1);
+        };
+        audio.addEventListener('ended', onEnd);
+        activeTUListeners.push({ target: audio, event: 'ended', listener: onEnd });
+      }
+
     } else {
-      segTimer = setTimeout(() => goToSegment(segIdx + 1), voiceMs + 2000);
+      // Fallback: word-count-based setTimeout
+      const words   = (seg.voiceover_text || '').split(/\s+/).filter(Boolean).length;
+      const voiceMs = Math.max(5000, (words / WORDS_PER_MIN) * 60000);
+      if (seg.video_id) {
+        segTimer = setTimeout(() => {
+          if (audio) { try { audio.pause(); } catch (_) {} }
+          segTimer = setTimeout(() => {
+            if (audio && playing) { try { audio.play().catch(() => {}); } catch (_) {} }
+            goToSegment(segIdx + 1);
+          }, VIDEO_PAUSE_SECS * 1000);
+        }, voiceMs);
+      } else {
+        segTimer = setTimeout(() => goToSegment(segIdx + 1), voiceMs + 2000);
+      }
     }
   }
 

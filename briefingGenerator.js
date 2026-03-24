@@ -31,7 +31,8 @@ const NO_AUDIO  = process.argv.includes('--no-audio');
 // ─── Config ────────────────────────────────────────────────────────────────
 const MAX_THREADS          = 10;  // stories in one briefing
 const MAX_ARTICLES_THREAD  = 6;   // articles shown per story
-const MAX_CATEGORY_REPEAT  = 3;   // max threads from same category
+const MAX_CATEGORY_REPEAT  = 2;   // max threads from same category
+const MAX_PER_REGION       = 2;   // max threads from the same geographic region
 const MAX_ENGLISH_DOMINANT = 4;   // max threads where >70% of articles are English-sourced
 const MIN_VIDEO_THREADS    = 3;   // at least this many story segments must have a video
 const THREAD_LOOKBACK_DAYS = 3;   // only threads active in last N days
@@ -118,13 +119,47 @@ async function run() {
     // ── 6. Build segments JSON ────────────────────────────────────────────
     const segments = buildSegments(narrative, threadData, allArcs, entityCoords);
 
-    // ── 6. Generate ElevenLabs audio ──────────────────────────────────────
+    // ── 6. Generate ElevenLabs audio — per-segment for accurate seek offsets
     let audioData = null;
     if (!NO_AUDIO && ELEVENLABS_KEY) {
-      console.log(`   [${elapsed(t0)}] Synthesising audio with ElevenLabs...`);
-      const fullScript = buildFullScript(narrative);
-      audioData = await synthesiseAudio(fullScript);
-      console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB`);
+      console.log(`   [${elapsed(t0)}] Synthesising ${segments.length} audio pieces with ElevenLabs...`);
+
+      // Build one text piece per segment (voiceover + optional transition)
+      const textPieces = segments.map(seg => {
+        const base = seg.voiceover_text || '';
+        const tr   = seg.transition ? (' ' + seg.transition) : '';
+        return (base + tr).trim();
+      });
+
+      const audioBuffers    = [];
+      const pieceDurationsMs = [];
+
+      for (let pi = 0; pi < textPieces.length; pi++) {
+        const text = textPieces[pi];
+        if (!text) { audioBuffers.push(Buffer.alloc(0)); pieceDurationsMs.push(0); continue; }
+        try {
+          const buf = await synthesiseAudio(text);
+          audioBuffers.push(buf);
+          // ElevenLabs returns 128 kbps CBR MP3: bytes × 8 / 128 = milliseconds
+          pieceDurationsMs.push(Math.round((buf.byteLength * 8) / 128));
+          console.log(`   [${elapsed(t0)}] Piece ${pi + 1}/${textPieces.length} — ${(buf.byteLength / 1024).toFixed(0)}KB`);
+        } catch (err) {
+          console.warn(`   ⚠ Audio piece ${pi} failed: ${err.message}`);
+          audioBuffers.push(Buffer.alloc(0));
+          pieceDurationsMs.push(0);
+        }
+      }
+
+      // Stamp each segment with its audio start offset so the player can seek accurately
+      let cumMs = 0;
+      for (let si = 0; si < segments.length; si++) {
+        segments[si].start_ms = cumMs;
+        cumMs += pieceDurationsMs[si];
+      }
+
+      // Concatenate all non-empty buffers into one MP3 file
+      audioData = Buffer.concat(audioBuffers.filter(b => b.byteLength > 0));
+      console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB total, ${(cumMs / 1000).toFixed(1)}s estimated`);
     } else if (!NO_AUDIO && !ELEVENLABS_KEY) {
       console.warn(`   ⚠ ELEVENLABS_API_KEY not set — skipping audio`);
     }
@@ -142,8 +177,8 @@ async function run() {
     `, [
       narrative.headline,
       buildFullScript(narrative),
-      JSON.stringify(segments),
-      audioData,   // BYTEA or null
+      JSON.stringify(segments),   // segments now include start_ms per entry
+      audioData,
       episodeId
     ]);
 
@@ -167,6 +202,25 @@ async function run() {
 }
 
 // ─── Thread Selection ──────────────────────────────────────────────────────
+function getRegionGroup(thread) {
+  const parts = [
+    ...(thread.geographic_scope || []),
+    thread.title || '',
+    thread.primary_category || '',
+  ].join(' ').toLowerCase();
+  if (/middle.?east|iran|iraq|israel|saudi|yemen|syria|gulf|qatar|bahrain|oman|jordan|lebanon/.test(parts)) return 'mideast';
+  if (/russia|ukraine|belarus|caucasus|georgia|armenia|azerbaijan|central.?asia|kazakhstan|uzbek/.test(parts)) return 'russia_cis';
+  if (/china|japan|korea|taiwan|hong.?kong|mongolia|east.?asia/.test(parts)) return 'east_asia';
+  if (/india|pakistan|bangladesh|nepal|sri.?lanka|south.?asia|afghanistan/.test(parts)) return 'south_asia';
+  if (/southeast.?asia|myanmar|thailand|vietnam|indonesia|philip|malaysia|singapore|cambodia|laos/.test(parts)) return 'se_asia';
+  if (/africa|nigeria|ethiopia|kenya|egypt|sudan|ghana|tanzania|south.?africa|morocco|algeria|congo/.test(parts)) return 'africa';
+  if (/latin.?america|mexico|brazil|argentin|colombia|venezuela|chile|peru|ecuador|cuba|haiti/.test(parts)) return 'latam';
+  if (/europe|germany|france|britain|uk |poland|spain|italy|nato|netherlands|sweden|norway|finland|ukraine/.test(parts)) return 'europe';
+  if (/united.?states|u\.s\.|america|canada|north.?america/.test(parts)) return 'north_america';
+  if (/australia|new.?zealand|pacific|oceania/.test(parts)) return 'oceania';
+  return 'global';
+}
+
 async function selectThreads() {
   // Step 1: Pull candidate threads with video presence flagged.
   // CTE computes the earliest article date per thread (across all history)
@@ -240,22 +294,26 @@ async function selectThreads() {
 
   scored.sort((a, b) => b.diversityScore - a.diversityScore);
 
-  // Step 4: Select with caps — category diversity + English-dominance cap
+  // Step 4: Select with caps — category + region diversity + English-dominance cap
   const selected        = [];
   const skipped         = [];
   const categoryCounts  = {};
+  const regionCounts    = {};
   let englishDomCount   = 0;
 
   for (const thread of scored) {
     if (selected.length >= MAX_THREADS) break;
-    const cat              = thread.primary_category || 'general';
-    const isEngDominant    = thread.englishRatio > 0.7;
+    const cat           = thread.primary_category || 'general';
+    const region        = getRegionGroup(thread);
+    const isEngDominant = thread.englishRatio > 0.7;
 
-    if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT)         { skipped.push(thread); continue; }
-    if (isEngDominant && englishDomCount >= MAX_ENGLISH_DOMINANT)  { skipped.push(thread); continue; }
+    if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT)              { skipped.push(thread); continue; }
+    if (region !== 'global' && (regionCounts[region] || 0) >= MAX_PER_REGION) { skipped.push(thread); continue; }
+    if (isEngDominant && englishDomCount >= MAX_ENGLISH_DOMINANT)        { skipped.push(thread); continue; }
 
     selected.push(thread);
-    categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+    categoryCounts[cat]    = (categoryCounts[cat]    || 0) + 1;
+    regionCounts[region]   = (regionCounts[region]   || 0) + 1;
     if (isEngDominant) englishDomCount++;
   }
 
@@ -565,6 +623,11 @@ REQUIREMENTS:
 - Connect stories when genuinely related (e.g. economic ripple effects, diplomatic links).
 - This briefing draws from sources in multiple languages and countries. When relevant, surface non-Western or non-English perspectives — e.g. how Beijing, Moscow, Tehran, or Seoul view a story, not just Washington or London. Avoid defaulting to a single national lens.
 
+STORY DIVERSITY (strictly enforced):
+- Every segment must cover a DIFFERENT geographic region. Do not include two stories primarily about the same country or region.
+- Do not include two stories of the same event type (two military strikes, two elections, two trade disputes) unless they are in entirely different regions with independent significance.
+- If two stories in the provided list are near-duplicates (same country, same event type, same week), write a segment for the higher-importance one and skip the other entirely — omit it from the segments array. Do NOT write a placeholder.
+
 Return ONLY valid JSON in this exact structure:
 {
   "headline": "Today's briefing headline (max 12 words, present tense)",
@@ -594,7 +657,7 @@ ENTITY RULES (critical for globe arc visualisation):
 - type is "country" or "city" only.`;
 
   const response = await client.messages.create({
-    model:      'claude-sonnet-4-5',
+    model:      'claude-sonnet-4-6',
     max_tokens: 4096,
     messages:   [{ role: 'user', content: prompt }]
   });
