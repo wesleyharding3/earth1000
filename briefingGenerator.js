@@ -11,8 +11,9 @@
  *
  * Usage:
  *   node briefingGenerator.js              # generate for today
- *   node briefingGenerator.js --force      # regenerate even if today's exists
- *   node briefingGenerator.js --no-audio   # skip ElevenLabs (text only)
+ *   node briefingGenerator.js --force        # regenerate narrative/segments (reuses existing audio)
+ *   node briefingGenerator.js --force-audio  # also re-synthesise audio (costs ElevenLabs credits)
+ *   node briefingGenerator.js --no-audio     # skip ElevenLabs entirely (text + globe only)
  */
 
 'use strict';
@@ -25,8 +26,9 @@ const client         = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM'; // Rachel
 
-const FORCE     = process.argv.includes('--force');
-const NO_AUDIO  = process.argv.includes('--no-audio');
+const FORCE       = process.argv.includes('--force');
+const NO_AUDIO    = process.argv.includes('--no-audio');
+const FORCE_AUDIO = process.argv.includes('--force-audio'); // re-synthesise even if audio exists
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const MAX_THREADS          = 10;  // stories in one briefing
@@ -140,7 +142,24 @@ async function run() {
 
     // ── 6. Generate ElevenLabs audio — per-segment for accurate seek offsets
     let audioData = null;
-    if (!NO_AUDIO && ELEVENLABS_KEY) {
+
+    // Check whether today's episode already has audio so we don't re-bill ElevenLabs
+    // on every --force run. Use --force-audio to explicitly re-synthesise.
+    if (!NO_AUDIO && ELEVENLABS_KEY && !FORCE_AUDIO) {
+      const { rows: existingAudio } = await pool.query(
+        `SELECT octet_length(audio_data) AS bytes FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
+        [episodeId]
+      );
+      if (existingAudio.length && existingAudio[0].bytes > 0) {
+        const { rows: audioRow } = await pool.query(
+          `SELECT audio_data FROM briefing_episodes WHERE id = $1`, [episodeId]
+        );
+        audioData = audioRow[0]?.audio_data;
+        console.log(`   [${elapsed(t0)}] Reusing existing audio (${(audioData.length / 1024).toFixed(0)}KB) — use --force-audio to re-synthesise`);
+      }
+    }
+
+    if (!NO_AUDIO && ELEVENLABS_KEY && !audioData) {
       console.log(`   [${elapsed(t0)}] Synthesising ${segments.length} audio pieces with ElevenLabs...`);
 
       // Build one text piece per segment (voiceover + optional transition)
@@ -182,6 +201,8 @@ async function run() {
     } else if (!NO_AUDIO && !ELEVENLABS_KEY) {
       console.warn(`   ⚠ ELEVENLABS_API_KEY not set — skipping audio`);
     }
+    // Note: if audioData is still null here (audio reused from DB), segments won't have
+    // start_ms stamped — the player will fall back to word-count estimates, which is fine.
 
     // ── 7. Save complete episode ───────────────────────────────────────────
     await pool.query(`
