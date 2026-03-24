@@ -15413,8 +15413,19 @@ grmClockTick();
     buildDots();
 
     if (episode.has_audio) {
-      audio = new Audio(`${API}/api/briefing/audio/${episode.id}`);
-      audio.preload = 'auto';
+      // Fetch as blob so the browser can seek to arbitrary positions.
+      // Streaming HTTP URLs don't support audio.currentTime seeking,
+      // causing every segment to replay from t=0.
+      try {
+        const resp = await fetch(`${API}/api/briefing/audio/${episode.id}`);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          audio = new Audio(blobUrl);
+          audio._blobUrl = blobUrl;
+          audio.preload = 'auto';
+        }
+      } catch (_) {}
     }
 
     document.getElementById('briefingOverlay').classList.add('open');
@@ -15429,7 +15440,11 @@ grmClockTick();
     setPlaying(false);
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
-    if (audio) { audio.pause(); audio = null; }
+    if (audio) {
+      audio.pause();
+      if (audio._blobUrl) { try { URL.revokeObjectURL(audio._blobUrl); } catch (_) {} }
+      audio = null;
+    }
     document.getElementById('briefingOverlay').classList.remove('open');
     document.getElementById('bVideoWrap').innerHTML = '';
     document.getElementById('bVideoWrap').classList.remove('visible');

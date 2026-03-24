@@ -101,7 +101,26 @@ async function run() {
 
     // ── 2. Pull articles for each thread ─────────────────────────────────
     console.log(`   [${elapsed(t0)}] Pulling articles for each thread...`);
-    const threadData = await Promise.all(threads.map(t => enrichThread(t)));
+    const rawThreadData = await Promise.all(threads.map(t => enrichThread(t)));
+
+    // ── 2b. Remove threads with >50% article overlap with a higher-ranked thread
+    const threadData   = [];
+    const seenArticles = [];
+    for (const thread of rawThreadData) {
+      const ids = new Set(thread.articleIds || []);
+      if (ids.size === 0) { threadData.push(thread); continue; }
+      const duplicate = seenArticles.some(prev => {
+        const common = [...ids].filter(id => prev.has(id)).length;
+        return common / Math.min(ids.size, prev.size) > 0.5;
+      });
+      if (duplicate) {
+        console.log(`   Deduped thread: "${thread.title}" (>50% article overlap)`);
+      } else {
+        threadData.push(thread);
+        seenArticles.push(ids);
+      }
+    }
+    console.log(`   [${elapsed(t0)}] ${threadData.length} unique threads after overlap dedup`);
 
     // ── 3. Generate Claude narrative (includes story entity extraction) ──────
     console.log(`   [${elapsed(t0)}] Generating narrative with Claude...`);
@@ -614,7 +633,7 @@ STORIES:
 ${JSON.stringify(storySummaries, null, 2)}
 
 REQUIREMENTS:
-- Intro: 2-3 natural, engaging sentences welcoming the listener. 40-50 words.
+- Intro: 2-3 natural, engaging sentences setting the global scene. 40-50 words. Open with a compelling present-tense hook (e.g. "Tensions are escalating...", "A seismic shift is underway..."). NEVER use time-of-day greetings (no "Good morning", "Good evening", "Good afternoon", "Welcome") — this briefing plays at all hours worldwide.
 - Each story segment: 55-75 words. Factual, clear, global perspective. No jargon.
 - Transitions: 1 sentence naturally bridging stories. Vary them — never reuse phrases.
 - Outro: 1-2 warm closing sentences. 20-30 words.
@@ -672,6 +691,7 @@ ENTITY RULES (critical for globe arc visualisation):
 // ─── Segment Builder ───────────────────────────────────────────────────────
 function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
   const segments = [];
+  const usedArticleIds = new Set();   // prevents same article appearing in two segments
 
   // Intro segment
   segments.push({
@@ -707,11 +727,16 @@ function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
       addLoc(arc.to_name,   arc.to_lat,   arc.to_lng);
     }
 
+    // Deduplicate articles: strip any article IDs already used in an earlier segment
+    const rawIds     = thread.articleIds || [];
+    const uniqueIds  = rawIds.filter(id => !usedArticleIds.has(id));
+    uniqueIds.forEach(id => usedArticleIds.add(id));
+
     segments.push({
       type:                'story',
       thread_id:           thread.id,
       thread_title:        thread.title,
-      article_ids:         thread.articleIds,
+      article_ids:         uniqueIds,
       video_id:            thread.videoId,
       voiceover_text:      ns.voiceover,
       transition:          ns.transition || null,
