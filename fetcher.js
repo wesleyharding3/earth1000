@@ -717,6 +717,14 @@ async function fetchFeeds() {
       let rawItems = [];
       try {
         rawItems = await dispatchFetch(feed);
+        // Feed is reachable — reset consecutive failure counter so a source only
+        // gets deactivated after 5 failures *in a row*, not 5 cumulative over its lifetime.
+        if (feed.failure_count > 0) {
+          await pool.query(
+            `UPDATE news_sources SET failure_count = 0, last_error = NULL WHERE id = $1`,
+            [feed.id]
+          );
+        }
       } catch (fetchErr) {
         console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
         await logFeedError(feed, fetchErr);
@@ -756,7 +764,11 @@ async function fetchFeeds() {
       let inserted = 0;
 
       for (const item of newItems) {
-        const title   = item.title;
+        const title   = item.title?.trim() || null;
+        if (!title) {
+          console.warn(`${tag} ⚠️  Skipping item — null/empty title (${item.link || 'no link'})`);
+          continue;
+        }
         const summary = item.summary ? truncateAtWord(item.summary, 500) : null;
 
         let translatedTitle   = null;

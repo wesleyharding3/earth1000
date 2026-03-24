@@ -173,9 +173,12 @@ async function classifyArticle(articleId) {
 
     for (let i = 0; i < topTags.length; i++) {
       const { tagId, combined } = topTags[i];
+      // ON CONFLICT handles the race where classifyArticle fires twice for the
+      // same article (pg_notify + direct call). DO UPDATE keeps the latest scores.
       await client.query(
         `INSERT INTO article_tags (article_id, tag_id, rank, score)
-         VALUES ($1, $2, $3, $4)`,
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (article_id, tag_id) DO UPDATE SET rank = EXCLUDED.rank, score = EXCLUDED.score`,
         [articleId, tagId, i + 1, combined]
       );
     }
