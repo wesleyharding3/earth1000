@@ -762,13 +762,30 @@ async function fetchFeeds() {
       }
 
       let inserted = 0;
+      const skipReasons = {};   // { reason: count } — aggregated at end of feed
 
       for (const item of newItems) {
-        const title   = item.title?.trim() || null;
+        // ── Constraint validation pass ─────────────────────────────────────
+        // Check every field that carries a NOT NULL / unique constraint before
+        // touching the DB. Skip invalid items individually so a feed that mixes
+        // valid articles with navigation/index pages still yields what it can.
+        const title = item.title?.trim() || null;
         if (!title) {
-          console.warn(`${tag} ⚠️  Skipping item — null/empty title (${item.link || 'no link'})`);
+          skipReasons['no title'] = (skipReasons['no title'] || 0) + 1;
           continue;
         }
+        if (!item.fingerprint) {
+          skipReasons['no url/guid'] = (skipReasons['no url/guid'] || 0) + 1;
+          continue;
+        }
+        // Reject items whose "title" is just a URL, a single word, or a pure
+        // number — these are typically sitemap index entries, not articles.
+        if (/^https?:\/\//i.test(title) || title.split(/\s+/).length < 2) {
+          skipReasons['non-article title'] = (skipReasons['non-article title'] || 0) + 1;
+          continue;
+        }
+        // ──────────────────────────────────────────────────────────────────
+
         const summary = item.summary ? truncateAtWord(item.summary, 500) : null;
 
         let translatedTitle   = null;
@@ -847,7 +864,11 @@ async function fetchFeeds() {
         }
       }
 
-      console.log(`${tag} ✅ Inserted: ${inserted} (tier ${feed.popularity_tier ?? "?"}, max ${MAX_ITEMS})`);
+      const skipSummary = Object.entries(skipReasons)
+        .map(([reason, n]) => `${n} ${reason}`)
+        .join(', ');
+      const skipNote = skipSummary ? `  skipped: ${skipSummary}` : '';
+      console.log(`${tag} ✅ Inserted: ${inserted}/${newItems.length} new (tier ${feed.popularity_tier ?? "?"}, max ${MAX_ITEMS})${skipNote}`);
 
     } catch (err) {
       console.error(`${tag} ❌ Failed: ${err.message}`);
