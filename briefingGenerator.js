@@ -250,6 +250,21 @@ async function run() {
     console.log(`   Threads:     ${threads.length}`);
     console.log(`   Segments:    ${segments.length}`);
     console.log(`   Audio:       ${audioData ? (audioData.length / 1024).toFixed(0) + 'KB' : 'none'}`);
+    console.log();
+    console.log('   Segment breakdown:');
+    segments.forEach((seg, i) => {
+      if (seg.type === 'intro') {
+        console.log(`     [${i}] intro      — ${(seg.voiceover_text || '').split(/\s+/).length} words`);
+      } else if (seg.type === 'outro') {
+        console.log(`     [${i}] outro      — ${(seg.voiceover_text || '').split(/\s+/).length} words`);
+      } else {
+        const arcsStr  = seg.flow_arcs?.length  ? ` arcs:${seg.flow_arcs.length}` : '';
+        const vidStr   = seg.video_id           ? ' 🎬' : '';
+        const words    = (seg.voiceover_text || '').split(/\s+/).length;
+        const primary  = seg.primary_city?.name || seg.primary_city || seg.primary_country?.name || seg.primary_country || '—';
+        console.log(`     [${i}] story      — "${seg.thread_title}" | focus:${primary}${arcsStr}${vidStr} | ${words}w`);
+      }
+    });
 
   } catch (err) {
     await pool.query(
@@ -689,13 +704,16 @@ STORY DIVERSITY (applied in tone and framing, NOT by skipping stories):
 - If two stories feel similar, distinguish them clearly in tone, geography, or angle. You must still write both.
 - Vary the geographic perspective: avoid defaulting to a single national lens across consecutive segments.
 
+CRITICAL THREAD_ID RULE: Every segment's "thread_id" must be one of these exact integer values (copy them verbatim — do NOT modify, abbreviate, or invent new ones):
+${storySummaries.map(s => s.thread_id).join(', ')}
+
 Return ONLY valid JSON in this exact structure:
 {
   "headline": "Today's briefing headline (max 12 words, present tense)",
   "intro": "Intro paragraph text",
   "segments": [
     {
-      "thread_id": <number>,
+      "thread_id": <must be one of the exact integers listed above>,
       "voiceover": "Story segment text",
       "transition": "Transition to next story (omit for last segment)",
       "entities": [
