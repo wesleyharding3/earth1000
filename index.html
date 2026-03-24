@@ -1988,6 +1988,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 65%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+/* CSS-drawn location dot — no emoji, renders identically on every platform */
+.articleCardOrigin::before,
+.nfCardOrigin::before {
+  content: '';
+  flex-shrink: 0;
+  display: inline-block;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
 }
 
 .articleTranslateBtn {
@@ -9403,7 +9417,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (article.city_name) parts.push(article.city_name);
             if (article.country_name) parts.push(article.country_name);
             else if (article.iso_code) parts.push(article.iso_code.toUpperCase());
-            if (parts.length) originLabel = `<div class="articleCardOrigin">📰 ${parts.join(", ")}</div>`;
+            if (parts.length) originLabel = `<div class="articleCardOrigin">${parts.join(", ")}</div>`;
           }
 
           return `
@@ -12284,7 +12298,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         
         // Origin label showing the route
-        const originLabel = `<div class="articleCardOrigin">📰 ${f.src?.place || ''} → ${f.dst?.place || ''}</div>`;
+        const originLabel = `<div class="articleCardOrigin">${f.src?.place || ''} → ${f.dst?.place || ''}</div>`;
         
         // Translate button (only if needed)
         const translateBtn = needsTranslation 
@@ -12952,8 +12966,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (a.city_name) parts.push(a.city_name);
       if (a.country_name) parts.push(a.country_name);
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
-      const originIcon = isVideo ? "▶" : "📰";
-      const origin = parts.length ? `<div class="nfCardOrigin">${originIcon} ${esc(parts.join(", "))}</div>` : "";
+      const videoPrefix = isVideo ? `<span style="font-size:8px;opacity:0.6;margin-right:2px;">▶</span>` : "";
+      const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
       return `
       <div style="position:relative">
@@ -14359,7 +14373,11 @@ grmClockTick();
     // Source logo (use flag as fallback)
     const sourceLogo = article.iso_code 
       ? `<img class="adpSourceLogo" src="${FLAG_CDN}${article.iso_code.toLowerCase()}.png" alt="">`
-      : `<div class="adpSourceLogo" style="display:flex;align-items:center;justify-content:center;font-size:16px;">${isVideo ? '▶' : '📰'}</div>`;
+      : `<div class="adpSourceLogo" style="display:flex;align-items:center;justify-content:center;">${
+          isVideo
+            ? `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><polygon points="3,2 12,7 3,12" fill="rgba(255,255,255,0.55)"/></svg>`
+            : `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="2" y="2" width="10" height="10" rx="1.5" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/><line x1="4" y1="5" x2="10" y2="5" stroke="rgba(255,255,255,0.4)" stroke-width="1"/><line x1="4" y1="7.5" x2="10" y2="7.5" stroke="rgba(255,255,255,0.4)" stroke-width="1"/><line x1="4" y1="10" x2="8" y2="10" stroke="rgba(255,255,255,0.4)" stroke-width="1"/></svg>`
+        }</div>`;
     
     // Date formatting
     const pubDate = article.published_at ? new Date(article.published_at) : null;
