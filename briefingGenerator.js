@@ -78,10 +78,19 @@ async function run() {
   let episodeId;
   if (existingRows.length) {
     episodeId = existingRows[0].id;
-    await pool.query(
-      `UPDATE briefing_episodes SET status = 'generating', segments = '[]', audio_data = NULL, generated_at = NOW() WHERE id = $1`,
-      [episodeId]
-    );
+    // Only wipe audio_data when explicitly asked — preserving it lets --force
+    // reuse existing audio without re-billing ElevenLabs.
+    if (FORCE_AUDIO) {
+      await pool.query(
+        `UPDATE briefing_episodes SET status='generating', segments='[]', audio_data=NULL, generated_at=NOW() WHERE id=$1`,
+        [episodeId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE briefing_episodes SET status='generating', segments='[]', generated_at=NOW() WHERE id=$1`,
+        [episodeId]
+      );
+    }
   } else {
     const { rows: [ep] } = await pool.query(`
       INSERT INTO briefing_episodes (user_id, target_date, status, segments)
