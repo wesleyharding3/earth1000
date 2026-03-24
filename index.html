@@ -15281,6 +15281,19 @@ grmClockTick();
   display: block; border: none;
 }
 
+/* ── Captions ── */
+.bCaptions {
+  position: absolute; bottom: 228px; left: 50%; transform: translateX(-50%);
+  max-width: min(700px, calc(100vw - 48px));
+  background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; padding: 10px 18px;
+  color: #fff; font-size: 14px; line-height: 1.55; text-align: center;
+  pointer-events: none; z-index: 3;
+  opacity: 0; transition: opacity 0.35s ease;
+}
+.bCaptions.visible { opacity: 1; }
+
 /* ── Controls — sit just above the article strip ── */
 .bControls {
   position: absolute; bottom: 178px; left: 50%; transform: translateX(-50%);
@@ -15302,6 +15315,15 @@ grmClockTick();
   background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
 }
 .bControlBtn.primary:hover { background: rgba(96,200,255,0.35); }
+.bControlBtn.cc {
+  width: auto; border-radius: 18px; padding: 0 12px;
+  font-size: 11px; font-weight: 700; letter-spacing: 1px;
+  color: rgba(255,255,255,0.55);
+}
+.bControlBtn.cc.active {
+  background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
+  color: #60c8ff;
+}
 
 /* ── Thread label & arc labels — hidden, visuals speak for themselves ── */
 .bThreadLabel { display: none; }
@@ -15401,10 +15423,12 @@ grmClockTick();
   <div class="bArticlesWrap">
     <div class="bArticlesScroll" id="bArticlesScroll"></div>
   </div>
+  <div class="bCaptions" id="bCaptions"></div>
   <div class="bControls">
     <button class="bControlBtn" id="bPrev" title="Previous">&#8592;</button>
     <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
     <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
+    <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
   </div>
   <!-- End-of-briefing recap -->
   <div class="bRecap" id="bRecap">
@@ -15433,6 +15457,7 @@ grmClockTick();
   let arcMeshes     = [];
   let briefingTimers    = [];
   let activeTUListeners = [];
+  let captionsOn    = false;
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
   function clearBTimers() {
@@ -15519,6 +15544,7 @@ grmClockTick();
     document.getElementById('bVideoWrap').innerHTML = '';
     document.getElementById('bVideoWrap').classList.remove('visible');
     document.getElementById('bArticlesScroll').innerHTML = '';
+    document.getElementById('bCaptions').classList.remove('visible');
     updatePlayBtn();
   }
 
@@ -15771,6 +15797,7 @@ grmClockTick();
 
     updateDots();
     updatePlayBtn();
+    updateCaptions(seg);
   }
 
   // ── Article card renderer ─────────────────────────────────────────────────
@@ -15931,12 +15958,30 @@ grmClockTick();
     if (btn) btn.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
   }
 
+  function updateCaptions(seg) {
+    const el = document.getElementById('bCaptions');
+    if (!el) return;
+    const text = seg?.voiceover_text || '';
+    el.textContent = text;
+    el.classList.toggle('visible', captionsOn && !!text);
+  }
+
+  function setCaptions(on) {
+    captionsOn = on;
+    const btn = document.getElementById('bCCToggle');
+    if (btn) btn.classList.toggle('active', captionsOn);
+    // Show/hide immediately based on current segment
+    const seg = episode?.segments?.[segIdx];
+    updateCaptions(seg);
+  }
+
   // ── Event wiring ──────────────────────────────────────────────────────────
   document.getElementById('briefingBtn')?.addEventListener('click', openBriefing);
   document.getElementById('bClose')?.addEventListener('click', closeBriefing);
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
   document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1, true));
   document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1), true));
+  document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
 
   // Recap: close button
   document.getElementById('bRecapClose')?.addEventListener('click', () => {
