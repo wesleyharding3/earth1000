@@ -139,6 +139,17 @@ async function run() {
     if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
 
+    // ── Validate thread_ids before spending any ElevenLabs credits ────────
+    const validThreadIds = new Set(threadData.map(t => String(t.id)));
+    const badSegs = narrative.segments.filter(s => !validThreadIds.has(String(s.thread_id)));
+    if (badSegs.length) {
+      console.warn(`   ⚠️  ${badSegs.length} segment(s) have invalid thread_ids: ${badSegs.map(s => s.thread_id).join(', ')}`);
+      console.warn(`   Valid thread_ids: ${[...validThreadIds].join(', ')}`);
+      if (badSegs.length > narrative.segments.length / 2) {
+        throw new Error(`Claude returned too many invalid thread_ids (${badSegs.length}/${narrative.segments.length}) — aborting to avoid wasting audio credits`);
+      }
+    }
+
     // ── 4. Resolve entity coordinates from DB ─────────────────────────────
     console.log(`   [${elapsed(t0)}] Resolving story entity coordinates...`);
     const entityCoords = await resolveEntityCoords(narrative.segments);
@@ -698,13 +709,16 @@ Return ONLY valid JSON in this exact structure:
 
 ENTITY RULES (critical for globe arc visualisation):
 - "entities" lists 2–4 geographic locations the story IS ABOUT (not where news sources are from).
-- For a Russia-Ukraine conflict story: entities = Russia + Ukraine.
-- For a Jeddah drone strike story: entities = Saudi Arabia + Jeddah (city).
-- For a US-China trade story: entities = United States + China.
-- For a domestic story (e.g. UK election): entities = just that one country.
+- The FIRST entity must be the PRIMARY subject of the story (the main country or city the segment is about).
+- For a Russia-Ukraine conflict story: entities = [Russia, Ukraine].
+- For a Jeddah drone strike story: entities = [Saudi Arabia, Jeddah (city)].
+- For a US-Iran diplomacy story: entities = [United States, Iran] — NOT Ukraine, NOT unrelated countries.
+- For a US-China trade story: entities = [United States, China].
+- For a domestic story (e.g. UK election): entities = [United Kingdom].
 - Use standard English country names that match a world atlas (e.g. "Iran", "South Korea", "Democratic Republic of Congo").
 - Cities must be major, well-known cities — avoid obscure towns.
 - type is "country" or "city" only.
+- CRITICAL: entities must match the story you are writing for that thread_id. Do NOT list entities from other stories.
 
 CONTENT GUARDRAILS (must follow):
 - Do NOT report the death, assassination, or removal from power of any sitting head of state or major world leader unless it is explicitly confirmed as verified fact in the provided articles. If articles only speculate or reference rumours, write about the speculation/rumour angle instead (e.g. "speculation is growing about...").
@@ -739,8 +753,13 @@ function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
   // Story segments
   for (let i = 0; i < narrative.segments.length; i++) {
     const ns     = narrative.segments[i];
-    const thread = threadData.find(t => t.id === ns.thread_id) || threadData[i];
-    if (!thread) continue;
+    // Strict match only — positional fallback (threadData[i]) caused article/story mismatches
+    // when Claude reordered segments or returned wrong thread_ids.
+    const thread = threadData.find(t => String(t.id) === String(ns.thread_id));
+    if (!thread) {
+      console.warn(`  [buildSegments] segment ${i} has unknown thread_id ${ns.thread_id} — skipping`);
+      continue;
+    }
 
     const arcs = allArcs.filter(a => a.thread_id === thread.id);
 
