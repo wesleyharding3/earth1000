@@ -15407,6 +15407,7 @@ grmClockTick();
   function openBriefing() {
     if (!episode) return;
     window.briefingActive = true;
+    const briefingStartTime = Date.now();
 
     document.getElementById('bHeadline').textContent = episode.headline;
     document.getElementById('bDate').textContent = new Date(episode.target_date)
@@ -15419,7 +15420,7 @@ grmClockTick();
     setPlaying(true);
     goToSegment(0);
 
-    // Fetch audio as seekable blob in the background (non-blocking)
+    // Fetch audio blob in the background, sync to elapsed clock on load
     if (episode.has_audio) {
       fetch(`${API}/api/briefing/audio/${episode.id}`)
         .then(r => r.ok ? r.blob() : null)
@@ -15429,11 +15430,19 @@ grmClockTick();
           audio = new Audio(url);
           audio._blobUrl = url;
           audio.preload = 'auto';
-          // Seek to wherever the setTimeout clock has advanced us to
-          try { audio.currentTime = Math.max(0, getSegmentOffset(segIdx)); } catch (_) {}
-          if (playing) audio.play().catch(() => {});
+          // Wait for metadata so currentTime assignment is honoured.
+          // Seek to elapsed wall-clock time so audio stays in sync with the setTimeout clock.
+          audio.addEventListener('loadedmetadata', () => {
+            const elapsedSec = (Date.now() - briefingStartTime) / 1000;
+            const dur = isFinite(audio.duration) ? audio.duration : Infinity;
+            const seekTo = Math.max(0, Math.min(elapsedSec, dur - 0.1));
+            console.log(`[briefing] audio ready — duration=${audio.duration?.toFixed(1)}s elapsed=${elapsedSec.toFixed(1)}s seekTo=${seekTo.toFixed(1)}s`);
+            try { audio.currentTime = seekTo; } catch (_) {}
+            if (playing) audio.play().catch(e => console.warn('[briefing] audio play blocked:', e.message));
+          }, { once: true });
+          audio.addEventListener('error', e => console.warn('[briefing] audio error:', e));
         })
-        .catch(() => {});
+        .catch(e => console.warn('[briefing] audio fetch failed:', e));
     }
   }
 
@@ -15499,12 +15508,14 @@ grmClockTick();
 
   // ── Draw arcs — each arc gets a unique pulse key so all can tick ──────────
   function drawSegmentArcs(seg) {
+    console.log('[briefing] drawSegmentArcs — arcs:', seg.flow_arcs?.length ?? 0, 'buildArcLines:', !!window.buildArcLines);
     if (!seg.flow_arcs?.length || !window.buildArcLines) return;
     for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
       const arc = seg.flow_arcs[ai];
       if (arc.from_lat == null || arc.to_lat == null) continue;
       try {
         const key      = `briefingArc_${ai}`;
+        console.log('[briefing]   arc', ai, arc.from_name, '→', arc.to_name);
         const baseMesh = window.buildArcLines(
           [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
           0xff6600, 0.002, 0.28, key
@@ -15516,7 +15527,8 @@ grmClockTick();
           arcMeshes.push(pulseMesh);
           if (window.briefingArcPulseList) window.briefingArcPulseList.push(pulseMesh);
         }
-      } catch (_) {}
+        console.log('[briefing]   baseMesh:', !!baseMesh, 'pulseMesh:', !!pulseMesh);
+      } catch (err) { console.warn('[briefing] arc error:', err); }
     }
   }
 
@@ -15531,6 +15543,8 @@ grmClockTick();
     segIdx = idx;
 
     const seg = episode.segments[idx];
+    const dur = getSegmentDuration(idx);
+    console.log(`[briefing] goToSegment(${idx}, seek=${seek}) type=${seg.type} dur=${dur.toFixed(1)}s audio=${audio ? 'ready@' + audio.currentTime.toFixed(1) + 's' : 'null'}`);
 
     // Clear previous globe state immediately
     clearArcMeshes();
@@ -15569,6 +15583,7 @@ grmClockTick();
       // 18 %: narrator has introduced story → origin node rings + camera focus
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
+        console.log(`[briefing] 18% focus — seg=${idx} primary_city=${seg.primary_city?.name} primary_country=${seg.primary_country?.name} focusCity=${!!window.focusCity}`);
         if (seg.primary_city && window.focusCity)            window.focusCity(seg.primary_city);
         else if (seg.primary_country && window.focusCountry) window.focusCountry(seg.primary_country);
         else if (seg.globe_focus && window.startFocus)       window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
@@ -15577,6 +15592,7 @@ grmClockTick();
       // 36 %: arcs draw + all destination nodes pulse
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
+        console.log(`[briefing] 36% arcs — seg=${idx}`);
         drawSegmentArcs(seg);
         secondary.forEach((loc, i) => {
           addBTimer(setTimeout(() => {
@@ -15639,6 +15655,7 @@ grmClockTick();
     clearTimeout(segTimer);
     const curIdx = segIdx;
     const durMs  = Math.round(getSegmentDuration(curIdx) * 1000);
+    console.log(`[briefing] scheduleAdvance seg=${curIdx} durMs=${durMs}`);
 
     if (seg.video_id) {
       // After narration, pause audio briefly so video can play
