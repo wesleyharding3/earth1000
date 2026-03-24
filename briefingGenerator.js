@@ -704,7 +704,12 @@ ENTITY RULES (critical for globe arc visualisation):
 - For a domestic story (e.g. UK election): entities = just that one country.
 - Use standard English country names that match a world atlas (e.g. "Iran", "South Korea", "Democratic Republic of Congo").
 - Cities must be major, well-known cities — avoid obscure towns.
-- type is "country" or "city" only.`;
+- type is "country" or "city" only.
+
+CONTENT GUARDRAILS (must follow):
+- Do NOT report the death, assassination, or removal from power of any sitting head of state or major world leader unless it is explicitly confirmed as verified fact in the provided articles. If articles only speculate or reference rumours, write about the speculation/rumour angle instead (e.g. "speculation is growing about...").
+- Do NOT use time-of-day greetings ("Good morning", "Good evening") — viewers watch at any time.
+- Do NOT write consecutive segments about the same country or conflict unless it is a distinctly different angle.`;
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-6',
@@ -763,6 +768,22 @@ function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
     const uniqueIds  = rawIds.filter(id => !usedArticleIds.has(id));
     uniqueIds.forEach(id => usedArticleIds.add(id));
 
+    // ── Primary globe focus: use Claude's entity extraction (subject of story),
+    //    NOT article geo-tags (source country, often wrong for international stories)
+    let primaryCity    = null;
+    let primaryCountry = null;
+    for (const e of (ns.entities || [])) {
+      const coords = entityCoords[e.name];
+      if (!coords) continue;
+      if (e.type === 'city'    && !primaryCity)    primaryCity    = { name: e.name, lat: coords.lat, lon: coords.lon };
+      if (e.type === 'country' && !primaryCountry) primaryCountry = { name: e.name, lat: coords.lat, lon: coords.lon };
+    }
+    // Fallback to article-sourced location only if Claude found nothing
+    if (!primaryCity && !primaryCountry) {
+      primaryCity    = thread.primaryCity    || null;
+      primaryCountry = thread.primaryCountry || null;
+    }
+
     segments.push({
       type:                'story',
       thread_id:           thread.id,
@@ -772,8 +793,8 @@ function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
       voiceover_text:      ns.voiceover,
       transition:          ns.transition || null,
       globe_focus:         thread.globeFocus,
-      primary_city:        thread.primaryCity    || null,
-      primary_country:     thread.primaryCountry || null,
+      primary_city:        primaryCity,
+      primary_country:     primaryCountry,
       flow_arcs:           arcs,
       secondary_locations: secondaryLocations,
     });

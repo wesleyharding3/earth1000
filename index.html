@@ -8691,6 +8691,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // ────────────────────────────────────────────────────────────────
 
       function updateHoverLabels() {
+        // Disable hover labels during briefing
+        if (window.briefingActive) { hideHoverCard(); return; }
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
@@ -8850,6 +8852,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let touchNodeSelectTime = 0;
 
       window.addEventListener("click", event => {
+        if (window.briefingActive) return;   // globe locked during briefing
         // If a touch-initiated node selection just happened, skip this click
         if (Date.now() - touchNodeSelectTime < 600) return;
 
@@ -8949,6 +8952,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       window.addEventListener("touchstart", (event) => {
+        if (window.briefingActive) return;   // globe locked during briefing
         if (event.touches.length !== 1) return;
         
         // If panel is active and touch is outside panel, close it and don't select new node
@@ -15303,9 +15307,72 @@ grmClockTick();
 }
 @keyframes bSkelPulse { 0%,100%{opacity:.5} 50%{opacity:1} }
 
+/* ── Card enter animation ── */
+@keyframes bCardSlideIn { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:translateX(0); } }
+.bCardEnter { animation: bCardSlideIn 0.35s ease both; opacity:0; }
+
+/* ── End-of-briefing recap ── */
+.bRecap {
+  position: absolute; inset: 0;
+  background: rgba(4,10,20,0.97);
+  display: flex; flex-direction: column;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.4s ease;
+  z-index: 10;
+}
+.bRecap.open { opacity: 1; pointer-events: all; }
+.bRecapHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 24px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  flex-shrink: 0;
+}
+.bRecapTitle { color: #fff; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.bRecapClose {
+  background: none; border: 1px solid rgba(255,255,255,0.2); color: #aaa;
+  border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px;
+}
+.bRecapClose:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.bRecapGrid {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 16px 20px 24px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px; align-content: start;
+}
+.bRecapCard {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; padding: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  opacity: 0; transform: translateY(12px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.bRecapCard.visible { opacity: 1; transform: translateY(0); }
+.bRecapNum { font-size: 10px; color: #60c8ff; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.bRecapHeadline { color: #fff; font-size: 13px; font-weight: 600; line-height: 1.4; }
+.bRecapTeaser { color: rgba(255,255,255,0.55); font-size: 11px; line-height: 1.5; }
+.bRecapPlay {
+  background: rgba(96,200,255,0.12); border: 1px solid rgba(96,200,255,0.3);
+  color: #60c8ff; border-radius: 5px; padding: 5px 12px; font-size: 11px;
+  cursor: pointer; align-self: flex-start; letter-spacing: 0.03em;
+}
+.bRecapPlay:hover { background: rgba(96,200,255,0.25); }
+.bRecapArticles {
+  display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px;
+}
+.bRecapThumb {
+  width: 40px; height: 30px; border-radius: 4px; object-fit: cover;
+  background: rgba(255,255,255,0.08); cursor: pointer; flex-shrink: 0;
+}
+.bRecapThumbNone {
+  width: 40px; height: 30px; border-radius: 4px;
+  background: rgba(255,255,255,0.06);
+}
+
 @media (max-width: 600px) {
   .bVideoWrap { display: none; }
   .bHeaderHeadline { display: none; }
+  .bRecapGrid { grid-template-columns: 1fr; }
 }
 </style>
 
@@ -15330,6 +15397,14 @@ grmClockTick();
     <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
     <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
   </div>
+  <!-- End-of-briefing recap -->
+  <div class="bRecap" id="bRecap">
+    <div class="bRecapHeader">
+      <span class="bRecapTitle">Today's Briefing — Summary</span>
+      <button class="bRecapClose" id="bRecapClose">Close ✕</button>
+    </div>
+    <div class="bRecapGrid" id="bRecapGrid"></div>
+  </div>
 </div>
 
 <script>
@@ -15338,16 +15413,17 @@ grmClockTick();
 
   const API           = 'https://earth-wjr6.onrender.com';
   const WORDS_PER_MIN = 148;
-  const VIDEO_PAUSE_SECS = 18;   // seconds of video to let play after voiceover timing
+  const VIDEO_PAUSE_SECS = 18;
 
   let episode       = null;
   let segIdx        = 0;
   let playing       = false;
   let segTimer      = null;
-  let audio         = null;
+  let audio         = null;    // current segment's Audio element
+  let audioNext     = null;    // preloaded next segment's Audio element
   let arcMeshes     = [];
   let briefingTimers    = [];
-  let activeTUListeners = [];   // { target, event, listener } — removed on clearBTimers
+  let activeTUListeners = [];
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
   function clearBTimers() {
@@ -15402,65 +15478,37 @@ grmClockTick();
   }
 
   // ── Open ─────────────────────────────────────────────────────────────────
-  // Opens overlay immediately, then loads audio blob in background.
-  // Timing is driven purely by setTimeout — audio is just the voice track.
   function openBriefing() {
     if (!episode) return;
     window.briefingActive = true;
-    const briefingStartTime = Date.now();
-
+    document.getElementById('bRecap').classList.remove('open');
     document.getElementById('bHeadline').textContent = episode.headline;
     document.getElementById('bDate').textContent = new Date(episode.target_date)
       .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-
     buildDots();
     document.getElementById('briefingOverlay').classList.add('open');
-
-    // Start immediately — UI, globe, articles all fire now
-    setPlaying(true);
+    playing = true;
+    updatePlayBtn();
     goToSegment(0);
-
-    // Fetch audio blob in the background, sync to elapsed clock on load
-    if (episode.has_audio) {
-      fetch(`${API}/api/briefing/audio/${episode.id}`)
-        .then(r => r.ok ? r.blob() : null)
-        .then(blob => {
-          if (!blob || !window.briefingActive) return;
-          const url = URL.createObjectURL(blob);
-          audio = new Audio(url);
-          audio._blobUrl = url;
-          audio.preload = 'auto';
-          // Wait for metadata so currentTime assignment is honoured.
-          // Seek to elapsed wall-clock time so audio stays in sync with the setTimeout clock.
-          audio.addEventListener('loadedmetadata', () => {
-            const elapsedSec = (Date.now() - briefingStartTime) / 1000;
-            const dur = isFinite(audio.duration) ? audio.duration : Infinity;
-            const seekTo = Math.max(0, Math.min(elapsedSec, dur - 0.1));
-            console.log(`[briefing] audio ready — duration=${audio.duration?.toFixed(1)}s elapsed=${elapsedSec.toFixed(1)}s seekTo=${seekTo.toFixed(1)}s`);
-            try { audio.currentTime = seekTo; } catch (_) {}
-            if (playing) audio.play().catch(e => console.warn('[briefing] audio play blocked:', e.message));
-          }, { once: true });
-          audio.addEventListener('error', e => console.warn('[briefing] audio error:', e));
-        })
-        .catch(e => console.warn('[briefing] audio fetch failed:', e));
-    }
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
   function closeBriefing() {
     window.briefingActive = false;
+    playing = false;
+    clearTimeout(segTimer);
     clearBTimers();
-    setPlaying(false);
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
-    if (audio) {
-      audio.pause();
-      if (audio._blobUrl) { try { URL.revokeObjectURL(audio._blobUrl); } catch (_) {} }
-      audio = null;
-    }
+    if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
+    if (audioNext) { try { audioNext.pause(); } catch (_) {} audioNext = null; }
+    segIdx = 0;
     document.getElementById('briefingOverlay').classList.remove('open');
+    document.getElementById('bRecap').classList.remove('open');
     document.getElementById('bVideoWrap').innerHTML = '';
     document.getElementById('bVideoWrap').classList.remove('visible');
+    document.getElementById('bArticlesScroll').innerHTML = '';
+    updatePlayBtn();
   }
 
   // ── Dots ─────────────────────────────────────────────────────────────────
@@ -15506,16 +15554,14 @@ grmClockTick();
     });
   }
 
-  // ── Draw arcs — each arc gets a unique pulse key so all can tick ──────────
+  // ── Draw arcs ────────────────────────────────────────────────────────────
   function drawSegmentArcs(seg) {
-    console.log('[briefing] drawSegmentArcs — arcs:', seg.flow_arcs?.length ?? 0, 'buildArcLines:', !!window.buildArcLines);
     if (!seg.flow_arcs?.length || !window.buildArcLines) return;
     for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
       const arc = seg.flow_arcs[ai];
       if (arc.from_lat == null || arc.to_lat == null) continue;
       try {
         const key      = `briefingArc_${ai}`;
-        console.log('[briefing]   arc', ai, arc.from_name, '→', arc.to_name);
         const baseMesh = window.buildArcLines(
           [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
           0xff6600, 0.002, 0.28, key
@@ -15527,50 +15573,14 @@ grmClockTick();
           arcMeshes.push(pulseMesh);
           if (window.briefingArcPulseList) window.briefingArcPulseList.push(pulseMesh);
         }
-        console.log('[briefing]   baseMesh:', !!baseMesh, 'pulseMesh:', !!pulseMesh);
-      } catch (err) { console.warn('[briefing] arc error:', err); }
+      } catch (_) {}
     }
   }
 
-  // ── Go to segment ─────────────────────────────────────────────────────────
-  // seek=true  → user-initiated skip: pause + seek to correct offset + resume
-  // seek=false → auto-advance: audio already playing through naturally, don't touch it
-  async function goToSegment(idx, seek = false) {
-    clearTimeout(segTimer);
-    clearBTimers();
-
-    if (!episode || idx >= episode.segments.length) { closeBriefing(); return; }
-    segIdx = idx;
-
-    const seg = episode.segments[idx];
-    const dur = getSegmentDuration(idx);
-    console.log(`[briefing] goToSegment(${idx}, seek=${seek}) type=${seg.type} dur=${dur.toFixed(1)}s audio=${audio ? 'ready@' + audio.currentTime.toFixed(1) + 's' : 'null'}`);
-
-    // Clear previous globe state immediately
-    clearArcMeshes();
-    if (window.clearBriefingPulses) window.clearBriefingPulses();
-
-    // Audio control: only seek when user explicitly skips.
-    // On auto-advance the concatenated MP3 is already at the right position — seeking
-    // in a browser-decoded blob is unreliable and resets playback to 0.
-    if (audio) {
-      if (seek) {
-        try {
-          audio.pause();
-          audio.currentTime = Math.max(0, getSegmentOffset(idx));
-        } catch (_) {}
-        if (playing) audio.play().catch(() => {});
-      } else if (!playing) {
-        try { audio.pause(); } catch (_) {}
-      }
-    }
-
-    // ── Globe animation — pure setTimeout, fraction of segment duration ──
-    // Single clock: no competing timeupdate listeners, always fires reliably.
+  // ── Globe timers for a segment ────────────────────────────────────────────
+  function startGlobeTimers(idx, seg, dur) {
+    const ms = f => Math.round(dur * f * 1000);
     if (seg.type === 'story') {
-      const dur = getSegmentDuration(idx);
-      const ms  = f => Math.round(dur * f * 1000);  // fraction → milliseconds
-
       const primary   = seg.primary_city || seg.primary_country;
       const secondary = (seg.secondary_locations || []).filter(loc => {
         if (!primary) return true;
@@ -15580,19 +15590,17 @@ grmClockTick();
       if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon });
       for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon });
 
-      // 18 %: narrator has introduced story → origin node rings + camera focus
+      // 18 %: focus camera on primary location
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
-        console.log(`[briefing] 18% focus — seg=${idx} primary_city=${seg.primary_city?.name} primary_country=${seg.primary_country?.name} focusCity=${!!window.focusCity}`);
         if (seg.primary_city && window.focusCity)            window.focusCity(seg.primary_city);
         else if (seg.primary_country && window.focusCountry) window.focusCountry(seg.primary_country);
         else if (seg.globe_focus && window.startFocus)       window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
       }, ms(0.18)));
 
-      // 36 %: arcs draw + all destination nodes pulse
+      // 36 %: draw flow arcs + pulse secondary nodes
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
-        console.log(`[briefing] 36% arcs — seg=${idx}`);
         drawSegmentArcs(seg);
         secondary.forEach((loc, i) => {
           addBTimer(setTimeout(() => {
@@ -15602,7 +15610,7 @@ grmClockTick();
         });
       }, ms(0.36)));
 
-      // 48 %+, every 12 %: camera tours all story nodes in cycle
+      // 48 %+ every 12 %: camera tour through all story locations
       if (tourNodes.length >= 2) {
         for (let t = 0; t < 8; t++) {
           const node = tourNodes[(t + 1) % tourNodes.length];
@@ -15620,9 +15628,109 @@ grmClockTick();
           }, ms(0.48 + t * 0.26)));
         }
       }
-
     } else if (seg.globe_animate && window.startFocus) {
       window.startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0);
+    }
+  }
+
+  // ── Go to segment ─────────────────────────────────────────────────────────
+  // Each segment fetches its own MP3 slice. audio.ended drives advancement.
+  // seek=true on user-initiated skips; seek=false on auto-advance (audio.ended).
+  function goToSegment(idx, seek = false) {
+    clearTimeout(segTimer);
+    clearBTimers();
+
+    // End of briefing → show recap
+    if (!episode || idx >= episode.segments.length) {
+      showRecap();
+      return;
+    }
+    segIdx = idx;
+    const seg = episode.segments[idx];
+
+    // Reset globe state
+    clearArcMeshes();
+    if (window.clearBriefingPulses) window.clearBriefingPulses();
+
+    // Stop & discard current audio
+    if (audio) {
+      try { audio.onended = null; audio.pause(); } catch (_) {}
+      audio = null;
+    }
+
+    // ── Per-segment audio ──────────────────────────────────────────────────
+    const hasTiming = episode.has_audio && seg.start_ms != null;
+    if (hasTiming) {
+      // Reuse preloaded element if available and matches, else create new
+      let sa;
+      if (audioNext && audioNext._segIdx === idx) {
+        sa = audioNext; audioNext = null;
+      } else {
+        sa = new Audio(`${API}/api/briefing/audio/${episode.id}/${idx}`);
+        sa.preload = 'auto';
+        sa._segIdx = idx;
+      }
+      audio = sa;
+      const curIdx = idx;
+      const estDur = getSegmentDuration(idx);
+      let timersSet = false;
+
+      sa.addEventListener('loadedmetadata', () => {
+        if (segIdx !== curIdx || !playing) return;
+        // Set globe timers with real duration; fall back to estimate
+        const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
+        if (!timersSet) { timersSet = true; startGlobeTimers(curIdx, seg, realDur); }
+        sa.play().catch(() => {});
+      }, { once: true });
+
+      sa.addEventListener('ended', () => {
+        if (segIdx !== curIdx || !playing) return;
+        clearTimeout(segTimer);
+        // Brief pause then advance
+        if (seg.video_id) {
+          segTimer = setTimeout(() => {
+            if (segIdx !== curIdx) return;
+            goToSegment(curIdx + 1);
+          }, VIDEO_PAUSE_SECS * 1000);
+        } else {
+          segTimer = setTimeout(() => {
+            if (segIdx !== curIdx) return;
+            goToSegment(curIdx + 1);
+          }, 300);
+        }
+      }, { once: true });
+
+      // Fallback timer in case audio fails or stalls
+      const fallbackMs = Math.round(estDur * 1000) + 5000;
+      segTimer = setTimeout(() => {
+        if (segIdx !== curIdx) return;
+        goToSegment(curIdx + 1);
+      }, fallbackMs);
+
+      // Start globe timers with estimate immediately (refined on loadedmetadata)
+      startGlobeTimers(idx, seg, estDur);
+      timersSet = true;
+
+    } else {
+      // No per-segment audio — word-count timer only
+      const estDur = getSegmentDuration(idx);
+      startGlobeTimers(idx, seg, estDur);
+      if (playing) {
+        const curIdx = idx;
+        segTimer = setTimeout(() => {
+          if (segIdx !== curIdx) return;
+          goToSegment(curIdx + 1);
+        }, Math.round(estDur * 1000) + 800);
+      }
+    }
+
+    // Preload next segment in background
+    const nextIdx = idx + 1;
+    if (episode.has_audio && nextIdx < episode.segments.length &&
+        episode.segments[nextIdx]?.start_ms != null) {
+      audioNext = new Audio(`${API}/api/briefing/audio/${episode.id}/${nextIdx}`);
+      audioNext.preload = 'auto';
+      audioNext._segIdx = nextIdx;
     }
 
     // ── Video embed ────────────────────────────────────────────────────────
@@ -15635,45 +15743,15 @@ grmClockTick();
       videoWrap.classList.remove('visible');
     }
 
-    // ── Article cards ──────────────────────────────────────────────────────
+    // ── Article cards (animated, non-blocking) ─────────────────────────────
     if (seg.article_ids?.length) {
-      await loadArticles(seg.article_ids);
+      loadArticlesAnimated(seg.article_ids);
     } else {
       document.getElementById('bArticlesScroll').innerHTML = '';
     }
 
     updateDots();
     updatePlayBtn();
-
-    if (playing) scheduleAdvance(seg);
-  }
-
-  // ── Schedule advance ──────────────────────────────────────────────────────
-  // Pure setTimeout using accurate start_ms durations (falls back to word count).
-  // Audio is purely a voice track — it does not drive segment advancement.
-  function scheduleAdvance(seg) {
-    clearTimeout(segTimer);
-    const curIdx = segIdx;
-    const durMs  = Math.round(getSegmentDuration(curIdx) * 1000);
-    console.log(`[briefing] scheduleAdvance seg=${curIdx} durMs=${durMs}`);
-
-    if (seg.video_id) {
-      // After narration, pause audio briefly so video can play
-      segTimer = setTimeout(() => {
-        if (segIdx !== curIdx) return;
-        if (audio) { try { audio.pause(); } catch (_) {} }
-        segTimer = setTimeout(() => {
-          if (segIdx !== curIdx) return;
-          if (audio && playing) { try { audio.play().catch(() => {}); } catch (_) {} }
-          goToSegment(curIdx + 1);
-        }, VIDEO_PAUSE_SECS * 1000);
-      }, durMs);
-    } else {
-      segTimer = setTimeout(() => {
-        if (segIdx !== curIdx) return;
-        goToSegment(curIdx + 1);
-      }, durMs + 800);
-    }
   }
 
   // ── Article card renderer ─────────────────────────────────────────────────
@@ -15698,23 +15776,32 @@ grmClockTick();
     </div>`;
   }
 
-  // ── Article cards ─────────────────────────────────────────────────────────
-  async function loadArticles(ids) {
+  // ── Animated article loader ───────────────────────────────────────────────
+  async function loadArticlesAnimated(ids) {
     const scroll = document.getElementById('bArticlesScroll');
-    scroll.innerHTML = ids.map(() => `<div class="bCardSkel"></div>`).join('');
+    const snapIdx = segIdx;  // capture so stale updates don't clobber
+    scroll.innerHTML = ids.map(() => '<div class="bCardSkel"></div>').join('');
     try {
       const res = await fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`);
-      if (!res.ok) throw new Error('fetch failed');
+      if (!res.ok) throw new Error('fetch');
       const articles = await res.json();
-      scroll.innerHTML = articles.map(a => makeBriefingCard(a)).join('');
-    } catch (_) {
+      if (segIdx !== snapIdx) return;   // segment changed while loading
       scroll.innerHTML = '';
+      articles.forEach((a, i) => {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = makeBriefingCard(a);
+        const el = tmp.firstElementChild;
+        el.classList.add('bCardEnter');
+        el.style.animationDelay = `${i * 110}ms`;
+        scroll.appendChild(el);
+      });
+    } catch (_) {
+      if (segIdx === snapIdx) scroll.innerHTML = '';
     }
   }
 
   // ── Arc cleanup ───────────────────────────────────────────────────────────
   function clearArcMeshes() {
-    // Stop pulsing before disposing so the render loop doesn't touch dead objects
     if (window.briefingArcPulseList) window.briefingArcPulseList.length = 0;
     const sc = window.globeScene;
     arcMeshes.forEach(m => {
@@ -15727,6 +15814,68 @@ grmClockTick();
     arcMeshes = [];
   }
 
+  // ── End-of-briefing recap ─────────────────────────────────────────────────
+  function showRecap() {
+    playing = false;
+    updatePlayBtn();
+    clearTimeout(segTimer);
+    clearBTimers();
+    clearArcMeshes();
+    if (window.clearBriefingPulses) window.clearBriefingPulses();
+
+    const grid = document.getElementById('bRecapGrid');
+    const storySegs = episode.segments.filter(s => s.type === 'story');
+    grid.innerHTML = '';
+
+    storySegs.forEach((seg, si) => {
+      const actualIdx = episode.segments.indexOf(seg);
+      const card = document.createElement('div');
+      card.className = 'bRecapCard';
+
+      const teaser = (seg.voiceover_text || '').slice(0, 130).trimEnd();
+      const ellipsis = seg.voiceover_text?.length > 130 ? '…' : '';
+
+      // Article thumbnails (up to 4)
+      const thumbIds = (seg.article_ids || []).slice(0, 4);
+      const thumbsHtml = thumbIds.map(id =>
+        `<div class="bRecapThumbNone" data-aid="${id}"></div>`
+      ).join('');
+
+      card.innerHTML = `
+        <div class="bRecapNum">Story ${si + 1}</div>
+        <div class="bRecapHeadline">${(seg.thread_title || seg.primary_country?.name || 'Story').replace(/</g,'&lt;')}</div>
+        <div class="bRecapTeaser">${teaser.replace(/</g,'&lt;')}${ellipsis}</div>
+        <button class="bRecapPlay" data-idx="${actualIdx}">▶ Replay</button>
+        <div class="bRecapArticles">${thumbsHtml}</div>`;
+
+      grid.appendChild(card);
+
+      // Animate in staggered
+      setTimeout(() => card.classList.add('visible'), si * 80 + 50);
+
+      // Fetch thumbnails lazily
+      if (thumbIds.length) {
+        fetch(`${API}/api/articles/by-ids?ids=${thumbIds.join(',')}`)
+          .then(r => r.ok ? r.json() : [])
+          .then(arts => {
+            card.querySelectorAll('.bRecapThumbNone').forEach((el, i) => {
+              const a = arts[i]; if (!a) return;
+              const src = a.image_url?.trim() || a.catalog_image_url?.trim() || '';
+              if (src) {
+                const img = document.createElement('img');
+                img.className = 'bRecapThumb';
+                img.src = src; img.alt = '';
+                img.onclick = () => window.open(a.url, '_blank');
+                el.replaceWith(img);
+              }
+            });
+          }).catch(() => {});
+      }
+    });
+
+    document.getElementById('bRecap').classList.add('open');
+  }
+
   // ── Playback controls ─────────────────────────────────────────────────────
   function setPlaying(val) {
     playing = val;
@@ -15735,11 +15884,25 @@ grmClockTick();
       clearBTimers();
       if (audio) { try { audio.pause(); } catch (_) {} }
     } else {
-      const seg = episode?.segments[segIdx];
-      if (seg) scheduleAdvance(seg);
+      // Resume audio if it hasn't ended; otherwise re-arm fallback timer
       if (audio) {
-        try { audio.play().catch(err => console.warn('[briefing] audio blocked:', err.message)); } catch (_) {}
+        const atEnd = isFinite(audio.duration) && audio.currentTime >= audio.duration - 0.1;
+        if (atEnd) {
+          goToSegment(segIdx + 1);
+          return;
+        }
+        try { audio.play().catch(() => {}); } catch (_) {}
       }
+      // Re-arm fallback (audio.ended will fire naturally when done)
+      const curIdx = segIdx;
+      const estDur = getSegmentDuration(curIdx);
+      const remaining = audio && isFinite(audio.duration)
+        ? (audio.duration - (audio.currentTime || 0)) + 0.5
+        : estDur;
+      segTimer = setTimeout(() => {
+        if (segIdx !== curIdx) return;
+        goToSegment(curIdx + 1);
+      }, remaining * 1000 + 800);
     }
     updatePlayBtn();
   }
@@ -15755,6 +15918,21 @@ grmClockTick();
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
   document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1, true));
   document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1), true));
+
+  // Recap: close button
+  document.getElementById('bRecapClose')?.addEventListener('click', () => {
+    document.getElementById('bRecap').classList.remove('open');
+  });
+  // Recap: replay a story segment
+  document.getElementById('bRecapGrid')?.addEventListener('click', e => {
+    const btn = e.target.closest('.bRecapPlay');
+    if (!btn) return;
+    const idx = parseInt(btn.dataset.idx);
+    document.getElementById('bRecap').classList.remove('open');
+    playing = true;
+    updatePlayBtn();
+    goToSegment(idx, true);
+  });
 
   document.addEventListener('keydown', e => {
     if (!document.getElementById('briefingOverlay')?.classList.contains('open')) return;

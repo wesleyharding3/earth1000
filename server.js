@@ -1156,6 +1156,39 @@ app.get("/api/briefing/today", async (req, res) => {
   }
 });
 
+// GET /api/briefing/audio/:id/:segIdx — serves one segment's MP3 slice (CBR 128kbps, 16 bytes/ms)
+app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
+  try {
+    const episodeId = parseInt(req.params.id);
+    const segIdx    = parseInt(req.params.segIdx);
+    const { rows } = await pool.query(
+      `SELECT audio_data, segments FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
+      [episodeId]
+    );
+    if (!rows.length) return res.status(404).json({ error: "Audio not found" });
+    const buf  = rows[0].audio_data;
+    const segs = rows[0].segments;
+    if (!segs || segIdx < 0 || segIdx >= segs.length) return res.status(404).json({ error: "Segment not found" });
+    const seg  = segs[segIdx];
+    const next = segs[segIdx + 1];
+    if (seg.start_ms == null) return res.status(404).json({ error: "No segment timing" });
+    const BYTES_PER_MS = 128 / 8;   // 128 kbps = 16 bytes/ms
+    const byteStart = Math.round(seg.start_ms  * BYTES_PER_MS);
+    const byteEnd   = next?.start_ms != null
+      ? Math.round(next.start_ms * BYTES_PER_MS)
+      : buf.length;
+    const slice = buf.slice(byteStart, Math.min(byteEnd, buf.length));
+    if (!slice.length) return res.status(404).json({ error: "Empty slice" });
+    res.set("Content-Type", "audio/mpeg");
+    res.set("Content-Length", slice.length);
+    res.set("Cache-Control", "public, max-age=86400");
+    res.send(slice);
+  } catch (err) {
+    console.error("[briefing/audio/seg]", err.message);
+    res.status(500).json({ error: "Failed to serve segment audio" });
+  }
+});
+
 // GET /api/briefing/audio/:id — streams the MP3 audio for an episode
 app.get("/api/briefing/audio/:id", async (req, res) => {
   try {
