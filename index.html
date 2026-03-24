@@ -15464,7 +15464,7 @@ grmClockTick();
       d.addEventListener('click', () => {
         const si = parseInt(d.dataset.story);
         const actualIdx = getStorySegmentIndex(si);
-        if (actualIdx >= 0) goToSegment(actualIdx);
+        if (actualIdx >= 0) goToSegment(actualIdx, true);
       });
     });
   }
@@ -15521,7 +15521,9 @@ grmClockTick();
   }
 
   // ── Go to segment ─────────────────────────────────────────────────────────
-  async function goToSegment(idx) {
+  // seek=true  → user-initiated skip: pause + seek to correct offset + resume
+  // seek=false → auto-advance: audio already playing through naturally, don't touch it
+  async function goToSegment(idx, seek = false) {
     clearTimeout(segTimer);
     clearBTimers();
 
@@ -15534,13 +15536,19 @@ grmClockTick();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
-    // Stop audio mid-sentence, seek to this segment's start, resume
+    // Audio control: only seek when user explicitly skips.
+    // On auto-advance the concatenated MP3 is already at the right position — seeking
+    // in a browser-decoded blob is unreliable and resets playback to 0.
     if (audio) {
-      try {
-        audio.pause();
-        audio.currentTime = Math.max(0, getSegmentOffset(idx));
-      } catch (_) {}
-      if (playing) audio.play().catch(() => {});
+      if (seek) {
+        try {
+          audio.pause();
+          audio.currentTime = Math.max(0, getSegmentOffset(idx));
+        } catch (_) {}
+        if (playing) audio.play().catch(() => {});
+      } else if (!playing) {
+        try { audio.pause(); } catch (_) {}
+      }
     }
 
     // ── Globe animation — pure setTimeout, fraction of segment duration ──
@@ -15728,14 +15736,14 @@ grmClockTick();
   document.getElementById('briefingBtn')?.addEventListener('click', openBriefing);
   document.getElementById('bClose')?.addEventListener('click', closeBriefing);
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
-  document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1));
-  document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1)));
+  document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1, true));
+  document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1), true));
 
   document.addEventListener('keydown', e => {
     if (!document.getElementById('briefingOverlay')?.classList.contains('open')) return;
     if (e.key === 'Escape')          { closeBriefing(); }
-    else if (e.key === 'ArrowRight') { goToSegment(segIdx + 1); }
-    else if (e.key === 'ArrowLeft')  { goToSegment(Math.max(0, segIdx - 1)); }
+    else if (e.key === 'ArrowRight') { goToSegment(segIdx + 1, true); }
+    else if (e.key === 'ArrowLeft')  { goToSegment(Math.max(0, segIdx - 1), true); }
     else if (e.key === ' ')          { e.preventDefault(); setPlaying(!playing); }
   });
 
