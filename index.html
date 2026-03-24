@@ -3248,6 +3248,34 @@
       padding: 0 8px;
       overflow-y: auto;
     }
+    /* Skeleton shimmer for loading state in list modes */
+    .kwi-skel-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px;
+    }
+    .kwi-skel-rank {
+      width: 18px; height: 12px; border-radius: 3px;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.07);
+    }
+    .kwi-skel-bar {
+      flex: 1; height: 12px; border-radius: 3px;
+      background: linear-gradient(90deg,
+        rgba(255,255,255,0.05) 25%,
+        rgba(255,255,255,0.13) 50%,
+        rgba(255,255,255,0.05) 75%);
+      background-size: 300% 100%;
+      animation: kwiSkelShimmer 1.6s ease-in-out infinite;
+    }
+    .kwi-skel-badge {
+      width: 32px; height: 16px; border-radius: 8px;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.07);
+    }
+    @keyframes kwiSkelShimmer {
+      0%   { background-position: 100% center; }
+      100% { background-position: -200% center; }
+    }
     .kwi-trending-item {
       display: flex;
       align-items: center;
@@ -5067,8 +5095,8 @@
           </div>
         </div>
 
-        <!-- Chart area -->
-        <div class="kwi-chart-area" id="kwiChartArea">
+        <!-- Chart area (hidden in trending/rising list modes) -->
+        <div class="kwi-chart-area" id="kwiChartArea" style="display:none;">
           <!-- Bar view -->
           <div class="kwi-bars" id="kwiBars" style="display:none;"></div>
           <!-- Trend view -->
@@ -13651,7 +13679,10 @@ grmClockTick();
       scheduleKwiGraphRender();
     } else {
       trendingList.style.display = 'flex';
-      
+      // Show skeleton immediately so the list fills the widget and the user
+      // sees a loading state instead of stale content from the previous mode.
+      kwiRenderSkeleton();
+
       if (mode === 'trending') {
         kwiLoadTrending();
       } else if (mode === 'rising') {
@@ -13659,6 +13690,17 @@ grmClockTick();
       }
     }
   };
+
+  // ── Skeleton loading state for list modes ───────────────────────────────────
+  function kwiRenderSkeleton(count = 10) {
+    const container = document.getElementById('kwiTrendingList');
+    container.innerHTML = Array.from({ length: count }, () => `
+      <div class="kwi-skel-item">
+        <div class="kwi-skel-rank"></div>
+        <div class="kwi-skel-bar"></div>
+        <div class="kwi-skel-badge"></div>
+      </div>`).join('');
+  }
 
   // ── Load rising keywords ────────────────────────────────────────────────────
   async function kwiLoadRising() {
