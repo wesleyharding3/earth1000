@@ -278,22 +278,31 @@ async function run() {
 }
 
 // ─── Thread Selection ──────────────────────────────────────────────────────
+// Per-region cap — hotspot regions get a tighter limit (1) since a single
+// conflict can dominate many threads. Other regions stay at MAX_PER_REGION.
+const HOTSPOT_REGIONS  = new Set(['mideast', 'russia_cis']);
+const MAX_PER_HOTSPOT  = 1;   // max threads from mideast / russia_cis
+
 function getRegionGroup(thread) {
-  const parts = [
-    ...(thread.geographic_scope || []),
+  // Check title + keywords FIRST so a story like "Trump-Iran negotiations"
+  // is tagged mideast (subject) rather than north_america (source country).
+  const titleAndScope = [
     thread.title || '',
-    thread.primary_category || '',
+    ...(thread.geographic_scope || []),
   ].join(' ').toLowerCase();
-  if (/middle.?east|iran|iraq|israel|saudi|yemen|syria|gulf|qatar|bahrain|oman|jordan|lebanon/.test(parts)) return 'mideast';
-  if (/russia|ukraine|belarus|caucasus|georgia|armenia|azerbaijan|central.?asia|kazakhstan|uzbek/.test(parts)) return 'russia_cis';
-  if (/china|japan|korea|taiwan|hong.?kong|mongolia|east.?asia/.test(parts)) return 'east_asia';
-  if (/india|pakistan|bangladesh|nepal|sri.?lanka|south.?asia|afghanistan/.test(parts)) return 'south_asia';
-  if (/southeast.?asia|myanmar|thailand|vietnam|indonesia|philip|malaysia|singapore|cambodia|laos/.test(parts)) return 'se_asia';
-  if (/africa|nigeria|ethiopia|kenya|egypt|sudan|ghana|tanzania|south.?africa|morocco|algeria|congo/.test(parts)) return 'africa';
-  if (/latin.?america|mexico|brazil|argentin|colombia|venezuela|chile|peru|ecuador|cuba|haiti/.test(parts)) return 'latam';
-  if (/europe|germany|france|britain|uk |poland|spain|italy|nato|netherlands|sweden|norway|finland|ukraine/.test(parts)) return 'europe';
-  if (/united.?states|u\.s\.|america|canada|north.?america/.test(parts)) return 'north_america';
-  if (/australia|new.?zealand|pacific|oceania/.test(parts)) return 'oceania';
+  const withCategory = titleAndScope + ' ' + (thread.primary_category || '').toLowerCase();
+
+  // Subject-first ordering: check high-specificity regions before broad ones
+  if (/iran|iraq|israel|gaza|hezbollah|hamas|saudi|yemen|syria|hormuz|gulf.state|qatar|bahrain|oman|jordan|lebanon|middle.?east/.test(titleAndScope)) return 'mideast';
+  if (/russia|ukraine|belarus|caucasus|georgia|armenia|azerbaijan|kazakhstan|uzbek|central.?asia/.test(titleAndScope)) return 'russia_cis';
+  if (/china|japan|korea|taiwan|hong.?kong|mongolia|east.?asia/.test(titleAndScope)) return 'east_asia';
+  if (/india|pakistan|bangladesh|nepal|sri.?lanka|south.?asia|afghanistan/.test(titleAndScope)) return 'south_asia';
+  if (/southeast.?asia|myanmar|thailand|vietnam|indonesia|philip|malaysia|singapore|cambodia|laos/.test(titleAndScope)) return 'se_asia';
+  if (/africa|nigeria|ethiopia|kenya|egypt|sudan|ghana|tanzania|south.?africa|morocco|algeria|niger|congo|mali/.test(titleAndScope)) return 'africa';
+  if (/latin.?america|mexico|brazil|argentin|colombia|venezuela|chile|peru|ecuador|cuba|haiti/.test(titleAndScope)) return 'latam';
+  if (/europe|germany|france|britain|uk |poland|spain|italy|nato|netherlands|sweden|norway|finland/.test(withCategory)) return 'europe';
+  if (/united.?states|u\.s\.|america|canada|north.?america/.test(withCategory)) return 'north_america';
+  if (/australia|new.?zealand|pacific|oceania/.test(withCategory)) return 'oceania';
   return 'global';
 }
 
@@ -382,9 +391,12 @@ async function selectThreads() {
     const cat           = thread.primary_category || 'general';
     const region        = getRegionGroup(thread);
     const isEngDominant = thread.englishRatio > 0.7;
+    // Hotspot regions (mideast, russia_cis) are capped at 1 thread each to prevent
+    // a single conflict dominating the briefing. Other regions allow MAX_PER_REGION.
+    const regionCap = HOTSPOT_REGIONS.has(region) ? MAX_PER_HOTSPOT : MAX_PER_REGION;
 
     if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT)              { skipped.push(thread); continue; }
-    if (region !== 'global' && (regionCounts[region] || 0) >= MAX_PER_REGION) { skipped.push(thread); continue; }
+    if (region !== 'global' && (regionCounts[region] || 0) >= regionCap){ skipped.push(thread); continue; }
     if (isEngDominant && englishDomCount >= MAX_ENGLISH_DOMINANT)        { skipped.push(thread); continue; }
 
     selected.push(thread);
@@ -393,12 +405,21 @@ async function selectThreads() {
     if (isEngDominant) englishDomCount++;
   }
 
-  // If we're still short (few threads overall), fill from skipped without caps
+  // If still short, fill from skipped — prefer threads from least-represented regions first
+  // to maintain diversity even in fill mode. Only fall back to over-represented regions last.
   if (selected.length < MAX_THREADS) {
     const selectedIds = new Set(selected.map(t => t.id));
-    for (const t of skipped) {
+    const fillPool = skipped.filter(t => !selectedIds.has(t.id));
+    // Sort fill pool: threads from regions with fewer selected slots come first
+    fillPool.sort((a, b) => {
+      const ra = getRegionGroup(a), rb = getRegionGroup(b);
+      return (regionCounts[ra] || 0) - (regionCounts[rb] || 0);
+    });
+    for (const t of fillPool) {
       if (selected.length >= MAX_THREADS) break;
-      if (!selectedIds.has(t.id)) selected.push(t);
+      selected.push(t);
+      const region = getRegionGroup(t);
+      regionCounts[region] = (regionCounts[region] || 0) + 1;
     }
   }
 
