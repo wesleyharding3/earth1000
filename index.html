@@ -15402,7 +15402,9 @@ grmClockTick();
   }
 
   // ── Open ─────────────────────────────────────────────────────────────────
-  async function openBriefing() {
+  // Opens overlay immediately, then loads audio blob in background.
+  // Timing is driven purely by setTimeout — audio is just the voice track.
+  function openBriefing() {
     if (!episode) return;
     window.briefingActive = true;
 
@@ -15411,26 +15413,28 @@ grmClockTick();
       .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
     buildDots();
-
-    if (episode.has_audio) {
-      // Fetch as blob so the browser can seek to arbitrary positions.
-      // Streaming HTTP URLs don't support audio.currentTime seeking,
-      // causing every segment to replay from t=0.
-      try {
-        const resp = await fetch(`${API}/api/briefing/audio/${episode.id}`);
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          audio = new Audio(blobUrl);
-          audio._blobUrl = blobUrl;
-          audio.preload = 'auto';
-        }
-      } catch (_) {}
-    }
-
     document.getElementById('briefingOverlay').classList.add('open');
-    goToSegment(0);
+
+    // Start immediately — UI, globe, articles all fire now
     setPlaying(true);
+    goToSegment(0);
+
+    // Fetch audio as seekable blob in the background (non-blocking)
+    if (episode.has_audio) {
+      fetch(`${API}/api/briefing/audio/${episode.id}`)
+        .then(r => r.ok ? r.blob() : null)
+        .then(blob => {
+          if (!blob || !window.briefingActive) return;
+          const url = URL.createObjectURL(blob);
+          audio = new Audio(url);
+          audio._blobUrl = url;
+          audio.preload = 'auto';
+          // Seek to wherever the setTimeout clock has advanced us to
+          try { audio.currentTime = Math.max(0, getSegmentOffset(segIdx)); } catch (_) {}
+          if (playing) audio.play().catch(() => {});
+        })
+        .catch(() => {});
+    }
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
@@ -15539,21 +15543,11 @@ grmClockTick();
       if (playing) audio.play().catch(() => {});
     }
 
-    // ── Globe animation — driven by audio.timeupdate for perfect sync ────
+    // ── Globe animation — pure setTimeout, fraction of segment duration ──
+    // Single clock: no competing timeupdate listeners, always fires reliably.
     if (seg.type === 'story') {
-      const segStart = getSegmentOffset(idx);
-      const segDur   = getSegmentDuration(idx);
-
-      // Trigger fractions of segment duration:
-      //   0.18 → narrator has introduced the story, origin node fires
-      //   0.36 → arc draws, destination nodes pulse
-      //   0.48+ → camera tours all nodes every 12% of segment
-      const FRAC_ORIGIN = 0.18;
-      const FRAC_ARC    = 0.36;
-      const FRAC_TOUR   = 0.12;
-
-      const phases    = { origin: false, arc: false };
-      const tourFired = new Set();
+      const dur = getSegmentDuration(idx);
+      const ms  = f => Math.round(dur * f * 1000);  // fraction → milliseconds
 
       const primary   = seg.primary_city || seg.primary_country;
       const secondary = (seg.secondary_locations || []).filter(loc => {
@@ -15564,68 +15558,42 @@ grmClockTick();
       if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon });
       for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon });
 
-      const fireOrigin = () => {
-        if (seg.primary_city && window.focusCity)         window.focusCity(seg.primary_city);
+      // 18 %: narrator has introduced story → origin node rings + camera focus
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        if (seg.primary_city && window.focusCity)            window.focusCity(seg.primary_city);
         else if (seg.primary_country && window.focusCountry) window.focusCountry(seg.primary_country);
-        else if (seg.globe_focus && window.startFocus)    window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
-      };
-      const fireArc = () => {
+        else if (seg.globe_focus && window.startFocus)       window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
+      }, ms(0.18)));
+
+      // 36 %: arcs draw + all destination nodes pulse
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
         drawSegmentArcs(seg);
-        secondary.forEach((loc, i) => setTimeout(() => {
-          if (segIdx !== idx || !window.briefingPulseAt) return;
-          window.briefingPulseAt(loc.lat, loc.lon);
-        }, i * 350));
-      };
+        secondary.forEach((loc, i) => {
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.briefingPulseAt) return;
+            window.briefingPulseAt(loc.lat, loc.lon);
+          }, i * 350));
+        });
+      }, ms(0.36)));
 
-      if (audio) {
-        // Audio-driven: phases fire when audio position crosses the trigger fraction
-        const onUpdate = () => {
-          if (segIdx !== idx) { audio.removeEventListener('timeupdate', onUpdate); return; }
-          const frac = segDur > 0 ? Math.max(0, (audio.currentTime - segStart) / segDur) : 0;
-
-          if (!phases.origin && frac >= FRAC_ORIGIN) { phases.origin = true; fireOrigin(); }
-          if (!phases.arc    && frac >= FRAC_ARC)    { phases.arc    = true; fireArc();   }
-
-          // Camera tour: cycle through all nodes every FRAC_TOUR after the arc phase
-          if (phases.arc && tourNodes.length >= 2) {
-            const tourStart   = FRAC_ARC + FRAC_TOUR;
-            const step        = frac >= tourStart ? Math.floor((frac - tourStart) / FRAC_TOUR) : -1;
-            for (let s = 0; s <= step; s++) {
-              if (!tourFired.has(s)) {
-                tourFired.add(s);
-                const node = tourNodes[(s + 1) % tourNodes.length];
-                if (window.startFocus)      window.startFocus(node.lat, node.lon);
-                if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-              }
-            }
-          } else if (phases.arc && tourNodes.length === 1 && !tourFired.has(0)) {
-            // Single node: re-pulse at tour start and every FRAC_TOUR after
-            const tourStart = FRAC_ARC + FRAC_TOUR;
-            const step = frac >= tourStart ? Math.floor((frac - tourStart) / (FRAC_TOUR * 3)) : -1;
-            for (let s = 0; s <= step; s++) {
-              if (!tourFired.has(s)) { tourFired.add(s); if (window.briefingPulseAt) window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon); }
-            }
-          }
-        };
-        audio.addEventListener('timeupdate', onUpdate);
-        activeTUListeners.push({ target: audio, event: 'timeupdate', listener: onUpdate });
-
-      } else {
-        // No audio fallback: use setTimeout with estimated durations
-        addBTimer(setTimeout(() => { if (segIdx !== idx) return; fireOrigin(); },
-          segDur * FRAC_ORIGIN * 1000));
-        addBTimer(setTimeout(() => { if (segIdx !== idx) return; fireArc(); },
-          segDur * FRAC_ARC    * 1000));
-        if (tourNodes.length >= 2) {
-          for (let t = 0; t < 8; t++) {
-            const node  = tourNodes[(t + 1) % tourNodes.length];
-            const delay = segDur * (FRAC_ARC + FRAC_TOUR * (t + 1)) * 1000;
-            addBTimer(setTimeout(() => {
-              if (segIdx !== idx || !window.startFocus) return;
-              window.startFocus(node.lat, node.lon);
-              if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-            }, delay));
-          }
+      // 48 %+, every 12 %: camera tours all story nodes in cycle
+      if (tourNodes.length >= 2) {
+        for (let t = 0; t < 8; t++) {
+          const node = tourNodes[(t + 1) % tourNodes.length];
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.startFocus) return;
+            window.startFocus(node.lat, node.lon);
+            if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
+          }, ms(0.48 + t * 0.12)));
+        }
+      } else if (tourNodes.length === 1) {
+        for (let t = 0; t < 3; t++) {
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx || !window.briefingPulseAt) return;
+            window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
+          }, ms(0.48 + t * 0.26)));
         }
       }
 
@@ -15657,66 +15625,29 @@ grmClockTick();
   }
 
   // ── Schedule advance ──────────────────────────────────────────────────────
-  // When accurate start_ms offsets exist, advance is driven by audio position
-  // (timeupdate fires when audio crosses the next segment's start boundary).
-  // Fallback: word-count setTimeout when no audio or no offsets.
+  // Pure setTimeout using accurate start_ms durations (falls back to word count).
+  // Audio is purely a voice track — it does not drive segment advancement.
   function scheduleAdvance(seg) {
     clearTimeout(segTimer);
     const curIdx = segIdx;
+    const durMs  = Math.round(getSegmentDuration(curIdx) * 1000);
 
-    if (audio && episode.segments[curIdx]?.start_ms != null) {
-      // Audio-position-driven advance
-      const next = episode.segments[curIdx + 1];
-      const advanceFn = () => {
+    if (seg.video_id) {
+      // After narration, pause audio briefly so video can play
+      segTimer = setTimeout(() => {
         if (segIdx !== curIdx) return;
-        if (seg.video_id) {
-          try { audio.pause(); } catch (_) {}
-          segTimer = setTimeout(() => {
-            if (segIdx !== curIdx) return;
-            try { if (playing) audio.play().catch(() => {}); } catch (_) {}
-            goToSegment(curIdx + 1);
-          }, VIDEO_PAUSE_SECS * 1000);
-        } else {
-          goToSegment(curIdx + 1);
-        }
-      };
-
-      if (next?.start_ms != null) {
-        const targetSec = next.start_ms / 1000;
-        const onAdv = () => {
-          if (segIdx !== curIdx) { audio.removeEventListener('timeupdate', onAdv); return; }
-          if (audio.currentTime >= targetSec - 0.15) {
-            audio.removeEventListener('timeupdate', onAdv);
-            advanceFn();
-          }
-        };
-        audio.addEventListener('timeupdate', onAdv);
-        activeTUListeners.push({ target: audio, event: 'timeupdate', listener: onAdv });
-      } else {
-        // Last segment: advance when audio ends
-        const onEnd = () => {
-          audio.removeEventListener('ended', onEnd);
-          if (segIdx === curIdx) goToSegment(curIdx + 1);
-        };
-        audio.addEventListener('ended', onEnd);
-        activeTUListeners.push({ target: audio, event: 'ended', listener: onEnd });
-      }
-
-    } else {
-      // Fallback: word-count-based setTimeout
-      const words   = (seg.voiceover_text || '').split(/\s+/).filter(Boolean).length;
-      const voiceMs = Math.max(5000, (words / WORDS_PER_MIN) * 60000);
-      if (seg.video_id) {
+        if (audio) { try { audio.pause(); } catch (_) {} }
         segTimer = setTimeout(() => {
-          if (audio) { try { audio.pause(); } catch (_) {} }
-          segTimer = setTimeout(() => {
-            if (audio && playing) { try { audio.play().catch(() => {}); } catch (_) {} }
-            goToSegment(segIdx + 1);
-          }, VIDEO_PAUSE_SECS * 1000);
-        }, voiceMs);
-      } else {
-        segTimer = setTimeout(() => goToSegment(segIdx + 1), voiceMs + 2000);
-      }
+          if (segIdx !== curIdx) return;
+          if (audio && playing) { try { audio.play().catch(() => {}); } catch (_) {} }
+          goToSegment(curIdx + 1);
+        }, VIDEO_PAUSE_SECS * 1000);
+      }, durMs);
+    } else {
+      segTimer = setTimeout(() => {
+        if (segIdx !== curIdx) return;
+        goToSegment(curIdx + 1);
+      }, durMs + 800);
     }
   }
 
