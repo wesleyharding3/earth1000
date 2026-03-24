@@ -127,7 +127,8 @@ async function run() {
     // ── 3. Generate Claude narrative (includes story entity extraction) ──────
     console.log(`   [${elapsed(t0)}] Generating narrative with Claude...`);
     const narrative = await generateNarrative(threadData);
-    console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}"`);
+    if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
+    console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
 
     // ── 4. Resolve entity coordinates from DB ─────────────────────────────
     console.log(`   [${elapsed(t0)}] Resolving story entity coordinates...`);
@@ -663,10 +664,10 @@ REQUIREMENTS:
 - Connect stories when genuinely related (e.g. economic ripple effects, diplomatic links).
 - This briefing draws from sources in multiple languages and countries. When relevant, surface non-Western or non-English perspectives — e.g. how Beijing, Moscow, Tehran, or Seoul view a story, not just Washington or London. Avoid defaulting to a single national lens.
 
-STORY DIVERSITY (strictly enforced):
-- Every segment must cover a DIFFERENT geographic region. Do not include two stories primarily about the same country or region.
-- Do not include two stories of the same event type (two military strikes, two elections, two trade disputes) unless they are in entirely different regions with independent significance.
-- If two stories in the provided list are near-duplicates (same country, same event type, same week), write a segment for the higher-importance one and skip the other entirely — omit it from the segments array. Do NOT write a placeholder.
+STORY DIVERSITY (applied in tone and framing, NOT by skipping stories):
+- Write EVERY story in the provided list — do not omit any thread from the segments array.
+- If two stories feel similar, distinguish them clearly in tone, geography, or angle. You must still write both.
+- Vary the geographic perspective: avoid defaulting to a single national lens across consecutive segments.
 
 Return ONLY valid JSON in this exact structure:
 {

@@ -1144,7 +1144,7 @@ app.get("/api/briefing/today", async (req, res) => {
       SELECT id, target_date, headline, voiceover_script, segments, status, generated_at,
              (audio_data IS NOT NULL) AS has_audio
       FROM briefing_episodes
-      WHERE user_id IS NULL AND target_date = $1
+      WHERE user_id IS NULL AND target_date = $1 AND status = 'ready'
       ORDER BY id DESC
       LIMIT 1
     `, [today]);
