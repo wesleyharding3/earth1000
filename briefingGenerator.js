@@ -664,19 +664,34 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
 
 // ─── Claude Narrative ──────────────────────────────────────────────────────
 async function generateNarrative(threadData) {
-  const storySummaries = threadData.map((t, i) => ({
-    index:      i + 1,
-    thread_id:  t.id,
-    title:      t.title,
-    category:   t.primary_category,
-    importance: t.importance,
-    articles:   t.articles.map(a => ({
-      title:   a.translated_title || a.title,
-      summary: (a.translated_summary || a.summary || '').slice(0, 200),
-      source:  a.source_name,
-      country: a.country_name,
-    }))
-  }));
+  const nowMs = Date.now();
+  const storySummaries = threadData.map((t, i) => {
+    // Find newest article date so Claude knows how fresh the story is
+    const dates = (t.articles || [])
+      .map(a => a.published_at ? new Date(a.published_at).getTime() : 0)
+      .filter(Boolean);
+    const newestMs  = dates.length ? Math.max(...dates) : 0;
+    const daysAgo   = newestMs ? Math.round((nowMs - newestMs) / 86400000) : null;
+    // Also find the oldest article — wide spread means ongoing saga, not fresh break
+    const oldestMs  = dates.length ? Math.min(...dates) : 0;
+    const spanDays  = (newestMs && oldestMs) ? Math.round((newestMs - oldestMs) / 86400000) : 0;
+    return {
+      index:                i + 1,
+      thread_id:            t.id,
+      title:                t.title,
+      category:             t.primary_category,
+      importance:           t.importance,
+      newest_article_days_ago: daysAgo,
+      article_span_days:    spanDays,
+      articles: (t.articles || []).map(a => ({
+        title:        a.translated_title || a.title,
+        summary:      (a.translated_summary || a.summary || '').slice(0, 200),
+        source:       a.source_name,
+        country:      a.country_name,
+        published_at: a.published_at ? a.published_at.toISOString?.() || String(a.published_at) : null,
+      }))
+    };
+  });
 
   const today = new Date().toLocaleDateString('en-US', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -699,10 +714,22 @@ REQUIREMENTS:
 - Connect stories when genuinely related (e.g. economic ripple effects, diplomatic links).
 - This briefing draws from sources in multiple languages and countries. When relevant, surface non-Western or non-English perspectives — e.g. how Beijing, Moscow, Tehran, or Seoul view a story, not just Washington or London. Avoid defaulting to a single national lens.
 
+RECENCY FRAMING (critical — frame stories correctly based on how old they are):
+- Each story includes "newest_article_days_ago" — the age of its most recent article.
+- If newest_article_days_ago <= 2: frame as breaking or developing news ("is unfolding", "has just", "is under way").
+- If newest_article_days_ago is 3–7: frame as a current/active story ("continues to", "remains", "is escalating").
+- If newest_article_days_ago > 7: frame as an ongoing situation or aftermath ("in the weeks since", "following last month's", "as the situation continues to unfold"). NEVER re-announce a weeks-old event as if it just happened. Example: if a leader died 5 weeks ago, do NOT open with "died today" or "has died" — instead say "in the weeks since [leader]'s death, the succession crisis continues to...".
+- This is a journalism standard: you would never lead the 6 o'clock news with "JFK was assassinated today" in 1964.
+
+SEGMENT ORDERING — GEOGRAPHIC INTERLEAVING (hard rule):
+- Do NOT place two segments about the same country OR the same conflict back-to-back.
+- Interleave segments so that consecutive segments are from different regions of the world.
+- If you have three Iran-related threads, spread them out: e.g. positions 1, 5, 9 — not 1, 2, 3.
+- Preferred order pattern: rotate through these broad regions — Middle East / Europe / Asia-Pacific / Americas / Africa / Europe / Middle East / Asia... etc.
+
 STORY DIVERSITY (applied in tone and framing, NOT by skipping stories):
 - Write EVERY story in the provided list — do not omit any thread from the segments array.
 - If two stories feel similar, distinguish them clearly in tone, geography, or angle. You must still write both.
-- Vary the geographic perspective: avoid defaulting to a single national lens across consecutive segments.
 
 CRITICAL THREAD_ID RULE: Every segment's "thread_id" must be one of these exact integer values (copy them verbatim — do NOT modify, abbreviate, or invent new ones):
 ${storySummaries.map(s => s.thread_id).join(', ')}
@@ -753,7 +780,70 @@ CONTENT GUARDRAILS (must follow):
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error('Claude returned no valid JSON for narrative');
 
-  return JSON.parse(jsonMatch[0]);
+  const result = JSON.parse(jsonMatch[0]);
+  // Post-process: interleave segments to break same-country/region clusters
+  result.segments = interleaveSegments(result.segments, threadData);
+  return result;
+}
+
+// ─── Segment Interleaver ───────────────────────────────────────────────────
+// Reorders segments so no two consecutive ones share a country/region.
+// Uses a greedy "most different from previous" pass.
+function interleaveSegments(segments, threadData) {
+  if (segments.length <= 2) return segments;
+
+  // Build a region tag for each segment using thread entities or title keywords
+  const REGION_PATTERNS = [
+    { region: 'mideast',  re: /iran|iraq|israel|gaza|lebanon|syria|saudi|yemen|qatar|kuwait|hormuz|tehran|jerusalem/i },
+    { region: 'europe',   re: /germany|france|ukraine|russia|uk|britain|nato|eu |poland|spain|italy|sweden|finland|norway|czech|balkan/i },
+    { region: 'eastasia', re: /china|japan|korea|taiwan|hong.?kong|beijing|tokyo|seoul/i },
+    { region: 'southasia',re: /india|pakistan|bangladesh|afghanistan|nepal|sri.?lanka/i },
+    { region: 'americas', re: /united.?states|usa|canada|mexico|brazil|argentina|colombia|venezuela|latin/i },
+    { region: 'africa',   re: /nigeria|ethiopia|kenya|south.?africa|egypt|algeria|niger|mali|sudan|congo|ghana/i },
+    { region: 'seasia',   re: /indonesia|thailand|vietnam|philippines|malaysia|myanmar|singapore/i },
+  ];
+
+  function getRegion(seg) {
+    const thread = threadData.find(t => String(t.id) === String(seg.thread_id));
+    const text = [thread?.title || '', seg.voiceover || '', ...(seg.entities || []).map(e => e.name)].join(' ');
+    for (const { region, re } of REGION_PATTERNS) {
+      if (re.test(text)) return region;
+    }
+    return 'other';
+  }
+
+  // Also track country-level to prevent back-to-back same country
+  function getCountry(seg) {
+    const thread = threadData.find(t => String(t.id) === String(seg.thread_id));
+    const text = [thread?.title || '', ...(seg.entities || []).map(e => e.name)].join(' ').toLowerCase();
+    // Extract first recognised country word
+    const countries = ['iran','ukraine','russia','germany','japan','indonesia','algeria','niger','brazil','india','china','israel','pakistan','usa','united states'];
+    return countries.find(c => text.includes(c)) || 'unknown';
+  }
+
+  // Greedy interleave: always pick the segment most different from the last placed
+  const tagged   = segments.map(s => ({ seg: s, region: getRegion(s), country: getCountry(s) }));
+  const result   = [];
+  const remaining = [...tagged];
+
+  while (remaining.length) {
+    const last = result[result.length - 1];
+    let bestIdx = 0;
+    if (last) {
+      // Prefer: different country first, then different region
+      let bestScore = -1;
+      for (let i = 0; i < remaining.length; i++) {
+        const cand = remaining[i];
+        let score = 0;
+        if (cand.country !== last.country) score += 2;
+        if (cand.region  !== last.region)  score += 1;
+        if (score > bestScore) { bestScore = score; bestIdx = i; }
+      }
+    }
+    result.push(remaining.splice(bestIdx, 1)[0]);
+  }
+
+  return result.map(r => r.seg);
 }
 
 // ─── Segment Builder ───────────────────────────────────────────────────────
