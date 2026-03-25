@@ -45,12 +45,13 @@ async function generateLocationBriefing(location) {
 
   // ── 0. Cache check ────────────────────────────────────────────────────────
   const { rows: cached } = await pool.query(`
-    SELECT id, headline, segments, has_audio, generated_at
+    SELECT id, headline, segments,
+           (audio_data IS NOT NULL) AS has_audio, generated_at
     FROM briefing_episodes
     WHERE location_type = $1
       AND location_id   = $2
       AND status        = 'ready'
-      AND has_audio     = $3
+      AND (audio_data IS NOT NULL) = $3
       AND generated_at  > NOW() - INTERVAL '${CACHE_HOURS} hours'
     ORDER BY generated_at DESC
     LIMIT 1
@@ -161,11 +162,10 @@ async function generateLocationBriefing(location) {
       SET status     = 'ready',
           headline   = $1,
           segments   = $2,
-          has_audio  = $3,
-          audio_data = $4,
+          audio_data = $3,
           generated_at = NOW()
-      WHERE id = $5
-    `, [narrative.headline, JSON.stringify(segments), !!audioData, audioData, episodeId]);
+      WHERE id = $4
+    `, [narrative.headline, JSON.stringify(segments), audioData, episodeId]);
 
     console.log(`[locBriefing] ${elapsed(t0)} done — ${segments.length} segments${audioData ? ' + audio' : ''}`);
 

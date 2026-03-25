@@ -15937,7 +15937,7 @@ grmClockTick();
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false }),
     })
-      .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+      .then(r => r.json().then(body => { if (!r.ok) throw new Error(body.error || `Server error ${r.status}`); return body; }))
       .then(ep => {
         if (cancelled) return;
         loading.classList.remove('visible');
@@ -15954,7 +15954,7 @@ grmClockTick();
         console.error('[locBriefing]', err);
         const toast = document.createElement('div');
         toast.style.cssText = 'position:absolute;bottom:20px;left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(220,50,50,0.92);color:#fff;padding:8px 16px;border-radius:8px;font-size:12px;z-index:220;pointer-events:none;';
-        toast.textContent = 'Briefing generation failed — try again';
+        toast.textContent = `Briefing failed: ${err.message}`;
         panel.appendChild(toast);
         setTimeout(() => toast.remove(), 3500);
       });
