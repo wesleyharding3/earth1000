@@ -14,10 +14,12 @@ pool.on('error', (err) => {
   console.error('🚨 Unexpected DB pool error:', err);
 });
 
-// Connection monitoring — logs pool state every 60s
+// Connection monitoring — logs pool state every 60s.
+// unref() so one-shot scripts (briefingGenerator, storyThreadBuilder, etc.)
+// can exit naturally without this interval keeping the process alive.
 setInterval(() => {
   console.log(`[pool] total=${pool.totalCount} idle=${pool.idleCount} waiting=${pool.waitingCount}`);
-}, 60000);
+}, 60000).unref();
 
 // Log when pool is under pressure
 pool.on('connect', () => {

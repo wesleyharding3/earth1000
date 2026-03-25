@@ -15493,9 +15493,77 @@ grmClockTick();
   border-radius: 10px; padding: 14px;
   display: flex; flex-direction: column; gap: 8px;
   opacity: 0; transform: translateY(12px);
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease, background 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
 }
 .bRecapCard.visible { opacity: 1; transform: translateY(0); }
+.bRecapCard:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.22); }
+
+/* ── Story detail panel (slides in over recap grid) ── */
+.bStoryDetail {
+  position: absolute; inset: 48px 0 0 0; /* below recap header */
+  background: rgba(4,10,20,0.99);
+  display: flex; flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.32,0.72,0,1);
+  z-index: 6; overflow: hidden;
+}
+.bStoryDetail.open { transform: translateX(0); }
+.bSDHeader {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+.bSDBack {
+  background: none; border: 1px solid rgba(255,255,255,0.15);
+  color: #aaa; border-radius: 5px; padding: 5px 12px;
+  font-size: 12px; cursor: pointer; letter-spacing: 0.02em;
+}
+.bSDBack:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.bSDNum { font-size: 10px; color: #60c8ff; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+.bSDBody {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 20px; display: flex; flex-direction: column; gap: 16px;
+}
+.bSDHeadline { color: #fff; font-size: 15px; font-weight: 700; line-height: 1.4; }
+.bSDAudioBar {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(96,200,255,0.07);
+  border: 1px solid rgba(96,200,255,0.18);
+  border-radius: 8px; padding: 10px 14px;
+}
+.bSDAudioPlay {
+  background: rgba(96,200,255,0.18); border: 1px solid rgba(96,200,255,0.4);
+  color: #60c8ff; border-radius: 50%; width: 32px; height: 32px;
+  font-size: 11px; cursor: pointer; display: flex;
+  align-items: center; justify-content: center; flex-shrink: 0;
+}
+.bSDAudioPlay:hover { background: rgba(96,200,255,0.32); }
+.bSDAudioTrack {
+  flex: 1; height: 3px; background: rgba(255,255,255,0.12);
+  border-radius: 3px; cursor: pointer; overflow: hidden;
+}
+.bSDAudioFill { height: 100%; background: #60c8ff; border-radius: 3px; width: 0%; transition: width 0.2s linear; }
+.bSDAudioTime { font-size: 11px; color: rgba(255,255,255,0.45); flex-shrink: 0; min-width: 80px; text-align: right; }
+.bSDSectionLabel {
+  font-size: 10px; color: rgba(255,255,255,0.3); font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
+}
+.bSDTranscript {
+  color: rgba(255,255,255,0.68); font-size: 13px; line-height: 1.75;
+  background: rgba(255,255,255,0.03); border-radius: 8px; padding: 14px;
+  border: 1px solid rgba(255,255,255,0.06); white-space: pre-wrap;
+}
+.bSDArticles { display: flex; flex-direction: column; gap: 8px; }
+/* Expand bCard to full width inside detail */
+.bSDArticles .bCard {
+  flex-direction: row; width: 100%;
+  gap: 12px; align-items: center;
+}
+.bSDArticles .bCardImg, .bSDArticles .bCardImgNone {
+  width: 64px; height: 48px; flex-shrink: 0; border-radius: 6px;
+}
 .bRecapNum { font-size: 10px; color: #60c8ff; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
 .bRecapHeadline { color: #fff; font-size: 13px; font-weight: 600; line-height: 1.4; }
 .bRecapTeaser { color: rgba(255,255,255,0.55); font-size: 11px; line-height: 1.5; }
@@ -15554,6 +15622,25 @@ grmClockTick();
       <button class="bRecapClose" id="bRecapClose">Close ✕</button>
     </div>
     <div class="bRecapGrid" id="bRecapGrid"></div>
+    <!-- Story detail (slides in over the grid) -->
+    <div class="bStoryDetail" id="bStoryDetail">
+      <div class="bSDHeader">
+        <button class="bSDBack" id="bSDBack">← Summary</button>
+        <span class="bSDNum" id="bSDNum"></span>
+      </div>
+      <div class="bSDBody" id="bSDBody">
+        <div class="bSDHeadline" id="bSDHeadline"></div>
+        <div class="bSDAudioBar" id="bSDAudioBar">
+          <button class="bSDAudioPlay" id="bSDAudioPlay">▶</button>
+          <div class="bSDAudioTrack" id="bSDAudioTrack"><div class="bSDAudioFill" id="bSDAudioFill"></div></div>
+          <span class="bSDAudioTime" id="bSDAudioTime">0:00 / 0:00</span>
+        </div>
+        <div class="bSDSectionLabel">Transcript</div>
+        <div class="bSDTranscript" id="bSDTranscript"></div>
+        <div class="bSDSectionLabel" id="bSDSourcesLabel">Sources</div>
+        <div class="bSDArticles" id="bSDArticles"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -15916,11 +16003,11 @@ grmClockTick();
             goToSegment(curIdx + 1);
           }, VIDEO_PAUSE_SECS * 1000);
         } else {
-          // Tight transition — 80ms is enough to let final audio frame flush
+          // 30ms — tight enough to feel seamless, enough to flush audio frame
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx) return;
             goToSegment(curIdx + 1);
-          }, 80);
+          }, 30);
         }
       }, { once: true });
 
@@ -15945,13 +16032,15 @@ grmClockTick();
       }
     }
 
-    // Preload next segment in background
+    // Preload next segment — call .load() explicitly so the browser starts
+    // buffering immediately rather than waiting for a play() call.
     const nextIdx = idx + 1;
     if (episode.has_audio && nextIdx < episode.segments.length &&
         episode.segments[nextIdx]?.start_ms != null) {
       audioNext = new Audio(`${API}/api/briefing/audio/${episode.id}/${nextIdx}`);
       audioNext.preload = 'auto';
       audioNext._segIdx = nextIdx;
+      audioNext.load();
     }
 
     // ── Video embed ────────────────────────────────────────────────────────
@@ -16053,6 +16142,8 @@ grmClockTick();
       const actualIdx = episode.segments.indexOf(seg);
       const card = document.createElement('div');
       card.className = 'bRecapCard';
+      card.dataset.idx = actualIdx;
+      card.dataset.num = si + 1;
 
       const teaser = (seg.voiceover_text || '').slice(0, 130).trimEnd();
       const ellipsis = seg.voiceover_text?.length > 130 ? '…' : '';
@@ -16067,7 +16158,7 @@ grmClockTick();
         <div class="bRecapNum">Story ${si + 1}</div>
         <div class="bRecapHeadline">${(seg.thread_title || seg.primary_country?.name || 'Story').replace(/</g,'&lt;')}</div>
         <div class="bRecapTeaser">${teaser.replace(/</g,'&lt;')}${ellipsis}</div>
-        <button class="bRecapPlay" data-idx="${actualIdx}">▶ Replay</button>
+        <button class="bRecapPlay" data-idx="${actualIdx}">▶ Resume from here</button>
         <div class="bRecapArticles">${thumbsHtml}</div>`;
 
       grid.appendChild(card);
@@ -16096,6 +16187,90 @@ grmClockTick();
     });
 
     document.getElementById('bRecap').classList.add('open');
+  }
+
+  // ── Story detail panel ───────────────────────────────────────────────────
+  let detailAudio = null;
+
+  function showStoryDetail(seg, actualIdx, storyNum) {
+    // Pause any existing detail audio
+    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+
+    document.getElementById('bSDNum').textContent      = `Story ${storyNum}`;
+    document.getElementById('bSDHeadline').textContent = seg.thread_title || seg.primary_country?.name || 'Story';
+    document.getElementById('bSDTranscript').textContent = seg.voiceover_text || '';
+
+    // Reset audio controls
+    const playBtn  = document.getElementById('bSDAudioPlay');
+    const fill     = document.getElementById('bSDAudioFill');
+    const timeEl   = document.getElementById('bSDAudioTime');
+    const trackEl  = document.getElementById('bSDAudioTrack');
+    const audioBar = document.getElementById('bSDAudioBar');
+    playBtn.textContent  = '▶';
+    fill.style.width     = '0%';
+    timeEl.textContent   = '0:00 / 0:00';
+
+    const fmt = s => {
+      const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+      return `${m}:${sec.toString().padStart(2, '0')}`;
+    };
+
+    if (!episode.has_audio || seg.start_ms == null) {
+      audioBar.style.display = 'none';
+    } else {
+      audioBar.style.display = 'flex';
+      const da = new Audio(`${API}/api/briefing/audio/${episode.id}/${actualIdx}`);
+      da.preload = 'metadata';
+      detailAudio = da;
+
+      da.addEventListener('loadedmetadata', () => {
+        timeEl.textContent = `0:00 / ${fmt(da.duration)}`;
+      });
+      da.addEventListener('timeupdate', () => {
+        if (!da.duration) return;
+        fill.style.width   = `${(da.currentTime / da.duration) * 100}%`;
+        timeEl.textContent = `${fmt(da.currentTime)} / ${fmt(da.duration)}`;
+      });
+      da.addEventListener('ended', () => {
+        playBtn.textContent = '▶';
+        fill.style.width    = '100%';
+      });
+
+      // Clone to avoid stale closure issues when user reopens detail
+      const freshPlay = playBtn.cloneNode(true);
+      playBtn.replaceWith(freshPlay);
+      freshPlay.addEventListener('click', e => {
+        e.stopPropagation();
+        if (da.paused) { da.play().catch(() => {}); freshPlay.textContent = '⏸'; }
+        else           { da.pause();                freshPlay.textContent = '▶'; }
+      });
+
+      trackEl.onclick = e => {
+        if (!da.duration) return;
+        const rect = trackEl.getBoundingClientRect();
+        da.currentTime = ((e.clientX - rect.left) / rect.width) * da.duration;
+      };
+    }
+
+    // Sources
+    const sourcesLabel = document.getElementById('bSDSourcesLabel');
+    const articlesEl   = document.getElementById('bSDArticles');
+    const allIds       = seg.article_ids || [];
+    if (!allIds.length) {
+      sourcesLabel.style.display = 'none';
+      articlesEl.innerHTML = '';
+    } else {
+      sourcesLabel.style.display = '';
+      articlesEl.innerHTML = `<div style="color:rgba(255,255,255,0.3);font-size:12px;padding:4px 0">Loading sources…</div>`;
+      fetch(`${API}/api/articles/by-ids?ids=${allIds.join(',')}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(arts => { articlesEl.innerHTML = arts.map(a => makeBriefingCard(a)).join(''); })
+        .catch(() => { articlesEl.innerHTML = ''; });
+    }
+
+    // Scroll body to top then slide in
+    document.getElementById('bSDBody').scrollTop = 0;
+    document.getElementById('bStoryDetail').classList.add('open');
   }
 
   // ── Playback controls ─────────────────────────────────────────────────────
@@ -16161,17 +16336,36 @@ grmClockTick();
 
   // Recap: close button
   document.getElementById('bRecapClose')?.addEventListener('click', () => {
+    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+    document.getElementById('bStoryDetail').classList.remove('open');
     document.getElementById('bRecap').classList.remove('open');
   });
-  // Recap: replay a story segment
+  // Story detail: back to summary grid
+  document.getElementById('bSDBack')?.addEventListener('click', () => {
+    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+    document.getElementById('bSDAudioPlay').textContent = '▶';
+    document.getElementById('bStoryDetail').classList.remove('open');
+  });
+  // Recap grid: card click → story detail, replay button → jump back into briefing
   document.getElementById('bRecapGrid')?.addEventListener('click', e => {
-    const btn = e.target.closest('.bRecapPlay');
-    if (!btn) return;
-    const idx = parseInt(btn.dataset.idx);
-    document.getElementById('bRecap').classList.remove('open');
-    playing = true;
-    updatePlayBtn();
-    goToSegment(idx, true);
+    // "Resume from here" button jumps back into the live briefing
+    const replayBtn = e.target.closest('.bRecapPlay');
+    if (replayBtn) {
+      if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+      const idx = parseInt(replayBtn.dataset.idx);
+      document.getElementById('bStoryDetail').classList.remove('open');
+      document.getElementById('bRecap').classList.remove('open');
+      playing = true; updatePlayBtn();
+      goToSegment(idx, true);
+      return;
+    }
+    // Any other click on the card → open story detail
+    const card = e.target.closest('.bRecapCard');
+    if (!card) return;
+    const idx = parseInt(card.dataset.idx);
+    const num = parseInt(card.dataset.num);
+    const seg = episode.segments[idx];
+    if (seg) showStoryDetail(seg, idx, num);
   });
 
   document.addEventListener('keydown', e => {
