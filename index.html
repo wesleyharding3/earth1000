@@ -9194,6 +9194,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(6,10,20,0.30);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
       padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
+            <button class="locBriefBtn" id="locBriefBtn" title="Generate location briefing">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M20.07 4.93a10 10 0 0 1 0 14.14M3.93 19.07a10 10 0 0 1 0-14.14"/>
+              </svg>
+            </button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:30px;gap:10px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
                 ${node.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${node.flag}</span>` : ""}
@@ -9696,6 +9701,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
         closeBtn.addEventListener("click", (e) => { e.stopPropagation(); });
+
+        // ── Location briefing ──
+        const locBriefBtn = panel.querySelector("#locBriefBtn");
+        if (locBriefBtn) {
+          locBriefBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            showLocBriefingOptions(node, type);
+          });
+          locBriefBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+        }
       }
 
       window.addEventListener("wheel", e => {
@@ -15590,6 +15605,98 @@ grmClockTick();
   .bHeaderHeadline { display: none; }
   .bRecapGrid { grid-template-columns: 1fr; }
 }
+
+/* ── Location Briefing ── */
+.locBriefBtn {
+  position: absolute; top: 6px; right: 32px; z-index: 110;
+  background: rgba(96,200,255,0.10);
+  border: 1px solid rgba(96,200,255,0.25);
+  color: #60c8ff; border-radius: 7px;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s;
+}
+.locBriefBtn:hover { background: rgba(96,200,255,0.26); }
+.locBriefBtn svg { width: 13px; height: 13px; }
+
+.locBriefOptions {
+  position: absolute; inset: auto 0 0 0;
+  background: rgba(6,10,20,0.97);
+  border-top: 1px solid rgba(255,255,255,0.10);
+  border-radius: 16px 16px 0 0;
+  padding: 20px 20px 24px;
+  transform: translateY(100%);
+  transition: transform 0.30s cubic-bezier(0.32,0.72,0,1);
+  z-index: 200;
+}
+.locBriefOptions.open { transform: translateY(0); }
+.locBriefOptionsTitle {
+  font-size: 13px; font-weight: 700; color: #fff;
+  margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
+}
+.locBriefOptionsTitle svg { width: 15px; height: 15px; opacity: 0.65; flex-shrink: 0; }
+.locBriefOptionRow {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.06);
+}
+.locBriefOptionLabel { font-size: 13px; color: rgba(255,255,255,0.85); }
+.locBriefOptionSub { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 2px; }
+.locBriefToggle {
+  width: 40px; height: 22px; border-radius: 11px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.14);
+  cursor: pointer; position: relative; transition: background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+.locBriefToggle.on { background: #60c8ff; border-color: #60c8ff; }
+.locBriefToggle::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(255,255,255,0.65); transition: left 0.2s, background 0.2s;
+}
+.locBriefToggle.on::after { left: 20px; background: #fff; }
+.locBriefBtnsRow { display: flex; gap: 10px; margin-top: 18px; }
+.locBriefCancelBtn {
+  flex: 1; padding: 11px; border-radius: 8px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.55); font-size: 13px; cursor: pointer;
+  transition: background 0.15s;
+}
+.locBriefCancelBtn:hover { background: rgba(255,255,255,0.11); }
+.locBriefGenerateBtn {
+  flex: 2; padding: 11px; border-radius: 8px;
+  background: rgba(96,200,255,0.15);
+  border: 1px solid rgba(96,200,255,0.32);
+  color: #60c8ff; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s;
+}
+.locBriefGenerateBtn:hover { background: rgba(96,200,255,0.30); }
+
+.locBriefLoading {
+  position: absolute; inset: 0;
+  background: rgba(4,10,20,0.92);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 14px; z-index: 210;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s;
+}
+.locBriefLoading.visible { opacity: 1; pointer-events: all; }
+.locBriefSpinner {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 2px solid rgba(96,200,255,0.15);
+  border-top-color: #60c8ff;
+  animation: locBriefSpin 0.85s linear infinite;
+}
+@keyframes locBriefSpin { to { transform: rotate(360deg); } }
+.locBriefLoadingText { font-size: 13px; color: rgba(255,255,255,0.65); }
+.locBriefLoadingCancel {
+  background: none; border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.35); border-radius: 6px;
+  padding: 6px 14px; font-size: 11px; cursor: pointer; transition: color 0.15s;
+}
+.locBriefLoadingCancel:hover { color: rgba(255,255,255,0.65); }
 </style>
 
 <!-- Briefing overlay HTML -->
@@ -15750,6 +15857,107 @@ grmClockTick();
     document.getElementById('bArticlesScroll').innerHTML = '';
     document.getElementById('bCaptions').classList.remove('visible');
     updatePlayBtn();
+  }
+
+  // ── Location Briefing Options + Request ──────────────────────────────────
+  function showLocBriefingOptions(node, type) {
+    const panel = document.getElementById('infoPanel');
+    panel.querySelectorAll('.locBriefOptions,.locBriefLoading').forEach(el => el.remove());
+
+    const opts = document.createElement('div');
+    opts.className = 'locBriefOptions';
+    opts.innerHTML = `
+      <div class="locBriefOptionsTitle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/>
+        </svg>
+        Location Briefing — ${node.name}
+      </div>
+      <div class="locBriefOptionRow">
+        <div>
+          <div class="locBriefOptionLabel">Voiceover</div>
+          <div class="locBriefOptionSub">ElevenLabs audio synthesis (~40s)</div>
+        </div>
+        <div class="locBriefToggle" id="locVoiceToggle"></div>
+      </div>
+      <div class="locBriefBtnsRow">
+        <button class="locBriefCancelBtn" id="locBriefCancel">Cancel</button>
+        <button class="locBriefGenerateBtn" id="locBriefGenerate">Generate Briefing</button>
+      </div>
+    `;
+    panel.appendChild(opts);
+    requestAnimationFrame(() => opts.classList.add('open'));
+
+    let voiceoverOn = false;
+    const toggle = opts.querySelector('#locVoiceToggle');
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      voiceoverOn = !voiceoverOn;
+      toggle.classList.toggle('on', voiceoverOn);
+    });
+
+    opts.querySelector('#locBriefCancel').addEventListener('click', (e) => {
+      e.stopPropagation();
+      opts.classList.remove('open');
+      setTimeout(() => opts.remove(), 320);
+    });
+
+    opts.querySelector('#locBriefGenerate').addEventListener('click', (e) => {
+      e.stopPropagation();
+      opts.classList.remove('open');
+      setTimeout(() => {
+        opts.remove();
+        requestLocationBriefing(node, type, { voiceover: voiceoverOn });
+      }, 200);
+    });
+  }
+
+  function requestLocationBriefing(node, type, opts = {}) {
+    const panel = document.getElementById('infoPanel');
+    const loading = document.createElement('div');
+    loading.className = 'locBriefLoading';
+    loading.innerHTML = `
+      <div class="locBriefSpinner"></div>
+      <div class="locBriefLoadingText">Generating briefing for ${node.name}…</div>
+      <button class="locBriefLoadingCancel" id="locBriefLoadingCancel">Cancel</button>
+    `;
+    panel.appendChild(loading);
+    requestAnimationFrame(() => loading.classList.add('visible'));
+
+    let cancelled = false;
+    loading.querySelector('#locBriefLoadingCancel').addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelled = true;
+      loading.classList.remove('visible');
+      setTimeout(() => loading.remove(), 200);
+    });
+
+    fetch(`${API}/api/briefing/location`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false }),
+    })
+      .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+      .then(ep => {
+        if (cancelled) return;
+        loading.classList.remove('visible');
+        setTimeout(() => loading.remove(), 200);
+        episode = ep;
+        // Location briefings have no target_date — patch a display-friendly one
+        if (!episode.target_date) episode.target_date = new Date().toISOString();
+        openBriefing();
+      })
+      .catch(err => {
+        if (cancelled) return;
+        loading.classList.remove('visible');
+        setTimeout(() => loading.remove(), 200);
+        console.error('[locBriefing]', err);
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:absolute;bottom:20px;left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(220,50,50,0.92);color:#fff;padding:8px 16px;border-radius:8px;font-size:12px;z-index:220;pointer-events:none;';
+        toast.textContent = 'Briefing generation failed — try again';
+        panel.appendChild(toast);
+        setTimeout(() => toast.remove(), 3500);
+      });
   }
 
   // ── Dots ─────────────────────────────────────────────────────────────────

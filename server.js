@@ -7,6 +7,7 @@ const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
 const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
+const { generateLocationBriefing } = require("./locationBriefingGenerator");
 const { resolveImagesForArticles } = require("./imageResolver");
 const jwt = require("jsonwebtoken");
 
@@ -1224,6 +1225,20 @@ app.get("/api/briefing/recent", async (req, res) => {
   } catch (err) {
     console.error("[briefing/recent]", err.message);
     res.status(500).json({ error: "Failed to fetch recent briefings" });
+  }
+});
+
+// POST /api/briefing/location — on-demand briefing for a city or country node
+app.post("/api/briefing/location", async (req, res) => {
+  const { type, id, name, voiceover = false } = req.body || {};
+  if (!type || !id || !name) return res.status(400).json({ error: "type, id, and name are required" });
+  if (!["city", "country"].includes(type)) return res.status(400).json({ error: "type must be 'city' or 'country'" });
+  try {
+    const ep = await generateLocationBriefing({ type, id: parseInt(id), name, voiceover: !!voiceover });
+    res.json(ep);
+  } catch (err) {
+    console.error("[briefing/location]", err.message);
+    res.status(500).json({ error: err.message || "Failed to generate location briefing" });
   }
 });
 
