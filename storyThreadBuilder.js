@@ -296,15 +296,17 @@ async function coolDownInactiveThreads() {
 }
 
 // ─── Keyword Normalization (inline, new keywords only) ────────────────────────
+// Uses Claude Haiku in batches of 60 — no DeepL dependency.
+// Haiku handles all non-Latin scripts (Arabic, Cyrillic, CJK, Devanagari, etc.)
+// and resolves proper nouns to standard English forms (Пекин → beijing).
 
 function isNonLatin(text) {
   return /[\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0900-\u097F\u0E00-\u0E7F\u0370-\u03FF]/.test(text);
 }
 
-async function normalizeNewKeywords(hours) {
-  const { translateText } = require("./translator");
+const NORMALIZE_BATCH = 60;
 
-  // Find non-Latin keywords from recent articles not yet normalized
+async function normalizeNewKeywords(hours) {
   const { rows } = await pool.query(`
     SELECT DISTINCT ak.keyword
     FROM article_keywords ak
@@ -314,29 +316,61 @@ async function normalizeNewKeywords(hours) {
       AND ak.keyword IS NOT NULL
   `);
 
-  const toTranslate = rows.map(r => r.keyword).filter(isNonLatin);
-  if (!toTranslate.length) return;
+  const toNormalize = rows.map(r => r.keyword).filter(isNonLatin);
+  if (!toNormalize.length) return;
 
   let done = 0;
-  for (const kw of toTranslate) {
+
+  for (let i = 0; i < toNormalize.length; i += NORMALIZE_BATCH) {
+    const batch = toNormalize.slice(i, i + NORMALIZE_BATCH);
     try {
-      const translated = await translateText(kw, "EN-US");
-      if (!translated) continue;
-      const norm = translated.toLowerCase().trim();
-      // Write to keyword_translations for future reference
-      await pool.query(`
-        INSERT INTO keyword_translations (original_keyword, normalized_keyword)
-        VALUES ($1, $2) ON CONFLICT (original_keyword) DO NOTHING
-      `, [kw, norm]);
-      // Update article_keywords directly
-      await pool.query(`
-        UPDATE article_keywords SET normalized_keyword = $1
-        WHERE keyword = $2 AND normalized_keyword IS NULL
-      `, [norm, kw]);
-      done++;
-    } catch (_) { /* skip on error, next run will retry */ }
+      const msg = await client.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 800,
+        messages: [{
+          role: "user",
+          content: `Translate these news keywords/phrases to standard English equivalents for keyword indexing.
+Return ONLY a valid JSON object: each key is the original keyword, each value is the lowercase English equivalent string, or null if untranslatable/too ambiguous.
+Use standard English proper nouns (e.g. "Пекин"→"beijing", "北京"→"beijing", "موسكو"→"moscow", "한국"→"south korea").
+Single characters or meaningless fragments → null.
+
+Keywords: ${JSON.stringify(batch)}
+
+JSON only:`
+        }]
+      });
+
+      let map;
+      try { map = JSON.parse(msg.content[0].text.trim()); }
+      catch { continue; }
+
+      const entries = Object.entries(map).filter(([, v]) => v && typeof v === "string");
+      if (!entries.length) continue;
+
+      // Bulk insert into keyword_translations
+      const tVals   = entries.map((_, j) => `($${j*2+1},$${j*2+2})`).join(",");
+      const tParams = entries.flatMap(([orig, norm]) => [orig, norm.toLowerCase().trim()]);
+      await pool.query(
+        `INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+         VALUES ${tVals} ON CONFLICT (original_keyword) DO NOTHING`,
+        tParams
+      );
+
+      // Bulk update article_keywords
+      for (const [orig, norm] of entries) {
+        await pool.query(
+          `UPDATE article_keywords SET normalized_keyword = $1
+           WHERE keyword = $2 AND normalized_keyword IS NULL`,
+          [norm.toLowerCase().trim(), orig]
+        );
+        done++;
+      }
+    } catch (err) {
+      console.warn(`  ⚠️  Keyword normalization batch failed: ${err.message}`);
+    }
   }
-  if (done) process.stdout.write(`(${done} new keywords normalized) `);
+
+  if (done) process.stdout.write(`(${done} keywords normalized via Claude Haiku) `);
 }
 
 // ─── DB Queries ───────────────────────────────────────────────────────────────

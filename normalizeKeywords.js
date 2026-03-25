@@ -21,7 +21,9 @@
 
 require('dotenv').config();
 const pool = require('./db');
-const { translateText } = require('./translator');
+const Anthropic = require('@anthropic-ai/sdk');
+
+const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SETUP       = process.argv.includes('--setup');
 const ANALYZE     = process.argv.includes('--analyze');
@@ -171,44 +173,73 @@ async function translateKeywords() {
   }
   const skipped = toTranslate.length - capped.length;
 
-  console.log(`  To translate: ${capped.length.toLocaleString()} (cap: ${CONFIG.CHAR_CAP.toLocaleString()} chars ≈ ${charCount.toLocaleString()} chars)`);
-  if (skipped > 0) console.log(`  ⚠ Skipped (over cap): ${skipped.toLocaleString()} keywords — run with --cap ${CONFIG.CHAR_CAP + 250_000} to continue`);
-  console.log('\nTranslating (highest frequency first)...\n');
+  // No character cap needed — Claude Haiku has no per-character billing.
+  // Process all keywords in batches of 60.
+  console.log(`  To normalize: ${toTranslate.length.toLocaleString()} keywords`);
+  console.log('\nNormalizing via Claude Haiku (highest frequency first)...\n');
 
+  const CLAUDE_BATCH = 60;
   let translated = 0;
   let errors = 0;
+  let batchNum = 0;
+  const totalBatches = Math.ceil(toTranslate.length / CLAUDE_BATCH);
 
-  for (const row of capped) {
+  for (let i = 0; i < toTranslate.length; i += CLAUDE_BATCH) {
+    batchNum++;
+    const batch = toTranslate.slice(i, i + CLAUDE_BATCH);
+    const keywords = batch.map(r => r.keyword);
+
     try {
-      const normalized = await translateText(row.keyword, 'EN-US');
-      
-      if (normalized && normalized.trim()) {
-        await pool.query(`
-          INSERT INTO keyword_translations (original_keyword, normalized_keyword)
-          VALUES ($1, $2)
-          ON CONFLICT (original_keyword) DO NOTHING
-        `, [row.keyword, normalized.toLowerCase().trim()]);
-        
-        translated++;
-        
-        // Progress every 50
-        if (translated % 50 === 0) {
-          console.log(`  Translated: ${translated} / ${toTranslate.length} (${row.mentions.toLocaleString()} mentions: "${row.keyword}" → "${normalized.trim()}")`);
-        }
+      const msg = await aiClient.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 800,
+        messages: [{
+          role: 'user',
+          content: `Translate these news keywords/phrases to standard English equivalents for keyword indexing.
+Return ONLY a valid JSON object: each key is the original keyword, each value is the lowercase English equivalent string, or null if untranslatable/too ambiguous/single character.
+Use standard English proper nouns (e.g. "Пекин"→"beijing", "北京"→"beijing", "موسكو"→"moscow").
+
+Keywords: ${JSON.stringify(keywords)}
+
+JSON only:`
+        }]
+      });
+
+      let map;
+      try { map = JSON.parse(msg.content[0].text.trim()); }
+      catch (parseErr) {
+        errors += batch.length;
+        console.warn(`  Batch ${batchNum}: JSON parse failed — ${parseErr.message}`);
+        continue;
       }
+
+      const entries = Object.entries(map).filter(([, v]) => v && typeof v === 'string' && v.trim());
+      if (entries.length) {
+        const vals   = entries.map((_, j) => `($${j*2+1},$${j*2+2})`).join(',');
+        const params = entries.flatMap(([orig, norm]) => [orig, norm.toLowerCase().trim()]);
+        await pool.query(
+          `INSERT INTO keyword_translations (original_keyword, normalized_keyword)
+           VALUES ${vals} ON CONFLICT (original_keyword) DO NOTHING`,
+          params
+        );
+        translated += entries.length;
+      }
+
+      const pct = ((batchNum / totalBatches) * 100).toFixed(0);
+      const sample = entries.slice(0, 2).map(([k, v]) => `"${k}"→"${v}"`).join(', ');
+      console.log(`  Batch ${batchNum}/${totalBatches} (${pct}%) — ${entries.length} normalized. e.g. ${sample}`);
+
     } catch (err) {
-      errors++;
-      if (errors <= 5) {
-        console.warn(`  Error translating "${row.keyword}": ${err.message}`);
-      }
+      errors += batch.length;
+      console.warn(`  Batch ${batchNum}: API error — ${err.message}`);
     }
-    
-    // Small pause every 100 to avoid rate limits
-    if ((translated + errors) % 100 === 0) await sleep(200);
+
+    // Small pause between batches to be polite to the API
+    if (batchNum % 5 === 0) await sleep(500);
   }
 
   console.log(`\n────────────────────────────────────────────────────────────`);
-  console.log(`Translated: ${translated.toLocaleString()}`);
+  console.log(`Normalized: ${translated.toLocaleString()}`);
   console.log(`Errors:     ${errors.toLocaleString()}`);
   console.log('═══════════════════════════════════════════════════════════\n');
 }

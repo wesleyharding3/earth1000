@@ -2,11 +2,68 @@ require("dotenv").config();
 const cheerio = require("cheerio");
 const Parser = require("rss-parser");
 const pool = require("./db");
-const { translateText } = require("./translator");
 const crypto = require("crypto");
 const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtractor");
+const Anthropic = require("@anthropic-ai/sdk");
 
 const TRANSLATION_ENABLED = false;
+
+// ── Claude Haiku client — used only for CJK keyword extraction ────────────────
+// CJK (Chinese, Japanese, Korean) scripts have no word separators; the regex
+// tokeniser falls back to character bigrams which are meaningless noise.
+// For these languages we ask Haiku to return English keywords directly, which
+// also eliminates any downstream normalization step (normalized_keyword = keyword).
+const aiClient = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+const CJK_EXTRACT_LANGS = new Set(["zh", "ja", "ko", "th", "km", "lo"]);
+
+async function extractKeywordsWithClaude(title, summary, articleId, publishedAt, countryId) {
+  if (!aiClient) return;
+  try {
+    const text = [title, (summary || "").slice(0, 200)].filter(Boolean).join(" — ");
+    const msg = await aiClient.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 200,
+      messages: [{
+        role: "user",
+        content: `Extract 5-10 concise English news keywords from this article text. Return ONLY a JSON array of lowercase strings. Include named entities (people, places, organisations), core topics, and meaningful bigrams. No stopwords, no generic terms like "news" or "said".
+
+Text: ${text}
+
+JSON array only:`
+      }]
+    });
+
+    let keywords;
+    try { keywords = JSON.parse(msg.content[0].text.trim()); }
+    catch { return; }
+    if (!Array.isArray(keywords) || !keywords.length) return;
+
+    // Shape into the format saveKeywords expects; mark normalized_keyword = keyword
+    // so the normalization step in storyThreadBuilder skips them (already English).
+    const shaped = keywords
+      .filter(k => typeof k === "string" && k.length >= 2)
+      .slice(0, 15)
+      .map((keyword, i) => ({ keyword: keyword.toLowerCase(), frequency: 15 - i, is_bigram: keyword.includes(" ") }));
+
+    await saveKeywords(articleId, shaped, "en", publishedAt, countryId, countryId);
+
+    // Mark them as already normalized so storyThreadBuilder skips them
+    const kws = shaped.map(k => k.keyword);
+    if (kws.length) {
+      await pool.query(
+        `UPDATE article_keywords SET normalized_keyword = keyword
+         WHERE article_id = $1 AND keyword = ANY($2)`,
+        [articleId, kws]
+      );
+    }
+  } catch (err) {
+    // Non-fatal — keyword extraction failures never block ingestion
+    console.warn(`  ⚠️  Claude keyword extraction failed [${articleId}]: ${err.message}`);
+  }
+}
 
 /* =========================================
    Parser Options
@@ -181,19 +238,6 @@ function extractPublishedDate(item) {
   }
 
   return null;
-}
-
-/* =========================================
-   Translation with Timeout
-========================================= */
-async function translateWithTimeout(text, lang, timeoutMs = 10000) {
-  if (!text) return text;
-  return Promise.race([
-    translateText(text, lang),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Translation timeout after ${timeoutMs}ms`)), timeoutMs)
-    )
-  ]);
 }
 
 /* =========================================
@@ -841,10 +885,21 @@ async function fetchFeeds() {
           pool.query("SELECT pg_notify('new_article', $1::text)", [String(newArticleId)])
             .catch(err => console.warn(`  ⚠️  NOTIFY failed [${newArticleId}]: ${err.message}`));
 
-          if (stopwordCache) {
-            const lang         = feed.language || "en";
-            setImmediate(async () => {
-              try {
+          const lang = feed.language || "en";
+          setImmediate(async () => {
+            try {
+              if (CJK_EXTRACT_LANGS.has(lang) && aiClient) {
+                // CJK and no-space scripts: regex tokeniser produces character
+                // n-grams which are meaningless. Use Claude Haiku to extract
+                // real English keywords directly — no normalization step needed.
+                await extractKeywordsWithClaude(
+                  title, summary, newArticleId, item.publishedAt, feed.country_id || null
+                );
+                console.log(`  ✅ Keywords [${newArticleId}] Claude extracted (${lang})`);
+              } else if (stopwordCache) {
+                // All other languages: fast regex extractor (English, Arabic,
+                // Russian, Spanish, etc.) — non-Latin tokens get normalized
+                // later by storyThreadBuilder via Claude Haiku batch.
                 const keywords = extractKeywords({ title, summary }, lang, stopwordCache);
                 if (keywords.length > 0) {
                   await saveKeywords(
@@ -856,11 +911,11 @@ async function fetchFeeds() {
                 } else {
                   console.log(`  ⚠️  Keywords [${newArticleId}] 0 extracted (${lang})`);
                 }
-              } catch (kwErr) {
-                console.warn(`  ❌ Keywords [${newArticleId}] extraction failed: ${kwErr.message}`);
               }
-            });
-          }
+            } catch (kwErr) {
+              console.warn(`  ❌ Keywords [${newArticleId}] extraction failed: ${kwErr.message}`);
+            }
+          });
         }
       }
 
