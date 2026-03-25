@@ -17,7 +17,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
-const ARTICLE_LIMIT   = 600;   // max articles to pull per run
+const ARTICLE_LIMIT   = 3000;  // max articles to pull per run
 const CLAUDE_BATCH    = 30;    // articles per Claude call
 const MIN_CLUSTER     = 2;     // min articles to form a cluster
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
@@ -395,7 +395,7 @@ async function getUnthreadedArticles(hours, limit) {
       AND NOT EXISTS (
         SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
       )
-    ORDER BY a.published_at DESC
+    ORDER BY a.score DESC NULLS LAST, a.published_at DESC
     LIMIT $1
   `, [limit]);
 
