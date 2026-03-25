@@ -760,7 +760,7 @@ REQUIREMENTS:
 
 STORY CONTINUITY FRAMING (use when is_ongoing = true):
 - Each story includes "is_ongoing" and "briefing_day_number" fields.
-- If is_ongoing = true and briefing_day_number >= 2: open the segment with a continuity marker such as "Continuing our coverage — now day ${briefing_day_number}..." or "An update on a story we've been following..." or "Day ${briefing_day_number} of...". Vary the phrasing naturally.
+- If is_ongoing = true and briefing_day_number >= 2: open the segment with a continuity marker such as "Continuing our coverage — now day \${briefing_day_number}..." or "An update on a story we've been following..." or "Day \${briefing_day_number} of...". Vary the phrasing naturally.
 - If is_ongoing = false (briefing_day_number = 1): introduce the story fresh with no continuity language.
 - Never say "Day 1" — only use day markers for briefing_day_number >= 2.
 
