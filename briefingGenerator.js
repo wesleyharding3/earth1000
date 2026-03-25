@@ -21,6 +21,7 @@
 require('dotenv').config();
 const pool     = require('./db');
 const Anthropic = require('@anthropic-ai/sdk');
+const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
 
 const client         = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
@@ -133,9 +134,18 @@ async function run() {
     }
     console.log(`   [${elapsed(t0)}] ${threadData.length} unique threads after overlap dedup`);
 
-    // ── 3. Generate Claude narrative (includes story entity extraction) ──────
+    // ── 3a. Resolve story identities (continuity tracking) ───────────────
+    console.log(`   [${elapsed(t0)}] Resolving story continuity...`);
+    const storyContexts = await resolveStoryContexts(threadData).catch(e => {
+      console.warn(`   ⚠ storyTracker failed (non-fatal): ${e.message}`);
+      return {};
+    });
+    const ongoingCount = Object.values(storyContexts).filter(c => c.isOngoing).length;
+    if (ongoingCount) console.log(`   [${elapsed(t0)}] ${ongoingCount} ongoing story/stories detected`);
+
+    // ── 3b. Generate Claude narrative (includes story entity extraction) ──
     console.log(`   [${elapsed(t0)}] Generating narrative with Claude...`);
-    const narrative = await generateNarrative(threadData);
+    const narrative = await generateNarrative(threadData, storyContexts);
     if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
 
@@ -242,6 +252,11 @@ async function run() {
       audioData,
       episodeId
     ]);
+
+    // ── 8. Persist story continuity links ─────────────────────────────────
+    await saveSegmentLinks(episodeId, segments, storyContexts).catch(e =>
+      console.warn(`   ⚠ storyTracker saveSegmentLinks failed (non-fatal): ${e.message}`)
+    );
 
     console.log();
     console.log(`✅ Briefing complete in ${elapsed(t0)}`);
@@ -684,7 +699,7 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
 }
 
 // ─── Claude Narrative ──────────────────────────────────────────────────────
-async function generateNarrative(threadData) {
+async function generateNarrative(threadData, storyContexts = {}) {
   const nowMs = Date.now();
   const storySummaries = threadData.map((t, i) => {
     // Find newest article date so Claude knows how fresh the story is
@@ -696,6 +711,13 @@ async function generateNarrative(threadData) {
     // Also find the oldest article — wide spread means ongoing saga, not fresh break
     const oldestMs  = dates.length ? Math.min(...dates) : 0;
     const spanDays  = (newestMs && oldestMs) ? Math.round((newestMs - oldestMs) / 86400000) : 0;
+
+    // Story continuity context — informs voiceover framing
+    const ctx = storyContexts[String(t.id)];
+    const continuity = ctx?.isOngoing
+      ? { is_ongoing: true, briefing_day_number: ctx.dayNumber, previously_known_as: ctx.canonicalTitle }
+      : { is_ongoing: false, briefing_day_number: 1 };
+
     return {
       index:                i + 1,
       thread_id:            t.id,
@@ -704,6 +726,7 @@ async function generateNarrative(threadData) {
       importance:           t.importance,
       newest_article_days_ago: daysAgo,
       article_span_days:    spanDays,
+      ...continuity,
       articles: (t.articles || []).map(a => ({
         title:        a.translated_title || a.title,
         summary:      (a.translated_summary || a.summary || '').slice(0, 200),
@@ -734,6 +757,12 @@ REQUIREMENTS:
 - Write conversationally — this will be spoken aloud by a professional voice.
 - Connect stories when genuinely related (e.g. economic ripple effects, diplomatic links).
 - This briefing draws from sources in multiple languages and countries. When relevant, surface non-Western or non-English perspectives — e.g. how Beijing, Moscow, Tehran, or Seoul view a story, not just Washington or London. Avoid defaulting to a single national lens.
+
+STORY CONTINUITY FRAMING (use when is_ongoing = true):
+- Each story includes "is_ongoing" and "briefing_day_number" fields.
+- If is_ongoing = true and briefing_day_number >= 2: open the segment with a continuity marker such as "Continuing our coverage — now day ${briefing_day_number}..." or "An update on a story we've been following..." or "Day ${briefing_day_number} of...". Vary the phrasing naturally.
+- If is_ongoing = false (briefing_day_number = 1): introduce the story fresh with no continuity language.
+- Never say "Day 1" — only use day markers for briefing_day_number >= 2.
 
 RECENCY FRAMING (critical — frame stories correctly based on how old they are):
 - Each story includes "newest_article_days_ago" — the age of its most recent article.

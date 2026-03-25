@@ -8720,15 +8720,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       // Per-node effective threshold.
-      // When neighbours are crowded (nearDist < 2.5 × baseThresh) tighten to
-      // 40% of the gap so the cursor can't bleed into an adjacent node.
-      // In sparse space use the full baseThresh.
-      // Floor: never shrink below 25% of baseThresh so tiny nodes stay clickable.
+      // Winner-takes-all (minimum-td loop) handles node discrimination, so this
+      // function only needs to reject "ghost" hovers (cursor far from all nodes).
+      //
+      // Dense clusters: halfGap = nearDist*0.5 is small → floor wins → gives
+      //   a comfortable ~45% of baseThresh hover radius. Min-td still picks
+      //   the correct node because it has the smallest transverse distance.
+      // Sparse nodes: min(baseThresh, halfGap) is large → full baseThresh used.
+      //
+      // Floor of baseThresh*0.45 ≈ 14 screen-px at default zoom — matches the
+      // visual dot size so nodes feel naturally hittable.
       function perNodeThresh(baseThresh, nearDist) {
-        if (nearDist < baseThresh * 3) {
-          return Math.max(nearDist * 0.45, baseThresh * 0.55);
-        }
-        return baseThresh * 1.15;
+        if (!nearDist || !isFinite(nearDist)) return baseThresh;
+        const halfGap = nearDist * 0.5;
+        const floor   = baseThresh * 0.45;                        // comfortable minimum
+        return Math.max(Math.min(baseThresh, halfGap), floor);
       }
       // ────────────────────────────────────────────────────────────────
 
@@ -8738,9 +8744,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
-        raycaster.params.Points.threshold = currentViewMode === "country"
-        ? Math.max(0.018, camera.position.z * 0.018)
-        : Math.max(0.013, camera.position.z * 0.015);
+        // Wide broad-phase net — screen-space check below handles precision
+        raycaster.params.Points.threshold = Math.max(0.040, camera.position.z * 0.028);
         raycaster.setFromCamera(hoverMouse, camera);
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
@@ -8758,24 +8763,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const intersects = raycaster.intersectObject(activePoints);
         if (intersects.length > 0) {
-          const index = intersects[0].index;
-          const nodePos = new THREE.Vector3();
-          nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
-          nodePos.applyMatrix4(activePoints.matrixWorld);
-          if (isCityVisible(nodePos, camera)) {
-            // Suppress hover for pop/gdp-filter-masked nodes
-            const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-            const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
-            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
-              // ── Spatial-aware threshold: reject if cursor is too far from this
-              //    specific node relative to its nearest neighbour distance ──
-              const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
-              const td = rayTransvDist(raycaster.ray, nodePos);
-              if (td <= perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) {
-                hoveredIndex = index;
-              }
-            }
+          // Screen-space pixel distance: project each candidate and pick the one
+          // whose rendered dot is closest to the cursor. Immune to 3D ray-space
+          // precision issues and naturally handles dense clusters.
+          const rect2 = renderer.domElement.getBoundingClientRect();
+          const msx = (hoverMouse.x + 1) / 2 * rect2.width;
+          const msy = (-hoverMouse.y + 1) / 2 * rect2.height;
+          const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+          const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+          const HOVER_PX = 22; // accept if within 22 screen pixels of dot centre
+          let bestIdx = null, bestPx = Infinity;
+          for (const hit of intersects) {
+            const idx = hit.index;
+            const np = new THREE.Vector3();
+            np.fromBufferAttribute(activePoints.geometry.attributes.position, idx);
+            np.applyMatrix4(activePoints.matrixWorld);
+            if (!isCityVisible(np, camera)) continue;
+            if ((popMask && !popMask[idx]) || (gdpMask && !gdpMask[idx])) continue;
+            const proj = np.project(camera);
+            const sx = (proj.x + 1) / 2 * rect2.width;
+            const sy = (-proj.y + 1) / 2 * rect2.height;
+            const px = Math.sqrt((sx - msx) ** 2 + (sy - msy) ** 2);
+            if (px < HOVER_PX && px < bestPx) { bestPx = px; bestIdx = idx; }
           }
+          if (bestIdx !== null) hoveredIndex = bestIdx;
         }
 
         if (hoveredIndex !== null) {
@@ -8959,36 +8970,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
 
-        raycaster.params.Points.threshold = currentViewMode === "country"
-          ? Math.max(0.018, camera.position.z * 0.016)
-          : Math.max(0.013, camera.position.z * 0.013);
-        const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
-        const activeData   = currentViewMode === "country" ? countries : cities;
-        const intersects   = raycaster.intersectObject(activePoints);
-        if (intersects.length > 0) {
-          const index = intersects[0].index;
-          const nodePos = new THREE.Vector3();
-          nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
-          nodePos.applyMatrix4(activePoints.matrixWorld);
-          if (isCityVisible(nodePos, camera)) {
-            const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-            const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
-            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
-              // Spatial-aware: tighten threshold for crowded nodes
-              const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
-              const td = rayTransvDist(raycaster.ray, nodePos);
-              if (td > perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) return;
-              lockAmbientRotation();
-              selectedNodeIndex = index; isFocused = true;
-              preFocusZoom = camera.position.z;
-              if (currentViewMode === "country") {
-                focusCountry(activeData[index]);
-                focusPendingPanel = () => openNodePanel(activeData[index], "country");
-              } else {
-                focusCity(activeData[index]);
-                focusPendingPanel = () => openNodePanel(activeData[index], "city");
-              }
-            }
+        // Screen-space sweep: project all visible nodes, pick the one whose dot
+        // is closest to the click point. No raycaster needed — O(N) is trivial
+        // for a single click event and works correctly for any cluster density.
+        const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeData      = currentViewMode === "country" ? countries : cities;
+        const activePositions = currentViewMode === "country" ? countryPositions : positions;
+        const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+        const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+        const rect2   = renderer.domElement.getBoundingClientRect();
+        const clickX  = event.clientX - rect2.left;
+        const clickY  = event.clientY - rect2.top;
+        const CLICK_PX = 18;
+        let bestIdx = null, bestPx = Infinity;
+        for (let i = 0; i < activeData.length; i++) {
+          if (popMask && !popMask[i]) continue;
+          if (gdpMask && !gdpMask[i]) continue;
+          const np = new THREE.Vector3(
+            activePositions[i*3], activePositions[i*3+1], activePositions[i*3+2]
+          ).applyMatrix4(activePoints.matrixWorld);
+          if (!isCityVisible(np, camera)) continue;
+          const proj = np.project(camera);
+          const sx = (proj.x + 1) / 2 * rect2.width;
+          const sy = (-proj.y + 1) / 2 * rect2.height;
+          const px = Math.sqrt((sx - clickX) ** 2 + (sy - clickY) ** 2);
+          if (px < CLICK_PX && px < bestPx) { bestPx = px; bestIdx = i; }
+        }
+        if (bestIdx !== null) {
+          lockAmbientRotation();
+          selectedNodeIndex = bestIdx; isFocused = true;
+          preFocusZoom = camera.position.z;
+          if (currentViewMode === "country") {
+            focusCountry(activeData[bestIdx]);
+            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "country");
+          } else {
+            focusCity(activeData[bestIdx]);
+            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "city");
           }
         }
       });
@@ -9054,37 +9071,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
 
-        raycaster.params.Points.threshold = currentViewMode === "country"
-          ? Math.max(0.018, camera.position.z * 0.016)
-          : Math.max(0.013, camera.position.z * 0.013);  
-        const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
-        const activeData   = currentViewMode === "country" ? countries : cities;
-        const intersects   = raycaster.intersectObject(activePoints);
-        if (intersects.length > 0) {
-          const index = intersects[0].index;
-          const nodePos = new THREE.Vector3();
-          nodePos.fromBufferAttribute(activePoints.geometry.attributes.position, index);
-          nodePos.applyMatrix4(activePoints.matrixWorld);
-          if (isCityVisible(nodePos, camera)) {
-            const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-            const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
-            if ((!popMask || popMask[index]) && (!gdpMask || gdpMask[index])) {
-              // Spatial-aware: tighten threshold for crowded nodes
-              const nearDists = currentViewMode === "country" ? countryNearestDist : cityNearestDist;
-              const td = rayTransvDist(raycaster.ray, nodePos);
-              if (td > perNodeThresh(raycaster.params.Points.threshold, nearDists[index])) return;
-              touchNodeSelectTime = Date.now();
-              lockAmbientRotation();
-              selectedNodeIndex = index; isFocused = true;
-              preFocusZoom = camera.position.z;
-              if (currentViewMode === "country") {
-                focusCountry(activeData[index]);
-                focusPendingPanel = () => openNodePanel(activeData[index], "country");
-              } else {
-                focusCity(activeData[index]);
-                focusPendingPanel = () => openNodePanel(activeData[index], "city");
-              }
-            }
+        // Screen-space sweep — same logic as click handler
+        const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
+        const activeData      = currentViewMode === "country" ? countries : cities;
+        const activePositions = currentViewMode === "country" ? countryPositions : positions;
+        const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
+        const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+        const rect2   = renderer.domElement.getBoundingClientRect();
+        const touchX  = touch.clientX - rect2.left;
+        const touchY  = touch.clientY - rect2.top;
+        const TOUCH_PX = 28; // slightly wider than click for fat-finger tolerance
+        let bestIdx = null, bestPx = Infinity;
+        for (let i = 0; i < activeData.length; i++) {
+          if (popMask && !popMask[i]) continue;
+          if (gdpMask && !gdpMask[i]) continue;
+          const np = new THREE.Vector3(
+            activePositions[i*3], activePositions[i*3+1], activePositions[i*3+2]
+          ).applyMatrix4(activePoints.matrixWorld);
+          if (!isCityVisible(np, camera)) continue;
+          const proj = np.project(camera);
+          const sx = (proj.x + 1) / 2 * rect2.width;
+          const sy = (-proj.y + 1) / 2 * rect2.height;
+          const px = Math.sqrt((sx - touchX) ** 2 + (sy - touchY) ** 2);
+          if (px < TOUCH_PX && px < bestPx) { bestPx = px; bestIdx = i; }
+        }
+        if (bestIdx !== null) {
+          touchNodeSelectTime = Date.now();
+          lockAmbientRotation();
+          selectedNodeIndex = bestIdx; isFocused = true;
+          preFocusZoom = camera.position.z;
+          if (currentViewMode === "country") {
+            focusCountry(activeData[bestIdx]);
+            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "country");
+          } else {
+            focusCity(activeData[bestIdx]);
+            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "city");
           }
         }
       }, { passive: true });

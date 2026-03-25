@@ -1405,6 +1405,27 @@ function makeKeywordCacheKey(route, parts) {
   return `${route}:${parts.join(":")}`;
 }
 
+// DB-level cache check — written by keywordCron.js on a scheduled basis.
+// Returns pre-computed results if fresh enough, null otherwise.
+// maxAgeMinutes: trending = 1440 (24h), rising = 240 (4h)
+async function getDbKeywordCache(mode, filterKey, maxAgeMinutes) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT results, computed_at
+      FROM   keyword_intelligence_cache
+      WHERE  mode       = $1
+        AND  filter_key = $2
+        AND  computed_at > NOW() - ($3 * INTERVAL '1 minute')
+      ORDER BY computed_at DESC
+      LIMIT 1
+    `, [mode, filterKey, maxAgeMinutes]);
+    if (rows.length) return rows[0].results; // already parsed JSONB
+  } catch {
+    // Table may not exist yet if migration hasn't run — fall through silently
+  }
+  return null;
+}
+
 async function getCachedKeywordPayload(cacheKey, ttlMs, loader) {
   const now = Date.now();
   const cached = keywordResponseCache.get(cacheKey);
@@ -1506,6 +1527,15 @@ app.get("/api/keywords/trending", async (req, res) => {
       aboutCountryId ?? "global",
     ]);
 
+    // Check DB pre-computed cache for global requests (populated by keywordCron.js)
+    if (!sourceCountryId && !aboutCountryId) {
+      const dbCached = await getDbKeywordCache("trending", "global", 1440); // 24h
+      if (dbCached) {
+        setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
+        return res.json(dbCached.slice(0, limitInt));
+      }
+    }
+
     setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
     const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.trending, async () => {
       const params = [daysInt];
@@ -1571,6 +1601,15 @@ app.get("/api/keywords/rising", async (req, res) => {
       sourceCountryId ?? "global",
       aboutCountryId ?? "global",
     ]);
+
+    // Check DB pre-computed cache for global requests (populated by keywordCron.js)
+    if (!sourceCountryId && !aboutCountryId) {
+      const dbCached = await getDbKeywordCache("rising", "global", 240); // 4h
+      if (dbCached) {
+        setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
+        return res.json(dbCached.slice(0, limitInt));
+      }
+    }
 
     setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
     const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.rising, async () => {
