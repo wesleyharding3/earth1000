@@ -229,15 +229,14 @@ async function selectLocationThreads(type, id, name) {
       AND st.last_updated_at > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
       AND a.published_at     > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
       AND (
-        st.geographic_scope @> ARRAY[$1]::text[]
-        OR st.title ILIKE $2
-        OR st.keywords @> ARRAY[$3]::text[]
+        st.title ILIKE $1
+        OR st.description ILIKE $1
       )
     GROUP BY st.id
     HAVING COUNT(sta.article_id) >= 1
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
     LIMIT ${MAX_THREADS * 3}
-  `, [name, `%${name}%`, name.toLowerCase()]);
+  `, [`%${name}%`]);
 
   const combined = [
     ...tier1,
