@@ -2102,6 +2102,110 @@ app.get("/api/regions", async (req, res) => {
 });
 
 /* =========================================
+   Location Stats  —  /api/stats/location
+   Returns panel-header metrics for a city,
+   country, or region node.
+========================================= */
+app.get("/api/stats/location", async (req, res) => {
+  const { type, id } = req.query;
+  const nodeId = parseInt(id);
+  if (!type || !nodeId) return res.status(400).json({ error: "type and id required" });
+
+  // Build the WHERE clause for articles belonging to this location
+  let articleWhere;
+  let sourceWhere;
+  if (type === "city") {
+    articleWhere = `a.city_id = ${nodeId}`;
+    sourceWhere  = `s.city_id = ${nodeId}`;
+  } else if (type === "country") {
+    articleWhere = `a.country_id = ${nodeId}`;
+    sourceWhere  = `s.country_id = ${nodeId}`;
+  } else if (type === "region") {
+    // Articles whose source country is in this region
+    articleWhere = `a.country_id IN (SELECT id FROM countries WHERE region_id = ${nodeId})`;
+    sourceWhere  = `s.country_id IN (SELECT id FROM countries WHERE region_id = ${nodeId})`;
+  } else {
+    return res.status(400).json({ error: "type must be city, country, or region" });
+  }
+
+  try {
+    const [todayRes, yesterdayRes, sourceRes, globalRes, nationsRes] = await Promise.all([
+
+      // Articles published today (UTC midnight → now)
+      pool.query(`
+        SELECT COUNT(*)::int AS n
+        FROM news_articles a
+        WHERE ${articleWhere}
+          AND a.published_at >= CURRENT_DATE
+          AND a.published_at <  NOW()
+      `),
+
+      // Articles published yesterday (for delta)
+      pool.query(`
+        SELECT COUNT(*)::int AS n
+        FROM news_articles a
+        WHERE ${articleWhere}
+          AND a.published_at >= CURRENT_DATE - INTERVAL '1 day'
+          AND a.published_at <  CURRENT_DATE
+      `),
+
+      // Active sources assigned to this location
+      pool.query(`
+        SELECT COUNT(*)::int AS n
+        FROM news_sources s
+        WHERE ${sourceWhere}
+          AND s.is_active = true
+      `),
+
+      // Global attention: location's 7-day articles as % of all 7-day articles
+      pool.query(`
+        SELECT
+          ROUND(
+            100.0 * loc.n / NULLIF(total.n, 0),
+            2
+          ) AS pct
+        FROM (
+          SELECT COUNT(*)::numeric AS n
+          FROM news_articles a
+          WHERE ${articleWhere}
+            AND a.published_at >= NOW() - INTERVAL '7 days'
+        ) loc,
+        (
+          SELECT COUNT(*)::numeric AS n
+          FROM news_articles
+          WHERE published_at >= NOW() - INTERVAL '7 days'
+        ) total
+      `),
+
+      // Source nations: distinct countries of sources covering this location
+      pool.query(`
+        SELECT COUNT(DISTINCT s.country_id)::int AS n
+        FROM news_articles a
+        JOIN news_sources s ON s.id = a.source_id
+        WHERE ${articleWhere}
+          AND a.published_at >= NOW() - INTERVAL '7 days'
+          AND s.country_id IS NOT NULL
+      `)
+    ]);
+
+    const today     = todayRes.rows[0].n;
+    const yesterday = yesterdayRes.rows[0].n;
+
+    res.json({
+      stories_today:        today,
+      stories_delta:        today - yesterday,
+      source_count:         sourceRes.rows[0].n,
+      attention_pct:        parseFloat(globalRes.rows[0].pct) || 0,
+      source_country_count: nationsRes.rows[0].n
+    });
+
+  } catch (err) {
+    console.error("[stats/location]", err.message);
+    res.status(500).json({ error: "Failed to fetch location stats" });
+  }
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
