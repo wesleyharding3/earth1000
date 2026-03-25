@@ -7218,10 +7218,15 @@ function computeCityTiers(cities) {
         });
 
       function isCityVisible(pointPos, camera) {
+        // A node is rendered if its surface normal (= normalised world position for a
+        // unit sphere) has any component facing the camera.  The visible tangent ring
+        // sits at dot ≈ -0.33 for camera z=3; anything < 0 is unambiguously front-face.
+        // We use +0.12 as the cutoff so nodes right at the globe's equatorial seam —
+        // which ARE rendered on screen — are never silently excluded.
         const pointVector = pointPos.clone().normalize();
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
-        return cameraDir.dot(pointVector) < 0;
+        return cameraDir.dot(pointVector) < 0.12;
       }
 
       function updateCompass() {
@@ -8744,9 +8749,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
-        // Wide broad-phase net — screen-space check below handles precision
-        raycaster.params.Points.threshold = Math.max(0.040, camera.position.z * 0.028);
-        raycaster.setFromCamera(hoverMouse, camera);
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
         const activePositions = currentViewMode === "country" ? countryPositions : positions;
@@ -8761,30 +8763,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
         if (currentViewMode === "regions") { updateRegionHoverLabels(); return; }
 
-        const intersects = raycaster.intersectObject(activePoints);
-        if (intersects.length > 0) {
-          // Screen-space pixel distance: project each candidate and pick the one
-          // whose rendered dot is closest to the cursor. Immune to 3D ray-space
-          // precision issues and naturally handles dense clusters.
+        // Full screen-space sweep — no raycaster broad-phase.
+        // Every visible node is always a candidate; the one whose projected dot is
+        // closest to the cursor wins (Voronoi-style). This guarantees dense nodes
+        // are individually reachable without any 3D threshold tuning.
+        {
           const rect2 = renderer.domElement.getBoundingClientRect();
-          const msx = (hoverMouse.x + 1) / 2 * rect2.width;
-          const msy = (-hoverMouse.y + 1) / 2 * rect2.height;
-          const popMask = currentViewMode === "country" ? countryPopMask : cityPopMask;
-          const gdpMask = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
-          const HOVER_PX = 22; // accept if within 22 screen pixels of dot centre
+          const msx   = (hoverMouse.x + 1) / 2 * rect2.width;
+          const msy   = (-hoverMouse.y + 1) / 2 * rect2.height;
+          const popMask   = currentViewMode === "country" ? countryPopMask : cityPopMask;
+          const gdpMask   = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
+          const nodeCount = activeData.length;
+          const HOVER_PX  = 26; // max pixel radius — prevents hover in empty ocean
           let bestIdx = null, bestPx = Infinity;
-          for (const hit of intersects) {
-            const idx = hit.index;
-            const np = new THREE.Vector3();
-            np.fromBufferAttribute(activePoints.geometry.attributes.position, idx);
-            np.applyMatrix4(activePoints.matrixWorld);
+          for (let i = 0; i < nodeCount; i++) {
+            if (popMask && !popMask[i]) continue;
+            if (gdpMask && !gdpMask[i]) continue;
+            const np = new THREE.Vector3(
+              activePositions[i*3], activePositions[i*3+1], activePositions[i*3+2]
+            ).applyMatrix4(activePoints.matrixWorld);
             if (!isCityVisible(np, camera)) continue;
-            if ((popMask && !popMask[idx]) || (gdpMask && !gdpMask[idx])) continue;
             const proj = np.project(camera);
             const sx = (proj.x + 1) / 2 * rect2.width;
             const sy = (-proj.y + 1) / 2 * rect2.height;
             const px = Math.sqrt((sx - msx) ** 2 + (sy - msy) ** 2);
-            if (px < HOVER_PX && px < bestPx) { bestPx = px; bestIdx = idx; }
+            if (px < HOVER_PX && px < bestPx) { bestPx = px; bestIdx = i; }
           }
           if (bestIdx !== null) hoveredIndex = bestIdx;
         }
