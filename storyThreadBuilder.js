@@ -306,15 +306,23 @@ function isNonLatin(text) {
 
 const NORMALIZE_BATCH = 60;
 
+const NORMALIZE_PER_RUN = 3000; // max keywords normalized per run (~50 Haiku calls)
+
 async function normalizeNewKeywords(hours) {
+  // Hard cap prevents this step from blocking the rest of the run.
+  // Uses keyword_translations as a fast dedup: keywords already translated
+  // are skipped even if article_keywords.normalized_keyword is still NULL
+  // (the UPDATE below backfills those).
   const { rows } = await pool.query(`
     SELECT DISTINCT ak.keyword
     FROM article_keywords ak
-    JOIN news_articles a ON a.id = ak.article_id
-    WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
-      AND ak.normalized_keyword IS NULL
+    WHERE ak.normalized_keyword IS NULL
       AND ak.keyword IS NOT NULL
-  `);
+      AND NOT EXISTS (
+        SELECT 1 FROM keyword_translations kt WHERE kt.original_keyword = ak.keyword
+      )
+    LIMIT $1
+  `, [NORMALIZE_PER_RUN]);
 
   const toNormalize = rows.map(r => r.keyword).filter(isNonLatin);
   if (!toNormalize.length) return;
