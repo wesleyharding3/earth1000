@@ -1230,11 +1230,13 @@ app.get("/api/briefing/recent", async (req, res) => {
 
 // POST /api/briefing/location — on-demand briefing for a city or country node
 app.post("/api/briefing/location", async (req, res) => {
-  const { type, id, name, voiceover = false } = req.body || {};
+  const { type, id, name, voiceover = false, sourceFilter = 'mix' } = req.body || {};
   if (!type || !id || !name) return res.status(400).json({ error: "type, id, and name are required" });
   if (!["city", "country"].includes(type)) return res.status(400).json({ error: "type must be 'city' or 'country'" });
+  const validFilters = ['local', 'mix', 'global'];
+  const filter = validFilters.includes(sourceFilter) ? sourceFilter : 'mix';
   try {
-    const ep = await generateLocationBriefing({ type, id: parseInt(id), name, voiceover: !!voiceover });
+    const ep = await generateLocationBriefing({ type, id: parseInt(id), name, voiceover: !!voiceover, sourceFilter: filter });
     res.json(ep);
   } catch (err) {
     console.error("[briefing/location]", err.message);

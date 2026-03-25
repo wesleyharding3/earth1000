@@ -35,31 +35,32 @@ function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
 
 // ─── Main export ───────────────────────────────────────────────────────────
 /**
- * @param {{ type: 'city'|'country', id: number, name: string, voiceover?: boolean }} location
+ * @param {{ type: 'city'|'country', id: number, name: string, voiceover?: boolean, sourceFilter?: 'local'|'mix'|'global' }} location
  * @returns {Promise<object>}  Full episode row ready to serve to the player
  */
 async function generateLocationBriefing(location) {
-  const { type, id, name, voiceover = false } = location;
+  const { type, id, name, voiceover = false, sourceFilter = 'mix' } = location;
   const t0 = Date.now();
   console.log(`[locBriefing] ${name} (${type} id=${id})`);
 
-  // ── 0. Cache check ────────────────────────────────────────────────────────
-  const { rows: cached } = await pool.query(`
-    SELECT id, headline, segments,
-           (audio_data IS NOT NULL) AS has_audio, generated_at
-    FROM briefing_episodes
-    WHERE location_type = $1
-      AND location_id   = $2
-      AND status        = 'ready'
-      AND (audio_data IS NOT NULL) = $3
-      AND generated_at  > NOW() - INTERVAL '${CACHE_HOURS} hours'
-    ORDER BY generated_at DESC
-    LIMIT 1
-  `, [type, id, voiceover]);
-
-  if (cached.length) {
-    console.log(`[locBriefing] ${elapsed(t0)} cache hit — episode id=${cached[0].id}`);
-    return cached[0];
+  // ── 0. Cache check (only for default mix filter) ─────────────────────────
+  if (sourceFilter === 'mix') {
+    const { rows: cached } = await pool.query(`
+      SELECT id, headline, segments,
+             (audio_data IS NOT NULL) AS has_audio, generated_at
+      FROM briefing_episodes
+      WHERE location_type = $1
+        AND location_id   = $2
+        AND status        = 'ready'
+        AND (audio_data IS NOT NULL) = $3
+        AND generated_at  > NOW() - INTERVAL '${CACHE_HOURS} hours'
+      ORDER BY generated_at DESC
+      LIMIT 1
+    `, [type, id, voiceover]);
+    if (cached.length) {
+      console.log(`[locBriefing] ${elapsed(t0)} cache hit — episode id=${cached[0].id}`);
+      return cached[0];
+    }
   }
 
   // ── 1. Create episode record ──────────────────────────────────────────────
@@ -75,7 +76,7 @@ async function generateLocationBriefing(location) {
 
   try {
     // ── 2. Select relevant story threads ──────────────────────────────────────
-    const threads = await selectLocationThreads(type, id, name);
+    const threads = await selectLocationThreads(type, id, name, sourceFilter);
     console.log(`[locBriefing] ${elapsed(t0)} ${threads.length} threads found`);
 
     if (!threads.length) {
@@ -188,10 +189,11 @@ async function generateLocationBriefing(location) {
 }
 
 // ─── Thread selection ────────────────────────────────────────────────────
-async function selectLocationThreads(type, id, name) {
-  // Tier 1: threads that have at least 2 articles directly geo-tagged to this location
+async function selectLocationThreads(type, id, name, sourceFilter = 'mix') {
   const geoCol = type === 'city' ? 'a.city_id' : 'a.country_id';
-  const { rows: tier1 } = await pool.query(`
+
+  // ── Tier 1: threads with articles directly geo-tagged to this location (local) ──
+  const fetchTier1 = () => pool.query(`
     SELECT
       st.id, st.title, st.description, st.importance,
       st.primary_category, st.geographic_scope, st.keywords,
@@ -208,15 +210,10 @@ async function selectLocationThreads(type, id, name) {
     HAVING COUNT(sta.article_id) >= 2
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
     LIMIT ${MAX_THREADS * 3}
-  `, [id]);
+  `, [id]).then(r => r.rows);
 
-  if (tier1.length >= MAX_THREADS) {
-    return selectDiverse(tier1, MAX_THREADS);
-  }
-
-  // Tier 2: supplement with threads whose geographic_scope mentions the location name
-  const existing = new Set(tier1.map(t => t.id));
-  const { rows: tier2 } = await pool.query(`
+  // ── Tier 2: threads mentioning the location by name (global perspective) ──
+  const fetchTier2 = (excludeIds = new Set()) => pool.query(`
     SELECT
       st.id, st.title, st.description, st.importance,
       st.primary_category, st.geographic_scope, st.keywords,
@@ -228,34 +225,50 @@ async function selectLocationThreads(type, id, name) {
     WHERE st.status = 'active'
       AND st.last_updated_at > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
       AND a.published_at     > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND (
-        st.title ILIKE $1
-        OR st.description ILIKE $1
-      )
+      AND (st.title ILIKE $1 OR st.description ILIKE $1)
     GROUP BY st.id
     HAVING COUNT(sta.article_id) >= 1
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
     LIMIT ${MAX_THREADS * 3}
-  `, [`%${name}%`]);
+  `, [`%${name}%`]).then(r => r.rows.filter(t => !excludeIds.has(t.id)));
 
-  const combined = [
-    ...tier1,
-    ...tier2.filter(t => !existing.has(t.id))
-  ];
-
-  if (combined.length >= MAX_THREADS) {
-    return selectDiverse(combined, MAX_THREADS);
-  }
-
-  // Tier 3: fallback — raw article search for this location, build ad-hoc threads
-  if (combined.length < 3) {
-    console.log(`[locBriefing] only ${combined.length} threads found — running article fallback`);
+  // ── local only ────────────────────────────────────────────────────────────
+  if (sourceFilter === 'local') {
+    const tier1 = await fetchTier1();
+    if (tier1.length >= MAX_THREADS) return selectDiverse(tier1, MAX_THREADS);
     const fallback = await buildAdHocThreads(type, id, name);
-    const fallbackNew = fallback.filter(t => !existing.has(t.id));
-    return selectDiverse([...combined, ...fallbackNew], MAX_THREADS);
+    const t1Ids = new Set(tier1.map(t => t.id));
+    return selectDiverse([...tier1, ...fallback.filter(t => !t1Ids.has(t.id))], MAX_THREADS);
   }
 
-  return selectDiverse(combined, MAX_THREADS);
+  // ── global only ───────────────────────────────────────────────────────────
+  if (sourceFilter === 'global') {
+    const tier2 = await fetchTier2();
+    if (!tier2.length) throw new Error(`No global story threads found mentioning ${name}`);
+    return selectDiverse(tier2, MAX_THREADS);
+  }
+
+  // ── mix (default): 3 local + 2 global ────────────────────────────────────
+  const LOCAL_SLOTS  = 3;
+  const GLOBAL_SLOTS = MAX_THREADS - LOCAL_SLOTS; // 2
+
+  const tier1 = await fetchTier1();
+  let localThreads = selectDiverse(tier1, LOCAL_SLOTS);
+
+  if (localThreads.length < LOCAL_SLOTS) {
+    console.log(`[locBriefing] only ${tier1.length} Tier-1 threads — supplementing with ad-hoc`);
+    const fallback = await buildAdHocThreads(type, id, name);
+    const t1Ids = new Set(tier1.map(t => t.id));
+    localThreads = selectDiverse([...tier1, ...fallback.filter(t => !t1Ids.has(t.id))], LOCAL_SLOTS);
+  }
+
+  const localIds = new Set(localThreads.map(t => t.id));
+  const tier2 = await fetchTier2(localIds);
+  const globalThreads = selectDiverse(tier2, GLOBAL_SLOTS);
+
+  const combined = [...localThreads, ...globalThreads];
+  if (!combined.length) throw new Error(`No story threads found for ${name}`);
+  return combined;
 }
 
 // Simple diversity selection: cap at 2 threads per category

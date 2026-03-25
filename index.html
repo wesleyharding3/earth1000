@@ -15461,6 +15461,10 @@ grmClockTick();
   background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
   color: #60c8ff;
 }
+.bControlBtn.close {
+  color: rgba(255,255,255,0.5); font-size: 16px;
+}
+.bControlBtn.close:hover { background: rgba(255,80,80,0.25); border-color: rgba(255,80,80,0.4); color: #fff; }
 
 /* ── Thread label & arc labels — hidden, visuals speak for themselves ── */
 .bThreadLabel { display: none; }
@@ -15660,6 +15664,18 @@ grmClockTick();
   background: rgba(255,255,255,0.65); transition: left 0.2s, background 0.2s;
 }
 .locBriefToggle.on::after { left: 20px; background: #fff; }
+.locBriefPills { display: flex; gap: 4px; }
+.locBriefPill {
+  padding: 5px 12px; border-radius: 20px; font-size: 12px; cursor: pointer;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.5); transition: all 0.15s;
+}
+.locBriefPill.active {
+  background: rgba(96,200,255,0.18);
+  border-color: rgba(96,200,255,0.4);
+  color: #60c8ff;
+}
 .locBriefBtnsRow { display: flex; gap: 10px; margin-top: 18px; }
 .locBriefCancelBtn {
   flex: 1; padding: 11px; border-radius: 8px;
@@ -15710,7 +15726,6 @@ grmClockTick();
     <div class="bHeaderLogo">Earth Briefing</div>
     <div class="bHeaderDate" id="bDate"></div>
     <div class="bHeaderHeadline" id="bHeadline"></div>
-    <button class="bClose" id="bClose" title="Close briefing">✕</button>
   </div>
   <div class="bDots" id="bDots"></div>
   <div class="bThreadLabel" id="bThreadLabel"></div>
@@ -15726,6 +15741,7 @@ grmClockTick();
     <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
     <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
     <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
+    <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
   </div>
   <!-- End-of-briefing recap -->
   <div class="bRecap" id="bRecap">
@@ -15880,6 +15896,17 @@ grmClockTick();
       </div>
       <div class="locBriefOptionRow">
         <div>
+          <div class="locBriefOptionLabel">Sources</div>
+          <div class="locBriefOptionSub">Which news sources to include</div>
+        </div>
+        <div class="locBriefPills" id="locSourcePills">
+          <button class="locBriefPill" data-val="local">Local</button>
+          <button class="locBriefPill active" data-val="mix">Mix</button>
+          <button class="locBriefPill" data-val="global">Global</button>
+        </div>
+      </div>
+      <div class="locBriefOptionRow">
+        <div>
           <div class="locBriefOptionLabel">Voiceover</div>
           <div class="locBriefOptionSub">ElevenLabs audio synthesis (~40s)</div>
         </div>
@@ -15894,6 +15921,18 @@ grmClockTick();
     requestAnimationFrame(() => opts.classList.add('open'));
 
     let voiceoverOn = false;
+    let sourceFilter = 'mix';
+
+    // Source pills
+    opts.querySelectorAll('.locBriefPill').forEach(pill => {
+      pill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sourceFilter = pill.dataset.val;
+        opts.querySelectorAll('.locBriefPill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+      });
+    });
+
     const toggle = opts.querySelector('#locVoiceToggle');
     toggle.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -15912,7 +15951,7 @@ grmClockTick();
       opts.classList.remove('open');
       setTimeout(() => {
         opts.remove();
-        requestLocationBriefing(node, type, { voiceover: voiceoverOn });
+        requestLocationBriefing(node, type, { voiceover: voiceoverOn, sourceFilter });
       }, 200);
     });
   }
@@ -15962,7 +16001,7 @@ grmClockTick();
       signal: abortCtrl.signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false }),
+      body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false, sourceFilter: opts.sourceFilter || 'mix' }),
     })
       .then(r => r.json().then(body => { if (!r.ok) throw new Error(body.error || `Server error ${r.status}`); return body; }))
       .then(ep => {
@@ -16183,9 +16222,10 @@ grmClockTick();
     segIdx = idx;
     const seg = episode.segments[idx];
 
-    // Reset globe state
+    // Reset globe state — always return to country view so city-view never sticks
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
+    if (window.setBriefingViewMode) window.setBriefingViewMode('country');
 
     // Stop & discard current audio
     if (audio) {
