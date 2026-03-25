@@ -376,26 +376,38 @@ JSON only:`
 // ─── DB Queries ───────────────────────────────────────────────────────────────
 
 async function getUnthreadedArticles(hours, limit) {
-  // Step 1: get article IDs quickly using indexed columns only
+  // Step 1: pick up to 5 most-recent unthreaded articles per source, then
+  // randomly sample across sources so all 7000 active feeds get fair representation.
+  // ROW_NUMBER() within each source enforces the per-source cap while keeping
+  // the 5 freshest articles; ORDER BY RANDOM() gives even dispersal.
   const { rows: baseRows } = await pool.query(`
-    SELECT
-      a.id, a.title, a.summary, a.translated_summary,
-      a.published_at,
-      COALESCE(ns.name, ys.name) AS source_name,
-      co.name AS country_name,
-      ci.name AS city_name
-    FROM news_articles a
-    LEFT JOIN countries co      ON co.id = a.country_id
-    LEFT JOIN cities    ci      ON ci.id = a.city_id
-    LEFT JOIN news_sources ns   ON ns.id = a.source_id
-    LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-    WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
-      AND a.published_at < NOW()
-      AND a.title IS NOT NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
-      )
-    ORDER BY a.score DESC NULLS LAST, a.published_at DESC
+    SELECT id, title, summary, translated_summary,
+           published_at, source_name, country_name, city_name
+    FROM (
+      SELECT
+        a.id, a.title, a.summary, a.translated_summary,
+        a.published_at,
+        COALESCE(ns.name, ys.name) AS source_name,
+        co.name AS country_name,
+        ci.name AS city_name,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
+          ORDER BY a.published_at DESC
+        ) AS source_rank
+      FROM news_articles a
+      LEFT JOIN countries co       ON co.id = a.country_id
+      LEFT JOIN cities    ci       ON ci.id = a.city_id
+      LEFT JOIN news_sources ns    ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
+        AND a.published_at < NOW()
+        AND a.title IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
+        )
+    ) ranked
+    WHERE source_rank <= 5
+    ORDER BY RANDOM()
     LIMIT $1
   `, [limit]);
 
