@@ -787,21 +787,54 @@ async function fetchFeeds() {
 
       const candidates = rawItems.slice(0, MAX_ITEMS * 3);
 
-      // Dedup against DB — use guid/link as the fingerprint key
+      // ── Dedup layer 1: URL fingerprint (SHA256 of title+link) ─────────────
+      // Catches exact re-fetches of the same article on subsequent runs.
       const fingerprints = candidates.map(it =>
         fingerprintRaw(it.title, it.link || it.guid)
       );
 
-      const existingRes = await pool.query(
-        `SELECT url FROM news_articles WHERE url = ANY($1)`,
-        [fingerprints]
-      );
-      const existingSet = new Set(existingRes.rows.map(r => r.url));
+      // ── Dedup layer 2: title-normalised per source ─────────────────────────
+      // Catches same article re-published at a different URL (UTM params,
+      // canonical vs AMP, re-post at new permalink, etc.).
+      // Normalize: lowercase + collapse whitespace so minor casing/spacing
+      // differences don't sneak through.
+      const normTitle = t => (t || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const candidateNormTitles = candidates
+        .map(it => normTitle(it.title))
+        .filter(Boolean);
+
+      const [existingRes, existingTitleRes] = await Promise.all([
+        pool.query(
+          `SELECT url FROM news_articles WHERE url = ANY($1)`,
+          [fingerprints]
+        ),
+        candidateNormTitles.length
+          ? pool.query(
+              `SELECT LOWER(title) AS title
+               FROM news_articles
+               WHERE source_id = $1
+                 AND LOWER(title) = ANY($2)`,
+              [feed.id, candidateNormTitles]
+            )
+          : Promise.resolve({ rows: [] })
+      ]);
+
+      const existingSet    = new Set(existingRes.rows.map(r => r.url));
+      const existingTitles = new Set(existingTitleRes.rows.map(r => r.title));
+      // ── Dedup layer 3: within-batch ───────────────────────────────────────
+      // If an RSS feed lists the same article twice (common), only the first
+      // passes — avoids a wasted INSERT that ON CONFLICT would silently drop.
+      const seenThisBatch  = new Set();
 
       const newItems = [];
       for (const item of candidates) {
         const fp = fingerprintRaw(item.title, item.link || item.guid);
-        if (!existingSet.has(fp)) newItems.push({ ...item, fingerprint: fp });
+        const nt = normTitle(item.title);
+        if (existingSet.has(fp))    continue;  // same URL fingerprint already in DB
+        if (existingTitles.has(nt)) continue;  // same title from this source in DB
+        if (seenThisBatch.has(nt))  continue;  // duplicate title within this batch
+        seenThisBatch.add(nt);
+        newItems.push({ ...item, fingerprint: fp });
         if (newItems.length >= MAX_ITEMS) break;
       }
 
