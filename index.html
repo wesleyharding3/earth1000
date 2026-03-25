@@ -7604,6 +7604,7 @@ function computeCityTiers(cities) {
       }, { passive: true });
 
       window.addEventListener("touchend", () => {
+        if (touchThresholdMet) touchDragEndTime = Date.now();
         touchDragging = false;
       });
 
@@ -8906,11 +8907,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Prevents the synthetic click that fires after touchstart from
       // resetting the camera animation that touchstart just started.
       let touchNodeSelectTime = 0;
+      let touchDragEndTime    = 0;  // set when a real drag ends — suppresses synthetic click
 
       window.addEventListener("click", event => {
         if (window.briefingActive) return;   // globe locked during briefing
         // If a touch-initiated node selection just happened, skip this click
         if (Date.now() - touchNodeSelectTime < 600) return;
+        // If a touch drag just ended, suppress the synthetic click at the release point
+        if (Date.now() - touchDragEndTime < 500) return;
 
         // Skip this handler when flow mode is active
         const flowControls = document.getElementById("flowControls");
@@ -9371,6 +9375,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         fetch("https://earth-wjr6.onrender.com/api/tags")
             .then(res => res.json())
             .then(tags => {
+              if (!Array.isArray(tags)) tags = [];
               const allTags = [
                 { id: null, name: "All" },
                 ...tags
@@ -15925,14 +15930,36 @@ grmClockTick();
     requestAnimationFrame(() => loading.classList.add('visible'));
 
     let cancelled = false;
+    const abortCtrl = new AbortController();
+    const abortTimer = setTimeout(() => abortCtrl.abort(), 90000);
+
+    // Cycle status messages while waiting
+    const statusMsgs = [
+      `Generating briefing for ${node.name}…`,
+      'Selecting top stories…',
+      'Writing narrative…',
+      'Assembling segments…',
+      'Almost ready…',
+    ];
+    const loadingText = loading.querySelector('.locBriefLoadingText');
+    let msgIdx = 0;
+    const msgCycle = setInterval(() => {
+      msgIdx = (msgIdx + 1) % statusMsgs.length;
+      if (loadingText) loadingText.textContent = statusMsgs[msgIdx];
+    }, 7000);
+
     loading.querySelector('#locBriefLoadingCancel').addEventListener('click', (e) => {
       e.stopPropagation();
       cancelled = true;
+      clearTimeout(abortTimer);
+      clearInterval(msgCycle);
+      abortCtrl.abort();
       loading.classList.remove('visible');
       setTimeout(() => loading.remove(), 200);
     });
 
     fetch(`${API}/api/briefing/location`, {
+      signal: abortCtrl.signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false }),
@@ -15940,6 +15967,8 @@ grmClockTick();
       .then(r => r.json().then(body => { if (!r.ok) throw new Error(body.error || `Server error ${r.status}`); return body; }))
       .then(ep => {
         if (cancelled) return;
+        clearTimeout(abortTimer);
+        clearInterval(msgCycle);
         loading.classList.remove('visible');
         setTimeout(() => loading.remove(), 200);
         episode = ep;
@@ -15949,6 +15978,8 @@ grmClockTick();
       })
       .catch(err => {
         if (cancelled) return;
+        clearTimeout(abortTimer);
+        clearInterval(msgCycle);
         loading.classList.remove('visible');
         setTimeout(() => loading.remove(), 200);
         console.error('[locBriefing]', err);
