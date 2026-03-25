@@ -15860,7 +15860,7 @@ grmClockTick();
   }
 
   // ── Location Briefing Options + Request ──────────────────────────────────
-  function showLocBriefingOptions(node, type) {
+  window.showLocBriefingOptions = function showLocBriefingOptions(node, type) {
     const panel = document.getElementById('infoPanel');
     panel.querySelectorAll('.locBriefOptions,.locBriefLoading').forEach(el => el.remove());
 
@@ -15912,7 +15912,7 @@ grmClockTick();
     });
   }
 
-  function requestLocationBriefing(node, type, opts = {}) {
+  window.requestLocationBriefing = function requestLocationBriefing(node, type, opts = {}) {
     const panel = document.getElementById('infoPanel');
     const loading = document.createElement('div');
     loading.className = 'locBriefLoading';
