@@ -1244,6 +1244,101 @@ app.post("/api/briefing/location", async (req, res) => {
   }
 });
 
+// POST /api/briefing/custom — custom briefing with from/about/keyword filters.
+// Returns 422 { insufficient, count, message, suggestions } if < 8 articles found
+// and skipCheck is not true. Otherwise generates and returns an episode.
+app.post("/api/briefing/custom", async (req, res) => {
+  const { from, about, keywords = [], skipCheck = false, voiceover = false } = req.body || {};
+  if (!from && !about && !keywords.length) {
+    return res.status(400).json({ error: "Provide at least one of: from, about, or keywords" });
+  }
+
+  try {
+    // ── Build article filter query ───────────────────────────────────────────
+    const conditions = [
+      "a.published_at > NOW() - INTERVAL '72 hours'",
+      "a.status = 'ready'",
+    ];
+    const params = [];
+
+    if (from) {
+      params.push(`%${from}%`);
+      conditions.push(`(a.source_country_name ILIKE $${params.length} OR a.source_name ILIKE $${params.length})`);
+    }
+    if (about) {
+      params.push(`%${about}%`);
+      conditions.push(`(
+        a.city_name ILIKE $${params.length}
+        OR a.country_name ILIKE $${params.length}
+        OR COALESCE(a.translated_title, a.title) ILIKE $${params.length}
+        OR COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
+      )`);
+    }
+    if (keywords.length) {
+      params.push(keywords);
+      conditions.push(`EXISTS (
+        SELECT 1 FROM article_keywords ak
+        WHERE ak.article_id = a.id
+          AND COALESCE(ak.normalized_keyword, ak.keyword) = ANY($${params.length}::text[])
+      )`);
+    }
+
+    const where = conditions.join(' AND ');
+
+    // ── Content availability check ───────────────────────────────────────────
+    if (!skipCheck) {
+      const { rows: cnt } = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM news_articles a WHERE ${where}`, params
+      );
+      const count = cnt[0].count;
+      const THRESHOLD = 8;
+
+      if (count < THRESHOLD) {
+        // Ask Claude for intelligent alternatives
+        const Anthropic = require('@anthropic-ai/sdk');
+        const haiku = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const ctx = [
+          from    ? `from: "${from}"`          : '',
+          about   ? `about: "${about}"`         : '',
+          keywords.length ? `keywords: "${keywords.join(', ')}"` : '',
+        ].filter(Boolean).join(', ');
+
+        const sugRes = await haiku.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          messages: [{
+            role: 'user',
+            content: `A user searched for news briefing content with parameters: ${ctx}. Only ${count} articles were found in the last 72 hours — below the minimum of ${THRESHOLD} needed for a meaningful briefing.
+
+Generate 3–4 intelligent alternative search directions related to the user's interests that would yield richer news coverage. Think geographically adjacent places, thematically related topics, or broader regional/political contexts.
+
+Return ONLY valid JSON: { "message": "one sentence explaining why coverage is limited", "suggestions": ["Direction 1", "Direction 2", "Direction 3"] }`,
+          }],
+        });
+        const match = sugRes.content[0].text.match(/\{[\s\S]*\}/);
+        const sugg  = match ? JSON.parse(match[0]) : { message: `Only ${count} matching articles found.`, suggestions: [] };
+        return res.status(422).json({ insufficient: true, count, ...sugg });
+      }
+    }
+
+    // ── Sufficient content — generate briefing via location generator ─────────
+    // Use `about` or keywords as the location "name"; type=country is fine for prompting
+    const locName = about || keywords.join(', ') || from || 'Custom';
+    const ep = await generateLocationBriefing({
+      type: 'country',
+      id: null,
+      name: locName,
+      voiceover: !!voiceover,
+      sourceFilter: 'mix',
+      customFilter: { from, about, keywords, sqlWhere: where, sqlParams: params },
+    });
+    res.json(ep);
+  } catch (err) {
+    console.error("[briefing/custom]", err.message);
+    res.status(500).json({ error: err.message || "Failed to generate custom briefing" });
+  }
+});
+
 /* =========================================
    On-demand Translation
 ========================================= */

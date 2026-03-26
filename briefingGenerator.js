@@ -977,6 +977,33 @@ function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
     });
   }
 
+  // Rising keywords segment (before outro)
+  try {
+    const rising = await getRisingKeywordsForSegment(3);
+    if (rising.length >= 2) {
+      const lines = rising.map(k => {
+        const x = Math.round(k.momentum);
+        const badge = x >= 5 ? `up ${x}× in recent coverage` : `surging in recent coverage`;
+        return `${k.keyword} — ${badge}${k.sample_title ? `, connected to: ${k.sample_title}` : ''}`;
+      });
+      const voiceText = `Before we close — three topics gaining rapid momentum in global news. ${lines.join('. ')}. We'll continue tracking these tomorrow.`;
+      segments.push({
+        type:           'keywords',
+        voiceover_text: voiceText,
+        keywords:       rising,
+        article_ids:    rising.flatMap(k => k.article_ids || []),
+        primary_country: null,
+        primary_city:   null,
+        arcs:           [],
+        entities:       [],
+        globe_animate:  { lat: 20, lng: 0, zoom: 0.9 },
+        start_ms:       null,
+      });
+    }
+  } catch (e) {
+    console.warn('[buildSegments] rising keywords skipped:', e.message);
+  }
+
   // Outro segment
   segments.push({
     type:           'outro',
@@ -985,6 +1012,32 @@ function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
   });
 
   return segments;
+}
+
+// ─── Rising keywords for the keywords spotlight segment ─────────────────────
+async function getRisingKeywordsForSegment(limit = 3) {
+  const { rows } = await pool.query(`
+    SELECT results FROM keyword_intelligence_cache
+    WHERE mode = 'rising' AND filter_key = 'global'
+    ORDER BY computed_at DESC LIMIT 1
+  `);
+  if (!rows.length) return [];
+
+  const topKeywords = JSON.parse(rows[0].results).slice(0, limit);
+
+  return Promise.all(topKeywords.map(async kw => {
+    const { rows: arts } = await pool.query(`
+      SELECT a.id, COALESCE(a.translated_title, a.title) AS sample_title
+      FROM article_keywords ak
+      JOIN news_articles a ON a.id = ak.article_id
+      WHERE COALESCE(ak.normalized_keyword, ak.keyword) = $1
+        AND a.published_at > NOW() - INTERVAL '7 days'
+        AND a.status = 'ready'
+      ORDER BY a.published_at DESC
+      LIMIT 3
+    `, [kw.keyword]);
+    return { ...kw, article_ids: arts.map(a => a.id), sample_title: arts[0]?.sample_title || null };
+  })).then(results => results.filter(k => k.article_ids.length > 0));
 }
 
 // ─── Script Assembly ───────────────────────────────────────────────────────

@@ -39,12 +39,12 @@ function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
  * @returns {Promise<object>}  Full episode row ready to serve to the player
  */
 async function generateLocationBriefing(location) {
-  const { type, id, name, voiceover = false, sourceFilter = 'mix' } = location;
+  const { type, id, name, voiceover = false, sourceFilter = 'mix', customFilter = null } = location;
   const t0 = Date.now();
   console.log(`[locBriefing] ${name} (${type} id=${id})`);
 
-  // ── 0. Cache check (only for default mix filter) ─────────────────────────
-  if (sourceFilter === 'mix') {
+  // ── 0. Cache check (only for default mix filter, not custom briefings) ──────
+  if (sourceFilter === 'mix' && !customFilter) {
     const { rows: cached } = await pool.query(`
       SELECT id, headline, segments,
              (audio_data IS NOT NULL) AS has_audio, generated_at
@@ -70,13 +70,20 @@ async function generateLocationBriefing(location) {
       (user_id, target_date, status, segments, location_type, location_id, location_name)
     VALUES (NULL, $1, 'generating', '[]', $2, $3, $4)
     RETURNING id
-  `, [targetDate, type, id, name]);
+  `, [targetDate, customFilter ? 'custom' : type, id || null, name]);
   const episodeId = ep.id;
   console.log(`[locBriefing] ${elapsed(t0)} episode id=${episodeId} created`);
 
   try {
     // ── 2. Select relevant story threads ──────────────────────────────────────
-    const threads = await selectLocationThreads(type, id, name, sourceFilter);
+    let threads;
+    if (customFilter) {
+      // Custom briefing: build ad-hoc threads from the pre-filtered article set
+      console.log(`[locBriefing] ${elapsed(t0)} custom filter mode — building ad-hoc threads`);
+      threads = await buildAdHocThreadsFromFilter(customFilter, name);
+    } else {
+      threads = await selectLocationThreads(type, id, name, sourceFilter);
+    }
     console.log(`[locBriefing] ${elapsed(t0)} ${threads.length} threads found`);
 
     if (!threads.length) {
@@ -356,6 +363,68 @@ async function buildAdHocThreads(type, id, name) {
   return clusters;
 }
 
+// ─── Custom filter → ad-hoc threads ────────────────────────────────────────
+// Used when the briefing was requested via /api/briefing/custom with arbitrary
+// from/about/keyword filters rather than a geo-tagged node.
+async function buildAdHocThreadsFromFilter(customFilter, name) {
+  const { sqlWhere, sqlParams } = customFilter;
+  const { rows: articles } = await pool.query(`
+    SELECT
+      a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+      a.published_at, a.video_id, a.country_id, a.city_id,
+      COALESCE(ak_agg.keywords, '{}') AS keywords,
+      COALESCE(ns.name, ys.name) AS source_name,
+      co.name AS country_name, co.latitude AS lat, co.longitude AS lon,
+      ci.name AS city_name, ci.latitude AS city_lat, ci.longitude AS city_lon
+    FROM news_articles a
+    LEFT JOIN news_sources ns    ON ns.id = a.source_id
+    LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+    LEFT JOIN countries co       ON co.id = a.country_id
+    LEFT JOIN cities ci          ON ci.id = a.city_id
+    LEFT JOIN LATERAL (
+      SELECT ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
+      FROM article_keywords WHERE article_id = a.id
+    ) ak_agg ON true
+    WHERE ${sqlWhere}
+      AND a.title IS NOT NULL
+    ORDER BY RANDOM()
+    LIMIT ${ARTICLE_LIMIT}
+  `, sqlParams);
+
+  if (!articles.length) return [];
+
+  // Same keyword-cluster logic as buildAdHocThreads
+  const clusters = [];
+  const used = new Set();
+  for (let i = 0; i < articles.length && clusters.length < MAX_THREADS; i++) {
+    if (used.has(i)) continue;
+    const anchor   = articles[i];
+    const anchorKws = new Set((anchor.keywords || []).slice(0, 5));
+    const group    = [anchor];
+    used.add(i);
+    for (let j = i + 1; j < articles.length && group.length < MAX_ARTICLES_THREAD; j++) {
+      if (used.has(j)) continue;
+      const other  = articles[j];
+      const shared = (other.keywords || []).filter(k => anchorKws.has(k));
+      if (shared.length >= 2) { group.push(other); used.add(j); }
+    }
+    clusters.push({
+      id:               -(clusters.length + 1),
+      title:            anchor.translated_title || anchor.title || name,
+      description:      '',
+      importance:       5,
+      primary_category: 'general',
+      geographic_scope: [name],
+      keywords:         [...anchorKws],
+      recent_articles:  group.length,
+      video_count:      group.filter(a => a.video_id).length,
+      _adHoc:           true,
+      _articles:        group,
+    });
+  }
+  return clusters;
+}
+
 // ─── Thread enrichment ───────────────────────────────────────────────────
 async function enrichThread(thread) {
   // Ad-hoc threads already have their articles
@@ -473,6 +542,7 @@ REQUIREMENTS:
 - Intro: 2-3 sentences opening on ${locationName} specifically. 35-45 words. Frame the briefing as a focused look at what's happening in or around ${locLabel}. NEVER use time-of-day greetings.
 - Each story segment: 55-75 words. Factual, clear. Always connect the story back to its relevance for ${locationName} or its people.
 - Transitions: 1 sentence bridging stories, vary them.
+- Summary: After the last story, a rapid-fire 2-3 sentence recap hitting the headline of each story in sequence. 40-60 words. Spoken like a news bulletin summary: "In summary — [headline 1]. [headline 2]. [headline 3]..."
 - Outro: 1-2 warm closing sentences referencing ${locationName}. 15-25 words.
 - Write conversationally — this will be read on-screen as text.
 
@@ -507,6 +577,7 @@ Return ONLY valid JSON:
       ]
     }
   ],
+  "summary": "Rapid-fire recap of all stories: In summary — [headline 1]. [headline 2]...",
   "outro": "Closing paragraph"
 }
 
@@ -680,6 +751,21 @@ function buildSegments(narrative, threadData, allArcs, entityCoords) {
       entities:        ns.entities || [],
       geographic_scope: thread.geographic_scope || [],
       start_ms:        null,
+    });
+  }
+
+  // Summary segment (rapid-fire recap of all stories before outro)
+  if (narrative.summary) {
+    const allArticleIds = [...new Set(threadData.flatMap(t => (t.articleIds || []).slice(0, 2)))].slice(0, 8);
+    segments.push({
+      type: 'summary',
+      voiceover_text: narrative.summary,
+      primary_country: null,
+      primary_city: null,
+      article_ids: allArticleIds,
+      arcs: [],
+      entities: [],
+      start_ms: null,
     });
   }
 

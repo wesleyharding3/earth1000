@@ -15718,7 +15718,180 @@ grmClockTick();
   padding: 6px 14px; font-size: 11px; cursor: pointer; transition: color 0.15s;
 }
 .locBriefLoadingCancel:hover { color: rgba(255,255,255,0.65); }
+
+/* ── Briefing Launcher ── */
+.bLauncher {
+  position: fixed; inset: 0; z-index: 9000;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.75); backdrop-filter: blur(10px);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.bLauncher.open { opacity: 1; pointer-events: all; }
+.bLauncherInner {
+  width: min(480px, 94vw); max-height: 90vh; overflow-y: auto;
+  background: rgba(8,12,24,0.96);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 18px; padding: 24px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.bLauncherHeader {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.bLauncherLogo { font-size: 11px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: #60c8ff; }
+.bLauncherX {
+  background: none; border: none; color: rgba(255,255,255,0.4);
+  font-size: 18px; cursor: pointer; padding: 2px 6px;
+  transition: color 0.15s;
+}
+.bLauncherX:hover { color: #fff; }
+.bLauncherSection {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.bLauncherSectionLabel {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: rgba(255,255,255,0.35);
+}
+.bLauncherTodayHeadline { font-size: 15px; font-weight: 700; color: #fff; line-height: 1.4; }
+.bLauncherTodayDate { font-size: 11px; color: rgba(255,255,255,0.4); }
+.bLauncherField { display: flex; flex-direction: column; gap: 5px; }
+.bLauncherField label { font-size: 11px; color: rgba(255,255,255,0.4); font-weight: 600; letter-spacing: 0.06em; }
+.bLauncherInput {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 7px; padding: 8px 11px;
+  color: #fff; font-size: 13px; outline: none; width: 100%; box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.bLauncherInput:focus { border-color: rgba(96,200,255,0.4); }
+.bLauncherInput::placeholder { color: rgba(255,255,255,0.22); }
+.bCustTagsWrap {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 7px; padding: 6px 8px; min-height: 36px;
+  cursor: text;
+}
+.bCustTagsWrap:focus-within { border-color: rgba(96,200,255,0.4); }
+.bCustTag {
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(96,200,255,0.15); border: 1px solid rgba(96,200,255,0.3);
+  color: #60c8ff; border-radius: 4px; padding: 2px 7px; font-size: 12px;
+}
+.bCustTag button { background: none; border: none; color: rgba(96,200,255,0.6); cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
+.bCustTag button:hover { color: #fff; }
+.bCustTagInput {
+  background: none; border: none; color: #fff; font-size: 12px;
+  outline: none; min-width: 100px; flex: 1;
+}
+.bCustTagInput::placeholder { color: rgba(255,255,255,0.22); }
+.bLauncherStartBtn {
+  align-self: flex-end; background: rgba(96,200,255,0.18);
+  border: 1px solid rgba(96,200,255,0.4); color: #60c8ff;
+  border-radius: 8px; padding: 9px 18px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s;
+}
+.bLauncherStartBtn:hover { background: rgba(96,200,255,0.32); }
+.bLauncherStartBtn.secondary {
+  background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.6);
+}
+.bLauncherStartBtn.secondary:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.bLauncherStartBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Insufficient content warning */
+.bLauncherInsuff {
+  background: rgba(255,180,30,0.07); border: 1px solid rgba(255,180,30,0.25);
+  border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
+}
+.bLauncherInsuffIcon { font-size: 22px; }
+.bLauncherInsuffTitle { font-size: 14px; font-weight: 700; color: rgba(255,200,60,0.95); }
+.bLauncherInsuffMsg { font-size: 12px; color: rgba(255,255,255,0.55); line-height: 1.5; }
+.bLauncherInsuffSugs { display: flex; flex-direction: column; gap: 7px; }
+.bLauncherInsuffSug {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px; padding: 10px 13px; font-size: 12px; color: rgba(255,255,255,0.7);
+  cursor: pointer; transition: background 0.15s;
+}
+.bLauncherInsuffSug:hover { background: rgba(96,200,255,0.10); border-color: rgba(96,200,255,0.25); color: #fff; }
+.bLauncherInsuffBtns { display: flex; gap: 10px; justify-content: flex-end; }
+.bLauncherBackBtn {
+  background: none; border: 1px solid rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.5); border-radius: 8px; padding: 8px 14px;
+  font-size: 12px; cursor: pointer; transition: all 0.15s;
+}
+.bLauncherBackBtn:hover { color: #fff; border-color: rgba(255,255,255,0.35); }
+/* Loading state inside launcher */
+.bLauncherLoading {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 24px 0;
+}
+.bLauncherLoadSpinner {
+  width: 28px; height: 28px; border-radius: 50%;
+  border: 2px solid rgba(96,200,255,0.2);
+  border-top-color: #60c8ff;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.bLauncherLoadMsg { font-size: 12px; color: rgba(255,255,255,0.4); }
 </style>
+
+<!-- Briefing Launcher Modal -->
+<div class="bLauncher" id="bLauncher">
+  <div class="bLauncherInner">
+    <div class="bLauncherHeader">
+      <span class="bLauncherLogo">Earth Briefing</span>
+      <button class="bLauncherX" id="bLauncherX">✕</button>
+    </div>
+
+    <!-- Today's briefing -->
+    <div class="bLauncherSection" id="bLauncherTodaySection">
+      <div class="bLauncherSectionLabel">Today's Briefing</div>
+      <div class="bLauncherTodayHeadline" id="bLauncherTodayHeadline">Loading…</div>
+      <div class="bLauncherTodayDate" id="bLauncherTodayDate"></div>
+      <button class="bLauncherStartBtn" id="bLauncherStartToday">Start Briefing →</button>
+    </div>
+
+    <!-- Custom briefing form -->
+    <div class="bLauncherSection" id="bLauncherCustomSection">
+      <div class="bLauncherSectionLabel">Custom Briefing</div>
+      <div class="bLauncherField">
+        <label>From</label>
+        <input class="bLauncherInput" id="bCustFrom" type="text" placeholder="Country, region, or news source…" autocomplete="off"/>
+      </div>
+      <div class="bLauncherField">
+        <label>About</label>
+        <input class="bLauncherInput" id="bCustAbout" type="text" placeholder="Topic, city, event, or subject…" autocomplete="off"/>
+      </div>
+      <div class="bLauncherField">
+        <label>Keywords</label>
+        <div class="bCustTagsWrap" id="bCustTagsWrap">
+          <input class="bCustTagInput" id="bCustTagInput" type="text" placeholder="Type keyword + Enter…"/>
+        </div>
+      </div>
+      <button class="bLauncherStartBtn secondary" id="bLauncherStartCustom">Generate Briefing →</button>
+    </div>
+
+    <!-- Insufficient content warning (hidden until needed) -->
+    <div class="bLauncherInsuff" id="bLauncherInsuff" style="display:none">
+      <div class="bLauncherInsuffIcon">⚠</div>
+      <div class="bLauncherInsuffTitle" id="bLauncherInsuffTitle"></div>
+      <div class="bLauncherInsuffMsg" id="bLauncherInsuffMsg"></div>
+      <div class="bLauncherInsuffSugs" id="bLauncherInsuffSugs"></div>
+      <div class="bLauncherInsuffBtns">
+        <button class="bLauncherBackBtn" id="bLauncherInsuffBack">← Back</button>
+        <button class="bLauncherStartBtn" id="bLauncherInsuffAnyway">Generate Anyway</button>
+      </div>
+    </div>
+
+    <!-- Loading state (hidden until needed) -->
+    <div class="bLauncherLoading" id="bLauncherLoadingState" style="display:none">
+      <div class="bLauncherLoadSpinner"></div>
+      <div class="bLauncherLoadMsg" id="bLauncherLoadMsg">Gathering stories…</div>
+    </div>
+  </div>
+</div>
 
 <!-- Briefing overlay HTML -->
 <div id="briefingOverlay">
@@ -16202,6 +16375,9 @@ grmClockTick();
         if (window.briefingHideLabel) window.briefingHideLabel();
       }, ms(0.95)));
 
+    } else if (seg.type === 'keywords' || seg.type === 'summary') {
+      // Slow globe rotation only — no city/country focus for recap segments
+      if (window.setBriefingViewMode) window.setBriefingViewMode('country');
     } else if (seg.globe_animate && window.startFocus) {
       window.startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0);
     }
@@ -16290,10 +16466,11 @@ grmClockTick();
         }
       }, { once: true });
 
-      // Fallback: advance anyway if audio stalls or never fires ended
+      // Fallback: advance anyway if audio stalls or never fires ended.
+      // Guard includes !playing so a long pause can never trigger an advance.
       const fallbackMs = Math.round(estDur * 1000) + 6000;
       segTimer = setTimeout(() => {
-        if (segIdx !== curIdx) return;
+        if (segIdx !== curIdx || !playing) return;
         console.warn(`[briefing] fallback advance seg ${curIdx}`);
         goToSegment(curIdx + 1);
       }, fallbackMs);
@@ -16605,8 +16782,173 @@ grmClockTick();
     updateCaptions(seg);
   }
 
+  // ── Briefing Launcher ─────────────────────────────────────────────────────
+  const customTags = new Set();
+
+  function openBriefingLauncher() {
+    const el = document.getElementById('bLauncherTodaySection');
+    if (episode && episode.status === 'ready') {
+      document.getElementById('bLauncherTodayHeadline').textContent = episode.headline || '';
+      document.getElementById('bLauncherTodayDate').textContent = new Date(episode.target_date)
+        .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+      if (el) el.style.display = '';
+    } else {
+      if (el) el.style.display = 'none';
+    }
+    hideLauncherInsuff();
+    hideLauncherLoading();
+    document.getElementById('bLauncher').classList.add('open');
+  }
+
+  function closeBriefingLauncher() {
+    document.getElementById('bLauncher').classList.remove('open');
+  }
+
+  function hideLauncherInsuff() {
+    document.getElementById('bLauncherInsuff').style.display = 'none';
+    const sec = document.getElementById('bLauncherCustomSection');
+    if (sec) sec.style.display = '';
+  }
+
+  function showLauncherInsuff(data) {
+    const sec = document.getElementById('bLauncherCustomSection');
+    if (sec) sec.style.display = 'none';
+    const el = document.getElementById('bLauncherInsuff');
+    el.style.display = '';
+    document.getElementById('bLauncherInsuffTitle').textContent =
+      `Limited Content — ${data.count} article${data.count === 1 ? '' : 's'} found`;
+    document.getElementById('bLauncherInsuffMsg').textContent = data.message || '';
+    const sugsEl = document.getElementById('bLauncherInsuffSugs');
+    sugsEl.innerHTML = (data.suggestions || []).map(s =>
+      `<div class="bLauncherInsuffSug">${s.replace(/</g,'&lt;')}</div>`
+    ).join('');
+    // Click a suggestion → populate "About" and go back
+    sugsEl.querySelectorAll('.bLauncherInsuffSug').forEach((btn, i) => {
+      btn.addEventListener('click', () => {
+        const sug = (data.suggestions || [])[i];
+        if (sug) document.getElementById('bCustAbout').value = sug;
+        hideLauncherInsuff();
+      });
+    });
+    // Store params for "Generate Anyway"
+    el.dataset.from     = document.getElementById('bCustFrom')?.value || '';
+    el.dataset.about    = document.getElementById('bCustAbout')?.value || '';
+    el.dataset.keywords = JSON.stringify([...customTags]);
+  }
+
+  function showLauncherLoading(msg) {
+    document.getElementById('bLauncherTodaySection').style.display = 'none';
+    document.getElementById('bLauncherCustomSection').style.display = 'none';
+    document.getElementById('bLauncherInsuff').style.display = 'none';
+    const el = document.getElementById('bLauncherLoadingState');
+    el.style.display = '';
+    document.getElementById('bLauncherLoadMsg').textContent = msg || 'Generating…';
+  }
+
+  function hideLauncherLoading() {
+    document.getElementById('bLauncherLoadingState').style.display = 'none';
+    document.getElementById('bLauncherTodaySection').style.display = '';
+    document.getElementById('bLauncherCustomSection').style.display = '';
+  }
+
+  function renderCustomTags() {
+    const wrap = document.getElementById('bCustTagsWrap');
+    const input = document.getElementById('bCustTagInput');
+    wrap.querySelectorAll('.bCustTag').forEach(t => t.remove());
+    customTags.forEach(tag => {
+      const el = document.createElement('div');
+      el.className = 'bCustTag';
+      el.innerHTML = `<span>${tag.replace(/</g,'&lt;')}</span><button>×</button>`;
+      el.querySelector('button').addEventListener('click', () => { customTags.delete(tag); renderCustomTags(); });
+      wrap.insertBefore(el, input);
+    });
+  }
+
+  async function submitCustomBriefing(from, about, keywords, skipCheck = false) {
+    const loadMsgs = ['Checking available content…', 'Gathering stories…', 'Building briefing…', 'Almost ready…'];
+    let msgIdx = 0;
+    showLauncherLoading(loadMsgs[0]);
+    const msgInterval = setInterval(() => {
+      msgIdx = (msgIdx + 1) % loadMsgs.length;
+      document.getElementById('bLauncherLoadMsg').textContent = loadMsgs[msgIdx];
+    }, 8000);
+
+    try {
+      const res = await fetch(`${API}/api/briefing/custom`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, about, keywords: [...keywords], skipCheck }),
+        signal: AbortSignal.timeout ? AbortSignal.timeout(120000) : undefined,
+      });
+      clearInterval(msgInterval);
+      const data = await res.json();
+
+      if (!res.ok) {
+        hideLauncherLoading();
+        if (data.insufficient) {
+          showLauncherInsuff(data);
+        } else {
+          alert(data.error || 'Something went wrong. Please try again.');
+        }
+        return;
+      }
+
+      // Success — swap episode, close launcher, open briefing
+      episode = data;
+      closeBriefingLauncher();
+      openBriefing();
+    } catch (e) {
+      clearInterval(msgInterval);
+      hideLauncherLoading();
+      alert('Request timed out or failed. Please try again.');
+    }
+  }
+
+  // ── Launcher event wiring ──────────────────────────────────────────────────
+  document.getElementById('bLauncherX')?.addEventListener('click', closeBriefingLauncher);
+
+  document.getElementById('bLauncherStartToday')?.addEventListener('click', () => {
+    closeBriefingLauncher();
+    openBriefing();
+  });
+
+  document.getElementById('bCustTagInput')?.addEventListener('keydown', e => {
+    const input = e.target;
+    if ((e.key === 'Enter' || e.key === ',') && input.value.trim()) {
+      e.preventDefault();
+      customTags.add(input.value.trim().toLowerCase());
+      input.value = '';
+      renderCustomTags();
+    } else if (e.key === 'Backspace' && !input.value && customTags.size) {
+      const last = [...customTags].pop();
+      customTags.delete(last);
+      renderCustomTags();
+    }
+  });
+
+  document.getElementById('bCustTagsWrap')?.addEventListener('click', () => {
+    document.getElementById('bCustTagInput')?.focus();
+  });
+
+  document.getElementById('bLauncherStartCustom')?.addEventListener('click', () => {
+    const from  = document.getElementById('bCustFrom')?.value.trim() || '';
+    const about = document.getElementById('bCustAbout')?.value.trim() || '';
+    if (!from && !about && !customTags.size) return;
+    submitCustomBriefing(from, about, customTags, false);
+  });
+
+  document.getElementById('bLauncherInsuffBack')?.addEventListener('click', hideLauncherInsuff);
+
+  document.getElementById('bLauncherInsuffAnyway')?.addEventListener('click', () => {
+    const el = document.getElementById('bLauncherInsuff');
+    const from     = el.dataset.from     || '';
+    const about    = el.dataset.about    || '';
+    const keywords = JSON.parse(el.dataset.keywords || '[]');
+    submitCustomBriefing(from, about, new Set(keywords), true);
+  });
+
   // ── Event wiring ──────────────────────────────────────────────────────────
-  document.getElementById('briefingBtn')?.addEventListener('click', openBriefing);
+  document.getElementById('briefingBtn')?.addEventListener('click', openBriefingLauncher);
   document.getElementById('bClose')?.addEventListener('click', closeBriefing);
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
   document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1, true));
