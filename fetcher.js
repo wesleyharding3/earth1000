@@ -304,30 +304,76 @@ async function fetchRSSType(feed) {
 }
 
 /* ── news_sitemap / xml_sitemap ────────────────────────────── */
+// Stream-parse: reads the response as chunks and stops as soon as we have
+// SITEMAP_STREAM_MAX complete <url> blocks.  We never buffer the full file,
+// so multi-MB sitemaps are handled cheaply — we cancel the download early.
+const SITEMAP_STREAM_MAX = 100; // read at most this many <url> entries
+
 async function fetchSitemap(feed) {
-  const xml = await fetchWithLimit(feed.rss_url || feed.scrape_url, 15000);
-  const $ = cheerio.load(xml, { xmlMode: true });
-  const items = [];
+  const url = feed.rss_url || feed.scrape_url;
+  const controller = new AbortController();
+  const timeout    = setTimeout(() => controller.abort(), 20000);
+  const items      = [];
 
-  $("url, item").each((_, el) => {
-    const $el = $(el);
-    const link  = $el.find("loc").first().text().trim();
-    const title =
-      $el.find("news\\:title, title").first().text().trim() ||
-      $el.find("news\\:name").first().text().trim();
-    const dateRaw =
-      $el.find("news\\:publication_date, lastmod, pubDate").first().text().trim();
-
-    if (!link) return;
-    items.push({
-      title:       title || null,
-      summary:     null,
-      link,
-      publishedAt: parseRobustDate(dateRaw),
-      imageUrl:    $el.find("image\\:loc").first().text().trim() || null,
-      guid:        link
+  try {
+    const response = await fetch(url, {
+      signal:  controller.signal,
+      headers: parserOptions.headers,
     });
-  });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    outer: while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Pull out every complete <url>…</url> block from the buffer
+      let start;
+      while ((start = buffer.indexOf('<url>')) !== -1) {
+        const end = buffer.indexOf('</url>', start);
+        if (end === -1) break;               // incomplete block — wait for more data
+
+        const block = buffer.slice(start, end + 6);
+        buffer = buffer.slice(end + 6);
+
+        // Extract fields with simple regex — no DOM parser needed
+        const grab = (re) => (block.match(re) || [])[1]?.trim() || null;
+
+        const link = grab(/<loc[^>]*>([\s\S]*?)<\/loc>/);
+        if (!link) continue;
+
+        const title = grab(/<news:title[^>]*>([\s\S]*?)<\/news:title>/)
+                   || grab(/<title[^>]*>([\s\S]*?)<\/title>/);
+
+        const dateRaw = grab(/<news:publication_date[^>]*>([\s\S]*?)<\/news:publication_date>/)
+                     || grab(/<lastmod[^>]*>([\s\S]*?)<\/lastmod>/)
+                     || grab(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/);
+
+        const imageUrl = grab(/<image:loc[^>]*>([\s\S]*?)<\/image:loc>/);
+
+        items.push({
+          title:       title || null,
+          summary:     null,
+          link,
+          publishedAt: parseRobustDate(dateRaw),
+          imageUrl,
+          guid:        link,
+        });
+
+        if (items.length >= SITEMAP_STREAM_MAX) {
+          // We have enough — cancel the rest of the download
+          try { await reader.cancel(); } catch (_) {}
+          break outer;
+        }
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 
   return items;
 }
