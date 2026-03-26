@@ -8809,7 +8809,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           currentViewMode = mode;
           setActiveMode(mode);
           setSidebarPanel(mode);
-          openSidebar();
           if (mode === "city")           { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
           else if (mode === "ocean")      { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else if (mode === "transportation") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
@@ -10111,8 +10110,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
         currentViewMode       = mode;
         window.__currentViewMode = mode;
         if (mode === 'city')    { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
-        else                    { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
+        else {
+          targetCityOpacity = 0.0; targetCountryOpacity = 1.0;
+          // Wipe briefing overlays the moment we return to country view so
+          // city-mode pulses / arcs never bleed into the inter-segment gap
+          if (window.clearBriefingPulses) window.clearBriefingPulses();
+          if (window.clearBriefingArcs)   window.clearBriefingArcs();
+        }
         if (window.__clearAmbientCache) window.__clearAmbientCache();
+      };
+
+      // Expose capital-city lookup so the briefing arc drawer can redirect
+      // country-centroid endpoints to the capital when in city view.
+      // Uses is_capital if available, falls back to highest-population city in country.
+      window.resolveArcEndpoint = function(lat, lng) {
+        if (window.__currentViewMode !== 'city') return { lat, lng };
+        const TOLE = 1.5;   // degrees — country centroids aren't pixel-perfect
+        const country = countries.find(c =>
+          c.lat != null &&
+          Math.abs(c.lat - lat) < TOLE &&
+          Math.abs((c.lon ?? c.lng ?? 0) - lng) < TOLE
+        );
+        if (!country) return { lat, lng };
+        // Prefer explicit capital flag, else largest city in country
+        const bucket = cities.filter(c => c.country === country.name && c.lat != null);
+        if (!bucket.length) return { lat, lng };
+        const capital = bucket.find(c => c.is_capital) ||
+                        bucket.sort((a, b) => (b.population || 0) - (a.population || 0))[0];
+        return { lat: capital.lat, lng: capital.lon ?? capital.lng };
       };
 
       // Show hover card for a named node during briefing.
@@ -10132,7 +10157,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const rect = renderer.domElement.getBoundingClientRect();
         const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
         const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
-        showHoverCard(nodeObj, sx, sy);
+        // Use the enriched array entry (has .population) rather than the
+        // simplified segment object, merging so any extra briefing fields are kept
+        const enriched = Object.assign({}, nodeObj, arr[idx] || {});
+        showHoverCard(enriched, sx, sy);
       };
 
       // Hide the hover card (briefing cleanup between segments)
@@ -16529,22 +16557,35 @@ grmClockTick();
     for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
       const arc = seg.flow_arcs[ai];
       if (arc.from_lat == null || arc.to_lat == null) continue;
-      const distKm = haversineKm(arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng);
+
+      // ── Resolve endpoints: in city view, redirect country centroids to capitals ──
+      const resolve = window.resolveArcEndpoint || ((lat, lng) => ({ lat, lng }));
+      const from = resolve(arc.from_lat, arc.from_lng ?? arc.from_lon);
+      const to   = resolve(arc.to_lat,   arc.to_lng   ?? arc.to_lon);
+
+      const distKm = haversineKm(from.lat, from.lng, to.lat, to.lng);
+
+      // Suppress arc when both endpoints resolve to the same city, or are
+      // within the same country (intra-country arcs are noise, not signal)
+      const samePoint = Math.abs(from.lat - to.lat) < 0.1 && Math.abs(from.lng - to.lng) < 0.1;
+      if (samePoint) continue;
+
       if (distKm < DOMESTIC_KM) {
         // Domestic: pulse both endpoints, skip the arc line
         if (window.briefingPulseAt) {
-          window.briefingPulseAt(arc.from_lat, arc.from_lng);
+          window.briefingPulseAt(from.lat, from.lng);
           addBTimer(setTimeout(() => {
-            if (window.briefingPulseAt) window.briefingPulseAt(arc.to_lat, arc.to_lng);
+            if (window.briefingPulseAt) window.briefingPulseAt(to.lat, to.lng);
           }, 500));
         }
         continue;
       }
       try {
         const key      = `briefingArc_${ai}`;
+        // ── Brighter, thicker arcs ──────────────────────────────────────────
         const baseMesh = window.buildArcLines(
-          [[arc.from_lat, arc.from_lng, arc.to_lat, arc.to_lng]],
-          0xff6600, 0.002, 0.28, key
+          [[from.lat, from.lng, to.lat, to.lng]],
+          0xff8c00, 0.005, 0.88, key   // was: 0xff6600, 0.002, 0.28
         );
         if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
         const pulseMesh = window.transPulseMeshes?.[key];
@@ -16561,7 +16602,29 @@ grmClockTick();
   // dur is the REAL audio duration (seconds), so all fractions are accurate.
   function startGlobeTimers(idx, seg, dur) {
     const ms = f => Math.round(dur * f * 1000);
-    const needsCityView = !!(seg.primary_city);
+
+    // City view only when every arc endpoint and secondary location is a real
+    // city node — not a country centroid.  If any endpoint resolves to a country
+    // (Russia → Moscow, Mexico → Mexico City) we stay in country view so the
+    // country node is visible.  Only explicitly city-to-city stories (e.g.
+    // Hermosillo → Oaxaca) get city view.
+    const _ctole = 1.5;
+    const _isCountryCentroid = (lat, lng) => {
+      if (lat == null || lng == null) return false;
+      return countries.some(c =>
+        c.lat != null &&
+        Math.abs(c.lat - lat) < _ctole &&
+        Math.abs((c.lon ?? c.lng ?? 0) - lng) < _ctole
+      );
+    };
+    const _arcsAllCity = (seg.flow_arcs || []).every(a =>
+      !_isCountryCentroid(a.from_lat, a.from_lng ?? a.from_lon) &&
+      !_isCountryCentroid(a.to_lat,   a.to_lng   ?? a.to_lon)
+    );
+    const _secsAllCity = (seg.secondary_locations || []).every(loc =>
+      !_isCountryCentroid(loc.lat, loc.lon ?? loc.lng)
+    );
+    const needsCityView = !!(seg.primary_city) && _arcsAllCity && _secsAllCity;
 
     if (seg.type === 'story') {
       const primary   = seg.primary_city || seg.primary_country;
@@ -16879,6 +16942,8 @@ grmClockTick();
     });
     arcMeshes = [];
   }
+  // Expose so setBriefingViewMode can call it when returning to country view
+  window.clearBriefingArcs = clearArcMeshes;
 
   // ── End-of-briefing recap ─────────────────────────────────────────────────
   function showRecap() {
