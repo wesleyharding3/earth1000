@@ -15575,7 +15575,17 @@ grmClockTick();
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.bCardDate { font-size: 9px; color: rgba(255,255,255,0.4); margin-top: auto; }
+.bCardFooter {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: auto; gap: 4px; min-width: 0;
+}
+.bCardLocation {
+  font-size: 9px; color: rgba(255,255,255,0.32);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: flex; align-items: center; gap: 3px; min-width: 0; flex: 1;
+}
+.bCardLocation svg { width: 8px; height: 8px; flex-shrink: 0; opacity: 0.55; }
+.bCardDate { font-size: 9px; color: rgba(255,255,255,0.35); flex-shrink: 0; }
 
 /* ── Video embed ── */
 .bVideoWrap {
@@ -15586,11 +15596,40 @@ grmClockTick();
   box-shadow: 0 8px 32px rgba(0,0,0,0.6);
   opacity: 0; transition: opacity 0.5s ease 0.3s;
   pointer-events: all;
+  display: flex; flex-direction: column;
+  background: rgba(6,10,20,0.95);
+  border: 1px solid rgba(255,255,255,0.1);
 }
 .bVideoWrap.visible { opacity: 1; }
 .bVideoWrap iframe {
   width: 100%; aspect-ratio: 16/9;
   display: block; border: none;
+}
+.bVideoMetaBar {
+  padding: 7px 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.bVideoMetaBar.top {
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.bVideoMetaBar.bottom {
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+.bVideoSource {
+  font-size: 10px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; color: #60c8ff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+.bVideoLocation {
+  font-size: 10px; color: rgba(255,255,255,0.45);
+  display: flex; align-items: center; gap: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.bVideoLocation svg { width: 10px; height: 10px; flex-shrink: 0; opacity: 0.6; }
+.bVideoDate {
+  font-size: 10px; color: rgba(255,255,255,0.3);
+  flex-shrink: 0; white-space: nowrap;
 }
 
 /* ── Captions ── */
@@ -16728,7 +16767,25 @@ grmClockTick();
     // ── Video embed ────────────────────────────────────────────────────────
     const videoWrap = document.getElementById('bVideoWrap');
     if (seg.video_id) {
-      videoWrap.innerHTML = `<iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1" allowfullscreen allow="autoplay; fullscreen"></iframe>`;
+      const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
+      const vidDate = seg.published_at
+        ? new Date(seg.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      videoWrap.innerHTML = `
+        <div class="bVideoMetaBar top">
+          <span class="bVideoSource" id="bVideoSource">—</span>
+        </div>
+        <iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1" allowfullscreen allow="autoplay; fullscreen"></iframe>
+        <div class="bVideoMetaBar bottom">
+          ${vidLoc ? `<span class="bVideoLocation">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+              <circle cx="12" cy="9" r="2.5"/>
+            </svg>
+            ${vidLoc}
+          </span>` : '<span></span>'}
+          <span class="bVideoDate">${vidDate}</span>
+        </div>`;
       videoWrap.classList.add('visible');
     } else {
       videoWrap.innerHTML = '';
@@ -16755,8 +16812,16 @@ grmClockTick();
     const date = a.published_at
       ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       : '';
-    const title = (a.translated_title || a.title || '').replace(/</g, '&lt;');
-    const safe  = (a.url || '').replace(/'/g, '%27');
+    const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+    const safe     = (a.url || '').replace(/'/g, '%27');
+    const locParts = [a.city_name, a.country_name].filter(Boolean);
+    const loc      = locParts[0] || '';   // city if available, else country
+    const locPin   = loc
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+           <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+           <circle cx="12" cy="9" r="2.5"/>
+         </svg>${loc}`
+      : '';
     return `<div class="bCard" onclick="window.open('${safe}','_blank')">
       ${src
         ? `<img class="bCardImg" src="${src}" onerror="this.style.display='none'" alt="" loading="lazy">`
@@ -16764,7 +16829,10 @@ grmClockTick();
       <div class="bCardBody">
         <div class="bCardSource">${a.source_name || ''}</div>
         <div class="bCardTitle">${title}</div>
-        <div class="bCardDate">${date}</div>
+        <div class="bCardFooter">
+          <span class="bCardLocation">${locPin}</span>
+          <span class="bCardDate">${date}</span>
+        </div>
       </div>
     </div>`;
   }
@@ -16788,6 +16856,11 @@ grmClockTick();
         el.style.animationDelay = `${i * 110}ms`;
         scroll.appendChild(el);
       });
+      // Backfill video source name with the first article's source
+      const srcEl = document.getElementById('bVideoSource');
+      if (srcEl && articles.length) {
+        srcEl.textContent = articles[0].source_name || '—';
+      }
     } catch (_) {
       if (segIdx === snapIdx) scroll.innerHTML = '';
     }
