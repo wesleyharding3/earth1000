@@ -39,7 +39,8 @@ function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
  * @returns {Promise<object>}  Full episode row ready to serve to the player
  */
 async function generateLocationBriefing(location) {
-  const { type, id, name, voiceover = false, sourceFilter = 'mix', customFilter = null } = location;
+  const { type, id, name, voiceover = false, sourceFilter = 'mix', customFilter = null, voiceId = null } = location;
+  const selectedVoiceId = voiceId || VOICE_ID;
   const t0 = Date.now();
   console.log(`[locBriefing] ${name} (${type} id=${id})`);
 
@@ -144,7 +145,7 @@ async function generateLocationBriefing(location) {
         const text = textPieces[pi];
         if (!text) { audioBuffers.push(Buffer.alloc(0)); durationsMs.push(0); continue; }
         try {
-          const buf = await synthesiseAudio(text);
+          const buf = await synthesiseAudio(text, selectedVoiceId);
           audioBuffers.push(buf);
           durationsMs.push(Math.round((buf.byteLength * 8) / 128));
           console.log(`[locBriefing] ${elapsed(t0)} audio piece ${pi + 1}/${textPieces.length} — ${(buf.byteLength / 1024).toFixed(0)}KB`);
@@ -785,8 +786,8 @@ function buildSegments(narrative, threadData, allArcs, entityCoords) {
 }
 
 // ─── ElevenLabs TTS ─────────────────────────────────────────────────────────
-async function synthesiseAudio(script) {
-  const url  = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+async function synthesiseAudio(script, voiceId = VOICE_ID) {
+  const url  = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`;
   const body = {
     text:       script,
     model_id:   'eleven_multilingual_v2',

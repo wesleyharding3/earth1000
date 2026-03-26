@@ -874,6 +874,18 @@
       box-shadow: 0 0 10px #ffffffb3;
     }
 
+    .sidebarLangSelect {
+      width: 100%; margin-top: 8px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 7px; padding: 7px 10px;
+      color: rgba(255,255,255,0.8); font-size: 12px;
+      outline: none; cursor: pointer;
+      -webkit-appearance: none; appearance: none;
+    }
+    .sidebarLangSelect:focus { border-color: rgba(96,200,255,0.4); }
+    .sidebarLangSelect option { background: #0a0f1e; }
+
     .settingsSlider::-moz-range-thumb {
       width: 13px; height: 13px;
       border: none;
@@ -5787,6 +5799,14 @@
                    min="0" max="0.0020" step="0.00005" value="0.0004" />
           </div>
         </div>
+        <div class="sidebarDivider"></div>
+        <div class="sidebarSection">
+          <div class="sidebarSectionLabel">Display Language</div>
+          <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px;line-height:1.4;">
+            Translate buttons convert articles into this language
+          </div>
+          <select class="sidebarLangSelect" id="userLangSelect"></select>
+        </div>
       </div>
 
     </div>
@@ -5898,6 +5918,56 @@
 
     window.__currentPage = 1;
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
+
+    // ── Supported interface/translate languages ──────────────────────────────────
+    const SUPPORTED_LANGUAGES = [
+      { label: 'Arabic',      code: 'AR',    iso: 'ar', short: 'AR'  },
+      { label: 'Bulgarian',   code: 'BG',    iso: 'bg', short: 'BG'  },
+      { label: 'Chinese',     code: 'ZH',    iso: 'zh', short: 'ZH'  },
+      { label: 'Danish',      code: 'DA',    iso: 'da', short: 'DA'  },
+      { label: 'Dutch',       code: 'NL',    iso: 'nl', short: 'NL'  },
+      { label: 'English',     code: 'EN-US', iso: 'en', short: 'EN'  },
+      { label: 'Filipino',    code: 'TL',    iso: 'tl', short: 'TL'  },
+      { label: 'Finnish',     code: 'FI',    iso: 'fi', short: 'FI'  },
+      { label: 'French',      code: 'FR',    iso: 'fr', short: 'FR'  },
+      { label: 'German',      code: 'DE',    iso: 'de', short: 'DE'  },
+      { label: 'Greek',       code: 'EL',    iso: 'el', short: 'EL'  },
+      { label: 'Hindi',       code: 'HI',    iso: 'hi', short: 'HI'  },
+      { label: 'Hungarian',   code: 'HU',    iso: 'hu', short: 'HU'  },
+      { label: 'Indonesian',  code: 'ID',    iso: 'id', short: 'ID'  },
+      { label: 'Italian',     code: 'IT',    iso: 'it', short: 'IT'  },
+      { label: 'Japanese',    code: 'JA',    iso: 'ja', short: 'JA'  },
+      { label: 'Korean',      code: 'KO',    iso: 'ko', short: 'KO'  },
+      { label: 'Malay',       code: 'MS',    iso: 'ms', short: 'MS'  },
+      { label: 'Norwegian',   code: 'NB',    iso: 'no', short: 'NO'  },
+      { label: 'Polish',      code: 'PL',    iso: 'pl', short: 'PL'  },
+      { label: 'Portuguese',  code: 'PT-PT', iso: 'pt', short: 'PT'  },
+      { label: 'Romanian',    code: 'RO',    iso: 'ro', short: 'RO'  },
+      { label: 'Russian',     code: 'RU',    iso: 'ru', short: 'RU'  },
+      { label: 'Spanish',     code: 'ES',    iso: 'es', short: 'ES'  },
+      { label: 'Swedish',     code: 'SV',    iso: 'sv', short: 'SV'  },
+      { label: 'Turkish',     code: 'TR',    iso: 'tr', short: 'TR'  },
+      { label: 'Ukrainian',   code: 'UK',    iso: 'uk', short: 'UK'  },
+      { label: 'Vietnamese',  code: 'VI',    iso: 'vi', short: 'VI'  },
+    ];
+
+    // Helper: get user's chosen target language (code + short label)
+    function getUserTargetLang() {
+      const code = localStorage.getItem('__userTargetLang') || 'EN-US';
+      return SUPPORTED_LANGUAGES.find(l => l.code === code) || SUPPORTED_LANGUAGES.find(l => l.code === 'EN-US');
+    }
+
+    // Helper: does this article need translation into the current target language?
+    function articleNeedsTranslation(article) {
+      if (!article || !article.title) return false;
+      const target = getUserTargetLang();
+      if (target.code === 'EN-US' || target.code === 'EN-GB') {
+        // English target: only show if no existing translated_title
+        return !article.translated_title;
+      }
+      // Non-English target: always offer translation (stored text is likely English)
+      return true;
+    }
 
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
 
@@ -7684,6 +7754,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const v = document.getElementById(vid);
         if (v) v.textContent = formatSpeed(parseFloat(document.getElementById("ambientSlider").value));
       });
+
+      // ── User display language preference ─────────────────────────────────────────
+      (function initUserLangSelect() {
+        const sel = document.getElementById('userLangSelect');
+        if (!sel) return;
+        const current = localStorage.getItem('__userTargetLang') || 'EN-US';
+        sel.innerHTML = SUPPORTED_LANGUAGES.map(l =>
+          `<option value="${l.code}" ${l.code === current ? 'selected' : ''}>${l.label}</option>`
+        ).join('');
+        sel.addEventListener('change', () => {
+          localStorage.setItem('__userTargetLang', sel.value);
+          // Re-render open panel if visible to update translate buttons
+          if (typeof renderCurrentPanel === 'function') renderCurrentPanel();
+        });
+      })();
 
       const biomeOverlayToggles = [
         document.getElementById("biomeOverlayToggleCountry"),
@@ -9496,10 +9581,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const summary   = btn.dataset.summary;
           btn.textContent = "⏳"; btn.disabled = true;
           try {
+            const targetLang = getUserTargetLang();
             const res = await fetch(`https://earth-wjr6.onrender.com/api/translate`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ title, summary, id: articleId })
+              body: JSON.stringify({ title, summary, id: articleId, targetLang: targetLang.code })
             });
             if (!res.ok) throw new Error("bad response");
             const { translatedTitle, translatedSummary } = await res.json();
@@ -10127,9 +10213,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const summary = a.translated_summary || a.summary || "";
             const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
             const cityTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
-            const needsTranslation = !a.translated_title && a.title;
-            const translateBtn = needsTranslation 
-              ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` 
+            const needsTranslation = articleNeedsTranslation(a);
+            const _tLang = getUserTargetLang();
+            const translateBtn = needsTranslation
+              ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate to ${_tLang.label}">${_tLang.short}</button>`
               : "";
             return `<div style="position:relative">
               <div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
@@ -12311,7 +12398,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const FLAG_CDN = "https://flagcdn.com/w80/";
       const cardsHtml = data.flows.map(f => {
         // Check if translation is needed (no translated title yet, but has a title)
-        const needsTranslation = !f.translatedTitle && f.title;
+        const needsTranslation = articleNeedsTranslation({ title: f.title, translated_title: f.translatedTitle });
         
         // Map flow fields to article fields
         const article = {
@@ -12347,8 +12434,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const originLabel = `<div class="articleCardOrigin">${f.src?.place || ''} → ${f.dst?.place || ''}</div>`;
         
         // Translate button (only if needed)
-        const translateBtn = needsTranslation 
-          ? `<button class="articleTranslateBtn" data-id="${f.id}" data-title="${(f.originalTitle||'').replace(/"/g,'&quot;')}" data-summary="${(f.originalSummary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` 
+        const _tLang2 = getUserTargetLang();
+        const translateBtn = needsTranslation
+          ? `<button class="articleTranslateBtn" data-id="${f.id}" data-title="${(f.originalTitle||'').replace(/"/g,'&quot;')}" data-summary="${(f.originalSummary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate to ${_tLang2.label}">${_tLang2.short}</button>`
           : "";
         
         return `
@@ -15666,6 +15754,16 @@ grmClockTick();
   background: rgba(255,255,255,0.65); transition: left 0.2s, background 0.2s;
 }
 .locBriefToggle.on::after { left: 20px; background: #fff; }
+.bVoiceSelect {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 7px; padding: 6px 10px;
+  color: rgba(255,255,255,0.75); font-size: 12px;
+  outline: none; cursor: pointer;
+  transition: border-color 0.15s;
+}
+.bVoiceSelect:focus { border-color: rgba(96,200,255,0.4); }
+.bVoiceSelect option { background: #0a0f1e; }
 .locBriefPills { display: flex; gap: 4px; }
 .locBriefPill {
   padding: 5px 12px; border-radius: 20px; font-size: 12px; cursor: pointer;
@@ -15872,6 +15970,13 @@ grmClockTick();
           <input class="bCustTagInput" id="bCustTagInput" type="text" placeholder="Type keyword + Enter…"/>
         </div>
       </div>
+      <div class="bLauncherField" id="bCustVoiceRow">
+        <label>Voiceover &amp; Language</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div class="locBriefToggle" id="bCustVoiceToggle" style="flex-shrink:0"></div>
+          <select class="bVoiceSelect" id="bCustLangSelect" style="display:none;flex:1"></select>
+        </div>
+      </div>
       <button class="bLauncherStartBtn secondary" id="bLauncherStartCustom">Generate Briefing →</button>
     </div>
 
@@ -16016,6 +16121,20 @@ grmClockTick();
       if (badge) badge.style.display = '';
       btn.title = `Today's Briefing: ${episode.headline}`;
     } catch (_) {}
+
+    // Fetch available ElevenLabs voices and cache globally
+    try {
+      const vRes = await fetch(`${API}/api/briefing/voices`);
+      if (vRes.ok) {
+        window._briefingVoices = await vRes.json();
+        // Pre-populate the launcher language select
+        const sel = document.getElementById('bCustLangSelect');
+        if (sel && window._briefingVoices.length) {
+          sel.innerHTML = window._briefingVoices
+            .map(v => `<option value="${v.voiceId}">${v.language}</option>`).join('');
+        }
+      }
+    } catch (_) {}
   }
 
   // ── Open ─────────────────────────────────────────────────────────────────
@@ -16087,6 +16206,13 @@ grmClockTick();
         </div>
         <div class="locBriefToggle" id="locVoiceToggle"></div>
       </div>
+      <div class="locBriefOptionRow" id="locLangRow" style="display:none">
+        <div>
+          <div class="locBriefOptionLabel">Language</div>
+          <div class="locBriefOptionSub">Broadcast voice</div>
+        </div>
+        <select class="bVoiceSelect" id="locLangSelect"></select>
+      </div>
       <div class="locBriefBtnsRow">
         <button class="locBriefCancelBtn" id="locBriefCancel">Cancel</button>
         <button class="locBriefGenerateBtn" id="locBriefGenerate">Generate Briefing</button>
@@ -16108,11 +16234,20 @@ grmClockTick();
       });
     });
 
+    // Populate language selector from cached voices
+    const locLangSelect = opts.querySelector('#locLangSelect');
+    const locLangRow    = opts.querySelector('#locLangRow');
+    if (window._briefingVoices?.length) {
+      locLangSelect.innerHTML = window._briefingVoices
+        .map(v => `<option value="${v.voiceId}">${v.language}</option>`).join('');
+    }
+
     const toggle = opts.querySelector('#locVoiceToggle');
     toggle.addEventListener('click', (e) => {
       e.stopPropagation();
       voiceoverOn = !voiceoverOn;
       toggle.classList.toggle('on', voiceoverOn);
+      locLangRow.style.display = (voiceoverOn && window._briefingVoices?.length) ? '' : 'none';
     });
 
     opts.querySelector('#locBriefCancel').addEventListener('click', (e) => {
@@ -16123,10 +16258,11 @@ grmClockTick();
 
     opts.querySelector('#locBriefGenerate').addEventListener('click', (e) => {
       e.stopPropagation();
+      const voiceId = (voiceoverOn && locLangSelect.value) ? locLangSelect.value : null;
       opts.classList.remove('open');
       setTimeout(() => {
         opts.remove();
-        requestLocationBriefing(node, type, { voiceover: voiceoverOn, sourceFilter });
+        requestLocationBriefing(node, type, { voiceover: voiceoverOn, sourceFilter, voiceId });
       }, 200);
     });
   }
@@ -16176,7 +16312,7 @@ grmClockTick();
       signal: abortCtrl.signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false, sourceFilter: opts.sourceFilter || 'mix' }),
+      body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false, sourceFilter: opts.sourceFilter || 'mix', voiceId: opts.voiceId || null }),
     })
       .then(r => r.json().then(body => { if (!r.ok) throw new Error(body.error || `Server error ${r.status}`); return body; }))
       .then(ep => {
@@ -16866,7 +17002,7 @@ grmClockTick();
     });
   }
 
-  async function submitCustomBriefing(from, about, keywords, skipCheck = false) {
+  async function submitCustomBriefing(from, about, keywords, skipCheck = false, voiceOpts = {}) {
     const loadMsgs = ['Checking available content…', 'Gathering stories…', 'Building briefing…', 'Almost ready…'];
     let msgIdx = 0;
     showLauncherLoading(loadMsgs[0]);
@@ -16879,7 +17015,7 @@ grmClockTick();
       const res = await fetch(`${API}/api/briefing/custom`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, about, keywords: [...keywords], skipCheck }),
+        body: JSON.stringify({ from, about, keywords: [...keywords], skipCheck, voiceover: voiceOpts.voiceover || false, voiceId: voiceOpts.voiceId || null }),
         signal: AbortSignal.timeout ? AbortSignal.timeout(120000) : undefined,
       });
       clearInterval(msgInterval);
@@ -16932,11 +17068,22 @@ grmClockTick();
     document.getElementById('bCustTagInput')?.focus();
   });
 
+  // Voiceover toggle in launcher
+  let custVoiceoverOn = false;
+  document.getElementById('bCustVoiceToggle')?.addEventListener('click', () => {
+    custVoiceoverOn = !custVoiceoverOn;
+    document.getElementById('bCustVoiceToggle').classList.toggle('on', custVoiceoverOn);
+    const sel = document.getElementById('bCustLangSelect');
+    if (sel) sel.style.display = (custVoiceoverOn && window._briefingVoices?.length) ? '' : 'none';
+  });
+
   document.getElementById('bLauncherStartCustom')?.addEventListener('click', () => {
-    const from  = document.getElementById('bCustFrom')?.value.trim() || '';
-    const about = document.getElementById('bCustAbout')?.value.trim() || '';
+    const from    = document.getElementById('bCustFrom')?.value.trim() || '';
+    const about   = document.getElementById('bCustAbout')?.value.trim() || '';
+    const voiceId = (custVoiceoverOn && document.getElementById('bCustLangSelect')?.value)
+      ? document.getElementById('bCustLangSelect').value : null;
     if (!from && !about && !customTags.size) return;
-    submitCustomBriefing(from, about, customTags, false);
+    submitCustomBriefing(from, about, customTags, false, { voiceover: custVoiceoverOn, voiceId });
   });
 
   document.getElementById('bLauncherInsuffBack')?.addEventListener('click', hideLauncherInsuff);
@@ -16946,7 +17093,9 @@ grmClockTick();
     const from     = el.dataset.from     || '';
     const about    = el.dataset.about    || '';
     const keywords = JSON.parse(el.dataset.keywords || '[]');
-    submitCustomBriefing(from, about, new Set(keywords), true);
+    const voiceId  = (custVoiceoverOn && document.getElementById('bCustLangSelect')?.value)
+      ? document.getElementById('bCustLangSelect').value : null;
+    submitCustomBriefing(from, about, new Set(keywords), true, { voiceover: custVoiceoverOn, voiceId });
   });
 
   // ── Event wiring ──────────────────────────────────────────────────────────

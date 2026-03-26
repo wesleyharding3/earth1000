@@ -8,6 +8,7 @@ const { getRankedArticles, getRankedCityArticles } = require("./rankingService")
 const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 const { generateLocationBriefing } = require("./locationBriefingGenerator");
+const Anthropic = new (require('@anthropic-ai/sdk'))({ apiKey: process.env.ANTHROPIC_API_KEY });
 const { resolveImagesForArticles } = require("./imageResolver");
 const jwt = require("jsonwebtoken");
 
@@ -1228,15 +1229,33 @@ app.get("/api/briefing/recent", async (req, res) => {
   }
 });
 
+// GET /api/briefing/voices — returns all configured ElevenLabs voices
+// Reads every env var matching ELEVENLABS_VOICE_ID_<LANGUAGE>
+app.get("/api/briefing/voices", (req, res) => {
+  const voices = [];
+  for (const [key, val] of Object.entries(process.env)) {
+    if (!val) continue;
+    const match = key.match(/^ELEVENLABS_VOICE_ID_(.+)$/);
+    if (match) {
+      const raw  = match[1];                                         // e.g. "ENGLISH", "PORTUGUESE_BR"
+      const label = raw.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+      voices.push({ language: label, voiceId: val });
+    }
+  }
+  // Sort alphabetically so the dropdown is consistent
+  voices.sort((a, b) => a.language.localeCompare(b.language));
+  res.json(voices);
+});
+
 // POST /api/briefing/location — on-demand briefing for a city or country node
 app.post("/api/briefing/location", async (req, res) => {
-  const { type, id, name, voiceover = false, sourceFilter = 'mix' } = req.body || {};
+  const { type, id, name, voiceover = false, sourceFilter = 'mix', voiceId } = req.body || {};
   if (!type || !id || !name) return res.status(400).json({ error: "type, id, and name are required" });
   if (!["city", "country"].includes(type)) return res.status(400).json({ error: "type must be 'city' or 'country'" });
   const validFilters = ['local', 'mix', 'global'];
   const filter = validFilters.includes(sourceFilter) ? sourceFilter : 'mix';
   try {
-    const ep = await generateLocationBriefing({ type, id: parseInt(id), name, voiceover: !!voiceover, sourceFilter: filter });
+    const ep = await generateLocationBriefing({ type, id: parseInt(id), name, voiceover: !!voiceover, sourceFilter: filter, voiceId: voiceId || null });
     res.json(ep);
   } catch (err) {
     console.error("[briefing/location]", err.message);
@@ -1248,7 +1267,7 @@ app.post("/api/briefing/location", async (req, res) => {
 // Returns 422 { insufficient, count, message, suggestions } if < 8 articles found
 // and skipCheck is not true. Otherwise generates and returns an episode.
 app.post("/api/briefing/custom", async (req, res) => {
-  const { from, about, keywords = [], skipCheck = false, voiceover = false } = req.body || {};
+  const { from, about, keywords = [], skipCheck = false, voiceover = false, voiceId } = req.body || {};
   if (!from && !about && !keywords.length) {
     return res.status(400).json({ error: "Provide at least one of: from, about, or keywords" });
   }
@@ -1330,6 +1349,7 @@ Return ONLY valid JSON: { "message": "one sentence explaining why coverage is li
       name: locName,
       voiceover: !!voiceover,
       sourceFilter: 'mix',
+      voiceId: voiceId || null,
       customFilter: { from, about, keywords, sqlWhere: where, sqlParams: params },
     });
     res.json(ep);
@@ -1343,14 +1363,43 @@ Return ONLY valid JSON: { "message": "one sentence explaining why coverage is li
    On-demand Translation
 ========================================= */
 app.post("/api/translate", async (req, res) => {
-  const { title, summary, id } = req.body || {};
+  const { title, summary, id, targetLang } = req.body || {};
   if (!title && !summary) return res.status(400).json({ error: "No text provided" });
   try {
-    const [translatedTitle, translatedSummary] = await Promise.all([
-      title   ? translateText(title,   "EN-US") : Promise.resolve(null),
-      summary ? translateText(summary, "EN-US") : Promise.resolve(null),
-    ]);
-    if (id && (translatedTitle || translatedSummary)) {
+    // DeepL supports all but: Filipino (TL), Hindi (HI), Malay (MS), Vietnamese (VI)
+    const DEEPL_UNSUPPORTED = new Set(['TL', 'HI', 'MS', 'VI']);
+    const target = targetLang || 'EN-US';
+    const baseTarget = target.split('-')[0].toUpperCase();
+    const needsClaudeFallback = DEEPL_UNSUPPORTED.has(baseTarget);
+
+    let translatedTitle = null, translatedSummary = null;
+    if (needsClaudeFallback) {
+      // Claude Haiku fallback for unsupported DeepL languages
+      const langNames = { TL: 'Filipino (Tagalog)', HI: 'Hindi', MS: 'Malay', VI: 'Vietnamese' };
+      const langName = langNames[baseTarget] || target;
+      const pieces = [title, summary].filter(Boolean);
+      const prompt = `Translate each of the following items into ${langName}. Return a JSON array with the same number of elements in the same order. Only return the JSON array, nothing else.\n${JSON.stringify(pieces)}`;
+      const resp = await Anthropic.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      try {
+        const arr = JSON.parse(resp.content[0].text.trim());
+        let i = 0;
+        if (title)   translatedTitle   = arr[i++] || null;
+        if (summary) translatedSummary = arr[i++] || null;
+      } catch (_) {}
+    } else {
+      [translatedTitle, translatedSummary] = await Promise.all([
+        title   ? translateText(title,   target) : Promise.resolve(null),
+        summary ? translateText(summary, target) : Promise.resolve(null),
+      ]);
+    }
+
+    // Only persist to DB for English translations (to avoid mixing languages across users)
+    const isEnglishTarget = target.startsWith('EN');
+    if (isEnglishTarget && id && (translatedTitle || translatedSummary)) {
       await pool.query(
         `UPDATE news_articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,
         [translatedTitle, translatedSummary, id]
