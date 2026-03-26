@@ -8750,6 +8750,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
+        if (window.briefingActive) { hideHoverCard(); return; }
         const activePoints    = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeData      = currentViewMode === "country" ? countries : cities;
         const activePositions = currentViewMode === "country" ? countryPositions : positions;
@@ -8761,6 +8762,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const flowControlsVisible = document.getElementById("flowControls")?.classList.contains("visible");
         if (flowControlsVisible) { hideHoverCard(); return; }
 
+        if (window.briefingActive) { hideHoverCard(); return; }
         if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
         if (currentViewMode === "regions") { updateRegionHoverLabels(); return; }
 
