@@ -15568,58 +15568,70 @@ grmClockTick();
 /* ── Subtitle / voiceover text — hidden by design ── */
 .bSubtitle { display: none; }
 
-/* ── Article cards strip ── */
-.bArticlesWrap {
-  position: absolute; bottom: 0; left: 0; right: 0;
-  background: linear-gradient(to top, rgba(0,0,0,0.95) 70%, transparent 100%);
-  padding: 20px 20px 20px;
-  opacity: 0; transform: translateY(20px);
-  transition: all 0.5s ease;
-  height: 168px;
+/* ── Left article panel ── */
+.bArticlePanel {
+  position: absolute; top: 50%; left: 24px;
+  transform: translateY(-50%);
+  width: min(270px, 28vw);
+  display: flex; flex-direction: column; gap: 8px;
+  opacity: 0; transition: opacity 0.5s ease 0.3s;
+  pointer-events: all;
 }
-#briefingOverlay.open .bArticlesWrap { opacity: 1; transform: translateY(0); }
-.bArticlesScroll {
-  display: flex; gap: 10px; overflow-x: auto;
-  scrollbar-width: none; height: 100%;
+.bArticlePanel.visible { opacity: 1; }
+.bAPCard {
+  background: rgba(6,10,20,0.92); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; overflow: hidden; cursor: pointer;
+  transition: background 0.2s;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
 }
-.bArticlesScroll::-webkit-scrollbar { display: none; }
-
-/* ── Briefing article card ── */
-.bCard {
-  min-width: 200px; max-width: 200px; flex-shrink: 0;
-  display: flex; flex-direction: column;
-  background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 8px; overflow: hidden;
-  cursor: pointer; transition: background 0.2s, transform 0.2s;
+.bAPCard:hover { background: rgba(255,255,255,0.07); }
+.bAPCardImg { width: 100%; height: 76px; object-fit: cover; display: block; }
+.bAPCardImgNone { width: 100%; height: 76px; background: rgba(255,255,255,0.04); }
+.bAPCardBody { padding: 8px 10px; }
+.bAPCardMeta {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-bottom: 4px;
 }
-.bCard:hover { background: rgba(255,255,255,0.13); transform: translateY(-2px); }
-.bCardImg {
-  width: 100%; height: 72px; object-fit: cover; display: block;
-  background: rgba(255,255,255,0.05);
-}
-.bCardImgNone { width: 100%; height: 72px; background: rgba(255,255,255,0.04); }
-.bCardBody { padding: 7px 8px; display: flex; flex-direction: column; gap: 3px; flex: 1; }
-.bCardSource {
+.bAPCardSource {
   font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
-  color: #60c8ff; text-transform: uppercase; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
+  color: #60c8ff; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
-.bCardTitle {
-  font-size: 11px; font-weight: 600; color: #fff; line-height: 1.35;
+.bAPCardDate { font-size: 9px; color: rgba(255,255,255,0.35); flex-shrink: 0; }
+.bAPCardTitle {
+  font-size: 11px; font-weight: 600; color: #fff; line-height: 1.4;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.bCardFooter {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-top: auto; gap: 4px; min-width: 0;
+
+/* ── News ticker ── */
+.bTicker {
+  position: absolute; bottom: 0; left: 0; right: 0; height: 58px;
+  background: linear-gradient(to top, rgba(0,0,0,0.97) 60%, rgba(0,0,0,0.75) 100%);
+  border-top: 1px solid rgba(255,255,255,0.07);
+  display: flex; align-items: center; padding: 0 20px;
+  opacity: 0; transition: opacity 0.5s ease;
+  overflow: hidden; pointer-events: none;
 }
-.bCardLocation {
-  font-size: 9px; color: rgba(255,255,255,0.32);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  display: flex; align-items: center; gap: 3px; min-width: 0; flex: 1;
+#briefingOverlay.open .bTicker { opacity: 1; }
+.bTickerItem {
+  display: flex; align-items: baseline; gap: 8px;
+  white-space: nowrap; overflow: hidden; width: 100%;
+  opacity: 1; transition: opacity 0.3s ease;
 }
-.bCardLocation svg { width: 8px; height: 8px; flex-shrink: 0; opacity: 0.55; }
-.bCardDate { font-size: 9px; color: rgba(255,255,255,0.35); flex-shrink: 0; }
+.bTickerItem.fading { opacity: 0; }
+.bTickerSource {
+  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
+  color: #60c8ff; text-transform: uppercase; flex-shrink: 0;
+}
+.bTickerDot { color: rgba(255,255,255,0.3); flex-shrink: 0; font-size: 9px; }
+.bTickerDate { font-size: 10px; color: rgba(255,255,255,0.4); flex-shrink: 0; }
+.bTickerSep { color: rgba(255,255,255,0.2); flex-shrink: 0; font-size: 11px; }
+.bTickerTitle { font-size: 11px; font-weight: 600; color: #fff; flex-shrink: 0; max-width: 38%; overflow: hidden; text-overflow: ellipsis; }
+.bTickerSummary {
+  font-size: 11px; color: rgba(255,255,255,0.55); line-height: 1;
+  overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
 
 /* ── Video embed ── */
 .bVideoWrap {
@@ -15668,7 +15680,7 @@ grmClockTick();
 
 /* ── Captions ── */
 .bCaptions {
-  position: absolute; bottom: 228px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 126px; left: 50%; transform: translateX(-50%);
   max-width: min(700px, calc(100vw - 48px));
   background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
   border: 1px solid rgba(255,255,255,0.1);
@@ -15679,9 +15691,9 @@ grmClockTick();
 }
 .bCaptions.visible { opacity: 1; }
 
-/* ── Controls — sit just above the article strip ── */
+/* ── Controls — sit just above the ticker ── */
 .bControls {
-  position: absolute; bottom: 178px; left: 50%; transform: translateX(-50%);
+  position: absolute; bottom: 68px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 16px;
   opacity: 0; transition: opacity 0.5s ease 0.5s;
   z-index: 2;
@@ -16170,10 +16182,11 @@ grmClockTick();
   <div class="bArcLabel" id="bArcLabel"></div>
   <div class="bSubtitle" id="bSubtitle"></div>
   <div class="bVideoWrap" id="bVideoWrap"></div>
-  <div class="bArticlesWrap">
-    <div class="bArticlesScroll" id="bArticlesScroll"></div>
-  </div>
+  <div class="bArticlePanel" id="bArticlePanel"></div>
   <div class="bCaptions" id="bCaptions"></div>
+  <div class="bTicker" id="bTicker">
+    <div class="bTickerItem" id="bTickerItem"></div>
+  </div>
   <div class="bControls">
     <button class="bControlBtn" id="bPrev" title="Previous">&#8592;</button>
     <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
@@ -16332,7 +16345,10 @@ grmClockTick();
     document.getElementById('bRecap').classList.remove('open');
     document.getElementById('bVideoWrap').innerHTML = '';
     document.getElementById('bVideoWrap').classList.remove('visible');
-    document.getElementById('bArticlesScroll').innerHTML = '';
+    document.getElementById('bArticlePanel').innerHTML = '';
+    document.getElementById('bArticlePanel').classList.remove('visible');
+    document.getElementById('bTickerItem').innerHTML = '';
+    stopTicker();
     document.getElementById('bCaptions').classList.remove('visible');
     updatePlayBtn();
   }
@@ -16900,77 +16916,106 @@ grmClockTick();
       videoWrap.classList.remove('visible');
     }
 
-    // ── Article cards (animated, non-blocking) ─────────────────────────────
-    if (seg.article_ids?.length) {
-      loadArticlesAnimated(seg.article_ids);
-    } else {
-      document.getElementById('bArticlesScroll').innerHTML = '';
-    }
+    // ── Article panel + ticker (non-blocking) ──────────────────────────────
+    loadArticlePanel(seg.article_ids?.length ? seg.article_ids : []);
 
     updateDots();
     updatePlayBtn();
     updateCaptions(seg);
   }
 
-  // ── Article card renderer ─────────────────────────────────────────────────
-  function makeBriefingCard(a) {
+  // ── Left article panel card renderer ─────────────────────────────────────
+  function makeAPCard(a) {
     const img  = a.image_url?.trim() || a.catalog_image_url?.trim() || '';
     const flag = a.iso_code ? `https://flagcdn.com/w80/${a.iso_code.toLowerCase()}.png` : '';
     const src  = img || flag;
     const date = a.published_at
       ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       : '';
-    const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
-    const safe     = (a.url || '').replace(/'/g, '%27');
-    const locParts = [a.city_name, a.country_name].filter(Boolean);
-    const loc      = locParts[0] || '';   // city if available, else country
-    const locPin   = loc
-      ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-           <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-           <circle cx="12" cy="9" r="2.5"/>
-         </svg>${loc}`
-      : '';
-    return `<div class="bCard" onclick="window.open('${safe}','_blank')">
-      ${src
-        ? `<img class="bCardImg" src="${src}" onerror="this.style.display='none'" alt="" loading="lazy">`
-        : `<div class="bCardImgNone"></div>`}
-      <div class="bCardBody">
-        <div class="bCardSource">${a.source_name || ''}</div>
-        <div class="bCardTitle">${title}</div>
-        <div class="bCardFooter">
-          <span class="bCardLocation">${locPin}</span>
-          <span class="bCardDate">${date}</span>
+    const title = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+    const safe  = (a.url || '').replace(/'/g, '%27');
+    return `<div class="bAPCard" onclick="window.open('${safe}','_blank')">
+      ${src ? `<img class="bAPCardImg" src="${src}" onerror="this.style.display='none'" alt="" loading="lazy">` : `<div class="bAPCardImgNone"></div>`}
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource">${a.source_name || ''}</span>
+          <span class="bAPCardDate">${date}</span>
         </div>
+        <div class="bAPCardTitle">${title}</div>
       </div>
     </div>`;
   }
 
-  // ── Animated article loader ───────────────────────────────────────────────
-  async function loadArticlesAnimated(ids) {
-    const scroll = document.getElementById('bArticlesScroll');
-    const snapIdx = segIdx;  // capture so stale updates don't clobber
-    scroll.innerHTML = ids.map(() => '<div class="bCardSkel"></div>').join('');
+  // ── News ticker ───────────────────────────────────────────────────────────
+  const TICKER_INTERVAL = 7000;
+  let _tickerArticles = [];
+  let _tickerIdx      = 0;
+  let _tickerTimer    = null;
+
+  function _renderTickerItem(a) {
+    const date    = a.published_at
+      ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : '';
+    const title   = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+    const summary = (a.summary || '').replace(/</g, '&lt;');
+    return `<span class="bTickerSource">${a.source_name || ''}</span>` +
+      (date ? `<span class="bTickerDot">·</span><span class="bTickerDate">${date}</span>` : '') +
+      `<span class="bTickerSep"> — </span><span class="bTickerTitle">${title}</span>` +
+      (summary ? `<span class="bTickerSep"> — </span><span class="bTickerSummary">${summary}</span>` : '');
+  }
+
+  function _advanceTicker() {
+    _tickerIdx = (_tickerIdx + 1) % _tickerArticles.length;
+    const el = document.getElementById('bTickerItem');
+    if (!el) return;
+    el.classList.add('fading');
+    setTimeout(() => {
+      if (!document.getElementById('bTickerItem')) return;
+      el.innerHTML = _renderTickerItem(_tickerArticles[_tickerIdx]);
+      el.classList.remove('fading');
+    }, 300);
+  }
+
+  function startTicker(articles) {
+    stopTicker();
+    _tickerArticles = articles;
+    _tickerIdx = 0;
+    const el = document.getElementById('bTickerItem');
+    if (!el) return;
+    if (!articles.length) { el.innerHTML = ''; return; }
+    el.classList.remove('fading');
+    el.innerHTML = _renderTickerItem(articles[0]);
+    if (articles.length > 1) {
+      _tickerTimer = setInterval(_advanceTicker, TICKER_INTERVAL);
+    }
+  }
+
+  function stopTicker() {
+    if (_tickerTimer) { clearInterval(_tickerTimer); _tickerTimer = null; }
+  }
+
+  // ── Article panel + ticker loader ─────────────────────────────────────────
+  async function loadArticlePanel(ids) {
+    const panel   = document.getElementById('bArticlePanel');
+    const snapIdx = segIdx;
+    panel.classList.remove('visible');
+    stopTicker();
+    if (!ids?.length) { panel.innerHTML = ''; return; }
     try {
       const res = await fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`);
       if (!res.ok) throw new Error('fetch');
       const articles = await res.json();
-      if (segIdx !== snapIdx) return;   // segment changed while loading
-      scroll.innerHTML = '';
-      articles.forEach((a, i) => {
-        const tmp = document.createElement('div');
-        tmp.innerHTML = makeBriefingCard(a);
-        const el = tmp.firstElementChild;
-        el.classList.add('bCardEnter');
-        el.style.animationDelay = `${i * 110}ms`;
-        scroll.appendChild(el);
-      });
-      // Backfill video source name with the first article's source
+      if (segIdx !== snapIdx) return;
+      // Left panel: first 2
+      panel.innerHTML = articles.slice(0, 2).map(makeAPCard).join('');
+      if (articles.length) panel.classList.add('visible');
+      // Ticker: all articles, looping
+      startTicker(articles);
+      // Backfill video source name
       const srcEl = document.getElementById('bVideoSource');
-      if (srcEl && articles.length) {
-        srcEl.textContent = articles[0].source_name || '—';
-      }
+      if (srcEl && articles.length) srcEl.textContent = articles[0].source_name || '—';
     } catch (_) {
-      if (segIdx === snapIdx) scroll.innerHTML = '';
+      if (segIdx === snapIdx) { panel.innerHTML = ''; stopTicker(); }
     }
   }
 
