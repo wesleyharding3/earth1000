@@ -674,9 +674,8 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
       });
       const effectiveResolved = dedupedResolved.length >= 2 ? dedupedResolved : resolved;
 
-      // Connect consecutive entity pairs (max 2 arcs per story)
-      const maxArcs = Math.min(effectiveResolved.length - 1, 2);
-      for (let i = 0; i < maxArcs; i++) {
+      // Connect all consecutive entity pairs
+      for (let i = 0; i < effectiveResolved.length - 1; i++) {
         const from = effectiveResolved[i];
         const to   = effectiveResolved[i + 1];
         arcs.push({
