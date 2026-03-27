@@ -6373,6 +6373,7 @@ function computeCityTiers(cities) {
 }
 
     function init(cities, countries) {
+      window.__globeCountries = countries; // expose for briefing IIFE
       let currentViewMode = "country";
       const earthPointCount = 10000;
       const earthPositions = [];
@@ -15978,7 +15979,7 @@ grmClockTick();
 
 /* ── Briefing Launcher ── */
 .bLauncher {
-  position: fixed; inset: 0; z-index: 9000;
+  position: fixed; inset: 0; z-index: 100001;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,0.75); backdrop-filter: blur(10px);
   opacity: 0; pointer-events: none;
@@ -16618,7 +16619,8 @@ grmClockTick();
     const _ctole = 1.5;
     const _isCountryCentroid = (lat, lng) => {
       if (lat == null || lng == null) return false;
-      return countries.some(c =>
+      const _countries = window.__globeCountries || [];
+      return _countries.some(c =>
         c.lat != null &&
         Math.abs(c.lat - lat) < _ctole &&
         Math.abs((c.lon ?? c.lng ?? 0) - lng) < _ctole
