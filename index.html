@@ -4448,7 +4448,11 @@
     #hoverCard, #hoverLineEl {
       z-index: 99999;
       will-change: auto;
-    }  
+    }
+    body.briefing-active #hoverCard,
+    body.briefing-active #hoverLineEl {
+      display: none !important;
+    }
 
     /* ── Vertical View Sidebar ── */
     #viewSidebar {
@@ -11107,6 +11111,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const on = !ambientPaused
             && !isFocused
             && ambientSpeed > 0
+            && !window.briefingActive
             && currentViewMode !== "ocean"
             && currentViewMode !== "transportation"
             && !document.getElementById("infoPanel")?.classList.contains("active")
@@ -15501,7 +15506,7 @@ grmClockTick();
 
 /* ── Overlay ── */
 #briefingOverlay {
-  position: fixed; inset: 0; z-index: 9000;
+  position: fixed; inset: 0; z-index: 100000;
   background: rgba(0,0,0,0.0);
   display: flex; flex-direction: column;
   pointer-events: none;
@@ -16296,6 +16301,7 @@ grmClockTick();
   function openBriefing() {
     if (!episode) return;
     window.briefingActive = true;
+    document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
     document.getElementById('bHeadline').textContent = episode.headline;
     document.getElementById('bDate').textContent = new Date(episode.target_date)
@@ -16310,6 +16316,7 @@ grmClockTick();
   // ── Close ────────────────────────────────────────────────────────────────
   function closeBriefing() {
     window.briefingActive = false;
+    document.body.classList.remove('briefing-active');
     playing = false;
     clearTimeout(segTimer);
     clearBTimers();
@@ -16669,6 +16676,41 @@ grmClockTick();
         if (segIdx !== idx) return;
         if (window.briefingHideLabel) window.briefingHideLabel();
         drawSegmentArcs(seg);
+        // Auto cross-nation arcs: any primary↔secondary pair that spans
+        // different countries (haversine > DOMESTIC_KM) and isn't already
+        // covered by a generator-supplied flow_arc gets a synthetic arc.
+        if (primary && window.buildArcLines) {
+          const resolve = window.resolveArcEndpoint || ((lat, lng) => ({ lat, lng }));
+          secondary.forEach((sec, i) => {
+            const distKm = haversineKm(primary.lat, primary.lon ?? primary.lng ?? 0,
+                                       sec.lat,    sec.lon  ?? sec.lng  ?? 0);
+            if (distKm < DOMESTIC_KM) return;
+            // Skip if a generator arc already covers this pair (within 200 km)
+            const covered = (seg.flow_arcs || []).some(a => {
+              const d1 = haversineKm(a.from_lat, a.from_lng ?? a.from_lon ?? 0, primary.lat, primary.lon ?? primary.lng ?? 0);
+              const d2 = haversineKm(a.to_lat,   a.to_lng   ?? a.to_lon   ?? 0, sec.lat,    sec.lon  ?? sec.lng  ?? 0);
+              const d3 = haversineKm(a.from_lat, a.from_lng ?? a.from_lon ?? 0, sec.lat,    sec.lon  ?? sec.lng  ?? 0);
+              const d4 = haversineKm(a.to_lat,   a.to_lng   ?? a.to_lon   ?? 0, primary.lat, primary.lon ?? primary.lng ?? 0);
+              return (d1 < 200 && d2 < 200) || (d3 < 200 && d4 < 200);
+            });
+            if (covered) return;
+            const rFrom = resolve(primary.lat, primary.lon ?? primary.lng ?? 0);
+            const rTo   = resolve(sec.lat,     sec.lon  ?? sec.lng  ?? 0);
+            const samePoint = Math.abs(rFrom.lat - rTo.lat) < 0.1 && Math.abs(rFrom.lng - rTo.lng) < 0.1;
+            if (samePoint) return;
+            try {
+              const key = `briefingAutoArc_${idx}_${i}`;
+              const baseMesh = window.buildArcLines([[rFrom.lat, rFrom.lng, rTo.lat, rTo.lng]], 0xff8c00, 0.005, 0.88, key);
+              if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
+              const pulseMesh = window.transPulseMeshes?.[key];
+              if (pulseMesh) {
+                pulseMesh.visible = true;
+                arcMeshes.push(pulseMesh);
+                if (window.briefingArcPulseList) window.briefingArcPulseList.push(pulseMesh);
+              }
+            } catch (_) {}
+          });
+        }
         secondary.forEach((loc, i) => {
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
@@ -16696,9 +16738,11 @@ grmClockTick();
         }
       }
 
-      // 95 %: return to country view before segment ends, hide hover card
+      // 95 %: clear arcs/pulses, return to country view, hide hover card
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
+        clearArcMeshes();
+        if (window.clearBriefingPulses) window.clearBriefingPulses();
         if (needsCityView && window.setBriefingViewMode) window.setBriefingViewMode('country');
         if (window.briefingHideLabel) window.briefingHideLabel();
       }, ms(0.95)));
@@ -16731,11 +16775,11 @@ grmClockTick();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.setBriefingViewMode) window.setBriefingViewMode('country');
 
-    // Stop & discard current audio
-    if (audio) {
-      try { audio.onended = null; audio.pause(); } catch (_) {}
-      audio = null;
-    }
+    // Stop ALL audio — guarantee only one voice at a time
+    if (audio)     { try { audio.onended = null; audio.pause(); }     catch (_) {} audio = null; }
+    if (audioNext) { try { audioNext.pause(); }                        catch (_) {} }
+    // Stop story-detail panel audio if open
+    if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
 
     // ── Per-segment audio ──────────────────────────────────────────────────
     // Hide hover card from previous segment immediately
@@ -16786,11 +16830,10 @@ grmClockTick();
             goToSegment(curIdx + 1);
           }, VIDEO_PAUSE_SECS * 1000);
         } else {
-          // 30ms — tight enough to feel seamless, enough to flush audio frame
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx) return;
             goToSegment(curIdx + 1);
-          }, 30);
+          }, 0);
         }
       }, { once: true });
 
@@ -16812,7 +16855,7 @@ grmClockTick();
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
-        }, Math.round(estDur * 1000) + 800);
+        }, Math.round(estDur * 1000) + 200);
       }
     }
 
@@ -17011,10 +17054,14 @@ grmClockTick();
 
   // ── Story detail panel ───────────────────────────────────────────────────
   let detailAudio = null;
+  // Pause detail audio and clear both local and global refs
+  function stopDetailAudio() {
+    stopDetailAudio();
+    window._detailAudio = null;
+  }
 
   function showStoryDetail(seg, actualIdx, storyNum) {
-    // Pause any existing detail audio
-    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+    stopDetailAudio();
 
     document.getElementById('bSDNum').textContent      = `Story ${storyNum}`;
     document.getElementById('bSDHeadline').textContent = seg.thread_title || seg.primary_country?.name || 'Story';
@@ -17042,6 +17089,7 @@ grmClockTick();
       const da = new Audio(`${API}/api/briefing/audio/${episode.id}/${actualIdx}`);
       da.preload = 'metadata';
       detailAudio = da;
+      window._detailAudio = da;  // expose for single-voice guarantee
 
       da.addEventListener('loadedmetadata', () => {
         timeEl.textContent = `0:00 / ${fmt(da.duration)}`;
@@ -17334,13 +17382,13 @@ grmClockTick();
 
   // Recap: close button
   document.getElementById('bRecapClose')?.addEventListener('click', () => {
-    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+    stopDetailAudio();
     document.getElementById('bStoryDetail').classList.remove('open');
     document.getElementById('bRecap').classList.remove('open');
   });
   // Story detail: back to summary grid
   document.getElementById('bSDBack')?.addEventListener('click', () => {
-    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+    stopDetailAudio();
     document.getElementById('bSDAudioPlay').textContent = '▶';
     document.getElementById('bStoryDetail').classList.remove('open');
   });
@@ -17349,7 +17397,7 @@ grmClockTick();
     // "Resume from here" button jumps back into the live briefing
     const replayBtn = e.target.closest('.bRecapPlay');
     if (replayBtn) {
-      if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+      stopDetailAudio();
       const idx = parseInt(replayBtn.dataset.idx);
       document.getElementById('bStoryDetail').classList.remove('open');
       document.getElementById('bRecap').classList.remove('open');

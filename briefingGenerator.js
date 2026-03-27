@@ -36,7 +36,9 @@ const MAX_THREADS          = 10;  // stories in one briefing
 const MAX_ARTICLES_THREAD  = 6;   // articles shown per story
 const MAX_CATEGORY_REPEAT  = 2;   // max threads from same category
 const MAX_PER_REGION       = 2;   // max threads from the same geographic region
-const MAX_ENGLISH_DOMINANT = 4;   // max threads where >70% of articles are English-sourced
+const MAX_ENGLISH_DOMINANT = 2;   // max threads where >70% of articles are English-sourced
+const MAX_GLOBAL_BUCKET    = 3;   // cap on threads that fall through to the 'global' region bucket
+                                  // (prevents US-centric stories without geo keywords from dominating)
 const MIN_VIDEO_THREADS    = 3;   // at least this many story segments must have a video
 const THREAD_LOOKBACK_DAYS = 3;   // only threads active in last N days
 const THREAD_MAX_AGE_DAYS  = 21;  // exclude threads whose first article is older than N days
@@ -169,7 +171,7 @@ async function run() {
     const allArcs = buildFlowArcs(threadData, narrative, entityCoords);
 
     // ── 6. Build segments JSON ────────────────────────────────────────────
-    const segments = buildSegments(narrative, threadData, allArcs, entityCoords);
+    const segments = await buildSegments(narrative, threadData, allArcs, entityCoords);
 
     // ── 6. Generate ElevenLabs audio — per-segment for accurate seek offsets
     let audioData = null;
@@ -316,7 +318,7 @@ function getRegionGroup(thread) {
   if (/africa|nigeria|ethiopia|kenya|egypt|sudan|ghana|tanzania|south.?africa|morocco|algeria|niger|congo|mali/.test(titleAndScope)) return 'africa';
   if (/latin.?america|mexico|brazil|argentin|colombia|venezuela|chile|peru|ecuador|cuba|haiti/.test(titleAndScope)) return 'latam';
   if (/europe|germany|france|britain|uk |poland|spain|italy|nato|netherlands|sweden|norway|finland/.test(withCategory)) return 'europe';
-  if (/united.?states|u\.s\.|america|canada|north.?america/.test(withCategory)) return 'north_america';
+  if (/united.?states|u\.s\.|america|canada|north.?america|trump|congress|senate|federal.reserve|pentagon|white.house|doge|tariff.*us|us.*tariff/.test(withCategory)) return 'north_america';
   if (/australia|new.?zealand|pacific|oceania/.test(withCategory)) return 'oceania';
   return 'global';
 }
@@ -410,9 +412,10 @@ async function selectThreads() {
     // a single conflict dominating the briefing. Other regions allow MAX_PER_REGION.
     const regionCap = HOTSPOT_REGIONS.has(region) ? MAX_PER_HOTSPOT : MAX_PER_REGION;
 
-    if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT)              { skipped.push(thread); continue; }
-    if (region !== 'global' && (regionCounts[region] || 0) >= regionCap){ skipped.push(thread); continue; }
-    if (isEngDominant && englishDomCount >= MAX_ENGLISH_DOMINANT)        { skipped.push(thread); continue; }
+    if ((categoryCounts[cat] || 0) >= MAX_CATEGORY_REPEAT)                           { skipped.push(thread); continue; }
+    if (region !== 'global' && (regionCounts[region] || 0) >= regionCap)             { skipped.push(thread); continue; }
+    if (region === 'global'  && (regionCounts['global'] || 0) >= MAX_GLOBAL_BUCKET)  { skipped.push(thread); continue; }
+    if (isEngDominant && englishDomCount >= MAX_ENGLISH_DOMINANT)                    { skipped.push(thread); continue; }
 
     selected.push(thread);
     categoryCounts[cat]    = (categoryCounts[cat]    || 0) + 1;
@@ -897,7 +900,7 @@ function interleaveSegments(segments, threadData) {
 }
 
 // ─── Segment Builder ───────────────────────────────────────────────────────
-function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
+async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) {
   const segments = [];
   const usedArticleIds = new Set();   // prevents same article appearing in two segments
 
