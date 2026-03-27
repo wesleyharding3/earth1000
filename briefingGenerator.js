@@ -25,7 +25,7 @@ const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
 
 const client         = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
-const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM'; // Rachel
+const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID_ENGLISH;
 
 const FORCE       = process.argv.includes('--force');
 const NO_AUDIO    = process.argv.includes('--no-audio');
@@ -229,8 +229,14 @@ async function run() {
       }
 
       // Concatenate all non-empty buffers into one MP3 file
-      audioData = Buffer.concat(audioBuffers.filter(b => b.byteLength > 0));
-      console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB total, ${(cumMs / 1000).toFixed(1)}s estimated`);
+      const concatted = Buffer.concat(audioBuffers.filter(b => b.byteLength > 0));
+      if (concatted.byteLength === 0) {
+        console.warn(`   ⚠ All audio pieces failed — storing episode without audio (check ELEVENLABS_VOICE_ID and API key)`);
+        audioData = null;
+      } else {
+        audioData = concatted;
+        console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB total, ${(cumMs / 1000).toFixed(1)}s estimated`);
+      }
     } else if (!NO_AUDIO && !ELEVENLABS_KEY) {
       console.warn(`   ⚠ ELEVENLABS_API_KEY not set — skipping audio`);
     }
@@ -627,6 +633,20 @@ async function resolveEntityCoords(segments) {
 }
 
 // ─── Flow Arc Detection ────────────────────────────────────────────────────
+// Simple great-circle distance (km) — Haversine
+function geoDistKm(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2)**2
+          + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+// If a city and its containing country both appear as entities, the city is
+// redundant — drop it so we never draw both Tehran→USA and Iran→USA arcs.
+// "Containing" = country centroid is within 900 km of the city.
+const CITY_COUNTRY_MERGE_KM = 900;
+
 function buildFlowArcs(threadData, narrative, entityCoords) {
   const arcs = [];
 
@@ -642,11 +662,23 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
       .filter(e => e.lat != null && e.lon != null);
 
     if (resolved.length >= 2) {
+      // Drop any city entity whose containing country is also in the list.
+      // Prevents Tehran→USA + Iran→USA double-arcs when both appear as entities.
+      const dedupedResolved = resolved.filter(entity => {
+        if (entity.type !== 'city') return true;
+        return !resolved.some(other =>
+          other !== entity &&
+          other.type === 'country' &&
+          geoDistKm(entity.lat, entity.lon, other.lat, other.lon) < CITY_COUNTRY_MERGE_KM
+        );
+      });
+      const effectiveResolved = dedupedResolved.length >= 2 ? dedupedResolved : resolved;
+
       // Connect consecutive entity pairs (max 2 arcs per story)
-      const maxArcs = Math.min(resolved.length - 1, 2);
+      const maxArcs = Math.min(effectiveResolved.length - 1, 2);
       for (let i = 0; i < maxArcs; i++) {
-        const from = resolved[i];
-        const to   = resolved[i + 1];
+        const from = effectiveResolved[i];
+        const to   = effectiveResolved[i + 1];
         arcs.push({
           thread_id: thread.id,
           from_name: from.name, from_lat: from.lat, from_lng: from.lon,
@@ -1026,7 +1058,8 @@ async function getRisingKeywordsForSegment(limit = 3) {
   `);
   if (!rows.length) return [];
 
-  const topKeywords = JSON.parse(rows[0].results).slice(0, limit);
+  const raw = rows[0].results;
+  const topKeywords = (typeof raw === 'string' ? JSON.parse(raw) : raw).slice(0, limit);
 
   return Promise.all(topKeywords.map(async kw => {
     const { rows: arts } = await pool.query(`

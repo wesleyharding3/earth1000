@@ -21,7 +21,7 @@ const { resolveStoryContexts } = require('./storyTracker');
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
-const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM';
+const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID_ENGLISH;
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const MAX_THREADS         = 5;
