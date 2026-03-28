@@ -4775,17 +4775,11 @@
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     }
     .sourceBiasBadge {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2px 6px;
+      display: inline-block;
+      width: 10px;
+      height: 10px;
       border-radius: 999px;
-      font-size: 8px;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      line-height: 1;
-      white-space: nowrap;
+      flex: 0 0 auto;
       border: 1px solid transparent;
     }
     .sourceBiasBadge.right { background: #b3261e; color: #fff; }
@@ -10092,12 +10086,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw)
             ? raw
             : 'unknown';
-          const label = normalized === 'center_left'
-            ? 'Center-L'
-            : normalized === 'center_right'
-              ? 'Center-R'
-              : normalized.charAt(0).toUpperCase() + normalized.slice(1);
-          return `<span class="sourceBiasBadge ${normalized}">${label}</span>`;
+          const label = normalized.replace('_', ' ');
+          return `<span class="sourceBiasBadge ${normalized}" aria-label="${label}" title="${label}"></span>`;
         };
 
         function articleCardHTML(article) {
