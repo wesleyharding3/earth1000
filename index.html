@@ -2794,7 +2794,7 @@
       height: 100%;
       overflow: hidden;
       color: var(--grm-text);
-      font-family: 'Chakra Petch', 'Segoe UI', Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background: var(--grm-bg);
     }
     #clusterCanvasWrap {
@@ -2900,7 +2900,7 @@
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       box-shadow: 0 8px 28px rgba(0,0,0,0.44);
-      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       pointer-events: all;
       white-space: nowrap;
       align-self: flex-start;
@@ -2936,7 +2936,7 @@
       pointer-events: all;
       box-shadow: 0 8px 28px rgba(0,0,0,0.44);
       position: relative;
-      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
     #clusterStatusPill::before {
       content: '';
@@ -2973,7 +2973,7 @@
       letter-spacing: 0.08em;
       white-space: nowrap;
       text-transform: uppercase;
-      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
     .clusterLegendDot {
       width: 7px;
@@ -3203,7 +3203,7 @@
       font-weight: 700;
       color: #ffffff;
       margin-bottom: 3px;
-      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
     /* ── Responsive ── */
     @media (max-width: 900px) {
@@ -3364,7 +3364,7 @@
       border-radius: 14px;
       overflow: hidden;
       box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
-      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       margin-top: 0;
       display: flex;
       flex-direction: column;
@@ -3912,7 +3912,7 @@
       border-radius: 14px;
       overflow: visible;
       box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
-      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       margin-top: 8px;
     }
     .grm-header {
@@ -14222,7 +14222,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     world.add(nodeGroup);
     scene.add(world);
 
-    const nodeGeometry = new THREE.SphereGeometry(1, 8, 8);
+    // Teardrop / concave-exponential lathe geometry: tip at -Y, blunt at +Y
+    // Profile: r = sqrt(t) * (1 - 0.18*t) gives a concave curve (steeper near tip, flatter near blunt)
+    const _lathePts = [];
+    for (let _i = 0; _i <= 18; _i++) {
+      const _t = _i / 18;
+      const _r = Math.sqrt(_t) * (1 - 0.18 * _t) * 0.82;
+      _lathePts.push(new THREE.Vector2(Math.max(0, _r), _t * 2.2 - 1.1));
+    }
+    const nodeGeometry = new THREE.LatheGeometry(_lathePts, 7); // 7 sides = organic, non-circular cross-section
     const cloudGeometry = new THREE.SphereGeometry(1, 12, 12);
 
     buildLegend();
@@ -14426,35 +14434,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function setTooltip(item, event) {
-      if (!item) {
+      if (!item || item.kind !== "node") {
         tooltipEl.classList.remove("on");
         return;
       }
-      if (item.kind === "node") {
-        const node = item.data;
-        tooltipEl.innerHTML = `
-          <div class="clusterTooltipLabel">Thread</div>
-          <div class="clusterTooltipTitle">${esc(node.title || "Untitled thread")}</div>
-          <div class="clusterTooltipMeta">
-            ${fmtNum(node.article_count)} articles<br>
-            ${fmtNum(node.language_count)} languages<br>
-            ${(node.primary_category || "uncategorized").toUpperCase()}
-          </div>
-        `;
-      } else {
-        const group = item.data;
-        tooltipEl.innerHTML = `
-          <div class="clusterTooltipLabel">Cluster</div>
-          <div class="clusterTooltipTitle">${esc(englishGroupTitle(group))}</div>
-          <div class="clusterTooltipMeta">
-            ${fmtNum(group.node_count)} threads<br>
-            ${fmtNum(group.article_count)} articles<br>
-            ${(group.primary_category || "uncategorized").toUpperCase()}
-          </div>
-        `;
-      }
-      tooltipEl.style.left = `${event.clientX}px`;
-      tooltipEl.style.top = `${event.clientY}px`;
+      const cat = (item.data.primary_category || "uncategorized");
+      tooltipEl.innerHTML = `<div class="clusterTooltipLabel">${esc(cat)}</div>`;
+      tooltipEl.style.left = `${event.clientX + 14}px`;
+      tooltipEl.style.top = `${event.clientY + 14}px`;
       tooltipEl.classList.add("on");
     }
 
@@ -14508,7 +14495,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const targetRadius = Math.max(42, Math.min(88, avgSpread * 3.8 + groups.length * 2.6));
+      const targetRadius = Math.max(68, Math.min(130, avgSpread * 6.2 + groups.length * 4.0));
       const groupFeatures = new Map(groups.map((group) => {
         const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
         shared.add(String(group.primary_category || "").toLowerCase());
@@ -14932,12 +14919,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (src && tgt) buildFilament(src, tgt, edge.weight, 90000 + idx, true);
       });
 
-      // synaptic nodes — gold ellipsoids oriented along dominant synapse axis
-      const ORIENT_FROM = new THREE.Vector3(1, 0, 0);
+      // synaptic nodes — gold teardrops oriented along dominant synapse axis
+      // LatheGeometry long axis is Y: tip at -Y, blunt at +Y
+      const ORIENT_FROM = new THREE.Vector3(0, 1, 0);
       snapshot.nodes.forEach((node) => {
-        const size = 0.30
-          + Math.min(0.60, (Number(node.importance) || 0) * 0.05)
-          + Math.min(0.26, Math.log2(1 + (Number(node.article_count) || 0)) * 0.07);
+        const size = 0.34
+          + Math.min(0.58, (Number(node.importance) || 0) * 0.05)
+          + Math.min(0.24, Math.log2(1 + (Number(node.article_count) || 0)) * 0.06);
 
         const coreMat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone() });
         const core = new THREE.Mesh(nodeGeometry, coreMat);
@@ -14945,16 +14933,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const avgDir = nodeEdgeDir.get(node.thread_id);
         if (avgDir && avgDir.length() > 0.5) {
-          core.scale.set(size * 1.95, size * 0.65, size * 0.65);
+          core.scale.setScalar(size);
           core.quaternion.setFromUnitVectors(ORIENT_FROM, avgDir.clone().normalize());
         } else {
-          // isolated — deterministic random tilt
+          // isolated node — deterministic random tilt
           const rSeed = ((node.thread_id || 1) * 1664525 + 1013904223) >>> 0;
-          core.scale.set(size * 1.5, size * 0.75, size * 0.75);
-          core.rotation.z = (rSeed / 0x100000000) * Math.PI * 2;
+          core.scale.setScalar(size);
+          core.rotation.set(
+            (rSeed / 0x100000000) * Math.PI,
+            ((rSeed * 1664525) >>> 0) / 0x100000000 * Math.PI,
+            0
+          );
         }
 
-        core.userData = { kind: "node", data: node, baseScale: size, ellipScale: core.scale.clone() };
+        core.userData = { kind: "node", data: node, baseScale: size };
         nodeGroup.add(core);
         state.interactive.push(core);
 
@@ -15044,9 +15036,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       });
 
-      // synchronized pulse across ALL filaments simultaneously
+      // synapses always visible at base — pulse adds brightness on top
       state.filamentData.forEach(({ line, baseOpacity }) => {
-        line.material.opacity = baseOpacity * (0.12 + globalPulse * 0.88);
+        line.material.opacity = baseOpacity * (0.55 + globalPulse * 0.45);
       });
 
       // cluster territory clouds
@@ -15121,13 +15113,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const hovered = pick(event);
       state.hovered = hovered;
       renderer.domElement.style.cursor = hovered ? "pointer" : "grab";
-      if (hovered) {
-        setTooltip(hovered, event);
-        if (hovered.kind === "node") renderDetailForNode(hovered.data);
-        else renderDetailForGroup(hovered.data);
-      } else {
-        tooltipEl.classList.remove("on");
-      }
+      if (hovered) setTooltip(hovered, event);
+      else tooltipEl.classList.remove("on");
     }
 
     function onPointerDown(event) {
@@ -16262,7 +16249,7 @@ grmClockTick();
 
     if (!series.length) {
       ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      ctx.font = '12px Chakra Petch, sans-serif';
+      ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText('No keyword activity found for this range', W / 2, H / 2);
       return;
@@ -16286,7 +16273,7 @@ grmClockTick();
 
     // Y axis labels
     ctx.fillStyle  = 'rgba(255,255,255,0.3)';
-    ctx.font       = '9px Chakra Petch, sans-serif';
+    ctx.font       = '9px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
     ctx.textAlign  = 'right';
     for (let i = 0; i <= 4; i++) {
       const v = Math.round(maxV * (1 - i / 4));
