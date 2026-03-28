@@ -11,6 +11,9 @@
       --mobile-control-scale: 1;
       --touch-control-min-height: 26px;
       --touch-icon-size: 40px;
+      --page-nav-height: 48px;
+      --global-ticker-height: 30px;
+      --global-ticker-gap: 8px;
     }
 
     body { 
@@ -4082,9 +4085,9 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 5px;
-      padding: 10px 4px 9px;
-      min-height: 54px;
+      gap: 4px;
+      padding: 8px 4px 7px;
+      min-height: var(--page-nav-height);
       cursor: pointer;
       color: rgba(255,180,80,0.32);
       position: relative;
@@ -4108,7 +4111,7 @@
     .tabItem:hover { color: rgba(255,180,80,0.6); }
     .tabItem.active { color: rgba(255,205,115,1); }
     .tabIcon {
-      width: 22px; height: 22px;
+      width: 20px; height: 20px;
       stroke: currentColor;
       fill: none;
       stroke-width: 1.75;
@@ -4117,7 +4120,7 @@
       flex-shrink: 0;
     }
     .tabLabel {
-      font-size: 9px;
+      font-size: 8px;
       font-weight: 700;
       letter-spacing: 0.1em;
       text-transform: uppercase;
@@ -16772,7 +16775,7 @@ grmClockTick();
   to   { transform: translateX(-50%); }
 }
 #globalTicker {
-  position: fixed; bottom: calc(54px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)); left: 0; right: 0; height: 38px;
+  position: fixed; bottom: calc(var(--page-nav-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)); left: 0; right: 0; height: var(--global-ticker-height);
   background: rgba(0,0,6,0.94);
   border-top: 1px solid rgba(255,153,64,0.15);
   display: flex; align-items: center;
@@ -16785,8 +16788,8 @@ grmClockTick();
 .gTickerLabel {
   flex-shrink: 0;
   background: #ff9940; color: #000;
-  font-size: 9px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
-  padding: 0 12px; height: 100%;
+  font-size: 8px; font-weight: 800; letter-spacing: 1.35px; text-transform: uppercase;
+  padding: 0 10px; height: 100%;
   display: flex; align-items: center; z-index: 1;
 }
 .gTickerTrackWrap {
@@ -16807,15 +16810,15 @@ grmClockTick();
 }
 .gTickerItem:hover { opacity: 0.75; }
 .gTickerSource {
-  font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
+  font-size: 8px; font-weight: 700; letter-spacing: 1px;
   color: #ff9940; text-transform: uppercase;
 }
-.gTickerLocation { font-size: 9px; color: rgba(255,153,64,0.65); font-weight: 600; }
-.gTickerDate { font-size: 10px; color: rgba(255,255,255,0.35); }
-.gTickerTitle { font-size: 11px; font-weight: 600; color: #fff; }
-.gTickerSummary { font-size: 11px; color: rgba(255,255,255,0.5); }
+.gTickerLocation { font-size: 8px; color: rgba(255,153,64,0.65); font-weight: 600; }
+.gTickerDate { font-size: 9px; color: rgba(255,255,255,0.35); }
+.gTickerTitle { font-size: 10px; font-weight: 600; color: #fff; }
+.gTickerSummary { font-size: 10px; color: rgba(255,255,255,0.5); }
 .gTickerSep { color: rgba(255,153,64,0.3); }
-.gTickerDiv { color: #ff9940; margin: 0 28px; font-size: 13px; }
+.gTickerDiv { color: #ff9940; margin: 0 20px; font-size: 11px; }
 
 /* ── Video embed ── */
 .bVideoWrap {
