@@ -14171,22 +14171,65 @@ const settingsToggle     = document.getElementById("settingsToggle");
         .slice(0, limit);
     }
 
+    const TITLE_STOPWORDS = new Set([
+      "the","a","an","and","or","but","for","nor","so","yet","to","of","in","on","at","by","from",
+      "with","without","into","over","under","after","before","amid","amidst","as","is","are","was",
+      "were","be","being","been","this","that","these","those","it","its","their","his","her","our",
+      "new","latest","says","say","over","more","than","near"
+    ]);
+
     function titleCase(value) {
       return String(value || "")
         .toLowerCase()
         .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
     }
 
-    function englishGroupTitle(group) {
-      const direct = String(group && group.label || "").trim();
-      if (direct) return direct;
+    function normalizeHeadline(text) {
+      return String(text || "")
+        .replace(/\s+/g, " ")
+        .replace(/\s+[|\u2014-]\s+[^|-\u2014]{2,40}$/, "")
+        .replace(/[:;,\-. ]+$/, "")
+        .trim();
+    }
 
-      const props = keywordList(group && group.shared_properties, 3);
-      if (props.length >= 2) return `${titleCase(props[0])} and ${titleCase(props[1])}`;
-      if (props.length === 1) return titleCase(props[0]);
+    function groupNodes(group, nodes = state.nodes) {
+      return nodes
+        .filter((node) => node.cluster_id === group.cluster_id)
+        .sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0) || (Number(b.article_count) || 0) - (Number(a.article_count) || 0));
+    }
 
-      const category = titleCase(group && group.primary_category || "Global");
-      return `${category} Story Cluster`;
+    function keywordHeadline(group, members) {
+      const pool = [];
+      members.slice(0, 5).forEach((member) => {
+        normalizeHeadline(member.title).split(/[^A-Za-z0-9]+/).forEach((token) => {
+          const word = token.toLowerCase();
+          if (word.length < 4 || TITLE_STOPWORDS.has(word)) return;
+          pool.push(word);
+        });
+      });
+
+      const counts = new Map();
+      pool.forEach((word) => counts.set(word, (counts.get(word) || 0) + 1));
+      const top = [...counts.entries()]
+        .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+        .map(([word]) => titleCase(word))
+        .slice(0, 3);
+
+      if (top.length >= 2) return top.join(" ");
+      if (top.length === 1) return `${top[0]} Update`;
+
+      const props = keywordList(group && group.shared_properties, 2).map(titleCase);
+      if (props.length >= 2) return props.join(" ");
+      if (props.length === 1) return `${props[0]} Update`;
+
+      return `${titleCase(group && group.primary_category || "Global")} Story`;
+    }
+
+    function englishGroupTitle(group, nodes = state.nodes) {
+      const members = groupNodes(group, nodes);
+      const direct = normalizeHeadline(members[0]?.title || "");
+      if (direct) return direct.slice(0, 88);
+      return keywordHeadline(group, members).slice(0, 88);
     }
 
     function buildLegend() {
@@ -14362,21 +14405,79 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function separateSnapshotGroups(snapshot) {
       if (!snapshot.groups.length) return snapshot;
 
-      const groups = snapshot.groups.map((group, index) => ({
+      const groups = snapshot.groups.map((group) => ({
         ...group,
         centroid: { ...group.centroid }
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const orbitRadius = Math.max(18, Math.min(44, avgSpread * 2.8 + groups.length * 2.4));
+      const targetRadius = Math.max(20, Math.min(48, avgSpread * 2.9 + groups.length * 1.9));
+      const groupFeatures = new Map(groups.map((group) => {
+        const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
+        shared.add(String(group.primary_category || "").toLowerCase());
+        return [group.cluster_id, shared];
+      }));
+
+      function similarity(a, b) {
+        const aSet = groupFeatures.get(a.cluster_id) || new Set();
+        const bSet = groupFeatures.get(b.cluster_id) || new Set();
+        let overlap = 0;
+        aSet.forEach((value) => { if (bSet.has(value)) overlap += 1; });
+        const union = new Set([...aSet, ...bSet]).size || 1;
+        const topical = overlap / union;
+        const categoryBoost = a.primary_category && a.primary_category === b.primary_category ? 0.2 : 0;
+        const originalDist = Math.hypot(
+          a.centroid.x - b.centroid.x,
+          a.centroid.y - b.centroid.y,
+          a.centroid.z - b.centroid.z
+        );
+        const originalCloseness = 1 - Math.min(1, originalDist / 42);
+        return Math.min(1, topical * 0.65 + categoryBoost + originalCloseness * 0.2);
+      }
 
       groups.forEach((group, index) => {
-        const angle = (Math.PI * 2 * index) / Math.max(1, groups.length);
-        const base = orbitRadius + Math.min(18, index * 1.5);
+        const theta = (index * 2.399963229728653) % (Math.PI * 2);
+        const yBand = 1 - ((index + 0.5) / groups.length) * 2;
+        const radius = Math.sqrt(Math.max(0.12, 1 - yBand * yBand));
+        group._layout = {
+          x: Math.cos(theta) * radius * targetRadius,
+          y: yBand * targetRadius * 0.72,
+          z: Math.sin(theta) * radius * targetRadius
+        };
+      });
+
+      for (let iter = 0; iter < 140; iter += 1) {
+        groups.forEach((group, i) => {
+          const force = { x: -group._layout.x * 0.0022, y: -group._layout.y * 0.0022, z: -group._layout.z * 0.0022 };
+          for (let j = 0; j < groups.length; j += 1) {
+            if (i === j) continue;
+            const other = groups[j];
+            const dx = group._layout.x - other._layout.x;
+            const dy = group._layout.y - other._layout.y;
+            const dz = group._layout.z - other._layout.z;
+            const dist = Math.max(0.001, Math.hypot(dx, dy, dz));
+            const sim = similarity(group, other);
+            const desired = Math.max(12, 28 - sim * 12 + ((group.spread + other.spread) * 0.2));
+            const repel = 32 / (dist * dist);
+            const attract = sim > 0.08 ? (dist - desired) * 0.0045 * sim : 0;
+            const mix = repel + attract;
+            force.x += (dx / dist) * mix;
+            force.y += (dy / dist) * mix;
+            force.z += (dz / dist) * mix;
+          }
+          group._layout.x += force.x;
+          group._layout.y += force.y;
+          group._layout.z += force.z;
+        });
+      }
+
+      const maxLayoutMag = Math.max(1, ...groups.map((group) => Math.hypot(group._layout.x, group._layout.y, group._layout.z)));
+      const layoutScale = targetRadius / maxLayoutMag;
+      groups.forEach((group) => {
         const target = {
-          x: Math.cos(angle) * base,
-          y: ((index % 3) - 1) * (avgSpread * 0.45),
-          z: Math.sin(angle) * base
+          x: group._layout.x * layoutScale,
+          y: group._layout.y * layoutScale,
+          z: group._layout.z * layoutScale
         };
         group._offset = {
           x: target.x - group.centroid.x,
@@ -14407,6 +14508,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         groups: groups.map((group) => {
           const next = { ...group };
           delete next._offset;
+          delete next._layout;
           return next;
         }),
         nodes
@@ -14461,8 +14563,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         el.style.left = `${x}px`;
         el.style.top = `${y}px`;
         el.style.transform = `translate(-50%, -50%) scale(${activeGroupId === group.cluster_id ? 1.03 : 1})`;
-        el.classList.add("on");
-        el.classList.toggle("active", activeGroupId === group.cluster_id);
+        const isActive = activeGroupId === group.cluster_id;
+        el.classList.toggle("on", isActive);
+        el.classList.toggle("active", isActive);
       });
     }
 

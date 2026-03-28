@@ -536,7 +536,7 @@ function buildGroups(threads, edges) {
 
     groups.push({
       cluster_id: clusterId,
-      label: fallbackClusterLabel(primaryCategory, sharedProperties),
+      label: fallbackClusterLabel(primaryCategory, sharedProperties, members),
       summary: fallbackClusterSummary(primaryCategory, sharedProperties, members),
       primary_category: primaryCategory,
       node_count: members.length,
@@ -700,7 +700,7 @@ async function labelGroups(groups, threads) {
 
   if (!aiClient) {
     groups.forEach((group) => {
-      group.label = fallbackClusterLabel(group.primary_category, group.shared_properties);
+      group.label = fallbackClusterLabel(group.primary_category, group.shared_properties, memberThreads(group, threads));
       group.summary = fallbackClusterSummary(group.primary_category, group.shared_properties, memberThreads(group, threads));
     });
     return;
@@ -724,14 +724,21 @@ async function labelGroups(groups, threads) {
         max_tokens: 220,
         messages: [{
           role: 'user',
-          content: `You are labeling a world-news semantic cluster.
+          content: `You are writing a plain-English headline for a world-news cluster.
 
 Return ONLY valid JSON:
 {
-  "label": "short label, max 5 words",
-  "summary": "one sentence, max 24 words",
+  "label": "news-style headline, max 8 words",
+  "summary": "one sentence in plain English, max 24 words",
   "shared_properties": ["3 to 5 concise shared properties"]
 }
+
+Rules for "label":
+- It must read like a clear news headline about the underlying story.
+- Use plain English only.
+- Do not use abstract taxonomy terms like "Focus", "Cluster", "Theme", or "Development".
+- Do not transliterate or preserve unexplained foreign words unless they are the actual central subject of the story.
+- Prefer the actual event, place, people, or issue the stories are about.
 
 Cluster category: ${group.primary_category}
 Current shared properties: ${JSON.stringify(group.shared_properties)}
@@ -887,11 +894,18 @@ async function markRunFailed(runId, err) {
   }
 }
 
-function fallbackClusterLabel(category, sharedProperties) {
+function fallbackClusterLabel(category, sharedProperties, members = []) {
+  const representative = members
+    .slice()
+    .sort((a, b) => b.importance - a.importance || b.article_count - a.article_count)
+    .map((member) => String(member.title || '').replace(/\s+/g, ' ').trim())
+    .find(Boolean);
+  if (representative) return representative.slice(0, 80);
+
   const leading = sharedProperties?.slice(0, 2) || [];
-  if (leading.length >= 2) return `${titleCase(leading[0])} / ${titleCase(leading[1])}`;
-  if (leading.length === 1) return `${titleCase(leading[0])} Focus`;
-  return `${titleCase(category || 'story')} Cluster`;
+  if (leading.length >= 2) return `${titleCase(leading[0])} ${titleCase(leading[1])}`.slice(0, 80);
+  if (leading.length === 1) return `${titleCase(leading[0])} Update`;
+  return `${titleCase(category || 'story')} Story`.slice(0, 80);
 }
 
 function fallbackClusterSummary(category, sharedProperties, members) {
