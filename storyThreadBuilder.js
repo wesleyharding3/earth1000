@@ -13,6 +13,7 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { normalizeRecentKeywords } = require("./keywordNormalizer");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -38,7 +39,18 @@ async function run() {
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: ${ARTICLE_LIMIT}`);
 
   console.log(`   [${elapsed()}] Normalizing new non-English keywords...`);
-  await normalizeNewKeywords(LOOKBACK_HOURS);
+  const normalization = await normalizeRecentKeywords({
+    pool,
+    anthropicClient: client,
+    logger: console,
+    scope: { hours: LOOKBACK_HOURS }
+  });
+  if (normalization?.updatedKeywords) {
+    const provider = normalization.provider === 'deepl' ? 'DeepL' : 'Claude';
+    process.stdout.write(
+      `(${normalization.updatedKeywords} keywords normalized via ${provider}, ${normalization.updatedRows} rows updated) `
+    );
+  }
   console.log(`   [${elapsed()}] Keyword normalization done`);
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
@@ -293,92 +305,6 @@ async function coolDownInactiveThreads() {
     WHERE status = 'cooling'
       AND last_updated_at < NOW() - INTERVAL '14 days'
   `);
-}
-
-// ─── Keyword Normalization (inline, new keywords only) ────────────────────────
-// Uses Claude Haiku in batches of 60 — no DeepL dependency.
-// Haiku handles all non-Latin scripts (Arabic, Cyrillic, CJK, Devanagari, etc.)
-// and resolves proper nouns to standard English forms (Пекин → beijing).
-
-function isNonLatin(text) {
-  return /[\u0600-\u06FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF\u0900-\u097F\u0E00-\u0E7F\u0370-\u03FF]/.test(text);
-}
-
-const NORMALIZE_BATCH = 60;
-
-const NORMALIZE_PER_RUN = 3000; // max keywords normalized per run (~50 Haiku calls)
-
-async function normalizeNewKeywords(hours) {
-  // Hard cap prevents this step from blocking the rest of the run.
-  // Uses keyword_translations as a fast dedup: keywords already translated
-  // are skipped even if article_keywords.normalized_keyword is still NULL
-  // (the UPDATE below backfills those).
-  const { rows } = await pool.query(`
-    SELECT DISTINCT ak.keyword
-    FROM article_keywords ak
-    WHERE ak.normalized_keyword IS NULL
-      AND ak.keyword IS NOT NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM keyword_translations kt WHERE kt.original_keyword = ak.keyword
-      )
-    LIMIT $1
-  `, [NORMALIZE_PER_RUN]);
-
-  const toNormalize = rows.map(r => r.keyword).filter(isNonLatin);
-  if (!toNormalize.length) return;
-
-  let done = 0;
-
-  for (let i = 0; i < toNormalize.length; i += NORMALIZE_BATCH) {
-    const batch = toNormalize.slice(i, i + NORMALIZE_BATCH);
-    try {
-      const msg = await client.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 800,
-        messages: [{
-          role: "user",
-          content: `Translate these news keywords/phrases to standard English equivalents for keyword indexing.
-Return ONLY a valid JSON object: each key is the original keyword, each value is the lowercase English equivalent string, or null if untranslatable/too ambiguous.
-Use standard English proper nouns (e.g. "Пекин"→"beijing", "北京"→"beijing", "موسكو"→"moscow", "한국"→"south korea").
-Single characters or meaningless fragments → null.
-
-Keywords: ${JSON.stringify(batch)}
-
-JSON only:`
-        }]
-      });
-
-      let map;
-      try { map = JSON.parse(msg.content[0].text.trim()); }
-      catch { continue; }
-
-      const entries = Object.entries(map).filter(([, v]) => v && typeof v === "string");
-      if (!entries.length) continue;
-
-      // Bulk insert into keyword_translations
-      const tVals   = entries.map((_, j) => `($${j*2+1},$${j*2+2})`).join(",");
-      const tParams = entries.flatMap(([orig, norm]) => [orig, norm.toLowerCase().trim()]);
-      await pool.query(
-        `INSERT INTO keyword_translations (original_keyword, normalized_keyword)
-         VALUES ${tVals} ON CONFLICT (original_keyword) DO NOTHING`,
-        tParams
-      );
-
-      // Bulk update article_keywords
-      for (const [orig, norm] of entries) {
-        await pool.query(
-          `UPDATE article_keywords SET normalized_keyword = $1
-           WHERE keyword = $2 AND normalized_keyword IS NULL`,
-          [norm.toLowerCase().trim(), orig]
-        );
-        done++;
-      }
-    } catch (err) {
-      console.warn(`  ⚠️  Keyword normalization batch failed: ${err.message}`);
-    }
-  }
-
-  if (done) process.stdout.write(`(${done} keywords normalized via Claude Haiku) `);
 }
 
 // ─── DB Queries ───────────────────────────────────────────────────────────────

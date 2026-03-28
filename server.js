@@ -2126,6 +2126,198 @@ app.get("/api/keywords/articles", async (req, res) => {
 });
 
 /* =========================================
+   Cluster Snapshot API
+========================================= */
+app.get("/api/clusters/weekly", async (req, res) => {
+  const preset = typeof req.query.preset === "string" && req.query.preset.trim()
+    ? req.query.preset.trim().slice(0, 16)
+    : "7d";
+  const runId = req.query.runId ? parseInt(req.query.runId, 10) : null;
+  const minImportance = clampQueryInt(req.query.minImportance, 0, 0, 10);
+  const category = typeof req.query.category === "string" && req.query.category.trim()
+    ? req.query.category.trim().toLowerCase().slice(0, 32)
+    : null;
+
+  try {
+    const runParams = [];
+    let runSql = `
+      SELECT
+        id,
+        preset,
+        window_start,
+        window_end,
+        algorithm_version,
+        thread_count,
+        group_count,
+        completed_at
+      FROM cluster_runs
+      WHERE status = 'completed'
+    `;
+
+    if (Number.isInteger(runId) && runId > 0) {
+      runParams.push(runId);
+      runSql += ` AND id = $1`;
+    } else {
+      runParams.push(preset);
+      runSql += ` AND preset = $1`;
+    }
+
+    runSql += ` ORDER BY completed_at DESC NULLS LAST, started_at DESC LIMIT 1`;
+
+    const { rows: runRows } = await pool.query(runSql, runParams);
+    const run = runRows[0];
+    if (!run) return res.status(404).json({ error: "No completed cluster snapshot found" });
+
+    const nodeParams = [run.id, minImportance];
+    const nodeClauses = [
+      `cn.run_id = $1`,
+      `COALESCE(cn.importance, 0) >= $2`
+    ];
+
+    if (category) {
+      nodeParams.push(category);
+      nodeClauses.push(`LOWER(COALESCE(cn.primary_category, '')) = $${nodeParams.length}`);
+    }
+
+    const { rows: nodeRows } = await pool.query(`
+      SELECT
+        cn.thread_id,
+        cn.story_identity_id,
+        cn.cluster_id,
+        cn.title,
+        cn.description,
+        cn.primary_category,
+        cn.importance,
+        cn.article_count,
+        cn.language_count,
+        cn.source_country_count,
+        cn.feature_keywords,
+        cn.top_countries,
+        cn.top_languages,
+        cn.x,
+        cn.y,
+        cn.z,
+        cn.radius,
+        cn.density_score,
+        cn.novelty_score
+      FROM cluster_nodes cn
+      WHERE ${nodeClauses.join("\n        AND ")}
+      ORDER BY COALESCE(cn.importance, 0) DESC, cn.article_count DESC, cn.thread_id ASC
+    `, nodeParams);
+
+    const nodeIds = nodeRows.map(r => parseInt(r.thread_id, 10)).filter(Boolean);
+    const clusterIds = [...new Set(nodeRows.map(r => r.cluster_id).filter(Boolean))];
+
+    const [groupResult, edgeResult] = await Promise.all([
+      clusterIds.length
+        ? pool.query(`
+            SELECT
+              cg.cluster_id,
+              cg.label,
+              cg.summary,
+              cg.primary_category,
+              cg.node_count,
+              cg.article_count,
+              cg.language_count,
+              cg.source_country_count,
+              cg.centroid_x,
+              cg.centroid_y,
+              cg.centroid_z,
+              cg.spread,
+              cg.shared_properties
+            FROM cluster_groups cg
+            WHERE cg.run_id = $1
+              AND cg.cluster_id = ANY($2::text[])
+            ORDER BY cg.node_count DESC, cg.article_count DESC, cg.cluster_id ASC
+          `, [run.id, clusterIds])
+        : Promise.resolve({ rows: [] }),
+      nodeIds.length
+        ? pool.query(`
+            SELECT
+              ce.source_thread_id,
+              ce.target_thread_id,
+              ce.weight,
+              ce.reasons
+            FROM cluster_edges ce
+            WHERE ce.run_id = $1
+              AND ce.source_thread_id = ANY($2::int[])
+              AND ce.target_thread_id = ANY($2::int[])
+            ORDER BY ce.weight DESC, ce.source_thread_id ASC, ce.target_thread_id ASC
+          `, [run.id, nodeIds])
+        : Promise.resolve({ rows: [] })
+    ]);
+
+    const groups = groupResult.rows.map((row) => ({
+      cluster_id: row.cluster_id,
+      label: row.label,
+      summary: row.summary,
+      primary_category: row.primary_category,
+      node_count: parseInt(row.node_count, 10) || 0,
+      article_count: parseInt(row.article_count, 10) || 0,
+      language_count: parseInt(row.language_count, 10) || 0,
+      source_country_count: parseInt(row.source_country_count, 10) || 0,
+      centroid: {
+        x: Number(row.centroid_x) || 0,
+        y: Number(row.centroid_y) || 0,
+        z: Number(row.centroid_z) || 0
+      },
+      spread: Number(row.spread) || 0,
+      shared_properties: Array.isArray(row.shared_properties) ? row.shared_properties : []
+    }));
+
+    const nodes = nodeRows.map((row) => ({
+      thread_id: parseInt(row.thread_id, 10),
+      story_identity_id: row.story_identity_id ? parseInt(row.story_identity_id, 10) : null,
+      cluster_id: row.cluster_id,
+      title: row.title,
+      description: row.description,
+      primary_category: row.primary_category,
+      importance: row.importance != null ? parseInt(row.importance, 10) : null,
+      article_count: parseInt(row.article_count, 10) || 0,
+      language_count: parseInt(row.language_count, 10) || 0,
+      source_country_count: parseInt(row.source_country_count, 10) || 0,
+      feature_keywords: Array.isArray(row.feature_keywords) ? row.feature_keywords : [],
+      top_countries: Array.isArray(row.top_countries) ? row.top_countries : [],
+      top_languages: Array.isArray(row.top_languages) ? row.top_languages : [],
+      position: {
+        x: Number(row.x) || 0,
+        y: Number(row.y) || 0,
+        z: Number(row.z) || 0
+      },
+      radius: Number(row.radius) || 1,
+      density_score: Number(row.density_score) || 0,
+      novelty_score: Number(row.novelty_score) || 0
+    }));
+
+    const edges = edgeResult.rows.map((row) => ({
+      source_thread_id: parseInt(row.source_thread_id, 10),
+      target_thread_id: parseInt(row.target_thread_id, 10),
+      weight: Number(row.weight) || 0,
+      reasons: Array.isArray(row.reasons) ? row.reasons : []
+    }));
+
+    res.json({
+      run: {
+        id: parseInt(run.id, 10),
+        preset: run.preset,
+        window_start: run.window_start,
+        window_end: run.window_end,
+        algorithm_version: run.algorithm_version,
+        thread_count: parseInt(run.thread_count, 10) || 0,
+        group_count: parseInt(run.group_count, 10) || 0,
+        completed_at: run.completed_at
+      },
+      groups,
+      nodes,
+      edges
+    });
+  } catch (err) {
+    console.error("[clusters/weekly]", err.message);
+    res.status(500).json({ error: "Failed to fetch cluster snapshot" });
+  }
+});
+
+/* =========================================
    Region News Feed
    City-level articles only - aggregated via cities.region_id
    Local: articles FROM cities in this region (source-based)
