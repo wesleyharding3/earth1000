@@ -2889,48 +2889,26 @@
     }
     /* ── Top Stats ── */
     #clusterTopStats {
-      display: flex;
-      gap: 8px;
-      flex-wrap: wrap;
-      justify-content: flex-end;
-      pointer-events: all;
-    }
-    .clusterStat {
-      min-width: 88px;
-      padding: 12px 14px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 9px 14px;
       border-radius: 4px;
       background: var(--grm-surface);
       border: 1px solid var(--grm-border2);
-      border-top: 2px solid var(--grm-gold);
+      border-left: 2px solid var(--grm-gold);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.04);
-      position: relative;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.44);
+      font-family: 'Chakra Petch', 'Segoe UI', sans-serif;
+      pointer-events: all;
+      white-space: nowrap;
+      align-self: flex-start;
     }
-    .clusterStat::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      border-radius: 4px;
-      background: linear-gradient(180deg, rgba(212,168,67,0.04) 0%, transparent 60%);
-      pointer-events: none;
-    }
-    .clusterStatNum {
-      display: block;
-      font-size: 20px;
-      font-weight: 700;
-      color: var(--grm-gold);
-      margin-bottom: 4px;
-      font-variant-numeric: tabular-nums;
-    }
-    .clusterStatLabel {
-      display: block;
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.2em;
-      text-transform: uppercase;
-      color: var(--grm-muted);
-    }
+    .csi { color: var(--grm-gold); font-size: 11px; opacity: 0.75; line-height: 1; flex-shrink: 0; }
+    .csn { font-size: 14px; font-weight: 700; color: var(--grm-gold); font-variant-numeric: tabular-nums; }
+    .csl { font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--grm-muted); margin-right: 1px; }
+    .csdiv { color: rgba(255,255,255,0.15); font-size: 13px; padding: 0 2px; line-height: 1; }
     /* ── Bottom Bar ── */
     #clusterBottomBar {
       position: absolute;
@@ -14009,18 +13987,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <p class="clusterSub">Each point is a story thread. Nearby threads share multilingual topic signals, overlap in place or framing, or resolve toward the same normalized concepts.</p>
       </div>
       <div id="clusterTopStats">
-        <div class="clusterStat">
-          <span class="clusterStatNum" id="clusterStatThreads">0</span>
-          <span class="clusterStatLabel">Threads</span>
-        </div>
-        <div class="clusterStat">
-          <span class="clusterStatNum" id="clusterStatGroups">0</span>
-          <span class="clusterStatLabel">Clusters</span>
-        </div>
-        <div class="clusterStat">
-          <span class="clusterStatNum" id="clusterStatEdges">0</span>
-          <span class="clusterStatLabel">Links</span>
-        </div>
+        <span class="csi">◈</span><span class="csn" id="clusterStatThreads">0</span><span class="csl">threads</span>
+        <span class="csdiv">·</span>
+        <span class="csi">⬡</span><span class="csn" id="clusterStatGroups">0</span><span class="csl">clusters</span>
+        <span class="csdiv">·</span>
+        <span class="csi">∿</span><span class="csn" id="clusterStatEdges">0</span><span class="csl">links</span>
       </div>
     </div>
 
@@ -14209,7 +14180,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       distance: 180,
       lastInteractionAt: performance.now(),
       filamentData: [],
-      sparks: []
+      sparks: [],
+      nodeLightMap: new Map()
     };
 
     const renderer = new THREE.WebGLRenderer({
@@ -14536,7 +14508,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const targetRadius = Math.max(72, Math.min(150, avgSpread * 6.5 + groups.length * 4.2));
+      const targetRadius = Math.max(42, Math.min(88, avgSpread * 3.8 + groups.length * 2.6));
       const groupFeatures = new Map(groups.map((group) => {
         const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
         shared.add(String(group.primary_category || "").toLowerCase());
@@ -14573,7 +14545,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       for (let iter = 0; iter < 140; iter += 1) {
         groups.forEach((group, i) => {
-          const force = { x: -group._layout.x * 0.0022, y: -group._layout.y * 0.0022, z: -group._layout.z * 0.0022 };
+          const distC = Math.hypot(group._layout.x, group._layout.y, group._layout.z);
+          const grav = distC > targetRadius * 1.4 ? 0.0008 : 0;
+          const force = { x: -group._layout.x * grav, y: -group._layout.y * grav, z: -group._layout.z * grav };
           for (let j = 0; j < groups.length; j += 1) {
             if (i === j) continue;
             const other = groups[j];
@@ -14582,9 +14556,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const dz = group._layout.z - other._layout.z;
             const dist = Math.max(0.001, Math.hypot(dx, dy, dz));
             const sim = similarity(group, other);
-            const desired = Math.max(36, 72 - sim * 18 + ((group.spread + other.spread) * 0.45));
-            const repel = 130 / (dist * dist);
-            const attract = sim > 0.08 ? (dist - desired) * 0.0039 * sim : 0;
+            const desired = Math.max(18, 44 - sim * 14 + ((group.spread + other.spread) * 0.3));
+            const repel = 75 / (dist * dist);
+            const attract = sim > 0.08 ? (dist - desired) * 0.007 * sim * sim : 0;
             const mix = repel + attract;
             force.x += (dx / dist) * mix;
             force.y += (dy / dist) * mix;
@@ -14612,7 +14586,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         group.centroid.x = target.x;
         group.centroid.y = target.y;
         group.centroid.z = target.z;
-        group.spread = Math.max(7, Math.min(22, group.spread * 1.15));
+        group.spread = Math.max(4, Math.min(13, group.spread * 0.88));
       });
 
       let nodes = snapshot.nodes.map((node) => {
@@ -14635,11 +14609,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       nodes = nodes.map((node) => ({ ...node, position: { ...node.position } }));
 
+      // detect the group nearest the origin — it suffers worst from central tendency
+      const centralGroupId = groups.reduce((best, g) => {
+        const mag = Math.hypot(g.centroid.x, g.centroid.y, g.centroid.z);
+        const bMag = Math.hypot(best.centroid.x, best.centroid.y, best.centroid.z);
+        return mag < bMag ? g : best;
+      }, groups[0]).cluster_id;
+
       groups.forEach((group) => {
         const members = nodesByGroup.get(group.cluster_id) || [];
         if (members.length <= 1) return;
 
-        const memberScale = Math.max(20, Math.min(48, group.spread * 3.4 + Math.sqrt(members.length) * 2.6));
+        const isCentral = group.cluster_id === centralGroupId;
+        const memberScale = Math.max(10, Math.min(26, group.spread * 2.0 + Math.sqrt(members.length) * 1.6))
+          * (isCentral ? 2.4 : 1.0);
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
           const dx = member.position.x - centroid.x;
@@ -14685,7 +14668,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const odz = entry.p.z - other.p.z;
               const dist = Math.max(0.001, Math.hypot(odx, ody, odz));
               const otherRadius = 1.6 + (Number(other.member.importance) || 0) * 0.1 + Math.log2(1 + (Number(other.member.article_count) || 0)) * 0.35;
-              const desired = baseRadius + otherRadius + 6.5;
+              const desired = baseRadius + otherRadius + 3.8;
               const repel = dist < desired ? (desired - dist) * 0.12 : 8 / (dist * dist);
               force.x += (odx / dist) * repel;
               force.y += (ody / dist) * repel;
@@ -14826,6 +14809,78 @@ const settingsToggle     = document.getElementById("settingsToggle");
       starGroup.add(new THREE.Points(geometry, material));
     }
 
+    const SYNAPSE_GOLD = new THREE.Color("#d4a843");
+
+    function computeInterClusterEdges(snapshot) {
+      const groups = snapshot.groups;
+      if (groups.length < 2) return [];
+      const feats = new Map(groups.map((g) => {
+        const s = new Set(keywordList(g.shared_properties, 6).map((x) => x.toLowerCase()));
+        s.add((g.primary_category || "").toLowerCase());
+        return [g.cluster_id, s];
+      }));
+      const result = [];
+      for (let i = 0; i < groups.length; i++) {
+        for (let j = i + 1; j < groups.length; j++) {
+          const a = groups[i], b = groups[j];
+          const aSet = feats.get(a.cluster_id), bSet = feats.get(b.cluster_id);
+          let overlap = 0;
+          aSet.forEach((v) => { if (bSet.has(v)) overlap++; });
+          const sim = overlap / (new Set([...aSet, ...bSet]).size || 1);
+          if (sim < 0.12) continue;
+          const aN = snapshot.nodes.filter((n) => n.cluster_id === a.cluster_id).slice(0, 10);
+          const bN = snapshot.nodes.filter((n) => n.cluster_id === b.cluster_id).slice(0, 10);
+          if (!aN.length || !bN.length) continue;
+          let minD = Infinity, src = null, tgt = null;
+          for (const an of aN) for (const bn of bN) {
+            const d = Math.hypot(an.position.x - bn.position.x, an.position.y - bn.position.y, an.position.z - bn.position.z);
+            if (d < minD) { minD = d; src = an; tgt = bn; }
+          }
+          if (!src || !tgt || minD > 52) continue;
+          result.push({ source_thread_id: src.thread_id, target_thread_id: tgt.thread_id, weight: sim * 0.55, _inter: true });
+        }
+      }
+      return result;
+    }
+
+    function buildFilament(source, target, weight, idx, isInter) {
+      const srcV = new THREE.Vector3(source.position.x, source.position.y, source.position.z);
+      const tgtV = new THREE.Vector3(target.position.x, target.position.y, target.position.z);
+      const dir = new THREE.Vector3().subVectors(tgtV, srcV);
+      const len = dir.length();
+      dir.normalize();
+      let perp = new THREE.Vector3(-dir.y, dir.x, 0);
+      if (perp.lengthSq() < 0.0001) perp.set(0, -dir.z, dir.y);
+      perp.normalize();
+      const perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
+      let rng = idx * 6271 + 9973;
+      const rand = () => { rng = Math.imul(rng, 1664525) + 1013904223; return ((rng >>> 0) / 0x100000000) - 0.5; };
+      const segs = isInter ? 13 : 9;
+      const jScale = isInter ? 0.055 : 0.09;
+      const points = [srcV.clone()];
+      for (let i = 1; i < segs; i++) {
+        const t = i / segs;
+        const jitter = Math.sin(t * Math.PI) * len * jScale;
+        points.push(new THREE.Vector3(
+          srcV.x + dir.x * len * t + perp.x * rand() * 2 * jitter + perp2.x * rand() * 2 * jitter,
+          srcV.y + dir.y * len * t + perp.y * rand() * 2 * jitter + perp2.y * rand() * 2 * jitter,
+          srcV.z + dir.z * len * t + perp.z * rand() * 2 * jitter + perp2.z * rand() * 2 * jitter
+        ));
+      }
+      points.push(tgtV.clone());
+      const baseOpacity = isInter
+        ? Math.max(0.05, Math.min(0.18, weight * 0.3))
+        : Math.max(0.15, Math.min(0.54, weight * 0.62));
+      const mat = new THREE.LineBasicMaterial({
+        color: SYNAPSE_GOLD.clone(),
+        transparent: true, opacity: baseOpacity,
+        blending: THREE.AdditiveBlending, depthWrite: false
+      });
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), mat);
+      linkGroup.add(line);
+      state.filamentData.push({ line, baseOpacity, pathPoints: points, sourceId: source.thread_id, targetId: target.thread_id });
+    }
+
     function buildScene(snapshot) {
       clearScene();
       state.nodeMap = new Map(snapshot.nodes.map((node) => [node.thread_id, node]));
@@ -14836,111 +14891,78 @@ const settingsToggle     = document.getElementById("settingsToggle");
       updateStats();
       buildGroupLabels(snapshot.groups);
 
-      // invisible cluster territory spheres — raycasting only, barely visible
+      // faint cluster territory spheres — raycasting only
       snapshot.groups.forEach((group) => {
-        const color = new THREE.Color(categoryColor(group.primary_category));
-        const material = new THREE.MeshBasicMaterial({
-          color,
-          transparent: true,
-          opacity: 0.025,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        });
-        const mesh = new THREE.Mesh(cloudGeometry, material);
+        const mat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone(), transparent: true, opacity: 0.018, blending: THREE.AdditiveBlending, depthWrite: false });
+        const mesh = new THREE.Mesh(cloudGeometry, mat);
         mesh.position.set(group.centroid.x, group.centroid.y, group.centroid.z);
-        mesh.scale.setScalar(Math.max(8, Math.min(28, group.spread * 1.4)));
+        mesh.scale.setScalar(Math.max(7, Math.min(26, group.spread * 1.3)));
         mesh.userData = { kind: "group", data: group };
         cloudGroup.add(mesh);
         state.interactive.push(mesh);
       });
 
-      // electrical filaments — jagged lightning-style connections weighted by similarity
+      // build node → avg-edge-direction map for ellipsoid orientation
+      const allEdges = [...snapshot.edges, ...computeInterClusterEdges(snapshot)];
+      const nodeEdgeDir = new Map();
+      allEdges.forEach((edge) => {
+        const src = state.nodeMap.get(edge.source_thread_id);
+        const tgt = state.nodeMap.get(edge.target_thread_id);
+        if (!src || !tgt) return;
+        const d = new THREE.Vector3(tgt.position.x - src.position.x, tgt.position.y - src.position.y, tgt.position.z - src.position.z);
+        if (d.length() < 0.001) return;
+        d.normalize();
+        const es = nodeEdgeDir.get(edge.source_thread_id); if (es) es.add(d); else nodeEdgeDir.set(edge.source_thread_id, d.clone());
+        const nd = d.clone().negate();
+        const et = nodeEdgeDir.get(edge.target_thread_id); if (et) et.add(nd); else nodeEdgeDir.set(edge.target_thread_id, nd.clone());
+      });
+      nodeEdgeDir.forEach((d) => d.normalize());
+
+      // intra-cluster filaments
       snapshot.edges.forEach((edge, idx) => {
-        const source = state.nodeMap.get(edge.source_thread_id);
-        const target = state.nodeMap.get(edge.target_thread_id);
-        if (!source || !target) return;
-
-        const weight = Math.max(0.08, Math.min(1, edge.weight || 0.3));
-        const col = new THREE.Color(categoryColor(source.primary_category));
-
-        const srcV = new THREE.Vector3(source.position.x, source.position.y, source.position.z);
-        const tgtV = new THREE.Vector3(target.position.x, target.position.y, target.position.z);
-        const dir = new THREE.Vector3().subVectors(tgtV, srcV);
-        const len = dir.length();
-        dir.normalize();
-
-        // two perpendicular axes for jitter
-        let perp = new THREE.Vector3(-dir.y, dir.x, 0);
-        if (perp.lengthSq() < 0.0001) perp.set(0, -dir.z, dir.y);
-        perp.normalize();
-        const perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
-
-        // deterministic per-edge RNG for stable jagged shape
-        let rng = idx * 6271 + 9973;
-        const rand = () => {
-          rng = Math.imul(rng, 1664525) + 1013904223;
-          return ((rng >>> 0) / 0x100000000) - 0.5;
-        };
-
-        const segs = 9;
-        const points = [srcV.clone()];
-        for (let i = 1; i < segs; i++) {
-          const t = i / segs;
-          const jitter = Math.sin(t * Math.PI) * len * 0.09;
-          points.push(new THREE.Vector3(
-            srcV.x + dir.x * len * t + perp.x * rand() * 2 * jitter + perp2.x * rand() * 2 * jitter,
-            srcV.y + dir.y * len * t + perp.y * rand() * 2 * jitter + perp2.y * rand() * 2 * jitter,
-            srcV.z + dir.z * len * t + perp.z * rand() * 2 * jitter + perp2.z * rand() * 2 * jitter
-          ));
-        }
-        points.push(tgtV.clone());
-
-        const geo = new THREE.BufferGeometry().setFromPoints(points);
-        const baseOpacity = Math.max(0.14, Math.min(0.52, weight * 0.6));
-        const mat = new THREE.LineBasicMaterial({
-          color: col,
-          transparent: true,
-          opacity: baseOpacity,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        });
-        const line = new THREE.Line(geo, mat);
-        linkGroup.add(line);
-        state.filamentData.push({
-          line,
-          baseOpacity,
-          phase: idx * 0.618 + (source.thread_id || 0) * 0.137,
-          pathPoints: points
-        });
+        const src = state.nodeMap.get(edge.source_thread_id);
+        const tgt = state.nodeMap.get(edge.target_thread_id);
+        if (src && tgt) buildFilament(src, tgt, Math.max(0.08, Math.min(1, edge.weight || 0.3)), idx, false);
       });
 
-      // synaptic nodes — small glowing spheres with pulsing energy halos
-      snapshot.nodes.forEach((node) => {
-        const col = new THREE.Color(categoryColor(node.primary_category));
-        const size = 0.30
-          + Math.min(0.65, (Number(node.importance) || 0) * 0.05)
-          + Math.min(0.28, Math.log2(1 + (Number(node.article_count) || 0)) * 0.07);
+      // inter-cluster bridge synapses
+      computeInterClusterEdges(snapshot).forEach((edge, idx) => {
+        const src = state.nodeMap.get(edge.source_thread_id);
+        const tgt = state.nodeMap.get(edge.target_thread_id);
+        if (src && tgt) buildFilament(src, tgt, edge.weight, 90000 + idx, true);
+      });
 
-        // bright core
-        const coreMat = new THREE.MeshBasicMaterial({ color: col });
+      // synaptic nodes — gold ellipsoids oriented along dominant synapse axis
+      const ORIENT_FROM = new THREE.Vector3(1, 0, 0);
+      snapshot.nodes.forEach((node) => {
+        const size = 0.30
+          + Math.min(0.60, (Number(node.importance) || 0) * 0.05)
+          + Math.min(0.26, Math.log2(1 + (Number(node.article_count) || 0)) * 0.07);
+
+        const coreMat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone() });
         const core = new THREE.Mesh(nodeGeometry, coreMat);
         core.position.set(node.position.x, node.position.y, node.position.z);
-        core.scale.setScalar(size);
-        core.userData = { kind: "node", data: node, baseScale: size };
+
+        const avgDir = nodeEdgeDir.get(node.thread_id);
+        if (avgDir && avgDir.length() > 0.5) {
+          core.scale.set(size * 1.95, size * 0.65, size * 0.65);
+          core.quaternion.setFromUnitVectors(ORIENT_FROM, avgDir.clone().normalize());
+        } else {
+          // isolated — deterministic random tilt
+          const rSeed = ((node.thread_id || 1) * 1664525 + 1013904223) >>> 0;
+          core.scale.set(size * 1.5, size * 0.75, size * 0.75);
+          core.rotation.z = (rSeed / 0x100000000) * Math.PI * 2;
+        }
+
+        core.userData = { kind: "node", data: node, baseScale: size, ellipScale: core.scale.clone() };
         nodeGroup.add(core);
         state.interactive.push(core);
 
-        // soft glow halo — additive so it blooms against dark background
-        const haloMat = new THREE.MeshBasicMaterial({
-          color: col,
-          transparent: true,
-          opacity: 0.15,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
-        });
+        // minimal halo — very dim at rest, bursts during pulse
+        const haloMat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone(), transparent: true, opacity: 0.04, blending: THREE.AdditiveBlending, depthWrite: false });
         const halo = new THREE.Mesh(nodeGeometry, haloMat);
         halo.position.copy(core.position);
-        halo.scale.setScalar(size * 3.2);
+        halo.scale.setScalar(size * 1.9);
         halo.userData = { isHalo: true };
         nodeGroup.add(halo);
         core.userData.halo = halo;
@@ -14990,78 +15012,67 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function animateSelection() {
       const t = performance.now() * 0.001;
+      // single global pulse wave — all filaments and nodes fire together
+      const globalPulse = 0.5 + 0.5 * Math.sin(t * 1.5);
 
-      // synaptic node glow breathing
+      // decay nodeLightMap (spark-triggered node bursts)
+      state.nodeLightMap.forEach((v, k) => {
+        if (v < 0.008) state.nodeLightMap.delete(k);
+        else state.nodeLightMap.set(k, v * 0.87);
+      });
+
+      // node glow: minimal at rest, bursts when pulse or spark arrives
       nodeGroup.children.forEach((mesh) => {
         if (mesh.userData.isHalo || !mesh.userData.data) return;
         const baseScale = mesh.userData.baseScale || 1;
+        const es = mesh.userData.ellipScale;
         const nodeId = mesh.userData.data.thread_id;
-        const isSelected = state.selected && state.selected.kind === "node" && state.selected.data.thread_id === nodeId;
-        const isHovered  = state.hovered  && state.hovered.kind  === "node" && state.hovered.data.thread_id  === nodeId;
+        const isHovered = state.hovered && state.hovered.kind === "node" && state.hovered.data.thread_id === nodeId;
+        const spark = state.nodeLightMap.get(nodeId) || 0;
 
-        let coreScale   = baseScale;
-        let haloScale   = baseScale * 3.2;
-        let haloOpacity = 0.10 + Math.sin(t * 0.85 + (nodeId || 0) * 0.41) * 0.05;
+        // preserve ellipsoid proportions when scaling
+        const factor = isHovered ? 1.18 : 1.0;
+        if (es) mesh.scale.set(es.x * factor, es.y * factor, es.z * factor);
+        else mesh.scale.setScalar(baseScale * factor);
 
-        if (isSelected) {
-          coreScale   = baseScale * (1.2 + Math.sin(t * 4.0) * 0.08);
-          haloScale   = baseScale * 6.0;
-          haloOpacity = 0.42 + Math.sin(t * 3.5) * 0.1;
-        } else if (isHovered) {
-          coreScale   = baseScale * 1.14;
-          haloScale   = baseScale * 4.6;
-          haloOpacity = 0.32;
-        }
-
-        mesh.scale.setScalar(coreScale);
         if (mesh.userData.halo) {
+          const haloBase = 0.03 + globalPulse * 0.07;
+          const haloOpacity = Math.min(0.88, haloBase + spark * 0.6 + (isHovered ? 0.32 : 0));
+          const haloScale = baseScale * (1.8 + spark * 2.2 + globalPulse * 0.5 + (isHovered ? 2.0 : 0));
           mesh.userData.halo.scale.setScalar(haloScale);
           mesh.userData.halo.material.opacity = haloOpacity;
         }
       });
 
-      // electrical filament pulse — each filament fires with its own phase offset
-      state.filamentData.forEach(({ line, baseOpacity, phase }) => {
-        const pulse = 0.5 + 0.5 * Math.sin(t * 1.7 + phase);
-        line.material.opacity = baseOpacity * (0.2 + pulse * 0.8);
+      // synchronized pulse across ALL filaments simultaneously
+      state.filamentData.forEach(({ line, baseOpacity }) => {
+        line.material.opacity = baseOpacity * (0.12 + globalPulse * 0.88);
       });
 
-      // cluster territory halos
+      // cluster territory clouds
       cloudGroup.children.forEach((mesh) => {
         if (!mesh.userData.data) return;
-        const isSelected = state.selected && state.selected.kind === "group" && state.selected.data.cluster_id === mesh.userData.data.cluster_id;
-        const isHovered  = state.hovered  && state.hovered.kind  === "group" && state.hovered.data.cluster_id  === mesh.userData.data.cluster_id;
-        mesh.material.opacity = isSelected ? 0.10 : isHovered ? 0.06 : 0.025;
+        const isHovered = state.hovered && state.hovered.kind === "group" && state.hovered.data.cluster_id === mesh.userData.data.cluster_id;
+        mesh.material.opacity = isHovered ? 0.07 : 0.018;
       });
 
-      // spark particles traveling along filaments
-      animateSparks();
+      animateSparks(globalPulse);
     }
 
-    function animateSparks() {
-      // occasionally launch a new spark along a random filament
-      if (state.filamentData.length > 0 && Math.random() < 0.04) {
+    function animateSparks(globalPulse) {
+      // launch sparks — more frequent near pulse peak
+      if (state.filamentData.length > 0 && Math.random() < 0.04 + globalPulse * 0.03) {
         const fd = state.filamentData[Math.floor(Math.random() * state.filamentData.length)];
-        const sparkGeo = new THREE.SphereGeometry(0.26, 4, 4);
-        const sparkCol = fd.line.material.color.clone().multiplyScalar(2.0);
         const sparkMat = new THREE.MeshBasicMaterial({
-          color: sparkCol,
-          transparent: true,
-          opacity: 1.0,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false
+          color: new THREE.Color("#f5c84a"),
+          transparent: true, opacity: 1.0,
+          blending: THREE.AdditiveBlending, depthWrite: false
         });
-        const sparkMesh = new THREE.Mesh(sparkGeo, sparkMat);
+        const sparkMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 4, 4), sparkMat);
         nodeGroup.add(sparkMesh);
-        state.sparks.push({
-          mesh: sparkMesh,
-          points: fd.pathPoints,
-          progress: 0,
-          speed: 0.022 + Math.random() * 0.032
-        });
+        state.sparks.push({ mesh: sparkMesh, points: fd.pathPoints, sourceId: fd.sourceId, targetId: fd.targetId, progress: 0, speed: 0.02 + Math.random() * 0.028 });
       }
 
-      // advance each spark along its filament path
       for (let i = state.sparks.length - 1; i >= 0; i--) {
         const spark = state.sparks[i];
         spark.progress += spark.speed;
@@ -15076,8 +15087,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const rawIdx = spark.progress * (pts.length - 1);
         const segIdx = Math.min(Math.floor(rawIdx), pts.length - 2);
         spark.mesh.position.lerpVectors(pts[segIdx], pts[segIdx + 1], rawIdx - segIdx);
-        // fade in at start, fade out at end
         spark.mesh.material.opacity = Math.min(1, Math.min(spark.progress * 10, (1 - spark.progress) * 10));
+
+        // light up endpoint nodes as spark arrives/departs
+        if (spark.progress < 0.14 && spark.sourceId != null)
+          state.nodeLightMap.set(spark.sourceId, Math.max(state.nodeLightMap.get(spark.sourceId) || 0, (0.14 - spark.progress) / 0.14));
+        if (spark.progress > 0.86 && spark.targetId != null)
+          state.nodeLightMap.set(spark.targetId, Math.max(state.nodeLightMap.get(spark.targetId) || 0, (spark.progress - 0.86) / 0.14));
       }
     }
 
@@ -15105,8 +15121,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const hovered = pick(event);
       state.hovered = hovered;
       renderer.domElement.style.cursor = hovered ? "pointer" : "grab";
-      if (hovered) setTooltip(hovered, event);
-      else tooltipEl.classList.remove("on");
+      if (hovered) {
+        setTooltip(hovered, event);
+        if (hovered.kind === "node") renderDetailForNode(hovered.data);
+        else renderDetailForGroup(hovered.data);
+      } else {
+        tooltipEl.classList.remove("on");
+      }
     }
 
     function onPointerDown(event) {
@@ -15121,18 +15142,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onPointerUp(event) {
-      const drag = state.drag;
       state.drag = null;
       state.lastInteractionAt = performance.now();
-      const moved = drag ? Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) : 0;
-      if (moved < 6) {
-        const picked = pick(event);
-        if (picked) {
-          state.selected = picked;
-          if (picked.kind === "node") renderDetailForNode(picked.data);
-          else renderDetailForGroup(picked.data);
-        }
-      }
       renderer.domElement.style.cursor = state.hovered ? "pointer" : "grab";
     }
 
