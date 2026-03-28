@@ -19,7 +19,6 @@ const fetchFeeds = require("./fetcher");
 async function run() {
   try {
     console.log("DATABASE_URL:", process.env.DATABASE_URL);
-
     await fetchFeeds();
 
     console.log("Worker finished successfully.");

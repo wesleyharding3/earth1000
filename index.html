@@ -17199,6 +17199,51 @@ grmClockTick();
 }
 #globalTicker.hidden { opacity: 0; pointer-events: none; transform: translateY(4px); }
 .briefing-active #globalTicker { display: none; }
+
+/* ── Ticker-active: combined nav + ticker bar ── */
+body.ticker-active #globalTicker {
+  bottom: 0;
+  height: calc(var(--page-nav-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  z-index: 997;
+  transition: opacity 0.3s ease, bottom 0.3s ease, height 0.3s ease;
+}
+body.ticker-active #pageNav {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-top: none;
+  align-items: flex-start;
+}
+body.ticker-active .tabItem {
+  min-height: 0;
+  padding: 4px 10px 3px;
+  margin-top: -20px;
+  background: rgba(7, 9, 13, 0.93);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255,180,80,0.13);
+  border-top-left-radius: 5px;
+  border-top-right-radius: 5px;
+  border-bottom: none;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+  transition: color 0.2s, background 0.2s;
+}
+body.ticker-active .tabIcon,
+body.ticker-active .tabLabel { display: none; }
+body.ticker-active .tabItem::before {
+  content: '···';
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: inherit;
+  line-height: 1;
+}
+body.ticker-active .tabItem::after { display: none; }
+body.ticker-active .tabItem.active {
+  background: rgba(255,180,80,0.15) !important;
+  border-color: rgba(255,180,80,0.3) !important;
+}
 .gTickerLabel {
   flex-shrink: 0;
   background: #ff9940; color: #000;
@@ -17295,7 +17340,14 @@ grmClockTick();
 /* ── Controls — sit just above the ticker ── */
 .bControls {
   position: absolute; bottom: 68px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 16px;
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(7,12,22,0.68);
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 16px 34px rgba(0,0,0,0.34);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   opacity: 0; transition: opacity 0.5s ease 0.5s;
   z-index: 2;
 }
@@ -19129,9 +19181,11 @@ grmClockTick();
     if (!el) return;
     if (_visible) {
       el.classList.remove('hidden');
+      document.body.classList.add('ticker-active');
       if (dot) dot.style.background = '#ff9940';
     } else {
       el.classList.add('hidden');
+      document.body.classList.remove('ticker-active');
       if (dot) dot.style.background = 'rgba(255,255,255,0.15)';
     }
   }

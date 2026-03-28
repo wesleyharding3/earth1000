@@ -18,6 +18,31 @@ const aiClient = process.env.ANTHROPIC_API_KEY
   : null;
 
 const CJK_EXTRACT_LANGS = new Set(["zh", "ja", "ko", "th", "km", "lo"]);
+const FETCH_TIER_INTERVALS = {
+  4: { label: "hourly",        intervalMinutes: 60 },
+  3: { label: "twice-daily",   intervalMinutes: 12 * 60 },
+  2: { label: "daily",         intervalMinutes: 24 * 60 },
+  1: { label: "weekly",        intervalMinutes: 7 * 24 * 60 }
+};
+const FETCH_BOOTSTRAP_PHASES = {
+  BASELINE: "baseline",
+  TIER3_EVAL: "tier3_eval",
+  TIER4_EVAL: "tier4_eval",
+  STABLE: "stable"
+};
+const FETCH_TIER_SQL_INTERVAL = `
+  CASE COALESCE(ns.fetch_bootstrap_phase, '${FETCH_BOOTSTRAP_PHASES.BASELINE}')
+    WHEN '${FETCH_BOOTSTRAP_PHASES.BASELINE}' THEN INTERVAL '0 minutes'
+    WHEN '${FETCH_BOOTSTRAP_PHASES.TIER3_EVAL}' THEN INTERVAL '12 hours'
+    WHEN '${FETCH_BOOTSTRAP_PHASES.TIER4_EVAL}' THEN INTERVAL '60 minutes'
+    ELSE CASE COALESCE(ns.fetch_tier, 1)
+      WHEN 4 THEN INTERVAL '60 minutes'
+      WHEN 3 THEN INTERVAL '12 hours'
+      WHEN 2 THEN INTERVAL '24 hours'
+      ELSE INTERVAL '7 days'
+    END
+  END
+`;
 
 async function extractKeywordsWithClaude(title, summary, articleId, publishedAt, countryId) {
   if (!aiClient) return;
@@ -153,6 +178,223 @@ function fingerprintRaw(title, link) {
     .createHash("sha256")
     .update((title || "") + (link || ""))
     .digest("hex");
+}
+
+function normalizeFetchTier(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null;
+}
+
+function getFetchTierMeta(tier) {
+  return FETCH_TIER_INTERVALS[tier] || FETCH_TIER_INTERVALS[1];
+}
+
+function normalizeFetchPhase(phase) {
+  return Object.values(FETCH_BOOTSTRAP_PHASES).includes(phase)
+    ? phase
+    : FETCH_BOOTSTRAP_PHASES.BASELINE;
+}
+
+function getPhaseProgress(feed, phase) {
+  if (phase === FETCH_BOOTSTRAP_PHASES.BASELINE) {
+    return {
+      runs: Number(feed.fetch_bootstrap_baseline_runs) || 0,
+      emptyRuns: Number(feed.fetch_bootstrap_baseline_empty_runs) || 0
+    };
+  }
+  if (phase === FETCH_BOOTSTRAP_PHASES.TIER3_EVAL) {
+    return {
+      runs: Number(feed.fetch_bootstrap_tier3_runs) || 0,
+      emptyRuns: Number(feed.fetch_bootstrap_tier3_empty_runs) || 0
+    };
+  }
+  if (phase === FETCH_BOOTSTRAP_PHASES.TIER4_EVAL) {
+    return {
+      runs: Number(feed.fetch_bootstrap_tier4_runs) || 0,
+      emptyRuns: Number(feed.fetch_bootstrap_tier4_empty_runs) || 0
+    };
+  }
+  return { runs: 0, emptyRuns: 0 };
+}
+
+async function applyBootstrapOutcome(feed, insertedCount) {
+  const phase = normalizeFetchPhase(feed.fetch_bootstrap_phase);
+  const hadNewItems = insertedCount > 0;
+  const wasTier = normalizeFetchTier(feed.fetch_tier) || 4;
+  let nextPhase = phase;
+  let nextTier = wasTier;
+  let movement = null;
+  let reason = "";
+
+  if (phase === FETCH_BOOTSTRAP_PHASES.BASELINE) {
+    const nextRuns = (Number(feed.fetch_bootstrap_baseline_runs) || 0) + 1;
+    const nextEmptyRuns = (Number(feed.fetch_bootstrap_baseline_empty_runs) || 0) + (hadNewItems ? 0 : 1);
+
+    if (nextRuns >= 4) {
+      if (nextEmptyRuns >= 4) {
+        nextPhase = FETCH_BOOTSTRAP_PHASES.STABLE;
+        nextTier = 1;
+        movement = "down";
+        reason = "baseline pass complete: 4/4 fetches returned nothing, moving source to weekly tier";
+      } else {
+        nextPhase = FETCH_BOOTSTRAP_PHASES.TIER3_EVAL;
+        nextTier = 3;
+        movement = wasTier === 3 ? null : (3 > wasTier ? "up" : "down");
+        reason = `baseline pass complete: ${nextRuns - nextEmptyRuns}/${nextRuns} fetches produced articles, promoting source into twice-daily evaluation`;
+      }
+    } else {
+      reason = `baseline warmup ${nextRuns}/4 (${nextRuns - nextEmptyRuns} hit, ${nextEmptyRuns} empty)`;
+    }
+
+    await pool.query(
+      `UPDATE news_sources
+          SET fetch_bootstrap_baseline_runs = $1,
+              fetch_bootstrap_baseline_empty_runs = $2,
+              fetch_bootstrap_phase = $3,
+              fetch_tier = $4,
+              fetch_tier_updated_at = NOW(),
+              fetch_tier_last_changed_at = CASE
+                WHEN COALESCE(fetch_tier, 4) <> $4 OR COALESCE(fetch_bootstrap_phase, '${FETCH_BOOTSTRAP_PHASES.BASELINE}') <> $3
+                THEN NOW()
+                ELSE fetch_tier_last_changed_at
+              END,
+              fetch_bootstrap_tier3_runs = CASE WHEN $3 = '${FETCH_BOOTSTRAP_PHASES.TIER3_EVAL}' THEN 0 ELSE fetch_bootstrap_tier3_runs END,
+              fetch_bootstrap_tier3_empty_runs = CASE WHEN $3 = '${FETCH_BOOTSTRAP_PHASES.TIER3_EVAL}' THEN 0 ELSE fetch_bootstrap_tier3_empty_runs END
+        WHERE id = $5`,
+      [nextRuns, nextEmptyRuns, nextPhase, nextTier, feed.id]
+    );
+
+    return {
+      phase,
+      nextPhase,
+      previousTier: wasTier,
+      nextTier,
+      movement,
+      hadNewItems,
+      runNumber: nextRuns,
+      emptyRuns: nextEmptyRuns,
+      reason
+    };
+  }
+
+  if (phase === FETCH_BOOTSTRAP_PHASES.TIER3_EVAL) {
+    const nextRuns = (Number(feed.fetch_bootstrap_tier3_runs) || 0) + 1;
+    const nextEmptyRuns = (Number(feed.fetch_bootstrap_tier3_empty_runs) || 0) + (hadNewItems ? 0 : 1);
+
+    if (nextRuns >= 4) {
+      if (nextEmptyRuns >= 2) {
+        nextPhase = FETCH_BOOTSTRAP_PHASES.STABLE;
+        nextTier = 2;
+        movement = "down";
+        reason = `twice-daily evaluation complete: ${nextEmptyRuns}/4 empty fetches, moving source to daily tier`;
+      } else {
+        nextPhase = FETCH_BOOTSTRAP_PHASES.TIER4_EVAL;
+        nextTier = 4;
+        movement = "up";
+        reason = `twice-daily evaluation complete: ${4 - nextEmptyRuns}/4 fetches produced articles, promoting source into hourly evaluation`;
+      }
+    } else {
+      reason = `twice-daily evaluation ${nextRuns}/4 (${nextRuns - nextEmptyRuns} hit, ${nextEmptyRuns} empty)`;
+    }
+
+    await pool.query(
+      `UPDATE news_sources
+          SET fetch_bootstrap_phase = $1,
+              fetch_tier = $2,
+              fetch_tier_updated_at = NOW(),
+              fetch_tier_last_changed_at = CASE
+                WHEN COALESCE(fetch_tier, 4) <> $2 OR COALESCE(fetch_bootstrap_phase, '${FETCH_BOOTSTRAP_PHASES.BASELINE}') <> $1
+                THEN NOW()
+                ELSE fetch_tier_last_changed_at
+              END,
+              fetch_bootstrap_tier3_runs = $3,
+              fetch_bootstrap_tier3_empty_runs = $4,
+              fetch_bootstrap_tier4_runs = CASE WHEN $1 = '${FETCH_BOOTSTRAP_PHASES.TIER4_EVAL}' THEN 0 ELSE fetch_bootstrap_tier4_runs END,
+              fetch_bootstrap_tier4_empty_runs = CASE WHEN $1 = '${FETCH_BOOTSTRAP_PHASES.TIER4_EVAL}' THEN 0 ELSE fetch_bootstrap_tier4_empty_runs END
+        WHERE id = $5`,
+      [nextPhase, nextTier, nextRuns, nextEmptyRuns, feed.id]
+    );
+
+    return {
+      phase,
+      nextPhase,
+      previousTier: wasTier,
+      nextTier,
+      movement,
+      hadNewItems,
+      runNumber: nextRuns,
+      emptyRuns: nextEmptyRuns,
+      reason
+    };
+  }
+
+  if (phase === FETCH_BOOTSTRAP_PHASES.TIER4_EVAL) {
+    const nextRuns = (Number(feed.fetch_bootstrap_tier4_runs) || 0) + 1;
+    const nextEmptyRuns = (Number(feed.fetch_bootstrap_tier4_empty_runs) || 0) + (hadNewItems ? 0 : 1);
+
+    if (nextRuns >= 4) {
+      nextPhase = FETCH_BOOTSTRAP_PHASES.STABLE;
+      if (nextEmptyRuns >= 2) {
+        nextTier = 3;
+        movement = "down";
+        reason = `hourly evaluation complete: ${nextEmptyRuns}/4 empty fetches, settling source into twice-daily tier`;
+      } else {
+        nextTier = 4;
+        movement = null;
+        reason = `hourly evaluation complete: source stayed productive on ${4 - nextEmptyRuns}/4 fetches, keeping hourly tier`;
+      }
+    } else {
+      reason = `hourly evaluation ${nextRuns}/4 (${nextRuns - nextEmptyRuns} hit, ${nextEmptyRuns} empty)`;
+    }
+
+    await pool.query(
+      `UPDATE news_sources
+          SET fetch_bootstrap_phase = $1,
+              fetch_tier = $2,
+              fetch_tier_updated_at = NOW(),
+              fetch_tier_last_changed_at = CASE
+                WHEN COALESCE(fetch_tier, 4) <> $2 OR COALESCE(fetch_bootstrap_phase, '${FETCH_BOOTSTRAP_PHASES.BASELINE}') <> $1
+                THEN NOW()
+                ELSE fetch_tier_last_changed_at
+              END,
+              fetch_bootstrap_tier4_runs = $3,
+              fetch_bootstrap_tier4_empty_runs = $4
+        WHERE id = $5`,
+      [nextPhase, nextTier, nextRuns, nextEmptyRuns, feed.id]
+    );
+
+    return {
+      phase,
+      nextPhase,
+      previousTier: wasTier,
+      nextTier,
+      movement,
+      hadNewItems,
+      runNumber: nextRuns,
+      emptyRuns: nextEmptyRuns,
+      reason
+    };
+  }
+
+  reason = `stable tier ${wasTier} (${getFetchTierMeta(wasTier).label})`;
+  await pool.query(
+    `UPDATE news_sources
+        SET fetch_tier_updated_at = NOW()
+      WHERE id = $1`,
+    [feed.id]
+  );
+
+  return {
+    phase,
+    nextPhase,
+    previousTier: wasTier,
+    nextTier: wasTier,
+    movement: null,
+    hadNewItems,
+    runNumber: null,
+    emptyRuns: null,
+    reason
+  };
 }
 
 function extractImage(item) {
@@ -753,8 +995,8 @@ async function dispatchFetch(feed) {
 /* =========================================
    Main Fetch Function
 ========================================= */
-async function fetchFeeds() {
-  console.log("🚀 Starting fetch run...", new Date().toISOString());
+async function fetchFeeds(options = {}) {
+  console.log(`🚀 Starting fetch run... ${new Date().toISOString()} [bootstrap-aware mode]`);
   const startTime = Date.now();
 
   let stopwordCache = null;
@@ -764,21 +1006,39 @@ async function fetchFeeds() {
     console.warn("⚠️  Could not load stopwords — keyword extraction disabled:", swErr.message);
   }
 
-  const feedResult = await pool.query(`
-    SELECT ns.id, ns.country_id, ns.rss_url, ns.scrape_url, ns.scrape_config,
-           ns.city_id, ns.failure_count, ns.language_id, ns.popularity_tier,
-           ns.source_type,
-           l.iso_code_2 AS language
-    FROM news_sources ns
-    LEFT JOIN languages l ON l.id = ns.language_id
-    WHERE ns.is_active = true
-    AND (
-      ns.last_checked_at IS NULL
-      OR ns.last_checked_at < NOW() - INTERVAL '480 minutes'
-    )
-    ORDER BY ns.last_checked_at NULLS FIRST
-    LIMIT 10000
-  `);
+  const feedResult = await pool.query(
+    `
+      SELECT ns.id, ns.name, ns.country_id, ns.rss_url, ns.scrape_url, ns.scrape_config,
+             ns.city_id, ns.failure_count, ns.language_id, ns.popularity_tier,
+             ns.source_type, COALESCE(ns.fetch_tier, 4) AS fetch_tier,
+             COALESCE(ns.fetch_bootstrap_phase, '${FETCH_BOOTSTRAP_PHASES.BASELINE}') AS fetch_bootstrap_phase,
+             COALESCE(ns.fetch_bootstrap_baseline_runs, 0) AS fetch_bootstrap_baseline_runs,
+             COALESCE(ns.fetch_bootstrap_baseline_empty_runs, 0) AS fetch_bootstrap_baseline_empty_runs,
+             COALESCE(ns.fetch_bootstrap_tier3_runs, 0) AS fetch_bootstrap_tier3_runs,
+             COALESCE(ns.fetch_bootstrap_tier3_empty_runs, 0) AS fetch_bootstrap_tier3_empty_runs,
+             COALESCE(ns.fetch_bootstrap_tier4_runs, 0) AS fetch_bootstrap_tier4_runs,
+             COALESCE(ns.fetch_bootstrap_tier4_empty_runs, 0) AS fetch_bootstrap_tier4_empty_runs,
+             ns.last_checked_at, ns.last_success_at,
+             l.iso_code_2 AS language
+      FROM news_sources ns
+      LEFT JOIN languages l ON l.id = ns.language_id
+      WHERE ns.is_active = true
+        AND (
+          ns.last_checked_at IS NULL
+          OR ns.last_checked_at < NOW() - ${FETCH_TIER_SQL_INTERVAL}
+        )
+      ORDER BY
+        CASE COALESCE(ns.fetch_bootstrap_phase, '${FETCH_BOOTSTRAP_PHASES.BASELINE}')
+          WHEN '${FETCH_BOOTSTRAP_PHASES.BASELINE}' THEN 0
+          WHEN '${FETCH_BOOTSTRAP_PHASES.TIER3_EVAL}' THEN 1
+          WHEN '${FETCH_BOOTSTRAP_PHASES.TIER4_EVAL}' THEN 2
+          ELSE 3
+        END,
+        COALESCE(ns.fetch_tier, 4) DESC,
+        ns.last_checked_at NULLS FIRST
+      LIMIT 10000
+    `
+  );
 
   const feeds = feedResult.rows;
   console.log(`📋 Feeds selected for this run: ${feeds.length}`);
@@ -789,6 +1049,9 @@ async function fetchFeeds() {
     const sourceType = feed.source_type || "rss";
     const emoji      = SOURCE_TYPE_EMOJI[sourceType] || "❓";
     const url        = feed.rss_url || feed.scrape_url || "(no url)";
+    const cadence    = getFetchTierMeta(feed.fetch_tier);
+    const phase      = normalizeFetchPhase(feed.fetch_bootstrap_phase);
+    const progress   = getPhaseProgress(feed, phase);
     const tag        = `[${i + 1}/${feeds.length}] [${elapsed}s]`;
 
     try {
@@ -802,19 +1065,23 @@ async function fetchFeeds() {
         [feed.id]
       );
 
-      console.log(`\n${tag} ${emoji} ${sourceType} — ${url}`);
+      const phaseText = phase === FETCH_BOOTSTRAP_PHASES.STABLE
+        ? `stable tier ${feed.fetch_tier} ${cadence.label}`
+        : `${phase} ${progress.runs}/4`;
+      console.log(`\n${tag} ${emoji} ${sourceType} — ${feed.name || "Unnamed source"} — ${url} [${phaseText}]`);
 
       let rawItems = [];
       try {
         rawItems = await dispatchFetch(feed);
-        // Feed is reachable — reset consecutive failure counter so a source only
-        // gets deactivated after 5 failures *in a row*, not 5 cumulative over its lifetime.
-        if (feed.failure_count > 0) {
-          await pool.query(
-            `UPDATE news_sources SET failure_count = 0, last_error = NULL WHERE id = $1`,
-            [feed.id]
-          );
-        }
+        // Feed is reachable — mark success and reset consecutive failure count.
+        await pool.query(
+          `UPDATE news_sources
+              SET last_success_at = NOW(),
+                  failure_count = 0,
+                  last_error = NULL
+            WHERE id = $1`,
+          [feed.id]
+        );
       } catch (fetchErr) {
         console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
         await logFeedError(feed, fetchErr);
@@ -822,7 +1089,12 @@ async function fetchFeeds() {
       }
 
       if (!rawItems.length) {
+        const tierStatus = await applyBootstrapOutcome(feed, 0);
+        const movementNote = tierStatus.movement
+          ? `moved ${tierStatus.movement} ${tierStatus.previousTier}->${tierStatus.nextTier}`
+          : `stayed ${tierStatus.nextTier}`;
         console.warn(`${tag} ⚠️  No items found.`);
+        console.log(`${tag} 🧭 ${movementNote} [${tierStatus.phase} -> ${tierStatus.nextPhase}] — ${tierStatus.reason}`);
         continue;
       }
 
@@ -1002,7 +1274,18 @@ async function fetchFeeds() {
         .map(([reason, n]) => `${n} ${reason}`)
         .join(', ');
       const skipNote = skipSummary ? `  skipped: ${skipSummary}` : '';
-      console.log(`${tag} ✅ Inserted: ${inserted}/${newItems.length} new (tier ${feed.popularity_tier ?? "?"}, max ${MAX_ITEMS})${skipNote}`);
+      const tierStatus = await applyBootstrapOutcome(feed, inserted);
+      const movementNote = tierStatus.movement
+        ? `moved ${tierStatus.movement} ${tierStatus.previousTier}->${tierStatus.nextTier}`
+        : `stayed ${tierStatus.nextTier}`;
+
+      console.log(
+        `${tag} ✅ Inserted: ${inserted}/${newItems.length} new ` +
+        `(pop tier ${feed.popularity_tier ?? "?"}, fetch tier ${feed.fetch_tier}->${tierStatus.nextTier}, max ${MAX_ITEMS})${skipNote}`
+      );
+      console.log(
+        `${tag} 🧭 ${movementNote} [${tierStatus.phase} -> ${tierStatus.nextPhase}] — ${tierStatus.reason}`
+      );
 
     } catch (err) {
       console.error(`${tag} ❌ Failed: ${err.message}`);
