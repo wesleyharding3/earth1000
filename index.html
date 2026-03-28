@@ -5887,6 +5887,16 @@
         </div>
         <div class="sidebarDivider"></div>
         <div class="sidebarSection">
+          <div class="sidebarSectionLabel">News Ticker</div>
+          <div class="layerList">
+            <div class="layerOpt" id="tickerVisToggle" style="cursor:pointer;">
+              <div class="layerDot" id="tickerVisToggleDot" style="background:#60c8ff;"></div>
+              <span class="layerLabel">Show News Ticker</span>
+            </div>
+          </div>
+        </div>
+        <div class="sidebarDivider"></div>
+        <div class="sidebarSection">
           <div class="sidebarSectionLabel">Display Language</div>
           <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px;line-height:1.4;">
             Translate buttons convert articles into this language
@@ -15518,30 +15528,23 @@ grmClockTick();
   background: transparent;
 }
 
-/* ── Header bar ── */
-.bHeader {
-  display: flex; align-items: center; gap: 12px;
-  padding: 18px 24px 12px;
-  background: linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, transparent 100%);
-  opacity: 0; transform: translateY(-12px);
+/* ── Dots meta label (Earth Briefing + date above dots) ── */
+.bDotsMeta {
+  text-align: center;
+  padding: 14px 24px 4px;
+  opacity: 0; transform: translateY(-8px);
   transition: all 0.5s ease 0.2s;
+  pointer-events: none;
+  line-height: 1.5;
 }
-#briefingOverlay.open .bHeader { opacity: 1; transform: translateY(0); }
-.bHeaderLogo {
-  font-size: 11px; font-weight: 700; letter-spacing: 3px;
-  color: #60c8ff; text-transform: uppercase; white-space: nowrap;
+#briefingOverlay.open .bDotsMeta { opacity: 1; transform: translateY(0); }
+.bDotsMetaLogo {
+  font-size: 10px; font-weight: 700; letter-spacing: 3px;
+  color: #60c8ff; text-transform: uppercase; display: block;
 }
-.bHeaderDate { font-size: 11px; color: rgba(255,255,255,0.5); letter-spacing: 1px; }
-.bHeaderHeadline {
-  flex: 1; font-size: 14px; font-weight: 600; color: #fff;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.bDotsMetaDate {
+  font-size: 10px; color: rgba(255,255,255,0.45); letter-spacing: 1px; display: block;
 }
-.bClose {
-  background: none; border: none; color: rgba(255,255,255,0.6);
-  cursor: pointer; padding: 4px 8px; font-size: 20px; line-height: 1;
-  transition: color 0.2s;
-}
-.bClose:hover { color: #fff; }
 
 /* ── Segment dots ── */
 .bDots {
@@ -15647,6 +15650,56 @@ grmClockTick();
 .bTickerSummary { font-size: 11px; color: rgba(255,255,255,0.55); }
 .bTickerSep { color: rgba(255,255,255,0.2); }
 .bTickerDiv { color: #60c8ff; margin: 0 24px; font-size: 14px; }
+
+/* ── Global persistent ticker ── */
+@keyframes gTickerScroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+#globalTicker {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 38px;
+  background: rgba(0,0,6,0.94);
+  border-top: 1px solid rgba(96,200,255,0.12);
+  display: flex; align-items: center;
+  z-index: 500;
+  overflow: hidden;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+#globalTicker.hidden { opacity: 0; pointer-events: none; transform: translateY(4px); }
+.briefing-active #globalTicker { display: none; }
+.gTickerLabel {
+  flex-shrink: 0;
+  background: #60c8ff; color: #000;
+  font-size: 9px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
+  padding: 0 12px; height: 100%;
+  display: flex; align-items: center; z-index: 1;
+}
+.gTickerTrackWrap {
+  flex: 1; overflow: hidden; height: 100%;
+  display: flex; align-items: center;
+  mask-image: linear-gradient(to right, transparent 0%, black 1%, black 99%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 1%, black 99%, transparent 100%);
+}
+.gTickerTrack {
+  display: inline-block; white-space: nowrap;
+  animation: gTickerScroll 80s linear infinite;
+  will-change: transform;
+}
+.gTickerTrack.reset { animation: none; }
+.gTickerItem {
+  display: inline; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.gTickerItem:hover { opacity: 0.75; }
+.gTickerSource {
+  font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
+  color: #60c8ff; text-transform: uppercase;
+}
+.gTickerDate { font-size: 10px; color: rgba(255,255,255,0.4); }
+.gTickerTitle { font-size: 11px; font-weight: 600; color: #fff; }
+.gTickerSummary { font-size: 11px; color: rgba(255,255,255,0.5); }
+.gTickerSep { color: rgba(255,255,255,0.2); }
+.gTickerDiv { color: #60c8ff; margin: 0 28px; font-size: 13px; }
 
 /* ── Video embed ── */
 .bVideoWrap {
@@ -16187,11 +16240,7 @@ grmClockTick();
 
 <!-- Briefing overlay HTML -->
 <div id="briefingOverlay">
-  <div class="bHeader">
-    <div class="bHeaderLogo">Earth Briefing</div>
-    <div class="bHeaderDate" id="bDate"></div>
-    <div class="bHeaderHeadline" id="bHeadline"></div>
-  </div>
+  <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
   <div class="bThreadLabel" id="bThreadLabel"></div>
   <div class="bArcLabel" id="bArcLabel"></div>
@@ -16238,6 +16287,14 @@ grmClockTick();
         <div class="bSDArticles" id="bSDArticles"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ── Global news ticker (always visible outside briefing) ── -->
+<div id="globalTicker">
+  <div class="gTickerLabel">Live</div>
+  <div class="gTickerTrackWrap">
+    <div class="gTickerTrack" id="gTickerTrack"></div>
   </div>
 </div>
 
@@ -16335,13 +16392,23 @@ grmClockTick();
     window.briefingActive = true;
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
-    document.getElementById('bHeadline').textContent = episode.headline;
-    document.getElementById('bDate').textContent = new Date(episode.target_date)
+    // Dots meta: "Earth Briefing" + date above nav dots
+    const metaDate = new Date(episode.target_date)
       .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    document.getElementById('bDotsMeta').innerHTML =
+      `<span class="bDotsMetaLogo">Earth Briefing</span><span class="bDotsMetaDate">${metaDate}</span>`;
     buildDots();
     document.getElementById('briefingOverlay').classList.add('open');
     playing = true;
     updatePlayBtn();
+    // Seed briefing ticker immediately with all episode article IDs
+    const allIds = (episode.segments || []).flatMap(s => s.article_ids || []);
+    if (allIds.length) {
+      fetch(`${API}/api/articles/by-ids?ids=${allIds.slice(0, 30).join(',')}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(arts => { if (arts.length && segIdx === 0) startTicker(arts); })
+        .catch(() => {});
+    }
     goToSegment(0);
   }
 
@@ -16978,6 +17045,7 @@ grmClockTick();
 
   // ── News ticker (scrolling marquee) ──────────────────────────────────────
   const TICKER_PX_PER_SEC = 90; // scroll speed
+  let _briefingTickerArticles = [];
 
   function _buildTickerHTML(articles) {
     return articles.map(a => {
@@ -16986,27 +17054,32 @@ grmClockTick();
         : '';
       const title   = (a.translated_title || a.title || '').replace(/</g, '&lt;');
       const summary = (a.summary || '').replace(/</g, '&lt;');
-      return `<span class="bTickerSource">${a.source_name || ''}</span>` +
+      return `<span class="bTickerItem-entry" data-bid="${a.id}" onclick="window._bTickerClick(this)" style="cursor:pointer;">` +
+        `<span class="bTickerSource">${a.source_name || ''}</span>` +
         (date ? ` <span class="bTickerDate">${date}</span>` : '') +
         ` <span class="bTickerSep">—</span> <span class="bTickerTitle">${title}</span>` +
-        (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '');
+        (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '') +
+        `</span>`;
     }).join('<span class="bTickerDiv">◆</span>');
   }
 
+  window._bTickerClick = function(el) {
+    const id = parseInt(el.dataset.bid);
+    const art = _briefingTickerArticles.find(a => a.id === id);
+    if (art && window.openArticleDetail) window.openArticleDetail(art, { type: 'feed' });
+  };
+
   function startTicker(articles) {
+    _briefingTickerArticles = articles;
     const el = document.getElementById('bTickerItem');
     if (!el) return;
-    // Stop current animation cleanly
     el.classList.add('reset');
     el.innerHTML = '';
     if (!articles.length) return;
-    // Build content duplicated for seamless loop
     const half = _buildTickerHTML(articles);
     el.innerHTML = half + '<span class="bTickerDiv">◆</span>' + half;
-    // Force reflow so animation restarts from beginning
     void el.offsetWidth;
     el.classList.remove('reset');
-    // Set duration based on half-width / speed
     requestAnimationFrame(() => {
       const halfW = el.scrollWidth / 2;
       el.style.animationDuration = (halfW / TICKER_PX_PER_SEC).toFixed(1) + 's';
@@ -17023,8 +17096,8 @@ grmClockTick();
     const panel   = document.getElementById('bArticlePanel');
     const snapIdx = segIdx;
     panel.classList.remove('visible');
+    if (!ids?.length) { panel.innerHTML = ''; return; } // keep seeded ticker alive
     stopTicker();
-    if (!ids?.length) { panel.innerHTML = ''; return; }
     try {
       const res = await fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`);
       if (!res.ok) throw new Error('fetch');
@@ -17505,6 +17578,111 @@ grmClockTick();
     setTimeout(init, 2500);
   } else {
     window.addEventListener('load', () => setTimeout(init, 2500));
+  }
+})();
+</script>
+
+<!-- ── Global news ticker controller ── -->
+<script>
+(function () {
+  'use strict';
+  const API = 'https://earth-wjr6.onrender.com';
+  const SPEED = 80; // px/sec
+  const REFRESH_MS = 10 * 60 * 1000; // refresh articles every 10 min
+  let _articles = [];
+  let _visible = true;
+
+  // ── Persist visibility via localStorage ──────────────────────────────────
+  function _loadPref() {
+    try { const v = localStorage.getItem('gTickerVisible'); return v === null ? true : v === '1'; }
+    catch (_) { return true; }
+  }
+  function _savePref(v) { try { localStorage.setItem('gTickerVisible', v ? '1' : '0'); } catch (_) {} }
+
+  function _applyVisibility() {
+    const el = document.getElementById('globalTicker');
+    const dot = document.getElementById('tickerVisToggleDot');
+    if (!el) return;
+    if (_visible) {
+      el.classList.remove('hidden');
+      if (dot) dot.style.background = '#60c8ff';
+    } else {
+      el.classList.add('hidden');
+      if (dot) dot.style.background = 'rgba(255,255,255,0.15)';
+    }
+  }
+
+  // ── Build HTML for one set of articles ───────────────────────────────────
+  function _buildHTML(articles) {
+    return articles.map(a => {
+      const date  = a.published_at
+        ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        : '';
+      const title = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      return `<span class="gTickerItem" data-gid="${a.id}" onclick="window._gTickerClick(this)">` +
+        `<span class="gTickerSource">${a.source_name || ''}</span>` +
+        (date ? ` <span class="gTickerDate">${date}</span>` : '') +
+        ` <span class="gTickerSep">—</span> <span class="gTickerTitle">${title}</span>` +
+        `</span>`;
+    }).join('<span class="gTickerDiv">◆</span>');
+  }
+
+  // ── Start / restart animation ─────────────────────────────────────────────
+  function _start(articles) {
+    if (!articles.length) return;
+    _articles = articles;
+    const el = document.getElementById('gTickerTrack');
+    if (!el) return;
+    el.classList.add('reset');
+    el.innerHTML = '';
+    const half = _buildHTML(articles);
+    el.innerHTML = half + '<span class="gTickerDiv">◆</span>' + half;
+    void el.offsetWidth;
+    el.classList.remove('reset');
+    requestAnimationFrame(() => {
+      const halfW = el.scrollWidth / 2;
+      el.style.animationDuration = (halfW / SPEED).toFixed(1) + 's';
+    });
+  }
+
+  // ── Click handler ─────────────────────────────────────────────────────────
+  window._gTickerClick = function(el) {
+    const id = parseInt(el.dataset.gid);
+    const art = _articles.find(a => a.id === id);
+    if (art && window.openArticleDetail) window.openArticleDetail(art, { type: 'feed' });
+  };
+
+  // ── Fetch and refresh ─────────────────────────────────────────────────────
+  async function _fetchAndStart() {
+    try {
+      const res = await fetch(`${API}/api/articles/recent?limit=60&hours=48`);
+      if (!res.ok) return;
+      const arts = await res.json();
+      if (arts.length) _start(arts);
+    } catch (_) {}
+  }
+
+  // ── Settings toggle ───────────────────────────────────────────────────────
+  function _initToggle() {
+    const btn = document.getElementById('tickerVisToggle');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      _visible = !_visible;
+      _savePref(_visible);
+      _applyVisibility();
+    });
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  _visible = _loadPref();
+  _applyVisibility();
+  _fetchAndStart();
+  setInterval(_fetchAndStart, REFRESH_MS);
+  // Wire settings toggle after DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initToggle);
+  } else {
+    _initToggle();
   }
 })();
 </script>

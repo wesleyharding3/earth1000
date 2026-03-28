@@ -1138,6 +1138,36 @@ app.get("/api/articles/by-ids", async (req, res) => {
   }
 });
 
+// GET /api/articles/recent?limit=60&hours=48 — random recent articles for global ticker
+app.get("/api/articles/recent", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 60, 100);
+  const hours = Math.min(parseInt(req.query.hours) || 48, 168);
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        a.id, a.title, a.translated_title, a.summary,
+        a.published_at, a.url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        co.name AS country_name, co.iso_code
+      FROM news_articles a
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      WHERE a.published_at >= NOW() - ($2 || ' hours')::interval
+        AND a.title IS NOT NULL
+      ORDER BY RANDOM()
+      LIMIT $1
+    `, [limit, hours]);
+    res.json(rows);
+  } catch (err) {
+    console.error("[articles/recent]", err.message);
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
 // GET /api/briefing/today — returns today's ready episode (no audio binary)
 app.get("/api/briefing/today", async (req, res) => {
   try {
