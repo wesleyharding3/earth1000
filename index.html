@@ -17200,10 +17200,10 @@ grmClockTick();
 #globalTicker.hidden { opacity: 0; pointer-events: none; transform: translateY(4px); }
 .briefing-active #globalTicker { display: none; }
 
-/* ── Ticker-active: combined nav + ticker bar ── */
+/* ── Ticker-active: oval buttons above ticker bar ── */
 body.ticker-active #globalTicker {
   bottom: 0;
-  height: calc(var(--page-nav-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   z-index: 997;
   transition: opacity 0.3s ease, bottom 0.3s ease, height 0.3s ease;
 }
@@ -17213,36 +17213,37 @@ body.ticker-active #pageNav {
   -webkit-backdrop-filter: none !important;
   border-top: none;
   align-items: flex-start;
+  overflow: visible;
+  height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  min-height: 0;
 }
 body.ticker-active .tabItem {
+  flex: 1;
   min-height: 0;
-  padding: 4px 10px 3px;
-  margin-top: -20px;
+  padding: 5px 8px;
+  margin-top: -30px;
   background: rgba(7, 9, 13, 0.93);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255,180,80,0.13);
-  border-top-left-radius: 5px;
-  border-top-right-radius: 5px;
-  border-bottom: none;
+  border: 1px solid rgba(255,180,80,0.2);
+  border-radius: 999px;
+  flex-direction: row;
   justify-content: center;
   align-items: center;
-  gap: 0;
-  transition: color 0.2s, background 0.2s;
-}
-body.ticker-active .tabIcon,
-body.ticker-active .tabLabel { display: none; }
-body.ticker-active .tabItem::before {
-  content: '···';
-  font-size: 13px;
-  letter-spacing: 2px;
-  color: inherit;
-  line-height: 1;
+  gap: 5px;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
 }
 body.ticker-active .tabItem::after { display: none; }
 body.ticker-active .tabItem.active {
   background: rgba(255,180,80,0.15) !important;
-  border-color: rgba(255,180,80,0.3) !important;
+  border-color: rgba(255,180,80,0.35) !important;
+}
+body.ticker-active .tabIcon {
+  width: 14px;
+  height: 14px;
+}
+body.ticker-active .tabLabel {
+  font-size: 6px;
 }
 .gTickerLabel {
   flex-shrink: 0;
