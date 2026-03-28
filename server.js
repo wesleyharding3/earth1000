@@ -239,6 +239,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         img_a.public_url AS catalog_image_url,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
         COALESCE(ns.site_url, ys.site_url) AS site_url,
         COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2 AS language,
@@ -316,6 +317,7 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         img_a.public_url AS catalog_image_url,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
         COALESCE(ns.site_url, ys.site_url) AS site_url,
         COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2 AS language,
@@ -460,6 +462,7 @@ app.get("/api/news/search", async (req, res) => {
           l.iso_code_2 AS language,
           a.base_priority,
           COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
           src_co.iso_code,
           src_co.name        AS country_name,
@@ -880,6 +883,7 @@ app.get("/api/flows", async (req, res) => {
           a.published_at                        AS "publishedAt",
           a.sentiment_score                     AS sentiment,
           COALESCE(ns.name, ys.name)            AS "sourceName",
+          COALESCE(ns.bias, 'unknown')          AS "sourceBias",
           COALESCE(ns.popularity_score, 1.0)    AS "popularityScore",
           COALESCE(ns.popularity_tier, 1)       AS "popularityTier",
           al.routing_type                       AS "routingType",
@@ -1031,6 +1035,7 @@ app.get("/api/flows", async (req, res) => {
         publishedAt: r.publishedAt,
         sentiment: r.sentiment,
         sourceName: r.sourceName,
+        sourceBias: r.sourceBias,
         routingType: r.routingType,
         priority: r.priority,
         src: {
@@ -1131,6 +1136,7 @@ app.get("/api/articles/by-ids", async (req, res) => {
         COALESCE(a.image_url, img_a.public_url) AS image_url,
         img_a.public_url AS catalog_image_url,
         COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
         co.name AS country_name, co.iso_code,
         ci.name AS city_name
       FROM news_articles a
@@ -1161,6 +1167,7 @@ app.get("/api/articles/recent", async (req, res) => {
         a.published_at, a.url,
         COALESCE(a.image_url, img_a.public_url) AS image_url,
         COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
         co.name AS country_name, co.iso_code
       FROM news_articles a
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
@@ -2109,6 +2116,7 @@ app.get("/api/keywords/articles", async (req, res) => {
            a.published_at,
            a.sentiment_score,
            COALESCE(ns.name, ys.name) AS source_name,
+           COALESCE(ns.bias, 'unknown') AS source_bias,
            ns.site_url AS source_url,
            co.name AS country_name,
            co.iso_code,
@@ -2358,6 +2366,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         img_a.public_url AS catalog_image_url,
           a.published_at,
           COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
           COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2    AS language,
@@ -2396,6 +2405,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         img_a.public_url AS catalog_image_url,
           a.published_at,
           COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
           COALESCE(ns.site_url, ys.site_url) AS site_url,
           COALESCE(ns.popularity_score, 0) AS popularity_score,
           l.iso_code_2    AS language,

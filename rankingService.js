@@ -60,6 +60,7 @@ const ARTICLE_FIELDS = `
   a.duration_seconds,
   a.language,
   COALESCE(ns.name,             ys.name)             AS source_name,
+  COALESCE(ns.bias,             'unknown')           AS source_bias,
   COALESCE(ns.site_url,         ys.site_url)         AS site_url,
   COALESCE(ns.popularity_score, ys.popularity_score, 1.0) AS popularity_score,
   COALESCE(ns.popularity_tier,  ys.popularity_tier,  1)   AS popularity_tier,

@@ -1985,6 +1985,10 @@
       text-transform: uppercase;
       color: rgba(255,180,80,0.85);
       margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
 
     .articleCardTitle {
@@ -4768,6 +4772,32 @@
     .nfCardSrc {
       font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
       text-transform: uppercase; color: rgba(255,180,80,0.78);
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+    .sourceBiasBadge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 6px;
+      border-radius: 999px;
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .sourceBiasBadge.right { background: #b3261e; color: #fff; }
+    .sourceBiasBadge.center_right { background: #f29a8b; color: #220606; }
+    .sourceBiasBadge.center { background: #8f98a3; color: #11161b; }
+    .sourceBiasBadge.center_left { background: #8fc3ff; color: #071726; }
+    .sourceBiasBadge.left { background: #2c6dff; color: #fff; }
+    .sourceBiasBadge.state { background: #fff; color: #000; }
+    .sourceBiasBadge.unknown {
+      background: #000;
+      color: #fff;
+      border-color: rgba(255,255,255,0.22);
     }
     .nfCardTitle {
       font-size: 13px; font-weight: 600; line-height: 1.4;
@@ -10057,9 +10087,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           else { el.src = flagUrl; }
         }
 
+        window.sourceBiasBadgeHTML = window.sourceBiasBadgeHTML || function sourceBiasBadgeHTML(bias) {
+          const raw = String(bias || 'unknown').toLowerCase();
+          const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw)
+            ? raw
+            : 'unknown';
+          const label = normalized === 'center_left'
+            ? 'Center-L'
+            : normalized === 'center_right'
+              ? 'Center-R'
+              : normalized.charAt(0).toUpperCase() + normalized.slice(1);
+          return `<span class="sourceBiasBadge ${normalized}">${label}</span>`;
+        };
+
         function articleCardHTML(article) {
           const hasImage = article.image_url && article.image_url.trim() !== "";
           const catalog  = article.catalog_image_url || '';
+          const sourceLine = `${window.sourceBiasBadgeHTML(article.source_bias)}<span>${article.source_name || ""}</span>`;
           let imageField;
           if (hasImage) {
             imageField = `<img class="articleCardImage" src="${article.image_url}" data-catalog="${catalog}" alt="" loading="lazy" onerror="imgFallback(this,'${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png')">`;
@@ -10086,7 +10130,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 ${imageField}
                 <div class="articleCardBody">
                   <div>
-                    <div class="articleCardSource">${article.source_name || ""}</div>
+                    <div class="articleCardSource">${sourceLine}</div>
                     <div class="articleCardTitle" data-aid="${article.id}">${article.translated_title || article.title || ""}</div>
                     <div class="articleCardSummary" data-aid="${article.id}">${article.translated_summary || article.summary || ""}</div>
                   </div>
@@ -10881,6 +10925,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const summary = a.translated_summary || a.summary || "";
             const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
             const cityTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
+            const sourceLine = `${window.sourceBiasBadgeHTML(a.source_bias)}<span>${a.source_name||""}</span> ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${cityTag}`;
             const needsTranslation = articleNeedsTranslation(a);
             const _tLang = getUserTargetLang();
             const translateBtn = needsTranslation
@@ -10890,7 +10935,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
               <div class="articleCardBody">
-                <div class="articleCardSource">${a.source_name||""} ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${cityTag}</div>
+                <div class="articleCardSource">${sourceLine}</div>
                 <div class="articleCardTitle" data-aid="${a.id}">${title}</div>
                 ${summary ? `<div class="articleCardSummary" data-aid="${a.id}">${summary}</div>` : ""}
               </div>
@@ -13090,6 +13135,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           translated_summary: f.translatedSummary || null,
           image_url: f.imageUrl,
           source_name: f.sourceName,
+          source_bias: f.sourceBias || 'unknown',
           published_at: f.publishedAt,
           article_url: f.articleUrl,
           iso_code: f.src?.iso || f.dst?.iso,
@@ -13119,6 +13165,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const translateBtn = needsTranslation
           ? `<button class="articleTranslateBtn" data-id="${f.id}" data-title="${(f.originalTitle||'').replace(/"/g,'&quot;')}" data-summary="${(f.originalSummary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate to ${_tLang2.label}">${_tLang2.short}</button>`
           : "";
+        const sourceLine = `${window.sourceBiasBadgeHTML(article.source_bias)}<span>${article.source_name || ""}</span>`;
         
         return `
           <div style="position:relative">
@@ -13126,7 +13173,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               ${imageField}
               <div class="articleCardBody">
                 <div>
-                  <div class="articleCardSource">${article.source_name || ""}</div>
+                  <div class="articleCardSource">${sourceLine}</div>
                   <div class="articleCardTitle" data-aid="${f.id}">${article.title || ""}</div>
                   <div class="articleCardSummary" data-aid="${f.id}">${article.summary || ""}</div>
                 </div>
@@ -13777,6 +13824,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const rawSummary = a.translated_summary || a.summary || "";
       const title   = lastKeyword ? hlText(rawTitle,   lastKeyword) : esc(rawTitle);
       const summary = lastKeyword ? hlText(rawSummary, lastKeyword) : esc(rawSummary);
+      const sourceLine = `${window.sourceBiasBadgeHTML(a.source_bias)}<span>${esc(a.source_name||"")}</span>`;
       const parts = [];
       if (a.city_name) parts.push(a.city_name);
       if (a.country_name) parts.push(a.country_name);
@@ -13790,7 +13838,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ${img}
           <div class="nfCardBody">
             <div>
-              <div class="nfCardSrc">${esc(a.source_name||"")}</div>
+              <div class="nfCardSrc">${sourceLine}</div>
               <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
               <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
             </div>
@@ -14490,7 +14538,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         group.spread = Math.max(4.4, Math.min(12.5, group.spread * 0.74));
       });
 
-      const nodes = snapshot.nodes.map((node) => {
+      let nodes = snapshot.nodes.map((node) => {
         const group = groupMap.get(node.cluster_id);
         if (!group || !group._offset) return node;
         return {
@@ -14501,6 +14549,83 @@ const settingsToggle     = document.getElementById("settingsToggle");
             z: node.position.z + group._offset.z
           }
         };
+      });
+
+      const nodesByGroup = new Map(groups.map((group) => [group.cluster_id, []]));
+      nodes.forEach((node) => {
+        if (nodesByGroup.has(node.cluster_id)) nodesByGroup.get(node.cluster_id).push(node);
+      });
+
+      nodes = nodes.map((node) => ({ ...node, position: { ...node.position } }));
+
+      groups.forEach((group) => {
+        const members = nodesByGroup.get(group.cluster_id) || [];
+        if (members.length <= 1) return;
+
+        const memberScale = Math.max(8, Math.min(18, group.spread * 1.8 + Math.sqrt(members.length) * 1.25));
+        const centroid = group.centroid;
+        const layout = members.map((member, index) => {
+          const dx = member.position.x - centroid.x;
+          const dy = member.position.y - centroid.y;
+          const dz = member.position.z - centroid.z;
+          const mag = Math.hypot(dx, dy, dz);
+          const seedTheta = (index * 2.399963229728653) % (Math.PI * 2);
+          const seedPhi = Math.acos(Math.max(-1, Math.min(1, 1 - ((index + 0.5) / members.length) * 2)));
+          const fallback = {
+            x: Math.sin(seedPhi) * Math.cos(seedTheta),
+            y: Math.cos(seedPhi) * 0.8,
+            z: Math.sin(seedPhi) * Math.sin(seedTheta)
+          };
+          const dir = mag > 0.001
+            ? { x: dx / mag, y: dy / mag, z: dz / mag }
+            : fallback;
+          return {
+            member,
+            p: {
+              x: centroid.x + dir.x * (memberScale + mag * 0.55),
+              y: centroid.y + dir.y * (memberScale * 0.8 + mag * 0.5),
+              z: centroid.z + dir.z * (memberScale + mag * 0.55)
+            }
+          };
+        });
+
+        for (let iter = 0; iter < 120; iter += 1) {
+          layout.forEach((entry, i) => {
+            const importance = Number(entry.member.importance) || 0;
+            const articleCount = Number(entry.member.article_count) || 0;
+            const baseRadius = 1.6 + importance * 0.1 + Math.log2(1 + articleCount) * 0.35;
+            const force = {
+              x: (centroid.x - entry.p.x) * 0.008,
+              y: (centroid.y - entry.p.y) * 0.008,
+              z: (centroid.z - entry.p.z) * 0.008
+            };
+
+            for (let j = 0; j < layout.length; j += 1) {
+              if (i === j) continue;
+              const other = layout[j];
+              const odx = entry.p.x - other.p.x;
+              const ody = entry.p.y - other.p.y;
+              const odz = entry.p.z - other.p.z;
+              const dist = Math.max(0.001, Math.hypot(odx, ody, odz));
+              const otherRadius = 1.6 + (Number(other.member.importance) || 0) * 0.1 + Math.log2(1 + (Number(other.member.article_count) || 0)) * 0.35;
+              const desired = baseRadius + otherRadius + 2.8;
+              const repel = dist < desired ? (desired - dist) * 0.12 : 8 / (dist * dist);
+              force.x += (odx / dist) * repel;
+              force.y += (ody / dist) * repel;
+              force.z += (odz / dist) * repel;
+            }
+
+            entry.p.x += force.x;
+            entry.p.y += force.y;
+            entry.p.z += force.z;
+          });
+        }
+
+        layout.forEach(({ member, p }) => {
+          member.position.x = p.x;
+          member.position.y = p.y;
+          member.position.z = p.z;
+        });
       });
 
       return {
