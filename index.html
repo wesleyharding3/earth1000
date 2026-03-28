@@ -111,13 +111,19 @@
       position: relative;
       display: flex; flex-direction: column; align-items: center;
     }
+    .el-panel-loader.el-node-loader .el-panel-inner {
+      transform: translate(22px, -44px);
+    }
     .el-panel-loader .el-globe-wrap .el-globe { width: 82px; height: 82px; }
     .el-panel-loader .el-e { font-size: 42px; bottom: 5px; left: 3px; }
     .el-panel-loader .el-dots { margin-top: 10px; gap: 5px; }
     .el-panel-loader .el-dots span { width: 5px; height: 5px; }
 
     /* Larger globe loader for the news feed grid */
-    #nfGrid .el-panel-loader { min-height: 420px; }
+    #nfGrid .el-panel-loader {
+      min-height: calc(var(--app-height, 100vh) - 320px);
+      place-self: center stretch;
+    }
     #nfGrid .el-panel-loader .el-globe-wrap .el-globe { width: 150px; height: 150px; }
     #nfGrid .el-panel-loader .el-e { font-size: 78px; bottom: 8px; left: 5px; }
     #nfGrid .el-panel-loader .el-dots { margin-top: 14px; gap: 8px; }
@@ -10188,7 +10194,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.translateCard = translateCard;
 
         function skeletonCards(n) {
-          return `<div class="el-panel-loader"><div class="el-panel-inner">
+          return `<div class="el-panel-loader el-node-loader"><div class="el-panel-inner">
             <div class="el-globe-wrap">
               <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
                 <g class="el-grid">
@@ -10857,7 +10863,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         searchInput.addEventListener("input", () => { filterQuery = searchInput.value.trim().toLowerCase(); renderCards(); });
 
         function skeletonCards(n) {
-          return `<div class="el-panel-loader"><div class="el-panel-inner">
+          return `<div class="el-panel-loader el-node-loader"><div class="el-panel-inner">
             <div class="el-globe-wrap">
               <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
                 <g class="el-grid">
@@ -13872,7 +13878,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
     function isoDate(d) { return d.toISOString().slice(0,10); }
     function skels(n) {
-      return `<div class="el-panel-loader"><div class="el-panel-inner">
+      return `<div class="el-panel-loader el-feed-loader"><div class="el-panel-inner">
         <div class="el-globe-wrap">
           <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
             <g class="el-grid">
