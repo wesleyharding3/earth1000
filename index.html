@@ -5890,7 +5890,7 @@
           <div class="sidebarSectionLabel">News Ticker</div>
           <div class="layerList">
             <div class="layerOpt" id="tickerVisToggle" style="cursor:pointer;">
-              <div class="layerDot" id="tickerVisToggleDot" style="background:#60c8ff;"></div>
+              <div class="layerDot" id="tickerVisToggleDot" style="background:#ff9940;"></div>
               <span class="layerLabel">Show News Ticker</span>
             </div>
           </div>
@@ -10119,6 +10119,87 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.clearBriefingPulses  = clearBriefingPulses;
       window.briefingArcPulseList = briefingArcPulseList;
 
+      // ── Traveling briefing arc ──────────────────────────────────────────
+      // Builds a single arc that reveals itself from origin → destination,
+      // then settles into a steady glow with a looping pulse for the rest
+      // of the segment. Color matches globe node amber (#ff9940).
+      const briefingRevealList = [];
+      window.briefingRevealList = briefingRevealList;
+
+      window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs) {
+        const R = radius + 0.006;
+        const STEPS = 48;
+        const positions = [], lineDists = [], lineLens = [];
+        const v0 = latLonToVec3Trans(lat0, lon0, 1);
+        const v1 = latLonToVec3Trans(lat1, lon1, 1);
+        const pts = [];
+        for (let i = 0; i <= STEPS; i++) {
+          const t = i / STEPS;
+          const mid = v0.clone().lerp(v1, t).normalize();
+          const lift = 1 + (arcHeight || 0.14) * Math.sin(t * Math.PI);
+          pts.push(mid.multiplyScalar(R * lift));
+        }
+        let totalLen = 0;
+        for (let i = 1; i < pts.length; i++) totalLen += pts[i].distanceTo(pts[i - 1]);
+        let cum = 0;
+        for (let i = 0; i < STEPS; i++) {
+          positions.push(pts[i].x, pts[i].y, pts[i].z,
+                         pts[i+1].x, pts[i+1].y, pts[i+1].z);
+          const sLen = pts[i+1].distanceTo(pts[i]);
+          lineDists.push(cum, cum + sLen);
+          lineLens.push(totalLen, totalLen);
+          cum += sLen;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geo.setAttribute('lineDist', new THREE.Float32BufferAttribute(lineDists, 1));
+        geo.setAttribute('lineLen',  new THREE.Float32BufferAttribute(lineLens,  1));
+
+        const mat = new THREE.ShaderMaterial({
+          transparent: true, depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          uniforms: {
+            uColor:      { value: new THREE.Color(0xff9940) },
+            uRevealEnd:  { value: 0.0 },
+            uRevealRate: { value: 1.0 / (revealSecs || 2.5) },
+            uTime:       { value: 0.0 },
+          },
+          vertexShader: `
+            attribute float lineDist;
+            attribute float lineLen;
+            varying float vT;
+            void main() {
+              vT = lineLen > 0.0 ? lineDist / lineLen : 0.0;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`,
+          fragmentShader: `
+            uniform vec3  uColor;
+            uniform float uRevealEnd;
+            uniform float uTime;
+            varying float vT;
+            void main() {
+              if (vT > uRevealEnd + 0.008) discard;
+              // Leading-edge glow (bright head travelling along arc)
+              float headDist = max(0.0, uRevealEnd - vT);
+              float settled  = clamp((uRevealEnd - 0.85) / 0.15, 0.0, 1.0);
+              float leadGlow = exp(-headDist * 22.0) * (1.0 - settled * 0.7);
+              // Steady pulse once arc is fully drawn
+              float ph = mod(uTime * 0.38, 1.0);
+              float d  = abs(vT - ph); d = min(d, 1.0 - d);
+              float pulse = smoothstep(0.11, 0.0, d) * settled;
+              // Base trail (dims slightly after head passes)
+              float base  = 0.52 * clamp(uRevealEnd, 0.0, 1.0);
+              float alpha = clamp(base + leadGlow * 0.85 + pulse * 0.55, 0.0, 0.95);
+              gl_FragColor = vec4(uColor * (1.6 + leadGlow * 3.5 + pulse * 2.2), alpha);
+            }`
+        });
+
+        const mesh = new THREE.LineSegments(geo, mat);
+        mesh.visible = true;
+        scene.add(mesh);
+        return mesh;
+      };
+
       // Switch city/country node visibility during briefing without opening the
       // sidebar or triggering UI animations. Only 'city' and 'country' are used.
       window.setBriefingViewMode = function(mode) {
@@ -10180,6 +10261,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Hide the hover card (briefing cleanup between segments)
       window.briefingHideLabel = hideHoverCard;
+
+      // Reverse-lookup the nearest node from lat/lon and show its hover card.
+      // Used when ring pulses fire on secondary locations that have no nodeObj.
+      window.briefingShowLabelAt = function(lat, lon) {
+        const isCityMode = window.__currentViewMode === 'city';
+        const arr = isCityMode ? cities : countries;
+        let best = null, bestDist = Infinity;
+        for (const n of arr) {
+          if (n.lat == null) continue;
+          const dLat = n.lat - lat;
+          const dLon = (n.lon ?? n.lng ?? 0) - lon;
+          const d = dLat * dLat + dLon * dLon;
+          if (d < bestDist) { bestDist = d; best = n; }
+        }
+        // Only show if we find a node within ~6 degrees
+        if (best && bestDist < 36) {
+          window.briefingShowLabel(best, isCityMode);
+        }
+      };
 
       function focusRegion(region) {
         const lat = parseFloat(region.centroid_lat);
@@ -10637,6 +10737,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (_bm?.isObject3D && _bm.visible && _bm.material?.uniforms?.uTime) {
               _bm.material.uniforms.uTime.value       += 0.016;
               _bm.material.uniforms.uPulseSpeed.value  = 0.55;
+            }
+          }
+        }
+        // Traveling briefing arc reveal animation
+        if (window.briefingActive && briefingRevealList.length) {
+          for (const _rm of briefingRevealList) {
+            if (_rm?.isObject3D && _rm.visible && _rm.material?.uniforms) {
+              const _u = _rm.material.uniforms;
+              if (_u.uRevealEnd.value < 1.0) {
+                _u.uRevealEnd.value = Math.min(1.0, _u.uRevealEnd.value + 0.016 * _u.uRevealRate.value);
+              }
+              _u.uTime.value += 0.016;
             }
           }
         }
@@ -15600,7 +15712,11 @@ grmClockTick();
   color: #60c8ff; text-transform: uppercase;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
-.bAPCardDate { font-size: 9px; color: rgba(255,255,255,0.35); flex-shrink: 0; }
+.bAPCardLocation {
+  font-size: 9px; color: rgba(255,153,64,0.7); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.bAPCardDate { font-size: 9px; color: rgba(255,255,255,0.35); flex-shrink: 0; margin-left: auto; }
 .bAPCardTitle {
   font-size: 11px; font-weight: 600; color: #fff; line-height: 1.4;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -15615,15 +15731,15 @@ grmClockTick();
 .bTicker {
   position: absolute; bottom: 0; left: 0; right: 0; height: 42px;
   background: rgba(0,0,6,0.96);
-  border-top: 1px solid rgba(96,200,255,0.15);
+  border-top: 1px solid rgba(255,153,64,0.18);
   display: flex; align-items: center;
   opacity: 0; transition: opacity 0.5s ease;
   overflow: hidden; pointer-events: none;
 }
-#briefingOverlay.open .bTicker { opacity: 1; }
+#briefingOverlay.open .bTicker { opacity: 1; pointer-events: all; }
 .bTickerLabel {
   flex-shrink: 0;
-  background: #60c8ff; color: #000;
+  background: #ff9940; color: #000;
   font-size: 9px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
   padding: 0 12px; height: 100%;
   display: flex; align-items: center;
@@ -15643,13 +15759,14 @@ grmClockTick();
 .bTickerItem.reset { animation: none; }
 .bTickerSource {
   font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
-  color: #60c8ff; text-transform: uppercase;
+  color: #ff9940; text-transform: uppercase;
 }
-.bTickerDate { font-size: 10px; color: rgba(255,255,255,0.4); }
+.bTickerLocation { font-size: 9px; color: rgba(255,153,64,0.65); font-weight: 600; }
+.bTickerDate { font-size: 10px; color: rgba(255,255,255,0.35); }
 .bTickerTitle { font-size: 11px; font-weight: 600; color: #fff; }
-.bTickerSummary { font-size: 11px; color: rgba(255,255,255,0.55); }
-.bTickerSep { color: rgba(255,255,255,0.2); }
-.bTickerDiv { color: #60c8ff; margin: 0 24px; font-size: 14px; }
+.bTickerSummary { font-size: 11px; color: rgba(255,255,255,0.5); }
+.bTickerSep { color: rgba(255,153,64,0.3); }
+.bTickerDiv { color: #ff9940; margin: 0 24px; font-size: 14px; }
 
 /* ── Global persistent ticker ── */
 @keyframes gTickerScroll {
@@ -15659,7 +15776,7 @@ grmClockTick();
 #globalTicker {
   position: fixed; bottom: 0; left: 0; right: 0; height: 38px;
   background: rgba(0,0,6,0.94);
-  border-top: 1px solid rgba(96,200,255,0.12);
+  border-top: 1px solid rgba(255,153,64,0.15);
   display: flex; align-items: center;
   z-index: 500;
   overflow: hidden;
@@ -15669,7 +15786,7 @@ grmClockTick();
 .briefing-active #globalTicker { display: none; }
 .gTickerLabel {
   flex-shrink: 0;
-  background: #60c8ff; color: #000;
+  background: #ff9940; color: #000;
   font-size: 9px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
   padding: 0 12px; height: 100%;
   display: flex; align-items: center; z-index: 1;
@@ -15693,13 +15810,14 @@ grmClockTick();
 .gTickerItem:hover { opacity: 0.75; }
 .gTickerSource {
   font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
-  color: #60c8ff; text-transform: uppercase;
+  color: #ff9940; text-transform: uppercase;
 }
-.gTickerDate { font-size: 10px; color: rgba(255,255,255,0.4); }
+.gTickerLocation { font-size: 9px; color: rgba(255,153,64,0.65); font-weight: 600; }
+.gTickerDate { font-size: 10px; color: rgba(255,255,255,0.35); }
 .gTickerTitle { font-size: 11px; font-weight: 600; color: #fff; }
 .gTickerSummary { font-size: 11px; color: rgba(255,255,255,0.5); }
-.gTickerSep { color: rgba(255,255,255,0.2); }
-.gTickerDiv { color: #60c8ff; margin: 0 28px; font-size: 13px; }
+.gTickerSep { color: rgba(255,153,64,0.3); }
+.gTickerDiv { color: #ff9940; margin: 0 28px; font-size: 13px; }
 
 /* ── Video embed ── */
 .bVideoWrap {
@@ -16690,18 +16808,10 @@ grmClockTick();
         continue;
       }
       try {
-        const key      = `briefingArc_${ai}`;
-        // ── Brighter, thicker arcs ──────────────────────────────────────────
-        const baseMesh = window.buildArcLines(
-          [[from.lat, from.lng, to.lat, to.lng]],
-          0xff8c00, 0.005, 0.10, key
-        );
-        if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
-        const pulseMesh = window.transPulseMeshes?.[key];
-        if (pulseMesh) {
-          pulseMesh.visible = true;
-          arcMeshes.push(pulseMesh);
-          if (window.briefingArcPulseList) window.briefingArcPulseList.push(pulseMesh);
+        if (window.buildBriefingArc) {
+          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 2.5);
+          arcMeshes.push(mesh);
+          if (window.briefingRevealList) window.briefingRevealList.push(mesh);
         }
       } catch (_) {}
     }
@@ -16751,28 +16861,28 @@ grmClockTick();
         window.setBriefingViewMode('city');
       }
 
-      // 15 %: focus camera on primary location + hover label after globe settles
+      // 6 %: focus camera on primary location + hover label after globe settles
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
         if (seg.primary_city && window.focusCity) {
           window.focusCity(seg.primary_city);
-          // Show hover label once globe finishes panning (~1.2s)
+          // Show hover label once globe finishes panning (~1s)
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingShowLabel) return;
             window.briefingShowLabel(seg.primary_city, true);
-          }, 1200));
+          }, 1000));
         } else if (seg.primary_country && window.focusCountry) {
           window.focusCountry(seg.primary_country);
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingShowLabel) return;
             window.briefingShowLabel(seg.primary_country, false);
-          }, 1200));
+          }, 1000));
         } else if (seg.globe_focus && window.startFocus) {
           window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
         }
-      }, ms(0.15)));
+      }, ms(0.06)));
 
-      // 33 %: draw flow arcs + pulse secondary nodes; hide hover label so arcs
+      // 20 %: draw flow arcs + pulse secondary nodes; hide hover label so arcs
       //        have full visual attention
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
@@ -16801,14 +16911,10 @@ grmClockTick();
             const samePoint = Math.abs(rFrom.lat - rTo.lat) < 0.1 && Math.abs(rFrom.lng - rTo.lng) < 0.1;
             if (samePoint) return;
             try {
-              const key = `briefingAutoArc_${idx}_${i}`;
-              const baseMesh = window.buildArcLines([[rFrom.lat, rFrom.lng, rTo.lat, rTo.lng]], 0xff8c00, 0.005, 0.06, key);
-              if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
-              const pulseMesh = window.transPulseMeshes?.[key];
-              if (pulseMesh) {
-                pulseMesh.visible = true;
-                arcMeshes.push(pulseMesh);
-                if (window.briefingArcPulseList) window.briefingArcPulseList.push(pulseMesh);
+              if (window.buildBriefingArc) {
+                const mesh = window.buildBriefingArc(rFrom.lat, rFrom.lng, rTo.lat, rTo.lng, 0.13, 2.5);
+                arcMeshes.push(mesh);
+                if (window.briefingRevealList) window.briefingRevealList.push(mesh);
               }
             } catch (_) {}
           });
@@ -16819,44 +16925,42 @@ grmClockTick();
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
+            // Show hover card for this pulsed node
+            if (window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon);
           }, i * 350));
         });
-      }, ms(0.33)));
+      }, ms(0.20)));
 
-      // 46 %+ every 12 %: camera tours all story nodes in cycle
+      // 40 %+ every 12 %: camera tours all story nodes in cycle
       // Stop scheduling once we'd exceed the audio duration (frac >= 0.95)
       if (tourNodes.length >= 2) {
         for (let t = 0; t < 8; t++) {
-          const frac = 0.46 + t * 0.12;
+          const frac = 0.40 + t * 0.12;
           if (frac >= 0.95) break;
           const node = tourNodes[(t + 1) % tourNodes.length];
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.startFocus) return;
             window.startFocus(node.lat, node.lon);
             if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
+            if (window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon);
           }, ms(frac)));
         }
       } else if (tourNodes.length === 1) {
         for (let t = 0; t < 3; t++) {
-          const frac = 0.46 + t * 0.26;
+          const frac = 0.40 + t * 0.26;
           if (frac >= 0.95) break;
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
+            if (window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon);
           }, ms(frac)));
         }
       }
 
-      // At 97 %: clear all pulses so the globe is clean in the inter-segment gap
+      // 95 %: clear pulses, return to country view, hide all hover cards;
+      //        arcs stay until next segment starts
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
-        if (window.clearBriefingPulses) window.clearBriefingPulses();
-      }, ms(0.97)));
-
-      // 95 %: clear arcs/pulses, return to country view, hide hover card
-      addBTimer(setTimeout(() => {
-        if (segIdx !== idx) return;
-        clearArcMeshes();
         if (window.clearBriefingPulses) window.clearBriefingPulses();
         if (needsCityView && window.setBriefingViewMode) window.setBriefingViewMode('country');
         if (window.briefingHideLabel) window.briefingHideLabel();
@@ -17029,13 +17133,15 @@ grmClockTick();
     const date = a.published_at
       ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       : '';
-    const title = (a.translated_title || a.title || '').replace(/</g, '&lt;');
-    const safe  = (a.url || '').replace(/'/g, '%27');
+    const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+    const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
+    const safe     = (a.url || '').replace(/'/g, '%27');
     return `<div class="bAPCard" onclick="window.open('${safe}','_blank')">
       ${src ? `<img class="bAPCardImg" src="${src}" onerror="this.style.display='none'" alt="" loading="lazy">` : `<div class="bAPCardImgNone"></div>`}
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
           <span class="bAPCardSource">${a.source_name || ''}</span>
+          ${location ? `<span class="bAPCardLocation">${location}</span>` : ''}
           <span class="bAPCardDate">${date}</span>
         </div>
         <div class="bAPCardTitle">${title}</div>
@@ -17049,13 +17155,15 @@ grmClockTick();
 
   function _buildTickerHTML(articles) {
     return articles.map(a => {
-      const date    = a.published_at
+      const date     = a.published_at
         ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         : '';
-      const title   = (a.translated_title || a.title || '').replace(/</g, '&lt;');
-      const summary = (a.summary || '').replace(/</g, '&lt;');
+      const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      const summary  = (a.translated_summary || a.summary || '').replace(/</g, '&lt;');
+      const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
       return `<span class="bTickerItem-entry" data-bid="${a.id}" onclick="window._bTickerClick(this)" style="cursor:pointer;">` +
         `<span class="bTickerSource">${a.source_name || ''}</span>` +
+        (location ? ` <span class="bTickerSep">·</span> <span class="bTickerLocation">${location}</span>` : '') +
         (date ? ` <span class="bTickerDate">${date}</span>` : '') +
         ` <span class="bTickerSep">—</span> <span class="bTickerTitle">${title}</span>` +
         (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '') +
@@ -17119,6 +17227,7 @@ grmClockTick();
   // ── Arc cleanup ───────────────────────────────────────────────────────────
   function clearArcMeshes() {
     if (window.briefingArcPulseList) window.briefingArcPulseList.length = 0;
+    if (window.briefingRevealList)   window.briefingRevealList.length   = 0;
     const sc = window.globeScene;
     arcMeshes.forEach(m => {
       try {
@@ -17605,7 +17714,7 @@ grmClockTick();
     if (!el) return;
     if (_visible) {
       el.classList.remove('hidden');
-      if (dot) dot.style.background = '#60c8ff';
+      if (dot) dot.style.background = '#ff9940';
     } else {
       el.classList.add('hidden');
       if (dot) dot.style.background = 'rgba(255,255,255,0.15)';
@@ -17615,14 +17724,18 @@ grmClockTick();
   // ── Build HTML for one set of articles ───────────────────────────────────
   function _buildHTML(articles) {
     return articles.map(a => {
-      const date  = a.published_at
+      const date     = a.published_at
         ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         : '';
-      const title = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      const summary  = (a.summary || '').replace(/</g, '&lt;');
+      const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
       return `<span class="gTickerItem" data-gid="${a.id}" onclick="window._gTickerClick(this)">` +
         `<span class="gTickerSource">${a.source_name || ''}</span>` +
+        (location ? ` <span class="gTickerSep">·</span> <span class="gTickerLocation">${location}</span>` : '') +
         (date ? ` <span class="gTickerDate">${date}</span>` : '') +
         ` <span class="gTickerSep">—</span> <span class="gTickerTitle">${title}</span>` +
+        (summary ? ` <span class="gTickerSep">—</span> <span class="gTickerSummary">${summary}</span>` : '') +
         `</span>`;
     }).join('<span class="gTickerDiv">◆</span>');
   }
