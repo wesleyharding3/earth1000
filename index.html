@@ -16627,7 +16627,7 @@ grmClockTick();
         // ── Brighter, thicker arcs ──────────────────────────────────────────
         const baseMesh = window.buildArcLines(
           [[from.lat, from.lng, to.lat, to.lng]],
-          0xff8c00, 0.005, 0.06, key
+          0xff8c00, 0.005, 0.10, key
         );
         if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
         const pulseMesh = window.transPulseMeshes?.[key];
@@ -16747,6 +16747,8 @@ grmClockTick();
           });
         }
         secondary.forEach((loc, i) => {
+          // In city view, skip pulsing bare country centroids — they're empty space
+          if (needsCityView && _isCountryCentroid(loc.lat, loc.lon ?? loc.lng)) return;
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
@@ -16755,23 +16757,34 @@ grmClockTick();
       }, ms(0.33)));
 
       // 46 %+ every 12 %: camera tours all story nodes in cycle
+      // Stop scheduling once we'd exceed the audio duration (frac >= 0.95)
       if (tourNodes.length >= 2) {
         for (let t = 0; t < 8; t++) {
+          const frac = 0.46 + t * 0.12;
+          if (frac >= 0.95) break;
           const node = tourNodes[(t + 1) % tourNodes.length];
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.startFocus) return;
             window.startFocus(node.lat, node.lon);
             if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-          }, ms(0.46 + t * 0.12)));
+          }, ms(frac)));
         }
       } else if (tourNodes.length === 1) {
         for (let t = 0; t < 3; t++) {
+          const frac = 0.46 + t * 0.26;
+          if (frac >= 0.95) break;
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
-          }, ms(0.46 + t * 0.26)));
+          }, ms(frac)));
         }
       }
+
+      // At 97 %: clear all pulses so the globe is clean in the inter-segment gap
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        if (window.clearBriefingPulses) window.clearBriefingPulses();
+      }, ms(0.97)));
 
       // 95 %: clear arcs/pulses, return to country view, hide hover card
       addBTimer(setTimeout(() => {
@@ -17207,12 +17220,20 @@ grmClockTick();
       clearBTimers();
       if (audio) { try { audio.pause(); } catch (_) {} }
     } else {
-      // Resume audio if it hasn't ended; otherwise re-arm fallback timer
+      // Resume audio if it hasn't ended; otherwise advance to next segment
       if (audio) {
         const atEnd = isFinite(audio.duration) && audio.currentTime >= audio.duration - 0.1;
         if (atEnd) {
           goToSegment(segIdx + 1);
           return;
+        }
+        // Restart globe timers for the remaining portion of this segment
+        const seg = episode?.segments[segIdx];
+        if (seg) {
+          const remaining = isFinite(audio.duration)
+            ? audio.duration - (audio.currentTime || 0)
+            : getSegmentDuration(segIdx);
+          if (remaining > 0.5) startGlobeTimers(segIdx, seg, remaining);
         }
         try { audio.play().catch(() => {}); } catch (_) {}
       }

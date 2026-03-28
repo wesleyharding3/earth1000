@@ -703,30 +703,8 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
       continue;
     }
 
-    // ── FALLBACK: article source countries (old behaviour) ─────────────────
-    const countryMap = {};
-    const countFreq  = {};
-    for (const a of thread.articles) {
-      if (a.country_id && a.lat != null) {
-        if (!countryMap[a.country_id]) {
-          countryMap[a.country_id] = { id: a.country_id, name: a.country_name, lat: parseFloat(a.lat), lng: parseFloat(a.lon) };
-        }
-        countFreq[a.country_id] = (countFreq[a.country_id] || 0) + 1;
-      }
-    }
-    const geos = Object.values(countryMap);
-    if (geos.length < 2) continue;
-    geos.sort((a, b) => (countFreq[b.id] || 0) - (countFreq[a.id] || 0));
-    const maxFallback = Math.min(geos.length - 1, 2);
-    for (let i = 0; i < maxFallback; i++) {
-      const from = geos[i], to = geos[i + 1];
-      arcs.push({
-        thread_id: thread.id,
-        from_name: from.name, from_lat: from.lat, from_lng: from.lng,
-        to_name:   to.name,   to_lat:   to.lat,   to_lng:   to.lng,
-        is_city_arc: false,
-      });
-    }
+    // No fallback — arcs are only drawn when the script explicitly mentions
+    // the locations as relevant actors. Article source countries are not enough.
   }
 
   return arcs;
