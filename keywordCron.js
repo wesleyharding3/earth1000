@@ -24,7 +24,19 @@ const ONLY_RISING   = process.argv.includes('--rising');
 const DO_TRENDING   = !ONLY_RISING;
 const DO_RISING     = !ONLY_TRENDING;
 
+const DATE_LIKE_KEYWORD_PATTERNS = [
+  /^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?$/i,
+  /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/i,
+  /^(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?$/i,
+  /^\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)(?:\s+\d{4})?$/i,
+];
+
 function elapsed(t0) { return `${((Date.now() - t0) / 1000).toFixed(1)}s`; }
+
+function isDateLikeKeyword(keyword) {
+  const value = typeof keyword === 'string' ? keyword.trim() : '';
+  return value ? DATE_LIKE_KEYWORD_PATTERNS.some((pattern) => pattern.test(value)) : false;
+}
 
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
@@ -91,7 +103,7 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
     ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
     LIMIT $3
   `, [days, baselineDays, limit]);
-  return rows;
+  return rows.filter((row) => !isDateLikeKeyword(row && row.keyword));
 }
 
 // ── Cache writer ─────────────────────────────────────────────────────────────

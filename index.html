@@ -2710,13 +2710,13 @@
 }
 
 /* ===============================
-       Three-Page Swipe System
+       Four-Page Swipe System
     =============================== */
    #pageTrack {
       position: fixed;
       top: 0;
       left: -100vw;
-      width: 300vw;
+      width: 400vw;
       height: 100%;
       display: flex;
       transition: left 0.48s cubic-bezier(0.32, 0.72, 0, 1);
@@ -2738,6 +2738,14 @@
       background: #000;
       display: flex;
       flex-direction: column;
+      z-index: 1;
+    }
+    #pageCluster {
+      background:
+        radial-gradient(circle at 18% 18%, rgba(56, 170, 255, 0.16), transparent 32%),
+        radial-gradient(circle at 82% 15%, rgba(255, 178, 88, 0.14), transparent 28%),
+        radial-gradient(circle at 50% 100%, rgba(18, 120, 255, 0.12), transparent 42%),
+        linear-gradient(180deg, #04070d 0%, #060a12 100%);
       z-index: 1;
     }
     #pageStats {
@@ -2762,6 +2770,340 @@
       color: #4ab8ff;
       text-shadow: 0 0 10px rgba(74,184,255,0.9), 0 0 24px rgba(74,184,255,0.55), 0 0 48px rgba(74,184,255,0.25);
       user-select: none;
+    }
+    #clusterPage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      color: #f2f7ff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    #clusterCanvasWrap {
+      position: absolute;
+      inset: 0;
+    }
+    #clusterCanvasWrap canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #clusterBackdrop {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.03), transparent 40%),
+        radial-gradient(circle at 22% 24%, rgba(70,170,255,0.12), transparent 26%),
+        radial-gradient(circle at 74% 30%, rgba(255,190,100,0.10), transparent 20%);
+      mix-blend-mode: screen;
+      opacity: 0.9;
+    }
+    #clusterHud {
+      position: absolute;
+      top: 18px;
+      left: 18px;
+      right: 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .clusterTitleBlock {
+      max-width: min(560px, calc(100vw - 60px));
+      pointer-events: all;
+    }
+    .clusterEyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(126, 202, 255, 0.9);
+      text-shadow: 0 0 16px rgba(59, 146, 255, 0.28);
+      margin-bottom: 10px;
+    }
+    .clusterTitle {
+      font-size: clamp(24px, 4vw, 38px);
+      font-weight: 650;
+      line-height: 1.02;
+      margin: 0 0 10px;
+      color: #f8fbff;
+      letter-spacing: -0.03em;
+    }
+    .clusterSub {
+      margin: 0;
+      max-width: 560px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: rgba(222, 234, 248, 0.75);
+    }
+    #clusterTopStats {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      pointer-events: all;
+    }
+    .clusterStat {
+      min-width: 92px;
+      padding: 11px 13px 10px;
+      border-radius: 14px;
+      background: rgba(6, 12, 24, 0.56);
+      border: 1px solid rgba(118, 167, 255, 0.18);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.28);
+    }
+    .clusterStatNum {
+      display: block;
+      font-size: 19px;
+      font-weight: 700;
+      color: #f8fbff;
+      margin-bottom: 3px;
+    }
+    .clusterStatLabel {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(191, 212, 237, 0.62);
+    }
+    #clusterBottomBar {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: calc(22px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      z-index: 6;
+      pointer-events: none;
+    }
+    #clusterStatusPill {
+      max-width: min(430px, 62vw);
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(6, 12, 24, 0.72);
+      border: 1px solid rgba(118, 167, 255, 0.2);
+      color: rgba(223, 234, 247, 0.84);
+      font-size: 12px;
+      line-height: 1.45;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      pointer-events: all;
+      box-shadow: 0 16px 36px rgba(0,0,0,0.24);
+    }
+    #clusterLegend {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      pointer-events: all;
+    }
+    .clusterLegendChip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      background: rgba(6, 12, 24, 0.62);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: rgba(228, 236, 245, 0.74);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+    .clusterLegendDot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      box-shadow: 0 0 12px currentColor;
+    }
+    #clusterTooltip {
+      position: absolute;
+      min-width: 220px;
+      max-width: 280px;
+      padding: 12px 13px;
+      border-radius: 14px;
+      background: rgba(4, 9, 20, 0.88);
+      border: 1px solid rgba(118, 167, 255, 0.24);
+      color: #edf4ff;
+      pointer-events: none;
+      transform: translate(14px, 14px);
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      z-index: 7;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 18px 42px rgba(0,0,0,0.34);
+    }
+    #clusterTooltip.on { opacity: 1; }
+    .clusterTooltipLabel {
+      display: inline-block;
+      margin-bottom: 7px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(133, 202, 255, 0.84);
+    }
+    .clusterTooltipTitle {
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.3;
+      margin-bottom: 8px;
+      color: #ffffff;
+    }
+    .clusterTooltipMeta {
+      font-size: 11px;
+      line-height: 1.5;
+      color: rgba(215, 227, 241, 0.72);
+    }
+    #clusterDetail {
+      position: absolute;
+      top: 132px;
+      right: 18px;
+      width: min(340px, calc(100vw - 36px));
+      max-height: calc(100vh - 240px);
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(6, 12, 24, 0.72);
+      border: 1px solid rgba(118, 167, 255, 0.18);
+      color: #eef4ff;
+      z-index: 6;
+      overflow: auto;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 20px 44px rgba(0,0,0,0.34);
+    }
+    .clusterDetailEmpty {
+      color: rgba(219, 230, 243, 0.66);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .clusterDetailType {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(133, 202, 255, 0.84);
+      margin-bottom: 9px;
+    }
+    .clusterDetailTitle {
+      font-size: 20px;
+      line-height: 1.12;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 9px;
+      color: #fff;
+    }
+    .clusterDetailSummary {
+      color: rgba(220, 230, 242, 0.78);
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 14px;
+    }
+    .clusterDetailGrid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .clusterDetailMetric {
+      padding: 11px 12px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.035);
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    .clusterDetailMetricNum {
+      display: block;
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 3px;
+      color: #fff;
+    }
+    .clusterDetailMetricLabel {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(192, 212, 237, 0.56);
+    }
+    .clusterTagRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .clusterTag {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(94, 152, 255, 0.12);
+      border: 1px solid rgba(94, 152, 255, 0.2);
+      color: rgba(222, 235, 255, 0.82);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .clusterDetailNeighbors {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .clusterNeighbor {
+      padding: 10px 11px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.035);
+      border: 1px solid rgba(255,255,255,0.05);
+      font-size: 12px;
+      color: rgba(223, 233, 246, 0.78);
+      line-height: 1.45;
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+    }
+    .clusterNeighbor:hover {
+      background: rgba(94, 152, 255, 0.12);
+      border-color: rgba(94, 152, 255, 0.24);
+      transform: translateY(-1px);
+    }
+    .clusterNeighborTitle {
+      display: block;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 3px;
+    }
+    @media (max-width: 900px) {
+      #clusterHud {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #clusterTopStats {
+        justify-content: flex-start;
+      }
+      #clusterDetail {
+        top: auto;
+        right: 14px;
+        left: 14px;
+        bottom: calc(92px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        width: auto;
+        max-height: 38vh;
+      }
+      #clusterBottomBar {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      #clusterStatusPill {
+        max-width: none;
+      }
+      #clusterLegend {
+        justify-content: flex-start;
+      }
     }
     .stats-row {
       display: grid;
@@ -6014,6 +6356,7 @@
 
     window.__currentPage = 1;
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
+    window.THREE = THREE;
 
     // ── Supported interface/translate languages ──────────────────────────────────
     const SUPPORTED_LANGUAGES = [
@@ -13426,6 +13769,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
   })();
   </script>
 </div><!-- /pageNews -->
+
+<div class="page" id="pageCluster">
+  <div id="clusterPage">
+    <div id="clusterCanvasWrap"></div>
+    <div id="clusterBackdrop"></div>
+
+    <div id="clusterHud">
+      <div class="clusterTitleBlock">
+        <div class="clusterEyebrow">Cluster Map</div>
+        <h2 class="clusterTitle">Stories form semantic constellations across the last week.</h2>
+        <p class="clusterSub">Each point is a story thread. Nearby threads share multilingual topic signals, overlap in place or framing, or resolve toward the same normalized concepts.</p>
+      </div>
+      <div id="clusterTopStats">
+        <div class="clusterStat">
+          <span class="clusterStatNum" id="clusterStatThreads">0</span>
+          <span class="clusterStatLabel">Threads</span>
+        </div>
+        <div class="clusterStat">
+          <span class="clusterStatNum" id="clusterStatGroups">0</span>
+          <span class="clusterStatLabel">Clusters</span>
+        </div>
+        <div class="clusterStat">
+          <span class="clusterStatNum" id="clusterStatEdges">0</span>
+          <span class="clusterStatLabel">Links</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="clusterDetail">
+      <div class="clusterDetailEmpty">Loading the latest weekly cluster snapshot…</div>
+    </div>
+
+    <div id="clusterTooltip"></div>
+
+    <div id="clusterBottomBar">
+      <div id="clusterStatusPill">Connecting to the latest weekly cluster snapshot…</div>
+      <div id="clusterLegend"></div>
+    </div>
+  </div>
+</div><!-- /pageCluster -->
 </div><!-- /pageTrack -->
 
 <!-- ── Article Detail Panel ── -->
@@ -13456,13 +13839,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   <div class="pageNavDot" data-page="2">
     <span class="navDotLabel">News</span>
   </div>
+  <div class="pageNavDot" data-page="3">
+    <span class="navDotLabel">Cluster</span>
+  </div>
 </div>
 
 <script>
   (function setupPageSwipe() {
     const track = document.getElementById("pageTrack");
     const dots  = document.querySelectorAll(".pageNavDot");
-    const PAGES = 3;
+    const PAGES = 4;
     let current = 1;
 
     function goTo(idx, animate = true) {
@@ -13535,6 +13921,566 @@ const settingsToggle     = document.getElementById("settingsToggle");
   })();
 
 
+</script>
+
+<script>
+  (function setupClusterPage() {
+    const THREE = window.THREE;
+    if (!THREE) return;
+
+    const BASE = "https://earth-wjr6.onrender.com";
+    const CATEGORY_COLORS = {
+      politics: "#5aa9ff",
+      economy: "#ffb14e",
+      military: "#ff6a5f",
+      diplomacy: "#8fd1a8",
+      environment: "#73d483",
+      technology: "#7fc0ff",
+      society: "#d6e1ff",
+      sports: "#f17cff",
+      culture: "#ffd978",
+      default: "#9bbcff"
+    };
+
+    const wrap = document.getElementById("clusterCanvasWrap");
+    const tooltipEl = document.getElementById("clusterTooltip");
+    const detailEl = document.getElementById("clusterDetail");
+    const statusEl = document.getElementById("clusterStatusPill");
+    const legendEl = document.getElementById("clusterLegend");
+    const statThreadsEl = document.getElementById("clusterStatThreads");
+    const statGroupsEl = document.getElementById("clusterStatGroups");
+    const statEdgesEl = document.getElementById("clusterStatEdges");
+
+    if (!wrap || !tooltipEl || !detailEl) return;
+
+    const state = {
+      run: null,
+      groups: [],
+      nodes: [],
+      edges: [],
+      nodeMap: new Map(),
+      groupMap: new Map(),
+      interactive: [],
+      hovered: null,
+      selected: null,
+      pointer: new THREE.Vector2(2, 2),
+      drag: null,
+      yaw: -0.36,
+      pitch: 0.2,
+      distance: 122,
+      lastInteractionAt: performance.now()
+    };
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      powerPreference: "high-performance"
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(Math.max(1, wrap.clientWidth), Math.max(1, wrap.clientHeight));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    wrap.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 2000);
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Line.threshold = 1.2;
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.95);
+    scene.add(ambient);
+
+    const keyLight = new THREE.PointLight(0x87bbff, 1.15, 0, 2);
+    keyLight.position.set(45, 55, 70);
+    scene.add(keyLight);
+
+    const warmLight = new THREE.PointLight(0xffb56d, 0.85, 0, 2);
+    warmLight.position.set(-60, -20, 45);
+    scene.add(warmLight);
+
+    const world = new THREE.Group();
+    const cloudGroup = new THREE.Group();
+    const linkGroup = new THREE.Group();
+    const nodeGroup = new THREE.Group();
+    const starGroup = new THREE.Group();
+
+    world.add(starGroup);
+    world.add(linkGroup);
+    world.add(cloudGroup);
+    world.add(nodeGroup);
+    scene.add(world);
+
+    const nodeGeometry = new THREE.SphereGeometry(1, 18, 18);
+    const cloudGeometry = new THREE.SphereGeometry(1, 20, 20);
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0x7fb6ff,
+      transparent: true,
+      opacity: 0.18,
+      blending: THREE.AdditiveBlending
+    });
+
+    buildLegend();
+    renderDetailEmpty("Loading the latest weekly cluster snapshot...");
+    setStatus("Connecting to the latest weekly cluster snapshot...");
+
+    function esc(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;");
+    }
+
+    function fmtNum(value) {
+      return Number(value || 0).toLocaleString("en-US");
+    }
+
+    function fmtDate(value) {
+      if (!value) return "Unknown";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return "Unknown";
+      return date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+      });
+    }
+
+    function categoryColor(category) {
+      return CATEGORY_COLORS[(category || "").toLowerCase()] || CATEGORY_COLORS.default;
+    }
+
+    function keywordList(items, limit) {
+      if (!Array.isArray(items)) return [];
+      return items
+        .map((item) => {
+          if (typeof item === "string") return item;
+          return item && typeof item.value === "string" ? item.value : "";
+        })
+        .filter(Boolean)
+        .slice(0, limit);
+    }
+
+    function buildLegend() {
+      const entries = [
+        ["military", "Military"],
+        ["politics", "Politics"],
+        ["economy", "Economy"],
+        ["diplomacy", "Diplomacy"],
+        ["technology", "Technology"]
+      ];
+      legendEl.innerHTML = entries.map(([key, label]) => `
+        <div class="clusterLegendChip">
+          <span class="clusterLegendDot" style="background:${categoryColor(key)};color:${categoryColor(key)}"></span>
+          <span>${label}</span>
+        </div>
+      `).join("");
+    }
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function updateStats() {
+      statThreadsEl.textContent = fmtNum(state.nodes.length);
+      statGroupsEl.textContent = fmtNum(state.groups.length);
+      statEdgesEl.textContent = fmtNum(state.edges.length);
+    }
+
+    function renderDetailEmpty(text) {
+      detailEl.innerHTML = `<div class="clusterDetailEmpty">${esc(text)}</div>`;
+    }
+
+    function renderDetailForNode(node) {
+      const group = state.groupMap.get(node.cluster_id);
+      const keywords = keywordList(node.feature_keywords, 8);
+      const topCountries = keywordList(node.top_countries, 4);
+      const topLanguages = keywordList(node.top_languages, 4);
+      detailEl.innerHTML = `
+        <div class="clusterDetailType">Story Thread</div>
+        <div class="clusterDetailTitle">${esc(node.title || "Untitled thread")}</div>
+        <div class="clusterDetailSummary">${esc(node.description || "This thread groups related coverage from the last week into a single multilingual story point.")}</div>
+        <div class="clusterDetailGrid">
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(node.article_count)}</span>
+            <span class="clusterDetailMetricLabel">Articles</span>
+          </div>
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(node.language_count)}</span>
+            <span class="clusterDetailMetricLabel">Languages</span>
+          </div>
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(node.source_country_count)}</span>
+            <span class="clusterDetailMetricLabel">Countries</span>
+          </div>
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(node.importance || 0)}</span>
+            <span class="clusterDetailMetricLabel">Importance</span>
+          </div>
+        </div>
+        ${keywords.length ? `<div class="clusterTagRow">${keywords.map((item) => `<span class="clusterTag">${esc(item)}</span>`).join("")}</div>` : ""}
+        <div class="clusterDetailSummary">
+          ${group ? `Cluster: <strong>${esc(group.label || "Unlabeled cluster")}</strong>` : "Standalone thread"}
+          <br>
+          ${topCountries.length ? `Top countries: ${esc(topCountries.join(", "))}` : "Countries are still resolving for this thread."}
+          <br>
+          ${topLanguages.length ? `Languages: ${esc(topLanguages.join(", "))}` : "Language spread unavailable."}
+        </div>
+      `;
+    }
+
+    function renderDetailForGroup(group) {
+      const properties = keywordList(group.shared_properties, 8);
+      detailEl.innerHTML = `
+        <div class="clusterDetailType">Cluster</div>
+        <div class="clusterDetailTitle">${esc(group.label || "Unlabeled cluster")}</div>
+        <div class="clusterDetailSummary">${esc(group.summary || "This cluster groups nearby threads that share multilingual topic, geography, and framing signals across the week.")}</div>
+        <div class="clusterDetailGrid">
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(group.node_count)}</span>
+            <span class="clusterDetailMetricLabel">Threads</span>
+          </div>
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(group.article_count)}</span>
+            <span class="clusterDetailMetricLabel">Articles</span>
+          </div>
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(group.language_count)}</span>
+            <span class="clusterDetailMetricLabel">Languages</span>
+          </div>
+          <div class="clusterDetailMetric">
+            <span class="clusterDetailMetricNum">${fmtNum(group.source_country_count)}</span>
+            <span class="clusterDetailMetricLabel">Countries</span>
+          </div>
+        </div>
+        ${properties.length ? `<div class="clusterTagRow">${properties.map((item) => `<span class="clusterTag">${esc(item)}</span>`).join("")}</div>` : ""}
+      `;
+    }
+
+    function setTooltip(item, event) {
+      if (!item) {
+        tooltipEl.classList.remove("on");
+        return;
+      }
+      if (item.kind === "node") {
+        const node = item.data;
+        tooltipEl.innerHTML = `
+          <div class="clusterTooltipLabel">Thread</div>
+          <div class="clusterTooltipTitle">${esc(node.title || "Untitled thread")}</div>
+          <div class="clusterTooltipMeta">
+            ${fmtNum(node.article_count)} articles<br>
+            ${fmtNum(node.language_count)} languages<br>
+            ${(node.primary_category || "uncategorized").toUpperCase()}
+          </div>
+        `;
+      } else {
+        const group = item.data;
+        tooltipEl.innerHTML = `
+          <div class="clusterTooltipLabel">Cluster</div>
+          <div class="clusterTooltipTitle">${esc(group.label || "Unlabeled cluster")}</div>
+          <div class="clusterTooltipMeta">
+            ${fmtNum(group.node_count)} threads<br>
+            ${fmtNum(group.article_count)} articles<br>
+            ${(group.primary_category || "uncategorized").toUpperCase()}
+          </div>
+        `;
+      }
+      tooltipEl.style.left = `${event.clientX}px`;
+      tooltipEl.style.top = `${event.clientY}px`;
+      tooltipEl.classList.add("on");
+    }
+
+    function normalizeSnapshot(data) {
+      const groups = Array.isArray(data && data.groups) ? data.groups : [];
+      const nodes = Array.isArray(data && data.nodes) ? data.nodes : [];
+      const edges = Array.isArray(data && data.edges) ? data.edges : [];
+
+      const maxCoord = Math.max(1, ...nodes.flatMap((node) => {
+        const p = node.position || {};
+        return [Math.abs(Number(p.x) || 0), Math.abs(Number(p.y) || 0), Math.abs(Number(p.z) || 0)];
+      }));
+      const scale = maxCoord > 52 ? 52 / maxCoord : 1;
+
+      return {
+        run: data && data.run ? data.run : null,
+        groups: groups.map((group) => ({
+          ...group,
+          centroid: {
+            x: (Number(group.centroid && group.centroid.x) || 0) * scale,
+            y: (Number(group.centroid && group.centroid.y) || 0) * scale,
+            z: (Number(group.centroid && group.centroid.z) || 0) * scale
+          },
+          spread: Math.max(3.5, Math.min(14, Number(group.spread) || 0))
+        })),
+        nodes: nodes.map((node) => ({
+          ...node,
+          position: {
+            x: (Number(node.position && node.position.x) || 0) * scale,
+            y: (Number(node.position && node.position.y) || 0) * scale,
+            z: (Number(node.position && node.position.z) || 0) * scale
+          }
+        })),
+        edges
+      };
+    }
+
+    function clearScene() {
+      state.interactive = [];
+      while (cloudGroup.children.length) cloudGroup.remove(cloudGroup.children[0]);
+      while (linkGroup.children.length) {
+        const child = linkGroup.children[0];
+        if (child.geometry) child.geometry.dispose();
+        linkGroup.remove(child);
+      }
+      while (nodeGroup.children.length) nodeGroup.remove(nodeGroup.children[0]);
+    }
+
+    function buildStars() {
+      while (starGroup.children.length) {
+        const child = starGroup.children[0];
+        if (child.geometry) child.geometry.dispose();
+        starGroup.remove(child);
+      }
+      const count = 700;
+      const positions = new Float32Array(count * 3);
+      const sizes = new Float32Array(count);
+      for (let i = 0; i < count; i += 1) {
+        const radius = 180 + Math.random() * 280;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos((Math.random() * 2) - 1);
+        positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+        positions[i * 3 + 2] = radius * Math.cos(phi);
+        sizes[i] = 1 + Math.random() * 2.8;
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+      const material = new THREE.PointsMaterial({
+        color: 0xbfdcff,
+        size: 1.6,
+        transparent: true,
+        opacity: 0.76,
+        depthWrite: false
+      });
+      starGroup.add(new THREE.Points(geometry, material));
+    }
+
+    function buildScene(snapshot) {
+      clearScene();
+      state.nodeMap = new Map(snapshot.nodes.map((node) => [node.thread_id, node]));
+      state.groupMap = new Map(snapshot.groups.map((group) => [group.cluster_id, group]));
+      state.nodes = snapshot.nodes;
+      state.groups = snapshot.groups;
+      state.edges = snapshot.edges;
+      updateStats();
+
+      snapshot.groups.forEach((group) => {
+        const color = new THREE.Color(categoryColor(group.primary_category));
+        const material = new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.08,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        });
+        const mesh = new THREE.Mesh(cloudGeometry, material);
+        mesh.position.set(group.centroid.x, group.centroid.y, group.centroid.z);
+        const scale = Math.max(4.4, Math.min(18, group.spread * 1.08));
+        mesh.scale.setScalar(scale);
+        mesh.userData = { kind: "group", data: group };
+        cloudGroup.add(mesh);
+        state.interactive.push(mesh);
+      });
+
+      snapshot.edges.forEach((edge) => {
+        const source = state.nodeMap.get(edge.source_thread_id);
+        const target = state.nodeMap.get(edge.target_thread_id);
+        if (!source || !target) return;
+        const geometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(source.position.x, source.position.y, source.position.z),
+          new THREE.Vector3(target.position.x, target.position.y, target.position.z)
+        ]);
+        const line = new THREE.Line(geometry, lineMaterial.clone());
+        line.material.opacity = Math.max(0.08, Math.min(0.28, edge.weight * 0.34));
+        linkGroup.add(line);
+      });
+
+      snapshot.nodes.forEach((node) => {
+        const color = new THREE.Color(categoryColor(node.primary_category));
+        const material = new THREE.MeshPhongMaterial({
+          color,
+          emissive: color.clone().multiplyScalar(0.6),
+          emissiveIntensity: 0.72,
+          shininess: 90,
+          transparent: true,
+          opacity: 0.96
+        });
+        const mesh = new THREE.Mesh(nodeGeometry, material);
+        mesh.position.set(node.position.x, node.position.y, node.position.z);
+        const size = 0.7
+          + Math.min(1.6, (Number(node.importance) || 0) * 0.08)
+          + Math.min(0.65, Math.log2(1 + (Number(node.article_count) || 0)) * 0.14);
+        mesh.scale.setScalar(size);
+        mesh.userData = { kind: "node", data: node, baseScale: size };
+        nodeGroup.add(mesh);
+        state.interactive.push(mesh);
+      });
+
+      const topGroup = snapshot.groups[0];
+      if (topGroup) renderDetailForGroup(topGroup);
+      else renderDetailEmpty("No weekly cluster data is available yet.");
+    }
+
+    async function loadSnapshot() {
+      try {
+        setStatus("Loading the latest weekly cluster snapshot...");
+        const response = await fetch(`${BASE}/api/clusters/weekly`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        const snapshot = normalizeSnapshot(data);
+        state.run = snapshot.run;
+        buildScene(snapshot);
+        if (snapshot.run) {
+          setStatus(
+            `Weekly snapshot ${fmtDate(snapshot.run.window_start)} - ${fmtDate(snapshot.run.window_end)}. `
+            + `${snapshot.run.algorithm_version || "cluster build"} completed ${fmtDate(snapshot.run.completed_at)}.`
+          );
+        } else {
+          setStatus("Weekly cluster snapshot loaded.");
+        }
+      } catch (error) {
+        console.error("[clusterPage]", error);
+        setStatus("Cluster snapshot failed to load.");
+        renderDetailEmpty("The cluster map could not load its weekly snapshot right now.");
+      }
+    }
+
+    function updateCamera() {
+      const idleMs = performance.now() - state.lastInteractionAt;
+      if (!state.drag && idleMs > 2200) state.yaw += 0.00135;
+      const pitch = Math.max(-1.15, Math.min(1.15, state.pitch));
+      const distance = Math.max(42, Math.min(190, state.distance));
+      camera.position.set(
+        Math.cos(pitch) * Math.sin(state.yaw) * distance,
+        Math.sin(pitch) * distance,
+        Math.cos(pitch) * Math.cos(state.yaw) * distance
+      );
+      camera.lookAt(0, 0, 0);
+    }
+
+    function animateSelection() {
+      const t = performance.now() * 0.0042;
+      nodeGroup.children.forEach((mesh) => {
+        const baseScale = mesh.userData.baseScale || 1;
+        let scale = baseScale;
+        if (state.selected && state.selected.kind === "node" && state.selected.data.thread_id === mesh.userData.data.thread_id) {
+          scale *= 1.2 + Math.sin(t) * 0.05;
+        } else if (state.hovered && state.hovered.kind === "node" && state.hovered.data.thread_id === mesh.userData.data.thread_id) {
+          scale *= 1.12;
+        }
+        mesh.scale.setScalar(scale);
+      });
+
+      cloudGroup.children.forEach((mesh) => {
+        mesh.material.opacity = 0.08;
+        if (state.selected && state.selected.kind === "group" && state.selected.data.cluster_id === mesh.userData.data.cluster_id) {
+          mesh.material.opacity = 0.18;
+        } else if (state.hovered && state.hovered.kind === "group" && state.hovered.data.cluster_id === mesh.userData.data.cluster_id) {
+          mesh.material.opacity = 0.14;
+        }
+      });
+    }
+
+    function pick(event) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      state.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      state.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(state.pointer, camera);
+      const hits = raycaster.intersectObjects(state.interactive, false);
+      const hit = hits.find((entry) => entry.object && entry.object.userData && entry.object.userData.kind);
+      return hit ? hit.object.userData : null;
+    }
+
+    function onPointerMove(event) {
+      if (state.drag) {
+        const dx = event.clientX - state.drag.startX;
+        const dy = event.clientY - state.drag.startY;
+        state.yaw = state.drag.startYaw - dx * 0.0062;
+        state.pitch = state.drag.startPitch - dy * 0.0052;
+        state.lastInteractionAt = performance.now();
+        tooltipEl.classList.remove("on");
+        return;
+      }
+
+      const hovered = pick(event);
+      state.hovered = hovered;
+      renderer.domElement.style.cursor = hovered ? "pointer" : "grab";
+      if (hovered) setTooltip(hovered, event);
+      else tooltipEl.classList.remove("on");
+    }
+
+    function onPointerDown(event) {
+      state.drag = {
+        startX: event.clientX,
+        startY: event.clientY,
+        startYaw: state.yaw,
+        startPitch: state.pitch
+      };
+      state.lastInteractionAt = performance.now();
+      renderer.domElement.style.cursor = "grabbing";
+    }
+
+    function onPointerUp(event) {
+      const drag = state.drag;
+      state.drag = null;
+      state.lastInteractionAt = performance.now();
+      const moved = drag ? Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) : 0;
+      if (moved < 6) {
+        const picked = pick(event);
+        if (picked) {
+          state.selected = picked;
+          if (picked.kind === "node") renderDetailForNode(picked.data);
+          else renderDetailForGroup(picked.data);
+        }
+      }
+      renderer.domElement.style.cursor = state.hovered ? "pointer" : "grab";
+    }
+
+    function onWheel(event) {
+      event.preventDefault();
+      state.distance += event.deltaY * 0.03;
+      state.lastInteractionAt = performance.now();
+    }
+
+    function onResize() {
+      const width = Math.max(1, wrap.clientWidth);
+      const height = Math.max(1, wrap.clientHeight);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    }
+
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("resize", onResize);
+
+    buildStars();
+    onResize();
+    renderer.domElement.style.cursor = "grab";
+
+    (function animate() {
+      requestAnimationFrame(animate);
+      updateCamera();
+      animateSelection();
+      world.rotation.y += 0.00045;
+      renderer.render(scene, camera);
+    })();
+
+    loadSnapshot();
+  })();
 </script>
 
 

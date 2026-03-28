@@ -24,6 +24,18 @@ app.use(cors({
 }));
 app.use(express.json());
 
+const DATE_LIKE_KEYWORD_PATTERNS = [
+  /^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?$/i,
+  /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/i,
+  /^(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?$/i,
+  /^\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)(?:\s+\d{4})?$/i,
+];
+
+function isDateLikeKeyword(keyword) {
+  const value = typeof keyword === "string" ? keyword.trim() : "";
+  return value ? DATE_LIKE_KEYWORD_PATTERNS.some((pattern) => pattern.test(value)) : false;
+}
+
 /* =========================================
    Auth Middleware
    SUPABASE_JWT_SECRET must be set in .env
@@ -1798,7 +1810,7 @@ app.get("/api/keywords/rising", async (req, res) => {
       const dbCached = await getDbKeywordCache("rising", "global", 240); // 4h
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
-        return res.json(dbCached.slice(0, limitInt));
+        return res.json(dbCached.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt));
       }
     }
 
@@ -1862,7 +1874,7 @@ app.get("/api/keywords/rising", async (req, res) => {
       return result.rows;
     });
 
-    res.json(rows);
+    res.json(rows.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt));
   } catch (err) {
     console.error("[keywords/rising]", err.message);
     res.status(500).json({ error: "rising failed" });
