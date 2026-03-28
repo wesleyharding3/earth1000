@@ -11,7 +11,7 @@
       --mobile-control-scale: 1;
       --touch-control-min-height: 26px;
       --touch-icon-size: 40px;
-      --page-nav-height: 48px;
+      --page-nav-height: 42px;
       --global-ticker-height: 30px;
       --global-ticker-gap: 8px;
     }
@@ -2786,6 +2786,12 @@
       position: absolute;
       inset: 0;
     }
+    #clusterLabelsLayer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 4;
+    }
     #clusterCanvasWrap canvas {
       width: 100%;
       height: 100%;
@@ -2927,6 +2933,52 @@
       border-radius: 50%;
       flex: 0 0 auto;
       box-shadow: 0 0 12px currentColor;
+    }
+    .clusterFloatingLabel {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      min-width: 120px;
+      max-width: min(240px, 28vw);
+      padding: 10px 12px 9px;
+      border-radius: 14px;
+      background: rgba(6, 12, 24, 0.72);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 20px 44px rgba(0,0,0,0.28);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      opacity: 0;
+      transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+    }
+    .clusterFloatingLabel.on {
+      opacity: 1;
+    }
+    .clusterFloatingLabel.active {
+      border-color: rgba(255,255,255,0.28);
+      background: rgba(8, 16, 31, 0.82);
+    }
+    .clusterFloatingLabelEyebrow {
+      display: block;
+      margin-bottom: 5px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(188, 213, 241, 0.66);
+    }
+    .clusterFloatingLabelTitle {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.2;
+      color: #f6fbff;
+      text-wrap: balance;
+    }
+    .clusterFloatingLabelMeta {
+      display: block;
+      margin-top: 6px;
+      font-size: 10px;
+      line-height: 1.35;
+      color: rgba(206, 223, 242, 0.64);
     }
     #clusterTooltip {
       position: absolute;
@@ -4085,8 +4137,8 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 4px;
-      padding: 8px 4px 7px;
+      gap: 3px;
+      padding: 6px 4px 5px;
       min-height: var(--page-nav-height);
       cursor: pointer;
       color: rgba(255,180,80,0.32);
@@ -4111,7 +4163,7 @@
     .tabItem:hover { color: rgba(255,180,80,0.6); }
     .tabItem.active { color: rgba(255,205,115,1); }
     .tabIcon {
-      width: 20px; height: 20px;
+      width: 18px; height: 18px;
       stroke: currentColor;
       fill: none;
       stroke-width: 1.75;
@@ -4120,7 +4172,7 @@
       flex-shrink: 0;
     }
     .tabLabel {
-      font-size: 8px;
+      font-size: 7px;
       font-weight: 700;
       letter-spacing: 0.1em;
       text-transform: uppercase;
@@ -13818,6 +13870,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 <div class="page" id="pageCluster">
   <div id="clusterPage">
     <div id="clusterCanvasWrap"></div>
+    <div id="clusterLabelsLayer"></div>
     <div id="clusterBackdrop"></div>
 
     <div id="clusterHud">
@@ -13998,6 +14051,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     };
 
     const wrap = document.getElementById("clusterCanvasWrap");
+    const labelsLayerEl = document.getElementById("clusterLabelsLayer");
     const tooltipEl = document.getElementById("clusterTooltip");
     const detailEl = document.getElementById("clusterDetail");
     const statusEl = document.getElementById("clusterStatusPill");
@@ -14015,6 +14069,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       edges: [],
       nodeMap: new Map(),
       groupMap: new Map(),
+      labelEls: new Map(),
       interactive: [],
       hovered: null,
       selected: null,
@@ -14116,6 +14171,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
         .slice(0, limit);
     }
 
+    function titleCase(value) {
+      return String(value || "")
+        .toLowerCase()
+        .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+    }
+
+    function englishGroupTitle(group) {
+      const direct = String(group && group.label || "").trim();
+      if (direct) return direct;
+
+      const props = keywordList(group && group.shared_properties, 3);
+      if (props.length >= 2) return `${titleCase(props[0])} and ${titleCase(props[1])}`;
+      if (props.length === 1) return titleCase(props[0]);
+
+      const category = titleCase(group && group.primary_category || "Global");
+      return `${category} Story Cluster`;
+    }
+
     function buildLegend() {
       const entries = [
         ["military", "Military"],
@@ -14175,7 +14248,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         </div>
         ${keywords.length ? `<div class="clusterTagRow">${keywords.map((item) => `<span class="clusterTag">${esc(item)}</span>`).join("")}</div>` : ""}
         <div class="clusterDetailSummary">
-          ${group ? `Cluster: <strong>${esc(group.label || "Unlabeled cluster")}</strong>` : "Standalone thread"}
+          ${group ? `Cluster: <strong>${esc(englishGroupTitle(group))}</strong>` : "Standalone thread"}
           <br>
           ${topCountries.length ? `Top countries: ${esc(topCountries.join(", "))}` : "Countries are still resolving for this thread."}
           <br>
@@ -14188,7 +14261,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const properties = keywordList(group.shared_properties, 8);
       detailEl.innerHTML = `
         <div class="clusterDetailType">Cluster</div>
-        <div class="clusterDetailTitle">${esc(group.label || "Unlabeled cluster")}</div>
+        <div class="clusterDetailTitle">${esc(englishGroupTitle(group))}</div>
         <div class="clusterDetailSummary">${esc(group.summary || "This cluster groups nearby threads that share multilingual topic, geography, and framing signals across the week.")}</div>
         <div class="clusterDetailGrid">
           <div class="clusterDetailMetric">
@@ -14232,7 +14305,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const group = item.data;
         tooltipEl.innerHTML = `
           <div class="clusterTooltipLabel">Cluster</div>
-          <div class="clusterTooltipTitle">${esc(group.label || "Unlabeled cluster")}</div>
+          <div class="clusterTooltipTitle">${esc(englishGroupTitle(group))}</div>
           <div class="clusterTooltipMeta">
             ${fmtNum(group.node_count)} threads<br>
             ${fmtNum(group.article_count)} articles<br>
@@ -14256,10 +14329,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const scale = maxCoord > 52 ? 52 / maxCoord : 1;
 
-      return {
+      const normalized = {
         run: data && data.run ? data.run : null,
         groups: groups.map((group) => ({
           ...group,
+          label: englishGroupTitle(group),
           centroid: {
             x: (Number(group.centroid && group.centroid.x) || 0) * scale,
             y: (Number(group.centroid && group.centroid.y) || 0) * scale,
@@ -14275,12 +14349,126 @@ const settingsToggle     = document.getElementById("settingsToggle");
             z: (Number(node.position && node.position.z) || 0) * scale
           }
         })),
-        edges
+        edges: edges.filter((edge) => {
+          const source = nodes.find((node) => Number(node.thread_id) === Number(edge.source_thread_id));
+          const target = nodes.find((node) => Number(node.thread_id) === Number(edge.target_thread_id));
+          return source && target && source.cluster_id && source.cluster_id === target.cluster_id;
+        })
       };
+
+      return separateSnapshotGroups(normalized);
+    }
+
+    function separateSnapshotGroups(snapshot) {
+      if (!snapshot.groups.length) return snapshot;
+
+      const groups = snapshot.groups.map((group, index) => ({
+        ...group,
+        centroid: { ...group.centroid }
+      }));
+      const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
+      const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
+      const orbitRadius = Math.max(18, Math.min(44, avgSpread * 2.8 + groups.length * 2.4));
+
+      groups.forEach((group, index) => {
+        const angle = (Math.PI * 2 * index) / Math.max(1, groups.length);
+        const base = orbitRadius + Math.min(18, index * 1.5);
+        const target = {
+          x: Math.cos(angle) * base,
+          y: ((index % 3) - 1) * (avgSpread * 0.45),
+          z: Math.sin(angle) * base
+        };
+        group._offset = {
+          x: target.x - group.centroid.x,
+          y: target.y - group.centroid.y,
+          z: target.z - group.centroid.z
+        };
+        group.centroid.x = target.x;
+        group.centroid.y = target.y;
+        group.centroid.z = target.z;
+        group.spread = Math.max(5.4, Math.min(16, group.spread * 0.92));
+      });
+
+      const nodes = snapshot.nodes.map((node) => {
+        const group = groupMap.get(node.cluster_id);
+        if (!group || !group._offset) return node;
+        return {
+          ...node,
+          position: {
+            x: node.position.x + group._offset.x,
+            y: node.position.y + group._offset.y,
+            z: node.position.z + group._offset.z
+          }
+        };
+      });
+
+      return {
+        ...snapshot,
+        groups: groups.map((group) => {
+          const next = { ...group };
+          delete next._offset;
+          return next;
+        }),
+        nodes
+      };
+    }
+
+    function clearLabels() {
+      state.labelEls.forEach((el) => el.remove());
+      state.labelEls.clear();
+      if (labelsLayerEl) labelsLayerEl.innerHTML = "";
+    }
+
+    function buildGroupLabels(groups) {
+      clearLabels();
+      if (!labelsLayerEl) return;
+      groups.forEach((group) => {
+        const el = document.createElement("div");
+        el.className = "clusterFloatingLabel";
+        el.innerHTML = `
+          <span class="clusterFloatingLabelEyebrow">${esc(group.primary_category || "Cluster")}</span>
+          <span class="clusterFloatingLabelTitle">${esc(englishGroupTitle(group))}</span>
+          <span class="clusterFloatingLabelMeta">${fmtNum(group.node_count)} threads · ${fmtNum(group.article_count)} articles</span>
+        `;
+        labelsLayerEl.appendChild(el);
+        state.labelEls.set(group.cluster_id, el);
+      });
+    }
+
+    function updateGroupLabels() {
+      if (!labelsLayerEl || !state.groups.length) return;
+      const width = Math.max(1, wrap.clientWidth);
+      const height = Math.max(1, wrap.clientHeight);
+      const activeGroupId = state.selected?.kind === "group"
+        ? state.selected.data.cluster_id
+        : state.hovered?.kind === "group"
+          ? state.hovered.data.cluster_id
+          : null;
+
+      state.groups.forEach((group) => {
+        const el = state.labelEls.get(group.cluster_id);
+        if (!el) return;
+        const projected = new THREE.Vector3(group.centroid.x, group.centroid.y, group.centroid.z).project(camera);
+        const visible = projected.z < 1 && projected.z > -1
+          && projected.x > -1.15 && projected.x < 1.15
+          && projected.y > -1.15 && projected.y < 1.15;
+        if (!visible) {
+          el.classList.remove("on", "active");
+          return;
+        }
+        const x = ((projected.x + 1) / 2) * width;
+        const y = ((-projected.y + 1) / 2) * height;
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        el.style.transform = `translate(-50%, -50%) scale(${activeGroupId === group.cluster_id ? 1.03 : 1})`;
+        el.classList.add("on");
+        el.classList.toggle("active", activeGroupId === group.cluster_id);
+      });
     }
 
     function clearScene() {
       state.interactive = [];
+      clearLabels();
       while (cloudGroup.children.length) cloudGroup.remove(cloudGroup.children[0]);
       while (linkGroup.children.length) {
         const child = linkGroup.children[0];
@@ -14329,6 +14517,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       state.groups = snapshot.groups;
       state.edges = snapshot.edges;
       updateStats();
+      buildGroupLabels(snapshot.groups);
 
       snapshot.groups.forEach((group) => {
         const color = new THREE.Color(categoryColor(group.primary_category));
@@ -14531,6 +14720,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       updateCamera();
       animateSelection();
       world.rotation.y += 0.00045;
+      updateGroupLabels();
       renderer.render(scene, camera);
     })();
 
