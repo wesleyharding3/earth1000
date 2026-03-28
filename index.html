@@ -16627,7 +16627,7 @@ grmClockTick();
         // ── Brighter, thicker arcs ──────────────────────────────────────────
         const baseMesh = window.buildArcLines(
           [[from.lat, from.lng, to.lat, to.lng]],
-          0xff8c00, 0.005, 0.88, key   // was: 0xff6600, 0.002, 0.28
+          0xff8c00, 0.005, 0.06, key
         );
         if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
         const pulseMesh = window.transPulseMeshes?.[key];
@@ -16660,14 +16660,13 @@ grmClockTick();
         Math.abs((c.lon ?? c.lng ?? 0) - lng) < _ctole
       );
     };
-    const _arcsAllCity = (seg.flow_arcs || []).every(a =>
-      !_isCountryCentroid(a.from_lat, a.from_lng ?? a.from_lon) &&
+    // City view if any arc endpoint is a real city (not a country centroid).
+    // Country-centroid endpoints will be resolved to capitals by resolveArcEndpoint.
+    const _arcsHasCity = (seg.flow_arcs || []).some(a =>
+      !_isCountryCentroid(a.from_lat, a.from_lng ?? a.from_lon) ||
       !_isCountryCentroid(a.to_lat,   a.to_lng   ?? a.to_lon)
     );
-    const _secsAllCity = (seg.secondary_locations || []).every(loc =>
-      !_isCountryCentroid(loc.lat, loc.lon ?? loc.lng)
-    );
-    const needsCityView = !!(seg.primary_city) && _arcsAllCity && _secsAllCity;
+    const needsCityView = !!(seg.primary_city) && (_arcsHasCity || !(seg.flow_arcs?.length));
 
     if (seg.type === 'story') {
       const primary   = seg.primary_city || seg.primary_country;
@@ -16736,7 +16735,7 @@ grmClockTick();
             if (samePoint) return;
             try {
               const key = `briefingAutoArc_${idx}_${i}`;
-              const baseMesh = window.buildArcLines([[rFrom.lat, rFrom.lng, rTo.lat, rTo.lng]], 0xff8c00, 0.005, 0.88, key);
+              const baseMesh = window.buildArcLines([[rFrom.lat, rFrom.lng, rTo.lat, rTo.lng]], 0xff8c00, 0.005, 0.06, key);
               if (baseMesh) { baseMesh.visible = true; arcMeshes.push(baseMesh); }
               const pulseMesh = window.transPulseMeshes?.[key];
               if (pulseMesh) {
