@@ -17,7 +17,6 @@ const Anthropic = require("@anthropic-ai/sdk");
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
-const ARTICLE_LIMIT   = 3000;  // max articles to pull per run
 const CLAUDE_BATCH    = 30;    // articles per Claude call
 const MIN_CLUSTER     = 2;     // min articles to form a cluster
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
@@ -35,10 +34,10 @@ async function run() {
   const elapsed = () => `+${((Date.now()-t0)/1000).toFixed(1)}s`;
 
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
-  console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: ${ARTICLE_LIMIT}`);
+  console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
-  const articles = await getUnthreadedArticles(LOOKBACK_HOURS, ARTICLE_LIMIT);
+  const articles = await getUnthreadedArticles(LOOKBACK_HOURS);
   console.log(`   [${elapsed()}] Found ${articles.length} unthreaded articles`);
   if (!articles.length) { console.log("   Nothing to thread. Done."); await pool.end(); return; }
 
@@ -293,7 +292,7 @@ async function coolDownInactiveThreads() {
 
 // ─── DB Queries ───────────────────────────────────────────────────────────────
 
-async function getUnthreadedArticles(hours, limit) {
+async function getUnthreadedArticles(hours) {
   // Step 1: pick up to 5 most-recent unthreaded articles per source, then
   // randomly sample across sources so all 7000 active feeds get fair representation.
   // ROW_NUMBER() within each source enforces the per-source cap while keeping
@@ -326,8 +325,7 @@ async function getUnthreadedArticles(hours, limit) {
     ) ranked
     WHERE source_rank <= 5
     ORDER BY RANDOM()
-    LIMIT $1
-  `, [limit]);
+  `);
 
   if (!baseRows.length) return [];
 

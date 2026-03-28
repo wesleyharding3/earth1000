@@ -36,6 +36,12 @@ function isDateLikeKeyword(keyword) {
   return value ? DATE_LIKE_KEYWORD_PATTERNS.some((pattern) => pattern.test(value)) : false;
 }
 
+function parseOptionalPositiveInt(value, fallback = null) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 /* =========================================
    Auth Middleware
    SUPABASE_JWT_SECRET must be set in .env
@@ -201,7 +207,7 @@ app.post("/api/images/resolve", async (req, res) => {
 ========================================= */
 app.get("/api/news/city/:cityId", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 10, 50);
+    const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
@@ -218,7 +224,7 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 ========================================= */
 app.get("/api/news/city/:cityId/global", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 50, 50);
+    const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
@@ -264,8 +270,9 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         AND a.city_id        != $1
         ${tagWhere}
       ORDER BY a.id, ${tagOrder}
-      LIMIT $2 OFFSET $3
-    `, [req.params.cityId, limit, offset]);
+      ${limit ? "LIMIT $2" : ""}
+      OFFSET $${limit ? 3 : 2}
+    `, limit ? [req.params.cityId, limit, offset] : [req.params.cityId, offset]);
 
     res.json(rows);
   } catch (err) {
@@ -279,7 +286,7 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
 ========================================= */
 app.get("/api/news/country/:countryId", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 50, 50);
+    const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
@@ -296,7 +303,7 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 ========================================= */
 app.get("/api/news/country/:countryId/global", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 50, 50);
+    const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
@@ -342,8 +349,9 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         AND a.country_id     != $1
         ${tagWhere}
       ORDER BY a.id, ${tagOrder}
-      LIMIT $2 OFFSET $3
-    `, [req.params.countryId, limit, offset]);
+      ${limit ? "LIMIT $2" : ""}
+      OFFSET $${limit ? 3 : 2}
+    `, limit ? [req.params.countryId, limit, offset] : [req.params.countryId, offset]);
 
     res.json(rows);
   } catch (err) {
@@ -372,7 +380,7 @@ app.get("/api/tags", async (req, res) => {
 ========================================= */
 app.get("/api/news/search", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 24, 50);
+    const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
 
     const fromIds = req.query.from
@@ -441,9 +449,17 @@ app.get("/api/news/search", async (req, res) => {
 
     const needsLocJoin = !!aboutIds?.length;
 
-    params.push(limit, offset);
-    const limitParam  = params.length - 1;
-    const offsetParam = params.length;
+    let limitClause;
+    if (limit) {
+      params.push(limit, offset);
+      const limitParam  = params.length - 1;
+      const offsetParam = params.length;
+      limitClause = `LIMIT $${limitParam} OFFSET $${offsetParam}`;
+    } else {
+      params.push(offset);
+      const offsetParam = params.length;
+      limitClause = `OFFSET $${offsetParam}`;
+    }
 
     const { rows } = await pool.query(`
       SELECT * FROM (
@@ -499,7 +515,7 @@ app.get("/api/news/search", async (req, res) => {
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
         * POWER(sub.country_boost, 2.0)
       ) DESC
-      LIMIT $${limitParam} OFFSET $${offsetParam}
+      ${limitClause}
     `, params);
 
     let results = rows.map(r => ({
@@ -2345,7 +2361,7 @@ app.get("/api/clusters/weekly", async (req, res) => {
 ========================================= */
 app.get("/api/news/region/:regionId", async (req, res) => {
   try {
-    const limit  = Math.min(parseInt(req.query.limit)  || 12, 50);
+    const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const regionId = parseInt(req.params.regionId);
     const feed = req.query.feed || "local"; // "local" or "global"
@@ -2388,7 +2404,8 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         WHERE ci_mention.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
         ORDER BY a.id, a.published_at DESC
-        LIMIT $2 OFFSET $3
+        ${limit ? "LIMIT $2" : ""}
+        OFFSET $${limit ? 3 : 2}
       `;
     } else {
       // Local: articles FROM cities in this region (source-based, city_id not null)
@@ -2426,11 +2443,12 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         WHERE ci.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
         ORDER BY a.published_at DESC
-        LIMIT $2 OFFSET $3
+        ${limit ? "LIMIT $2" : ""}
+        OFFSET $${limit ? 3 : 2}
       `;
     }
 
-    const { rows } = await pool.query(query, [regionId, limit, offset]);
+    const { rows } = await pool.query(query, limit ? [regionId, limit, offset] : [regionId, offset]);
     
     // Get total count for pagination
     let countQuery;

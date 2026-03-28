@@ -11,13 +11,9 @@ const { rankArticles } = require("./priorityEngine");
 // large enough to exhaust recent ones — the fallback pool handles that.
 const CANDIDATE_WINDOW_HOURS = 72;
 
-// Candidate pool: enough to give diversityRerank room to work, but not
-// so large that we're sorting thousands of rows on every request.
-const CANDIDATE_POOL = 400;
-
 // Hard cap on how many articles any single source can contribute to the
-// candidate pool. Prevents NBC/BBC/Reuters from flooding 350 of 400 slots
-// and making diversityRerank's job impossible.
+// ranked candidate set. Prevents a single outlet from flooding the feed
+// when we no longer cap the overall pool size.
 // At COOLDOWN_SLOTS=5, a source appears every 6 slots max — so 60 is generous.
 const MAX_PER_SOURCE = 60;
 
@@ -28,6 +24,12 @@ const MAX_PER_SOURCE = 60;
 function clampPositiveInt(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseOptionalPositiveInt(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -85,7 +87,7 @@ const ARTICLE_JOINS = `
 // ─────────────────────────────────────────────────────────────
 
 async function getRankedArticles(countryId, options = {}) {
-  const limit  = clampPositiveInt(options.limit, 50);
+  const limit  = parseOptionalPositiveInt(options.limit);
   const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
   const tagId  = options.tagId ? parseInt(options.tagId) : null;
 
@@ -108,20 +110,19 @@ async function getRankedArticles(countryId, options = {}) {
     ),
     candidate_articles AS (
       SELECT id FROM ranked_by_source
-      WHERE source_rank <= $3
+      WHERE source_rank <= $2
       ORDER BY id DESC
-      LIMIT $2
     )
     SELECT ${ARTICLE_FIELDS}
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
     ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [countryId, CANDIDATE_POOL, MAX_PER_SOURCE]);
+  `, [countryId, MAX_PER_SOURCE]);
 
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
-  return ranked.slice(offset, offset + limit);
+  return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -129,7 +130,7 @@ async function getRankedArticles(countryId, options = {}) {
 // ─────────────────────────────────────────────────────────────
 
 async function getRankedCityArticles(cityId, options = {}) {
-  const limit  = clampPositiveInt(options.limit, 50);
+  const limit  = parseOptionalPositiveInt(options.limit);
   const offset = Math.max(parseInt(options.offset, 10) || 0, 0);
   const tagId  = options.tagId ? parseInt(options.tagId) : null;
 
@@ -151,20 +152,19 @@ async function getRankedCityArticles(cityId, options = {}) {
     ),
     candidate_articles AS (
       SELECT id FROM ranked_by_source
-      WHERE source_rank <= $3
+      WHERE source_rank <= $2
       ORDER BY id DESC
-      LIMIT $2
     )
     SELECT ${ARTICLE_FIELDS}
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
     ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [cityId, CANDIDATE_POOL, MAX_PER_SOURCE]);
+  `, [cityId, MAX_PER_SOURCE]);
 
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity, { skipCityPenalty: true });
-  return ranked.slice(offset, offset + limit);
+  return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
 }
 
 module.exports = { getRankedArticles, getRankedCityArticles };
