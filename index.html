@@ -11156,7 +11156,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Config ── */
   const GLOBE_RADIUS   = radius;
-  const ARC_HEIGHT     = 0.07;
+  const ARC_HEIGHT     = 0.025;
   const ARC_SEGMENTS   = 64;
   const TUBE_RADIUS_BASE = 0.002;
   const TUBE_RADIUS_MIN  = 0.0012;
@@ -15605,33 +15605,48 @@ grmClockTick();
 }
 
 /* ── News ticker ── */
+@keyframes bTickerScroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
 .bTicker {
-  position: absolute; bottom: 0; left: 0; right: 0; height: 58px;
-  background: linear-gradient(to top, rgba(0,0,0,0.97) 60%, rgba(0,0,0,0.75) 100%);
-  border-top: 1px solid rgba(255,255,255,0.07);
-  display: flex; align-items: center; padding: 0 20px;
+  position: absolute; bottom: 0; left: 0; right: 0; height: 42px;
+  background: rgba(0,0,6,0.96);
+  border-top: 1px solid rgba(96,200,255,0.15);
+  display: flex; align-items: center;
   opacity: 0; transition: opacity 0.5s ease;
   overflow: hidden; pointer-events: none;
 }
 #briefingOverlay.open .bTicker { opacity: 1; }
+.bTickerLabel {
+  flex-shrink: 0;
+  background: #60c8ff; color: #000;
+  font-size: 9px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase;
+  padding: 0 12px; height: 100%;
+  display: flex; align-items: center;
+  z-index: 1;
+}
+.bTickerTrackWrap {
+  flex: 1; overflow: hidden; height: 100%;
+  display: flex; align-items: center;
+  mask-image: linear-gradient(to right, transparent 0%, black 1%, black 99%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 1%, black 99%, transparent 100%);
+}
 .bTickerItem {
-  display: flex; align-items: baseline; gap: 8px;
-  white-space: nowrap; overflow: hidden; width: 100%;
-  opacity: 1; transition: opacity 0.3s ease;
+  display: inline-block; white-space: nowrap;
+  animation: bTickerScroll 60s linear infinite;
+  will-change: transform;
 }
-.bTickerItem.fading { opacity: 0; }
+.bTickerItem.reset { animation: none; }
 .bTickerSource {
-  font-size: 9px; font-weight: 700; letter-spacing: 1.5px;
-  color: #60c8ff; text-transform: uppercase; flex-shrink: 0;
+  font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
+  color: #60c8ff; text-transform: uppercase;
 }
-.bTickerDot { color: rgba(255,255,255,0.3); flex-shrink: 0; font-size: 9px; }
-.bTickerDate { font-size: 10px; color: rgba(255,255,255,0.4); flex-shrink: 0; }
-.bTickerSep { color: rgba(255,255,255,0.2); flex-shrink: 0; font-size: 11px; }
-.bTickerTitle { font-size: 11px; font-weight: 600; color: #fff; flex-shrink: 0; max-width: 38%; overflow: hidden; text-overflow: ellipsis; }
-.bTickerSummary {
-  font-size: 11px; color: rgba(255,255,255,0.55); line-height: 1;
-  overflow: hidden; text-overflow: ellipsis; min-width: 0;
-}
+.bTickerDate { font-size: 10px; color: rgba(255,255,255,0.4); }
+.bTickerTitle { font-size: 11px; font-weight: 600; color: #fff; }
+.bTickerSummary { font-size: 11px; color: rgba(255,255,255,0.55); }
+.bTickerSep { color: rgba(255,255,255,0.2); }
+.bTickerDiv { color: #60c8ff; margin: 0 24px; font-size: 14px; }
 
 /* ── Video embed ── */
 .bVideoWrap {
@@ -16185,7 +16200,10 @@ grmClockTick();
   <div class="bArticlePanel" id="bArticlePanel"></div>
   <div class="bCaptions" id="bCaptions"></div>
   <div class="bTicker" id="bTicker">
-    <div class="bTickerItem" id="bTickerItem"></div>
+    <div class="bTickerLabel">Live</div>
+    <div class="bTickerTrackWrap">
+      <div class="bTickerItem" id="bTickerItem"></div>
+    </div>
   </div>
   <div class="bControls">
     <button class="bControlBtn" id="bPrev" title="Previous">&#8592;</button>
@@ -16946,52 +16964,46 @@ grmClockTick();
     </div>`;
   }
 
-  // ── News ticker ───────────────────────────────────────────────────────────
-  const TICKER_INTERVAL = 7000;
-  let _tickerArticles = [];
-  let _tickerIdx      = 0;
-  let _tickerTimer    = null;
+  // ── News ticker (scrolling marquee) ──────────────────────────────────────
+  const TICKER_PX_PER_SEC = 90; // scroll speed
 
-  function _renderTickerItem(a) {
-    const date    = a.published_at
-      ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-      : '';
-    const title   = (a.translated_title || a.title || '').replace(/</g, '&lt;');
-    const summary = (a.summary || '').replace(/</g, '&lt;');
-    return `<span class="bTickerSource">${a.source_name || ''}</span>` +
-      (date ? `<span class="bTickerDot">·</span><span class="bTickerDate">${date}</span>` : '') +
-      `<span class="bTickerSep"> — </span><span class="bTickerTitle">${title}</span>` +
-      (summary ? `<span class="bTickerSep"> — </span><span class="bTickerSummary">${summary}</span>` : '');
-  }
-
-  function _advanceTicker() {
-    _tickerIdx = (_tickerIdx + 1) % _tickerArticles.length;
-    const el = document.getElementById('bTickerItem');
-    if (!el) return;
-    el.classList.add('fading');
-    setTimeout(() => {
-      if (!document.getElementById('bTickerItem')) return;
-      el.innerHTML = _renderTickerItem(_tickerArticles[_tickerIdx]);
-      el.classList.remove('fading');
-    }, 300);
+  function _buildTickerHTML(articles) {
+    return articles.map(a => {
+      const date    = a.published_at
+        ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        : '';
+      const title   = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      const summary = (a.summary || '').replace(/</g, '&lt;');
+      return `<span class="bTickerSource">${a.source_name || ''}</span>` +
+        (date ? ` <span class="bTickerDate">${date}</span>` : '') +
+        ` <span class="bTickerSep">—</span> <span class="bTickerTitle">${title}</span>` +
+        (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '');
+    }).join('<span class="bTickerDiv">◆</span>');
   }
 
   function startTicker(articles) {
-    stopTicker();
-    _tickerArticles = articles;
-    _tickerIdx = 0;
     const el = document.getElementById('bTickerItem');
     if (!el) return;
-    if (!articles.length) { el.innerHTML = ''; return; }
-    el.classList.remove('fading');
-    el.innerHTML = _renderTickerItem(articles[0]);
-    if (articles.length > 1) {
-      _tickerTimer = setInterval(_advanceTicker, TICKER_INTERVAL);
-    }
+    // Stop current animation cleanly
+    el.classList.add('reset');
+    el.innerHTML = '';
+    if (!articles.length) return;
+    // Build content duplicated for seamless loop
+    const half = _buildTickerHTML(articles);
+    el.innerHTML = half + '<span class="bTickerDiv">◆</span>' + half;
+    // Force reflow so animation restarts from beginning
+    void el.offsetWidth;
+    el.classList.remove('reset');
+    // Set duration based on half-width / speed
+    requestAnimationFrame(() => {
+      const halfW = el.scrollWidth / 2;
+      el.style.animationDuration = (halfW / TICKER_PX_PER_SEC).toFixed(1) + 's';
+    });
   }
 
   function stopTicker() {
-    if (_tickerTimer) { clearInterval(_tickerTimer); _tickerTimer = null; }
+    const el = document.getElementById('bTickerItem');
+    if (el) { el.classList.add('reset'); el.innerHTML = ''; }
   }
 
   // ── Article panel + ticker loader ─────────────────────────────────────────
