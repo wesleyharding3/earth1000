@@ -4138,14 +4138,31 @@
     ─────────────────────────────────────── */
     #nfQueryBar {
       flex-shrink: 0;
-      padding: 14px 20px 14px;
-      background: rgba(8, 14, 24, 0.48);
-      -webkit-      border-bottom: 1px solid rgba(255,255,255,0.07);
+      padding: 16px 20px 16px;
+      background: rgba(4, 7, 13, 0.82);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255,180,80,0.12);
+      box-shadow:
+        0 1px 0 rgba(255,180,80,0.07),
+        inset 0 1px 0 rgba(255,180,80,0.09);
       display: flex;
       flex-direction: column;
       gap: 12px;
       position: relative;
       z-index: 50;
+    }
+    #nfQueryBar::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(255,180,80,0.55) 30%,
+        rgba(255,140,40,0.80) 50%,
+        rgba(255,180,80,0.55) 70%,
+        transparent 100%);
+      pointer-events: none;
     }
 
     /* ── Top row: page title + sort + tag + text search ── */
@@ -4175,23 +4192,24 @@
     .nfSortSeg {
       display: flex;
       border-radius: 20px;
-      border: 1px solid rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,180,80,0.18);
       overflow: hidden;
       flex-shrink: 0;
+      background: rgba(255,180,80,0.04);
     }
     .nfSortOpt {
       display: flex; align-items: center; gap: 5px;
       padding: 5px 12px;
       font-size: 10px; font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
-      color: rgba(255,255,255,0.35);
+      color: rgba(255,180,80,0.35);
       cursor: pointer; user-select: none;
       transition: color 0.2s, background 0.2s;
       white-space: nowrap;
     }
     .nfSortOpt:first-child { border-radius: 20px 0 0 20px; }
     .nfSortOpt:last-child  { border-radius: 0 20px 20px 0; }
-    .nfSortOpt.active { color: rgba(255,200,100,0.9); background: rgba(255,255,255,0.06); }
+    .nfSortOpt.active { color: rgba(255,210,110,0.95); background: rgba(255,180,80,0.10); }
     .nfSortDot {
       width: 5px; height: 5px; border-radius: 50%;
       background: rgba(255,255,255,0.15); flex-shrink: 0;
@@ -4205,29 +4223,29 @@
     .nfTagWrap { position: relative; flex-shrink: 0; }
     .nfTagBtn {
       display: flex; align-items: center; gap: 6px;
-      height: 24px; padding: 0 9px;
-      border-radius: 12px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.10);
-      color: rgba(255,255,255,0.50);
+      height: 26px; padding: 0 10px;
+      border-radius: 13px;
+      background: rgba(255,180,80,0.05);
+      border: 1px solid rgba(255,180,80,0.18);
+      color: rgba(255,180,80,0.55);
       font-size: 9px; font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
       cursor: pointer; user-select: none; white-space: nowrap;
-      transition: border-color 0.2s, color 0.2s;
+      transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
       font-family: inherit;
     }
-    .nfTagBtn:hover { border-color: rgba(255,255,255,0.22); color: rgba(255,255,255,0.8); }
-    .nfTagBtn.active { border-color: rgba(255,180,80,0.45); color: rgba(255,200,100,0.9); }
-    .nfTagDot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,255,255,0.15); flex-shrink: 0; }
+    .nfTagBtn:hover { border-color: rgba(255,180,80,0.38); color: rgba(255,200,100,0.85); box-shadow: 0 0 10px rgba(255,140,30,0.12); }
+    .nfTagBtn.active { border-color: rgba(255,180,80,0.55); color: rgba(255,210,110,0.95); box-shadow: 0 0 14px rgba(255,140,30,0.20); }
+    .nfTagDot { width: 5px; height: 5px; border-radius: 50%; background: rgba(255,180,80,0.25); flex-shrink: 0; }
     .nfTagBtn.active .nfTagDot { background: rgba(255,180,80,1); box-shadow: 0 0 6px rgba(255,150,40,0.8); }
     .nfTagDropdown {
       position: absolute; top: 38px; right: 0;
       width: 160px; max-height: 230px; overflow-y: auto;
-      background: rgba(6,6,10,0.99);
-      border: 1px solid rgba(255,255,255,0.10);
+      background: rgba(5,8,14,0.99);
+      border: 1px solid rgba(255,180,80,0.16);
       border-radius: 12px;
       display: none; flex-direction: column;
-      box-shadow: 0 6px 24px rgba(0,0,0,0.75);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.80), 0 0 20px rgba(255,140,30,0.06);
       z-index: 110;
     }
     .nfTagDropdown.open { display: flex; }
@@ -4246,20 +4264,23 @@
     /* Text search */
     .nfTextWrap { display: flex; align-items: center; position: relative; flex: 1; max-width: 220px; min-width: 100px; flex-shrink: 1; }
     .nfTextInput {
-      width: 100%; height: 30px;
-      padding: 0 26px 0 10px;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.04);
-      color: #fff; font-size: 12px; font-family: inherit;
-      outline: none; transition: border-color 0.2s;
+      width: 100%; height: 28px;
+      padding: 0 28px 0 10px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,180,80,0.16);
+      background: rgba(255,180,80,0.04);
+      color: rgba(255,230,180,0.9); font-size: 12px; font-family: inherit;
+      outline: none; transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .nfTextInput::placeholder { color: rgba(255,255,255,0.20); }
-    .nfTextInput:focus { border-color: rgba(0,180,255,0.38); }
+    .nfTextInput::placeholder { color: rgba(255,180,80,0.25); }
+    .nfTextInput:focus {
+      border-color: rgba(255,180,80,0.48);
+      box-shadow: 0 0 0 2px rgba(255,150,40,0.08), 0 0 12px rgba(255,140,30,0.10);
+    }
     .nfTextIcon {
       position: absolute; right: 10px; top: 50%;
       transform: translateY(-50%);
-      color: rgba(255,255,255,0.22); pointer-events: none;
+      color: rgba(255,180,80,0.30); pointer-events: none;
     }
     .nfTextIcon svg { width: 12px; height: 12px; display: block; }
 
@@ -4342,7 +4363,8 @@
       font-weight: 700;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: rgba(255,255,255,0.28);
+      color: rgba(255,180,80,0.50);
+      text-shadow: 0 0 8px rgba(255,150,40,0.25);
       padding-left: 2px;
       user-select: none;
     }
@@ -4356,29 +4378,29 @@
       overflow: hidden;
       padding: calc(3px * var(--mobile-control-scale)) calc(22px * var(--mobile-control-scale)) calc(3px * var(--mobile-control-scale)) calc(8px * var(--mobile-control-scale));
       border-radius: calc(10px * var(--mobile-control-scale));
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.11);
-      color: rgba(255,255,255,0.70);
+      background: rgba(255,180,80,0.04);
+      border: 1px solid rgba(255,180,80,0.14);
+      color: rgba(255,210,150,0.70);
       font-size: calc(11px * var(--mobile-control-scale)); font-family: inherit;
       cursor: pointer; user-select: none;
       display: flex; align-items: center;
       flex-wrap: wrap; gap: 4px;
       position: relative;
-      transition: border-color 0.2s, background 0.2s;
+      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
       text-align: left;
     }
-    .nfMultiBtn:hover { border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.06); }
-    .nfMultiBtn.has-sel { border-color: rgba(255,180,80,0.35); }
+    .nfMultiBtn:hover { border-color: rgba(255,180,80,0.30); background: rgba(255,180,80,0.07); box-shadow: 0 0 10px rgba(255,140,30,0.08); }
+    .nfMultiBtn.has-sel { border-color: rgba(255,180,80,0.45); box-shadow: 0 0 12px rgba(255,140,30,0.14); }
 
     .nfBtnChevron {
       position: absolute; right: 8px; top: 50%;
       transform: translateY(-50%);
-      color: rgba(255,255,255,0.22); pointer-events: none;
+      color: rgba(255,180,80,0.30); pointer-events: none;
       display: flex; align-items: center;
     }
     .nfBtnChevron svg { width: 10px; height: 10px; display: block; }
 
-    .nfPlaceholder { color: rgba(255,255,255,0.24); font-size: 11px; }
+    .nfPlaceholder { color: rgba(255,180,80,0.28); font-size: 11px; }
 
     /* Chips */
     .nfChip {
@@ -4404,11 +4426,11 @@
       position: absolute; top: calc(100% + 5px); left: 0;
       width: 100%;
       min-width: 220px;
-      background: rgba(5,5,10,0.99);
-      border: 1px solid rgba(255,255,255,0.11);
+      background: rgba(4,7,13,0.99);
+      border: 1px solid rgba(255,180,80,0.16);
       border-radius: 13px;
       display: none; flex-direction: column;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.80);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 24px rgba(255,140,30,0.07);
       z-index: 100;
       overflow: hidden;
       max-height: 310px;
@@ -4421,31 +4443,32 @@
       margin: 8px 8px 3px;
       height: 28px; padding: 0 10px;
       border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.05);
-      color: #fff; font-size: 11px; font-family: inherit;
+      border: 1px solid rgba(255,180,80,0.16);
+      background: rgba(255,180,80,0.05);
+      color: rgba(255,225,170,0.9); font-size: 11px; font-family: inherit;
       outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .nfDropSearch::placeholder { color: rgba(255,255,255,0.24); }
-    .nfDropSearch:focus { border-color: rgba(0,180,255,0.32); }
+    .nfDropSearch::placeholder { color: rgba(255,180,80,0.28); }
+    .nfDropSearch:focus { border-color: rgba(255,180,80,0.45); box-shadow: 0 0 0 2px rgba(255,150,40,0.07); }
 
     /* Actions row */
     .nfDropActions {
       display: flex;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      border-bottom: 1px solid rgba(255,180,80,0.10);
       flex-shrink: 0;
     }
     .nfDropAction {
       flex: 1; padding: 6px 0;
       font-size: 9px; font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
-      color: rgba(255,255,255,0.25);
+      color: rgba(255,180,80,0.30);
       cursor: pointer; text-align: center;
       transition: color 0.14s, background 0.14s;
       user-select: none;
     }
-    .nfDropAction:hover { color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.04); }
-    .nfDropAction + .nfDropAction { border-left: 1px solid rgba(255,255,255,0.06); }
+    .nfDropAction:hover { color: rgba(255,210,110,0.85); background: rgba(255,180,80,0.06); }
+    .nfDropAction + .nfDropAction { border-left: 1px solid rgba(255,180,80,0.10); }
 
     /* List */
     .nfDropList {
@@ -4487,14 +4510,14 @@
       width: 100%; height: 26px;
       padding: 0 10px;
       border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.11);
-      background: rgba(255,255,255,0.04);
-      color: #fff; font-size: 11px; font-family: inherit;
+      border: 1px solid rgba(255,180,80,0.14);
+      background: rgba(255,180,80,0.04);
+      color: rgba(255,230,180,0.9); font-size: 11px; font-family: inherit;
       outline: none;
-      transition: border-color 0.2s;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .nfKwInput::placeholder { color: rgba(255,255,255,0.20); }
-    .nfKwInput:focus { border-color: rgba(0,180,255,0.38); }
+    .nfKwInput::placeholder { color: rgba(255,180,80,0.25); }
+    .nfKwInput:focus { border-color: rgba(255,180,80,0.48); box-shadow: 0 0 0 2px rgba(255,150,40,0.08), 0 0 10px rgba(255,140,30,0.09); }
 
     /* ── Date range ── */
     .nfDateRow {
@@ -4504,21 +4527,21 @@
       flex: 1 1 0; height: 26px; min-width: 70px;
       padding: 0 8px;
       border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.11);
-      background: rgba(255,255,255,0.04);
-      color: rgba(255,255,255,0.75);
+      border: 1px solid rgba(255,180,80,0.14);
+      background: rgba(255,180,80,0.04);
+      color: rgba(255,210,150,0.80);
       font-size: 11px; font-family: inherit;
       outline: none;
       cursor: pointer;
-      transition: border-color 0.2s;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    .nfDateInput:focus { border-color: rgba(0,180,255,0.38); }
+    .nfDateInput:focus { border-color: rgba(255,180,80,0.48); box-shadow: 0 0 0 2px rgba(255,150,40,0.08), 0 0 10px rgba(255,140,30,0.09); }
     .nfDateInput::-webkit-calendar-picker-indicator {
-      filter: invert(0.45); cursor: pointer; opacity: 0.6;
+      filter: invert(0.65) sepia(1) saturate(2) hue-rotate(5deg); cursor: pointer; opacity: 0.7;
     }
     .nfDateSep {
-      font-size: 10px; color: rgba(255,255,255,0.20);
-      flex-shrink: 0; font-weight: 600;
+      font-size: 11px; color: rgba(255,180,80,0.40);
+      flex-shrink: 0; font-weight: 700;
     }
     .nfDateWrap {
       position: relative; display: flex; align-items: center; flex: 1 1 0;
@@ -4538,24 +4561,32 @@
 
     /* ── Search + Clear buttons ── */
     .nfSearchBtn {
-      min-height: max(26px, calc(26px * var(--mobile-control-scale))); padding: 0 calc(14px * var(--mobile-control-scale));
+      min-height: max(26px, calc(26px * var(--mobile-control-scale))); padding: 0 calc(16px * var(--mobile-control-scale));
       border-radius: calc(8px * var(--mobile-control-scale));
-      background: rgba(255,180,80,0.13);
-      border: 1px solid rgba(255,180,80,0.35);
-      color: rgba(255,210,120,0.95);
+      background: rgba(255,150,40,0.16);
+      border: 1px solid rgba(255,180,80,0.50);
+      color: rgba(255,215,120,1);
       font-size: calc(11px * var(--mobile-control-scale)); font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
       cursor: pointer; flex-shrink: 0; white-space: nowrap;
       display: flex; align-items: center; gap: 7px;
-      transition: background 0.18s, border-color 0.18s, transform 0.12s;
+      box-shadow:
+        0 0 12px rgba(255,140,30,0.22),
+        0 0 28px rgba(255,100,10,0.10),
+        inset 0 1px 0 rgba(255,220,140,0.12);
+      transition: background 0.18s, border-color 0.18s, box-shadow 0.18s, transform 0.12s;
       font-family: inherit;
     }
     .nfSearchBtn:hover {
-      background: rgba(255,180,80,0.22);
-      border-color: rgba(255,180,80,0.55);
+      background: rgba(255,160,50,0.26);
+      border-color: rgba(255,190,90,0.75);
+      box-shadow:
+        0 0 18px rgba(255,150,40,0.36),
+        0 0 40px rgba(255,100,10,0.18),
+        inset 0 1px 0 rgba(255,220,140,0.18);
       transform: translateY(-1px);
     }
-    .nfSearchBtn:active { transform: translateY(0); }
+    .nfSearchBtn:active { transform: translateY(0); box-shadow: 0 0 8px rgba(255,140,30,0.20); }
     .nfSearchBtn.busy { opacity: 0.55; pointer-events: none; }
     .nfSearchBtn svg { width: calc(13px * var(--mobile-control-scale)); height: calc(13px * var(--mobile-control-scale)); flex-shrink: 0; }
 
@@ -4563,8 +4594,8 @@
       min-height: max(26px, calc(26px * var(--mobile-control-scale))); padding: 0 calc(10px * var(--mobile-control-scale));
       border-radius: calc(8px * var(--mobile-control-scale));
       background: transparent;
-      border: 1px solid rgba(255,255,255,0.09);
-      color: rgba(255,255,255,0.26);
+      border: 1px solid rgba(255,180,80,0.12);
+      color: rgba(255,180,80,0.30);
       font-size: calc(10px * var(--mobile-control-scale)); font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
       cursor: pointer; flex-shrink: 0;
@@ -4573,7 +4604,7 @@
       display: none;
     }
     .nfClearBtn.on { display: block; }
-    .nfClearBtn:hover { border-color: rgba(255,255,255,0.20); color: rgba(255,255,255,0.55); }
+    .nfClearBtn:hover { border-color: rgba(255,180,80,0.32); color: rgba(255,200,100,0.65); }
 
     /* ───────────────────────────────────────
        META BAR
