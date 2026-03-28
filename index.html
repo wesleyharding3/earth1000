@@ -13983,8 +13983,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <div id="clusterHud">
       <div class="clusterTitleBlock">
         <div class="clusterEyebrow">Cluster Map</div>
-        <h2 class="clusterTitle">Stories form semantic constellations across the last week.</h2>
-        <p class="clusterSub">Each point is a story thread. Nearby threads share multilingual topic signals, overlap in place or framing, or resolve toward the same normalized concepts.</p>
       </div>
       <div id="clusterTopStats">
         <span class="csi">◈</span><span class="csn" id="clusterStatThreads">0</span><span class="csl">threads</span>
@@ -14495,7 +14493,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const targetRadius = Math.max(68, Math.min(130, avgSpread * 6.2 + groups.length * 4.0));
+      const targetRadius = Math.max(110, Math.min(220, avgSpread * 10.0 + groups.length * 6.0));
       const groupFeatures = new Map(groups.map((group) => {
         const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
         shared.add(String(group.primary_category || "").toLowerCase());
@@ -14608,7 +14606,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (members.length <= 1) return;
 
         const isCentral = group.cluster_id === centralGroupId;
-        const memberScale = Math.max(10, Math.min(26, group.spread * 2.0 + Math.sqrt(members.length) * 1.6))
+        const memberScale = Math.max(16, Math.min(42, group.spread * 3.2 + Math.sqrt(members.length) * 2.6))
           * (isCentral ? 2.4 : 1.0);
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
@@ -14856,8 +14854,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       points.push(tgtV.clone());
       const baseOpacity = isInter
-        ? Math.max(0.05, Math.min(0.18, weight * 0.3))
-        : Math.max(0.15, Math.min(0.54, weight * 0.62));
+        ? Math.max(0.22, Math.min(0.42, weight * 0.6))
+        : Math.max(0.45, Math.min(0.78, weight * 0.9));
       const mat = new THREE.LineBasicMaterial({
         color: SYNAPSE_GOLD.clone(),
         transparent: true, opacity: baseOpacity,
@@ -15038,7 +15036,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // synapses always visible at base — pulse adds brightness on top
       state.filamentData.forEach(({ line, baseOpacity }) => {
-        line.material.opacity = baseOpacity * (0.55 + globalPulse * 0.45);
+        line.material.opacity = baseOpacity * (0.88 + globalPulse * 0.12);
       });
 
       // cluster territory clouds
