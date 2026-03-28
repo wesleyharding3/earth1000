@@ -12,7 +12,7 @@
       --touch-control-min-height: 26px;
       --touch-icon-size: 40px;
       --page-nav-height: 42px;
-      --global-ticker-height: 30px;
+      --global-ticker-height: 33px;
       --global-ticker-gap: 8px;
     }
 
@@ -14411,7 +14411,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const targetRadius = Math.max(20, Math.min(48, avgSpread * 2.9 + groups.length * 1.9));
+      const targetRadius = Math.max(26, Math.min(58, avgSpread * 3.35 + groups.length * 2.35));
       const groupFeatures = new Map(groups.map((group) => {
         const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
         shared.add(String(group.primary_category || "").toLowerCase());
@@ -14457,9 +14457,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const dz = group._layout.z - other._layout.z;
             const dist = Math.max(0.001, Math.hypot(dx, dy, dz));
             const sim = similarity(group, other);
-            const desired = Math.max(12, 28 - sim * 12 + ((group.spread + other.spread) * 0.2));
-            const repel = 32 / (dist * dist);
-            const attract = sim > 0.08 ? (dist - desired) * 0.0045 * sim : 0;
+            const desired = Math.max(16, 34 - sim * 10 + ((group.spread + other.spread) * 0.24));
+            const repel = 52 / (dist * dist);
+            const attract = sim > 0.08 ? (dist - desired) * 0.0039 * sim : 0;
             const mix = repel + attract;
             force.x += (dx / dist) * mix;
             force.y += (dy / dist) * mix;
@@ -14487,7 +14487,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         group.centroid.x = target.x;
         group.centroid.y = target.y;
         group.centroid.z = target.z;
-        group.spread = Math.max(5.4, Math.min(16, group.spread * 0.92));
+        group.spread = Math.max(4.4, Math.min(12.5, group.spread * 0.74));
       });
 
       const nodes = snapshot.nodes.map((node) => {
@@ -14633,7 +14633,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
         const mesh = new THREE.Mesh(cloudGeometry, material);
         mesh.position.set(group.centroid.x, group.centroid.y, group.centroid.z);
-        const scale = Math.max(4.4, Math.min(18, group.spread * 1.08));
+        const scale = Math.max(3.5, Math.min(11.5, group.spread * 0.9));
         mesh.scale.setScalar(scale);
         mesh.userData = { kind: "group", data: group };
         cloudGroup.add(mesh);
@@ -14665,9 +14665,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
         const mesh = new THREE.Mesh(nodeGeometry, material);
         mesh.position.set(node.position.x, node.position.y, node.position.z);
-        const size = 0.7
-          + Math.min(1.6, (Number(node.importance) || 0) * 0.08)
-          + Math.min(0.65, Math.log2(1 + (Number(node.article_count) || 0)) * 0.14);
+        const size = 0.58
+          + Math.min(1.35, (Number(node.importance) || 0) * 0.07)
+          + Math.min(0.5, Math.log2(1 + (Number(node.article_count) || 0)) * 0.11);
         mesh.scale.setScalar(size);
         mesh.userData = { kind: "node", data: node, baseScale: size };
         nodeGroup.add(mesh);
