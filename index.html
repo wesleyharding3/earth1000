@@ -13925,8 +13925,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 <script>
   (function setupClusterPage() {
+    if (window.__clusterPageBooted) return;
     const THREE = window.THREE;
-    if (!THREE) return;
+    if (!THREE) {
+      window.addEventListener("load", setupClusterPage, { once: true });
+      window.setTimeout(setupClusterPage, 250);
+      return;
+    }
+    window.__clusterPageBooted = true;
 
     const BASE = "https://earth-wjr6.onrender.com";
     const CATEGORY_COLORS = {
