@@ -13,7 +13,6 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
-const { normalizeRecentKeywords } = require("./keywordNormalizer");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -37,21 +36,6 @@ async function run() {
 
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: ${ARTICLE_LIMIT}`);
-
-  console.log(`   [${elapsed()}] Normalizing new non-English keywords...`);
-  const normalization = await normalizeRecentKeywords({
-    pool,
-    anthropicClient: client,
-    logger: console,
-    scope: { hours: LOOKBACK_HOURS }
-  });
-  if (normalization?.updatedKeywords) {
-    const provider = normalization.provider === 'deepl' ? 'DeepL' : 'Claude';
-    process.stdout.write(
-      `(${normalization.updatedKeywords} keywords normalized via ${provider}, ${normalization.updatedRows} rows updated) `
-    );
-  }
-  console.log(`   [${elapsed()}] Keyword normalization done`);
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
   const articles = await getUnthreadedArticles(LOOKBACK_HOURS, ARTICLE_LIMIT);
