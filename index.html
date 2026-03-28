@@ -14220,15 +14220,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     world.add(nodeGroup);
     scene.add(world);
 
-    // Teardrop / concave-exponential lathe geometry: tip at -Y, blunt at +Y
-    // Profile: r = sqrt(t) * (1 - 0.18*t) gives a concave curve (steeper near tip, flatter near blunt)
-    const _lathePts = [];
-    for (let _i = 0; _i <= 18; _i++) {
-      const _t = _i / 18;
-      const _r = Math.sqrt(_t) * (1 - 0.18 * _t) * 0.82;
-      _lathePts.push(new THREE.Vector2(Math.max(0, _r), _t * 2.2 - 1.1));
-    }
-    const nodeGeometry = new THREE.LatheGeometry(_lathePts, 7); // 7 sides = organic, non-circular cross-section
+    const nodeGeometry = new THREE.SphereGeometry(1, 10, 10);
     const cloudGeometry = new THREE.SphereGeometry(1, 12, 12);
 
     buildLegend();
@@ -14531,7 +14523,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       for (let iter = 0; iter < 140; iter += 1) {
         groups.forEach((group, i) => {
           const distC = Math.hypot(group._layout.x, group._layout.y, group._layout.z);
-          const grav = distC > targetRadius * 1.4 ? 0.0008 : 0;
+          const grav = distC > targetRadius ? 0.0014 : 0;
           const force = { x: -group._layout.x * grav, y: -group._layout.y * grav, z: -group._layout.z * grav };
           for (let j = 0; j < groups.length; j += 1) {
             if (i === j) continue;
@@ -14607,7 +14599,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const isCentral = group.cluster_id === centralGroupId;
         const memberScale = Math.max(16, Math.min(42, group.spread * 3.2 + Math.sqrt(members.length) * 2.6))
-          * (isCentral ? 2.4 : 1.0);
+          * (isCentral ? 3.5 : 1.0);
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
           const dx = member.position.x - centroid.x;
@@ -14821,7 +14813,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const d = Math.hypot(an.position.x - bn.position.x, an.position.y - bn.position.y, an.position.z - bn.position.z);
             if (d < minD) { minD = d; src = an; tgt = bn; }
           }
-          if (!src || !tgt || minD > 52) continue;
+          if (!src || !tgt || minD > 90) continue;
           result.push({ source_thread_id: src.thread_id, target_thread_id: tgt.thread_id, weight: sim * 0.55, _inter: true });
         }
       }
@@ -14840,19 +14832,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
       let rng = idx * 6271 + 9973;
       const rand = () => { rng = Math.imul(rng, 1664525) + 1013904223; return ((rng >>> 0) / 0x100000000) - 0.5; };
-      const segs = isInter ? 13 : 9;
-      const jScale = isInter ? 0.055 : 0.09;
-      const points = [srcV.clone()];
-      for (let i = 1; i < segs; i++) {
-        const t = i / segs;
-        const jitter = Math.sin(t * Math.PI) * len * jScale;
-        points.push(new THREE.Vector3(
-          srcV.x + dir.x * len * t + perp.x * rand() * 2 * jitter + perp2.x * rand() * 2 * jitter,
-          srcV.y + dir.y * len * t + perp.y * rand() * 2 * jitter + perp2.y * rand() * 2 * jitter,
-          srcV.z + dir.z * len * t + perp.z * rand() * 2 * jitter + perp2.z * rand() * 2 * jitter
+      // smooth CatmullRom path — 2 gentle interior control points, slight bow only at midspan
+      const numCtrl = isInter ? 3 : 2;
+      const bowScale = isInter ? 0.045 : 0.06;
+      const ctrlPts = [srcV.clone()];
+      for (let i = 1; i <= numCtrl; i++) {
+        const t = i / (numCtrl + 1);
+        const bow = Math.sin(t * Math.PI) * len * bowScale;
+        ctrlPts.push(new THREE.Vector3(
+          srcV.x + dir.x * len * t + (perp.x * rand() + perp2.x * rand()) * bow,
+          srcV.y + dir.y * len * t + (perp.y * rand() + perp2.y * rand()) * bow,
+          srcV.z + dir.z * len * t + (perp.z * rand() + perp2.z * rand()) * bow
         ));
       }
-      points.push(tgtV.clone());
+      ctrlPts.push(tgtV.clone());
+      const curve = new THREE.CatmullRomCurve3(ctrlPts);
+      const points = curve.getPoints(28); // 28 samples = smooth arc
       const baseOpacity = isInter
         ? Math.max(0.22, Math.min(0.42, weight * 0.6))
         : Math.max(0.45, Math.min(0.78, weight * 0.9));
@@ -14917,9 +14912,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (src && tgt) buildFilament(src, tgt, edge.weight, 90000 + idx, true);
       });
 
-      // synaptic nodes — gold teardrops oriented along dominant synapse axis
-      // LatheGeometry long axis is Y: tip at -Y, blunt at +Y
-      const ORIENT_FROM = new THREE.Vector3(0, 1, 0);
+      // synaptic nodes — gold spheres
       snapshot.nodes.forEach((node) => {
         const size = 0.34
           + Math.min(0.58, (Number(node.importance) || 0) * 0.05)
@@ -14928,21 +14921,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const coreMat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone() });
         const core = new THREE.Mesh(nodeGeometry, coreMat);
         core.position.set(node.position.x, node.position.y, node.position.z);
-
-        const avgDir = nodeEdgeDir.get(node.thread_id);
-        if (avgDir && avgDir.length() > 0.5) {
-          core.scale.setScalar(size);
-          core.quaternion.setFromUnitVectors(ORIENT_FROM, avgDir.clone().normalize());
-        } else {
-          // isolated node — deterministic random tilt
-          const rSeed = ((node.thread_id || 1) * 1664525 + 1013904223) >>> 0;
-          core.scale.setScalar(size);
-          core.rotation.set(
-            (rSeed / 0x100000000) * Math.PI,
-            ((rSeed * 1664525) >>> 0) / 0x100000000 * Math.PI,
-            0
-          );
-        }
+        core.scale.setScalar(size);
 
         core.userData = { kind: "node", data: node, baseScale: size };
         nodeGroup.add(core);
@@ -15050,40 +15029,74 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function animateSparks(globalPulse) {
-      // launch sparks — more frequent near pulse peak
-      if (state.filamentData.length > 0 && Math.random() < 0.04 + globalPulse * 0.03) {
-        const fd = state.filamentData[Math.floor(Math.random() * state.filamentData.length)];
-        const sparkMat = new THREE.MeshBasicMaterial({
-          color: new THREE.Color("#f5c84a"),
-          transparent: true, opacity: 1.0,
-          blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        const sparkMesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 4, 4), sparkMat);
-        nodeGroup.add(sparkMesh);
-        state.sparks.push({ mesh: sparkMesh, points: fd.pathPoints, sourceId: fd.sourceId, targetId: fd.targetId, progress: 0, speed: 0.02 + Math.random() * 0.028 });
+      const PULSE_LEN = 0.30;   // fraction of path lit at once — long sweep
+      const PULSE_SPEED = 0.009; // uniform travel speed
+      const MAX_PULSES = 50;
+
+      // spawn several pulses per frame, weighted toward pulse peak
+      if (state.filamentData.length > 0 && state.sparks.length < MAX_PULSES) {
+        const toSpawn = Math.random() < (0.22 + globalPulse * 0.18) ? (Math.random() < 0.5 ? 2 : 3) : 0;
+        for (let s = 0; s < toSpawn && state.sparks.length < MAX_PULSES; s++) {
+          const fd = state.filamentData[Math.floor(Math.random() * state.filamentData.length)];
+          const pulseMat = new THREE.LineBasicMaterial({
+            color: new THREE.Color("#ffe580"),
+            transparent: true, opacity: 0.95,
+            blending: THREE.AdditiveBlending, depthWrite: false
+          });
+          const pulseLine = new THREE.Line(new THREE.BufferGeometry(), pulseMat);
+          nodeGroup.add(pulseLine);
+          state.sparks.push({
+            mesh: pulseLine,
+            points: fd.pathPoints,
+            sourceId: fd.sourceId,
+            targetId: fd.targetId,
+            progress: 0,
+            speed: PULSE_SPEED,
+            pulseLen: PULSE_LEN
+          });
+        }
       }
 
       for (let i = state.sparks.length - 1; i >= 0; i--) {
         const spark = state.sparks[i];
         spark.progress += spark.speed;
-        if (spark.progress >= 1) {
+        if (spark.progress >= 1 + spark.pulseLen) {
           nodeGroup.remove(spark.mesh);
           spark.mesh.geometry.dispose();
           spark.mesh.material.dispose();
           state.sparks.splice(i, 1);
           continue;
         }
-        const pts = spark.points;
-        const rawIdx = spark.progress * (pts.length - 1);
-        const segIdx = Math.min(Math.floor(rawIdx), pts.length - 2);
-        spark.mesh.position.lerpVectors(pts[segIdx], pts[segIdx + 1], rawIdx - segIdx);
-        spark.mesh.material.opacity = Math.min(1, Math.min(spark.progress * 10, (1 - spark.progress) * 10));
 
-        // light up endpoint nodes as spark arrives/departs
-        if (spark.progress < 0.14 && spark.sourceId != null)
-          state.nodeLightMap.set(spark.sourceId, Math.max(state.nodeLightMap.get(spark.sourceId) || 0, (0.14 - spark.progress) / 0.14));
-        if (spark.progress > 0.86 && spark.targetId != null)
-          state.nodeLightMap.set(spark.targetId, Math.max(state.nodeLightMap.get(spark.targetId) || 0, (spark.progress - 0.86) / 0.14));
+        // extract the lit window of path points
+        const pts = spark.points;
+        const n = pts.length;
+        const tailT = Math.max(0, spark.progress - spark.pulseLen);
+        const headT = Math.min(1, spark.progress);
+
+        // gather points in window, inserting interpolated endpoints for clean edges
+        const windowPts = [];
+        const tailF = tailT * (n - 1);
+        const headF = headT * (n - 1);
+        const tailSeg = Math.min(Math.floor(tailF), n - 2);
+        const headSeg = Math.min(Math.floor(headF), n - 2);
+        windowPts.push(new THREE.Vector3().lerpVectors(pts[tailSeg], pts[tailSeg + 1], tailF - tailSeg));
+        for (let k = tailSeg + 1; k <= headSeg; k++) windowPts.push(pts[k]);
+        if (headSeg > tailSeg || headF - headSeg > 0)
+          windowPts.push(new THREE.Vector3().lerpVectors(pts[headSeg], pts[headSeg + 1], headF - headSeg));
+
+        if (windowPts.length >= 2) spark.mesh.geometry.setFromPoints(windowPts);
+
+        // fade in at start of path, fade out at end
+        const fadeIn = Math.min(1, spark.progress / (spark.pulseLen * 0.6));
+        const fadeOut = Math.min(1, (1 + spark.pulseLen - spark.progress) / (spark.pulseLen * 0.6));
+        spark.mesh.material.opacity = 0.95 * fadeIn * fadeOut;
+
+        // light up endpoint nodes as pulse arrives/departs
+        if (spark.progress < 0.16 && spark.sourceId != null)
+          state.nodeLightMap.set(spark.sourceId, Math.max(state.nodeLightMap.get(spark.sourceId) || 0, (0.16 - spark.progress) / 0.16));
+        if (spark.progress > 0.84 && spark.targetId != null)
+          state.nodeLightMap.set(spark.targetId, Math.max(state.nodeLightMap.get(spark.targetId) || 0, (spark.progress - 0.84) / 0.16));
       }
     }
 
