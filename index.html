@@ -14179,7 +14179,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       lastInteractionAt: performance.now(),
       filamentData: [],
       sparks: [],
-      nodeLightMap: new Map()
+      nodeLightMap: new Map(),
+      keys: new Set()
     };
 
     const renderer = new THREE.WebGLRenderer({
@@ -14485,7 +14486,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const targetRadius = Math.max(110, Math.min(220, avgSpread * 10.0 + groups.length * 6.0));
+      const targetRadius = Math.max(150, Math.min(310, avgSpread * 14.0 + groups.length * 8.0));
       const groupFeatures = new Map(groups.map((group) => {
         const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
         shared.add(String(group.primary_category || "").toLowerCase());
@@ -14523,7 +14524,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       for (let iter = 0; iter < 140; iter += 1) {
         groups.forEach((group, i) => {
           const distC = Math.hypot(group._layout.x, group._layout.y, group._layout.z);
-          const grav = distC > targetRadius ? 0.0014 : 0;
+          const grav = distC > targetRadius ? 0.0022 : (distC > targetRadius * 0.8 ? 0.0008 : 0);
           const force = { x: -group._layout.x * grav, y: -group._layout.y * grav, z: -group._layout.z * grav };
           for (let j = 0; j < groups.length; j += 1) {
             if (i === j) continue;
@@ -14912,6 +14913,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (src && tgt) buildFilament(src, tgt, edge.weight, 90000 + idx, true);
       });
 
+      // ensure every node has at least one synapse — connect isolated nodes to nearest neighbor
+      const connectedIds = new Set();
+      state.filamentData.forEach(({ sourceId, targetId }) => { connectedIds.add(sourceId); connectedIds.add(targetId); });
+      snapshot.nodes.forEach((node, idx) => {
+        if (connectedIds.has(node.thread_id)) return;
+        let nearestNode = null, nearestDist = Infinity;
+        snapshot.nodes.forEach((other) => {
+          if (other.thread_id === node.thread_id) return;
+          const d = Math.hypot(node.position.x - other.position.x, node.position.y - other.position.y, node.position.z - other.position.z);
+          if (d < nearestDist) { nearestDist = d; nearestNode = other; }
+        });
+        if (nearestNode) buildFilament(node, nearestNode, 0.28, 200000 + idx, false);
+      });
+
       // synaptic nodes — gold spheres
       snapshot.nodes.forEach((node) => {
         const size = 0.34
@@ -14968,7 +14983,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function updateCamera() {
       const idleMs = performance.now() - state.lastInteractionAt;
-      if (!state.drag && idleMs > 2200) state.yaw += 0.00135;
+      // keyboard orbit — WASD or arrow keys
+      const LEFT  = state.keys.has('ArrowLeft')  || state.keys.has('a') || state.keys.has('A');
+      const RIGHT = state.keys.has('ArrowRight') || state.keys.has('d') || state.keys.has('D');
+      const UP    = state.keys.has('ArrowUp')    || state.keys.has('w') || state.keys.has('W');
+      const DOWN  = state.keys.has('ArrowDown')  || state.keys.has('s') || state.keys.has('S');
+      const IN    = state.keys.has('+') || state.keys.has('=');
+      const OUT   = state.keys.has('-') || state.keys.has('_');
+      if (LEFT)  { state.yaw  -= 0.022; state.lastInteractionAt = performance.now(); }
+      if (RIGHT) { state.yaw  += 0.022; state.lastInteractionAt = performance.now(); }
+      if (UP)    { state.pitch = Math.max(-1.15, state.pitch - 0.016); state.lastInteractionAt = performance.now(); }
+      if (DOWN)  { state.pitch = Math.min( 1.15, state.pitch + 0.016); state.lastInteractionAt = performance.now(); }
+      if (IN)    { state.distance = Math.max(55, state.distance - 2.5); state.lastInteractionAt = performance.now(); }
+      if (OUT)   { state.distance = Math.min(340, state.distance + 2.5); state.lastInteractionAt = performance.now(); }
+      if (!state.drag && !(LEFT || RIGHT || UP || DOWN) && idleMs > 2200) state.yaw += 0.00135;
       const pitch = Math.max(-1.15, Math.min(1.15, state.pitch));
       const distance = Math.max(55, Math.min(340, state.distance));
       camera.position.set(
@@ -15005,9 +15033,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         else mesh.scale.setScalar(baseScale * factor);
 
         if (mesh.userData.halo) {
-          const haloBase = 0.03 + globalPulse * 0.07;
-          const haloOpacity = Math.min(0.88, haloBase + spark * 0.6 + (isHovered ? 0.32 : 0));
-          const haloScale = baseScale * (1.8 + spark * 2.2 + globalPulse * 0.5 + (isHovered ? 2.0 : 0));
+          const haloBase = 0.012 + globalPulse * 0.018;
+          const haloOpacity = Math.min(0.16, haloBase + spark * 0.09 + (isHovered ? 0.12 : 0));
+          const haloScale = baseScale * (1.35 + spark * 0.35 + globalPulse * 0.1 + (isHovered ? 0.9 : 0));
           mesh.userData.halo.scale.setScalar(haloScale);
           mesh.userData.halo.material.opacity = haloOpacity;
         }
@@ -15029,13 +15057,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function animateSparks(globalPulse) {
-      const PULSE_LEN = 0.30;   // fraction of path lit at once — long sweep
-      const PULSE_SPEED = 0.009; // uniform travel speed
-      const MAX_PULSES = 50;
+      const PULSE_LEN = 0.32;   // fraction of path lit at once — long sweep
+      const PULSE_SPEED = 0.018; // fast uniform travel
+      const MAX_PULSES = 140;
 
-      // spawn several pulses per frame, weighted toward pulse peak
+      // spawn several pulses per frame — high volume, weighted toward pulse peak
       if (state.filamentData.length > 0 && state.sparks.length < MAX_PULSES) {
-        const toSpawn = Math.random() < (0.22 + globalPulse * 0.18) ? (Math.random() < 0.5 ? 2 : 3) : 0;
+        const toSpawn = Math.random() < (0.55 + globalPulse * 0.30) ? (2 + Math.floor(Math.random() * 4)) : 1;
         for (let s = 0; s < toSpawn && state.sparks.length < MAX_PULSES; s++) {
           const fd = state.filamentData[Math.floor(Math.random() * state.filamentData.length)];
           const pulseMat = new THREE.LineBasicMaterial({
@@ -15087,10 +15115,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         if (windowPts.length >= 2) spark.mesh.geometry.setFromPoints(windowPts);
 
-        // fade in at start of path, fade out at end
-        const fadeIn = Math.min(1, spark.progress / (spark.pulseLen * 0.6));
-        const fadeOut = Math.min(1, (1 + spark.pulseLen - spark.progress) / (spark.pulseLen * 0.6));
-        spark.mesh.material.opacity = 0.95 * fadeIn * fadeOut;
+        // smooth sine-based fade in/out along the full path
+        const fadeT = Math.max(0, Math.min(1, spark.progress / (1 + spark.pulseLen)));
+        const fade = Math.sin(fadeT * Math.PI);
+        spark.mesh.material.opacity = 0.92 * fade;
 
         // light up endpoint nodes as pulse arrives/departs
         if (spark.progress < 0.16 && spark.sourceId != null)
@@ -15164,6 +15192,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("resize", onResize);
+
+    // keyboard orbit controls — only active when cluster page is shown
+    const CLUSTER_KEYS = new Set(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','a','A','d','D','w','W','s','S','+','=','-','_']);
+    window.addEventListener("keydown", (e) => {
+      if (window.__currentPage !== 3) return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (CLUSTER_KEYS.has(e.key)) { e.stopPropagation(); e.preventDefault(); state.keys.add(e.key); }
+    }, true);
+    window.addEventListener("keyup", (e) => {
+      state.keys.delete(e.key);
+    });
 
     buildStars();
     onResize();
