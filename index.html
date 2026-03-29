@@ -1781,17 +1781,14 @@
     .panelSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
     .panelSlide::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
 
-    /* ── Overview slide: map top half + info bottom half ── */
+    /* ── Overview slide: map fills entire slide ── */
     #panelOverviewSlide {
-      overflow-y: auto !important;
-      overflow-x: hidden;
+      overflow: hidden !important;
       display: flex; flex-direction: column;
       height: 100%;
     }
-    #panelOverviewSlide::-webkit-scrollbar { width: 4px; }
-    #panelOverviewSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
     #panelMapHalf {
-      position: relative; flex: 0 0 50%; min-height: 0;
+      position: relative; flex: 1; min-height: 0;
       background: #060a10;
     }
     #panelMapContainer {
@@ -1823,13 +1820,8 @@
     }
     .mapStyleBtn.active { background: rgba(255,255,255,0.1); color: #fff; }
     .mapStyleBtn:not(:last-child) { border-right: 1px solid rgba(255,255,255,0.1); }
-    /* Location info panel (bottom half) */
-    #panelOverviewInfo {
-      flex: 0 0 50%; padding: 16px;
-      background: rgba(6,10,16,0.6);
-      border-top: 1px solid rgba(255,255,255,0.06);
-      overflow-y: auto;
-    }
+    /* Location info panel — hidden, map fills entire slide now */
+    #panelOverviewInfo { display: none; }
     .poiSection {
       font-size: 9px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
       color: rgba(255,255,255,0.28); margin-bottom: 8px; margin-top: 14px;
@@ -10299,7 +10291,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
               <div class="panelSlide" id="panelOverviewSlide">
                 <div id="panelMapHalf"><div id="panelMapContainer"></div></div>
-                <div id="panelOverviewInfo"></div>
               </div>
               <div class="panelSlide" id="panelStatsSlide">
                 <div id="panelStatsContent"><div class="psEmpty"><span style="font-size:22px;opacity:0.3">◈</span><span>Loading statistics…</span></div></div>
@@ -10767,6 +10758,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             });
 
             setTimeout(() => map.invalidateSize(), 120);
+
+            // Re-render whenever the panel is resized or maximized — covers both
+            // the drag-resize handle and the maximize/minimize button.
+            if (window.ResizeObserver) {
+              const ro = new ResizeObserver(() => map.invalidateSize());
+              ro.observe(mapContainer.closest("#panelMapHalf") || mapContainer);
+              // Clean up when the panel is closed
+              mapContainer.addEventListener("_leafletRemove", () => ro.disconnect(), { once: true });
+            }
           }
 
           if (window.L) {
@@ -10783,84 +10783,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             script.onload = () => buildMap(window.L);
             document.head.appendChild(script);
           }
-        })();
-
-        // ── Overview info panel: location details ──
-        (function populateOverviewInfo() {
-          const infoEl = document.getElementById("panelOverviewInfo");
-          if (!infoEl) return;
-
-          function fmtPop(n) {
-            if (!n || isNaN(n)) return "–";
-            if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, "") + "B";
-            if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-            if (n >= 1e3) return (n / 1e3).toFixed(0) + "K";
-            return String(n);
-          }
-          function fmtGdp(n) {
-            if (!n || isNaN(n)) return "–";
-            if (n >= 1e12) return "$" + (n / 1e12).toFixed(2).replace(/\.?0+$/, "") + "T";
-            if (n >= 1e9)  return "$" + (n / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
-            if (n >= 1e6)  return "$" + (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-            return "$" + Number(n).toLocaleString();
-          }
-          function fmtCoords(lat, lon) {
-            if (lat == null || lon == null) return "–";
-            const la = Math.abs(lat).toFixed(2) + "° " + (lat >= 0 ? "N" : "S");
-            const lo = Math.abs(lon).toFixed(2) + "° " + (lon >= 0 ? "E" : "W");
-            return `${la}, ${lo}`;
-          }
-
-          const lat  = node.lat ?? node.latitude ?? null;
-          const lon  = node.lon ?? node.longitude ?? null;
-          const pop  = node.population ?? null;
-          const gdp  = node.gdp ?? null;
-          const tz   = node.timezone ?? null;
-          const region    = node.region ?? null;
-          const country   = isCity ? (node.country ?? null) : null;
-          const continent = node.continent ?? null;
-
-          // Build stat tiles
-          const stats = [];
-          if (pop)  stats.push({ val: fmtPop(pop),  label: "Population" });
-          if (gdp)  stats.push({ val: fmtGdp(gdp),  label: isCity ? "City GDP" : "GDP" });
-          if (lat != null && lon != null) stats.push({ val: fmtCoords(lat, lon), label: "Coordinates" });
-          if (tz)   stats.push({ val: tz.replace(/_/g, " "), label: "Timezone" });
-
-          const tags = [];
-          if (continent) tags.push(continent);
-          if (region && region !== continent) tags.push(region);
-          if (country)   tags.push(country);
-
-          let html = "";
-
-          // Location section label
-          html += `<div class="poiSection">${isCity ? "City" : "Country"} Overview</div>`;
-
-          // Stats grid
-          if (stats.length) {
-            html += `<div class="poiGrid">`;
-            stats.forEach(s => {
-              html += `<div class="poiStat"><div class="poiStatVal">${s.val}</div><div class="poiStatLabel">${s.label}</div></div>`;
-            });
-            html += `</div>`;
-          }
-
-          // Tags row
-          if (tags.length) {
-            html += `<div class="poiSection">Region</div><div class="poiTagRow">`;
-            tags.forEach(t => {
-              html += `<span class="poiTag">${t}</span>`;
-            });
-            html += `</div>`;
-          }
-
-          // Fallback if nothing available
-          if (!stats.length && !tags.length) {
-            html += `<div class="poiDesc" style="opacity:0.4;text-align:center;padding-top:12px;">No additional data available.</div>`;
-          }
-
-          infoEl.innerHTML = html;
         })();
 
         // ── Statistics: trade/exports/imports ──
