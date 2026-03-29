@@ -1337,6 +1337,42 @@ app.get("/api/articles/by-ids", async (req, res) => {
   }
 });
 
+// GET /api/articles/by-thread?thread_id=X&limit=20 — articles for a cluster node thread
+app.get("/api/articles/by-thread", async (req, res) => {
+  try {
+    const threadId = parseInt(req.query.thread_id, 10);
+    if (!threadId) return res.status(400).json({ error: "thread_id required" });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 40);
+    const { rows } = await pool.query(`
+      SELECT
+        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+        a.published_at, a.url, a.video_id, a.media_type,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        img_a.public_url AS catalog_image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        co.name AS country_name, co.iso_code,
+        ci.name AS city_name,
+        sta.relevance_score, sta.is_anchor
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities ci ON ci.id = a.city_id
+      WHERE sta.thread_id = $1
+      ORDER BY sta.is_anchor DESC, sta.relevance_score DESC, a.published_at DESC
+      LIMIT $2
+    `, [threadId, limit]);
+    res.json(rows);
+  } catch (err) {
+    console.error("[articles/by-thread]", err.message);
+    res.status(500).json({ error: "Failed to fetch thread articles" });
+  }
+});
+
 // GET /api/articles/recent?limit=60&hours=48 — random recent articles for global ticker
 app.get("/api/articles/recent", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 60, 100);

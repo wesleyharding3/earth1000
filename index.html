@@ -15321,7 +15321,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const members = nodesByGroup.get(group.cluster_id) || [];
         if (members.length <= 1) return;
 
-        const memberScale = Math.max(24, Math.min(52, group.spread * 3.2 + Math.sqrt(members.length) * 3.0));
+        const isCentral = group.cluster_id === centralGroupId;
+        const memberScale = isCentral
+          ? Math.max(36, Math.min(68, group.spread * 4.2 + Math.sqrt(members.length) * 3.8))
+          : Math.max(18, Math.min(40, group.spread * 2.4 + Math.sqrt(members.length) * 2.4));
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
           const dx = member.position.x - centroid.x;
@@ -15353,10 +15356,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const importance = Number(entry.member.importance) || 0;
             const articleCount = Number(entry.member.article_count) || 0;
             const baseRadius = 1.6 + importance * 0.1 + Math.log2(1 + articleCount) * 0.35;
+            const centripetal = isCentral ? 0.0004 : 0.0012;
             const force = {
-              x: (centroid.x - entry.p.x) * 0.0008,
-              y: (centroid.y - entry.p.y) * 0.0008,
-              z: (centroid.z - entry.p.z) * 0.0008
+              x: (centroid.x - entry.p.x) * centripetal,
+              y: (centroid.y - entry.p.y) * centripetal,
+              z: (centroid.z - entry.p.z) * centripetal
             };
 
             for (let j = 0; j < layout.length; j += 1) {
@@ -15367,7 +15371,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const odz = entry.p.z - other.p.z;
               const dist = Math.max(0.001, Math.hypot(odx, ody, odz));
               const otherRadius = 1.6 + (Number(other.member.importance) || 0) * 0.1 + Math.log2(1 + (Number(other.member.article_count) || 0)) * 0.35;
-              const desired = baseRadius + otherRadius + 11.0;
+              const desired = baseRadius + otherRadius + (isCentral ? 16.0 : 7.0);
               const repel = dist < desired ? (desired - dist) * 0.22 : 8 / (dist * dist);
               force.x += (odx / dist) * repel;
               force.y += (ody / dist) * repel;
@@ -15381,8 +15385,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         // ── Normalisation pass: rescale so average inter-node distance ≈ TARGET_SPACING
-        // This enforces a uniform spread regardless of memberScale or article count variance
-        const TARGET_SPACING = 18;
+        // Central cluster gets more spread; fringe clusters pulled tighter to normalise
+        const TARGET_SPACING = isCentral ? 28 : 13;
         if (layout.length >= 2) {
           let totalDist = 0, pairs = 0;
           for (let i = 0; i < layout.length; i++) {
