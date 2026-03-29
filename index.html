@@ -14297,7 +14297,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     <div id="clusterTooltip"></div>
 
-    <div id="clusterBottomBar">
+    <div id="clusterBottomBar" style="display:none">
       <div id="clusterStatusPill">Connecting to the latest weekly cluster snapshot…</div>
       <div id="clusterLegend"></div>
     </div>
@@ -14808,7 +14808,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       const groupMap = new Map(groups.map((group) => [group.cluster_id, group]));
       const avgSpread = groups.reduce((sum, group) => sum + Math.max(5, group.spread || 0), 0) / groups.length;
-      const targetRadius = Math.max(150, Math.min(310, avgSpread * 14.0 + groups.length * 8.0));
+      const targetRadius = Math.max(160, Math.min(280, avgSpread * 12.0 + groups.length * 7.0));
       const groupFeatures = new Map(groups.map((group) => {
         const shared = new Set(keywordList(group.shared_properties, 6).map((item) => item.toLowerCase()));
         shared.add(String(group.primary_category || "").toLowerCase());
@@ -14846,7 +14846,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       for (let iter = 0; iter < 140; iter += 1) {
         groups.forEach((group, i) => {
           const distC = Math.hypot(group._layout.x, group._layout.y, group._layout.z);
-          const grav = distC > targetRadius ? 0.0022 : (distC > targetRadius * 0.8 ? 0.0008 : 0);
+          // uniform shell: pull hard beyond radius, nudge gently between 0.7-1.0, no grav inside
+          const grav = distC > targetRadius * 1.1 ? 0.0045
+                     : distC > targetRadius        ? 0.0028
+                     : distC > targetRadius * 0.7  ? 0.0012
+                     : 0;
           const force = { x: -group._layout.x * grav, y: -group._layout.y * grav, z: -group._layout.z * grav };
           for (let j = 0; j < groups.length; j += 1) {
             if (i === j) continue;
@@ -14921,8 +14925,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (members.length <= 1) return;
 
         const isCentral = group.cluster_id === centralGroupId;
-        const memberScale = Math.max(16, Math.min(42, group.spread * 3.2 + Math.sqrt(members.length) * 2.6))
-          * (isCentral ? 3.5 : 1.0);
+        const memberScale = Math.max(14, Math.min(36, group.spread * 2.8 + Math.sqrt(members.length) * 2.2))
+          * (isCentral ? 4.2 : 1.0);
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
           const dx = member.position.x - centroid.x;
@@ -15172,8 +15176,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const curve = new THREE.CatmullRomCurve3(ctrlPts);
       const points = curve.getPoints(28); // 28 samples = smooth arc
       const baseOpacity = isInter
-        ? Math.max(0.22, Math.min(0.42, weight * 0.6))
-        : Math.max(0.45, Math.min(0.78, weight * 0.9));
+        ? Math.max(0.38, Math.min(0.58, weight * 0.8))
+        : Math.max(0.62, Math.min(0.88, weight * 1.1));
       const mat = new THREE.LineBasicMaterial({
         color: SYNAPSE_GOLD.clone(),
         transparent: true, opacity: baseOpacity,
@@ -15235,18 +15239,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (src && tgt) buildFilament(src, tgt, edge.weight, 90000 + idx, true);
       });
 
-      // ensure every node has at least one synapse — connect isolated nodes to nearest neighbor
-      const connectedIds = new Set();
-      state.filamentData.forEach(({ sourceId, targetId }) => { connectedIds.add(sourceId); connectedIds.add(targetId); });
+      // dense connectivity — every node gets at least 3 synapse connections via K-nearest-neighbors
+      const MIN_CONNECTIONS = 3;
+      const connectionCount = new Map(snapshot.nodes.map(n => [n.thread_id, 0]));
+      state.filamentData.forEach(({ sourceId, targetId }) => {
+        connectionCount.set(sourceId, (connectionCount.get(sourceId) || 0) + 1);
+        connectionCount.set(targetId, (connectionCount.get(targetId) || 0) + 1);
+      });
+      const existingPairs = new Set(state.filamentData.map(({ sourceId, targetId }) =>
+        [Math.min(sourceId, targetId), Math.max(sourceId, targetId)].join("-")
+      ));
       snapshot.nodes.forEach((node, idx) => {
-        if (connectedIds.has(node.thread_id)) return;
-        let nearestNode = null, nearestDist = Infinity;
-        snapshot.nodes.forEach((other) => {
-          if (other.thread_id === node.thread_id) return;
-          const d = Math.hypot(node.position.x - other.position.x, node.position.y - other.position.y, node.position.z - other.position.z);
-          if (d < nearestDist) { nearestDist = d; nearestNode = other; }
-        });
-        if (nearestNode) buildFilament(node, nearestNode, 0.28, 200000 + idx, false);
+        const needed = MIN_CONNECTIONS - (connectionCount.get(node.thread_id) || 0);
+        if (needed <= 0) return;
+        // sort all other nodes by distance, pick the closest `needed` not already connected
+        const sorted = snapshot.nodes
+          .filter(o => o.thread_id !== node.thread_id)
+          .map(o => ({ node: o, dist: Math.hypot(node.position.x - o.position.x, node.position.y - o.position.y, node.position.z - o.position.z) }))
+          .sort((a, b) => a.dist - b.dist);
+        let added = 0;
+        for (const { node: other } of sorted) {
+          if (added >= needed) break;
+          const pairKey = [Math.min(node.thread_id, other.thread_id), Math.max(node.thread_id, other.thread_id)].join("-");
+          if (existingPairs.has(pairKey)) continue;
+          existingPairs.add(pairKey);
+          const isInter = node.cluster_id !== other.cluster_id;
+          buildFilament(node, other, 0.28, 200000 + idx * 100 + added, isInter);
+          connectionCount.set(node.thread_id, (connectionCount.get(node.thread_id) || 0) + 1);
+          connectionCount.set(other.thread_id, (connectionCount.get(other.thread_id) || 0) + 1);
+          added++;
+        }
       });
 
       // synaptic nodes — gold spheres
