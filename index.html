@@ -5588,6 +5588,80 @@
   font-size: 11px; font-weight: 700; letter-spacing: 0;
   display: flex; align-items: center; justify-content: center;
 }
+/* ── Pricing Modal ─────────────────────────────────────────────────────── */
+#pricingOverlay {
+  display: none; position: fixed; inset: 0; z-index: 10001;
+  background: rgba(0,0,0,0.82); backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  align-items: center; justify-content: center; padding: 16px;
+}
+#pricingOverlay.open { display: flex; }
+#pricingCard {
+  background: rgba(8,14,26,0.98); border: 1px solid rgba(212,168,67,0.22);
+  border-radius: 24px; padding: 36px 30px 28px; width: 560px;
+  max-width: calc(100vw - 32px); max-height: calc(100vh - 40px);
+  overflow-y: auto; box-shadow: 0 32px 100px rgba(0,0,0,0.85);
+  position: relative;
+}
+#pricingClose {
+  position: absolute; top: 16px; right: 18px;
+  background: none; border: none; color: rgba(255,255,255,0.4);
+  font-size: 18px; cursor: pointer; padding: 4px 8px; line-height: 1;
+}
+#pricingClose:hover { color: #fff; }
+.pricingTitle { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+.pricingSubtitle { font-size: 13px; color: rgba(255,255,255,0.45); margin-bottom: 28px; }
+.pricingTiers { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+@media (max-width: 520px) { .pricingTiers { grid-template-columns: 1fr; } }
+.pricingTierCard {
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 16px; padding: 20px 16px 18px; display: flex;
+  flex-direction: column; gap: 0;
+}
+.pricingTierCard.current { border-color: rgba(212,168,67,0.5); background: rgba(212,168,67,0.06); }
+.pricingTierCard.highlighted { border-color: rgba(212,168,67,0.7); background: rgba(212,168,67,0.1); }
+.pricingTierName { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(255,255,255,0.45); margin-bottom: 8px; }
+.pricingTierPrice { font-size: 28px; font-weight: 800; color: #fff; line-height: 1; }
+.pricingTierPrice span { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.4); margin-left: 3px; }
+.pricingTierFeatures { list-style: none; padding: 0; margin: 14px 0 18px; display: flex; flex-direction: column; gap: 7px; flex: 1; }
+.pricingTierFeatures li { font-size: 12px; color: rgba(255,255,255,0.65); padding-left: 16px; position: relative; line-height: 1.4; }
+.pricingTierFeatures li::before { content: '·'; position: absolute; left: 4px; color: rgba(212,168,67,0.7); }
+.pricingTierCta {
+  width: 100%; padding: 10px; border-radius: 10px; font-size: 13px; font-weight: 700;
+  cursor: pointer; border: none; transition: opacity 0.15s;
+  background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5);
+}
+.pricingTierCta:hover { opacity: 0.8; }
+.pricingTierCta.active { background: #d4a843; color: #000; }
+.pricingTierCta.current-plan { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); cursor: default; }
+.pricingPaypalBtn { margin-top: 8px; }
+.pricingNote { font-size: 11px; color: rgba(255,255,255,0.25); text-align: center; margin-top: 20px; }
+/* Upgrade nudge banner */
+.upgradeNudge {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(212,168,67,0.1); border: 1px solid rgba(212,168,67,0.3);
+  border-radius: 10px; padding: 10px 14px; margin-top: 12px;
+  font-size: 12px; color: rgba(255,255,255,0.7);
+}
+.upgradeNudge button {
+  margin-left: auto; flex-shrink: 0; padding: 5px 12px;
+  background: #d4a843; color: #000; border: none; border-radius: 7px;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+}
+/* Explain button */
+.explainBtn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 11px; border-radius: 8px; font-size: 11px; font-weight: 600;
+  background: rgba(212,168,67,0.12); border: 1px solid rgba(212,168,67,0.3);
+  color: rgba(212,168,67,0.85); cursor: pointer; transition: all 0.15s; margin-top: 10px;
+}
+.explainBtn:hover { background: rgba(212,168,67,0.22); color: #d4a843; }
+.explainBtn:disabled { opacity: 0.4; cursor: default; }
+.explainResult {
+  font-size: 12px; color: rgba(255,255,255,0.65); line-height: 1.6;
+  background: rgba(255,255,255,0.04); border-left: 2px solid rgba(212,168,67,0.4);
+  border-radius: 0 6px 6px 0; padding: 8px 12px; margin-top: 8px;
+}
 #authOverlay {
   display: none; position: fixed; inset: 0; z-index: 10000;
   background: rgba(0,0,0,0.78); backdrop-filter: blur(8px);
@@ -6267,6 +6341,12 @@
         <div class="acctDpHeader">
           <div class="acctDpEmail" id="acctDpEmail">—</div>
           <span class="acctDpTier free" id="acctDpTier">Free</span>
+        </div>
+        <div class="acctDpBtn" id="acctDpUpgrade" onclick="window.__openPricing()" style="color:rgba(212,168,67,0.9)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/>
+          </svg>
+          Upgrade Plan
         </div>
         <div class="acctDpBtn signout" id="acctDpSignOut">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -15074,6 +15154,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.source_country_count || 0)}</span><span class="cdMetaLabel">Countries</span></div>
             <div class="cdMetaItem"><span class="cdMetaNum" style="color:${catColor}">${fmtNum(node.importance || 0)}</span><span class="cdMetaLabel">Importance</span></div>
           </div>
+          <div style="padding:0 16px 4px" id="cdExplainWrap"
+               data-thread-id="${node.thread_id || node.id}"
+               data-title="${esc(node.title || '')}"
+               data-summary="${esc((node.description || '').slice(0,400))}"
+               data-keywords="${esc(JSON.stringify(node.keywords || []))}">
+            <button class="explainBtn" onclick="window.__triggerExplain(this,'thread')" ${!window.__authToken ? 'data-needsauth="1"' : ''}>
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.2v3.1M6 3.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              Explain context
+            </button>
+            <div class="explainResult" id="cdExplainResult" style="display:none"></div>
+          </div>
         </div>
         <div class="cdBody" id="cdBodyEl">
           <div class="cdLoadingRow" style="grid-column:1/-1">
@@ -17269,24 +17360,17 @@ grmClockTick();
       ? `<div class="adpMiniMap"><svg width="10" height="12" viewBox="0 0 10 12" fill="none" style="display:inline;vertical-align:middle;margin-right:3px;opacity:.7"><path d="M5 0C2.79 0 1 1.79 1 4c0 3 4 8 4 8s4-5 4-8c0-2.21-1.79-4-4-4zm0 5.5A1.5 1.5 0 1 1 5 2.5a1.5 1.5 0 0 1 0 3z" fill="currentColor"/></svg>${locationTags.join(', ')}</div>`
       : '';
     
-    // Context section (placeholder for future metrics)
+    // Context section — AI Explain button (Pro/Enterprise feature)
+    const canExplain = window.__checkTier && window.__checkTier('pro');
     const contextHTML = `
-      <div class="adpContext">
-        <div class="adpContextTitle">Story Context</div>
-        <div class="adpContextGrid">
-          <div class="adpContextStat">
-            <div class="adpContextStatValue">—</div>
-            <div class="adpContextStatLabel">Related stories</div>
-          </div>
-          <div class="adpContextStat">
-            <div class="adpContextStatValue">—</div>
-            <div class="adpContextStatLabel">Sources covering</div>
-          </div>
-          <div class="adpContextStat">
-            <div class="adpContextStatValue">—</div>
-            <div class="adpContextStatLabel">Hours trending</div>
-          </div>
-        </div>
+      <div class="adpContext" id="adpExplainWrap" data-article-id="${article.id}"
+           data-title="${(article.translated_title || article.title || '').replace(/"/g,'&quot;')}"
+           data-summary="${((article.translated_summary || article.summary || '')).slice(0,400).replace(/"/g,'&quot;')}">
+        <button class="explainBtn" onclick="window.__triggerExplain(this,'article')" ${!window.__authToken ? 'data-needsauth="1"' : ''}>
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.2v3.1M6 3.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          Explain context
+        </button>
+        <div class="explainResult" id="adpExplainResult" style="display:none"></div>
       </div>
     `;
     
@@ -17795,6 +17879,62 @@ grmClockTick();
   </script>
 
 <!-- ═══════════════════════════════════════════════════════════════
+     PRICING MODAL
+════════════════════════════════════════════════════════════════ -->
+<div id="pricingOverlay">
+  <div id="pricingCard">
+    <button id="pricingClose">✕</button>
+    <div class="pricingTitle">Choose your plan</div>
+    <div class="pricingSubtitle" id="pricingSubtitle">Unlock the full Earth intelligence platform.</div>
+    <div class="pricingTiers">
+
+      <!-- Free -->
+      <div class="pricingTierCard" id="pricingCardFree">
+        <div class="pricingTierName">Free</div>
+        <div class="pricingTierPrice">$0<span>/mo</span></div>
+        <ul class="pricingTierFeatures">
+          <li>2 global briefings / week</li>
+          <li>5 article translations / day</li>
+          <li>Custom briefings at $2.50 each</li>
+          <li>Globe + cluster explorer</li>
+        </ul>
+        <button class="pricingTierCta current-plan" id="pricingCtaFree">Current plan</button>
+      </div>
+
+      <!-- Pro -->
+      <div class="pricingTierCard highlighted" id="pricingCardPro">
+        <div class="pricingTierName">Pro</div>
+        <div class="pricingTierPrice">$5<span>/mo</span></div>
+        <ul class="pricingTierFeatures">
+          <li>All 7 daily briefings</li>
+          <li>5 article translations / day</li>
+          <li>5 context explanations / day</li>
+          <li>Custom briefings at $2.50 each</li>
+        </ul>
+        <button class="pricingTierCta active" id="pricingCtaProManage" style="display:none" onclick="window.__cancelPayPal()">Manage subscription</button>
+        <div id="pricingPaypalPro" class="pricingPaypalBtn"></div>
+      </div>
+
+      <!-- Enterprise -->
+      <div class="pricingTierCard" id="pricingCardEnterprise">
+        <div class="pricingTierName">Enterprise</div>
+        <div class="pricingTierPrice">$25<span>/mo</span></div>
+        <ul class="pricingTierFeatures">
+          <li>All daily briefings</li>
+          <li>20 translations / month</li>
+          <li>20 context explanations / day</li>
+          <li>10 custom briefings / month</li>
+        </ul>
+        <button class="pricingTierCta active" id="pricingCtaEnterpriseManage" style="display:none" onclick="window.__cancelPayPal()">Manage subscription</button>
+        <div id="pricingPaypalEnterprise" class="pricingPaypalBtn"></div>
+      </div>
+
+    </div>
+    <div class="pricingNote">Cancel anytime · Secured by Stripe &amp; PayPal</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
      AUTH MODAL
 ════════════════════════════════════════════════════════════════ -->
 <div id="authOverlay">
@@ -18092,6 +18232,218 @@ grmClockTick();
       const badge = accountDropdown.querySelector('.acctAdminBadge');
       if (badge) badge.remove();
     }
+  });
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════
+     PAYMENTS + EXPLAIN LOGIC
+═══════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  const BASE = 'https://earth-wjr6.onrender.com';
+  const PAYPAL_CLIENT_ID = '%%PAYPAL_CLIENT_ID%%'; // replaced at build time or set via window.PAYPAL_CLIENT_ID
+
+  // ── Pricing modal ──────────────────────────────────────────────
+  const pricingOverlay = document.getElementById('pricingOverlay');
+  const pricingClose   = document.getElementById('pricingClose');
+
+  window.__openPricing = function (nudgeMsg) {
+    document.getElementById('pricingSubtitle').textContent =
+      nudgeMsg || 'Unlock the full Earth intelligence platform.';
+    _updatePricingCtaState();
+    pricingOverlay.classList.add('open');
+    _initPayPalButtons();
+  };
+
+  pricingClose.addEventListener('click', () => pricingOverlay.classList.remove('open'));
+  pricingOverlay.addEventListener('click', e => {
+    if (e.target === pricingOverlay) pricingOverlay.classList.remove('open');
+  });
+
+  function _updatePricingCtaState() {
+    const tier    = window.__userTier || 'free';
+    const cardFree = document.getElementById('pricingCardFree');
+    const cardPro  = document.getElementById('pricingCardPro');
+    const cardEnt  = document.getElementById('pricingCardEnterprise');
+    const ctaFree  = document.getElementById('pricingCtaFree');
+    const ctaPro   = document.getElementById('pricingCtaProManage');
+    const ctaEnt   = document.getElementById('pricingCtaEnterpriseManage');
+    const ppPro    = document.getElementById('pricingPaypalPro');
+    const ppEnt    = document.getElementById('pricingPaypalEnterprise');
+
+    [cardFree, cardPro, cardEnt].forEach(c => c?.classList.remove('current'));
+    ctaFree.textContent = 'Current plan';
+
+    if (tier === 'pro') {
+      cardPro?.classList.add('current');
+      if (ctaPro)  { ctaPro.style.display  = 'block'; }
+      if (ppPro)   { ppPro.style.display   = 'none';  }
+    } else if (tier === 'enterprise') {
+      cardEnt?.classList.add('current');
+      if (ctaEnt)  { ctaEnt.style.display  = 'block'; }
+      if (ppEnt)   { ppEnt.style.display   = 'none';  }
+    } else {
+      cardFree?.classList.add('current');
+      if (ctaPro)  { ctaPro.style.display  = 'none'; }
+      if (ctaEnt)  { ctaEnt.style.display  = 'none'; }
+      if (ppPro)   { ppPro.style.display   = '';     }
+      if (ppEnt)   { ppEnt.style.display   = '';     }
+    }
+  }
+
+  // ── PayPal ─────────────────────────────────────────────────────
+  let _ppLoaded = false;
+
+  function _initPayPalButtons() {
+    const clientId = window.PAYPAL_CLIENT_ID || '%%PAYPAL_CLIENT_ID%%';
+    if (!clientId || clientId.includes('%%')) return; // env var not set yet
+    if (_ppLoaded) { _renderPayPalButtons(); return; }
+    const s = document.createElement('script');
+    s.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&vault=true&intent=subscription`;
+    s.setAttribute('data-sdk-integration-source', 'button-factory');
+    s.onload = () => { _ppLoaded = true; _renderPayPalButtons(); };
+    document.head.appendChild(s);
+  }
+
+  function _renderPayPalButtons() {
+    if (typeof paypal === 'undefined') return;
+    _ppRenderBtn('pricingPaypalPro',        'pro');
+    _ppRenderBtn('pricingPaypalEnterprise', 'enterprise');
+  }
+
+  function _ppRenderBtn(containerId, tier) {
+    const container = document.getElementById(containerId);
+    if (!container || container.dataset.rendered) return;
+    container.dataset.rendered = '1';
+    const planId = tier === 'pro'
+      ? (window.PAYPAL_PLAN_ID_PRO || '')
+      : (window.PAYPAL_PLAN_ID_ENTERPRISE || '');
+    if (!planId) return;
+
+    paypal.Buttons({
+      style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'subscribe', height: 36 },
+      createSubscription: (_data, actions) => actions.subscription.create({ plan_id: planId }),
+      onApprove: async (data) => {
+        if (!window.__authToken) { window.__openAuthModal?.(); return; }
+        try {
+          const res = await fetch(`${BASE}/api/payments/paypal/activate`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscriptionId: data.subscriptionID, tier }),
+          });
+          const result = await res.json();
+          if (result.success) {
+            window.__userTier = tier;
+            pricingOverlay.classList.remove('open');
+            _showToast(`You're now on the ${tier.charAt(0).toUpperCase() + tier.slice(1)} plan!`);
+          } else {
+            _showToast('Activation failed — please contact support.');
+          }
+        } catch (e) { console.error('[paypal activate]', e); }
+      },
+      onError: (err) => console.error('[paypal error]', err),
+    }).render(`#${containerId}`);
+  }
+
+  // ── Cancel / manage PayPal (redirect to PayPal account) ────────
+  window.__cancelPayPal = function () {
+    window.open('https://www.paypal.com/myaccount/autopay/', '_blank');
+  };
+
+  // ── Upgrade nudge helper ────────────────────────────────────────
+  // Inserts an upgrade banner after a given container element
+  window.__showUpgradeNudge = function (containerEl, message, requiredTier) {
+    if (!containerEl) return;
+    const existing = containerEl.querySelector('.upgradeNudge');
+    if (existing) { existing.querySelector('span').textContent = message; return; }
+    const div = document.createElement('div');
+    div.className = 'upgradeNudge';
+    div.innerHTML = `<span>${message}</span><button onclick="window.__openPricing('${message}')">Upgrade</button>`;
+    containerEl.appendChild(div);
+  };
+
+  // ── AI Explain handler ──────────────────────────────────────────
+  window.__triggerExplain = async function (btn, type) {
+    if (!window.__authToken) {
+      window.__openAuthModal?.();
+      return;
+    }
+
+    const wrap      = btn.closest('[data-title]');
+    const resultEl  = wrap?.querySelector('.explainResult');
+    if (!wrap || !resultEl) return;
+
+    // Check tier client-side first for immediate feedback
+    if (!window.__checkTier('pro')) {
+      window.__openPricing('Context explanations require a Pro or Enterprise plan.');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3" stroke-dasharray="20" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 6 6" to="360 6 6" dur="0.8s" repeatCount="indefinite"/></circle></svg> Generating…`;
+
+    try {
+      const title    = wrap.dataset.title || '';
+      const summary  = wrap.dataset.summary || '';
+      const keywords = (() => { try { return JSON.parse(wrap.dataset.keywords || '[]'); } catch { return []; } })();
+      const threadId = wrap.dataset.threadId;
+
+      const res  = await fetch(`${BASE}/api/explain`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, title, summary, keywords,
+          description: type === 'thread' ? summary : undefined }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 429 && data.limitReached) {
+          resultEl.style.display = 'none';
+          window.__showUpgradeNudge(wrap,
+            data.requiredTier ? 'Context explanations require Pro or Enterprise.' :
+            `${data.used}/${data.limit} explanations used today. ${data.resetNote || 'Resets at midnight.'}`,
+            data.requiredTier
+          );
+        } else {
+          resultEl.textContent = 'Could not generate explanation.';
+          resultEl.style.display = 'block';
+        }
+      } else {
+        resultEl.textContent = data.explanation || '';
+        resultEl.style.display = data.explanation ? 'block' : 'none';
+        // Update btn to show remaining uses
+        if (data.limit && data.limit !== Infinity) {
+          btn.innerHTML = `✓ ${data.used}/${data.limit} today`;
+          btn.style.opacity = '0.5';
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('[explain]', e);
+      resultEl.textContent = 'Network error. Please try again.';
+      resultEl.style.display = 'block';
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.2v3.1M6 3.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> Explain context`;
+  };
+
+  // ── Toast helper ────────────────────────────────────────────────
+  function _showToast(msg) {
+    const t = document.createElement('div');
+    t.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+      background:rgba(20,28,45,0.97);border:1px solid rgba(212,168,67,0.4);
+      color:#fff;padding:10px 20px;border-radius:12px;font-size:13px;
+      z-index:99999;pointer-events:none;white-space:nowrap;
+      box-shadow:0 8px 32px rgba(0,0,0,0.6)`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+  }
+
+  // ── Wire "Upgrade" link in account dropdown ─────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    const upgradeLink = document.getElementById('acctDpUpgrade');
+    if (upgradeLink) upgradeLink.addEventListener('click', () => window.__openPricing());
   });
 })();
 </script>

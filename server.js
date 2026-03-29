@@ -12,6 +12,9 @@ const { generateLocationBriefing } = require("./locationBriefingGenerator");
 const Anthropic = new (require('@anthropic-ai/sdk'))({ apiKey: process.env.ANTHROPIC_API_KEY });
 const { resolveImagesForArticles } = require("./imageResolver");
 const jwt = require("jsonwebtoken");
+const payments = require("./payments");
+const sba = require("./supabaseAdmin");
+const { checkTranslation, checkExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -23,7 +26,11 @@ app.use(cors({
     "http://localhost:5500"
   ]
 }));
+
 app.use(express.json());
+
+// Mount payment routes
+app.use("/api/payments", payments.router);
 
 const DATE_LIKE_KEYWORD_PATTERNS = [
   /^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?$/i,
@@ -192,7 +199,7 @@ const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 const TIER_ORDER = ["free", "pro", "enterprise"];
 
 // optionalAuth — enriches req.user when a valid Bearer JWT is present.
-// Loads is_admin + active tier from the DB. Falls through silently if no token.
+// Loads is_admin + active tier from Supabase. Falls through silently if no token.
 async function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ") || !SUPABASE_JWT_SECRET) return next();
@@ -201,19 +208,17 @@ async function optionalAuth(req, res, next) {
     const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
     req.user = { id: payload.sub, email: payload.email };
 
-    // Load admin flag and active subscription tier
-    const { rows } = await pool.query(`
-      SELECT p.is_admin, st.name AS tier_name
-      FROM profiles p
-      LEFT JOIN subscriptions s   ON s.user_id  = p.id AND s.status = 'active'
-      LEFT JOIN subscription_tiers st ON st.id = s.tier_id
-      WHERE p.id = $1
-      LIMIT 1
-    `, [req.user.id]);
+    // Load admin flag + active subscription tier from Supabase
+    const { data: profile } = await sba
+      .from("profiles")
+      .select("is_admin, subscriptions(status, subscription_tiers(name))")
+      .eq("id", req.user.id)
+      .maybeSingle();
 
-    if (rows.length) {
-      req.user.is_admin = rows[0].is_admin || false;
-      req.user.tier     = rows[0].tier_name || "free";
+    if (profile) {
+      req.user.is_admin = profile.is_admin || false;
+      const activeSub   = (profile.subscriptions || []).find(s => s.status === "active");
+      req.user.tier     = activeSub?.subscription_tiers?.name || "free";
     } else {
       req.user.is_admin = false;
       req.user.tier     = "free";
@@ -254,20 +259,25 @@ app.use(optionalAuth);
 ========================================= */
 app.get("/api/auth/profile", async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT p.id, p.is_admin, p.created_at,
-             st.name        AS tier_name,
-             st.display_name AS tier_display_name,
-             s.status       AS subscription_status
-      FROM profiles p
-      LEFT JOIN subscriptions s    ON s.user_id  = p.id AND s.status = 'active'
-      LEFT JOIN subscription_tiers st ON st.id = s.tier_id
-      WHERE p.id = $1
-      LIMIT 1
-    `, [req.user.id]);
+    const { data: profile, error } = await sba
+      .from("profiles")
+      .select("id, is_admin, created_at, subscriptions(status, subscription_tiers(name, display_name))")
+      .eq("id", req.user.id)
+      .maybeSingle();
 
-    if (!rows.length) return res.status(404).json({ error: "Profile not found" });
-    res.json({ ...rows[0], email: req.user.email });
+    if (error) throw new Error(error.message);
+    if (!profile) return res.status(404).json({ error: "Profile not found" });
+
+    const activeSub = (profile.subscriptions || []).find(s => s.status === "active");
+    res.json({
+      id:                   profile.id,
+      is_admin:             profile.is_admin,
+      created_at:           profile.created_at,
+      tier_name:            activeSub?.subscription_tiers?.name        || "free",
+      tier_display_name:    activeSub?.subscription_tiers?.display_name || "Free",
+      subscription_status:  activeSub?.status || null,
+      email:                req.user.email,
+    });
   } catch (err) {
     console.error("[auth/profile]", err.message);
     res.status(500).json({ error: "Failed to fetch profile" });
@@ -1418,7 +1428,25 @@ app.get("/api/briefing/today", async (req, res) => {
       LIMIT 1
     `, [today]);
     if (!rows.length) return res.status(404).json({ error: "No briefing for today yet" });
-    res.json(rows[0]);
+
+    const episode = rows[0];
+
+    // Free-tier weekly access gate (2 briefings per rolling 7 days)
+    if (req.user?.id) {
+      const tier = req.user.tier || "free";
+      const access = await checkBriefingAccess(req.user.id, episode.id, tier).catch(() => ({ allowed: true }));
+      if (!access.allowed) {
+        return res.status(403).json({
+          error:       access.resetNote || "Weekly briefing limit reached",
+          limitReached: true,
+          used:        access.used,
+          limit:       access.limit,
+          requiredTier: "pro",
+        });
+      }
+    }
+
+    res.json(episode);
   } catch (err) {
     console.error("[briefing/today]", err.message);
     res.status(500).json({ error: "Failed to fetch briefing" });
@@ -1534,6 +1562,31 @@ app.post("/api/briefing/location", async (req, res) => {
 // Returns 422 { insufficient, count, message, suggestions } if < 8 articles found
 // and skipCheck is not true. Otherwise generates and returns an episode.
 app.post("/api/briefing/custom", async (req, res) => {
+  // Tier gate: free/pro pay per use ($2.50); enterprise has monthly cap
+  if (req.user?.id) {
+    const tier = req.user.tier || "free";
+    const cbAccess = await checkCustomBriefing(req.user.id, tier).catch(() => ({ allowed: true }));
+    if (!cbAccess.allowed && !cbAccess.payPerUse) {
+      return res.status(403).json({
+        error:       cbAccess.resetNote || "Monthly custom briefing limit reached",
+        limitReached: true,
+        used:        cbAccess.used,
+        limit:       cbAccess.limit,
+      });
+    }
+    if (cbAccess.payPerUse) {
+      // Allow if they've confirmed payment intent, otherwise surface the price
+      if (!req.body?.confirmedPayPerUse) {
+        return res.status(402).json({
+          error:      "Custom briefings cost $2.50",
+          payPerUse:  true,
+          priceUsd:   2.50,
+          message:    "Add confirmedPayPerUse: true to proceed (billing handled separately)",
+        });
+      }
+    }
+  }
+
   const { from, about, keywords = [], skipCheck = false, voiceover = false, voiceId } = req.body || {};
   if (!from && !about && !keywords.length) {
     return res.status(400).json({ error: "Provide at least one of: from, about, or keywords" });
@@ -1632,6 +1685,21 @@ Return ONLY valid JSON: { "message": "one sentence explaining why coverage is li
 app.post("/api/translate", async (req, res) => {
   const { title, summary, id, targetLang } = req.body || {};
   if (!title && !summary) return res.status(400).json({ error: "No text provided" });
+
+  // Tier-based translation limits
+  if (req.user?.id) {
+    const tlAccess = await checkTranslation(req.user.id, req.user.tier || "free").catch(() => ({ allowed: true }));
+    if (!tlAccess.allowed) {
+      return res.status(429).json({
+        error:       tlAccess.resetNote || "Translation limit reached",
+        limitReached: true,
+        used:        tlAccess.used,
+        limit:       tlAccess.limit,
+        requiredTier: (req.user.tier || "free") === "free" ? "pro" : null,
+      });
+    }
+  }
+
   try {
     // DeepL supports all but: Filipino (TL), Hindi (HI), Malay (MS), Vietnamese (VI)
     const DEEPL_UNSUPPORTED = new Set(['TL', 'HI', 'MS', 'VI']);
@@ -1676,6 +1744,51 @@ app.post("/api/translate", async (req, res) => {
   } catch (err) {
     console.error("On-demand translate error:", err.message);
     res.status(500).json({ error: "Translation failed" });
+  }
+});
+
+/* =========================================
+   AI Context Explanation
+   Generates a ≤250-char contextual writeup for an article or story thread.
+   Tier limits: Pro = 5/day, Enterprise = 20/day, Free = restricted.
+========================================= */
+app.post("/api/explain", async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: "Authentication required" });
+
+  const tier = req.user.tier || "free";
+  const access = await checkExplanation(req.user.id, tier).catch(() => ({ allowed: false }));
+  if (!access.allowed) {
+    return res.status(429).json({
+      error:     access.resetNote || "Daily explanation limit reached",
+      limitReached: true,
+      used:      access.used,
+      limit:     access.limit,
+      requiredTier: tier === "free" ? "pro" : null,
+    });
+  }
+
+  const { type, title, summary, keywords = [], description } = req.body || {};
+  if (!title) return res.status(400).json({ error: "title is required" });
+
+  try {
+    const context = type === "thread"
+      ? `Story thread: "${title}"\nDescription: ${description || summary || ""}\nKeywords: ${(keywords || []).slice(0, 10).join(", ")}`
+      : `Article: "${title}"\nSummary: ${(summary || "").slice(0, 400)}`;
+
+    const response = await Anthropic.messages.create({
+      model:      "claude-haiku-4-5",
+      max_tokens: 120,
+      messages:   [{
+        role:    "user",
+        content: `You are a concise global news analyst. Write a single plain-English sentence (max 250 characters) explaining the broader significance and context of this news item. No quotes, no markdown, no introductory phrases like "This article" — just the insight.\n\n${context}`,
+      }],
+    });
+
+    const explanation = (response.content[0]?.text || "").trim().slice(0, 250);
+    res.json({ explanation, used: access.used, limit: access.limit });
+  } catch (err) {
+    console.error("[api/explain]", err.message);
+    res.status(500).json({ error: "Explanation generation failed" });
   }
 });
 
