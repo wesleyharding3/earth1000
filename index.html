@@ -1772,14 +1772,111 @@
       flex-shrink: 0;
     }
     
-    .panelSlide:not(#articlesViewport) {
+    .panelSlide:not(#articlesViewport):not(#panelStatsSlide) {
       overflow: hidden;
-    }  
+    }
 
     .panelSlide::-webkit-scrollbar { width: 5px; }
     .panelSlide::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
     .panelSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
     .panelSlide::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
+
+    /* ── Overview / Map slide ── */
+    #panelOverviewSlide { position: relative; overflow: hidden; height: 100%; }
+    #panelMapContainer {
+      position: absolute; inset: 0;
+      background: #0d1117;
+    }
+    #panelMapContainer .leaflet-container {
+      width: 100%; height: 100%;
+      background: #0d1117;
+    }
+    /* B&W tile filter */
+    #panelMapContainer.bw .leaflet-tile { filter: grayscale(1) brightness(0.72) contrast(1.1); }
+    /* Map style toggle */
+    .mapStyleToggle {
+      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      display: flex; border-radius: 4px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    .mapStyleBtn {
+      padding: 5px 10px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      background: rgba(10,12,16,0.88); color: rgba(255,255,255,0.45);
+      border: none; cursor: pointer; transition: background 0.14s, color 0.14s;
+      backdrop-filter: blur(8px);
+    }
+    .mapStyleBtn.active { background: rgba(255,255,255,0.12); color: #fff; }
+    .mapStyleBtn:not(:last-child) { border-right: 1px solid rgba(255,255,255,0.12); }
+
+    /* ── Statistics slide ── */
+    #panelStatsSlide { overflow-y: auto !important; }
+    #panelStatsSlide::-webkit-scrollbar { width: 4px; }
+    #panelStatsSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+    .psTrade {
+      padding: 16px 16px 8px;
+    }
+    .psSection {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(255,255,255,0.28); margin-bottom: 10px; margin-top: 16px;
+    }
+    .psSection:first-child { margin-top: 0; }
+    .psTradeGrid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+    }
+    .psTradeCard {
+      border-radius: 4px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      padding: 12px 14px;
+      position: relative; overflow: hidden;
+    }
+    .psTradeCard::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+    }
+    .psTradeCard.exports::before { background: #3de87a; }
+    .psTradeCard.imports::before { background: #4a9eff; }
+    .psTradeCard.balance.surplus::before { background: #3de87a; }
+    .psTradeCard.balance.deficit::before { background: #ff5f5f; }
+    .psTradeCard.balance { grid-column: 1 / -1; }
+    .psTradeVal {
+      font-size: 20px; font-weight: 700; letter-spacing: -0.02em;
+      color: #fff; line-height: 1; margin-bottom: 5px;
+      font-variant-numeric: tabular-nums;
+    }
+    .psTradeVal.surplus { color: #3de87a; }
+    .psTradeVal.deficit { color: #ff7070; }
+    .psTradeLabel {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+    }
+    .psTradeYear {
+      font-size: 9px; color: rgba(255,255,255,0.22); margin-top: 3px;
+    }
+    .psTopList {
+      display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;
+    }
+    .psTopItem {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px; border-radius: 3px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      font-size: 12px; color: rgba(255,255,255,0.75);
+    }
+    .psTopRank {
+      font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.25);
+      min-width: 14px;
+    }
+    .psTopVal {
+      margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums;
+      color: rgba(255,255,255,0.38);
+    }
+    .psEmpty {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 10px; padding: 48px 24px; color: rgba(255,255,255,0.2); text-align: center;
+      font-size: 12px;
+    }
 
     .panelSlidePlaceholder {
       display: flex;
@@ -10057,22 +10154,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
             <div class="panelSlidesTrack" id="panelSlidesTrack">
               <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
-              <div class="panelSlide">
-                <div class="panelSlidePlaceholder">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/>
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                  </svg>
-                  <span>Overview</span>
-                </div>
+              <div class="panelSlide" id="panelOverviewSlide">
+                <div id="panelMapContainer" class="bw"></div>
               </div>
-              <div class="panelSlide">
-                <div class="panelSlidePlaceholder">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-                  </svg>
-                  <span>Statistics</span>
-                </div>
+              <div class="panelSlide" id="panelStatsSlide">
+                <div id="panelStatsContent"><div class="psEmpty"><span style="font-size:22px;opacity:0.3">◈</span><span>Loading statistics…</span></div></div>
               </div>
             </div>
           </div>`;
@@ -10472,6 +10558,155 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ── Location stats ──
         fetchLocationStats(isCity ? "city" : "country", node.id);
+
+        // ── Overview: Leaflet map ──
+        (function initPanelMap() {
+          const BASE_URL = "https://earth-wjr6.onrender.com";
+          const mapContainer = document.getElementById("panelMapContainer");
+          if (!mapContainer) return;
+          const lat = node.lat ?? node.latitude ?? 0;
+          const lon = node.lon ?? node.longitude ?? 0;
+          const zoom = isCity ? 13 : 5;
+
+          function buildMap(L) {
+            if (mapContainer._leafletMap) {
+              mapContainer._leafletMap.remove();
+              mapContainer._leafletMap = null;
+            }
+            const map = L.map(mapContainer, {
+              center: [lat, lon], zoom,
+              zoomControl: false, attributionControl: false,
+              scrollWheelZoom: false, dragging: true
+            });
+            mapContainer._leafletMap = map;
+
+            const osmTiles = L.tileLayer(
+              "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+              { subdomains: "abcd", maxZoom: 19 }
+            );
+            const satTiles = L.tileLayer(
+              "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+              { maxZoom: 19 }
+            );
+            osmTiles.addTo(map);
+
+            // toggle buttons
+            const toggle = document.createElement("div");
+            toggle.className = "mapStyleToggle";
+            toggle.innerHTML = `<button class="mapStyleBtn active" data-mode="bw">Map</button><button class="mapStyleBtn" data-mode="sat">Satellite</button>`;
+            mapContainer.appendChild(toggle);
+
+            let mode = "bw";
+            toggle.querySelectorAll(".mapStyleBtn").forEach(btn => {
+              btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (btn.dataset.mode === mode) return;
+                mode = btn.dataset.mode;
+                toggle.querySelectorAll(".mapStyleBtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+                mapContainer.classList.toggle("bw", mode === "bw");
+                if (mode === "sat") { osmTiles.remove(); satTiles.addTo(map); }
+                else { satTiles.remove(); osmTiles.addTo(map); }
+              });
+            });
+
+            // stop map events bubbling to globe
+            ["click","mousedown","touchstart","wheel"].forEach(ev => {
+              mapContainer.addEventListener(ev, e => e.stopPropagation(), { passive: ev === "wheel" || ev === "touchstart" });
+            });
+
+            setTimeout(() => map.invalidateSize(), 120);
+          }
+
+          if (window.L) {
+            buildMap(window.L);
+          } else {
+            if (!document.getElementById("leaflet-css")) {
+              const link = document.createElement("link");
+              link.id = "leaflet-css"; link.rel = "stylesheet";
+              link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+              document.head.appendChild(link);
+            }
+            const script = document.createElement("script");
+            script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+            script.onload = () => buildMap(window.L);
+            document.head.appendChild(script);
+          }
+        })();
+
+        // ── Statistics: trade/exports/imports ──
+        (async function loadTradeStats() {
+          const BASE_URL = "https://earth-wjr6.onrender.com";
+          const statsEl = document.getElementById("panelStatsContent");
+          if (!statsEl) return;
+
+          function fmtTrade(v) {
+            if (v == null || isNaN(v)) return "–";
+            const n = Number(v);
+            if (Math.abs(n) >= 1e12) return "$" + (n / 1e12).toFixed(2) + " T";
+            if (Math.abs(n) >= 1e9)  return "$" + (n / 1e9).toFixed(2) + " B";
+            if (Math.abs(n) >= 1e6)  return "$" + (n / 1e6).toFixed(1) + " M";
+            return "$" + n.toLocaleString();
+          }
+
+          try {
+            const param = isCity ? `city_id=${node.id}` : `country_id=${node.id}`;
+            const res = await fetch(`${BASE_URL}/api/trade?${param}`);
+            if (!res.ok) throw new Error("no data");
+            const d = await res.json();
+            if (!statsEl.isConnected) return;
+
+            const exports_val = d.exports_value ?? d.exports ?? null;
+            const imports_val = d.imports_value ?? d.imports ?? null;
+            const balance = (exports_val != null && imports_val != null) ? exports_val - imports_val : null;
+            const year = d.year ? `${d.year}` : "";
+            const topExports = Array.isArray(d.top_exports) ? d.top_exports : [];
+            const topImports = Array.isArray(d.top_imports) ? d.top_imports : [];
+            const isSurplus = balance != null && balance >= 0;
+
+            statsEl.innerHTML = `
+              <div class="psTrade">
+                <div class="psSection">Trade Overview</div>
+                <div class="psTradeGrid">
+                  <div class="psTradeCard exports">
+                    <div class="psTradeVal">${fmtTrade(exports_val)}</div>
+                    <div class="psTradeLabel">Exports</div>
+                    ${year ? `<div class="psTradeYear">${year}</div>` : ""}
+                  </div>
+                  <div class="psTradeCard imports">
+                    <div class="psTradeVal">${fmtTrade(imports_val)}</div>
+                    <div class="psTradeLabel">Imports</div>
+                    ${year ? `<div class="psTradeYear">${year}</div>` : ""}
+                  </div>
+                  ${balance != null ? `
+                  <div class="psTradeCard balance ${isSurplus ? "surplus" : "deficit"}">
+                    <div class="psTradeVal ${isSurplus ? "surplus" : "deficit"}">${isSurplus ? "+" : ""}${fmtTrade(balance)}</div>
+                    <div class="psTradeLabel">Trade ${isSurplus ? "Surplus" : "Deficit"}</div>
+                  </div>` : ""}
+                </div>
+                ${topExports.length ? `
+                <div class="psSection">Top Exports</div>
+                <div class="psTopList">${topExports.slice(0, 6).map((item, i) => `
+                  <div class="psTopItem">
+                    <span class="psTopRank">${i + 1}</span>
+                    <span>${typeof item === "object" ? (item.name || item.label || item.product || JSON.stringify(item)) : item}</span>
+                    ${typeof item === "object" && item.value != null ? `<span class="psTopVal">${fmtTrade(item.value)}</span>` : ""}
+                  </div>`).join("")}
+                </div>` : ""}
+                ${topImports.length ? `
+                <div class="psSection">Top Imports</div>
+                <div class="psTopList">${topImports.slice(0, 6).map((item, i) => `
+                  <div class="psTopItem">
+                    <span class="psTopRank">${i + 1}</span>
+                    <span>${typeof item === "object" ? (item.name || item.label || item.product || JSON.stringify(item)) : item}</span>
+                    ${typeof item === "object" && item.value != null ? `<span class="psTopVal">${fmtTrade(item.value)}</span>` : ""}
+                  </div>`).join("")}
+                </div>` : ""}
+              </div>`;
+          } catch (_) {
+            if (statsEl.isConnected)
+              statsEl.innerHTML = `<div class="psEmpty"><span style="font-size:22px;opacity:0.25">◈</span><span>No trade data available for this ${isCity ? "city" : "country"}.</span></div>`;
+          }
+        })();
 
         // Close
         const closeBtn = panel.querySelector(".closePanel");
