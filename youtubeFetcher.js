@@ -2,7 +2,6 @@ require("dotenv").config();
 const Parser = require("rss-parser");
 const pool = require("./db");
 const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtractor");
-const { classifyArticle } = require("./scoringEngine");
 
 /* =========================================
    YouTube RSS Fetcher
@@ -219,12 +218,11 @@ async function fetchChannel(source, stopwordCache) {
           console.warn(`${tag} Keyword extraction failed for article ${articleId}:`, kwErr.message);
         }
 
-        // Classify article to get organic base_priority score
-        try {
-          await classifyArticle(articleId);
-        } catch (classErr) {
-          console.warn(`${tag} Classification failed for article ${articleId}:`, classErr.message);
-        }
+        // Hand off to articleListener for the full pipeline:
+        // classify → route (article_locations) → image resolution.
+        // Fire-and-forget, same pattern as fetcher.js.
+        pool.query("SELECT pg_notify('new_article', $1::text)", [String(articleId)])
+          .catch(err => console.warn(`${tag} pg_notify failed for article ${articleId}:`, err.message));
       }
     } catch (insertErr) {
       console.error(`${tag} Insert failed for ${videoId}:`, insertErr.message);
