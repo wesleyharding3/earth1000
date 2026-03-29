@@ -14432,6 +14432,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     window.__clusterPageBooted = true;
 
+    // ensure sourceBiasBadgeHTML is available globally (also defined lazily in openNodePanel)
+    if (!window.sourceBiasBadgeHTML) {
+      window.sourceBiasBadgeHTML = function(bias) {
+        const raw = String(bias || 'unknown').toLowerCase();
+        const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw) ? raw : 'unknown';
+        const label = normalized.replace('_', ' ');
+        return `<span class="sourceBiasBadge ${normalized}" aria-label="${label}" title="${label}"></span>`;
+      };
+    }
+
     const BASE = "https://earth-wjr6.onrender.com";
     const CATEGORY_COLORS = {
       politics:    "#4da8ff",
@@ -14523,7 +14533,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const cloudGeometry = new THREE.SphereGeometry(1, 12, 12);
 
     buildLegend();
-    renderDetailEmpty("Loading the latest weekly cluster snapshot...");
     setStatus("Connecting to the latest weekly cluster snapshot...");
 
     function esc(value) {
