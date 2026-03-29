@@ -15303,8 +15303,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const isCentral = group.cluster_id === centralGroupId;
         const memberScale = isCentral
-          ? Math.max(36, Math.min(68, group.spread * 4.2 + Math.sqrt(members.length) * 3.8))
-          : Math.max(18, Math.min(40, group.spread * 2.4 + Math.sqrt(members.length) * 2.4));
+          ? Math.max(60, Math.min(120, group.spread * 5.5 + Math.sqrt(members.length) * 5.5))
+          : Math.max(22, Math.min(50, group.spread * 2.8 + Math.sqrt(members.length) * 2.8));
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
           const dx = member.position.x - centroid.x;
@@ -15351,8 +15351,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const odz = entry.p.z - other.p.z;
               const dist = Math.max(0.001, Math.hypot(odx, ody, odz));
               const otherRadius = 1.6 + (Number(other.member.importance) || 0) * 0.1 + Math.log2(1 + (Number(other.member.article_count) || 0)) * 0.35;
-              const desired = baseRadius + otherRadius + (isCentral ? 16.0 : 7.0);
-              const repel = dist < desired ? (desired - dist) * 0.22 : 8 / (dist * dist);
+              const desired = baseRadius + otherRadius + (isCentral ? 30.0 : 10.0);
+              const repel = dist < desired ? (desired - dist) * 0.28 : 8 / (dist * dist);
               force.x += (odx / dist) * repel;
               force.y += (ody / dist) * repel;
               force.z += (odz / dist) * repel;
@@ -15366,7 +15366,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ── Normalisation pass: rescale so average inter-node distance ≈ TARGET_SPACING
         // Central cluster gets more spread; fringe clusters pulled tighter to normalise
-        const TARGET_SPACING = isCentral ? 28 : 13;
+        const TARGET_SPACING = isCentral ? 52 : 16;
         if (layout.length >= 2) {
           let totalDist = 0, pairs = 0;
           for (let i = 0; i < layout.length; i++) {
@@ -15382,7 +15382,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const avgDist = totalDist / Math.max(1, pairs);
           const scale = avgDist > 0.01 ? TARGET_SPACING / avgDist : 1;
           // clamp scale so we don't over-compress or over-expand
-          const clampedScale = Math.max(0.6, Math.min(2.2, scale));
+          const clampedScale = Math.max(0.6, Math.min(isCentral ? 5.0 : 2.8, scale));
           const cx = centroid.x, cy = centroid.y, cz = centroid.z;
           layout.forEach(({ p }) => {
             p.x = cx + (p.x - cx) * clampedScale;
@@ -15394,7 +15394,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // ── Hard minimum-distance pass ──
         // After normalization, pairs can still be nearly coincident. Iteratively
         // push any pair closer than MIN_NODE_DIST apart, equally splitting the gap.
-        const MIN_NODE_DIST = isCentral ? 14.0 : 7.0;
+        const MIN_NODE_DIST = isCentral ? 30.0 : 10.0;
         for (let pass = 0; pass < 40; pass++) {
           let moved = false;
           for (let i = 0; i < layout.length; i++) {
@@ -15715,7 +15715,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         state.interactive.push(core);
 
         // minimal halo — very dim at rest, bursts during pulse
-        const haloMat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone(), transparent: true, opacity: 0.04, blending: THREE.AdditiveBlending, depthWrite: false });
+        const haloMat = new THREE.MeshBasicMaterial({ color: SYNAPSE_GOLD.clone(), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
         const halo = new THREE.Mesh(nodeGeometry, haloMat);
         halo.position.copy(core.position);
         halo.scale.setScalar(size * 1.9);
@@ -15798,29 +15798,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const spark = state.nodeLightMap.get(nodeId) || 0;
 
         // preserve ellipsoid proportions when scaling
-        const factor = isSelected ? 1.28 : isHovered ? 1.12 : 1.0;
+        const factor = isSelected ? 1.28 : isHovered ? 1.1 : 1.0;
         if (es) mesh.scale.set(es.x * factor, es.y * factor, es.z * factor);
         else mesh.scale.setScalar(baseScale * factor);
 
-        // Selected = white; hovered = bright gold; rest = SYNAPSE_GOLD
+        // Selected = white; hovered = bright gold (slightly); rest = SYNAPSE_GOLD
         if (mesh.userData.coreMat) {
-          const col = isSelected ? 0xffffff : isHovered ? 0xfff0a0 : 0xd4a843;
+          const col = isSelected ? 0xffffff : isHovered ? 0xffe090 : 0xd4a843;
           mesh.userData.coreMat.color.setHex(col);
         }
 
         if (mesh.userData.halo) {
-          // Selected node: persistent visible halo ring; pulse/spark-driven otherwise
-          const haloBase = 0.012 + globalPulse * 0.018;
-          const haloOpacity = isSelected
-            ? Math.min(0.28, 0.18 + spark * 0.1)
-            : Math.min(0.10, haloBase + spark * 0.07);
-          const haloScale = isSelected
-            ? baseScale * (2.0 + spark * 0.2)
-            : baseScale * (1.3 + spark * 0.3 + globalPulse * 0.08);
+          // Halo only appears on selected node — invisible at rest and on hover
+          const haloOpacity = isSelected ? Math.min(0.28, 0.18 + spark * 0.1) : 0;
+          const haloScale   = isSelected ? baseScale * (2.0 + spark * 0.2) : baseScale * 1.9;
           mesh.userData.halo.scale.setScalar(haloScale);
           mesh.userData.halo.material.opacity = haloOpacity;
-          // Tint halo white when selected
-          mesh.userData.halo.material.color.setHex(isSelected ? 0xffffff : 0xd4a843);
+          mesh.userData.halo.material.color.setHex(0xffffff);
         }
       });
 
@@ -15840,18 +15834,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function animateSparks(globalPulse) {
-      const PULSE_LEN = 0.32;   // fraction of path lit at once — long sweep
-      const PULSE_SPEED = 0.018; // fast uniform travel
+      const PULSE_LEN = 0.62;   // fraction of path lit at once — long comet sweep
+      const PULSE_SPEED = 0.014; // slightly slower so long pulses are clearly visible
       const MAX_PULSES = 140;
+      const PULSE_COLOR = new THREE.Color("#ffe580");
 
       // spawn several pulses per frame — high volume, weighted toward pulse peak
       if (state.filamentData.length > 0 && state.sparks.length < MAX_PULSES) {
         const toSpawn = Math.random() < (0.55 + globalPulse * 0.30) ? (2 + Math.floor(Math.random() * 4)) : 1;
         for (let s = 0; s < toSpawn && state.sparks.length < MAX_PULSES; s++) {
           const fd = state.filamentData[Math.floor(Math.random() * state.filamentData.length)];
+          // vertexColors=true lets us paint a dark-tail → bright-head gradient per frame
           const pulseMat = new THREE.LineBasicMaterial({
-            color: new THREE.Color("#ffe580"),
-            transparent: true, opacity: 0.95,
+            vertexColors: true,
+            transparent: true, opacity: 1.0,
             blending: THREE.AdditiveBlending, depthWrite: false
           });
           const pulseLine = new THREE.Line(new THREE.BufferGeometry(), pulseMat);
@@ -15896,12 +15892,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (headSeg > tailSeg || headF - headSeg > 0)
           windowPts.push(new THREE.Vector3().lerpVectors(pts[headSeg], pts[headSeg + 1], headF - headSeg));
 
-        if (windowPts.length >= 2) spark.mesh.geometry.setFromPoints(windowPts);
+        if (windowPts.length >= 2) {
+          spark.mesh.geometry.setFromPoints(windowPts);
 
-        // smooth sine-based fade in/out along the full path
-        const fadeT = Math.max(0, Math.min(1, spark.progress / (1 + spark.pulseLen)));
-        const fade = Math.sin(fadeT * Math.PI);
-        spark.mesh.material.opacity = 0.92 * fade;
+          // per-vertex colour: tail fades to black, head stays bright gold
+          // also modulated by the lifecycle sine so the whole pulse fades in/out
+          const fadeT = Math.max(0, Math.min(1, spark.progress / (1 + spark.pulseLen)));
+          const lifeFade = Math.sin(fadeT * Math.PI); // 0→1→0 over full journey
+          const colArr = new Float32Array(windowPts.length * 3);
+          for (let k = 0; k < windowPts.length; k++) {
+            // t=0 at tail, t=1 at head; quadratic so tail is very dark
+            const t = windowPts.length > 1 ? k / (windowPts.length - 1) : 1;
+            const b = t * t * lifeFade;
+            colArr[k * 3]     = PULSE_COLOR.r * b;
+            colArr[k * 3 + 1] = PULSE_COLOR.g * b;
+            colArr[k * 3 + 2] = PULSE_COLOR.b * b;
+          }
+          spark.mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+        }
 
         // light up endpoint nodes as pulse arrives/departs
         if (spark.progress < 0.16 && spark.sourceId != null)
