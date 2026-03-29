@@ -738,7 +738,7 @@ async function runTester() {
   let progress = loadProgress();
 
   if (progress.lastId > 0) {
-    const resume = await ask(`  Resume from source ID ${progress.lastId}? (y/n — n will restart from beginning): `);
+    const resume = await ask(`  Resume below source ID ${progress.lastId}? (y/n — n will restart from the top): `);
     if (resume.trim().toLowerCase() === "n") {
       clearProgress();
       progress = { lastId: 0, applied: 0, skipped: 0, failed: 0 };
@@ -756,8 +756,8 @@ async function runTester() {
     WHERE ns.is_active = false
       AND ns.site_url IS NOT NULL
       AND ns.site_url != ''
-      AND ns.id > $1
-    ORDER BY ns.id ASC
+      AND ($1 = 0 OR ns.id < $1)
+    ORDER BY ns.id DESC
   `, [progress.lastId]);
 
   const total = sources.length;
