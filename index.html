@@ -3217,32 +3217,57 @@
     }
     /* ── Detail Panel ── */
     #clusterDetail {
-      position: absolute;
-      top: 18px;
-      right: 18px;
-      bottom: 18px;
-      width: min(340px, calc(100vw - 36px));
+      position: fixed;
+      bottom: -100%;
+      left: 0;
+      width: 100%;
+      height: min(480px, calc(var(--app-height, 100vh) - 24px));
       display: flex;
       flex-direction: column;
-      border-radius: 4px;
-      background: rgba(10, 12, 16, 0.88);
-      border: 1px solid rgba(212, 168, 67, 0.22);
+      border-radius: 22px 22px 0 0;
+      background: rgba(6, 10, 18, 0.94);
       border-top: 2px solid var(--grm-gold);
+      border-left: 1px solid rgba(255,255,255,0.13);
+      border-right: 1px solid rgba(255,255,255,0.13);
       color: var(--grm-text);
-      z-index: 6;
-      backdrop-filter: blur(18px);
-      -webkit-backdrop-filter: blur(18px);
-      box-shadow: 0 24px 64px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.03);
+      z-index: 200;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 -8px 48px rgba(0,0,0,0.65);
       opacity: 0;
       pointer-events: none;
-      transform: translateX(16px);
-      transition: opacity 0.22s ease, transform 0.22s ease;
+      transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
     }
     #clusterDetail.open {
+      bottom: 0;
       opacity: 1;
       pointer-events: all;
-      transform: translateX(0);
     }
+    #clusterDetail.cdMaximized {
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
+      border-radius: 20px 20px 0 0;
+    }
+    /* drag handle */
+    #cdResizeHandle {
+      position: absolute;
+      top: -14px; left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      cursor: pointer;
+      z-index: 10;
+    }
+    #cdResizeArrow {
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.45);
+      transition: background 0.15s, color 0.15s, transform 0.3s cubic-bezier(0.32,0.72,0,1);
+    }
+    #cdResizeHandle:hover #cdResizeArrow { background: rgba(255,255,255,0.12); color: #fff; }
+    #cdResizeArrow svg { width: 12px; height: 12px; pointer-events: none; }
+    #cdResizeArrow.flipped svg { transform: rotate(180deg); }
     .cdHeader {
       padding: 14px 16px 10px;
       border-bottom: 1px solid rgba(255,255,255,0.06);
@@ -3312,10 +3337,11 @@
     .cdBody {
       flex: 1;
       overflow-y: auto;
-      padding: 10px 12px;
-      display: flex;
-      flex-direction: column;
+      padding: 10px 14px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
       gap: 8px;
+      align-content: start;
     }
     .cdBody::-webkit-scrollbar { width: 4px; }
     .cdBody::-webkit-scrollbar-track { background: transparent; }
@@ -3421,12 +3447,7 @@
         justify-content: flex-start;
       }
       #clusterDetail {
-        top: auto;
-        right: 14px;
-        left: 14px;
-        bottom: calc(72px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
-        width: auto;
-        height: 46vh;
+        height: min(420px, calc(var(--app-height, 100vh) - 20px));
       }
       #clusterBottomBar {
         flex-direction: column;
@@ -14979,8 +15000,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
       statEdgesEl.textContent = fmtNum(state.edges.length);
     }
 
+    // ── Cluster detail panel snap heights ──
+    const CD_DEFAULT_H = () => Math.min(480, (window.innerHeight || screen.height) - 24);
+    const CD_MAX_H     = () => window.innerHeight || screen.height;
+    let cdSnapState = "default";
+
+    function cdApplySnap(s, animate = true) {
+      cdSnapState = s;
+      const h = s === "max" ? CD_MAX_H() : CD_DEFAULT_H();
+      detailEl.style.transition = animate
+        ? "bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease"
+        : "none";
+      detailEl.style.height = h + "px";
+      detailEl.classList.toggle("cdMaximized", s === "max");
+      const arrow = document.getElementById("cdResizeArrow");
+      if (arrow) arrow.classList.toggle("flipped", s === "max");
+    }
+
     function closeNodePanel() {
       detailEl.classList.remove("open");
+      cdSnapState = "default";
+      detailEl.style.height = "";
       state.selected = null;
     }
 
@@ -15010,12 +15050,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
     async function openNodePanel(node) {
       state.selected = node;
       const keywords = keywordList(node.feature_keywords, 12);
+      const catColor = CATEGORY_COLORS[node.primary_category] || CATEGORY_COLORS.default;
       // render shell immediately
       detailEl.innerHTML = `
+        <button id="cdResizeHandle" aria-label="Resize panel">
+          <div id="cdResizeArrow">
+            <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="2.5,7.5 6,4 9.5,7.5"/>
+            </svg>
+          </div>
+        </button>
         <div class="cdHeader">
           <div class="cdHeaderTop">
-            <div>
-              <div class="cdType">Story Thread</div>
+            <div style="flex:1;min-width:0;">
+              <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
               <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
             </div>
             <div class="cdClose" id="cdCloseBtn">✕</div>
@@ -15024,18 +15072,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.article_count)}</span><span class="cdMetaLabel">Articles</span></div>
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.language_count || 0)}</span><span class="cdMetaLabel">Languages</span></div>
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.source_country_count || 0)}</span><span class="cdMetaLabel">Countries</span></div>
+            <div class="cdMetaItem"><span class="cdMetaNum" style="color:${catColor}">${fmtNum(node.importance || 0)}</span><span class="cdMetaLabel">Importance</span></div>
           </div>
         </div>
         <div class="cdBody" id="cdBodyEl">
-          <div class="cdLoadingRow">Loading articles…</div>
+          <div class="cdLoadingRow" style="grid-column:1/-1">
+            <span style="font-size:20px;opacity:0.2">◈</span><span>Loading articles…</span>
+          </div>
         </div>
+        ${keywords.length ? `
         <div class="cdFooter">
           <div class="cdFooterLabel">Keywords</div>
-          <div class="cdKeywords">${keywords.map((k) => `<span class="cdKeyword">${esc(k)}</span>`).join("") || `<span style="color:rgba(255,255,255,0.25);font-size:11px;">No keywords available</span>`}</div>
-        </div>
+          <div class="cdKeywords">${keywords.map((k) => `<span class="cdKeyword">${esc(k)}</span>`).join("")}</div>
+        </div>` : ""}
       `;
+      cdApplySnap("default", false);
       detailEl.classList.add("open");
+
       document.getElementById("cdCloseBtn").addEventListener("click", (e) => { e.stopPropagation(); closeNodePanel(); });
+      document.getElementById("cdResizeHandle").addEventListener("click", (e) => {
+        e.stopPropagation();
+        cdApplySnap(cdSnapState === "max" ? "default" : "max");
+      });
 
       // fetch articles
       const bodyEl = document.getElementById("cdBodyEl");
@@ -15331,6 +15389,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
             p.y = cy + (p.y - cy) * clampedScale;
             p.z = cz + (p.z - cz) * clampedScale;
           });
+        }
+
+        // ── Hard minimum-distance pass ──
+        // After normalization, pairs can still be nearly coincident. Iteratively
+        // push any pair closer than MIN_NODE_DIST apart, equally splitting the gap.
+        const MIN_NODE_DIST = isCentral ? 14.0 : 7.0;
+        for (let pass = 0; pass < 40; pass++) {
+          let moved = false;
+          for (let i = 0; i < layout.length; i++) {
+            for (let j = i + 1; j < layout.length; j++) {
+              const a = layout[i].p, b = layout[j].p;
+              const dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+              const dist = Math.hypot(dx, dy, dz);
+              if (dist < MIN_NODE_DIST && dist > 0.0001) {
+                const push = (MIN_NODE_DIST - dist) * 0.5 / dist;
+                a.x += dx * push; a.y += dy * push; a.z += dz * push;
+                b.x -= dx * push; b.y -= dy * push; b.z -= dz * push;
+                moved = true;
+              }
+            }
+          }
+          if (!moved) break;
         }
 
         layout.forEach(({ member, p }) => {
@@ -15630,7 +15710,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         core.position.set(node.position.x, node.position.y, node.position.z);
         core.scale.setScalar(size);
 
-        core.userData = { kind: "node", data: node, baseScale: size };
+        core.userData = { kind: "node", data: node, baseScale: size, coreMat };
         nodeGroup.add(core);
         state.interactive.push(core);
 
@@ -15713,20 +15793,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const baseScale = mesh.userData.baseScale || 1;
         const es = mesh.userData.ellipScale;
         const nodeId = mesh.userData.data.thread_id;
-        const isHovered = state.hovered && state.hovered.kind === "node" && state.hovered.data.thread_id === nodeId;
+        const isHovered  = state.hovered && state.hovered.kind === "node" && state.hovered.data.thread_id === nodeId;
+        const isSelected = state.selected && state.selected.thread_id === nodeId;
         const spark = state.nodeLightMap.get(nodeId) || 0;
 
         // preserve ellipsoid proportions when scaling
-        const factor = isHovered ? 1.18 : 1.0;
+        const factor = isSelected ? 1.28 : isHovered ? 1.12 : 1.0;
         if (es) mesh.scale.set(es.x * factor, es.y * factor, es.z * factor);
         else mesh.scale.setScalar(baseScale * factor);
 
+        // Selected = white; hovered = bright gold; rest = SYNAPSE_GOLD
+        if (mesh.userData.coreMat) {
+          const col = isSelected ? 0xffffff : isHovered ? 0xfff0a0 : 0xd4a843;
+          mesh.userData.coreMat.color.setHex(col);
+        }
+
         if (mesh.userData.halo) {
+          // Selected node: persistent visible halo ring; pulse/spark-driven otherwise
           const haloBase = 0.012 + globalPulse * 0.018;
-          const haloOpacity = Math.min(0.16, haloBase + spark * 0.09 + (isHovered ? 0.12 : 0));
-          const haloScale = baseScale * (1.35 + spark * 0.35 + globalPulse * 0.1 + (isHovered ? 0.9 : 0));
+          const haloOpacity = isSelected
+            ? Math.min(0.28, 0.18 + spark * 0.1)
+            : Math.min(0.10, haloBase + spark * 0.07);
+          const haloScale = isSelected
+            ? baseScale * (2.0 + spark * 0.2)
+            : baseScale * (1.3 + spark * 0.3 + globalPulse * 0.08);
           mesh.userData.halo.scale.setScalar(haloScale);
           mesh.userData.halo.material.opacity = haloOpacity;
+          // Tint halo white when selected
+          mesh.userData.halo.material.color.setHex(isSelected ? 0xffffff : 0xd4a843);
         }
       });
 
