@@ -41,30 +41,40 @@ function isDateLikeKeyword(keyword) {
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
 async function computeTrending({ days = 7, limit = 50 } = {}) {
-  const { rows } = await pool.query(`
-    SELECT
-      k.keyword,
-      SUM(k.total_count)::bigint  AS mentions,
-      COUNT(DISTINCT k.date)::int AS days_active
-    FROM keyword_daily_stats k
-    WHERE k.date              >= CURRENT_DATE - $1::int
-      AND k.source_country_id IS NULL
-      AND k.about_country_id  IS NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword
-      )
-    GROUP BY k.keyword
-    HAVING SUM(k.total_count) >= 3
-    ORDER BY mentions DESC, k.keyword ASC
-    LIMIT $2
-  `, [days, limit]);
-  return rows;
+  // Disable statement_timeout for this long-running aggregation
+  const client = await pool.connect();
+  try {
+    await client.query('SET statement_timeout = 0');
+    const { rows } = await client.query(`
+      SELECT
+        k.keyword,
+        SUM(k.total_count)::bigint  AS mentions,
+        COUNT(DISTINCT k.date)::int AS days_active
+      FROM keyword_daily_stats k
+      WHERE k.date              >= CURRENT_DATE - $1::int
+        AND k.source_country_id IS NULL
+        AND k.about_country_id  IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword
+        )
+      GROUP BY k.keyword
+      HAVING SUM(k.total_count) >= 3
+      ORDER BY mentions DESC, k.keyword ASC
+      LIMIT $2
+    `, [days, limit]);
+    return rows;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Rising ──────────────────────────────────────────────────────────────────
 // Keywords whose recent velocity is significantly above their baseline rate.
 async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
-  const { rows } = await pool.query(`
+  const client = await pool.connect();
+  try {
+    await client.query('SET statement_timeout = 0');
+    const { rows } = await client.query(`
     WITH recent AS (
       SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
       FROM keyword_daily_stats k
@@ -102,8 +112,11 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
     WHERE r.recent_count >= 2
     ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
     LIMIT $3
-  `, [days, baselineDays, limit]);
-  return rows.filter((row) => !isDateLikeKeyword(row && row.keyword));
+    `, [days, baselineDays, limit]);
+    return rows.filter((row) => !isDateLikeKeyword(row && row.keyword));
+  } finally {
+    client.release();
+  }
 }
 
 // ── Cache writer ─────────────────────────────────────────────────────────────

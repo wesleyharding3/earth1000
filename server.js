@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const { spawn } = require("child_process");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
@@ -2847,6 +2848,25 @@ const PORT = process.env.PORT || 3000;
       : console.log(`[startup] OK: ${p}`)
   );
 });
+
+// ── Keyword cache refresh ─────────────────────────────────────────────────
+// keywordCron.js calls pool.end() so it must run as a child process.
+// Run once at startup (60s delay so DB pool settles) then every 4 hours.
+function runKeywordCron(label = "") {
+  const tag = label ? `[keywordCron${label}]` : "[keywordCron]";
+  console.log(`${tag} starting...`);
+  const proc = spawn(process.execPath, [path.join(__dirname, "keywordCron.js")], {
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  proc.stdout.on("data", d => process.stdout.write(d));
+  proc.stderr.on("data", d => process.stderr.write(d));
+  proc.on("exit", code => console.log(`${tag} exited (code ${code})`));
+  proc.on("error", err => console.error(`${tag} spawn error: ${err.message}`));
+}
+
+setTimeout(() => runKeywordCron(" startup"), 60_000);           // ~1 min after boot
+setInterval(() => runKeywordCron(), 4 * 60 * 60 * 1000).unref?.(); // every 4h
 
 startArticleListener().catch(console.error);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
