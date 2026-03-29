@@ -14,12 +14,14 @@
  *   node briefingGenerator.js --force        # regenerate narrative/segments (reuses existing audio)
  *   node briefingGenerator.js --force-audio  # also re-synthesise audio (costs ElevenLabs credits)
  *   node briefingGenerator.js --no-audio     # skip ElevenLabs entirely (text + globe only)
+ *   node briefingGenerator.js --pick         # interactive: choose threads manually from top 50
  */
 
 'use strict';
 
 require('dotenv').config();
-const pool     = require('./db');
+const pool      = require('./db');
+const readline  = require('readline');
 const Anthropic = require('@anthropic-ai/sdk');
 const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
 
@@ -30,6 +32,7 @@ const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS
 const FORCE       = process.argv.includes('--force');
 const NO_AUDIO    = process.argv.includes('--no-audio');
 const FORCE_AUDIO = process.argv.includes('--force-audio'); // re-synthesise even if audio exists
+const PICK_MODE   = process.argv.includes('--pick');        // interactive thread selection
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const MAX_THREADS          = 10;  // stories in one briefing
@@ -55,8 +58,12 @@ async function run() {
 
   console.log('📡 Earth Briefing Generator');
   console.log(`   Date:  ${targetDate}`);
+  console.log(`   Mode:  ${PICK_MODE ? 'interactive (--pick)' : 'automatic'}`);
   console.log(`   Audio: ${NO_AUDIO ? 'disabled' : 'enabled (ElevenLabs)'}`);
   console.log();
+
+  // Ensure preference learning table exists (idempotent)
+  await ensureCurationTable();
 
   // Check if already generated today
   if (!FORCE) {
@@ -106,10 +113,18 @@ async function run() {
 
   try {
     // ── 1. Select story threads ───────────────────────────────────────────
-    console.log(`   [${elapsed(t0)}] Selecting story threads...`);
-    const threads = await selectThreads();
-    if (!threads.length) {
-      throw new Error('No active story threads found — run storyThreadBuilder first');
+    let threads;
+    if (PICK_MODE) {
+      console.log(`   [${elapsed(t0)}] Loading top 50 candidate threads for manual selection...`);
+      const candidates = await listCandidateThreads(50);
+      if (!candidates.length) throw new Error('No active story threads found — run storyThreadBuilder first');
+      threads = await promptThreadSelection(candidates);
+      if (!threads.length) throw new Error('No threads selected — aborting');
+    } else {
+      console.log(`   [${elapsed(t0)}] Selecting story threads...`);
+      const profile = await buildPreferenceProfile();
+      threads = await selectThreads(profile);
+      if (!threads.length) throw new Error('No active story threads found — run storyThreadBuilder first');
     }
     console.log(`   [${elapsed(t0)}] Selected ${threads.length} threads`);
 
@@ -147,7 +162,8 @@ async function run() {
 
     // ── 3b. Generate Claude narrative (includes story entity extraction) ──
     console.log(`   [${elapsed(t0)}] Generating narrative with Claude...`);
-    const narrative = await generateNarrative(threadData, storyContexts);
+    const prefProfileForNarrative = PICK_MODE ? null : await buildPreferenceProfile().catch(() => null);
+    const narrative = await generateNarrative(threadData, storyContexts, prefProfileForNarrative);
     if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
 
@@ -266,6 +282,14 @@ async function run() {
       console.warn(`   ⚠ storyTracker saveSegmentLinks failed (non-fatal): ${e.message}`)
     );
 
+    // ── 9. Save curation choice for preference learning ───────────────────
+    if (PICK_MODE) {
+      await saveCurationChoice(threads, episodeId).catch(e =>
+        console.warn(`   ⚠ saveCurationChoice failed (non-fatal): ${e.message}`)
+      );
+      console.log(`   [${elapsed(t0)}] Curation choice saved (${threads.length} threads)`);
+    }
+
     console.log();
     console.log(`✅ Briefing complete in ${elapsed(t0)}`);
     console.log(`   Episode id:  ${episodeId}`);
@@ -329,7 +353,7 @@ function getRegionGroup(thread) {
   return 'global';
 }
 
-async function selectThreads() {
+async function selectThreads(profile = null) {
   // Step 1: Pull candidate threads with video presence flagged.
   // CTE computes the earliest article date per thread (across all history)
   // to exclude threads whose story started more than THREAD_MAX_AGE_DAYS ago.
@@ -388,14 +412,28 @@ async function selectThreads() {
   // English-dominant threads (>70% English sources) get no boost.
   // Mixed/non-English threads get up to a 50% score lift so they can compete
   // without being completely buried — but raw importance still leads.
+  const PREFERENCE_WEIGHT = 0.35; // max 35% boost from preference profile
   const scored = candidates.map(t => {
     const englishRatio   = langMap[t.id] ?? 1.0;
     const nonEngRatio    = 1 - englishRatio;
     const diversityBoost = nonEngRatio > 0.3 ? nonEngRatio * 0.5 : 0;
+
+    // Preference profile boost — rewards categories/regions/keywords chosen in past sessions
+    let prefBoost = 0;
+    if (profile) {
+      const cat    = t.primary_category || 'general';
+      const region = getRegionGroup(t);
+      const kwList = Array.isArray(t.keywords) ? t.keywords : [];
+      const catAff    = profile.categories[cat]    || 0;
+      const regionAff = profile.regions[region]    || 0;
+      const kwAff     = kwList.reduce((sum, kw) => sum + (profile.keywords[kw] || 0), 0) / Math.max(kwList.length, 1);
+      prefBoost = Math.min(PREFERENCE_WEIGHT, (catAff * 0.4 + regionAff * 0.3 + kwAff * 0.3));
+    }
+
     return {
       ...t,
       englishRatio,
-      diversityScore: Number(t.importance) * (1 + diversityBoost),
+      diversityScore: Number(t.importance) * (1 + diversityBoost + prefBoost),
       hasVideo:       Number(t.video_count) > 0,
     };
   });
@@ -711,7 +749,7 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
 }
 
 // ─── Claude Narrative ──────────────────────────────────────────────────────
-async function generateNarrative(threadData, storyContexts = {}) {
+async function generateNarrative(threadData, storyContexts = {}, preferenceProfile = null) {
   const nowMs = Date.now();
   const storySummaries = threadData.map((t, i) => {
     // Find newest article date so Claude knows how fresh the story is
@@ -830,7 +868,10 @@ ENTITY RULES (critical for globe arc visualisation):
 CONTENT GUARDRAILS (must follow):
 - Do NOT report the death, assassination, or removal from power of any sitting head of state or major world leader unless it is explicitly confirmed as verified fact in the provided articles. If articles only speculate or reference rumours, write about the speculation/rumour angle instead (e.g. "speculation is growing about...").
 - Do NOT use time-of-day greetings ("Good morning", "Good evening") — viewers watch at any time.
-- Do NOT write consecutive segments about the same country or conflict unless it is a distinctly different angle.`;
+- Do NOT write consecutive segments about the same country or conflict unless it is a distinctly different angle.${preferenceProfile && preferenceProfile._summary ? `
+
+EDITORIAL PREFERENCES (soft guidance — reflect in tone and framing, do not skip any story):
+The editor who curated today's stories has historically favoured coverage of: ${preferenceProfile._summary}. When writing segments, lean into depth, global impact, and multi-stakeholder framing for these topic areas where relevant. This is background context only — still write every story.` : ''}`;
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-6',
@@ -1094,6 +1135,199 @@ async function synthesiseAudio(script) {
   }
 
   return Buffer.from(await res.arrayBuffer());
+}
+
+// ─── Curation Table ────────────────────────────────────────────────────────
+async function ensureCurationTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS briefing_curation_history (
+      id          SERIAL      PRIMARY KEY,
+      chosen_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      episode_id  INTEGER     REFERENCES briefing_episodes(id) ON DELETE SET NULL,
+      thread_ids  INTEGER[]   NOT NULL,
+      categories  TEXT[]      NOT NULL DEFAULT '{}',
+      keywords    TEXT[]      NOT NULL DEFAULT '{}',
+      regions     TEXT[]      NOT NULL DEFAULT '{}'
+    )
+  `);
+}
+
+// ─── Pick Mode: List Candidates ────────────────────────────────────────────
+// Returns the same candidate pool as selectThreads but without diversity caps,
+// sorted by importance × diversity for display.
+async function listCandidateThreads(limit = 50) {
+  const { rows: candidates } = await pool.query(`
+    WITH thread_origin AS (
+      SELECT sta2.thread_id, MIN(a2.published_at) AS first_article_date
+      FROM story_thread_articles sta2
+      JOIN news_articles a2 ON a2.id = sta2.article_id
+      GROUP BY sta2.thread_id
+    )
+    SELECT
+      st.id, st.title, st.primary_category, st.importance, st.keywords,
+      st.geographic_scope,
+      COUNT(sta.article_id)                                           AS recent_articles,
+      COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)             AS video_count
+    FROM story_threads st
+    JOIN story_thread_articles sta ON sta.thread_id = st.id
+    JOIN news_articles a           ON a.id = sta.article_id
+    JOIN thread_origin  tori       ON tori.thread_id = st.id
+    WHERE st.status = 'active'
+      AND st.last_updated_at  > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND a.published_at      > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND tori.first_article_date > NOW() - INTERVAL '${THREAD_MAX_AGE_DAYS} days'
+    GROUP BY st.id
+    HAVING COUNT(sta.article_id) >= 2
+    ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
+    LIMIT $1
+  `, [limit]);
+
+  // Tag video presence and region
+  return candidates.map(t => ({
+    ...t,
+    hasVideo: Number(t.video_count) > 0,
+    region:   getRegionGroup(t),
+  }));
+}
+
+// ─── Pick Mode: Interactive Selection ─────────────────────────────────────
+async function promptThreadSelection(candidates) {
+  // Display formatted table
+  console.log();
+  console.log('┌─────────────────────────────────────────────────────────────────────────────┐');
+  console.log('│  AVAILABLE STORY THREADS — choose up to 10                                  │');
+  console.log('├────┬────────┬───────────────────────────────────────────────┬──────┬───────┤');
+  console.log('│ #  │  ID    │ Title                                          │ Cat  │ 🎬/📰 │');
+  console.log('├────┼────────┼───────────────────────────────────────────────┼──────┼───────┤');
+
+  candidates.forEach((t, i) => {
+    const num    = String(i + 1).padStart(2);
+    const id     = String(t.id).padEnd(6);
+    const title  = (t.title || '').slice(0, 46).padEnd(46);
+    const cat    = (t.primary_category || 'general').slice(0, 4).padEnd(4);
+    const media  = t.hasVideo ? '🎬' : '📰 ';
+    const region = (t.region || '').slice(0, 10);
+    console.log(`│ ${num} │ ${id} │ ${title} │ ${cat} │ ${media}    │  ${region}`);
+  });
+
+  console.log('└────┴────────┴───────────────────────────────────────────────┴──────┴───────┘');
+  console.log();
+  console.log(`Enter thread IDs (comma-separated), or # row numbers prefixed with #, to select up to ${MAX_THREADS} stories.`);
+  console.log(`Example:  1045, 1089, 1102   or   #1, #3, #7, #12`);
+  console.log();
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise(resolve => rl.question('Your selection: ', resolve));
+  rl.close();
+
+  const tokens = answer.split(',').map(s => s.trim()).filter(Boolean);
+  const selected = [];
+  const seen = new Set();
+
+  for (const token of tokens) {
+    let thread = null;
+    if (token.startsWith('#')) {
+      // Row number reference — 1-indexed
+      const rowNum = parseInt(token.slice(1), 10);
+      if (!isNaN(rowNum) && rowNum >= 1 && rowNum <= candidates.length) {
+        thread = candidates[rowNum - 1];
+      } else {
+        console.warn(`  ⚠ Skipping unknown row reference: ${token}`);
+        continue;
+      }
+    } else {
+      const id = parseInt(token, 10);
+      thread = candidates.find(c => c.id === id);
+      if (!thread) {
+        console.warn(`  ⚠ Skipping unknown thread ID: ${token}`);
+        continue;
+      }
+    }
+    if (seen.has(thread.id)) continue;
+    seen.add(thread.id);
+    selected.push(thread);
+    if (selected.length >= MAX_THREADS) break;
+  }
+
+  console.log();
+  console.log(`Selected ${selected.length} thread(s):`);
+  selected.forEach((t, i) => console.log(`  ${i + 1}. [${t.id}] ${t.title}`));
+  console.log();
+
+  return selected;
+}
+
+// ─── Curation Persistence ──────────────────────────────────────────────────
+async function saveCurationChoice(threads, episodeId) {
+  const threadIds  = threads.map(t => t.id);
+  const categories = [...new Set(threads.map(t => t.primary_category).filter(Boolean))];
+  const regions    = [...new Set(threads.map(t => getRegionGroup(t)).filter(Boolean))];
+  const keywords   = [...new Set(
+    threads.flatMap(t => Array.isArray(t.keywords) ? t.keywords : []).filter(Boolean)
+  )].slice(0, 60); // cap at 60 to keep the array manageable
+
+  await pool.query(`
+    INSERT INTO briefing_curation_history (episode_id, thread_ids, categories, keywords, regions)
+    VALUES ($1, $2, $3, $4, $5)
+  `, [episodeId || null, threadIds, categories, keywords, regions]);
+}
+
+// ─── Preference Profile Builder ────────────────────────────────────────────
+// Reads the last 30 curation sessions and derives category/keyword/region
+// affinities with exponential recency decay (half-life ≈ 10 sessions).
+async function buildPreferenceProfile() {
+  const { rows } = await pool.query(`
+    SELECT categories, keywords, regions, chosen_at
+    FROM briefing_curation_history
+    ORDER BY chosen_at DESC
+    LIMIT 30
+  `);
+
+  if (!rows.length) return null;
+
+  const HALF_LIFE = 10; // sessions — older choices decay exponentially
+  const catAff    = {};
+  const kwAff     = {};
+  const regAff    = {};
+
+  rows.forEach((row, idx) => {
+    // Weight decays by 50% every HALF_LIFE sessions (newest = weight 1.0)
+    const weight = Math.pow(0.5, idx / HALF_LIFE);
+
+    for (const cat of (row.categories || [])) {
+      catAff[cat] = (catAff[cat] || 0) + weight;
+    }
+    for (const kw of (row.keywords || [])) {
+      kwAff[kw] = (kwAff[kw] || 0) + weight;
+    }
+    for (const reg of (row.regions || [])) {
+      regAff[reg] = (regAff[reg] || 0) + weight;
+    }
+  });
+
+  // Normalise so the max affinity in each dimension = 1.0
+  const normalise = obj => {
+    const max = Math.max(...Object.values(obj), 1e-9);
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = v / max;
+    return out;
+  };
+
+  const categories = normalise(catAff);
+  const keywords   = normalise(kwAff);
+  const regions    = normalise(regAff);
+
+  // Build a human-readable summary for injection into the Claude prompt
+  const topCats = Object.entries(categories).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+  const topRegs = Object.entries(regions).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k.replace('_', ' '));
+  const topKws  = Object.entries(keywords).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => k);
+  const parts   = [];
+  if (topCats.length) parts.push(`categories: ${topCats.join(', ')}`);
+  if (topRegs.length) parts.push(`regions: ${topRegs.join(', ')}`);
+  if (topKws.length)  parts.push(`topics: ${topKws.join(', ')}`);
+  const _summary = parts.join('; ');
+
+  return { categories, keywords, regions, _summary };
 }
 
 // ─── Entry ─────────────────────────────────────────────────────────────────
