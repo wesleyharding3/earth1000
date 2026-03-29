@@ -1781,34 +1781,86 @@
     .panelSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
     .panelSlide::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
 
-    /* ── Overview / Map slide ── */
-    #panelOverviewSlide { position: relative; overflow: hidden; height: 100%; }
+    /* ── Overview slide: map top half + info bottom half ── */
+    #panelOverviewSlide {
+      overflow-y: auto !important;
+      overflow-x: hidden;
+      display: flex; flex-direction: column;
+      height: 100%;
+    }
+    #panelOverviewSlide::-webkit-scrollbar { width: 4px; }
+    #panelOverviewSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+    #panelMapHalf {
+      position: relative; flex: 0 0 50%; min-height: 0;
+      background: #060a10;
+    }
     #panelMapContainer {
       position: absolute; inset: 0;
-      background: #0d1117;
     }
     #panelMapContainer .leaflet-container {
       width: 100%; height: 100%;
-      background: #0d1117;
+      background: #060a10;
     }
-    /* B&W tile filter */
-    #panelMapContainer.bw .leaflet-tile { filter: grayscale(1) brightness(0.72) contrast(1.1); }
+    /* Dark map with white lines — invert the CartoDB dark tiles */
+    #panelMapContainer .leaflet-tile {
+      filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(1.15);
+    }
+    /* Satellite: no filter */
+    #panelMapContainer.sat .leaflet-tile { filter: none; }
     /* Map style toggle */
     .mapStyleToggle {
-      position: absolute; top: 10px; right: 10px; z-index: 1000;
+      position: absolute; top: 8px; right: 8px; z-index: 1000;
       display: flex; border-radius: 4px; overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.18);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.15);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
     }
     .mapStyleBtn {
-      padding: 5px 10px;
-      font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-      background: rgba(10,12,16,0.88); color: rgba(255,255,255,0.45);
+      padding: 4px 9px;
+      font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+      background: rgba(6,10,16,0.92); color: rgba(255,255,255,0.4);
       border: none; cursor: pointer; transition: background 0.14s, color 0.14s;
       backdrop-filter: blur(8px);
     }
-    .mapStyleBtn.active { background: rgba(255,255,255,0.12); color: #fff; }
-    .mapStyleBtn:not(:last-child) { border-right: 1px solid rgba(255,255,255,0.12); }
+    .mapStyleBtn.active { background: rgba(255,255,255,0.1); color: #fff; }
+    .mapStyleBtn:not(:last-child) { border-right: 1px solid rgba(255,255,255,0.1); }
+    /* Location info panel (bottom half) */
+    #panelOverviewInfo {
+      flex: 0 0 50%; padding: 16px;
+      background: rgba(6,10,16,0.6);
+      border-top: 1px solid rgba(255,255,255,0.06);
+      overflow-y: auto;
+    }
+    .poiSection {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(255,255,255,0.28); margin-bottom: 8px; margin-top: 14px;
+    }
+    .poiSection:first-child { margin-top: 0; }
+    .poiGrid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px;
+    }
+    .poiStat {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 4px; padding: 9px 11px;
+    }
+    .poiStatVal {
+      font-size: 15px; font-weight: 700; color: #fff; line-height: 1;
+      font-variant-numeric: tabular-nums; margin-bottom: 4px;
+    }
+    .poiStatLabel {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+      color: rgba(255,255,255,0.3);
+    }
+    .poiDesc {
+      font-size: 12px; line-height: 1.6; color: rgba(255,255,255,0.55);
+      margin-bottom: 10px;
+    }
+    .poiTagRow { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+    .poiTag {
+      padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.5);
+    }
 
     /* ── Statistics slide ── */
     #panelStatsSlide { overflow-y: auto !important; }
@@ -10246,7 +10298,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="panelSlidesTrack" id="panelSlidesTrack">
               <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
               <div class="panelSlide" id="panelOverviewSlide">
-                <div id="panelMapContainer" class="bw"></div>
+                <div id="panelMapHalf"><div id="panelMapContainer"></div></div>
+                <div id="panelOverviewInfo"></div>
               </div>
               <div class="panelSlide" id="panelStatsSlide">
                 <div id="panelStatsContent"><div class="psEmpty"><span style="font-size:22px;opacity:0.3">◈</span><span>Loading statistics…</span></div></div>
@@ -10652,7 +10705,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ── Overview: Leaflet map ──
         (function initPanelMap() {
-          const BASE_URL = "https://earth-wjr6.onrender.com";
           const mapContainer = document.getElementById("panelMapContainer");
           if (!mapContainer) return;
           const lat = node.lat ?? node.latitude ?? 0;
@@ -10681,20 +10733,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
             );
             osmTiles.addTo(map);
 
-            // toggle buttons
+            // toggle buttons — default is B&W (CSS filter active by default, .sat removes it)
             const toggle = document.createElement("div");
             toggle.className = "mapStyleToggle";
-            toggle.innerHTML = `<button class="mapStyleBtn active" data-mode="bw">Map</button><button class="mapStyleBtn" data-mode="sat">Satellite</button>`;
+            toggle.innerHTML = `<button class="mapStyleBtn active" data-mode="map">Map</button><button class="mapStyleBtn" data-mode="sat">Satellite</button>`;
             mapContainer.appendChild(toggle);
 
-            let mode = "bw";
+            let mode = "map";
             toggle.querySelectorAll(".mapStyleBtn").forEach(btn => {
               btn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 if (btn.dataset.mode === mode) return;
                 mode = btn.dataset.mode;
                 toggle.querySelectorAll(".mapStyleBtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-                mapContainer.classList.toggle("bw", mode === "bw");
+                // "sat" class on container disables the invert filter via CSS
+                mapContainer.classList.toggle("sat", mode === "sat");
                 if (mode === "sat") { osmTiles.remove(); satTiles.addTo(map); }
                 else { satTiles.remove(); osmTiles.addTo(map); }
               });
@@ -10724,6 +10777,84 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         })();
 
+        // ── Overview info panel: location details ──
+        (function populateOverviewInfo() {
+          const infoEl = document.getElementById("panelOverviewInfo");
+          if (!infoEl) return;
+
+          function fmtPop(n) {
+            if (!n || isNaN(n)) return "–";
+            if (n >= 1e9) return (n / 1e9).toFixed(2).replace(/\.?0+$/, "") + "B";
+            if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+            if (n >= 1e3) return (n / 1e3).toFixed(0) + "K";
+            return String(n);
+          }
+          function fmtGdp(n) {
+            if (!n || isNaN(n)) return "–";
+            if (n >= 1e12) return "$" + (n / 1e12).toFixed(2).replace(/\.?0+$/, "") + "T";
+            if (n >= 1e9)  return "$" + (n / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
+            if (n >= 1e6)  return "$" + (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+            return "$" + Number(n).toLocaleString();
+          }
+          function fmtCoords(lat, lon) {
+            if (lat == null || lon == null) return "–";
+            const la = Math.abs(lat).toFixed(2) + "° " + (lat >= 0 ? "N" : "S");
+            const lo = Math.abs(lon).toFixed(2) + "° " + (lon >= 0 ? "E" : "W");
+            return `${la}, ${lo}`;
+          }
+
+          const lat  = node.lat ?? node.latitude ?? null;
+          const lon  = node.lon ?? node.longitude ?? null;
+          const pop  = node.population ?? null;
+          const gdp  = node.gdp ?? null;
+          const tz   = node.timezone ?? null;
+          const region    = node.region ?? null;
+          const country   = isCity ? (node.country ?? null) : null;
+          const continent = node.continent ?? null;
+
+          // Build stat tiles
+          const stats = [];
+          if (pop)  stats.push({ val: fmtPop(pop),  label: "Population" });
+          if (gdp)  stats.push({ val: fmtGdp(gdp),  label: isCity ? "City GDP" : "GDP" });
+          if (lat != null && lon != null) stats.push({ val: fmtCoords(lat, lon), label: "Coordinates" });
+          if (tz)   stats.push({ val: tz.replace(/_/g, " "), label: "Timezone" });
+
+          const tags = [];
+          if (continent) tags.push(continent);
+          if (region && region !== continent) tags.push(region);
+          if (country)   tags.push(country);
+
+          let html = "";
+
+          // Location section label
+          html += `<div class="poiSection">${isCity ? "City" : "Country"} Overview</div>`;
+
+          // Stats grid
+          if (stats.length) {
+            html += `<div class="poiGrid">`;
+            stats.forEach(s => {
+              html += `<div class="poiStat"><div class="poiStatVal">${s.val}</div><div class="poiStatLabel">${s.label}</div></div>`;
+            });
+            html += `</div>`;
+          }
+
+          // Tags row
+          if (tags.length) {
+            html += `<div class="poiSection">Region</div><div class="poiTagRow">`;
+            tags.forEach(t => {
+              html += `<span class="poiTag">${t}</span>`;
+            });
+            html += `</div>`;
+          }
+
+          // Fallback if nothing available
+          if (!stats.length && !tags.length) {
+            html += `<div class="poiDesc" style="opacity:0.4;text-align:center;padding-top:12px;">No additional data available.</div>`;
+          }
+
+          infoEl.innerHTML = html;
+        })();
+
         // ── Statistics: trade/exports/imports ──
         (async function loadTradeStats() {
           const BASE_URL = "https://earth-wjr6.onrender.com";
@@ -10739,34 +10870,85 @@ const settingsToggle     = document.getElementById("settingsToggle");
             return "$" + n.toLocaleString();
           }
 
+          // Schema: exports/imports table has country_id + city_id
+          // Country rows: country_id = X, city_id IS NULL
+          // City rows:    country_id = X, city_id = Y (both present)
+          // Query: for countries use country_id; for cities use city_id
+          const param = isCity ? `city_id=${node.id}` : `country_id=${node.id}`;
+
           try {
-            const param = isCity ? `city_id=${node.id}` : `country_id=${node.id}`;
-            const res = await fetch(`${BASE_URL}/api/trade?${param}`);
-            if (!res.ok) throw new Error("no data");
-            const d = await res.json();
+            // Fetch exports and imports in parallel — separate endpoints per table
+            const [exRes, imRes] = await Promise.all([
+              fetch(`${BASE_URL}/api/exports?${param}`),
+              fetch(`${BASE_URL}/api/imports?${param}`)
+            ]);
+
             if (!statsEl.isConnected) return;
 
-            const exports_val = d.exports_value ?? d.exports ?? null;
-            const imports_val = d.imports_value ?? d.imports ?? null;
-            const balance = (exports_val != null && imports_val != null) ? exports_val - imports_val : null;
-            const year = d.year ? `${d.year}` : "";
-            const topExports = Array.isArray(d.top_exports) ? d.top_exports : [];
-            const topImports = Array.isArray(d.top_imports) ? d.top_imports : [];
+            // Parse whichever endpoints exist — fall through gracefully on 404
+            const exData = exRes.ok ? await exRes.json() : null;
+            const imData = imRes.ok ? await imRes.json() : null;
+
+            // Normalise — rows may be a single object or an array; sum if array
+            function extractValue(d, ...keys) {
+              if (!d) return null;
+              const row = Array.isArray(d) ? d[0] : d;
+              if (!row) return null;
+              for (const k of keys) {
+                if (row[k] != null && !isNaN(Number(row[k]))) return Number(row[k]);
+              }
+              return null;
+            }
+            function extractYear(d) {
+              const row = Array.isArray(d) ? d[0] : d;
+              return row?.year ?? row?.data_year ?? null;
+            }
+            function extractList(d, ...keys) {
+              const row = Array.isArray(d) ? d[0] : d;
+              if (!row) return [];
+              for (const k of keys) {
+                if (Array.isArray(row[k]) && row[k].length) return row[k];
+              }
+              return [];
+            }
+
+            const exports_val = extractValue(exData, "value", "total_value", "exports_value", "amount");
+            const imports_val = extractValue(imData, "value", "total_value", "imports_value", "amount");
+            const year        = extractYear(exData) || extractYear(imData);
+            const topExports  = extractList(exData, "top_items", "items", "top_exports", "products");
+            const topImports  = extractList(imData, "top_items", "items", "top_imports", "products");
+
+            const hasAny = exports_val != null || imports_val != null;
+            if (!hasAny) throw new Error("empty");
+
+            const balance  = (exports_val != null && imports_val != null) ? exports_val - imports_val : null;
             const isSurplus = balance != null && balance >= 0;
+
+            function topList(items, label) {
+              if (!items.length) return "";
+              return `<div class="psSection">${label}</div>
+                <div class="psTopList">${items.slice(0, 6).map((item, i) => {
+                  const name = typeof item === "object" ? (item.name || item.label || item.product || item.commodity || Object.values(item)[0]) : item;
+                  const val  = typeof item === "object" ? (item.value ?? item.total_value ?? item.amount ?? null) : null;
+                  return `<div class="psTopItem">
+                    <span class="psTopRank">${i + 1}</span>
+                    <span>${String(name || "").replace(/</g,"&lt;")}</span>
+                    ${val != null ? `<span class="psTopVal">${fmtTrade(val)}</span>` : ""}
+                  </div>`;
+                }).join("")}</div>`;
+            }
 
             statsEl.innerHTML = `
               <div class="psTrade">
-                <div class="psSection">Trade Overview</div>
+                <div class="psSection">Trade Overview${year ? ` · ${year}` : ""}</div>
                 <div class="psTradeGrid">
                   <div class="psTradeCard exports">
                     <div class="psTradeVal">${fmtTrade(exports_val)}</div>
                     <div class="psTradeLabel">Exports</div>
-                    ${year ? `<div class="psTradeYear">${year}</div>` : ""}
                   </div>
                   <div class="psTradeCard imports">
                     <div class="psTradeVal">${fmtTrade(imports_val)}</div>
                     <div class="psTradeLabel">Imports</div>
-                    ${year ? `<div class="psTradeYear">${year}</div>` : ""}
                   </div>
                   ${balance != null ? `
                   <div class="psTradeCard balance ${isSurplus ? "surplus" : "deficit"}">
@@ -10774,25 +10956,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
                     <div class="psTradeLabel">Trade ${isSurplus ? "Surplus" : "Deficit"}</div>
                   </div>` : ""}
                 </div>
-                ${topExports.length ? `
-                <div class="psSection">Top Exports</div>
-                <div class="psTopList">${topExports.slice(0, 6).map((item, i) => `
-                  <div class="psTopItem">
-                    <span class="psTopRank">${i + 1}</span>
-                    <span>${typeof item === "object" ? (item.name || item.label || item.product || JSON.stringify(item)) : item}</span>
-                    ${typeof item === "object" && item.value != null ? `<span class="psTopVal">${fmtTrade(item.value)}</span>` : ""}
-                  </div>`).join("")}
-                </div>` : ""}
-                ${topImports.length ? `
-                <div class="psSection">Top Imports</div>
-                <div class="psTopList">${topImports.slice(0, 6).map((item, i) => `
-                  <div class="psTopItem">
-                    <span class="psTopRank">${i + 1}</span>
-                    <span>${typeof item === "object" ? (item.name || item.label || item.product || JSON.stringify(item)) : item}</span>
-                    ${typeof item === "object" && item.value != null ? `<span class="psTopVal">${fmtTrade(item.value)}</span>` : ""}
-                  </div>`).join("")}
-                </div>` : ""}
+                ${topList(topExports, "Top Exports")}
+                ${topList(topImports, "Top Imports")}
               </div>`;
+
           } catch (_) {
             if (statsEl.isConnected)
               statsEl.innerHTML = `<div class="psEmpty"><span style="font-size:22px;opacity:0.25">◈</span><span>No trade data available for this ${isCity ? "city" : "country"}.</span></div>`;
