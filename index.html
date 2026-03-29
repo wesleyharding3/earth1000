@@ -10322,6 +10322,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
           if (typeof syncArrows === "function") syncArrows();
           setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
+          const isArticles = currentSlide === 0;
+          const hide = isArticles ? "" : "none";
+          const sortRow = panel.querySelector(".panelSortRow");
+          const mediaRow = panel.querySelector(".panelMediaRow");
+          const searchPill = panel.querySelector(".panelSearchPill");
+          if (sortRow) sortRow.style.display = hide;
+          if (mediaRow) mediaRow.style.display = hide;
+          if (searchPill) searchPill.style.display = hide;
         }
 
         const arrowLeft  = panel.querySelector("#panelArrowLeft");

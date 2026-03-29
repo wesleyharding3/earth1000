@@ -42,6 +42,146 @@ function parseOptionalPositiveInt(value, fallback = null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+const tradeTableColumnCache = new Map();
+const TRADE_VALUE_COLUMN_CANDIDATES = ["annual_profit", "annual_cost", "value", "total_value", "exports_value", "imports_value", "amount"];
+const TRADE_ITEM_COLUMN_CANDIDATES = ["name", "label", "product", "commodity", "item_name", "category"];
+const TRADE_YEAR_COLUMN_CANDIDATES = ["year", "data_year", "trade_year"];
+const TRADE_RANK_COLUMN_CANDIDATES = ["rank"];
+
+function pickTradeColumn(columns, candidates) {
+  for (const candidate of candidates) {
+    if (columns.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function getTradeTableColumns(tableName) {
+  if (tradeTableColumnCache.has(tableName)) return tradeTableColumnCache.get(tableName);
+
+  const { rows } = await pool.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = $1
+  `, [tableName]);
+
+  const columns = new Set(rows.map((row) => row.column_name));
+  tradeTableColumnCache.set(tableName, columns);
+  return columns;
+}
+
+async function getTradeSummary(tableName, query) {
+  const countryId = parseOptionalPositiveInt(query.country_id);
+  const cityId = parseOptionalPositiveInt(query.city_id);
+  const requestedYear = parseOptionalPositiveInt(query.year);
+  const topLimit = Math.min(parseOptionalPositiveInt(query.top, 6) || 6, 12);
+
+  if (!countryId && !cityId) {
+    const err = new Error("country_id or city_id required");
+    err.status = 400;
+    throw err;
+  }
+
+  const columns = await getTradeTableColumns(tableName);
+  if (!columns.size) {
+    const err = new Error(`Table "${tableName}" not found`);
+    err.status = 404;
+    throw err;
+  }
+
+  if (!columns.has("country_id") || !columns.has("city_id")) {
+    const err = new Error(`Table "${tableName}" is missing country_id/city_id`);
+    err.status = 500;
+    throw err;
+  }
+
+  const valueColumn = pickTradeColumn(columns, TRADE_VALUE_COLUMN_CANDIDATES);
+  if (!valueColumn) {
+    const err = new Error(`Table "${tableName}" is missing a supported value column`);
+    err.status = 500;
+    throw err;
+  }
+
+  const yearColumn = pickTradeColumn(columns, TRADE_YEAR_COLUMN_CANDIDATES);
+  const itemColumn = pickTradeColumn(columns, TRADE_ITEM_COLUMN_CANDIDATES);
+  const rankColumn = pickTradeColumn(columns, TRADE_RANK_COLUMN_CANDIDATES);
+
+  const baseConditions = [];
+  const baseParams = [];
+
+  if (cityId) {
+    if (countryId) {
+      baseParams.push(countryId);
+      baseConditions.push(`country_id = $${baseParams.length}`);
+    }
+    baseParams.push(cityId);
+    baseConditions.push(`city_id = $${baseParams.length}`);
+  } else {
+    baseParams.push(countryId);
+    baseConditions.push(`country_id = $${baseParams.length}`);
+    baseConditions.push(`city_id IS NULL`);
+  }
+
+  let effectiveYear = requestedYear;
+  if (yearColumn && !effectiveYear) {
+    const latestYearSql = `
+      SELECT MAX(${yearColumn}) AS year
+      FROM ${tableName}
+      WHERE ${baseConditions.join(" AND ")}
+    `;
+    const { rows } = await pool.query(latestYearSql, baseParams);
+    effectiveYear = rows[0]?.year != null ? parseInt(rows[0].year, 10) : null;
+  }
+
+  const conditions = [...baseConditions];
+  const params = [...baseParams];
+  if (yearColumn && effectiveYear) {
+    params.push(effectiveYear);
+    conditions.push(`${yearColumn} = $${params.length}`);
+  }
+
+  const whereClause = conditions.join(" AND ");
+
+  const totalSql = `
+    SELECT COALESCE(SUM(${valueColumn}), 0)::numeric AS total_value
+    FROM ${tableName}
+    WHERE ${whereClause}
+  `;
+  const totalPromise = pool.query(totalSql, params);
+
+  let topItemsPromise = Promise.resolve({ rows: [] });
+  if (itemColumn) {
+    const topParams = [...params, topLimit];
+    const orderBy = rankColumn
+      ? `${rankColumn} ASC, name ASC`
+      : `value DESC, name ASC`;
+    const topItemsSql = `
+      SELECT
+        ${itemColumn} AS name,
+        COALESCE(SUM(${valueColumn}), 0)::numeric AS value
+        ${rankColumn ? `, MIN(${rankColumn}) AS rank` : ""}
+      FROM ${tableName}
+      WHERE ${whereClause}
+        AND ${itemColumn} IS NOT NULL
+      GROUP BY ${itemColumn}
+      ORDER BY ${orderBy}
+      LIMIT $${topParams.length}
+    `;
+    topItemsPromise = pool.query(topItemsSql, topParams);
+  }
+
+  const [totalRes, topItemsRes] = await Promise.all([totalPromise, topItemsPromise]);
+  return {
+    value: totalRes.rows[0]?.total_value != null ? Number(totalRes.rows[0].total_value) : null,
+    total_value: totalRes.rows[0]?.total_value != null ? Number(totalRes.rows[0].total_value) : null,
+    year: effectiveYear,
+    top_items: topItemsRes.rows.map((row) => ({
+      name: row.name,
+      value: row.value != null ? Number(row.value) : null
+    }))
+  };
+}
+
 /* =========================================
    Auth Middleware
    SUPABASE_JWT_SECRET must be set in .env
@@ -1133,6 +1273,31 @@ app.get("/api/ocean/temperature", async (req, res) => {
   } catch (err) {
     console.error("Ocean temperature error:", err.message);
     res.status(500).json({ error: "Failed to fetch ocean temperature data" });
+  }
+});
+
+/* =========================================
+   Trade Stats
+========================================= */
+app.get("/api/exports", async (req, res) => {
+  try {
+    const data = await getTradeSummary("exports", req.query);
+    res.json(data);
+  } catch (err) {
+    const status = err.status || 500;
+    console.error("[exports]", err.message);
+    res.status(status).json({ error: err.message || "Failed to fetch exports" });
+  }
+});
+
+app.get("/api/imports", async (req, res) => {
+  try {
+    const data = await getTradeSummary("imports", req.query);
+    res.json(data);
+  } catch (err) {
+    const status = err.status || 500;
+    console.error("[imports]", err.message);
+    res.status(status).json({ error: err.message || "Failed to fetch imports" });
   }
 });
 
