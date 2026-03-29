@@ -12,7 +12,13 @@ const pool = new Pool({
   },
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: 25  // increased from 5 — need headroom for listener + fetcher + web requests
+  max: 40  // bumped from 25 — fetcher + listener + concurrent web requests need headroom
+});
+
+// Kill runaway queries after 45 seconds so they release their connection instead
+// of blocking the pool for 90-120s during heavy fetch runs.
+pool.on("connect", (client) => {
+  client.query("SET statement_timeout = 45000").catch(() => {});
 });
 
 pool.on('error', (err) => {

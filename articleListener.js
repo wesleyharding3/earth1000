@@ -58,6 +58,23 @@ async function logScoringVerification() {
   console.log();
 }
 
+// Dedup guard — the fetcher fires an explicit pg_notify AND the DB trigger
+// fires one too, so each insert produces two notifications. Track recently-seen
+// IDs for 10 seconds to silently skip the duplicate.
+const recentlySeen = new Map(); // articleId → timestamp
+const DEDUP_TTL_MS = 10_000;
+
+function isDuplicate(articleId) {
+  const now = Date.now();
+  // Prune stale entries to prevent unbounded growth
+  for (const [id, ts] of recentlySeen) {
+    if (now - ts > DEDUP_TTL_MS) recentlySeen.delete(id);
+  }
+  if (recentlySeen.has(articleId)) return true;
+  recentlySeen.set(articleId, now);
+  return false;
+}
+
 async function startArticleListener() {
   const listener = await pool.connect();
   await listener.query("LISTEN new_article");
@@ -65,6 +82,10 @@ async function startArticleListener() {
 
   listener.on("notification", async (msg) => {
     const articleId = parseInt(msg.payload);
+    if (isDuplicate(articleId)) {
+      console.log(`🔖 Skipping duplicate notify for article ${articleId}`);
+      return;
+    }
     console.log(`🔖 New article detected: ${articleId}`);
     scoringStats.attempted++;
 
