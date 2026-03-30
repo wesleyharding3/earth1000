@@ -209,10 +209,14 @@ async function saveKeywords(
     ? new Date(publishedAt).toISOString().slice(0, 10)
     : new Date().toISOString().slice(0, 10);
 
+  // Sort keywords alphabetically so all concurrent processes lock rows in the
+  // same order — this eliminates the circular-wait condition that causes deadlocks.
+  const sorted = keywords.slice().sort((a, b) => a.keyword.localeCompare(b.keyword));
+
   // ── 1. Bulk insert into article_keywords (single query)
-  const akVals   = keywords.map((_, i) => `($1, $${i*3+2}, $${i*3+3}, $${i*3+4})`).join(',');
+  const akVals   = sorted.map((_, i) => `($1, $${i*3+2}, $${i*3+3}, $${i*3+4})`).join(',');
   const akParams = [articleId];
-  for (const { keyword, frequency } of keywords) {
+  for (const { keyword, frequency } of sorted) {
     akParams.push(keyword, lang, frequency);
   }
   await db.query(
@@ -222,37 +226,55 @@ async function saveKeywords(
     akParams
   );
 
-  // ── 2. Bulk upsert keyword_daily_stats — global rows
-  const globalVals   = keywords.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, NULL, NULL)`).join(',');
-  const globalParams = [];
-  for (const { keyword } of keywords) globalParams.push(keyword, date);
-  await db.query(
-    `INSERT INTO keyword_daily_stats
-       (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
-     VALUES ${globalVals}
-     ON CONFLICT (keyword, date, source_country_id, about_country_id)
-     DO UPDATE SET
-       total_count          = keyword_daily_stats.total_count + 1,
-       language_group_count = keyword_daily_stats.language_group_count + 1`,
-    globalParams
-  );
+  // ── 2 & 3. Bulk upsert keyword_daily_stats with deadlock retry ─────────────
+  // Keywords are inserted in sorted order (see above) so all concurrent processes
+  // acquire row locks in the same sequence → no circular wait → no deadlocks.
+  // The retry loop handles the rare case where a deadlock still slips through.
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // ── Global rows (no country context)
+      const globalVals   = sorted.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, NULL, NULL)`).join(',');
+      const globalParams = [];
+      for (const { keyword } of sorted) globalParams.push(keyword, date);
+      await db.query(
+        `INSERT INTO keyword_daily_stats
+           (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
+         VALUES ${globalVals}
+         ON CONFLICT (keyword, date, source_country_id, about_country_id)
+         DO UPDATE SET
+           total_count          = keyword_daily_stats.total_count + 1,
+           language_group_count = keyword_daily_stats.language_group_count + 1`,
+        globalParams
+      );
 
-  // ── 3. Bulk upsert keyword_daily_stats — country rows (if we have country context)
-  if (sourceCountryId || aboutCountryId) {
-    const cVals   = keywords.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, $${keywords.length*2+1}, $${keywords.length*2+2})`).join(',');
-    const cParams = [];
-    for (const { keyword } of keywords) cParams.push(keyword, date);
-    cParams.push(sourceCountryId || null, aboutCountryId || null);
-    await db.query(
-      `INSERT INTO keyword_daily_stats
-         (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
-       VALUES ${cVals}
-       ON CONFLICT (keyword, date, source_country_id, about_country_id)
-       DO UPDATE SET
-         total_count          = keyword_daily_stats.total_count + 1,
-         language_group_count = keyword_daily_stats.language_group_count + 1`,
-      cParams
-    );
+      // ── Country rows (only when we have country context)
+      if (sourceCountryId || aboutCountryId) {
+        const cVals   = sorted.map((_, i) => `($${i*2+1}, $${i*2+2}, 1, 1, $${sorted.length*2+1}, $${sorted.length*2+2})`).join(',');
+        const cParams = [];
+        for (const { keyword } of sorted) cParams.push(keyword, date);
+        cParams.push(sourceCountryId || null, aboutCountryId || null);
+        await db.query(
+          `INSERT INTO keyword_daily_stats
+             (keyword, date, total_count, language_group_count, source_country_id, about_country_id)
+           VALUES ${cVals}
+           ON CONFLICT (keyword, date, source_country_id, about_country_id)
+           DO UPDATE SET
+             total_count          = keyword_daily_stats.total_count + 1,
+             language_group_count = keyword_daily_stats.language_group_count + 1`,
+          cParams
+        );
+      }
+      break; // success — exit retry loop
+
+    } catch (err) {
+      if (err.code === '40P01' && attempt < MAX_RETRIES) {
+        // Deadlock detected — wait briefly then retry with same sorted order
+        await new Promise(r => setTimeout(r, attempt * 50));
+        continue;
+      }
+      throw err; // non-deadlock error or max retries exceeded — propagate
+    }
   }
 
 }
