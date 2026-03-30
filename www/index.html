@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Population Globe with Zoom</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Earth00</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
@@ -17,6 +18,14 @@
       --page-nav-height: 39px;
       --global-ticker-height: 36px;
       --global-ticker-gap: 8px;
+      /* fluid type scale — multiplied by clamp() throughout */
+      --t-xs:  clamp(9px,  2.2vw, 10px);
+      --t-sm:  clamp(11px, 2.8vw, 13px);
+      --t-md:  clamp(13px, 3.4vw, 15px);
+      --t-lg:  clamp(15px, 4.0vw, 18px);
+      --t-xl:  clamp(18px, 4.8vw, 22px);
+      /* touch target floor */
+      --tap-min: 44px;
     }
 
     body { 
@@ -5507,6 +5516,108 @@
         --touch-icon-size: 50px;
       }
     }
+
+    /* ═══════════════════════════════════════════════════════════════
+       MOBILE / TOUCH — comprehensive responsive overrides
+       Applied when pointer is coarse (touch screen) OR narrow viewport
+    ════════════════════════════════════════════════════════════════ */
+    @media (pointer: coarse), (max-width: 600px) {
+
+      /* ── Bottom tab bar — Apple HIG standard 49px + safe area ── */
+      :root { --page-nav-height: 52px; }
+      .tabItem {
+        padding: 9px 6px 7px;
+        gap: 4px;
+        min-height: var(--page-nav-height);
+      }
+      .tabIcon  { width: 22px; height: 22px; stroke-width: 1.6; }
+      .tabLabel { font-size: 9px; letter-spacing: 0.04em; }
+
+      /* ── All tappable elements — 44px minimum touch target ── */
+      button,
+      .iconBtn,
+      .tabItem,
+      .acctDpBtn,
+      .pricingTierBtn,
+      .bControlBtn,
+      .bDot,
+      .panelNavArrow,
+      .snapBtn,
+      .kwi-mode-tab,
+      .kwi-range-btn,
+      .pop-scope-btn,
+      .panelMediaOption,
+      .panelSortOption,
+      .tagOption,
+      .nfFilterBtn,
+      .grm-dropdown-item {
+        min-height: var(--tap-min);
+        touch-action: manipulation;
+      }
+
+      /* ── Fluid typography on key panel/card text ── */
+      /* Panel titles */
+      .panelHeaderTitle,
+      .grm-panel-title,
+      .cdHeader h2,
+      .adpTitle            { font-size: var(--t-lg); }
+
+      /* Article / card titles */
+      .bAPCardTitle,
+      .nfCardTitle,
+      .adpHeadline         { font-size: var(--t-md); line-height: 1.45; }
+
+      /* Body / summary text */
+      .adpSummary,
+      .nfCardSummary,
+      .bAPCardBody p       { font-size: var(--t-sm); line-height: 1.55; }
+
+      /* Meta / source labels */
+      .bAPCardSource,
+      .bAPCardLocation,
+      .nfCardSource,
+      .nfCardOrigin,
+      .adpMeta             { font-size: var(--t-xs); }
+
+      /* Briefing control buttons — bigger on mobile */
+      .bControlBtn         { width: 48px; height: 48px; font-size: 18px; }
+      .bControlBtn.primary { width: 58px; height: 58px; font-size: 22px; }
+      .bDot                { width: 9px; height: 9px; min-height: 0; }
+
+      /* ── Account dropdown — anchor to bottom of screen on narrow ── */
+      #accountDropdown {
+        position: fixed !important;
+        top: auto !important;
+        bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + 10px) !important;
+        left: 10px;
+        right: 10px;
+        width: auto;
+        max-height: 70vh;
+        overflow-y: auto;
+      }
+
+      /* ── Pricing / auth modals — full comfortable padding ── */
+      #pricingCard  { padding: 28px 18px 22px; }
+      #authCard     { padding: 28px 20px 22px; }
+      .pricingTitle { font-size: var(--t-lg); }
+
+      /* ── News feed — single column on very narrow ── */
+      #nfGrid { grid-template-columns: 1fr; gap: 12px; }
+      .nfCard        { min-height: 0; height: auto; }
+      .nfCardImg     { height: 160px; }
+      .nfCardTitle   { font-size: var(--t-md); -webkit-line-clamp: 3; }
+      .nfCardSummary { font-size: var(--t-sm); }
+
+      /* ── Panel scroll areas — native momentum ── */
+      .articlePage,
+      #aggRouteArticles,
+      #articlesViewport,
+      #nfViewport,
+      .panelSlide {
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
+      }
+    }
   
 /* ── Border pulse animation ─────────────────────────────────── */
 
@@ -5787,7 +5898,7 @@
 .acctDpBtn.signout:hover { background: rgba(255,50,50,0.08); color: rgba(255,130,130,1); }
 </style>
 </head>
-<script src="/js/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <body>
 
@@ -6943,7 +7054,7 @@
   <script type="module">
 
     window.__currentPage = 1;
-    import * as THREE from "/js/three.module.js";
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
     window.THREE = THREE;
 
     // ── Supported interface/translate languages ──────────────────────────────────
@@ -10876,11 +10987,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (!document.getElementById("leaflet-css")) {
               const link = document.createElement("link");
               link.id = "leaflet-css"; link.rel = "stylesheet";
-              link.href = "/js/leaflet.css";
+              link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
               document.head.appendChild(link);
             }
             const script = document.createElement("script");
-            script.src = "/js/leaflet.js";
+            script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
             script.onload = () => buildMap(window.L);
             document.head.appendChild(script);
           }
@@ -11244,6 +11355,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.focusCity            = focusCity;
       window.focusCountry         = focusCountry;
       window._globeResetZoom      = () => { targetZoom = 3.0; zoomingOut = true; };
+
+      // ── Mobile globe navigation controls ─────────────────────────────────────
+      window.__globeNav = {
+        zoomIn:   () => { targetZoom = Math.max(1.3, targetZoom * 0.72); },
+        zoomOut:  () => { targetZoom = Math.min(8.0, targetZoom * 1.38); },
+        recenter: () => {
+          targetZoom = 3.0;
+          zoomingOut = true;
+          globeYaw   = 0;
+          globePitch = 0;
+          rebuildGlobeQuat();
+        },
+      };
+      // ─────────────────────────────────────────────────────────────────────────
       window.buildArcLines        = buildArcLines;
       window.transPulseMeshes     = transPulseMeshes;
       window.globeScene           = scene;
@@ -20724,6 +20849,139 @@ body.ticker-active .tabLabel {
   } else {
     _initToggle();
   }
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MOBILE GLOBE NAVIGATION CONTROLS
+     Floating zoom + recenter buttons — visible only on touch devices
+════════════════════════════════════════════════════════════════ -->
+<style>
+  #globeNavControls {
+    display: none; /* desktop hidden */
+    position: fixed;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    gap: 10px;
+    z-index: 150;
+    pointer-events: none; /* container transparent; buttons handle events */
+  }
+  @media (pointer: coarse) {
+    #globeNavControls { display: flex; }
+    body.briefing-active #globeNavControls { display: none; }
+    body.panel-open     #globeNavControls { opacity: 0.35; }
+  }
+  .gncBtn {
+    width: 46px; height: 46px;
+    border-radius: 50%;
+    background: rgba(7, 12, 22, 0.76);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    color: rgba(255,255,255,0.85);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    pointer-events: all;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    transition: background 0.15s, transform 0.1s;
+    user-select: none;
+  }
+  .gncBtn:active {
+    background: rgba(255,180,80,0.22);
+    transform: scale(0.91);
+  }
+  .gncBtn svg {
+    width: 20px; height: 20px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    pointer-events: none;
+  }
+  /* Recenter button — slightly smaller, dimmer */
+  #gncReset { width: 40px; height: 40px; margin-top: 4px; }
+  #gncReset svg { width: 17px; height: 17px; }
+
+  /* ── Mobile tap-to-select hint ── */
+  #globeTapHint {
+    display: none;
+    position: fixed;
+    bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + 18px);
+    left: 50%; transform: translateX(-50%);
+    background: rgba(7,12,22,0.82);
+    border: 1px solid rgba(255,180,80,0.25);
+    border-radius: 20px;
+    padding: 7px 16px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    color: rgba(255,180,80,0.85);
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 120;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  @media (pointer: coarse) {
+    #globeTapHint { display: block; }
+  }
+</style>
+
+<div id="globeNavControls">
+  <!-- Zoom in -->
+  <button class="gncBtn" id="gncZoomIn" aria-label="Zoom in">
+    <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+  <!-- Zoom out -->
+  <button class="gncBtn" id="gncZoomOut" aria-label="Zoom out">
+    <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+  </button>
+  <!-- Recenter -->
+  <button class="gncBtn" id="gncReset" aria-label="Reset view">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+
+<div id="globeTapHint">Tap a node to explore</div>
+
+<script>
+// ── Globe nav controls wiring ─────────────────────────────────────────────
+(function() {
+  function waitForGlobeNav(cb) {
+    if (window.__globeNav) { cb(); return; }
+    const t = setInterval(() => { if (window.__globeNav) { clearInterval(t); cb(); } }, 80);
+  }
+
+  waitForGlobeNav(() => {
+    const nav = window.__globeNav;
+
+    document.getElementById('gncZoomIn') .addEventListener('click', () => { nav.zoomIn();   e_stop(); });
+    document.getElementById('gncZoomOut').addEventListener('click', () => { nav.zoomOut();  e_stop(); });
+    document.getElementById('gncReset')  .addEventListener('click', () => { nav.recenter(); e_stop(); });
+
+    function e_stop() { /* prevent click bubbling to globe drag handlers — buttons call stopPropagation via the panel passthrough fix already in place */ }
+
+    // Stop globe drag events from passing through nav buttons
+    ['mousedown','touchstart'].forEach(ev =>
+      document.getElementById('globeNavControls').addEventListener(ev, e => e.stopPropagation(), { passive: true })
+    );
+
+    // ── Tap hint: show briefly on first touch, then fade ─────────────────
+    if (window.matchMedia('(pointer: coarse)').matches) {
+      const hint = document.getElementById('globeTapHint');
+      let shown = false;
+      function showHint() {
+        if (shown) return;
+        shown = true;
+        hint.style.opacity = '1';
+        setTimeout(() => { hint.style.opacity = '0'; }, 2800);
+      }
+      // Show after globe is visible (wait for site loader to dismiss)
+      setTimeout(showHint, 1800);
+    }
+  });
 })();
 </script>
 </body>
