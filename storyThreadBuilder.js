@@ -195,8 +195,8 @@ Return ONLY a valid JSON array, no explanation:
 ]`;
 
   const response = await client.messages.create({
-    model:      "claude-sonnet-4-5",
-    max_tokens: 4096,
+    model:      "claude-haiku-4-5",
+    max_tokens: 2048,
     messages:   [{ role: "user", content: prompt }]
   });
 
@@ -325,6 +325,7 @@ async function getUnthreadedArticles(hours) {
     ) ranked
     WHERE source_rank <= 5
     ORDER BY RANDOM()
+    LIMIT 300
   `);
 
   if (!baseRows.length) return [];

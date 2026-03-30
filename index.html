@@ -19985,8 +19985,11 @@ body.ticker-active .tabLabel {
           });
         }
         secondary.forEach((loc, i) => {
-          // In city view, skip pulsing bare country centroids — they're empty space
+          // In city view, skip bare country centroids — those nodes aren't visible
           if (needsCityView && _isCountryCentroid(loc.lat, loc.lon ?? loc.lng)) return;
+          // In country view, skip city-level points — only country nodes are visible,
+          // so pulsing a city coordinate creates a phantom ring over empty globe space
+          if (!needsCityView && !_isCountryCentroid(loc.lat, loc.lon ?? loc.lng)) return;
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
