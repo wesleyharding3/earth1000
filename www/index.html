@@ -8745,6 +8745,19 @@ function computeCityTiers(cities) {
       function playSFX(sfx) {
         try { sfx.currentTime = 0; sfx.play(); } catch(e) {}
       }
+
+      // iOS WKWebView blocks audio until the audio context is unlocked by a user gesture.
+      // On first touchstart, silently play+pause each track at volume 0 to unlock it.
+      let _audioUnlocked = false;
+      function _unlockAudio() {
+        if (_audioUnlocked) return;
+        _audioUnlocked = true;
+        [SFX.node, SFX.article].forEach(sfx => {
+          sfx.volume = 0;
+          sfx.play().then(() => { sfx.pause(); sfx.currentTime = 0; sfx.volume = 1; }).catch(() => { sfx.volume = 1; });
+        });
+      }
+      window.addEventListener('touchstart', _unlockAudio, { once: true, passive: true });
       // ─────────────────────────────────────────────────────────────────────────
 
       let touchStartX = 0, touchStartY = 0;
@@ -10139,8 +10152,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("click", event => {
         if (window.briefingActive) return;   // globe locked during briefing
-        // If a touch-initiated node selection just happened, skip this click
-        if (Date.now() - touchNodeSelectTime < 600) return;
+        // If a touch-initiated node selection just happened, skip this click.
+        // Threshold is 1500ms to account for Capacitor WKWebView bridge latency,
+        // which can delay the JS click handler well past the usual ~300ms iOS synthetic-click delay.
+        if (Date.now() - touchNodeSelectTime < 1500) return;
         // If a touch drag just ended, suppress the synthetic click at the release point
         if (Date.now() - touchDragEndTime < 500) return;
 
