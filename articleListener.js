@@ -3,6 +3,7 @@ const pool = require("./db");
 const { classifyArticle } = require("./scoringEngine");
 const { routeArticle } = require("./locationRouter");
 const { resolveImageForArticle } = require("./imageResolver");
+const { deepAnalyzeArticle } = require("./deepAnalyzer");
 
 // Track scoring results across the current fetch run
 const scoringStats = {
@@ -92,6 +93,11 @@ async function startArticleListener() {
     try {
       const result = await classifyArticle(articleId);
       await routeArticle(articleId);
+
+      // Deep NLP analysis — fire-and-forget, only for high-priority articles.
+      // Writes sentiment_score + article_entities. Never blocks pipeline.
+      deepAnalyzeArticle(articleId)
+        .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
 
       // Resolve image after classify+route so article_tags and article_locations
       // are already written — the resolver depends on both.
