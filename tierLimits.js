@@ -10,6 +10,7 @@ const LIMITS = {
     translationsPerMonth:    null,   // daily cap applies
     explanationsPerDay:      0,      // feature restricted
     customBriefingsPerMonth: 0,      // pay-per-use at $2.50
+    kwExplanationsPerDay:    0,      // enterprise-only feature
   },
   pro: {
     briefingsPerWeek:        Infinity,
@@ -17,6 +18,7 @@ const LIMITS = {
     translationsPerMonth:    null,   // daily cap applies
     explanationsPerDay:      5,
     customBriefingsPerMonth: 0,      // pay-per-use at $2.50
+    kwExplanationsPerDay:    0,      // enterprise-only feature
   },
   enterprise: {
     briefingsPerWeek:        Infinity,
@@ -24,6 +26,7 @@ const LIMITS = {
     translationsPerMonth:    20,
     explanationsPerDay:      20,
     customBriefingsPerMonth: 10,
+    kwExplanationsPerDay:    25,     // AI keyword context explanations
   },
 };
 
@@ -217,6 +220,33 @@ async function checkCustomBriefing(userId, tier) {
 }
 
 /**
+ * Check and consume one keyword AI explanation credit.
+ * Enterprise-only: 25/day. Pro and Free: 0.
+ * Returns { allowed: bool, used: number, limit: number }
+ */
+async function checkKwExplanation(userId, tier) {
+  const lim = limitsFor(tier);
+  const dailyLimit = lim.kwExplanationsPerDay;
+
+  if (dailyLimit === 0) {
+    return { allowed: false, used: 0, limit: 0, resetNote: 'Keyword AI Context is an Enterprise feature' };
+  }
+  if (dailyLimit === Infinity) return { allowed: true, used: 0, limit: Infinity };
+
+  const newCount = await _upsertDailyUsage(userId, 'kw_explanations');
+  if (newCount > dailyLimit) {
+    await _decrementDailyUsage(userId, 'kw_explanations');
+    return {
+      allowed:   false,
+      used:      dailyLimit,
+      limit:     dailyLimit,
+      resetNote: 'Resets at midnight',
+    };
+  }
+  return { allowed: true, used: newCount, limit: dailyLimit };
+}
+
+/**
  * Returns a snapshot of a user's current usage for the frontend.
  */
 async function getUsageSnapshot(userId, tier) {
@@ -225,7 +255,7 @@ async function getUsageSnapshot(userId, tier) {
   const month = new Date().toISOString().slice(0, 7);
 
   const [dailyRow, weekRow, customRow, monthTransRow] = await Promise.all([
-    pool.query(`SELECT translations, explanations FROM user_usage WHERE user_id=$1 AND usage_date=$2`, [userId, today]),
+    pool.query(`SELECT translations, explanations, kw_explanations FROM user_usage WHERE user_id=$1 AND usage_date=$2`, [userId, today]),
     pool.query(`SELECT COUNT(*)::int AS c FROM briefing_access_log WHERE user_id=$1 AND accessed_at > NOW() - INTERVAL '7 days'`, [userId]),
     pool.query(`SELECT count FROM custom_briefing_usage WHERE user_id=$1 AND usage_month=$2`, [userId, month]),
     lim.translationsPerMonth !== null
@@ -243,6 +273,11 @@ async function getUsageSnapshot(userId, tier) {
     explanations: {
       used:  daily.explanations ?? 0,
       limit: lim.explanationsPerDay,
+      period: 'day',
+    },
+    kwExplanations: {
+      used:  daily.kw_explanations ?? 0,
+      limit: lim.kwExplanationsPerDay,
       period: 'day',
     },
     briefings: {
@@ -263,6 +298,7 @@ module.exports = {
   limitsFor,
   checkTranslation,
   checkExplanation,
+  checkKwExplanation,
   checkBriefingAccess,
   checkCustomBriefing,
   getUsageSnapshot,

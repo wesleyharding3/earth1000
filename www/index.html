@@ -4251,15 +4251,23 @@
       padding: var(--grm-gap);
       display: grid;
       gap: var(--grm-gap);
-      transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
-      min-height: 220px;
+      transition: grid-template-columns 0.35s cubic-bezier(0.4,0,0.2,1);
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
     }
+    /* 0: empty state fills space */
     .grm-grid[data-count="0"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-    .grm-grid[data-count="1"] { grid-template-columns: 1fr; grid-template-rows: 220px; }
-    .grm-grid[data-count="2"] { grid-template-columns: 1fr 1fr; grid-template-rows: 190px; }
-    .grm-grid[data-count="3"] { grid-template-columns: 1fr 1fr; grid-template-rows: 160px 160px; }
-    .grm-grid[data-count="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 160px 160px; }
+    /* 1: single tracker, full width */
+    .grm-grid[data-count="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+    /* 2: stacked vertically — one column, two equal rows */
+    .grm-grid[data-count="2"] { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    /* 3: two side-by-side on top, one full-width on bottom */
+    .grm-grid[data-count="3"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
     .grm-grid[data-count="3"] .grm-sub:nth-child(3) { grid-column: 1 / -1; }
+    /* 4: 2×2 grid */
+    .grm-grid[data-count="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+    /* Full-width bottom item in 3-tracker layout: centre content */
     .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-price-view {
       align-items: center; justify-content: center; text-align: center;
     }
@@ -5773,6 +5781,50 @@
   background: rgba(255,255,255,0.04); border-left: 2px solid rgba(212,168,67,0.4);
   border-radius: 0 6px 6px 0; padding: 8px 12px; margin-top: 8px;
 }
+/* KWI header layout */
+.kwi-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 8px; }
+/* KWI enterprise AI button */
+.kwi-ai-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 8px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.03em;
+  background: rgba(139,92,246,0.13); border: 1px solid rgba(139,92,246,0.35);
+  color: rgba(167,139,250,0.9); cursor: pointer; transition: all 0.18s;
+  white-space: nowrap;
+}
+.kwi-ai-btn:hover { background: rgba(139,92,246,0.24); color: #a78bfa; border-color: rgba(139,92,246,0.6); }
+.kwi-ai-btn:disabled { opacity: 0.4; cursor: default; }
+.kwi-ai-btn.loading { opacity: 0.7; }
+/* KWI explain panel */
+.kwi-explain-panel {
+  margin: 0 12px 8px;
+  background: rgba(139,92,246,0.07);
+  border: 1px solid rgba(139,92,246,0.2);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.kwi-explain-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid rgba(139,92,246,0.15);
+}
+.kwi-explain-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  color: rgba(167,139,250,0.8); text-transform: uppercase;
+}
+.kwi-explain-close {
+  background: none; border: none; color: rgba(255,255,255,0.35);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px;
+  transition: color 0.15s;
+}
+.kwi-explain-close:hover { color: rgba(255,255,255,0.7); }
+.kwi-explain-body { padding: 10px 12px 12px; }
+.kwi-explain-text {
+  font-size: 12px; color: rgba(255,255,255,0.72); line-height: 1.65;
+}
+.kwi-explain-usage {
+  font-size: 10px; color: rgba(139,92,246,0.6); margin-top: 7px; text-align: right;
+}
 #authOverlay {
   display: none; position: fixed; inset: 0; z-index: 10000;
   background: rgba(0,0,0,0.78); backdrop-filter: blur(8px);
@@ -6203,6 +6255,23 @@
           <div class="kwi-header-left">
             <div class="kwi-pulse"></div>
             <span class="kwi-title">Keyword Intelligence</span>
+          </div>
+          <div class="kwi-header-right">
+            <button class="kwi-ai-btn" id="kwiAiBtn" onclick="window.kwiExplainKeyword()" title="AI Context — Enterprise">
+              ✦ AI Context
+            </button>
+          </div>
+        </div>
+
+        <!-- AI Explain Panel (hidden by default) -->
+        <div class="kwi-explain-panel" id="kwiExplainPanel" style="display:none;">
+          <div class="kwi-explain-header">
+            <span class="kwi-explain-badge">✦ Enterprise AI · Keyword Context</span>
+            <button class="kwi-explain-close" onclick="window.kwiCloseExplain()">✕</button>
+          </div>
+          <div class="kwi-explain-body">
+            <div class="kwi-explain-text" id="kwiExplainText"></div>
+            <div class="kwi-explain-usage" id="kwiExplainUsage"></div>
           </div>
         </div>
 
@@ -16739,14 +16808,20 @@ function grmRefresh() {
   requestAnimationFrame(()=>{ grmActive.forEach(id=>{ if((grmModes[id]||'price')==='chart') grmDrawChart(id); }); });
 }
 
+function grmSaveState() {
+  try { localStorage.setItem('grm_active', JSON.stringify(grmActive)); } catch(_) {}
+}
+
 function grmAdd(id) {
   if (grmActive.includes(id)||grmActive.length>=4) return;
   grmModes[id]=grmModes[id]||'price'; grmRanges[id]=grmRanges[id]||'1M';
   grmActive.push(id); grmCloseDropdown(); grmRefresh(); grmUpdateDropdown();
+  grmSaveState();
 }
 
 function grmRemove(id) {
   grmActive=grmActive.filter(x=>x!==id); grmRefresh(); grmUpdateDropdown();
+  grmSaveState();
 }
 
 function grmSetMode(id,mode) {
@@ -16863,9 +16938,16 @@ function grmClockTick() {
   if (el) el.textContent = new Date().toUTCString().slice(17,25) + ' UTC';
 }
 
-// Init — poll server first so first paint shows real prices, not mock seeds
+// Init — restore saved trackers from localStorage, or default to gold
 grmBuildDropdown();
-['gold'].forEach(id=>{ grmModes[id]='price'; grmRanges[id]='1M'; grmActive.push(id); });
+(function() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('grm_active')); } catch(_) {}
+  const toLoad = (Array.isArray(saved) && saved.length > 0)
+    ? saved.filter(id => id in GRM_CATALOG).slice(0, 4)
+    : ['gold'];
+  toLoad.forEach(id => { grmModes[id] = 'price'; grmRanges[id] = '1M'; grmActive.push(id); });
+})();
 grmUpdateDropdown();
 grmClockTick();
 
@@ -17747,6 +17829,91 @@ grmClockTick();
 
   // ── Expose globally ───────────────────────────────────────────────────────
   // (all onclick handlers already use window.kwi* so nothing extra needed)
+
+  // ── Enterprise AI: keyword context explain ────────────────────────────────
+  let kwiExplaining = false;
+
+  window.kwiCloseExplain = function() {
+    document.getElementById('kwiExplainPanel').style.display = 'none';
+  };
+
+  window.kwiExplainKeyword = async function() {
+    if (!window.__authToken) {
+      window.__openAuthModal?.();
+      return;
+    }
+
+    // Client-side tier check — immediate feedback
+    if (!window.__checkTier || !window.__checkTier('enterprise')) {
+      window.__openPricing?.('AI Keyword Context is an Enterprise feature.');
+      return;
+    }
+
+    if (kwiExplaining) return;
+    kwiExplaining = true;
+
+    const btn      = document.getElementById('kwiAiBtn');
+    const panel    = document.getElementById('kwiExplainPanel');
+    const textEl   = document.getElementById('kwiExplainText');
+    const usageEl  = document.getElementById('kwiExplainUsage');
+
+    // Show panel with loading state
+    textEl.textContent  = '';
+    usageEl.textContent = '';
+    panel.style.display = 'block';
+    textEl.innerHTML = '<span style="color:rgba(167,139,250,0.5);font-style:italic">Analysing keyword context…</span>';
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.textContent = '✦ Thinking…';
+
+    try {
+      // Collect context — active searched keyword OR top visible trending keywords
+      let keyword    = kwiKeyword || null;
+      let topKeywords = [];
+
+      if (!keyword) {
+        // Scrape top 8 keyword labels from the currently visible list
+        const items = document.querySelectorAll('.kwi-trending-keyword');
+        topKeywords = Array.from(items).slice(0, 8).map(el => el.textContent.replace('🔥','').trim()).filter(Boolean);
+      }
+
+      const locationIso = kwiLocationCountry?.iso || null;
+
+      const res  = await fetch(`https://earth-wjr6.onrender.com/api/keywords/explain`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ keyword, topKeywords, locationCountry: locationIso }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 429 && data.limitReached) {
+          textEl.innerHTML = '';
+          if (data.requiredTier === 'enterprise') {
+            window.__openPricing?.('AI Keyword Context is an Enterprise feature.');
+            panel.style.display = 'none';
+          } else {
+            textEl.textContent = `Daily limit reached (${data.used}/${data.limit}). ${data.resetNote || 'Resets at midnight.'}`;
+          }
+        } else {
+          textEl.textContent = 'Could not generate analysis. Try again.';
+        }
+      } else {
+        textEl.textContent = data.explanation || '—';
+        if (data.limit && data.limit !== Infinity) {
+          usageEl.textContent = `${data.used} / ${data.limit} uses today`;
+        }
+      }
+    } catch (err) {
+      console.error('[kwi-explain]', err);
+      textEl.textContent = 'Network error. Please try again.';
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.textContent = '✦ AI Context';
+      kwiExplaining = false;
+    }
+  };
 
 })();
 </script>

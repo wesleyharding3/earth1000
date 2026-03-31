@@ -14,7 +14,7 @@ const { resolveImagesForArticles } = require("./imageResolver");
 const jwt = require("jsonwebtoken");
 const payments = require("./payments");
 const sba = require("./supabaseAdmin");
-const { checkTranslation, checkExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
+const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -1791,6 +1791,87 @@ app.post("/api/explain", async (req, res) => {
   } catch (err) {
     console.error("[api/explain]", err.message);
     res.status(500).json({ error: "Explanation generation failed" });
+  }
+});
+
+/* =========================================
+   Keyword AI Context  —  POST /api/keywords/explain
+   Enterprise-only. 25 calls/user/day.
+   Fetches recent articles for the keyword, then asks
+   Claude Haiku to explain significance and context.
+========================================= */
+app.post("/api/keywords/explain", async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: "Authentication required" });
+
+  const tier = req.user.tier || "free";
+  const access = await checkKwExplanation(req.user.id, tier).catch(() => ({ allowed: false }));
+  if (!access.allowed) {
+    return res.status(429).json({
+      error:        access.resetNote || "Daily keyword explanation limit reached",
+      limitReached: true,
+      used:         access.used,
+      limit:        access.limit,
+      requiredTier: tier !== "enterprise" ? "enterprise" : null,
+    });
+  }
+
+  const { keyword, topKeywords = [], locationCountry } = req.body || {};
+  if (!keyword && !topKeywords.length) {
+    return res.status(400).json({ error: "keyword or topKeywords is required" });
+  }
+
+  try {
+    let context = "";
+
+    if (keyword) {
+      // Fetch recent articles mentioning this keyword (last 7 days)
+      const { rows: articles } = await pool.query(`
+        SELECT DISTINCT ON (a.id)
+               COALESCE(a.translated_title, a.title)        AS title,
+               COALESCE(a.translated_summary, a.summary)    AS summary,
+               a.published_at,
+               ns.name AS source
+        FROM news_articles a
+        JOIN article_keywords ak ON ak.article_id = a.id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        WHERE ak.keyword = $1
+          AND a.published_at > NOW() - INTERVAL '7 days'
+          ${locationCountry ? "AND a.about_country_id = (SELECT id FROM countries WHERE iso_code_2 = $2 LIMIT 1)" : ""}
+        ORDER BY a.id, a.base_priority DESC
+        LIMIT 10
+      `, locationCountry ? [keyword, locationCountry] : [keyword]);
+
+      const articleLines = articles.map(a =>
+        `- "${(a.title || '').slice(0, 100)}" (${a.source || 'Unknown'}, ${new Date(a.published_at).toLocaleDateString()})`
+      ).join('\n');
+
+      context = `Keyword: "${keyword}"
+${locationCountry ? `Geographic focus: ${locationCountry}` : ""}
+Recent articles (${articles.length} found, last 7 days):
+${articleLines || "No recent articles found — keyword may be older trending data."}`;
+    } else {
+      // Trending context — explain the overall keyword landscape
+      context = `Top trending keywords right now: ${topKeywords.slice(0, 8).join(', ')}
+${locationCountry ? `Geographic focus: ${locationCountry}` : "Global view"}`;
+    }
+
+    const response = await Anthropic.messages.create({
+      model:      "claude-haiku-4-5",
+      max_tokens: 200,
+      messages:   [{
+        role:    "user",
+        content: `You are a senior geopolitical analyst providing keyword intelligence context.
+Write 2-3 plain sentences explaining: what broader story or trend this keyword represents, why it is significant right now, and what underlying forces are driving it. Be specific and analytical. No markdown, no bullet points, no introductory phrases.
+
+${context}`,
+      }],
+    });
+
+    const explanation = (response.content[0]?.text || "").trim().slice(0, 450);
+    res.json({ explanation, used: access.used, limit: access.limit });
+  } catch (err) {
+    console.error("[api/keywords/explain]", err.message);
+    res.status(500).json({ error: "Keyword explanation generation failed" });
   }
 });
 

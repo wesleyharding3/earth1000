@@ -91,13 +91,51 @@ JSON array only:`
 }
 
 /* =========================================
+   Header Sets
+   Full browser fingerprints dramatically reduce 403s.
+   UA rotation sequence used when initial request is blocked.
+========================================= */
+const HEADERS_DESKTOP = {
+  "User-Agent":                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language":           "en-US,en;q=0.5",
+  "Accept-Encoding":           "gzip, deflate, br",
+  "Cache-Control":             "max-age=0",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest":            "document",
+  "Sec-Fetch-Mode":            "navigate",
+  "Sec-Fetch-Site":            "none",
+  "Sec-Fetch-User":            "?1",
+};
+
+// Many news sites explicitly whitelist Googlebot in their WAF/CDN rules
+const HEADERS_GOOGLEBOT = {
+  "User-Agent":      "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+  "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+
+// Designed for RSS — widely whitelisted by CMS platforms
+const HEADERS_FEEDBOT = {
+  "User-Agent": "FeedFetcher-Google; (+http://www.google.com/feedfetcher.html)",
+  "Accept":     "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+};
+
+const HEADERS_MOBILE = {
+  "User-Agent":      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+  "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.5",
+};
+
+// Retry order when desktop headers get a 403
+const RETRY_HEADERS_403 = [HEADERS_GOOGLEBOT, HEADERS_FEEDBOT, HEADERS_MOBILE];
+const RETRY_UA_LABELS    = ["Googlebot", "FeedBot", "Mobile"];
+
+/* =========================================
    Parser Options
 ========================================= */
 const parserOptions = {
-  headers: {
-    "User-Agent":
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-  },
+  headers: HEADERS_DESKTOP,
   defaultRSS: 2.0,
   xml2js: {
     strict: false,
@@ -125,7 +163,10 @@ function resolvePath(obj, dotPath) {
   return dotPath.split(".").reduce((acc, key) => acc?.[key], obj);
 }
 
-async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
+// opts.skipFailureIncrement — don't touch failure_count (used for 429 rate limits)
+// opts.deactivateThreshold  — failures needed before auto-disable (default 5)
+async function logFeedError(feed, err, type = "RSS_FETCH_ERROR", opts = {}) {
+  const { skipFailureIncrement = false, deactivateThreshold = 5 } = opts;
   try {
     console.error("❌ ERROR:", {
       feed_id: feed.id,
@@ -137,7 +178,7 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
     });
 
     await pool.query(
-      `INSERT INTO rss_error_logs 
+      `INSERT INTO rss_error_logs
        (feed_id, rss_url, error_type, error_message, stack_trace)
        VALUES ($1,$2,$3,$4,$5)`,
       [
@@ -149,14 +190,22 @@ async function logFeedError(feed, err, type = "RSS_FETCH_ERROR") {
       ]
     );
 
-    await pool.query(
-      `UPDATE news_sources 
-       SET last_error = $1, last_failed_at = NOW(),
-           failure_count = failure_count + 1,
-           is_active = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
-       WHERE id = $2`,
-      [err.message?.substring(0, 1000), feed.id]
-    );
+    if (skipFailureIncrement) {
+      // Just stamp the error — don't penalise the source (e.g. 429 rate-limit)
+      await pool.query(
+        `UPDATE news_sources SET last_error = $1, last_failed_at = NOW() WHERE id = $2`,
+        [err.message?.substring(0, 1000), feed.id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE news_sources
+         SET last_error = $1, last_failed_at = NOW(),
+             failure_count = failure_count + 1,
+             is_active = CASE WHEN failure_count + 1 >= $3 THEN false ELSE is_active END
+         WHERE id = $2`,
+        [err.message?.substring(0, 1000), feed.id, deactivateThreshold]
+      );
+    }
   } catch (logErr) {
     console.error("🚨 CRITICAL: Failed to log error:", logErr);
   }
@@ -483,42 +532,164 @@ function extractPublishedDate(item) {
 }
 
 /* =========================================
-   Controlled Fetch (Size-Limited)
+   Controlled Fetch (Size-Limited, UA-Rotating)
+
+   fetchWithRetry  — text response, retries with fallback UAs on 403
+   fetchJsonWithRetry — JSON response, same retry logic
+   discoverFeedUrl — tries homepage link discovery + common paths on 404
 ========================================= */
 const MAX_FEED_SIZE = 2 * 1024 * 1024;
 
-async function fetchWithLimit(url, timeoutMs = 15000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-  const response = await Promise.race([
-    fetch(url, { signal: controller.signal, headers: parserOptions.headers }),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Hard timeout after ${timeoutMs}ms`)), timeoutMs + 1000)
-    )
-  ]);
-
-  clearTimeout(timeout);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const text = await response.text();
-  if (text.length > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
-  return text;
+// Attach httpStatus so the main loop can differentiate without regex
+function makeHttpError(status, attempt = 0) {
+  const err = new Error(`HTTP ${status}${attempt > 0 ? ` (retry ${attempt})` : ""}`);
+  err.httpStatus = status;
+  return err;
 }
 
-async function fetchJson(url, timeoutMs = 15000) {
+async function _fetchRaw(url, headers, timeoutMs) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await Promise.race([
+      fetch(url, { signal: controller.signal, headers }),
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error(`Hard timeout after ${timeoutMs}ms`)), timeoutMs + 1000)
+      )
+    ]);
+    return response;
+  } finally {
+    clearTimeout(tid);
+  }
+}
 
-  const response = await Promise.race([
-    fetch(url, { signal: controller.signal, headers: parserOptions.headers }),
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Hard timeout after ${timeoutMs}ms`)), timeoutMs + 1000)
-    )
-  ]);
+async function fetchWithRetry(url, timeoutMs = 15000) {
+  const allHeaders = [HEADERS_DESKTOP, ...RETRY_HEADERS_403];
+  let lastErr;
 
-  clearTimeout(timeout);
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+  for (let attempt = 0; attempt < allHeaders.length; attempt++) {
+    try {
+      const response = await _fetchRaw(url, allHeaders[attempt], timeoutMs);
+
+      if (response.ok) {
+        if (attempt > 0) {
+          console.log(`  ↩️  Unblocked on ${RETRY_UA_LABELS[attempt - 1]} UA (attempt ${attempt + 1})`);
+        }
+        const text = await response.text();
+        if (text.length > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
+        return text;
+      }
+
+      const status = response.status;
+      // Drain the body so the connection is released
+      response.body?.cancel().catch(() => {});
+      lastErr = makeHttpError(status, attempt);
+
+      if (status === 403 && attempt < allHeaders.length - 1) {
+        console.log(`  🔄 403 blocked (attempt ${attempt + 1}/${allHeaders.length}), retrying with ${RETRY_UA_LABELS[attempt]}…`);
+        continue;
+      }
+      // 404 / 429 / 5xx / other: stop, let caller decide
+      throw lastErr;
+
+    } catch (err) {
+      // If it already has httpStatus it came from the block above — re-throw unless 403 to retry
+      if (err.httpStatus) {
+        if (err.httpStatus === 403 && attempt < allHeaders.length - 1) continue;
+        throw err;
+      }
+      // Network/timeout errors — no point retrying
+      throw err;
+    }
+  }
+  // Exhausted all UA retries
+  throw lastErr || makeHttpError(403);
+}
+
+async function fetchJsonWithRetry(url, timeoutMs = 15000) {
+  const allHeaders = [HEADERS_DESKTOP, ...RETRY_HEADERS_403];
+  let lastErr;
+
+  for (let attempt = 0; attempt < allHeaders.length; attempt++) {
+    try {
+      const response = await _fetchRaw(url, allHeaders[attempt], timeoutMs);
+
+      if (response.ok) {
+        if (attempt > 0) {
+          console.log(`  ↩️  Unblocked on ${RETRY_UA_LABELS[attempt - 1]} UA (attempt ${attempt + 1})`);
+        }
+        return response.json();
+      }
+
+      const status = response.status;
+      response.body?.cancel().catch(() => {});
+      lastErr = makeHttpError(status, attempt);
+
+      if (status === 403 && attempt < allHeaders.length - 1) {
+        console.log(`  🔄 403 blocked (attempt ${attempt + 1}/${allHeaders.length}), retrying with ${RETRY_UA_LABELS[attempt]}…`);
+        continue;
+      }
+      throw lastErr;
+
+    } catch (err) {
+      if (err.httpStatus) {
+        if (err.httpStatus === 403 && attempt < allHeaders.length - 1) continue;
+        throw err;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || makeHttpError(403);
+}
+
+/* ─── Feed URL discovery (called on 404) ────────────────────────────────────
+   1. Fetch origin homepage and look for <link rel="alternate" type="application/…+xml">
+   2. Probe common feed path patterns with HEAD requests
+   Returns the discovered URL string, or null if nothing found.
+──────────────────────────────────────────────────────────────────────────── */
+const FEED_PATH_CANDIDATES = [
+  "/feed", "/rss", "/rss.xml", "/feed.xml", "/atom.xml",
+  "/?feed=rss2", "/feeds/posts/default", "/rss/index.xml",
+  "/news/rss.xml", "/api/rss", "/index.xml", "/news/feed",
+];
+
+async function discoverFeedUrl(originalUrl) {
+  let origin;
+  try { origin = new URL(originalUrl).origin; } catch { return null; }
+
+  // 1. Homepage <link rel="alternate"> discovery
+  try {
+    const res = await _fetchRaw(origin, HEADERS_DESKTOP, 10000);
+    if (res.ok) {
+      const html = await res.text();
+      // Match both attribute orderings
+      const m =
+        html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]+href=["']([^"']+)["']/i) ||
+        html.match(/<link[^>]+href=["']([^"']+)["'][^>]+type=["']application\/(rss|atom)\+xml["']/i);
+      if (m) {
+        const href = m[2] || m[1];
+        const discovered = href.startsWith("http") ? href : new URL(href, origin).href;
+        console.log(`  🔍 Feed discovered via <link rel=alternate>: ${discovered}`);
+        return discovered;
+      }
+    }
+  } catch (_) {}
+
+  // 2. Probe common paths with HEAD requests
+  for (const path of FEED_PATH_CANDIDATES) {
+    try {
+      const testUrl = origin + path;
+      const r = await _fetchRaw(testUrl, HEADERS_FEEDBOT, 5000);
+      const ct = r.headers?.get("content-type") || "";
+      if (r.ok && (ct.includes("xml") || ct.includes("rss") || ct.includes("atom") || ct.includes("feed"))) {
+        console.log(`  🔍 Feed discovered via path probe: ${testUrl} (${ct.split(";")[0]})`);
+        return testUrl;
+      }
+      r.body?.cancel().catch(() => {});
+    } catch (_) {}
+  }
+
+  return null;
 }
 
 /* =========================================
@@ -531,7 +702,7 @@ async function fetchJson(url, timeoutMs = 15000) {
 /* ── RSS / Atom / xml_feed ─────────────────────────────────── */
 async function fetchRSSType(feed) {
   const parser = new Parser(parserOptions);
-  const xml = await fetchWithLimit(feed.rss_url, 15000);
+  const xml = await fetchWithRetry(feed.rss_url, 15000);
   const parsed = await parser.parseString(xml);
   if (!parsed?.items?.length) return [];
 
@@ -552,18 +723,41 @@ async function fetchRSSType(feed) {
 const SITEMAP_STREAM_MAX = 100; // read at most this many <url> entries
 
 async function fetchSitemap(feed) {
-  const url = feed.rss_url || feed.scrape_url;
-  const controller = new AbortController();
-  const timeout    = setTimeout(() => controller.abort(), 20000);
-  const items      = [];
+  const url  = feed.rss_url || feed.scrape_url;
+  const items = [];
+
+  // Try UA rotation on 403 before beginning the stream
+  const allHeaders = [HEADERS_DESKTOP, ...RETRY_HEADERS_403];
+  let response, lastSitemapErr;
+
+  for (let attempt = 0; attempt < allHeaders.length; attempt++) {
+    const controller = new AbortController();
+    const timeout    = setTimeout(() => controller.abort(), 20000);
+    try {
+      response = await fetch(url, { signal: controller.signal, headers: allHeaders[attempt] });
+      clearTimeout(timeout);
+      if (response.ok) {
+        if (attempt > 0) console.log(`  ↩️  Sitemap unblocked on ${RETRY_UA_LABELS[attempt - 1]} UA`);
+        break;
+      }
+      clearTimeout(timeout);
+      response.body?.cancel().catch(() => {});
+      lastSitemapErr = makeHttpError(response.status, attempt);
+      if (response.status === 403 && attempt < allHeaders.length - 1) {
+        console.log(`  🔄 Sitemap 403 (attempt ${attempt + 1}), retrying with ${RETRY_UA_LABELS[attempt]}…`);
+        response = null;
+        continue;
+      }
+      throw lastSitemapErr;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err.httpStatus === 403 && attempt < allHeaders.length - 1) { response = null; continue; }
+      throw err;
+    }
+  }
+  if (!response) throw lastSitemapErr || makeHttpError(403);
 
   try {
-    const response = await fetch(url, {
-      signal:  controller.signal,
-      headers: parserOptions.headers,
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
     const reader  = response.body.getReader();
     const decoder = new TextDecoder();
     let   buffer  = '';
@@ -628,7 +822,7 @@ async function fetchSitemap(feed) {
 ─────────────────────────────────────────────────────────── */
 async function fetchHtmlList(feed) {
   const cfg = feed.scrape_config || {};
-  const html = await fetchWithLimit(feed.scrape_url, 20000);
+  const html = await fetchWithRetry(feed.scrape_url, 20000);
   const $ = cheerio.load(html);
   const base = cfg.base_url || "";
   const items = [];
@@ -680,7 +874,7 @@ async function fetchHtmlRoll(feed) {
 ─────────────────────────────────────────────────────────── */
 async function fetchHtmlTable(feed) {
   const cfg = feed.scrape_config || {};
-  const html = await fetchWithLimit(feed.scrape_url, 20000);
+  const html = await fetchWithRetry(feed.scrape_url, 20000);
   const $ = cheerio.load(html);
   const base = cfg.base_url || "";
   const items = [];
@@ -722,19 +916,33 @@ async function fetchHtmlTable(feed) {
    Falls back to html_list selectors from scrape_config.
 ─────────────────────────────────────────────────────────── */
 async function fetchMobileHtml(feed) {
-  const mobileHeaders = {
-    "User-Agent":
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1"
-  };
+  // Mobile-first, but fall through to other UAs on 403
+  const mobileFirst = [HEADERS_MOBILE, HEADERS_DESKTOP, HEADERS_GOOGLEBOT];
+  const mobileLabels = ["Mobile", "Desktop", "Googlebot"];
+  let html, lastMobileErr;
 
-  const controller = new AbortController();
-  setTimeout(() => controller.abort(), 20000);
-  const response = await fetch(feed.scrape_url, {
-    signal: controller.signal,
-    headers: mobileHeaders
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const html = await response.text();
+  for (let attempt = 0; attempt < mobileFirst.length; attempt++) {
+    try {
+      const response = await _fetchRaw(feed.scrape_url, mobileFirst[attempt], 20000);
+      if (response.ok) {
+        if (attempt > 0) console.log(`  ↩️  Mobile-html unblocked on ${mobileLabels[attempt]} UA`);
+        html = await response.text();
+        break;
+      }
+      const status = response.status;
+      response.body?.cancel().catch(() => {});
+      lastMobileErr = makeHttpError(status, attempt);
+      if (status === 403 && attempt < mobileFirst.length - 1) {
+        console.log(`  🔄 Mobile-html 403 (attempt ${attempt + 1}), retrying with ${mobileLabels[attempt + 1]}…`);
+        continue;
+      }
+      throw lastMobileErr;
+    } catch (err) {
+      if (err.httpStatus === 403 && attempt < mobileFirst.length - 1) continue;
+      throw err;
+    }
+  }
+  if (!html) throw lastMobileErr || makeHttpError(403);
 
   // Reuse html_list parsing with the mobile HTML
   const cfg = feed.scrape_config || {};
@@ -772,7 +980,7 @@ async function fetchAmpList(feed) {
 ─────────────────────────────────────────────────────────── */
 async function fetchJsonApi(feed) {
   const cfg = feed.scrape_config || {};
-  const data = await fetchJson(feed.scrape_url || feed.rss_url);
+  const data = await fetchJsonWithRetry(feed.scrape_url || feed.rss_url);
   const rawItems = cfg.items_path ? resolvePath(data, cfg.items_path) : data;
 
   if (!Array.isArray(rawItems)) throw new Error("json_api: items_path did not resolve to an array");
@@ -874,7 +1082,7 @@ async function fetchWechatFeed(feed) {
    scrape_url should be https://t.me/s/channelname
 ─────────────────────────────────────────────────────────── */
 async function fetchTelegramChannel(feed) {
-  const html = await fetchWithLimit(feed.scrape_url, 20000);
+  const html = await fetchWithRetry(feed.scrape_url, 20000);
   const $ = cheerio.load(html);
   const items = [];
 
@@ -1083,6 +1291,61 @@ async function fetchFeeds(options = {}) {
           [feed.id]
         );
       } catch (fetchErr) {
+        const status = fetchErr.httpStatus;
+
+        // ── 429 Rate Limited ───────────────────────────────────────────────────
+        // Server asked us to back off. Don't penalise the source — it's alive.
+        if (status === 429) {
+          console.warn(`${tag} ⏸️  Rate limited (429) — skipping without failure penalty`);
+          await logFeedError(feed, fetchErr, "HTTP_429_RATE_LIMITED", { skipFailureIncrement: true });
+          continue;
+        }
+
+        // ── 404 Not Found ─────────────────────────────────────────────────────
+        // Feed URL may have moved. Attempt auto-discovery before counting failure.
+        if (status === 404) {
+          console.warn(`${tag} 🔍 404 — attempting feed auto-discovery for ${feed.name}…`);
+          const originalUrl = feed.rss_url || feed.scrape_url;
+          const newUrl = await discoverFeedUrl(originalUrl);
+
+          if (newUrl && newUrl !== originalUrl) {
+            const col = feed.rss_url ? "rss_url" : "scrape_url";
+            await pool.query(
+              `UPDATE news_sources
+                  SET ${col} = $1,
+                      last_error = NULL,
+                      failure_count = 0
+                WHERE id = $2`,
+              [newUrl, feed.id]
+            );
+            console.log(`${tag} ✅ Feed URL updated: ${originalUrl} → ${newUrl} (will fetch next run)`);
+          } else {
+            console.error(`${tag} ❌ 404 — no replacement feed found`);
+            await logFeedError(feed, fetchErr, "HTTP_404_NOT_FOUND");
+          }
+          continue;
+        }
+
+        // ── 403 Forbidden (all UAs exhausted) ─────────────────────────────────
+        // Full retry sequence ran — site is actively blocking our IP/ASNs.
+        // Count the failure but use a higher deactivation threshold (10 not 5)
+        // since the feed is live, just geo/IP blocking us.
+        if (status === 403) {
+          console.error(`${tag} 🚫 403 blocked — all UA retries exhausted for ${feed.name}`);
+          await logFeedError(feed, fetchErr, "HTTP_403_BLOCKED", { deactivateThreshold: 10 });
+          continue;
+        }
+
+        // ── 5xx Server Error ──────────────────────────────────────────────────
+        // Transient server-side problem. Count failure but use higher threshold
+        // since the feed is likely coming back.
+        if (status >= 500) {
+          console.error(`${tag} ⚡ Server error (${status}) for ${feed.name}: ${fetchErr.message}`);
+          await logFeedError(feed, fetchErr, `HTTP_${status}_SERVER_ERROR`, { deactivateThreshold: 8 });
+          continue;
+        }
+
+        // ── Everything else (network timeout, parse error, etc.) ──────────────
         console.error(`${tag} ❌ Fetch/parse failed: ${fetchErr.message}`);
         await logFeedError(feed, fetchErr);
         continue;
