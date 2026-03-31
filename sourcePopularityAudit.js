@@ -53,7 +53,7 @@ async function loadSources() {
       ns.popularity_tier,
       ns.popularity_score,
       co.name  AS country,
-      l.code   AS lang
+      l.iso_code_2 AS lang
     FROM news_sources ns
     LEFT JOIN countries  co ON co.id = ns.country_id
     LEFT JOIN languages  l  ON l.id  = ns.language_id
