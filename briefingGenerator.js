@@ -127,6 +127,13 @@ async function run() {
       if (!threads.length) throw new Error('No active story threads found — run storyThreadBuilder first');
     }
     console.log(`   [${elapsed(t0)}] Selected ${threads.length} threads`);
+    console.log('\n── SELECTED THREADS ─────────────────────────────────────────');
+    threads.forEach((t, i) => {
+      console.log(`  [${i+1}] id=${t.id} | "${t.title}"`);
+      console.log(`       category=${t.primary_category} importance=${t.importance} region=${t.geographic_scope?.join(',') || '?'}`);
+      console.log(`       keywords=${(t.keywords||[]).slice(0,8).join(', ')}`);
+    });
+    console.log('─────────────────────────────────────────────────────────────\n');
 
     // ── 2. Pull articles for each thread ─────────────────────────────────
     console.log(`   [${elapsed(t0)}] Pulling articles for each thread...`);
@@ -150,6 +157,15 @@ async function run() {
       }
     }
     console.log(`   [${elapsed(t0)}] ${threadData.length} unique threads after overlap dedup`);
+    console.log('\n── ENRICHED THREADS ─────────────────────────────────────────');
+    threadData.forEach((t, i) => {
+      console.log(`  [${i+1}] "${t.title}" (id=${t.id})`);
+      console.log(`       articles=${t.articleIds?.length || 0} | video=${t.videoId || 'none'}`);
+      console.log(`       primaryCity=${JSON.stringify(t.primaryCity || null)}`);
+      console.log(`       primaryCountry=${JSON.stringify(t.primaryCountry || null)}`);
+      console.log(`       globeFocus=${JSON.stringify(t.globeFocus || null)}`);
+    });
+    console.log('─────────────────────────────────────────────────────────────\n');
 
     // ── 3a. Resolve story identities (continuity tracking) ───────────────
     console.log(`   [${elapsed(t0)}] Resolving story continuity...`);
@@ -166,6 +182,18 @@ async function run() {
     const narrative = await generateNarrative(threadData, storyContexts, prefProfileForNarrative);
     if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
+    console.log('\n══ CLAUDE NARRATIVE OUTPUT ══════════════════════════════════');
+    console.log(`  HEADLINE : ${narrative.headline}`);
+    console.log(`  INTRO    : ${narrative.intro}`);
+    console.log(`  OUTRO    : ${narrative.outro}`);
+    narrative.segments.forEach((s, i) => {
+      console.log(`\n  ── Segment ${i+1} (thread_id=${s.thread_id}) ─────────────────`);
+      console.log(`     voiceover  : ${s.voiceover}`);
+      console.log(`     transition : ${s.transition || '(none)'}`);
+      console.log(`     entities   : ${JSON.stringify(s.entities || [])}`);
+      console.log(`     globe_focus: ${JSON.stringify(s.globe_focus || null)}`);
+    });
+    console.log('═════════════════════════════════════════════════════════════\n');
 
     // ── Validate thread_ids before spending any ElevenLabs credits ────────
     const validThreadIds = new Set(threadData.map(t => String(t.id)));
@@ -182,9 +210,24 @@ async function run() {
     console.log(`   [${elapsed(t0)}] Resolving story entity coordinates...`);
     const entityCoords = await resolveEntityCoords(narrative.segments);
     console.log(`   [${elapsed(t0)}] Resolved ${Object.keys(entityCoords).length} entities`);
+    console.log('\n── ENTITY COORDS ────────────────────────────────────────────');
+    Object.entries(entityCoords).forEach(([name, coords]) => {
+      console.log(`  ${name.padEnd(28)} lat=${String(coords.lat).padEnd(10)} lon=${coords.lon}  type=${coords.type||'?'}`);
+    });
+    console.log('─────────────────────────────────────────────────────────────\n');
 
     // ── 5. Build geographic flow arcs (entity-based, not source-based) ────
     const allArcs = buildFlowArcs(threadData, narrative, entityCoords);
+
+    console.log('\n── FLOW ARCS ────────────────────────────────────────────────');
+    if (allArcs.length === 0) {
+      console.log('  (none)');
+    } else {
+      allArcs.forEach((a, i) => {
+        console.log(`  [${i+1}] thread=${a.thread_id} | ${a.from_name} (${a.from_lat},${a.from_lng}) → ${a.to_name} (${a.to_lat},${a.to_lng})`);
+      });
+    }
+    console.log('─────────────────────────────────────────────────────────────\n');
 
     // ── 6. Build segments JSON ────────────────────────────────────────────
     const segments = await buildSegments(narrative, threadData, allArcs, entityCoords);
@@ -955,11 +998,11 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
   const usedArticleIds = new Set();   // prevents same article appearing in two segments
 
   // Intro segment
-  segments.push({
-    type:           'intro',
-    voiceover_text: narrative.intro,
-    globe_animate:  { lat: 20, lng: 0, zoom: 0.9 },
-  });
+  const introSeg = { type: 'intro', voiceover_text: narrative.intro, globe_animate: { lat: 20, lng: 0, zoom: 0.9 } };
+  console.log(`\n── SEGMENT 0 BUILD: INTRO ───────────────────────────────────`);
+  console.log(`   globe_animate : ${JSON.stringify(introSeg.globe_animate)}`);
+  console.log(`   voiceover     : ${(introSeg.voiceover_text||'').slice(0, 120)}…`);
+  segments.push(introSeg);
 
   // Story segments
   for (let i = 0; i < narrative.segments.length; i++) {
@@ -1014,7 +1057,7 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       primaryCountry = thread.primaryCountry || null;
     }
 
-    segments.push({
+    const storySeg = {
       type:                'story',
       thread_id:           thread.id,
       thread_title:        thread.title,
@@ -1027,7 +1070,21 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       primary_country:     primaryCountry,
       flow_arcs:           arcs,
       secondary_locations: secondaryLocations,
-    });
+    };
+
+    console.log(`\n── SEGMENT ${i+1} BUILD: "${thread.title}" ──────────────────`);
+    console.log(`   thread_id        : ${storySeg.thread_id}`);
+    console.log(`   video_id         : ${storySeg.video_id || '(none)'}`);
+    console.log(`   article_ids      : [${storySeg.article_ids.join(', ')}]`);
+    console.log(`   globe_focus      : ${JSON.stringify(storySeg.globe_focus)}`);
+    console.log(`   primary_city     : ${JSON.stringify(storySeg.primary_city)}`);
+    console.log(`   primary_country  : ${JSON.stringify(storySeg.primary_country)}`);
+    console.log(`   flow_arcs (${String(storySeg.flow_arcs.length).padStart(2)}) : ${JSON.stringify(storySeg.flow_arcs)}`);
+    console.log(`   secondary_locs   : ${JSON.stringify(storySeg.secondary_locations)}`);
+    console.log(`   transition       : ${storySeg.transition || '(none)'}`);
+    console.log(`   voiceover (${String((storySeg.voiceover_text||'').split(/\s+/).length).padStart(3)}w): ${(storySeg.voiceover_text||'').slice(0, 120)}…`);
+
+    segments.push(storySeg);
   }
 
   // Rising keywords segment (before outro)
@@ -1058,11 +1115,26 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
   }
 
   // Outro segment
-  segments.push({
-    type:           'outro',
-    voiceover_text: narrative.outro,
-    globe_animate:  { lat: 20, lng: 0, zoom: 0.9 },
+  const outroSeg = { type: 'outro', voiceover_text: narrative.outro, globe_animate: { lat: 20, lng: 0, zoom: 0.9 } };
+  console.log(`\n── SEGMENT ${segments.length} BUILD: OUTRO ──────────────────────────────────`);
+  console.log(`   globe_animate : ${JSON.stringify(outroSeg.globe_animate)}`);
+  console.log(`   voiceover     : ${(outroSeg.voiceover_text||'').slice(0, 120)}…`);
+  segments.push(outroSeg);
+
+  console.log('\n══ FINAL SEGMENTS ARRAY ═════════════════════════════════════');
+  segments.forEach((seg, i) => {
+    console.log(`  [${i}] type=${seg.type.padEnd(8)} | globe_animate=${JSON.stringify(seg.globe_animate||null)} | globe_focus=${JSON.stringify(seg.globe_focus||null)}`);
+    if (seg.primary_city || seg.primary_country) {
+      console.log(`       primary_city=${JSON.stringify(seg.primary_city||null)}  primary_country=${JSON.stringify(seg.primary_country||null)}`);
+    }
+    if (seg.secondary_locations?.length) {
+      console.log(`       secondary_locations (${seg.secondary_locations.length}): ${seg.secondary_locations.map(l => l.name).join(', ')}`);
+    }
+    if (seg.flow_arcs?.length) {
+      console.log(`       flow_arcs (${seg.flow_arcs.length}): ${seg.flow_arcs.map(a => `${a.from_name}→${a.to_name}`).join(', ')}`);
+    }
   });
+  console.log('═════════════════════════════════════════════════════════════\n');
 
   return segments;
 }

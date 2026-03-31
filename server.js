@@ -2841,6 +2841,22 @@ app.get("/api/regions", async (req, res) => {
   }
 });
 
+app.get("/api/environment", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, slug, entity_type,
+             latitude, longitude, area_km2, biome, priority_score
+      FROM environmental_entity
+      WHERE is_active = true
+      ORDER BY entity_type, name ASC
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.error("[environment]", err.message);
+    res.status(500).json({ error: "Failed to fetch environment" });
+  }
+});
+
 /* =========================================
    Location Stats  —  /api/stats/location
    Returns panel-header metrics for a city,
