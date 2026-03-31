@@ -19,8 +19,9 @@
  *
  * Usage:
  *   node sourcePopularityAudit.js --dry-run      # print changes, don't apply
- *   node sourcePopularityAudit.js                # apply changes to DB
+ *   node sourcePopularityAudit.js                # apply changes to ALL ~7000 sources
  *   node sourcePopularityAudit.js --tier 4       # only audit tier 4 sources
+ *   node sourcePopularityAudit.js --tier 1       # only audit tier 1 sources
  */
 
 'use strict';
@@ -43,7 +44,7 @@ const CALL_DELAY  = 250;  // ms between batches (rate-limit headroom)
 async function loadSources() {
   const tierFilter = ONLY_TIER
     ? `AND ns.popularity_tier = ${ONLY_TIER}`
-    : `AND ns.popularity_tier >= 3`;
+    : ``; // no filter = audit all tiers
 
   const { rows } = await pool.query(`
     SELECT
