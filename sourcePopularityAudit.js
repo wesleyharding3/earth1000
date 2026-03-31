@@ -17,11 +17,15 @@
  *   0.95–1.09  local editorial with real content
  *   0.90–0.94  borderline / mostly institutional
  *
+ * State-aware: stamps popularity_audited_at after each batch so restarts
+ * resume from where they left off rather than reprocessing everything.
+ *
  * Usage:
  *   node sourcePopularityAudit.js --dry-run      # print changes, don't apply
- *   node sourcePopularityAudit.js                # apply changes to ALL ~7000 sources
+ *   node sourcePopularityAudit.js                # apply changes to ALL unaudited sources
  *   node sourcePopularityAudit.js --tier 4       # only audit tier 4 sources
  *   node sourcePopularityAudit.js --tier 1       # only audit tier 1 sources
+ *   node sourcePopularityAudit.js --re-audit     # re-audit ALL sources (ignore prior stamps)
  */
 
 'use strict';
@@ -33,6 +37,7 @@ const pool   = new Pool({ connectionString: process.env.DATABASE_URL });
 const claude = new Anthropic();
 
 const DRY_RUN     = process.argv.includes('--dry-run');
+const RE_AUDIT    = process.argv.includes('--re-audit'); // ignore prior stamps
 const ONLY_TIER   = process.argv.includes('--tier')
   ? parseInt(process.argv[process.argv.indexOf('--tier') + 1])
   : null;
@@ -42,9 +47,9 @@ const CALL_DELAY  = 250;  // ms between batches (rate-limit headroom)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function loadSources() {
-  const tierFilter = ONLY_TIER
-    ? `AND ns.popularity_tier = ${ONLY_TIER}`
-    : ``; // no filter = audit all tiers
+  const tierFilter   = ONLY_TIER ? `AND ns.popularity_tier = ${ONLY_TIER}` : '';
+  // Skip already-audited sources unless --re-audit flag is set
+  const auditFilter  = (!DRY_RUN && !RE_AUDIT) ? `AND ns.popularity_audited_at IS NULL` : '';
 
   const { rows } = await pool.query(`
     SELECT
@@ -60,6 +65,7 @@ async function loadSources() {
     LEFT JOIN languages  l  ON l.id  = ns.language_id
     WHERE ns.is_active = true
       ${tierFilter}
+      ${auditFilter}
     ORDER BY ns.popularity_tier DESC, co.name, ns.name
   `);
   return rows;
@@ -158,10 +164,14 @@ async function run() {
   const sources = await loadSources();
   const totalBatches = Math.ceil(sources.length / BATCH_SIZE);
 
+  const { rows: remaining } = await pool.query(
+    `SELECT COUNT(*) AS n FROM news_sources WHERE is_active = true AND popularity_audited_at IS NULL`
+  );
   console.log(`\n=== Source Popularity Audit ===`);
   console.log(`Sources to audit : ${sources.length}`);
+  console.log(`Still unaudited  : ${remaining[0].n} total active sources`);
   console.log(`Haiku batches    : ${totalBatches}`);
-  console.log(`Mode             : ${DRY_RUN ? 'DRY RUN (no DB writes)' : 'LIVE'}`);
+  console.log(`Mode             : ${DRY_RUN ? 'DRY RUN (no DB writes)' : 'LIVE'} ${RE_AUDIT ? '(--re-audit: ignoring stamps)' : ''}`);
   console.log('');
 
   const allResults = [];
@@ -219,15 +229,19 @@ async function run() {
   console.log('\nApplying changes to DB...');
   let applied = 0;
   for (const r of allResults) {
-    if (r.newTier !== r.oldTier || r.newScore !== r.oldScore) {
-      await pool.query(
-        `UPDATE news_sources SET popularity_tier = $1, popularity_score = $2 WHERE id = $3`,
-        [r.newTier, r.newScore, r.id]
-      );
-      applied++;
-    }
+    // Always stamp popularity_audited_at so restarts skip already-processed
+    // sources even when the score/tier didn't change.
+    await pool.query(
+      `UPDATE news_sources
+          SET popularity_tier       = $1,
+              popularity_score      = $2,
+              popularity_audited_at = NOW()
+        WHERE id = $3`,
+      [r.newTier, r.newScore, r.id]
+    );
+    if (r.newTier !== r.oldTier || r.newScore !== r.oldScore) applied++;
   }
-  console.log(`Applied ${applied} updates.`);
+  console.log(`Applied ${applied} score/tier changes (${allResults.length} sources stamped).`);
   await pool.end();
   console.log('Done.');
 }

@@ -875,7 +875,7 @@ The editor who curated today's stories has historically favoured coverage of: ${
 
   const response = await client.messages.create({
     model:      'claude-sonnet-4-6',
-    max_tokens: 2000,
+    max_tokens: 4096, // 10-story briefings can reach ~3500 tokens; 2000 causes truncation
     messages:   [{ role: 'user', content: prompt }]
   });
 
