@@ -230,9 +230,14 @@ async function run() {
     console.log('─────────────────────────────────────────────────────────────\n');
 
     // ── 6. Build segments JSON ────────────────────────────────────────────
-    const segments = await buildSegments(narrative, threadData, allArcs, entityCoords);
+    let segments = await buildSegments(narrative, threadData, allArcs, entityCoords);
 
-    // ── 6. Generate ElevenLabs audio — per-segment for accurate seek offsets
+    // ── 6a. Pick mode: interactive script review before TTS ───────────────
+    if (PICK_MODE) {
+      segments = await reviewAndEditSegments(segments);
+    }
+
+    // ── 7. Generate ElevenLabs audio — per-segment for accurate seek offsets
     let audioData = null;
 
     // Check whether today's episode already has audio so we don't re-bill ElevenLabs
@@ -1327,6 +1332,222 @@ async function promptThreadSelection(candidates) {
   console.log();
 
   return selected;
+}
+
+// ─── Pick Mode: Script Review & Edit ──────────────────────────────────────
+async function reviewAndEditSegments(segments) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
+
+  function fmtCoord(v) {
+    if (v === null || v === undefined) return '—';
+    return String(v);
+  }
+
+  function printSegment(seg, idx) {
+    const label = `[${idx}] ${(seg.type || '?').toUpperCase()}`;
+    const bar   = '─'.repeat(Math.max(0, 75 - label.length));
+    console.log(`\n┌─ ${label} ${bar}┐`);
+
+    // Globe position
+    const gf = seg.globe_focus || seg.globe_animate || null;
+    if (gf) {
+      const tag = seg.globe_animate ? 'globe_animate' : 'globe_focus ';
+      console.log(`│  ${tag}  lat=${fmtCoord(gf.lat)}  lng=${fmtCoord(gf.lng)}  zoom=${fmtCoord(gf.zoom)}`);
+    }
+
+    // Primary node
+    const pCity    = seg.primary_city;
+    const pCountry = seg.primary_country;
+    if (pCity)    console.log(`│  primary_city     ${pCity.name}  (${fmtCoord(pCity.lat)}, ${fmtCoord(pCity.lon)})`);
+    if (pCountry) console.log(`│  primary_country  ${pCountry.name}  (${fmtCoord(pCountry.lat)}, ${fmtCoord(pCountry.lon)})`);
+
+    // Secondary locations
+    const secs = seg.secondary_locations || [];
+    if (secs.length) {
+      console.log(`│  secondary_locations (${secs.length}):`);
+      secs.forEach((s, i) => console.log(`│    [${i}] ${s.name}  (${fmtCoord(s.lat)}, ${fmtCoord(s.lon)})`));
+    }
+
+    // Flow arcs
+    const arcs = seg.flow_arcs || [];
+    if (arcs.length) {
+      console.log(`│  flow_arcs (${arcs.length}):`);
+      arcs.forEach((a, i) => console.log(`│    [${i}] thread=${a.thread_id}  ${a.from_name} → ${a.to_name}`));
+    }
+
+    // Transition
+    if (seg.transition) {
+      console.log(`│  transition:  "${seg.transition}"`);
+    }
+
+    // Voiceover — word-wrapped at 72 chars
+    const vo = seg.voiceover_text || '';
+    console.log(`│  voiceover_text:`);
+    const words = vo.split(' ');
+    let line = '│    ';
+    words.forEach(w => {
+      if (line.length + w.length + 1 > 77) { console.log(line); line = '│    ' + w + ' '; }
+      else { line += w + ' '; }
+    });
+    if (line.trim() !== '│') console.log(line);
+
+    console.log(`└${'─'.repeat(77)}┘`);
+  }
+
+  async function editSegment(seg, idx) {
+    console.log('\n  Edit fields for segment ' + idx + ':');
+    console.log('    v  — voiceover_text');
+    console.log('    t  — transition');
+    console.log('    f  — globe_focus / globe_animate  (enter: lat lng zoom)');
+    console.log('    p  — primary node  (enter: city|country  name  lat  lon)');
+    console.log('    s  — secondary_locations  (add/remove: +name lat lon  or  -index)');
+    console.log('    a  — flow_arcs  (add/remove: +fromName lat lng toName lat lng  or  -index)');
+    console.log('    done — finish editing this segment');
+    console.log();
+
+    while (true) {
+      const cmd = (await ask(`  seg[${idx}] field> `)).trim();
+      if (!cmd || cmd === 'done') break;
+
+      if (cmd === 'v') {
+        const val = (await ask('  voiceover_text> ')).trim();
+        if (val) seg.voiceover_text = val;
+
+      } else if (cmd === 't') {
+        const val = (await ask('  transition (blank to clear)> ')).trim();
+        seg.transition = val || null;
+
+      } else if (cmd === 'f') {
+        const val = (await ask('  lat lng zoom (space-separated)> ')).trim();
+        const parts = val.split(/\s+/);
+        if (parts.length >= 3) {
+          const key = seg.globe_animate ? 'globe_animate' : 'globe_focus';
+          seg[key] = { lat: parseFloat(parts[0]), lng: parseFloat(parts[1]), zoom: parseFloat(parts[2]) };
+          console.log(`  ✓ ${key} updated`);
+        } else {
+          console.log('  ✗ Need 3 values: lat lng zoom');
+        }
+
+      } else if (cmd === 'p') {
+        const val = (await ask('  city|country  name  lat  lon (space-separated, name may include spaces before last 2 nums)> ')).trim();
+        const parts = val.split(/\s+/);
+        if (parts.length >= 4) {
+          const kind = parts[0].toLowerCase();
+          const lon  = parseFloat(parts[parts.length - 1]);
+          const lat  = parseFloat(parts[parts.length - 2]);
+          const name = parts.slice(1, parts.length - 2).join(' ');
+          if (kind === 'city')    { seg.primary_city    = { name, lat, lon }; console.log(`  ✓ primary_city = ${name}`); }
+          else if (kind === 'country') { seg.primary_country = { name, lat, lon }; console.log(`  ✓ primary_country = ${name}`); }
+          else console.log('  ✗ First token must be "city" or "country"');
+        } else {
+          console.log('  ✗ Need: city|country  name  lat  lon');
+        }
+
+      } else if (cmd === 's') {
+        const val = (await ask('  +name lat lon  or  -index> ')).trim();
+        if (!seg.secondary_locations) seg.secondary_locations = [];
+        if (val.startsWith('+')) {
+          const parts = val.slice(1).trim().split(/\s+/);
+          if (parts.length >= 3) {
+            const lon  = parseFloat(parts[parts.length - 1]);
+            const lat  = parseFloat(parts[parts.length - 2]);
+            const name = parts.slice(0, parts.length - 2).join(' ');
+            seg.secondary_locations.push({ name, lat, lon });
+            console.log(`  ✓ Added secondary: ${name}`);
+          } else console.log('  ✗ Need: +name lat lon');
+        } else if (val.startsWith('-')) {
+          const idx2 = parseInt(val.slice(1), 10);
+          if (!isNaN(idx2) && idx2 >= 0 && idx2 < seg.secondary_locations.length) {
+            const removed = seg.secondary_locations.splice(idx2, 1);
+            console.log(`  ✓ Removed secondary[${idx2}]: ${removed[0].name}`);
+          } else console.log('  ✗ Index out of range');
+        } else console.log('  ✗ Start with + to add or - to remove');
+
+      } else if (cmd === 'a') {
+        const val = (await ask('  +fromName lat lng toName lat lng  or  -index> ')).trim();
+        if (!seg.flow_arcs) seg.flow_arcs = [];
+        if (val.startsWith('+')) {
+          const parts = val.slice(1).trim().split(/\s+/);
+          // Expect: fromName fromLat fromLng toName toLat toLng
+          if (parts.length >= 6) {
+            const toLng   = parseFloat(parts[parts.length - 1]);
+            const toLat   = parseFloat(parts[parts.length - 2]);
+            const toName  = parts[parts.length - 3];
+            const fromLng = parseFloat(parts[parts.length - 4]);
+            const fromLat = parseFloat(parts[parts.length - 5]);
+            const fromName = parts.slice(0, parts.length - 5).join(' ');
+            seg.flow_arcs.push({ thread_id: null, from_name: fromName, from_lat: fromLat, from_lng: fromLng, to_name: toName, to_lat: toLat, to_lng: toLng });
+            console.log(`  ✓ Added arc: ${fromName} → ${toName}`);
+          } else console.log('  ✗ Need: +fromName fromLat fromLng toName toLat toLng');
+        } else if (val.startsWith('-')) {
+          const idx2 = parseInt(val.slice(1), 10);
+          if (!isNaN(idx2) && idx2 >= 0 && idx2 < seg.flow_arcs.length) {
+            const removed = seg.flow_arcs.splice(idx2, 1);
+            console.log(`  ✓ Removed arc[${idx2}]: ${removed[0].from_name} → ${removed[0].to_name}`);
+          } else console.log('  ✗ Index out of range');
+        } else console.log('  ✗ Start with + to add or - to remove');
+
+      } else {
+        console.log('  Unknown field. Use: v  t  f  p  s  a  done');
+      }
+
+      // Re-print the segment after each change so user can see current state
+      printSegment(seg, idx);
+    }
+  }
+
+  // ── Main review loop ──────────────────────────────────────────────────────
+  console.log('\n');
+  console.log('╔═══════════════════════════════════════════════════════════════════════════════╗');
+  console.log('║         SCRIPT REVIEW — verify nodes, arcs, and voiceover before TTS         ║');
+  console.log('╚═══════════════════════════════════════════════════════════════════════════════╝');
+  console.log(`  ${segments.length} segments total`);
+  console.log('  Commands:  confirm  |  edit N  |  show N  |  abort');
+  console.log();
+
+  // Initial display: all segments
+  segments.forEach((seg, i) => printSegment(seg, i));
+  console.log();
+
+  while (true) {
+    const cmd = (await ask('review> ')).trim().toLowerCase();
+
+    if (!cmd) continue;
+
+    if (cmd === 'confirm') {
+      console.log('\n  ✓ Script confirmed — proceeding to ElevenLabs synthesis...\n');
+      rl.close();
+      return segments;
+    }
+
+    if (cmd === 'abort') {
+      console.log('\n  ✗ Aborted by user.\n');
+      rl.close();
+      process.exit(0);
+    }
+
+    const showMatch = cmd.match(/^show\s+(\d+)$/);
+    if (showMatch) {
+      const idx = parseInt(showMatch[1], 10);
+      if (idx >= 0 && idx < segments.length) printSegment(segments[idx], idx);
+      else console.log(`  ✗ Segment index out of range (0–${segments.length - 1})`);
+      continue;
+    }
+
+    const editMatch = cmd.match(/^edit\s+(\d+)$/);
+    if (editMatch) {
+      const idx = parseInt(editMatch[1], 10);
+      if (idx >= 0 && idx < segments.length) {
+        await editSegment(segments[idx], idx);
+      } else {
+        console.log(`  ✗ Segment index out of range (0–${segments.length - 1})`);
+      }
+      continue;
+    }
+
+    console.log('  Commands:  confirm  |  edit N  |  show N  |  abort');
+  }
 }
 
 // ─── Curation Persistence ──────────────────────────────────────────────────
