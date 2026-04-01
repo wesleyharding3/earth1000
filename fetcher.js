@@ -807,6 +807,9 @@ async function fetchSitemap(feed) {
         }
       }
     }
+  } catch (streamErr) {
+    // Propagate stream errors (fetch timeout already cleared inside the retry loop above)
+    throw streamErr;
   }
 
   return items;
