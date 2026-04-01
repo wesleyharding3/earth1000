@@ -88,9 +88,10 @@ async function run() {
   let episodeId;
   if (existingRows.length) {
     episodeId = existingRows[0].id;
-    // Only wipe audio_data when explicitly asked — preserving it lets --force
-    // reuse existing audio without re-billing ElevenLabs.
-    if (FORCE_AUDIO) {
+    // Wipe audio when explicitly asked OR in pick-mode (manual story selection always
+    // produces different content, so reusing stale audio would desync start_ms offsets
+    // and leave the player with no voiceovers).
+    if (FORCE_AUDIO || PICK_MODE) {
       await pool.query(
         `UPDATE briefing_episodes SET status='generating', segments='[]', audio_data=NULL, generated_at=NOW() WHERE id=$1`,
         [episodeId]
@@ -250,7 +251,9 @@ async function run() {
 
     // Check whether today's episode already has audio so we don't re-bill ElevenLabs
     // on every --force run. Use --force-audio to explicitly re-synthesise.
-    if (!NO_AUDIO && ELEVENLABS_KEY && !FORCE_AUDIO) {
+    // PICK_MODE always regenerates audio — its chosen stories differ from prior runs,
+    // so stale audio would desync start_ms offsets and silence the player.
+    if (!NO_AUDIO && ELEVENLABS_KEY && !FORCE_AUDIO && !PICK_MODE) {
       const { rows: existingAudio } = await pool.query(
         `SELECT octet_length(audio_data) AS bytes FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
         [episodeId]

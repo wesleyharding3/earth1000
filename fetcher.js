@@ -807,8 +807,6 @@ async function fetchSitemap(feed) {
         }
       }
     }
-  } finally {
-    clearTimeout(timeout);
   }
 
   return items;
