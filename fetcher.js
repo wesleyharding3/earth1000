@@ -144,6 +144,16 @@ const parserOptions = {
   }
 };
 
+const HOST_MIN_INTERVAL_MS   = 2000;
+const HOST_JITTER_MS         = 400;
+const HOST_403_BACKOFF_MS    = 10 * 60 * 1000;
+const HOST_429_BACKOFF_MS    = 15 * 60 * 1000;
+const HOST_BACKOFF_CAP_MS    = 6 * 60 * 60 * 1000;
+const CONDITIONAL_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+const hostThrottleState = new Map();
+const conditionalRequestCache = new Map();
+
 /* =========================================
    Utilities
 ========================================= */
@@ -161,6 +171,108 @@ function truncateAtWord(text, limit = 500) {
 
 function resolvePath(obj, dotPath) {
   return dotPath.split(".").reduce((acc, key) => acc?.[key], obj);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getHostKey(rawUrl) {
+  try {
+    return new URL(rawUrl).host.toLowerCase();
+  } catch (_) {
+    return null;
+  }
+}
+
+function getHostState(rawUrl) {
+  const host = getHostKey(rawUrl);
+  if (!host) return null;
+  if (!hostThrottleState.has(host)) {
+    hostThrottleState.set(host, {
+      nextAllowedAt: 0,
+      lastRequestAt: 0,
+      consecutive403: 0,
+      consecutive429: 0
+    });
+  }
+  return hostThrottleState.get(host);
+}
+
+function withConditionalHeaders(rawUrl, headers = {}) {
+  const cached = conditionalRequestCache.get(rawUrl);
+  if (!cached) return headers;
+  if (Date.now() - cached.storedAt > CONDITIONAL_CACHE_TTL_MS) {
+    conditionalRequestCache.delete(rawUrl);
+    return headers;
+  }
+
+  const nextHeaders = { ...headers };
+  if (cached.etag) nextHeaders["If-None-Match"] = cached.etag;
+  if (cached.lastModified) nextHeaders["If-Modified-Since"] = cached.lastModified;
+  return nextHeaders;
+}
+
+function updateConditionalCache(rawUrl, response) {
+  const etag = response.headers.get("etag");
+  const lastModified = response.headers.get("last-modified");
+  if (!etag && !lastModified) return;
+
+  conditionalRequestCache.set(rawUrl, {
+    etag: etag || null,
+    lastModified: lastModified || null,
+    storedAt: Date.now()
+  });
+}
+
+async function waitForHostThrottle(rawUrl) {
+  const state = getHostState(rawUrl);
+  if (!state) return;
+
+  const now = Date.now();
+  const earliest = Math.max(state.nextAllowedAt || 0, (state.lastRequestAt || 0) + HOST_MIN_INTERVAL_MS);
+  const waitMs = earliest - now;
+  if (waitMs > 0) {
+    console.log(`  ⏳ Host throttle ${getHostKey(rawUrl)} — waiting ${(waitMs / 1000).toFixed(1)}s`);
+    await sleep(waitMs);
+  }
+}
+
+function noteHostResult(rawUrl, status, responseHeaders = null) {
+  const state = getHostState(rawUrl);
+  if (!state) return;
+
+  const now = Date.now();
+  const jitter = Math.floor(Math.random() * HOST_JITTER_MS);
+  state.lastRequestAt = now;
+  state.nextAllowedAt = Math.max(state.nextAllowedAt || 0, now + HOST_MIN_INTERVAL_MS + jitter);
+
+  if (status === 403) {
+    state.consecutive403 += 1;
+    state.consecutive429 = 0;
+    const backoffMs = Math.min(HOST_BACKOFF_CAP_MS, HOST_403_BACKOFF_MS * (2 ** (state.consecutive403 - 1)));
+    state.nextAllowedAt = Math.max(state.nextAllowedAt, now + backoffMs);
+    return;
+  }
+
+  if (status === 429) {
+    state.consecutive429 += 1;
+    state.consecutive403 = 0;
+    const retryAfterHeader = responseHeaders?.get?.("retry-after");
+    const retryAfterSeconds = retryAfterHeader && /^\d+$/.test(retryAfterHeader)
+      ? Number(retryAfterHeader)
+      : null;
+    const computedBackoff = retryAfterSeconds
+      ? retryAfterSeconds * 1000
+      : Math.min(HOST_BACKOFF_CAP_MS, HOST_429_BACKOFF_MS * (2 ** (state.consecutive429 - 1)));
+    state.nextAllowedAt = Math.max(state.nextAllowedAt, now + computedBackoff);
+    return;
+  }
+
+  if (status >= 200 && status < 400) {
+    state.consecutive403 = 0;
+    state.consecutive429 = 0;
+  }
 }
 
 // opts.skipFailureIncrement — don't touch failure_count (used for 429 rate limits)
@@ -548,15 +660,19 @@ function makeHttpError(status, attempt = 0) {
 }
 
 async function _fetchRaw(url, headers, timeoutMs) {
+  await waitForHostThrottle(url);
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const requestHeaders = withConditionalHeaders(url, headers);
     const response = await Promise.race([
-      fetch(url, { signal: controller.signal, headers }),
+      fetch(url, { signal: controller.signal, headers: requestHeaders }),
       new Promise((_, rej) =>
         setTimeout(() => rej(new Error(`Hard timeout after ${timeoutMs}ms`)), timeoutMs + 1000)
       )
     ]);
+    noteHostResult(url, response.status, response.headers);
+    if (response.ok || response.status === 304) updateConditionalCache(url, response);
     return response;
   } finally {
     clearTimeout(tid);
@@ -581,6 +697,10 @@ async function fetchWithRetry(url, timeoutMs = 15000) {
       }
 
       const status = response.status;
+      if (status === 304) {
+        response.body?.cancel().catch(() => {});
+        throw makeHttpError(304, attempt);
+      }
       // Drain the body so the connection is released
       response.body?.cancel().catch(() => {});
       lastErr = makeHttpError(status, attempt);
@@ -622,6 +742,10 @@ async function fetchJsonWithRetry(url, timeoutMs = 15000) {
       }
 
       const status = response.status;
+      if (status === 304) {
+        response.body?.cancel().catch(() => {});
+        throw makeHttpError(304, attempt);
+      }
       response.body?.cancel().catch(() => {});
       lastErr = makeHttpError(status, attempt);
 
@@ -731,16 +855,16 @@ async function fetchSitemap(feed) {
   let response, lastSitemapErr;
 
   for (let attempt = 0; attempt < allHeaders.length; attempt++) {
-    const controller = new AbortController();
-    const timeout    = setTimeout(() => controller.abort(), 20000);
     try {
-      response = await fetch(url, { signal: controller.signal, headers: allHeaders[attempt] });
-      clearTimeout(timeout);
+      response = await _fetchRaw(url, allHeaders[attempt], 20000);
       if (response.ok) {
         if (attempt > 0) console.log(`  ↩️  Sitemap unblocked on ${RETRY_UA_LABELS[attempt - 1]} UA`);
         break;
       }
-      clearTimeout(timeout);
+      if (response.status === 304) {
+        response.body?.cancel().catch(() => {});
+        throw makeHttpError(304, attempt);
+      }
       response.body?.cancel().catch(() => {});
       lastSitemapErr = makeHttpError(response.status, attempt);
       if (response.status === 403 && attempt < allHeaders.length - 1) {
@@ -750,7 +874,6 @@ async function fetchSitemap(feed) {
       }
       throw lastSitemapErr;
     } catch (err) {
-      clearTimeout(timeout);
       if (err.httpStatus === 403 && attempt < allHeaders.length - 1) { response = null; continue; }
       throw err;
     }
@@ -931,6 +1054,10 @@ async function fetchMobileHtml(feed) {
         break;
       }
       const status = response.status;
+      if (status === 304) {
+        response.body?.cancel().catch(() => {});
+        throw makeHttpError(304, attempt);
+      }
       response.body?.cancel().catch(() => {});
       lastMobileErr = makeHttpError(status, attempt);
       if (status === 403 && attempt < mobileFirst.length - 1) {
@@ -1293,6 +1420,19 @@ async function fetchFeeds(options = {}) {
         );
       } catch (fetchErr) {
         const status = fetchErr.httpStatus;
+
+        if (status === 304) {
+          console.log(`${tag} ↪️  Not modified (304) — skipped fetch body via conditional request`);
+          await pool.query(
+            `UPDATE news_sources
+                SET last_success_at = NOW(),
+                    failure_count = 0,
+                    last_error = NULL
+              WHERE id = $1`,
+            [feed.id]
+          );
+          continue;
+        }
 
         // ── 429 Rate Limited ───────────────────────────────────────────────────
         // Server asked us to back off. Don't penalise the source — it's alive.
