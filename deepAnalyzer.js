@@ -196,6 +196,7 @@ async function deepAnalyzeArticle(articleId) {
     // 4a. Scrape full text
     if (art.article_url) {
       try {
+        console.log(`${tag} Fetching full article text for keyword/entity extraction`);
         const html      = await _fetchHTML(art.article_url);
         const extracted = _extractText(html);
         if (extracted.length > 200) {

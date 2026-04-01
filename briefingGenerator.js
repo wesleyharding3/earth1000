@@ -602,7 +602,7 @@ async function enrichThread(thread) {
   const { rows: articles } = await pool.query(`
     SELECT
       a.id, a.title, a.translated_title, a.summary, a.translated_summary,
-      a.published_at, a.video_id, a.media_type,
+      a.published_at, a.video_id, a.media_type, a.article_url, a.content,
       COALESCE(ns.name, ys.name) AS source_name,
       co.name AS country_name, co.latitude AS lat, co.longitude AS lon,
       ci.name AS city_name, ci.latitude AS city_lat, ci.longitude AS city_lon,
@@ -740,6 +740,7 @@ async function _deepEnrichThread(thread) {
     if (a.content && a.content.length > 300) {
       return { title: a.translated_title || a.title, text: a.content };
     }
+    console.log(`   ↳ Fetching full article [${a.id}] for story keywords/entities: ${(a.translated_title || a.title || '').slice(0, 80)}`);
     const text = await _fetchArticleText(a.article_url);
     if (text) {
       // Persist so next run can skip the fetch
