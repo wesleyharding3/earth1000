@@ -130,8 +130,10 @@ async function run() {
     console.log('\n── SELECTED THREADS ─────────────────────────────────────────');
     threads.forEach((t, i) => {
       console.log(`  [${i+1}] id=${t.id} | "${t.title}"`);
-      console.log(`       category=${t.primary_category} importance=${t.importance} region=${t.geographic_scope?.join(',') || '?'}`);
-      console.log(`       keywords=${(t.keywords||[]).slice(0,8).join(', ')}`);
+      const _scope = Array.isArray(t.geographic_scope) ? t.geographic_scope : (t.geographic_scope ? [t.geographic_scope] : []);
+      console.log(`       category=${t.primary_category} importance=${t.importance} region=${_scope.join(',') || '?'}`);
+      const _kws = Array.isArray(t.keywords) ? t.keywords : (t.keywords ? [t.keywords] : []);
+      console.log(`       keywords=${_kws.slice(0,8).join(', ')}`);
     });
     console.log('─────────────────────────────────────────────────────────────\n');
 
@@ -157,6 +159,12 @@ async function run() {
       }
     }
     console.log(`   [${elapsed(t0)}] ${threadData.length} unique threads after overlap dedup`);
+
+    // ── 2c. Deep-scrape articles for richer Claude context ────────────────
+    console.log(`   [${elapsed(t0)}] Deep-scraping articles to enrich narrative context...`);
+    await deepEnrichAllThreads(threadData);
+    console.log(`   [${elapsed(t0)}] Article enrichment complete`);
+
     console.log('\n── ENRICHED THREADS ─────────────────────────────────────────');
     threadData.forEach((t, i) => {
       console.log(`  [${i+1}] "${t.title}" (id=${t.id})`);
@@ -381,10 +389,9 @@ const MAX_PER_HOTSPOT  = 1;   // max threads from mideast / russia_cis
 function getRegionGroup(thread) {
   // Check title + keywords FIRST so a story like "Trump-Iran negotiations"
   // is tagged mideast (subject) rather than north_america (source country).
-  const titleAndScope = [
-    thread.title || '',
-    ...(thread.geographic_scope || []),
-  ].join(' ').toLowerCase();
+  const _gs = Array.isArray(thread.geographic_scope) ? thread.geographic_scope
+            : thread.geographic_scope ? [thread.geographic_scope] : [];
+  const titleAndScope = [thread.title || '', ..._gs].join(' ').toLowerCase();
   const withCategory = titleAndScope + ' ' + (thread.primary_category || '').toLowerCase();
 
   // Subject-first ordering: check high-specificity regions before broad ones
@@ -674,6 +681,125 @@ async function translateMissingTitles(articles) {
   } catch (_) { /* translation is best-effort, don't fail generation */ }
 }
 
+// ─── Article Deep Scraper & Enricher ──────────────────────────────────────
+// Scrapes full text for ≥2/3 of each thread's text articles, then asks
+// Claude Haiku to extract deeper keywords, entities, relationships, and
+// geopolitical background. Result is attached as thread.deepContext and
+// passed to Claude Sonnet so it writes more informed voiceovers.
+
+const _SCRAPE_HEADERS = {
+  'User-Agent':      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36',
+  'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cache-Control':   'no-cache',
+  'Sec-Fetch-Dest':  'document',
+  'Sec-Fetch-Mode':  'navigate',
+  'Sec-Fetch-Site':  'none',
+};
+
+function _htmlToText(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ').replace(/&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function _fetchArticleText(url, timeoutMs = 10000) {
+  if (!url) return null;
+  try {
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const resp  = await fetch(url, { headers: _SCRAPE_HEADERS, signal: ctrl.signal, redirect: 'follow' });
+    clearTimeout(timer);
+    if (!resp.ok) return null;
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('html') && !ct.includes('text')) return null;
+    const html = await resp.text();
+    const text = _htmlToText(html);
+    return text.length > 150 ? text.slice(0, 6000) : null;
+  } catch (_) { return null; }
+}
+
+async function _deepEnrichThread(thread) {
+  const articles    = thread.articles || [];
+  const textArts    = articles.filter(a => !a.video_id && a.article_url);
+  if (!textArts.length) return null;
+
+  const target  = Math.ceil(textArts.length * 2 / 3);
+  const toFetch = textArts.slice(0, target);
+
+  // Fetch full text — reuse cached content if already substantial
+  const settled = await Promise.allSettled(toFetch.map(async a => {
+    if (a.content && a.content.length > 300) {
+      return { title: a.translated_title || a.title, text: a.content };
+    }
+    const text = await _fetchArticleText(a.article_url);
+    if (text) {
+      // Persist so next run can skip the fetch
+      pool.query(`UPDATE news_articles SET content = $1 WHERE id = $2`, [text.slice(0, 8000), a.id]).catch(() => {});
+    }
+    return text ? { title: a.translated_title || a.title, text } : null;
+  }));
+
+  const scraped = settled
+    .filter(r => r.status === 'fulfilled' && r.value)
+    .map(r => r.value);
+
+  if (!scraped.length) return null;
+
+  // Combine texts for Haiku — cap each article at 1500 chars to keep prompt lean
+  const combined = scraped
+    .map((s, i) => `ARTICLE ${i + 1}: ${s.title}\n${s.text.slice(0, 1500)}`)
+    .join('\n\n---\n\n');
+
+  try {
+    const resp = await client.messages.create({
+      model:      'claude-haiku-4-5',
+      max_tokens: 450,
+      messages: [{
+        role: 'user',
+        content:
+`Extract structured context from these articles about "${thread.title}" for a news briefing writer. Return ONLY valid JSON:
+{
+  "key_keywords": ["6-10 specific terms, proper nouns, or insider phrases NOT obvious from the headline alone"],
+  "key_entities": ["named people, organizations, laws, treaties, sanctions mentioned"],
+  "relationships": ["2-3 concrete cause-effect or political relationships, e.g. 'Country X sanctions Y because Z'"],
+  "background": "1-2 sentences of deeper geopolitical, historical, or legal context the briefing writer should know"
+}
+
+ARTICLES:
+${combined}`,
+      }],
+    });
+
+    const match = resp.content[0].text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    return { ...JSON.parse(match[0]), scraped_count: scraped.length };
+  } catch (_) { return null; }
+}
+
+// Enrich all threads with concurrency cap of 4
+async function deepEnrichAllThreads(threadData) {
+  let idx = 0;
+  async function worker() {
+    while (idx < threadData.length) {
+      const thread = threadData[idx++];
+      const ctx = await _deepEnrichThread(thread).catch(() => null);
+      if (ctx) {
+        thread.deepContext = ctx;
+        console.log(`   ✓ Enriched [${thread.id}] "${thread.title.slice(0, 45)}" (${ctx.scraped_count} articles)`);
+      } else {
+        console.log(`   – No scrape  [${thread.id}] "${thread.title.slice(0, 45)}"`);
+      }
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()]);
+}
+
 // ─── Entity Coordinate Resolution ─────────────────────────────────────────
 // Look up DB coordinates for every story entity Claude identified.
 // Tries countries first, then cities for anything not matched.
@@ -831,7 +957,16 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
         source:       a.source_name,
         country:      a.country_name,
         published_at: a.published_at ? a.published_at.toISOString?.() || String(a.published_at) : null,
-      }))
+      })),
+      // Deep context from full article scraping — use to write more informed segments
+      ...(t.deepContext ? {
+        deep_context: {
+          additional_keywords:  t.deepContext.key_keywords,
+          key_people_and_orgs:  t.deepContext.key_entities,
+          key_relationships:    t.deepContext.relationships,
+          background_context:   t.deepContext.background,
+        },
+      } : {}),
     };
   });
 
@@ -855,6 +990,7 @@ REQUIREMENTS:
 - Write conversationally — this will be spoken aloud by a professional voice.
 - Connect stories when genuinely related (e.g. economic ripple effects, diplomatic links).
 - This briefing draws from sources in multiple languages and countries. When relevant, surface non-Western or non-English perspectives — e.g. how Beijing, Moscow, Tehran, or Seoul view a story, not just Washington or London. Avoid defaulting to a single national lens.
+- Many stories include a "deep_context" field extracted from full article text. Use "background_context" to add depth beyond the headline, "key_relationships" to frame cause-and-effect accurately, and "key_people_and_orgs" to name relevant actors precisely. This is your primary enrichment source — use it.
 
 STORY CONTINUITY FRAMING (use when is_ongoing = true):
 - Each story includes "is_ongoing" and "briefing_day_number" fields.
