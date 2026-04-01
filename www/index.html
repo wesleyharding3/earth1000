@@ -8921,7 +8921,8 @@ function computeCityTiers(cities) {
 
       window.addEventListener("mouseup", () => { dragging = false; });
       
-      const DRAG_THRESHOLD = 3;  // pixels - ignore movement smaller than this (click/tap jitter)
+      const DRAG_THRESHOLD       = 3;  // pixels — mouse precision is high, 3px is fine
+      const TOUCH_DRAG_THRESHOLD = 8;  // pixels — thumbs land with natural drift; 8px avoids false drags
       let lastTouchTime = 0;     // used to suppress hover labels briefly after touch events
 
       // ── Sound Effects ────────────────────────────────────────────────────────
@@ -8982,13 +8983,17 @@ function computeCityTiers(cities) {
       window.addEventListener("touchmove", e => {
         if (!touchDragging || e.touches.length !== 1) return;
         
-        // Check if we've moved enough to be considered a real drag (not tap jitter)
+        // Check if we've moved enough to be considered a real drag (not tap jitter).
+        // Use a wider threshold for touch — thumbs naturally drift 3-5px on landing.
         if (!touchThresholdMet) {
           const totalMoved = Math.abs(e.touches[0].clientX - touchStartX) + Math.abs(e.touches[0].clientY - touchStartY);
-          if (totalMoved < DRAG_THRESHOLD) return;  // Ignore small movements
+          if (totalMoved < TOUCH_DRAG_THRESHOLD) return;
           touchThresholdMet = true;
-          // Confirmed real drag — now cancel any in-progress focus animation
-          if (focusTargetQuat) {
+          // Only cancel a pending node panel if this is a deliberate drag, not post-tap
+          // finger settle. Guard: if a node was selected within the last 200ms, the
+          // movement is landing vibration — let the panel fire from the animation loop.
+          const isPostTapJitter = (Date.now() - touchNodeSelectTime) < 200;
+          if (focusTargetQuat && !isPostTapJitter) {
             focusTargetQuat = null;
             focusPendingPanel = null;
             isFocused = false;
