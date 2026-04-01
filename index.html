@@ -19187,8 +19187,8 @@ grmClockTick();
 ═══════════════════════════════════════════════════════ -->
 <script>
 (function () {
-  const BASE = 'https://earth-wjr6.onrender.com';
-  const PAYPAL_CLIENT_ID = '%%PAYPAL_CLIENT_ID%%'; // replaced at build time or set via window.PAYPAL_CLIENT_ID
+  const BASE = window.__API_BASE || window.location.origin || 'https://earth0.onrender.com';
+  const PAYPAL_CLIENT_ID = '%%PAYPAL_CLIENT_ID%%'; // replaced at build time or set via runtime config
 
   // ── Pricing modal ──────────────────────────────────────────────
   const pricingOverlay = document.getElementById('pricingOverlay');
@@ -19277,15 +19277,56 @@ grmClockTick();
 
   // ── PayPal ─────────────────────────────────────────────────────
   let _ppLoaded = false;
+  let _ppConfig = null;
+  let _ppConfigPromise = null;
 
-  function _initPayPalButtons() {
-    const clientId = window.PAYPAL_CLIENT_ID || '%%PAYPAL_CLIENT_ID%%';
+  async function _loadPayPalConfig() {
+    if (_ppConfig) return _ppConfig;
+    if (_ppConfigPromise) return _ppConfigPromise;
+
+    _ppConfigPromise = fetch(`${BASE}/api/payments/paypal/config`)
+      .then(async (res) => {
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+        _ppConfig = payload;
+        window.PAYPAL_CLIENT_ID = payload.clientId;
+        window.PAYPAL_PLAN_ID_PRO = payload.planIdPro;
+        window.PAYPAL_PLAN_ID_ENTERPRISE = payload.planIdEnterprise;
+        window.PAYPAL_ENV = payload.env;
+        return payload;
+      })
+      .catch((err) => {
+        console.error('[paypal config]', err);
+        _showPayPalUnavailable('Subscriptions are temporarily unavailable.');
+        throw err;
+      })
+      .finally(() => {
+        _ppConfigPromise = null;
+      });
+
+    return _ppConfigPromise;
+  }
+
+  function _showPayPalUnavailable(message) {
+    ['pricingPaypalPro', 'pricingPaypalEnterprise'].forEach((id) => {
+      const container = document.getElementById(id);
+      if (!container) return;
+      container.innerHTML = `<div class="pricingNote" style="margin-top:10px;">${message}</div>`;
+      container.dataset.rendered = 'fallback';
+    });
+  }
+
+  async function _initPayPalButtons() {
+    const config = await _loadPayPalConfig().catch(() => null);
+    const clientId = config?.clientId || window.PAYPAL_CLIENT_ID || PAYPAL_CLIENT_ID;
     if (!clientId || clientId.includes('%%')) return; // env var not set yet
     if (_ppLoaded) { _renderPayPalButtons(); return; }
     const s = document.createElement('script');
-    s.src = `https://www.paypal.com/sdk/js?client-id=${clientId}&vault=true&intent=subscription`;
+    const sdkBase = config?.sdkBase || (config?.env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com');
+    s.src = `${sdkBase}/sdk/js?client-id=${encodeURIComponent(clientId)}&vault=true&intent=subscription`;
     s.setAttribute('data-sdk-integration-source', 'button-factory');
     s.onload = () => { _ppLoaded = true; _renderPayPalButtons(); };
+    s.onerror = () => _showPayPalUnavailable('Failed to load PayPal checkout.');
     document.head.appendChild(s);
   }
 
@@ -19297,12 +19338,14 @@ grmClockTick();
 
   function _ppRenderBtn(containerId, tier) {
     const container = document.getElementById(containerId);
-    if (!container || container.dataset.rendered) return;
-    container.dataset.rendered = '1';
+    if (!container || container.dataset.rendered === '1') return;
     const planId = tier === 'pro'
       ? (window.PAYPAL_PLAN_ID_PRO || '')
       : (window.PAYPAL_PLAN_ID_ENTERPRISE || '');
-    if (!planId) return;
+    if (!planId) {
+      _showPayPalUnavailable('Subscription plan is not configured yet.');
+      return;
+    }
 
     paypal.Buttons({
       style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'subscribe', height: 36 },
@@ -19319,6 +19362,8 @@ grmClockTick();
             window.__userTier = tier;
             pricingOverlay.classList.remove('open');
             _showToast(`You're now on the ${tier.charAt(0).toUpperCase() + tier.slice(1)} plan!`);
+            loadProfile?.();
+            _updatePricingCtaState();
           } else {
             _showToast('Activation failed — please contact support.');
           }
@@ -19326,11 +19371,16 @@ grmClockTick();
       },
       onError: (err) => console.error('[paypal error]', err),
     }).render(`#${containerId}`);
+    container.dataset.rendered = '1';
   }
 
   // ── Cancel / manage PayPal (redirect to PayPal account) ────────
   window.__cancelPayPal = function () {
-    window.open('https://www.paypal.com/myaccount/autopay/', '_blank');
+    const isLive = (window.PAYPAL_ENV || _ppConfig?.env) === 'live';
+    const manageUrl = isLive
+      ? 'https://www.paypal.com/myaccount/autopay/'
+      : 'https://www.sandbox.paypal.com/myaccount/autopay/';
+    window.open(manageUrl, '_blank');
   };
 
   // ── Upgrade nudge helper ────────────────────────────────────────

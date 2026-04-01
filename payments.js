@@ -30,6 +30,16 @@ const PAYPAL_PLAN = {
   enterprise: process.env.PAYPAL_PLAN_ID_ENTERPRISE,
 };
 
+function getPayPalEnv() {
+  return process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox';
+}
+
+function getPayPalSdkBase() {
+  return getPayPalEnv() === 'live'
+    ? 'https://www.paypal.com'
+    : 'https://www.sandbox.paypal.com';
+}
+
 // ─── Supabase helpers (subscriptions live in Supabase, not Render Postgres) ─
 
 async function getTierIdByName(name) {
@@ -82,7 +92,7 @@ let _ppTokenExpiry = 0;
 async function getPayPalToken() {
   if (_ppToken && Date.now() < _ppTokenExpiry - 60_000) return _ppToken;
   const creds = Buffer.from(`${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`).toString('base64');
-  const base  = process.env.PAYPAL_ENV === 'live'
+  const base  = getPayPalEnv() === 'live'
     ? 'https://api-m.paypal.com'
     : 'https://api-m.sandbox.paypal.com';
   const res = await fetch(`${base}/v1/oauth2/token`, {
@@ -97,9 +107,32 @@ async function getPayPalToken() {
   return _ppToken;
 }
 
-const PP_BASE = () => process.env.PAYPAL_ENV === 'live'
+const PP_BASE = () => getPayPalEnv() === 'live'
   ? 'https://api-m.paypal.com'
   : 'https://api-m.sandbox.paypal.com';
+
+router.get('/paypal/config', (_req, res) => {
+  const clientId = process.env.PAYPAL_CLIENT_ID || null;
+  const planIdPro = PAYPAL_PLAN.pro || null;
+  const planIdEnterprise = PAYPAL_PLAN.enterprise || null;
+
+  if (!clientId || !planIdPro || !planIdEnterprise) {
+    return res.status(503).json({
+      error: 'PayPal configuration is incomplete',
+      hasClientId: Boolean(clientId),
+      hasPlanIdPro: Boolean(planIdPro),
+      hasPlanIdEnterprise: Boolean(planIdEnterprise)
+    });
+  }
+
+  return res.json({
+    clientId,
+    env: getPayPalEnv(),
+    sdkBase: getPayPalSdkBase(),
+    planIdPro,
+    planIdEnterprise
+  });
+});
 
 async function ppGet(path) {
   const tok = await getPayPalToken();
