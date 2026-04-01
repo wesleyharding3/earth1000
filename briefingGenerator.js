@@ -14,7 +14,7 @@
  *   node briefingGenerator.js --force        # regenerate narrative/segments (reuses existing audio)
  *   node briefingGenerator.js --force-audio  # also re-synthesise audio (costs ElevenLabs credits)
  *   node briefingGenerator.js --no-audio     # skip ElevenLabs entirely (text + globe only)
- *   node briefingGenerator.js --pick         # interactive: choose threads manually from top 50
+ *   node briefingGenerator.js --pick         # interactive: choose threads manually from top 100
  */
 
 'use strict';
@@ -115,8 +115,8 @@ async function run() {
     // ── 1. Select story threads ───────────────────────────────────────────
     let threads;
     if (PICK_MODE) {
-      console.log(`   [${elapsed(t0)}] Loading top 50 candidate threads for manual selection...`);
-      const candidates = await listCandidateThreads(50);
+      console.log(`   [${elapsed(t0)}] Loading top 100 candidate threads for manual selection...`);
+      const candidates = await listCandidateThreads(100);
       if (!candidates.length) throw new Error('No active story threads found — run storyThreadBuilder first');
       threads = await promptThreadSelection(candidates);
       if (!threads.length) throw new Error('No threads selected — aborting');
@@ -884,7 +884,10 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
           geoDistKm(entity.lat, entity.lon, other.lat, other.lon) < CITY_COUNTRY_MERGE_KM
         );
       });
-      const effectiveResolved = dedupedResolved.length >= 2 ? dedupedResolved : resolved;
+      // Only fall back to un-deduped list if dedup removed EVERYTHING (all-city edge case).
+      // When dedup correctly leaves 1 entity (city removed because its country is present),
+      // use that single entity — the loop below won't run, producing no arc (correct).
+      const effectiveResolved = dedupedResolved.length > 0 ? dedupedResolved : resolved;
 
       // Connect all consecutive entity pairs
       for (let i = 0; i < effectiveResolved.length - 1; i++) {
@@ -901,10 +904,14 @@ function buildFlowArcs(threadData, narrative, entityCoords) {
     }
 
     // Single entity + primary city → arc from entity to city
+    // Only draw if the city is NOT within the same country as the entity —
+    // avoids Country → own capital/city arcs (e.g. Germany → Berlin).
     if (resolved.length === 1 && thread.primaryCity) {
       const from = resolved[0];
       const city = thread.primaryCity;
-      if (Math.abs(from.lat - city.lat) > 0.4 || Math.abs(from.lon - city.lon) > 0.4) {
+      const isSameCountry = from.type === 'country' &&
+        geoDistKm(from.lat, from.lon, city.lat, city.lon) < CITY_COUNTRY_MERGE_KM;
+      if (!isSameCountry && (Math.abs(from.lat - city.lat) > 0.4 || Math.abs(from.lon - city.lon) > 0.4)) {
         arcs.push({
           thread_id: thread.id,
           from_name: from.name, from_lat: from.lat, from_lng: from.lon,
@@ -1198,6 +1205,16 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       primaryCountry = thread.primaryCountry || null;
     }
 
+    // Strip primary node(s) from secondary_locations — avoids duplication in
+    // display and globe player (primary_city / primary_country shown separately).
+    const primaryCoordKeys = new Set();
+    const _coordKey = (lat, lon) => `${parseFloat(lat).toFixed(2)},${parseFloat(lon).toFixed(2)}`;
+    if (primaryCity)    primaryCoordKeys.add(_coordKey(primaryCity.lat,    primaryCity.lon));
+    if (primaryCountry) primaryCoordKeys.add(_coordKey(primaryCountry.lat, primaryCountry.lon));
+    const filteredSecondaries = secondaryLocations.filter(
+      s => !primaryCoordKeys.has(_coordKey(s.lat, s.lon))
+    );
+
     const storySeg = {
       type:                'story',
       thread_id:           thread.id,
@@ -1206,11 +1223,13 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       video_id:            thread.videoId,
       voiceover_text:      ns.voiceover,
       transition:          ns.transition || null,
-      globe_focus:         thread.globeFocus,
+      globe_focus:         thread.globeFocus
+                             ? { lat: thread.globeFocus.lat, lng: thread.globeFocus.lng, zoom: 2.5 }
+                             : null,
       primary_city:        primaryCity,
       primary_country:     primaryCountry,
       flow_arcs:           arcs,
-      secondary_locations: secondaryLocations,
+      secondary_locations: filteredSecondaries,
     };
 
     console.log(`\n── SEGMENT ${i+1} BUILD: "${thread.title}" ──────────────────`);
@@ -1408,7 +1427,7 @@ async function promptThreadSelection(candidates) {
   // Display formatted table
   console.log();
   console.log('┌─────────────────────────────────────────────────────────────────────────────┐');
-  console.log('│  AVAILABLE STORY THREADS — choose up to 10                                  │');
+  console.log('│  AVAILABLE STORY THREADS — choose up to 10  (showing top 100)               │');
   console.log('├────┬────────┬───────────────────────────────────────────────┬──────┬───────┤');
   console.log('│ #  │  ID    │ Title                                          │ Cat  │ 🎬/📰 │');
   console.log('├────┼────────┼───────────────────────────────────────────────┼──────┼───────┤');

@@ -1103,11 +1103,11 @@
 
 /* ── Flow Controls Panel ── */
 #flowControls {
-  position: absolute;
-  bottom: calc(32px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  position: fixed;
+  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 50;
+  z-index: 600;
   display: none;
   flex-direction: column;
   align-items: center;
@@ -1117,6 +1117,9 @@
   min-width: 520px;
 }
 #flowControls.visible { display: flex; }
+body.ticker-active #flowControls {
+  bottom: calc(var(--global-ticker-height) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+}
 
 .flowPanel {
   background: rgba(6, 10, 20, 0.30);
@@ -2249,7 +2252,7 @@
   right: 0;
   height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
   max-height: none;
-  background: transparent;
+  background: rgb(7, 11, 21);
   border: none;
   border-radius: 0;
   z-index: 800;
@@ -2264,13 +2267,11 @@
 
 #articleDetailPanel.visible {
   transform: translateY(0);
-  background: rgba(6, 10, 20, 0.30);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: rgb(7, 11, 21);
   border-radius: 20px 20px 0 0;
-  border-top: 1px solid rgba(255,255,255,0.18);
-  border-left: 1px solid rgba(255,255,255,0.18);
-  border-right: 1px solid rgba(255,255,255,0.18);
+  border-top: 1px solid rgba(255,255,255,0.12);
+  border-left: 1px solid rgba(255,255,255,0.08);
+  border-right: 1px solid rgba(255,255,255,0.08);
   border-bottom: none;
   overflow: hidden;
 }
@@ -2386,6 +2387,32 @@
   opacity: 0.1;
 }
 
+/* ── Two-column hero: meta left, thumbnail right ── */
+.adpHeroLayout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+.adpHeroText {
+  flex: 1;
+  min-width: 0;
+}
+.adpThumb {
+  width: 190px;
+  min-width: 190px;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.04);
+  display: block;
+}
+@media (max-width: 540px) {
+  .adpHeroLayout { flex-direction: column-reverse; gap: 12px; }
+  .adpThumb { width: 100%; min-width: unset; height: 180px; }
+}
+
 .adpSource {
   display: flex;
   align-items: center;
@@ -2417,11 +2444,11 @@
 }
 
 .adpTitle {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   line-height: 1.3;
   color: #fff;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .adpSummary {
@@ -5904,8 +5931,6 @@
   text-align: center; margin-top: 15px;
   font-size: 12px; color: rgba(255,255,255,0.28);
 }
-.authForgot a { color: rgba(255,160,40,0.65); cursor: pointer; text-decoration: none; }
-.authForgot a:hover { color: rgba(255,185,60,1); }
 /* ─── Onboarding Questionnaire ─────────────────────────────── */
 #onboardOverlay {
   display: none; position: fixed; inset: 0; z-index: 9500;
@@ -5998,6 +6023,8 @@
 .obSaveBtn:hover  { background: rgba(255,180,55,1); }
 .obSaveBtn:active { transform: scale(0.98); }
 .obSaveBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+.authForgot a { color: rgba(255,160,40,0.65); cursor: pointer; text-decoration: none; }
+.authForgot a:hover { color: rgba(255,185,60,1); }
 /* Account dropdown */
 #accountDropdown {
   display: none; position: absolute; top: calc(100% + 9px); left: 0;
@@ -12961,10 +12988,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Config ── */
   const GLOBE_RADIUS   = radius;
-  const ARC_HEIGHT     = 0.025;
+  const ARC_HEIGHT     = 0.14;
   const ARC_SEGMENTS   = 64;
-  const TUBE_RADIUS_BASE = 0.002;
-  const TUBE_RADIUS_MIN  = 0.0012;
+  const TUBE_RADIUS_BASE = 0.003;
+  const TUBE_RADIUS_MIN  = 0.0018;
   const TUBE_RADIUS_MAX  = 0.010;
   const TUBE_RADIAL    = 6;
   const PARTICLE_COUNT = 3;
@@ -13623,6 +13650,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Close flow panel helper ── */
   function closeFlowPanel() {
     flowModeOpen = false;
+    renderer.domElement.style.cursor = '';
     document.getElementById("flowModeBtn").classList.remove("active");
     const flowControls = document.getElementById("flowControls");
     flowControls.classList.remove("visible");
@@ -14190,6 +14218,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
     if (!hit) tooltip.style.display = "none";
+    renderer.domElement.style.cursor = hit ? 'pointer' : '';
   });
 
   /* Click on flow arc to open article detail */
@@ -18022,33 +18051,60 @@ grmClockTick();
       </div>
     `;
     
-    content.innerHTML = `
-      ${imageHTML}
-      
+    // Thumbnail (right-side) only for non-video articles that have a real image
+    const thumbSrc = !isVideo && article.image_url && article.image_url.trim() ? article.image_url : null;
+    const thumbHTML = thumbSrc
+      ? `<img class="adpThumb" src="${thumbSrc}" alt="" onerror="this.remove()">`
+      : '';
+
+    const sourceBlock = `
       <div class="adpSource">
         ${sourceLogo}
         <div class="adpSourceInfo">
           <div class="adpSourceName">${article.source_name || 'Unknown Source'}</div>
           <div class="adpSourceMeta">${dateStr}${timeStr ? ' · ' + timeStr : ''}</div>
         </div>
-      </div>
-      
-      <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
-      
-      <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
-      
+      </div>`;
+
+    const metaBlock = `
       <div class="adpMeta">
         ${locationTags.map(loc => `<span class="adpMetaTag location"><svg width="9" height="11" viewBox="0 0 10 12" fill="none" style="display:inline;vertical-align:middle;margin-right:2px;opacity:.8"><path d="M5 0C2.79 0 1 1.79 1 4c0 3 4 8 4 8s4-5 4-8c0-2.21-1.79-4-4-4zm0 5.5A1.5 1.5 0 1 1 5 2.5a1.5 1.5 0 0 1 0 3z" fill="currentColor"/></svg>${loc}</span>`).join('')}
         ${sentimentTag}
-      </div>
-      
-      ${miniMapHTML}
-      ${contextHTML}
-      
-      <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
-        ${isVideo ? 'Watch on YouTube' : 'Read Full Article'} <span>↗ ${article.source_name || 'Source'}</span>
-      </a>
-    `;
+      </div>`;
+
+    if (isVideo) {
+      // Video: full-width embed, then meta below
+      content.innerHTML = `
+        ${imageHTML}
+        ${sourceBlock}
+        <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
+        <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
+        ${metaBlock}
+        ${miniMapHTML}
+        ${contextHTML}
+        <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
+          Watch on YouTube <span>↗ ${article.source_name || 'Source'}</span>
+        </a>
+      `;
+    } else {
+      // Article: two-column hero (meta + title left, thumbnail right), summary below
+      content.innerHTML = `
+        <div class="adpHeroLayout">
+          <div class="adpHeroText">
+            ${sourceBlock}
+            <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
+            ${metaBlock}
+            ${miniMapHTML}
+          </div>
+          ${thumbHTML}
+        </div>
+        <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
+        ${contextHTML}
+        <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
+          Read Full Article <span>↗ ${article.source_name || 'Source'}</span>
+        </a>
+      `;
+    }
   }
   
   // ── Open article detail panel ──────────────────────────────────────────────
@@ -18593,6 +18649,7 @@ grmClockTick();
     <h2 class="obTitle">Personalise Your Briefing</h2>
     <p class="obSub">Tell us where you're from and what regions interest you.<br>This shapes your daily news briefing.</p>
 
+    <!-- Home location -->
     <div class="obSection">
       <div class="obSectionLabel">Your home location</div>
       <div class="obField">
@@ -18613,6 +18670,7 @@ grmClockTick();
       </div>
     </div>
 
+    <!-- Interests -->
     <div class="obSection">
       <div class="obSectionLabel">Other regions of interest <span class="obOptional">optional</span></div>
       <div class="obDropWrap" id="obInterestWrap">
@@ -18927,17 +18985,18 @@ grmClockTick();
   // ── Onboarding questionnaire ──────────────────────────────────
   let _obHomeCountry = null;
   let _obHomeCity    = null;
-  let _obInterests   = [];
+  let _obInterests   = []; // [{type:'country'|'city', id, name}]
 
   async function maybeShowOnboarding(userId) {
     const { data } = await sb.from('briefing_preferences')
       .select('user_id').eq('user_id', userId).maybeSingle();
-    if (data) return;
+    if (data) return; // already set (or skipped)
     showOnboarding();
   }
 
   function showOnboarding() {
-    document.getElementById('onboardOverlay').classList.add('open');
+    const ov = document.getElementById('onboardOverlay');
+    ov.classList.add('open');
     _buildOnboard();
   }
 
@@ -18981,14 +19040,15 @@ grmClockTick();
   }
 
   async function skipOnboarding() {
-    await _obUpsert([]);
+    await _obUpsert([]); // empty row so we never show again
     closeOnboarding();
   }
 
   function _buildOnboard() {
     const countries = (window.__globeCountries || []).slice().sort((a,b) => a.name.localeCompare(b.name));
-    const cities    = window.__globeCities || [];
+    const cities    = window.__globeCities    || [];
 
+    // ── Home country ────────────────────────────────────────
     const cSearch = document.getElementById('obCountrySearch');
     const cList   = document.getElementById('obCountryList');
     const cTag    = document.getElementById('obCountryTag');
@@ -19028,6 +19088,7 @@ grmClockTick();
       if (!document.getElementById('obCountryWrap')?.contains(e.target)) cList.classList.remove('open');
     });
 
+    // ── Home city ────────────────────────────────────────────
     const citySearch = document.getElementById('obCitySearch');
     const cityList   = document.getElementById('obCityList');
     const cityTag    = document.getElementById('obCityTag');
@@ -19062,6 +19123,7 @@ grmClockTick();
       if (!document.getElementById('obCityWrap')?.contains(e.target)) cityList.classList.remove('open');
     });
 
+    // ── Interests multi-select ───────────────────────────────
     const iSearch = document.getElementById('obInterestSearch');
     const iList   = document.getElementById('obInterestList');
     const iTags   = document.getElementById('obInterestTags');
@@ -19108,6 +19170,7 @@ grmClockTick();
       );
     }
 
+    // ── Wire buttons ─────────────────────────────────────────
     document.getElementById('onboardSave').onclick = saveOnboarding;
     document.getElementById('onboardSkip').onclick = skipOnboarding;
   }
@@ -20725,11 +20788,8 @@ body.ticker-active .tabLabel {
           });
         }
         secondary.forEach((loc, i) => {
-          // In city view, skip bare country centroids — those nodes aren't visible
+          // In city view, skip pulsing bare country centroids — they're empty space
           if (needsCityView && _isCountryCentroid(loc.lat, loc.lon ?? loc.lng)) return;
-          // In country view, skip city-level points — only country nodes are visible,
-          // so pulsing a city coordinate creates a phantom ring over empty globe space
-          if (!needsCityView && !_isCountryCentroid(loc.lat, loc.lon ?? loc.lng)) return;
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
