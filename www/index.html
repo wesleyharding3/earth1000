@@ -19276,7 +19276,6 @@ grmClockTick();
   }
 
   // ── PayPal ─────────────────────────────────────────────────────
-  let _ppLoaded = false;
   let _ppConfig = null;
   let _ppConfigPromise = null;
 
@@ -19318,20 +19317,11 @@ grmClockTick();
 
   async function _initPayPalButtons() {
     const config = await _loadPayPalConfig().catch(() => null);
-    const clientId = config?.clientId || window.PAYPAL_CLIENT_ID || PAYPAL_CLIENT_ID;
-    if (!clientId || clientId.includes('%%')) return; // env var not set yet
-    if (_ppLoaded) { _renderPayPalButtons(); return; }
-    const s = document.createElement('script');
-    const sdkBase = config?.sdkBase || (config?.env === 'live' ? 'https://www.paypal.com' : 'https://www.sandbox.paypal.com');
-    s.src = `${sdkBase}/sdk/js?client-id=${encodeURIComponent(clientId)}&vault=true&intent=subscription`;
-    s.setAttribute('data-sdk-integration-source', 'button-factory');
-    s.onload = () => { _ppLoaded = true; _renderPayPalButtons(); };
-    s.onerror = () => _showPayPalUnavailable('Failed to load PayPal checkout.');
-    document.head.appendChild(s);
+    if (!config?.clientId) return;
+    _renderPayPalButtons();
   }
 
   function _renderPayPalButtons() {
-    if (typeof paypal === 'undefined') return;
     _ppRenderBtn('pricingPaypalPro',        'pro');
     _ppRenderBtn('pricingPaypalEnterprise', 'enterprise');
   }
@@ -19346,31 +19336,16 @@ grmClockTick();
       _showPayPalUnavailable('Subscription plan is not configured yet.');
       return;
     }
-
-    paypal.Buttons({
-      style: { layout: 'vertical', color: 'gold', shape: 'rect', label: 'subscribe', height: 36 },
-      createSubscription: (_data, actions) => actions.subscription.create({ plan_id: planId }),
-      onApprove: async (data) => {
-        if (!window.__authToken) { window.__openAuthModal?.(); return; }
-        try {
-          const res = await fetch(`${BASE}/api/payments/paypal/activate`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ subscriptionId: data.subscriptionID, tier }),
-          });
-          const result = await res.json();
-          if (result.success) {
-            window.__userTier = tier;
-            pricingOverlay.classList.remove('open');
-            _showToast(`You're now on the ${tier.charAt(0).toUpperCase() + tier.slice(1)} plan!`);
-            loadProfile?.();
-            _updatePricingCtaState();
-          } else {
-            _showToast('Activation failed — please contact support.');
-          }
-        } catch (e) { console.error('[paypal activate]', e); }
-      },
-      onError: (err) => console.error('[paypal error]', err),
-    }).render(`#${containerId}`);
+    container.innerHTML = `<button class="pricingTierCta active" type="button">Continue with PayPal</button>`;
+    container.querySelector('button')?.addEventListener('click', () => {
+      if (!window.__authToken) {
+        window.__openAuthModal?.();
+        return;
+      }
+      const checkoutUrl = new URL(`${window.location.origin}/paypal-checkout.html`);
+      checkoutUrl.searchParams.set('tier', tier);
+      window.location.href = checkoutUrl.toString();
+    });
     container.dataset.rendered = '1';
   }
 
