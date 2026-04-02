@@ -18757,6 +18757,7 @@ grmClockTick();
   const acctDpSignOut   = document.getElementById('acctDpSignOut');
 
   let currentUser = null;
+  window.__currentUser = null;
 
   // ── Global auth token + tier state ──────────────────────────
   window.__authToken = null;
@@ -18822,6 +18823,7 @@ grmClockTick();
   // ── Account button UI ────────────────────────────────────────
   function updateAccountUI(user) {
     currentUser = user;
+    window.__currentUser = user;
     if (user) {
       accountBtnIcon.style.display = 'none';
       let av = accountBtn.querySelector('.acct-avatar');
@@ -18904,8 +18906,9 @@ grmClockTick();
   }
 
   async function refreshSubscriptionState(options = {}) {
-    if (!currentUser) return;
-    await loadUserTier(currentUser.id);
+    const user = currentUser || window.__currentUser;
+    if (!user) return;
+    await loadUserTier(user.id);
     await loadProfile();
     if (typeof window.__updatePricingState === 'function') {
       window.__updatePricingState();
@@ -18914,6 +18917,7 @@ grmClockTick();
       window.__showToast(`Subscription updated: ${window.__userTier}`);
     }
   }
+  window.__refreshSubscriptionState = refreshSubscriptionState;
 
   // ── Ensure new user has a free subscription row ──────────────
   async function ensureSubscription(userId) {
@@ -19245,8 +19249,8 @@ grmClockTick();
   window.__openPricing = function (nudgeMsg) {
     document.getElementById('pricingSubtitle').textContent =
       nudgeMsg || 'Unlock the full Earth intelligence platform.';
-    if (currentUser) {
-      refreshSubscriptionState().catch((err) => {
+    if (window.__currentUser && typeof window.__refreshSubscriptionState === 'function') {
+      window.__refreshSubscriptionState().catch((err) => {
         console.warn('[pricing] subscription refresh failed:', err.message);
         _updatePricingCtaState();
       });
