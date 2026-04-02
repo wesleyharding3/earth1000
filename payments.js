@@ -104,6 +104,53 @@ async function setSubscriptionStatus(userId, status) {
   if (error) throw new Error(`setSubscriptionStatus: ${error.message}`);
 }
 
+async function getBestSubscriptionStatus(userId) {
+  const { data, error } = await sba
+    .from('subscriptions')
+    .select('id, status, updated_at, provider, tier_id')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  if (error) throw new Error(`getSubscriptionStatus: ${error.message}`);
+
+  const active = (data || []).sort((a, b) => {
+    const tierA = Number(a?.tier_id) || 0;
+    const tierB = Number(b?.tier_id) || 0;
+    if (tierA !== tierB) return tierB - tierA;
+    const updatedA = new Date(a?.updated_at || 0).getTime();
+    const updatedB = new Date(b?.updated_at || 0).getTime();
+    return updatedB - updatedA;
+  })[0] || null;
+
+  if (!active?.tier_id) {
+    return {
+      subscription_id: null,
+      status: null,
+      provider: null,
+      tier_id: 1,
+      tier_name: 'free',
+      tier_display_name: 'Free',
+      updated_at: null
+    };
+  }
+
+  const { data: tier, error: tierError } = await sba
+    .from('subscription_tiers')
+    .select('id, name, display_name')
+    .eq('id', active.tier_id)
+    .maybeSingle();
+  if (tierError) throw new Error(`getSubscriptionTier: ${tierError.message}`);
+
+  return {
+    subscription_id: active.id || null,
+    status: active.status || null,
+    provider: active.provider || null,
+    tier_id: active.tier_id || null,
+    tier_name: tier?.name || 'free',
+    tier_display_name: tier?.display_name || 'Free',
+    updated_at: active.updated_at || null
+  };
+}
+
 // ─── PayPal access token ────────────────────────────────────────────────────
 let _ppToken = null;
 let _ppTokenExpiry = 0;
@@ -151,6 +198,16 @@ router.get('/paypal/config', (_req, res) => {
     planIdPro,
     planIdEnterprise
   });
+});
+
+router.get('/subscription-status', requireAuth, async (req, res) => {
+  try {
+    const status = await getBestSubscriptionStatus(req.user.id);
+    res.json(status);
+  } catch (err) {
+    console.error('[payments/subscription-status]', err.message);
+    res.status(500).json({ error: 'Failed to load subscription status' });
+  }
 });
 
 async function ppGet(path) {

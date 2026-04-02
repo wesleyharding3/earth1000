@@ -18876,6 +18876,18 @@ grmClockTick();
 
   // ── Load tier from DB + set globals ─────────────────────────
   async function loadUserTier(userId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      acctDpTier.textContent = data?.tier_display_name || 'Free';
+      acctDpTier.className = `acctDpTier ${data?.tier_name || 'free'}`;
+      window.__userTier = data?.tier_name || 'free';
+      return;
+    } catch (err) {
+      console.warn('[auth] backend tier load failed:', err.message);
+    }
+
     const { data, error } = await sb
       .from('subscriptions')
       .select('status, updated_at, tier_id')
@@ -18941,6 +18953,15 @@ grmClockTick();
   }
   window.__refreshSubscriptionState = refreshSubscriptionState;
 
+  function clearAuthUI() {
+    window.__authToken = null;
+    window.__isAdmin = false;
+    window.__userTier = 'free';
+    const badge = accountDropdown.querySelector('.acctAdminBadge');
+    if (badge) badge.remove();
+    updateAccountUI(null);
+  }
+
   // ── Ensure new user has a free subscription row ──────────────
   async function ensureSubscription(userId) {
     const { data: existingRows, error: existingError } = await sb
@@ -19004,16 +19025,18 @@ grmClockTick();
 
   async function signOut() {
     try {
-      const { error } = await sb.auth.signOut();
+      const { error } = await sb.auth.signOut({ scope: 'local' });
       if (error) throw error;
+      clearAuthUI();
+      window.location.replace('/');
     } catch (err) {
       if (String(err?.message || '').includes('another request stole it') || String(err?.message || '').includes('released because another request stole it')) {
         await sleep(150);
-        const retry = await sb.auth.signOut().catch((retryErr) => ({ error: retryErr }));
+        const retry = await sb.auth.signOut({ scope: 'local' }).catch((retryErr) => ({ error: retryErr }));
         if (retry?.error) {
           console.warn('[auth] signOut retry failed:', retry.error.message || retry.error);
-          window.__authToken = null;
-          window.location.reload();
+          clearAuthUI();
+          window.location.replace('/');
         }
         return;
       }
@@ -19056,25 +19079,35 @@ grmClockTick();
   suPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signUp(); });
   suEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signUp(); });
 
-  // ── Auth state — fires on load + every sign-in/out ───────────
-  sb.auth.onAuthStateChange(async (event, session) => {
+  async function applySession(session) {
     const user = session?.user ?? null;
-    // Store JWT so fetch interceptor can attach it to API calls
     window.__authToken = session?.access_token ?? null;
     updateAccountUI(user);
     if (user) {
       await ensureSubscription(user.id);
       await loadSettings(user.id);
-      await loadProfile();          // loads is_admin + tier from backend
+      await loadProfile();
       await maybeShowOnboarding(user.id);
     } else {
-      window.__isAdmin  = false;
-      window.__userTier = 'free';
-      // Remove admin badge if present
-      const badge = accountDropdown.querySelector('.acctAdminBadge');
-      if (badge) badge.remove();
+      clearAuthUI();
     }
+  }
+
+  // ── Auth state — fires on load + every sign-in/out ───────────
+  sb.auth.onAuthStateChange(async (_event, session) => {
+    await applySession(session);
   });
+
+  (async function initAuth() {
+    try {
+      const { data, error } = await sb.auth.getSession();
+      if (error) throw error;
+      await applySession(data?.session || null);
+    } catch (err) {
+      console.warn('[auth] initial session load failed:', err.message);
+      clearAuthUI();
+    }
+  })();
 
   // ── Onboarding questionnaire ──────────────────────────────────
   let _obHomeCountry = null;
@@ -21931,7 +21964,11 @@ body.ticker-active .tabLabel {
 
   const params = new URLSearchParams(window.location.search);
   if (params.get('subscription') === 'success') {
-    setTimeout(() => {
+    (async function handleSubscriptionSuccess() {
+      for (let i = 0; i < 20; i += 1) {
+        if (window.__currentUser && typeof window.__refreshSubscriptionState === 'function') break;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
       window.__refreshSubscriptionState?.({ showToast: true }).catch((err) => {
         console.warn('[auth] subscription refresh failed:', err.message);
       });
@@ -21941,7 +21978,7 @@ body.ticker-active .tabLabel {
         cleanUrl.searchParams.delete('tier');
         window.history.replaceState({}, '', cleanUrl.toString());
       }
-    }, 400);
+    })();
   }
 })();
 </script>
