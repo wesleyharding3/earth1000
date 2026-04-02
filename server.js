@@ -211,6 +211,17 @@ function pickBestActiveSubscription(subscriptions = []) {
   })[0];
 }
 
+async function resolveTierRecordById(tierId) {
+  if (!tierId) return null;
+  const { data, error } = await sba
+    .from("subscription_tiers")
+    .select("id, name, display_name")
+    .eq("id", tierId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data || null;
+}
+
 // optionalAuth — enriches req.user when a valid Bearer JWT is present.
 // Loads is_admin + active tier from Supabase. Falls through silently if no token.
 async function optionalAuth(req, res, next) {
@@ -230,8 +241,15 @@ async function optionalAuth(req, res, next) {
 
     if (profile) {
       req.user.is_admin = profile.is_admin || false;
-      const activeSub   = pickBestActiveSubscription(profile.subscriptions || []);
-      req.user.tier     = activeSub?.subscription_tiers?.name || "free";
+      const { data: subs, error: subsError } = await sba
+        .from("subscriptions")
+        .select("status, updated_at, tier_id")
+        .eq("user_id", req.user.id)
+        .eq("status", "active");
+      if (subsError) throw new Error(subsError.message);
+      const activeSub = pickBestActiveSubscription(subs || []);
+      const tierRow = await resolveTierRecordById(activeSub?.tier_id);
+      req.user.tier = tierRow?.name || "free";
     } else {
       req.user.is_admin = false;
       req.user.tier     = "free";
@@ -303,20 +321,27 @@ app.get("/api/auth/profile", async (req, res) => {
 
     const { data: profile, error } = await sba
       .from("profiles")
-      .select("id, is_admin, created_at, subscriptions(status, updated_at, subscription_tiers(name, display_name))")
+      .select("id, is_admin, created_at")
       .eq("id", authUser.id)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
     if (!profile) return res.status(404).json({ error: "Profile not found" });
 
-    const activeSub = pickBestActiveSubscription(profile.subscriptions || []);
+    const { data: subs, error: subsError } = await sba
+      .from("subscriptions")
+      .select("status, updated_at, tier_id")
+      .eq("user_id", authUser.id)
+      .eq("status", "active");
+    if (subsError) throw new Error(subsError.message);
+    const activeSub = pickBestActiveSubscription(subs || []);
+    const tierRow = await resolveTierRecordById(activeSub?.tier_id);
     res.json({
       id:                   profile.id,
       is_admin:             profile.is_admin,
       created_at:           profile.created_at,
-      tier_name:            activeSub?.subscription_tiers?.name        || "free",
-      tier_display_name:    activeSub?.subscription_tiers?.display_name || "Free",
+      tier_name:            tierRow?.name || "free",
+      tier_display_name:    tierRow?.display_name || "Free",
       subscription_status:  activeSub?.status || null,
       email:                authUser.email,
     });

@@ -18771,13 +18771,27 @@ grmClockTick();
     const activeRows = (rows || []).filter((row) => row?.status === 'active');
     if (!activeRows.length) return null;
     return activeRows.sort((a, b) => {
-      const tierA = TIER_ORDER.indexOf(a?.subscription_tiers?.name || 'free');
-      const tierB = TIER_ORDER.indexOf(b?.subscription_tiers?.name || 'free');
+      const tierA = Number(a?.tier_id) || 0;
+      const tierB = Number(b?.tier_id) || 0;
       if (tierA !== tierB) return tierB - tierA;
       const updatedA = new Date(a?.updated_at || 0).getTime();
       const updatedB = new Date(b?.updated_at || 0).getTime();
       return updatedB - updatedA;
     })[0];
+  }
+
+  async function loadTierRecord(tierId) {
+    if (!tierId) return null;
+    const { data, error } = await sb
+      .from('subscription_tiers')
+      .select('id, name, display_name')
+      .eq('id', tierId)
+      .maybeSingle();
+    if (error) {
+      console.warn('[auth] tier record load failed:', error.message);
+      return null;
+    }
+    return data || null;
   }
 
   // Global helper: returns true if user meets or exceeds minTier (admins always pass)
@@ -18865,7 +18879,7 @@ grmClockTick();
 
     const { data, error } = await sb
       .from('subscriptions')
-      .select('status, updated_at, subscription_tiers(name, display_name)')
+      .select('status, updated_at, tier_id')
       .eq('user_id', userId)
       .eq('status', 'active');
     if (error) {
@@ -18873,7 +18887,7 @@ grmClockTick();
       return;
     }
     const bestSub = pickBestSubscription(data || []);
-    const tier = bestSub?.subscription_tiers;
+    const tier = await loadTierRecord(bestSub?.tier_id);
     acctDpTier.textContent  = tier?.display_name ?? 'Free';
     acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
     window.__userTier = tier?.name ?? 'free';
