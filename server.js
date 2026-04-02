@@ -31,9 +31,6 @@ app.use(cors({
 
 app.use(express.json());
 
-// Mount payment routes
-app.use("/api/payments", payments.router);
-
 const DATE_LIKE_KEYWORD_PATTERNS = [
   /^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?$/i,
   /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/i,
@@ -255,6 +252,9 @@ function requireTier(minTier) {
 
 // Apply optionalAuth globally — enriches req.user on every request when a token is present
 app.use(optionalAuth);
+
+// Mount payment routes after optionalAuth so subscription activation can require req.user
+app.use("/api/payments", payments.router);
 
 /* =========================================
    Auth — Profile (requires valid JWT)
