@@ -18775,6 +18775,10 @@ grmClockTick();
     3: { id: 3, name: 'enterprise', display_name: 'Enterprise' },
   };
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   function pickBestSubscription(rows) {
     const activeRows = (rows || []).filter((row) => row?.status === 'active');
     if (!activeRows.length) return null;
@@ -18888,24 +18892,26 @@ grmClockTick();
     window.__userTier = tier?.name ?? 'free';
   }
 
-  // ── Load full profile from backend (admin flag + tier) ───────
+  // ── Load profile/admin state directly from Supabase ───────────
   async function loadProfile() {
-    if (!window.__authToken) {
+    const user = currentUser || window.__currentUser;
+    if (!user) {
       window.__isAdmin = false;
+      const badge = accountDropdown.querySelector('.acctAdminBadge');
+      if (badge) badge.remove();
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/api/auth/profile`);
-      if (!res.ok) {
-        if (res.status !== 404) return;
-        window.__isAdmin = false;
-        return;
-      }
-      const data = await res.json();
-      window.__isAdmin  = data.is_admin  || false;
+      const { data, error } = await sb
+        .from('profiles')
+        .select('is_admin')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (error) throw error;
+      window.__isAdmin = data?.is_admin || false;
       // Update dropdown badge for admin
       let badge = accountDropdown.querySelector('.acctAdminBadge');
-      if (data.is_admin) {
+      if (window.__isAdmin) {
         if (!badge) {
           badge = document.createElement('div');
           badge.className = 'acctAdminBadge';
@@ -18917,7 +18923,7 @@ grmClockTick();
       }
     } catch (e) {
       window.__isAdmin = false;
-      console.warn('[auth] profile fetch failed:', e.message);
+      console.warn('[auth] profile load failed:', e.message);
     }
   }
 
