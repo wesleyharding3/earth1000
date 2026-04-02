@@ -5559,7 +5559,11 @@ body.ticker-active #flowControls {
     @media (pointer: coarse), (max-width: 600px) {
 
       /* ── Bottom tab bar — Apple HIG standard 49px + safe area ── */
-      :root { --page-nav-height: 52px; }
+      :root {
+        --page-nav-height: 52px;
+        --global-ticker-height: 24px;
+        --global-ticker-gap: 0px;
+      }
       .tabItem {
         padding: 9px 6px 7px;
         gap: 4px;
@@ -5630,6 +5634,98 @@ body.ticker-active #flowControls {
         max-height: 70vh;
         overflow-y: auto;
       }
+
+      /* ── Mobile ticker: flush to bottom, tab bar sits above it ── */
+      #globalTicker {
+        bottom: 0 !important;
+        height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
+        padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        box-sizing: border-box;
+        z-index: 997;
+      }
+      #pageNav {
+        bottom: calc(var(--global-ticker-height) - 1px);
+      }
+      body.ticker-active #pageNav {
+        bottom: calc(var(--global-ticker-height) - 1px);
+        height: auto;
+        min-height: var(--page-nav-height);
+        background: rgba(7, 9, 13, 0.93) !important;
+        backdrop-filter: blur(18px) !important;
+        -webkit-backdrop-filter: blur(18px) !important;
+        border-top: 1px solid rgba(255,180,80,0.13);
+        align-items: stretch;
+        overflow: hidden;
+      }
+      body.ticker-active .tabItem {
+        margin-top: 0;
+        min-height: var(--page-nav-height);
+        padding: 9px 6px 7px;
+        background: transparent;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        border: none;
+        border-radius: 0;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .gTickerLabel {
+        font-size: 7px;
+        letter-spacing: 1px;
+        padding: 0 8px;
+      }
+      .gTickerTrackWrap { min-width: 0; }
+      .gTickerTrack {
+        display: inline-flex;
+        align-items: center;
+        width: max-content;
+      }
+      .gTickerItem {
+        display: inline-flex;
+        align-items: center;
+      }
+      .gTickerSource,
+      .gTickerLocation,
+      .gTickerDate { font-size: 7px; }
+      .gTickerTitle,
+      .gTickerSummary { font-size: 9px; }
+      .gTickerDiv {
+        margin: 0 12px;
+        font-size: 9px;
+      }
+
+      /* ── Top controls: move into safe area and shrink a bit ── */
+      #topLeftCluster {
+        top: calc(env(safe-area-inset-top, 0px) + 10px);
+        left: 8px;
+        gap: 6px;
+      }
+      .iconBtn {
+        width: 40px;
+        height: 40px;
+      }
+      .iconBtn svg {
+        width: 15px;
+        height: 15px;
+      }
+      #citySearch.expanded,
+      #searchResults { width: 180px; }
+
+      #compass {
+        top: calc(env(safe-area-inset-top, 0px) + 10px);
+        right: 8px;
+        width: 44px;
+        height: 44px;
+      }
+      #scaleBar {
+        top: calc(env(safe-area-inset-top, 0px) + 62px);
+        right: 8px;
+        transform: scale(0.88);
+        transform-origin: top right;
+      }
+
+      /* ── Remove mid-right mobile zoom/recenter controls ── */
+      #globeNavControls { display: none !important; }
 
       /* ── Pricing / auth modals — full comfortable padding ── */
       #pricingCard  { padding: 28px 18px 22px; }
@@ -21757,9 +21853,10 @@ body.ticker-active .tabLabel {
 <script>
 (function () {
   'use strict';
-  const API = 'https://earth-wjr6.onrender.com';
+  const API = window.__API_BASE || 'https://earth-wjr6.onrender.com';
   const SPEED = 80; // px/sec
   const REFRESH_MS = 10 * 60 * 1000; // refresh articles every 10 min
+  const CACHE_KEY = 'gTickerCacheV1';
   let _articles = [];
   let _visible = true;
 
@@ -21769,6 +21866,23 @@ body.ticker-active .tabLabel {
     catch (_) { return true; }
   }
   function _savePref(v) { try { localStorage.setItem('gTickerVisible', v ? '1' : '0'); } catch (_) {} }
+
+  function _loadCache() {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function _saveCache(articles) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(Array.isArray(articles) ? articles.slice(0, 60) : []));
+    } catch (_) {}
+  }
 
   function _applyVisibility() {
     const el = document.getElementById('globalTicker');
@@ -21804,9 +21918,21 @@ body.ticker-active .tabLabel {
     }).join('<span class="gTickerDiv">◆</span>');
   }
 
+  function _fallbackArticles() {
+    return [{
+      id: -1,
+      source_name: 'Earth',
+      translated_title: 'Live feed updating',
+      summary: 'Reconnecting to the latest cross-referenced headlines.',
+      country_name: '',
+      city_name: '',
+      published_at: new Date().toISOString()
+    }];
+  }
+
   // ── Start / restart animation ─────────────────────────────────────────────
   function _start(articles) {
-    if (!articles.length) return;
+    if (!articles.length) articles = _fallbackArticles();
     _articles = articles;
     const el = document.getElementById('gTickerTrack');
     if (!el) return;
@@ -21818,7 +21944,7 @@ body.ticker-active .tabLabel {
     el.classList.remove('reset');
     requestAnimationFrame(() => {
       const halfW = el.scrollWidth / 2;
-      el.style.animationDuration = (halfW / SPEED).toFixed(1) + 's';
+      el.style.animationDuration = `${Math.max(24, halfW / SPEED).toFixed(1)}s`;
     });
   }
 
@@ -21832,11 +21958,23 @@ body.ticker-active .tabLabel {
   // ── Fetch and refresh ─────────────────────────────────────────────────────
   async function _fetchAndStart() {
     try {
-      const res = await fetch(`${API}/api/articles/recent?limit=60&hours=48`);
-      if (!res.ok) return;
+      const res = await fetch(`${API}/api/articles/recent?limit=60&hours=48`, {
+        signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
+      });
+      if (!res.ok) throw new Error(`ticker_http_${res.status}`);
       const arts = await res.json();
-      if (arts.length) _start(arts);
-    } catch (_) {}
+      if (Array.isArray(arts) && arts.length) {
+        _saveCache(arts);
+        _start(arts);
+        return;
+      }
+      const cached = _loadCache();
+      _start(cached.length ? cached : _fallbackArticles());
+    } catch (err) {
+      console.warn('[global ticker] using cached headlines', err?.message || err);
+      const cached = _loadCache();
+      _start(cached.length ? cached : _fallbackArticles());
+    }
   }
 
   // ── Settings toggle ───────────────────────────────────────────────────────
