@@ -18902,6 +18902,8 @@ grmClockTick();
       const data = await res.json();
       window.__isAdmin  = data.is_admin  || false;
       window.__userTier = data.tier_name || 'free';
+      acctDpTier.textContent = data.tier_display_name || 'Free';
+      acctDpTier.className = `acctDpTier ${data.tier_name || 'free'}`;
       // Update dropdown badge for admin
       let badge = accountDropdown.querySelector('.acctAdminBadge');
       if (data.is_admin) {
@@ -21909,7 +21911,7 @@ body.ticker-active .tabLabel {
   const params = new URLSearchParams(window.location.search);
   if (params.get('subscription') === 'success') {
     setTimeout(() => {
-      refreshSubscriptionState({ showToast: true }).catch((err) => {
+      window.__refreshSubscriptionState?.({ showToast: true }).catch((err) => {
         console.warn('[auth] subscription refresh failed:', err.message);
       });
       if (window.history?.replaceState) {
