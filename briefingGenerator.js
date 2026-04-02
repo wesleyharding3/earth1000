@@ -47,11 +47,116 @@ const THREAD_ACTIVITY_LOOKBACK_DAYS = 3;   // thread must still have fresh activ
 const THREAD_ENRICH_LOOKBACK_DAYS   = 7;   // but enrich from a wider recent window so ongoing stories keep context
 const MIN_RECENT_ARTICLES_AUTO      = 2;   // auto-selection stays stricter
 const MIN_RECENT_ARTICLES_PICK      = 1;   // manual pick mode can include ongoing threads with a single fresh update
+const ARTICLE_POOL_LIMIT            = 14;  // pull a wider pool, then choose a diverse representative set
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
 function today()     { return new Date().toISOString().slice(0, 10); }
 function sleep(ms)   { return new Promise(r => setTimeout(r, ms)); }
+
+function normalizeArticleLanguage(value) {
+  return String(value || 'en').trim().toLowerCase() || 'en';
+}
+
+function normalizeSourceKey(article) {
+  if (article.source_key) return String(article.source_key);
+  if (article.youtube_source_id != null) return `yt:${article.youtube_source_id}`;
+  if (article.source_id != null) return `news:${article.source_id}`;
+  return `unknown:${article.id}`;
+}
+
+function normalizeCountryKey(article) {
+  return article.country_id != null ? String(article.country_id) : null;
+}
+
+function selectDiverseThreadArticles(poolArticles, limit) {
+  const selected = [];
+  const selectedIds = new Set();
+  const sourceCounts = new Map();
+  const countryCounts = new Map();
+  const languageCounts = new Map();
+
+  const articles = poolArticles.map((article, index) => ({
+    ...article,
+    __rank: index,
+    source_key: normalizeSourceKey(article),
+    article_language: normalizeArticleLanguage(article.article_language || article.language),
+    country_key: normalizeCountryKey(article)
+  }));
+
+  while (selected.length < Math.min(limit, articles.length)) {
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (const article of articles) {
+      if (selectedIds.has(article.id)) continue;
+
+      const sourceSeen = sourceCounts.get(article.source_key) || 0;
+      const countrySeen = article.country_key ? (countryCounts.get(article.country_key) || 0) : 0;
+      const languageSeen = languageCounts.get(article.article_language) || 0;
+
+      let score = (Number(article.relevance_score) || 0) * 100;
+      score += Math.max(0, 20 - article.__rank);
+
+      if (!sourceSeen) score += 14;
+      else score -= sourceSeen * 7;
+
+      if (article.country_key) {
+        if (!countrySeen) score += 10;
+        else score -= countrySeen * 5;
+      }
+
+      if (!languageSeen) score += 6;
+      else score -= languageSeen * 2;
+
+      if (article.video_id && !selected.some((item) => item.video_id)) score += 3;
+
+      if (score > bestScore) {
+        best = article;
+        bestScore = score;
+      }
+    }
+
+    if (!best) break;
+    selected.push(best);
+    selectedIds.add(best.id);
+    sourceCounts.set(best.source_key, (sourceCounts.get(best.source_key) || 0) + 1);
+    if (best.country_key) countryCounts.set(best.country_key, (countryCounts.get(best.country_key) || 0) + 1);
+    languageCounts.set(best.article_language, (languageCounts.get(best.article_language) || 0) + 1);
+  }
+
+  return selected;
+}
+
+async function getThreadDiversityStats(threadIds, windowDays = THREAD_ACTIVITY_LOOKBACK_DAYS) {
+  if (!threadIds.length) return new Map();
+
+  const { rows } = await pool.query(`
+    WITH article_lang AS (
+      SELECT article_id, MIN(source_language) AS source_language
+      FROM article_keywords
+      WHERE article_id IN (
+        SELECT sta.article_id
+        FROM story_thread_articles sta
+        WHERE sta.thread_id = ANY($1::int[])
+      )
+      GROUP BY article_id
+    )
+    SELECT
+      sta.thread_id,
+      COUNT(DISTINCT COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text, 'unknown'))::int AS source_count,
+      COUNT(DISTINCT a.country_id)::int AS country_count,
+      COUNT(DISTINCT COALESCE(NULLIF(a.language, ''), al.source_language, 'en'))::int AS language_count
+    FROM story_thread_articles sta
+    JOIN news_articles a ON a.id = sta.article_id
+    LEFT JOIN article_lang al ON al.article_id = a.id
+    WHERE sta.thread_id = ANY($1::int[])
+      AND a.published_at > NOW() - INTERVAL '${windowDays} days'
+    GROUP BY sta.thread_id
+  `, [threadIds]);
+
+  return new Map(rows.map((row) => [Number(row.thread_id), row]));
+}
 
 // ─── Main ──────────────────────────────────────────────────────────────────
 async function run() {
@@ -451,6 +556,7 @@ async function selectThreads(profile = null) {
     WHERE sta.thread_id = ANY($1)
     GROUP BY sta.thread_id
   `, [threadIds]);
+  const diversityStats = await getThreadDiversityStats(threadIds, THREAD_ENRICH_LOOKBACK_DAYS);
 
   const langMap = {};
   for (const row of langRows) {
@@ -469,6 +575,14 @@ async function selectThreads(profile = null) {
     const englishRatio   = langMap[t.id] ?? 1.0;
     const nonEngRatio    = 1 - englishRatio;
     const diversityBoost = nonEngRatio > 0.3 ? nonEngRatio * 0.5 : 0;
+    const stats = diversityStats.get(Number(t.id));
+    const sourceCount = Number(stats?.source_count) || 1;
+    const countryCount = Number(stats?.country_count) || 1;
+    const languageCount = Number(stats?.language_count) || 1;
+    const representationBoost =
+      Math.min(0.24, Math.max(0, sourceCount - 1) * 0.06) +
+      Math.min(0.18, Math.max(0, countryCount - 1) * 0.06) +
+      Math.min(0.14, Math.max(0, languageCount - 1) * 0.07);
 
     // Preference profile boost — rewards categories/regions/keywords chosen in past sessions
     let prefBoost = 0;
@@ -485,7 +599,10 @@ async function selectThreads(profile = null) {
     return {
       ...t,
       englishRatio,
-      diversityScore: Number(t.importance) * (1 + diversityBoost + prefBoost),
+      sourceCount,
+      countryCount,
+      languageCount,
+      diversityScore: Number(t.importance) * (1 + diversityBoost + representationBoost + prefBoost),
       hasVideo:       Number(t.video_count) > 0,
     };
   });
@@ -595,17 +712,26 @@ async function enrichThread(thread) {
   // Pull top recent articles for this thread from a slightly wider window than
   // selection so continuing stories keep current context without dragging in
   // stale history.
-  const { rows: articles } = await pool.query(`
+  const { rows: articlePool } = await pool.query(`
+    WITH article_lang AS (
+      SELECT article_id, MIN(source_language) AS source_language
+      FROM article_keywords
+      GROUP BY article_id
+    )
     SELECT
       a.id, a.title, a.translated_title, a.summary, a.translated_summary,
       a.published_at, a.video_id, a.media_type, a.article_url, a.content,
+      a.language, a.source_id, a.youtube_source_id,
       COALESCE(ns.name, ys.name) AS source_name,
       co.name AS country_name, co.latitude AS lat, co.longitude AS lon,
       ci.name AS city_name, ci.latitude AS city_lat, ci.longitude AS city_lon,
       ci.id AS city_id, co.id AS country_id,
+      COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text, 'unknown') AS source_key,
+      COALESCE(NULLIF(a.language, ''), al.source_language, 'en') AS article_language,
       sta.relevance_score
     FROM story_thread_articles sta
     JOIN news_articles a       ON a.id  = sta.article_id
+    LEFT JOIN article_lang al  ON al.article_id = a.id
     LEFT JOIN news_sources ns  ON ns.id = a.source_id
     LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
     LEFT JOIN countries co     ON co.id = a.country_id
@@ -614,7 +740,8 @@ async function enrichThread(thread) {
       AND a.published_at > NOW() - INTERVAL '${THREAD_ENRICH_LOOKBACK_DAYS} days'
     ORDER BY sta.relevance_score DESC, a.published_at DESC
     LIMIT $2
-  `, [thread.id, MAX_ARTICLES_THREAD]);
+  `, [thread.id, ARTICLE_POOL_LIMIT]);
+  const articles = selectDiverseThreadArticles(articlePool, MAX_ARTICLES_THREAD);
 
   // Primary geographic focus — prefer city, fall back to country
   const geoArticle = articles.find(a => a.city_lat || a.lat);
@@ -1405,12 +1532,16 @@ async function listCandidateThreads(limit = 50) {
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
     LIMIT $1
   `, [limit]);
+  const diversityStats = await getThreadDiversityStats(candidates.map((t) => t.id), THREAD_ENRICH_LOOKBACK_DAYS);
 
   // Tag video presence and region
   return candidates.map(t => ({
     ...t,
     hasVideo: Number(t.video_count) > 0,
     region:   getRegionGroup(t),
+    sourceCount: Number(diversityStats.get(Number(t.id))?.source_count) || 1,
+    countryCount: Number(diversityStats.get(Number(t.id))?.country_count) || 1,
+    languageCount: Number(diversityStats.get(Number(t.id))?.language_count) || 1,
   }));
 }
 

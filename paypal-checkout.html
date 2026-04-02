@@ -132,9 +132,20 @@
       messageEl.classList.toggle('error', Boolean(isError));
     }
 
+    async function getAccessToken(forceRefresh = false) {
+      let { data: sessionData } = await sb.auth.getSession();
+      let session = sessionData?.session || null;
+
+      if ((forceRefresh || !session?.access_token) && session?.refresh_token) {
+        const refreshed = await sb.auth.refreshSession().catch(() => ({ data: null }));
+        session = refreshed?.data?.session || session;
+      }
+
+      return session?.access_token || null;
+    }
+
     async function run() {
-      const { data: sessionData } = await sb.auth.getSession();
-      const authToken = sessionData?.session?.access_token || null;
+      const authToken = await getAccessToken();
       if (!authToken) {
         setMessage('Please sign in on Earth first, then reopen checkout.', true);
         return;
@@ -169,17 +180,40 @@
           createSubscription: (_data, actions) => actions.subscription.create({ plan_id: planId }),
           onApprove: async (data) => {
             setMessage('Activating your subscription...');
-            const res = await fetch(`${API_BASE}/api/payments/paypal/activate`, {
+            let activateToken = await getAccessToken(true);
+            if (!activateToken) activateToken = await getAccessToken();
+            if (!activateToken) {
+              setMessage('Your sign-in session expired. Please return to Earth and sign in again.', true);
+              return;
+            }
+
+            let res = await fetch(`${API_BASE}/api/payments/paypal/activate`, {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${authToken}`,
+                'Authorization': `Bearer ${activateToken}`,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({ subscriptionId: data.subscriptionID, tier })
             });
-            const result = await res.json().catch(() => ({}));
+            let result = await res.json().catch(() => ({}));
+
+            if (res.status === 401) {
+              const retryToken = await getAccessToken(true);
+              if (retryToken) {
+                res = await fetch(`${API_BASE}/api/payments/paypal/activate`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${retryToken}`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({ subscriptionId: data.subscriptionID, tier })
+                });
+                result = await res.json().catch(() => ({}));
+              }
+            }
+
             if (!res.ok || !result.success) {
-              setMessage(result.error || 'Activation failed. Please contact support.', true);
+              setMessage(result.error || `Activation failed (${res.status}). Please contact support.`, true);
               return;
             }
             window.location.href = `/?subscription=success&tier=${encodeURIComponent(tier)}`;

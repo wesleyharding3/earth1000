@@ -13,6 +13,7 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { normalizeRecentKeywords } = require("./keywordNormalizer");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -41,6 +42,20 @@ async function run() {
 
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
+
+  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords...`);
+  const normalization = await normalizeRecentKeywords({
+    pool,
+    anthropicClient: client,
+    logger: console,
+    scope: { hours: LOOKBACK_HOURS }
+  }).catch(err => {
+    console.warn(`   ⚠ Keyword normalization skipped: ${err.message}`);
+    return null;
+  });
+  if (normalization) {
+    console.log(`   [${elapsed()}] Keyword normalization provider=${normalization.provider} updated_keywords=${normalization.updatedKeywords} updated_rows=${normalization.updatedRows}`);
+  }
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
   const articles = await getUnthreadedArticles(LOOKBACK_HOURS);
@@ -104,7 +119,7 @@ function sqlCluster(articles) {
   const kwIndex = new Map();
   for (const a of articles) {
     for (const kw of (a.keywords || [])) {
-      const k = kw.toLowerCase().trim();
+      const k = normalizeKeyword(kw);
       if (k.length < 4 || SKIP_KEYWORDS.has(k)) continue;
       if (!kwIndex.has(k)) kwIndex.set(k, []);
       kwIndex.get(k).push(a);
@@ -163,7 +178,7 @@ async function evaluateWithClaude(articles, existingThreads) {
   const articleData = articles.map(a => ({
     id:           a.id,
     title:        a.title,
-    summary:      (a.summary || a.translated_summary || "").slice(0, 250),
+    summary:      (a.translated_summary || a.summary || "").slice(0, 250),
     keywords:     (a.keywords || []).slice(0, 12),
     country:      a.country_name || null,
     city:         a.city_name || null,
@@ -563,11 +578,24 @@ async function getActiveThreads() {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function normalizeKeyword(keyword) {
-  return String(keyword || "").trim().toLowerCase();
+  return String(keyword || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[“”"'`]/g, "")
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function mergeKeywords(existingKeywords, incomingKeywords) {
-  return [...new Set([...(existingKeywords || []), ...(incomingKeywords || [])].filter(Boolean))];
+  const merged = new Map();
+  for (const keyword of [...(existingKeywords || []), ...(incomingKeywords || [])]) {
+    const normalized = normalizeKeyword(keyword);
+    if (!normalized || merged.has(normalized)) continue;
+    merged.set(normalized, String(keyword || "").trim());
+  }
+  return [...merged.values()];
 }
 
 function shouldRefreshThreadContext(thread, incomingKeywords) {
