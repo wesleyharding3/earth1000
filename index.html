@@ -18768,6 +18768,11 @@ grmClockTick();
 
   // Tier order for comparisons
   const TIER_ORDER = ['free', 'pro', 'enterprise'];
+  const TIER_META_BY_ID = {
+    1: { id: 1, name: 'free', display_name: 'Free' },
+    2: { id: 2, name: 'pro', display_name: 'Pro' },
+    3: { id: 3, name: 'enterprise', display_name: 'Enterprise' },
+  };
 
   function pickBestSubscription(rows) {
     const activeRows = (rows || []).filter((row) => row?.status === 'active');
@@ -18783,6 +18788,8 @@ grmClockTick();
   }
 
   async function loadTierRecord(tierId) {
+    const numericTierId = Number(tierId);
+    if (TIER_META_BY_ID[numericTierId]) return TIER_META_BY_ID[numericTierId];
     if (!tierId) return null;
     const { data, error } = await sb
       .from('subscription_tiers')
@@ -18864,21 +18871,6 @@ grmClockTick();
 
   // ── Load tier from DB + set globals ─────────────────────────
   async function loadUserTier(userId) {
-    if (window.__authToken) {
-      try {
-        const res = await fetch(`${API_BASE}/api/auth/profile`);
-        if (res.ok) {
-          const profile = await res.json();
-          acctDpTier.textContent  = profile.tier_display_name ?? 'Free';
-          acctDpTier.className    = `acctDpTier ${profile.tier_name ?? 'free'}`;
-          window.__userTier = profile.tier_name ?? 'free';
-          return;
-        }
-      } catch (e) {
-        console.warn('[auth] profile tier fetch failed:', e.message);
-      }
-    }
-
     const { data, error } = await sb
       .from('subscriptions')
       .select('status, updated_at, tier_id')
@@ -18897,15 +18889,19 @@ grmClockTick();
 
   // ── Load full profile from backend (admin flag + tier) ───────
   async function loadProfile() {
-    if (!window.__authToken) return;
+    if (!window.__authToken) {
+      window.__isAdmin = false;
+      return;
+    }
     try {
       const res = await fetch(`${API_BASE}/api/auth/profile`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        if (res.status !== 404) return;
+        window.__isAdmin = false;
+        return;
+      }
       const data = await res.json();
       window.__isAdmin  = data.is_admin  || false;
-      window.__userTier = data.tier_name || 'free';
-      acctDpTier.textContent = data.tier_display_name || 'Free';
-      acctDpTier.className = `acctDpTier ${data.tier_name || 'free'}`;
       // Update dropdown badge for admin
       let badge = accountDropdown.querySelector('.acctAdminBadge');
       if (data.is_admin) {
@@ -18919,6 +18915,7 @@ grmClockTick();
         badge.remove();
       }
     } catch (e) {
+      window.__isAdmin = false;
       console.warn('[auth] profile fetch failed:', e.message);
     }
   }
