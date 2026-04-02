@@ -18846,6 +18846,21 @@ grmClockTick();
 
   // ── Load tier from DB + set globals ─────────────────────────
   async function loadUserTier(userId) {
+    if (window.__authToken) {
+      try {
+        const res = await fetch('https://earth-wjr6.onrender.com/api/auth/profile');
+        if (res.ok) {
+          const profile = await res.json();
+          acctDpTier.textContent  = profile.tier_display_name ?? 'Free';
+          acctDpTier.className    = `acctDpTier ${profile.tier_name ?? 'free'}`;
+          window.__userTier = profile.tier_name ?? 'free';
+          return;
+        }
+      } catch (e) {
+        console.warn('[auth] profile tier fetch failed:', e.message);
+      }
+    }
+
     const { data, error } = await sb
       .from('subscriptions')
       .select('status, updated_at, subscription_tiers(name, display_name)')
@@ -18902,9 +18917,13 @@ grmClockTick();
 
   // ── Ensure new user has a free subscription row ──────────────
   async function ensureSubscription(userId) {
-    const { data: existing } = await sb
-      .from('subscriptions').select('id').eq('user_id', userId).maybeSingle();
-    if (existing) return;
+    const { data: existingRows, error: existingError } = await sb
+      .from('subscriptions').select('id').eq('user_id', userId).limit(1);
+    if (existingError) {
+      console.warn('[auth] ensureSubscription check failed:', existingError.message);
+      return;
+    }
+    if (existingRows?.length) return;
     const { data: tier } = await sb
       .from('subscription_tiers').select('id').eq('name', 'free').single();
     if (tier) {
@@ -19226,7 +19245,14 @@ grmClockTick();
   window.__openPricing = function (nudgeMsg) {
     document.getElementById('pricingSubtitle').textContent =
       nudgeMsg || 'Unlock the full Earth intelligence platform.';
-    _updatePricingCtaState();
+    if (currentUser) {
+      refreshSubscriptionState().catch((err) => {
+        console.warn('[pricing] subscription refresh failed:', err.message);
+        _updatePricingCtaState();
+      });
+    } else {
+      _updatePricingCtaState();
+    }
     pricingOverlay.classList.add('open');
     _initPayPalButtons();
   };

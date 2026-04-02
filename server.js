@@ -242,6 +242,29 @@ async function optionalAuth(req, res, next) {
   next();
 }
 
+async function resolveSupabaseUserFromRequest(req) {
+  if (req.user?.id) return req.user;
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice(7).trim();
+  if (!token) return null;
+
+  try {
+    const { data, error } = await sba.auth.getUser(token);
+    if (error || !data?.user?.id) return null;
+    req.user = {
+      ...(req.user || {}),
+      id: data.user.id,
+      email: data.user.email || null,
+      is_admin: false,
+      tier: "free"
+    };
+    return req.user;
+  } catch (_) {
+    return null;
+  }
+}
+
 // requireAuth — rejects anonymous requests with 401
 function requireAuth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: "Authentication required" });
@@ -275,10 +298,13 @@ app.use("/api/payments", payments.router);
 ========================================= */
 app.get("/api/auth/profile", async (req, res) => {
   try {
+    const authUser = await resolveSupabaseUserFromRequest(req);
+    if (!authUser?.id) return res.status(401).json({ error: "Authentication required" });
+
     const { data: profile, error } = await sba
       .from("profiles")
       .select("id, is_admin, created_at, subscriptions(status, updated_at, subscription_tiers(name, display_name))")
-      .eq("id", req.user.id)
+      .eq("id", authUser.id)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
@@ -292,7 +318,7 @@ app.get("/api/auth/profile", async (req, res) => {
       tier_name:            activeSub?.subscription_tiers?.name        || "free",
       tier_display_name:    activeSub?.subscription_tiers?.display_name || "Free",
       subscription_status:  activeSub?.status || null,
-      email:                req.user.email,
+      email:                authUser.email,
     });
   } catch (err) {
     console.error("[auth/profile]", err.message);
