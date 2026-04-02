@@ -18728,6 +18728,8 @@ grmClockTick();
 
 <script>
 (function () {
+  const APP_ORIGIN = window.location.origin;
+  const API_BASE = window.__API_BASE || APP_ORIGIN;
   // ── Init Supabase client ─────────────────────────────────────
   const { createClient } = supabase;
   const sb = createClient(
@@ -18805,7 +18807,7 @@ grmClockTick();
     const _orig = window.fetch.bind(window);
     window.fetch = function(url, opts) {
       opts = opts ? { ...opts } : {};
-      if (typeof url === 'string' && url.includes('earth-wjr6.onrender.com') && window.__authToken) {
+      if (typeof url === 'string' && (url.startsWith(API_BASE) || url.startsWith(APP_ORIGIN)) && window.__authToken) {
         opts.headers = Object.assign({ 'Authorization': `Bearer ${window.__authToken}` }, opts.headers || {});
       }
       return _orig(url, opts);
@@ -18864,7 +18866,7 @@ grmClockTick();
   async function loadUserTier(userId) {
     if (window.__authToken) {
       try {
-        const res = await fetch('https://earth-wjr6.onrender.com/api/auth/profile');
+        const res = await fetch(`${API_BASE}/api/auth/profile`);
         if (res.ok) {
           const profile = await res.json();
           acctDpTier.textContent  = profile.tier_display_name ?? 'Free';
@@ -18897,7 +18899,7 @@ grmClockTick();
   async function loadProfile() {
     if (!window.__authToken) return;
     try {
-      const res = await fetch('https://earth-wjr6.onrender.com/api/auth/profile');
+      const res = await fetch(`${API_BASE}/api/auth/profile`);
       if (!res.ok) return;
       const data = await res.json();
       window.__isAdmin  = data.is_admin  || false;
@@ -19255,7 +19257,7 @@ grmClockTick();
 ═══════════════════════════════════════════════════════ -->
 <script>
 (function () {
-  const BASE = window.__API_BASE || 'https://earth-wjr6.onrender.com';
+  const BASE = window.__API_BASE || window.location.origin;
   const PAYPAL_CLIENT_ID = '%%PAYPAL_CLIENT_ID%%'; // replaced at build time or set via runtime config
 
   // ── Pricing modal ──────────────────────────────────────────────
