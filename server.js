@@ -18,7 +18,7 @@ const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAcc
 
 const app = express();
 console.log("Node version:", process.version);
-app.use(cors({
+const corsOptions = {
   origin: [
     "https://wesleyharding3.github.io",
     "https://earth0.onrender.com",
@@ -26,8 +26,13 @@ app.use(cors({
     "http://localhost:5500",
     "capacitor://localhost",
     "ionic://localhost"
-  ]
-}));
+  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type", "Accept"],
+  optionsSuccessStatus: 204,
+};
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 
