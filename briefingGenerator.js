@@ -43,8 +43,10 @@ const MAX_ENGLISH_DOMINANT = 2;   // max threads where >70% of articles are Engl
 const MAX_GLOBAL_BUCKET    = 3;   // cap on threads that fall through to the 'global' region bucket
                                   // (prevents US-centric stories without geo keywords from dominating)
 const MIN_VIDEO_THREADS    = 3;   // at least this many story segments must have a video
-const THREAD_LOOKBACK_DAYS = 3;   // only threads active in last N days
-const THREAD_MAX_AGE_DAYS  = 21;  // exclude threads whose first article is older than N days
+const THREAD_ACTIVITY_LOOKBACK_DAYS = 3;   // thread must still have fresh activity to be briefing-eligible
+const THREAD_ENRICH_LOOKBACK_DAYS   = 7;   // but enrich from a wider recent window so ongoing stories keep context
+const MIN_RECENT_ARTICLES_AUTO      = 2;   // auto-selection stays stricter
+const MIN_RECENT_ARTICLES_PICK      = 1;   // manual pick mode can include ongoing threads with a single fresh update
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 function elapsed(t0) { return `+${((Date.now() - t0) / 1000).toFixed(1)}s`; }
@@ -413,15 +415,9 @@ function getRegionGroup(thread) {
 
 async function selectThreads(profile = null) {
   // Step 1: Pull candidate threads with video presence flagged.
-  // CTE computes the earliest article date per thread (across all history)
-  // to exclude threads whose story started more than THREAD_MAX_AGE_DAYS ago.
+  // Ongoing stories remain eligible as long as they are still active and have
+  // fresh developments in the recent activity window.
   const { rows: candidates } = await pool.query(`
-    WITH thread_origin AS (
-      SELECT sta2.thread_id, MIN(a2.published_at) AS first_article_date
-      FROM story_thread_articles sta2
-      JOIN news_articles a2 ON a2.id = sta2.article_id
-      GROUP BY sta2.thread_id
-    )
     SELECT
       st.id, st.title, st.description, st.importance,
       st.primary_category, st.geographic_scope, st.keywords,
@@ -431,13 +427,11 @@ async function selectThreads(profile = null) {
     FROM story_threads st
     JOIN story_thread_articles sta ON sta.thread_id = st.id
     JOIN news_articles a           ON a.id = sta.article_id
-    JOIN thread_origin  tori       ON tori.thread_id = st.id
     WHERE st.status = 'active'
-      AND st.last_updated_at  > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND a.published_at      > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND tori.first_article_date > NOW() - INTERVAL '${THREAD_MAX_AGE_DAYS} days'
+      AND st.last_updated_at  > NOW() - INTERVAL '${THREAD_ACTIVITY_LOOKBACK_DAYS} days'
+      AND a.published_at      > NOW() - INTERVAL '${THREAD_ACTIVITY_LOOKBACK_DAYS} days'
     GROUP BY st.id
-    HAVING COUNT(sta.article_id) >= 2
+    HAVING COUNT(sta.article_id) >= ${MIN_RECENT_ARTICLES_AUTO}
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
     LIMIT 80
   `);
@@ -598,7 +592,9 @@ async function pickPlayableVideo(articles, primaryCountryId) {
 
 // ─── Thread Enrichment ─────────────────────────────────────────────────────
 async function enrichThread(thread) {
-  // Pull top articles for this thread
+  // Pull top recent articles for this thread from a slightly wider window than
+  // selection so continuing stories keep current context without dragging in
+  // stale history.
   const { rows: articles } = await pool.query(`
     SELECT
       a.id, a.title, a.translated_title, a.summary, a.translated_summary,
@@ -615,7 +611,7 @@ async function enrichThread(thread) {
     LEFT JOIN countries co     ON co.id = a.country_id
     LEFT JOIN cities ci        ON ci.id = a.city_id
     WHERE sta.thread_id = $1
-      AND a.published_at > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
+      AND a.published_at > NOW() - INTERVAL '${THREAD_ENRICH_LOOKBACK_DAYS} days'
     ORDER BY sta.relevance_score DESC, a.published_at DESC
     LIMIT $2
   `, [thread.id, MAX_ARTICLES_THREAD]);
@@ -1393,12 +1389,6 @@ async function ensureCurationTable() {
 // sorted by importance × diversity for display.
 async function listCandidateThreads(limit = 50) {
   const { rows: candidates } = await pool.query(`
-    WITH thread_origin AS (
-      SELECT sta2.thread_id, MIN(a2.published_at) AS first_article_date
-      FROM story_thread_articles sta2
-      JOIN news_articles a2 ON a2.id = sta2.article_id
-      GROUP BY sta2.thread_id
-    )
     SELECT
       st.id, st.title, st.primary_category, st.importance, st.keywords,
       st.geographic_scope,
@@ -1407,13 +1397,11 @@ async function listCandidateThreads(limit = 50) {
     FROM story_threads st
     JOIN story_thread_articles sta ON sta.thread_id = st.id
     JOIN news_articles a           ON a.id = sta.article_id
-    JOIN thread_origin  tori       ON tori.thread_id = st.id
     WHERE st.status = 'active'
-      AND st.last_updated_at  > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND a.published_at      > NOW() - INTERVAL '${THREAD_LOOKBACK_DAYS} days'
-      AND tori.first_article_date > NOW() - INTERVAL '${THREAD_MAX_AGE_DAYS} days'
+      AND st.last_updated_at  > NOW() - INTERVAL '${THREAD_ACTIVITY_LOOKBACK_DAYS} days'
+      AND a.published_at      > NOW() - INTERVAL '${THREAD_ACTIVITY_LOOKBACK_DAYS} days'
     GROUP BY st.id
-    HAVING COUNT(sta.article_id) >= 2
+    HAVING COUNT(sta.article_id) >= ${MIN_RECENT_ARTICLES_PICK}
     ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
     LIMIT $1
   `, [limit]);
