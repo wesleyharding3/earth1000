@@ -197,6 +197,20 @@ async function getTradeSummary(tableName, query) {
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 const TIER_ORDER = ["free", "pro", "enterprise"];
 
+function pickBestActiveSubscription(subscriptions = []) {
+  const activeSubs = (subscriptions || []).filter((subscription) => subscription?.status === "active");
+  if (!activeSubs.length) return null;
+
+  return activeSubs.sort((a, b) => {
+    const tierA = TIER_ORDER.indexOf(a?.subscription_tiers?.name || "free");
+    const tierB = TIER_ORDER.indexOf(b?.subscription_tiers?.name || "free");
+    if (tierA !== tierB) return tierB - tierA;
+    const updatedA = new Date(a?.updated_at || 0).getTime();
+    const updatedB = new Date(b?.updated_at || 0).getTime();
+    return updatedB - updatedA;
+  })[0];
+}
+
 // optionalAuth — enriches req.user when a valid Bearer JWT is present.
 // Loads is_admin + active tier from Supabase. Falls through silently if no token.
 async function optionalAuth(req, res, next) {
@@ -210,13 +224,13 @@ async function optionalAuth(req, res, next) {
     // Load admin flag + active subscription tier from Supabase
     const { data: profile } = await sba
       .from("profiles")
-      .select("is_admin, subscriptions(status, subscription_tiers(name))")
+      .select("is_admin, subscriptions(status, updated_at, subscription_tiers(name))")
       .eq("id", req.user.id)
       .maybeSingle();
 
     if (profile) {
       req.user.is_admin = profile.is_admin || false;
-      const activeSub   = (profile.subscriptions || []).find(s => s.status === "active");
+      const activeSub   = pickBestActiveSubscription(profile.subscriptions || []);
       req.user.tier     = activeSub?.subscription_tiers?.name || "free";
     } else {
       req.user.is_admin = false;
@@ -263,14 +277,14 @@ app.get("/api/auth/profile", async (req, res) => {
   try {
     const { data: profile, error } = await sba
       .from("profiles")
-      .select("id, is_admin, created_at, subscriptions(status, subscription_tiers(name, display_name))")
+      .select("id, is_admin, created_at, subscriptions(status, updated_at, subscription_tiers(name, display_name))")
       .eq("id", req.user.id)
       .maybeSingle();
 
     if (error) throw new Error(error.message);
     if (!profile) return res.status(404).json({ error: "Profile not found" });
 
-    const activeSub = (profile.subscriptions || []).find(s => s.status === "active");
+    const activeSub = pickBestActiveSubscription(profile.subscriptions || []);
     res.json({
       id:                   profile.id,
       is_admin:             profile.is_admin,

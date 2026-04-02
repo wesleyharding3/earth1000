@@ -18766,6 +18766,19 @@ grmClockTick();
   // Tier order for comparisons
   const TIER_ORDER = ['free', 'pro', 'enterprise'];
 
+  function pickBestSubscription(rows) {
+    const activeRows = (rows || []).filter((row) => row?.status === 'active');
+    if (!activeRows.length) return null;
+    return activeRows.sort((a, b) => {
+      const tierA = TIER_ORDER.indexOf(a?.subscription_tiers?.name || 'free');
+      const tierB = TIER_ORDER.indexOf(b?.subscription_tiers?.name || 'free');
+      if (tierA !== tierB) return tierB - tierA;
+      const updatedA = new Date(a?.updated_at || 0).getTime();
+      const updatedB = new Date(b?.updated_at || 0).getTime();
+      return updatedB - updatedA;
+    })[0];
+  }
+
   // Global helper: returns true if user meets or exceeds minTier (admins always pass)
   window.__checkTier = function(minTier) {
     if (window.__isAdmin) return true;
@@ -18833,13 +18846,17 @@ grmClockTick();
 
   // ── Load tier from DB + set globals ─────────────────────────
   async function loadUserTier(userId) {
-    const { data } = await sb
+    const { data, error } = await sb
       .from('subscriptions')
-      .select('subscription_tiers(name, display_name)')
+      .select('status, updated_at, subscription_tiers(name, display_name)')
       .eq('user_id', userId)
-      .eq('status', 'active')
-      .maybeSingle();
-    const tier = data?.subscription_tiers;
+      .eq('status', 'active');
+    if (error) {
+      console.warn('[auth] tier load failed:', error.message);
+      return;
+    }
+    const bestSub = pickBestSubscription(data || []);
+    const tier = bestSub?.subscription_tiers;
     acctDpTier.textContent  = tier?.display_name ?? 'Free';
     acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
     window.__userTier = tier?.name ?? 'free';
@@ -18868,6 +18885,18 @@ grmClockTick();
       }
     } catch (e) {
       console.warn('[auth] profile fetch failed:', e.message);
+    }
+  }
+
+  async function refreshSubscriptionState(options = {}) {
+    if (!currentUser) return;
+    await loadUserTier(currentUser.id);
+    await loadProfile();
+    if (typeof window.__updatePricingState === 'function') {
+      window.__updatePricingState();
+    }
+    if (options.showToast && typeof window.__showToast === 'function') {
+      window.__showToast(`Subscription updated: ${window.__userTier}`);
     }
   }
 
@@ -19274,6 +19303,7 @@ grmClockTick();
       if (ppEnt)   { ppEnt.style.display   = '';     }
     }
   }
+  window.__updatePricingState = _updatePricingCtaState;
 
   // ── PayPal ─────────────────────────────────────────────────────
   let _ppConfig = null;
@@ -19447,6 +19477,7 @@ grmClockTick();
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 4000);
   }
+  window.__showToast = _showToast;
 
   // ── Wire "Upgrade" link in account dropdown ─────────────────────
   document.addEventListener('DOMContentLoaded', () => {
@@ -21830,6 +21861,21 @@ body.ticker-active .tabLabel {
       setTimeout(showHint, 1800);
     }
   });
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('subscription') === 'success') {
+    setTimeout(() => {
+      refreshSubscriptionState({ showToast: true }).catch((err) => {
+        console.warn('[auth] subscription refresh failed:', err.message);
+      });
+      if (window.history?.replaceState) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete('subscription');
+        cleanUrl.searchParams.delete('tier');
+        window.history.replaceState({}, '', cleanUrl.toString());
+      }
+    }, 400);
+  }
 })();
 </script>
 </body>
