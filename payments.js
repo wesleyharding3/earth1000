@@ -150,9 +150,35 @@ function ppPlanToTier(planId) {
 }
 
 // ─── Auth middleware ────────────────────────────────────────────────────────
-function requireAuth(req, res, next) {
-  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
-  next();
+async function requireAuth(req, res, next) {
+  if (req.user?.id) return next();
+
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  try {
+    const { data, error } = await sba.auth.getUser(token);
+    if (error || !data?.user?.id) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    req.user = {
+      ...(req.user || {}),
+      id: data.user.id,
+      email: data.user.email || null
+    };
+    return next();
+  } catch (err) {
+    console.error('[payments/auth]', err.message);
+    return res.status(401).json({ error: 'Authentication required' });
+  }
 }
 
 // ─── PayPal — Activate subscription after user approval ───────────────────
