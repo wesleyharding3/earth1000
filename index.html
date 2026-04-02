@@ -5639,17 +5639,30 @@ body.ticker-active #flowControls {
       #globalTicker {
         bottom: 0 !important;
         height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
-        padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        padding-bottom: 0;
         box-sizing: border-box;
+        align-items: flex-start;
         z-index: 997;
       }
+      #globalTicker::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        background: rgba(0,0,6,0.94);
+        pointer-events: none;
+      }
       #pageNav {
-        bottom: calc(var(--global-ticker-height) - 1px);
+        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) - 1px);
+        padding-bottom: 0;
       }
       body.ticker-active #pageNav {
-        bottom: calc(var(--global-ticker-height) - 1px);
+        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) - 1px);
         height: auto;
         min-height: var(--page-nav-height);
+        padding-bottom: 0;
         background: rgba(7, 9, 13, 0.93) !important;
         backdrop-filter: blur(18px) !important;
         -webkit-backdrop-filter: blur(18px) !important;
@@ -5673,16 +5686,27 @@ body.ticker-active #flowControls {
         font-size: 7px;
         letter-spacing: 1px;
         padding: 0 8px;
+        height: var(--global-ticker-height);
+        min-height: var(--global-ticker-height);
       }
-      .gTickerTrackWrap { min-width: 0; }
+      .gTickerTrackWrap {
+        min-width: 0;
+        height: var(--global-ticker-height);
+        min-height: var(--global-ticker-height);
+        align-items: center;
+      }
       .gTickerTrack {
         display: inline-flex;
         align-items: center;
         width: max-content;
+        height: var(--global-ticker-height);
+        line-height: 1;
       }
       .gTickerItem {
         display: inline-flex;
         align-items: center;
+        min-height: var(--global-ticker-height);
+        line-height: 1;
       }
       .gTickerSource,
       .gTickerLocation,
@@ -5692,6 +5716,7 @@ body.ticker-active #flowControls {
       .gTickerDiv {
         margin: 0 12px;
         font-size: 9px;
+        line-height: 1;
       }
 
       /* ── Top controls: move into safe area and shrink a bit ── */
