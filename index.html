@@ -18732,10 +18732,11 @@ grmClockTick();
   const API_BASE = window.__API_BASE || 'https://earth-wjr6.onrender.com';
   // ── Init Supabase client ─────────────────────────────────────
   const { createClient } = supabase;
-  const sb = createClient(
+  const sb = window.__earthSupabase || createClient(
     'https://hqzabwjwuszupxwookgx.supabase.co',
     'sb_publishable_9mT1GessoNyi5cvPN-PSbw_IcTydubW'
   );
+  window.__earthSupabase = sb;
 
   // ── DOM refs ─────────────────────────────────────────────────
   const accountBtn      = document.getElementById('accountBtn');
@@ -18996,7 +18997,22 @@ grmClockTick();
   }
 
   async function signOut() {
-    await sb.auth.signOut();
+    try {
+      const { error } = await sb.auth.signOut();
+      if (error) throw error;
+    } catch (err) {
+      if (String(err?.message || '').includes('another request stole it') || String(err?.message || '').includes('released because another request stole it')) {
+        await sleep(150);
+        const retry = await sb.auth.signOut().catch((retryErr) => ({ error: retryErr }));
+        if (retry?.error) {
+          console.warn('[auth] signOut retry failed:', retry.error.message || retry.error);
+          window.__authToken = null;
+          window.location.reload();
+        }
+        return;
+      }
+      throw err;
+    }
   }
 
   async function forgotPassword() {
