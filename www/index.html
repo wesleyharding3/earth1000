@@ -8882,6 +8882,7 @@ function computeCityTiers(cities) {
       let focusTargetQuat = null;
       let focusInitialAngle = 0;
       let focusPendingPanel = null;   // callback fired when focus animation completes
+      let focusPanelTimer = null;     // touch fallback if focus callback never fires
       let preFocusZoom = 3;           // zoom level before focus, restored on panel close
       let focusLocked = false;        // true after focus lands — skip rebuildGlobeQuat until next drag
       let timeInterval = null;
@@ -8891,6 +8892,28 @@ function computeCityTiers(cities) {
       let touchDragging = false;
       let touchPrevX = 0, touchPrevY = 0;
       let touchTapMoved = false;
+
+      function clearFocusPanelTimer() {
+        if (!focusPanelTimer) return;
+        clearTimeout(focusPanelTimer);
+        focusPanelTimer = null;
+      }
+
+      function queueFocusPanelOpen(callback, options = {}) {
+        const { immediate = false } = options;
+        clearFocusPanelTimer();
+        focusPendingPanel = callback;
+        if (!immediate) return;
+        focusPanelTimer = setTimeout(() => {
+          const cb = focusPendingPanel;
+          focusPendingPanel = null;
+          focusPanelTimer = null;
+          if (cb && !document.getElementById("infoPanel")?.classList.contains("active")) {
+            cb();
+            targetZoom = 2.3;
+          }
+        }, 220);
+      }
 
       window.addEventListener("mousedown", e => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
@@ -8905,6 +8928,7 @@ function computeCityTiers(cities) {
           zoomVelocity = 0;
           focusTargetQuat = null;
           focusPendingPanel = null;
+          clearFocusPanelTimer();
           isFocused = false;
           selectedNodeIndex = null;
           focusLocked = true;
@@ -8996,6 +9020,7 @@ function computeCityTiers(cities) {
           if (focusTargetQuat && !isPostTapJitter) {
             focusTargetQuat = null;
             focusPendingPanel = null;
+            clearFocusPanelTimer();
             isFocused = false;
             selectedNodeIndex = null;
             focusLocked = true;
@@ -10625,6 +10650,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           zoomVelocity = 0;
           focusTargetQuat = null;
           focusPendingPanel = null;
+          clearFocusPanelTimer();
           isFocused = false;
           selectedNodeIndex = null;
           focusLocked = true;  // Keep camera frozen until drag or new focus
@@ -10655,7 +10681,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               isFocused = true; preFocusZoom = camera.position.z;
               const r = regionData[index];
               focusRegion(r);
-              focusPendingPanel = () => openRegionPanel(r);
+              queueFocusPanelOpen(() => openRegionPanel(r));
             }
           }
           return;
@@ -10693,10 +10719,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           preFocusZoom = camera.position.z;
           if (currentViewMode === "country") {
             focusCountry(activeData[bestIdx]);
-            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "country");
+            queueFocusPanelOpen(() => openNodePanel(activeData[bestIdx], "country"));
           } else {
             focusCity(activeData[bestIdx]);
-            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "city");
+            queueFocusPanelOpen(() => openNodePanel(activeData[bestIdx], "city"));
           }
         }
       });
@@ -10725,6 +10751,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           zoomVelocity = 0;
           focusTargetQuat = null;
           focusPendingPanel = null;
+          clearFocusPanelTimer();
           isFocused = false;
           selectedNodeIndex = null;
           focusLocked = true;  // Keep camera frozen until drag or new focus
@@ -10756,7 +10783,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               isFocused = true; preFocusZoom = camera.position.z;
               const r = regionData[index];
               focusRegion(r);
-              focusPendingPanel = () => openRegionPanel(r);
+              queueFocusPanelOpen(() => openRegionPanel(r), { immediate: true });
             }
           }
           return;
@@ -10793,10 +10820,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           preFocusZoom = camera.position.z;
           if (currentViewMode === "country") {
             focusCountry(activeData[bestIdx]);
-            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "country");
+            queueFocusPanelOpen(() => openNodePanel(activeData[bestIdx], "country"), { immediate: true });
           } else {
             focusCity(activeData[bestIdx]);
-            focusPendingPanel = () => openNodePanel(activeData[bestIdx], "city");
+            queueFocusPanelOpen(() => openNodePanel(activeData[bestIdx], "city"), { immediate: true });
           }
         }
       }, { passive: true });
@@ -10967,6 +10994,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
 
         panel.classList.add("active");
+        document.body.classList.add("panel-open");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
 
@@ -11569,6 +11597,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("click", () => {
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
+          document.body.classList.remove("panel-open");
           document.getElementById("pageNav").style.pointerEvents = "all";
           if (timeInterval) { clearInterval(timeInterval); timeInterval = null; }
           
@@ -11582,6 +11611,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           isFocused = false; 
           selectedNodeIndex = null; 
           focusPendingPanel = null;
+          clearFocusPanelTimer();
           
           // Smooth zoom-out: start immediately, no delay
           zoomVelocity = 0;
@@ -12065,6 +12095,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>`;
 
         panel.classList.add("active");
+        document.body.classList.add("panel-open");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
         fetchLocationStats("region", region.id);
@@ -12212,6 +12243,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("click", () => {
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
+          document.body.classList.remove("panel-open");
           document.getElementById("pageNav").style.pointerEvents = "all";
           
           // Extract yaw/pitch for when focusLocked is eventually cleared by user drag
@@ -12223,6 +12255,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           
           isFocused = false; 
           focusPendingPanel = null;
+          clearFocusPanelTimer();
           
           // Smooth zoom-out: start immediately, no delay
           zoomVelocity = 0;
