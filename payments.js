@@ -49,24 +49,43 @@ async function getTierIdByName(name) {
     .eq('name', name)
     .maybeSingle();
   if (error) throw new Error(`getTierIdByName: ${error.message}`);
+  if (!data?.id) throw new Error(`Missing subscription_tiers row for "${name}"`);
   return data?.id ?? null;
 }
 
 async function upsertSubscription({ userId, tier, provider, providerSubId, providerCusId, periodEnd, status = 'active' }) {
   const tierId = await getTierIdByName(tier);
+  const payload = {
+    user_id:            userId,
+    tier_id:            tierId,
+    provider,
+    provider_sub_id:    providerSubId,
+    provider_cus_id:    providerCusId,
+    current_period_end: periodEnd?.toISOString() ?? null,
+    status,
+    updated_at:         new Date().toISOString(),
+  };
+
+  const { data: existing, error: existingError } = await sba
+    .from('subscriptions')
+    .select('user_id')
+    .eq('user_id', userId)
+    .limit(1);
+  if (existingError) throw new Error(`loadSubscription: ${existingError.message}`);
+
+  if (existing?.length) {
+    const { error } = await sba
+      .from('subscriptions')
+      .update(payload)
+      .eq('user_id', userId);
+    if (error) throw new Error(`updateSubscription: ${error.message}`);
+    return;
+  }
+
   const { error } = await sba
     .from('subscriptions')
-    .upsert({
-      user_id:            userId,
-      tier_id:            tierId,
-      provider,
-      provider_sub_id:    providerSubId,
-      provider_cus_id:    providerCusId,
-      current_period_end: periodEnd?.toISOString() ?? null,
-      status,
-      updated_at:         new Date().toISOString(),
-    }, { onConflict: 'user_id' });
-  if (error) throw new Error(`upsertSubscription: ${error.message}`);
+    .insert(payload);
+  if (error) throw new Error(`insertSubscription: ${error.message}`);
 }
 
 async function cancelSubscription(userId) {
@@ -220,7 +239,10 @@ router.post('/paypal/activate', requireAuth, async (req, res) => {
     res.json({ success: true, tier });
   } catch (err) {
     console.error('[payments/paypal/activate]', err.message);
-    res.status(500).json({ error: 'Failed to activate PayPal subscription' });
+    res.status(500).json({
+      error: 'Failed to activate PayPal subscription',
+      detail: err.message
+    });
   }
 });
 
