@@ -227,15 +227,22 @@ function updateConditionalCache(rawUrl, response) {
 
 async function waitForHostThrottle(rawUrl) {
   const state = getHostState(rawUrl);
-  if (!state) return;
+  if (!state) return false;
 
   const now = Date.now();
-  const earliest = Math.max(state.nextAllowedAt || 0, (state.lastRequestAt || 0) + HOST_MIN_INTERVAL_MS);
+  const earliest = Math.max(
+    state.nextAllowedAt || 0,
+    (state.lastRequestAt || 0) + HOST_MIN_INTERVAL_MS
+  );
+
   const waitMs = earliest - now;
+
   if (waitMs > 0) {
-    console.log(`  ⏳ Host throttle ${getHostKey(rawUrl)} — waiting ${(waitMs / 1000).toFixed(1)}s`);
-    await sleep(waitMs);
+    console.log(`⏭ Skipping ${getHostKey(rawUrl)} — cooldown ${(waitMs / 1000).toFixed(1)}s`);
+    return true; // 🚫 signal skip
   }
+
+  return false;
 }
 
 function noteHostResult(rawUrl, status, responseHeaders = null) {
@@ -660,20 +667,35 @@ function makeHttpError(status, attempt = 0) {
 }
 
 async function _fetchRaw(url, headers, timeoutMs) {
-  await waitForHostThrottle(url);
+  // 🚫 DO NOT WAIT — SKIP IF THROTTLED
+  const isThrottled = await waitForHostThrottle(url);
+  if (isThrottled) {
+    const err = new Error("Host throttled");
+    err.httpStatus = 429;
+    throw err;
+  }
+
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const requestHeaders = withConditionalHeaders(url, headers);
+
     const response = await Promise.race([
       fetch(url, { signal: controller.signal, headers: requestHeaders }),
       new Promise((_, rej) =>
         setTimeout(() => rej(new Error(`Hard timeout after ${timeoutMs}ms`)), timeoutMs + 1000)
       )
     ]);
+
     noteHostResult(url, response.status, response.headers);
-    if (response.ok || response.status === 304) updateConditionalCache(url, response);
+
+    if (response.ok || response.status === 304) {
+      updateConditionalCache(url, response);
+    }
+
     return response;
+
   } finally {
     clearTimeout(tid);
   }
