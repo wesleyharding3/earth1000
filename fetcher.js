@@ -697,32 +697,33 @@ async function fetchWithRetry(url, timeoutMs = 15000) {
       }
 
       const status = response.status;
+
       if (status === 304) {
         response.body?.cancel().catch(() => {});
         throw makeHttpError(304, attempt);
       }
-      // Drain the body so the connection is released
+
+      // 🚫 HARD STOP — NO 403 RETRIES
+      if (status === 403) {
+        response.body?.cancel().catch(() => {});
+        throw makeHttpError(403, attempt);
+      }
+
       response.body?.cancel().catch(() => {});
       lastErr = makeHttpError(status, attempt);
 
-      if (status === 403 && attempt < allHeaders.length - 1) {
-        console.log(`  🔄 403 blocked (attempt ${attempt + 1}/${allHeaders.length}), retrying with ${RETRY_UA_LABELS[attempt]}…`);
-        continue;
-      }
-      // 404 / 429 / 5xx / other: stop, let caller decide
+      // everything else behaves the same
       throw lastErr;
 
     } catch (err) {
-      // If it already has httpStatus it came from the block above — re-throw unless 403 to retry
       if (err.httpStatus) {
-        if (err.httpStatus === 403 && attempt < allHeaders.length - 1) continue;
+        // 🚫 DO NOT RETRY 403
         throw err;
       }
-      // Network/timeout errors — no point retrying
       throw err;
     }
   }
-  // Exhausted all UA retries
+
   throw lastErr || makeHttpError(403);
 }
 
@@ -742,27 +743,32 @@ async function fetchJsonWithRetry(url, timeoutMs = 15000) {
       }
 
       const status = response.status;
+
       if (status === 304) {
         response.body?.cancel().catch(() => {});
         throw makeHttpError(304, attempt);
       }
+
+      // 🚫 HARD STOP — NO 403 RETRIES
+      if (status === 403) {
+        response.body?.cancel().catch(() => {});
+        throw makeHttpError(403, attempt);
+      }
+
       response.body?.cancel().catch(() => {});
       lastErr = makeHttpError(status, attempt);
 
-      if (status === 403 && attempt < allHeaders.length - 1) {
-        console.log(`  🔄 403 blocked (attempt ${attempt + 1}/${allHeaders.length}), retrying with ${RETRY_UA_LABELS[attempt]}…`);
-        continue;
-      }
       throw lastErr;
 
     } catch (err) {
       if (err.httpStatus) {
-        if (err.httpStatus === 403 && attempt < allHeaders.length - 1) continue;
+        // 🚫 DO NOT RETRY 403
         throw err;
       }
       throw err;
     }
   }
+
   throw lastErr || makeHttpError(403);
 }
 
