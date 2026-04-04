@@ -247,7 +247,7 @@ async function run() {
 
     // ── 2. Pull articles for each thread ─────────────────────────────────
     console.log(`   [${elapsed(t0)}] Pulling articles for each thread...`);
-    const pLimit = require('p-limit');
+    const pLimit = require('p-limit').default;
     const limit = pLimit(3); // adjust to 2–4 if needed
 
     const results = await Promise.allSettled(
