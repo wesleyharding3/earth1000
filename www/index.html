@@ -2534,16 +2534,25 @@ body.ticker-active #flowControls {
   margin-top: 2px;
 }
 
-.adpMiniMap {
-  height: 120px;
+.adpSourceSummary {
   background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
   border-radius: 12px;
+  padding: 16px;
   margin-bottom: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255,255,255,0.3);
-  font-size: 12px;
+}
+.adpSourceSummaryLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+}
+.adpSourceSummaryText {
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255,255,255,0.6);
 }
 
 .adpReadOriginal {
@@ -17341,9 +17350,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
     
-    // Mini-map placeholder (location context)
-    const miniMapHTML = locationTags.length 
-      ? `<div class="adpMiniMap"><svg width="10" height="12" viewBox="0 0 10 12" fill="none" style="display:inline;vertical-align:middle;margin-right:3px;opacity:.7"><path d="M5 0C2.79 0 1 1.79 1 4c0 3 4 8 4 8s4-5 4-8c0-2.21-1.79-4-4-4zm0 5.5A1.5 1.5 0 1 1 5 2.5a1.5 1.5 0 0 1 0 3z" fill="currentColor"/></svg>${locationTags.join(', ')}</div>`
+    // Article summary for hero area
+    const summaryText = article.translated_summary || article.summary || '';
+
+    // Source summary (about the news source itself)
+    const sourceSummaryHTML = article.source_summary
+      ? `<div class="adpSourceSummary">
+           <div class="adpSourceSummaryLabel">About ${article.source_name || 'this source'}</div>
+           <div class="adpSourceSummaryText">${article.source_summary}</div>
+         </div>`
       : '';
     
     // Context section — AI Explain button (Pro/Enterprise feature)
@@ -17387,27 +17402,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ${imageHTML}
         ${sourceBlock}
         <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
-        <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
+        <div class="adpSummary">${summaryText}</div>
         ${metaBlock}
-        ${miniMapHTML}
+        ${sourceSummaryHTML}
         ${contextHTML}
         <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
           Watch on YouTube <span>↗ ${article.source_name || 'Source'}</span>
         </a>
       `;
     } else {
-      // Article: two-column hero (meta + title left, thumbnail right), summary below
+      // Article: two-column hero (meta + title left, thumbnail right), source summary below
       content.innerHTML = `
         <div class="adpHeroLayout">
           <div class="adpHeroText">
             ${sourceBlock}
             <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
             ${metaBlock}
-            ${miniMapHTML}
+            <div class="adpSummary" style="margin-bottom:0">${summaryText}</div>
           </div>
           ${thumbHTML}
         </div>
-        <div class="adpSummary">${article.translated_summary || article.summary || ''}</div>
+        ${sourceSummaryHTML}
         ${contextHTML}
         <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
           Read Full Article <span>↗ ${article.source_name || 'Source'}</span>
