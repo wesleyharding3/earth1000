@@ -247,8 +247,35 @@ async function run() {
 
     // ── 2. Pull articles for each thread ─────────────────────────────────
     console.log(`   [${elapsed(t0)}] Pulling articles for each thread...`);
-    const rawThreadData = await Promise.all(threads.map(t => enrichThread(t)));
+    const pLimit = require('p-limit');
+    const limit = pLimit(3); // adjust to 2–4 if needed
 
+    const results = await Promise.allSettled(
+      threads.map(t => limit(() => enrichThread(t)))
+    );
+
+    const rawThreadData = [];
+    const failedThreads = [];
+
+    results.forEach((res, i) => {
+      if (res.status === 'fulfilled') {
+        rawThreadData.push(res.value);
+      } else {
+        failedThreads.push({
+          thread_id: threads[i]?.id,
+          title: threads[i]?.title,
+          error: res.reason?.message || String(res.reason)
+        });
+      }
+    });
+
+    // Optional logging so you know what failed without killing the job
+    if (failedThreads.length) {
+      console.warn(`⚠ ${failedThreads.length} thread(s) failed during enrichment:`);
+      failedThreads.forEach(f =>
+        console.warn(`   - [${f.thread_id}] ${f.title}: ${f.error}`)
+      );
+    }
     // ── 2b. Remove threads with >50% article overlap with a higher-ranked thread
     const threadData   = [];
     const seenArticles = [];
