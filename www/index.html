@@ -3523,6 +3523,211 @@ body.ticker-active #flowControls {
       font-weight: 600;
       letter-spacing: 0.04em;
     }
+    /* ── Node Panel Sections ── */
+    .cdSections {
+      flex: 1;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    .cdSections::-webkit-scrollbar { width: 4px; }
+    .cdSections::-webkit-scrollbar-track { background: transparent; }
+    .cdSections::-webkit-scrollbar-thumb { background: rgba(212,168,67,0.25); border-radius: 4px; }
+    .cdSection {
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      padding: 14px 16px;
+    }
+    .cdSection:last-child { border-bottom: none; }
+    .cdSectionLabel {
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.3);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .cdSectionLabel .cdSectionIcon {
+      width: 14px; height: 14px;
+      opacity: 0.4;
+    }
+    /* AI Summary */
+    .cdSummaryText {
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: rgba(255,255,255,0.78);
+      letter-spacing: 0.01em;
+    }
+    .cdSummaryLoading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255,255,255,0.25);
+      font-size: 11px;
+    }
+    .cdSummaryLoading .cdPulse {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--grm-gold);
+      animation: cdPulseAnim 1.2s ease-in-out infinite;
+    }
+    @keyframes cdPulseAnim {
+      0%, 100% { opacity: 0.2; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.1); }
+    }
+    /* Timeline */
+    .cdTimeline {
+      position: relative;
+      padding-left: 20px;
+    }
+    .cdTimeline::before {
+      content: '';
+      position: absolute;
+      left: 5px;
+      top: 4px;
+      bottom: 4px;
+      width: 1px;
+      background: linear-gradient(to bottom, rgba(212,168,67,0.4), rgba(212,168,67,0.08));
+    }
+    .cdTimelineItem {
+      position: relative;
+      margin-bottom: 14px;
+      cursor: pointer;
+      transition: opacity 0.12s;
+    }
+    .cdTimelineItem:hover { opacity: 0.85; }
+    .cdTimelineItem:last-child { margin-bottom: 0; }
+    .cdTimelineDot {
+      position: absolute;
+      left: -18px;
+      top: 3px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--grm-gold);
+      border: 1.5px solid rgba(6,10,18,0.9);
+      box-shadow: 0 0 6px rgba(212,168,67,0.3);
+    }
+    .cdTimelineDot.video {
+      background: #ff6b6b;
+      box-shadow: 0 0 6px rgba(255,107,107,0.3);
+    }
+    .cdTimelineDate {
+      font-size: 9px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.3);
+      letter-spacing: 0.08em;
+      margin-bottom: 2px;
+    }
+    .cdTimelineTitle {
+      font-size: 11.5px;
+      font-weight: 600;
+      line-height: 1.35;
+      color: rgba(255,255,255,0.82);
+    }
+    .cdTimelineSource {
+      font-size: 9px;
+      font-weight: 600;
+      color: var(--grm-gold);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+    .cdTimelineTag {
+      display: inline-block;
+      font-size: 7.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 1.5px 4px;
+      border-radius: 2px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .cdTimelineTag.video {
+      background: rgba(255,107,107,0.15);
+      color: #ff6b6b;
+    }
+    .cdTimelineTag.anchor {
+      background: rgba(212,168,67,0.15);
+      color: var(--grm-gold);
+    }
+    /* Tab bar for articles/videos */
+    .cdTabBar {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 10px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 3px;
+      padding: 2px;
+    }
+    .cdTab {
+      flex: 1;
+      padding: 5px 0;
+      text-align: center;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+      cursor: pointer;
+      border-radius: 2px;
+      transition: background 0.14s, color 0.14s;
+    }
+    .cdTab:hover { color: rgba(255,255,255,0.55); }
+    .cdTab.active {
+      background: rgba(212,168,67,0.12);
+      color: var(--grm-gold);
+    }
+    .cdArticleGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 8px;
+    }
+    /* Related clusters */
+    .cdRelatedList {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .cdRelatedItem {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+      transition: border-color 0.14s, background 0.14s;
+    }
+    .cdRelatedItem:hover {
+      border-color: rgba(212,168,67,0.25);
+      background: rgba(212,168,67,0.04);
+    }
+    .cdRelatedDot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .cdRelatedLabel {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.8);
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cdRelatedMeta {
+      font-size: 9px;
+      color: rgba(255,255,255,0.3);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
     /* ── Responsive ── */
     @media (max-width: 900px) {
       #clusterHud {
@@ -15551,11 +15756,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>`;
     }
 
+    function makeTimelineItem(a) {
+      const isVideo = a.media_type === "video" || !!a.video_id;
+      const isAnchor = !!a.is_anchor;
+      const title = esc(a.translated_title || a.title || "Untitled");
+      const source = esc(a.source_name || "");
+      const safe = (a.url || a.article_url || "").replace(/'/g, "%27");
+      const date = a.published_at
+        ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+        : "";
+      return `<div class="cdTimelineItem" onclick="window.open('${safe}','_blank')">
+        <div class="cdTimelineDot${isVideo ? " video" : ""}"></div>
+        <div class="cdTimelineDate">${date}${isAnchor ? '<span class="cdTimelineTag anchor">Anchor</span>' : ""}${isVideo ? '<span class="cdTimelineTag video">Video</span>' : ""}</div>
+        <div class="cdTimelineTitle">${title}</div>
+        ${source ? `<div class="cdTimelineSource">${source}</div>` : ""}
+      </div>`;
+    }
+
+    function renderArticleGrid(articles, filter) {
+      const filtered = filter === "all" ? articles
+        : filter === "video" ? articles.filter(a => a.media_type === "video" || !!a.video_id)
+        : articles.filter(a => a.media_type !== "video" && !a.video_id);
+      if (!filtered.length) {
+        return `<div class="cdLoadingRow" style="grid-column:1/-1"><span style="opacity:0.3">No ${filter === "video" ? "videos" : "articles"} found</span></div>`;
+      }
+      return filtered.map(makeCdCard).join("");
+    }
+
     async function openNodePanel(node) {
       state.selected = node;
       const keywords = keywordList(node.feature_keywords, 12);
       const catColor = CATEGORY_COLORS[node.primary_category] || CATEGORY_COLORS.default;
-      // render shell immediately
+
+      // render shell immediately with all 4 section placeholders
       detailEl.innerHTML = `
         <button id="cdResizeHandle" aria-label="Resize panel">
           <div id="cdResizeArrow">
@@ -15570,7 +15803,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
               <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
             </div>
-            <div class="cdClose" id="cdCloseBtn">✕</div>
+            <div class="cdClose" id="cdCloseBtn">\u2715</div>
           </div>
           <div class="cdMeta">
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.article_count)}</span><span class="cdMetaLabel">Articles</span></div>
@@ -15578,28 +15811,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.source_country_count || 0)}</span><span class="cdMetaLabel">Countries</span></div>
             <div class="cdMetaItem"><span class="cdMetaNum" style="color:${catColor}">${fmtNum(node.importance || 0)}</span><span class="cdMetaLabel">Importance</span></div>
           </div>
-          <div style="padding:0 16px 4px" id="cdExplainWrap"
-               data-thread-id="${node.thread_id || node.id}"
-               data-title="${esc(node.title || '')}"
-               data-summary="${esc((node.description || '').slice(0,400))}"
-               data-keywords="${esc(JSON.stringify(node.keywords || []))}">
-            <button class="explainBtn" onclick="window.__triggerExplain(this,'thread')" ${!window.__authToken ? 'data-needsauth="1"' : ''}>
-              <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.2v3.1M6 3.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-              Explain context
-            </button>
-            <div class="explainResult" id="cdExplainResult" style="display:none"></div>
+          ${keywords.length ? `
+          <div style="padding:4px 0 0;display:flex;flex-wrap:wrap;gap:4px;">
+            ${keywords.slice(0, 8).map((k) => `<span class="cdKeyword">${esc(k)}</span>`).join("")}
+          </div>` : ""}
+        </div>
+        <div class="cdSections" id="cdSectionsEl">
+          <!-- Section A: AI Summary -->
+          <div class="cdSection" id="cdSummarySection">
+            <div class="cdSectionLabel">
+              <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v4M8 11v.01" stroke-linecap="round"/></svg>
+              Analysis
+            </div>
+            <div id="cdSummaryBody">
+              <div class="cdSummaryLoading"><div class="cdPulse"></div><span>Generating deep analysis...</span></div>
+            </div>
+          </div>
+          <!-- Section B: Timeline -->
+          <div class="cdSection" id="cdTimelineSection">
+            <div class="cdSectionLabel">
+              <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
+              Thread Timeline
+            </div>
+            <div id="cdTimelineBody">
+              <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading timeline...</span></div>
+            </div>
+          </div>
+          <!-- Section C: Articles & Videos -->
+          <div class="cdSection" id="cdArticlesSection">
+            <div class="cdSectionLabel">
+              <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6h6M5 9h4" stroke-linecap="round"/></svg>
+              Sources
+            </div>
+            <div id="cdTabBarWrap"></div>
+            <div id="cdArticlesBody" class="cdArticleGrid">
+              <div class="cdLoadingRow" style="grid-column:1/-1"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading sources...</span></div>
+            </div>
+          </div>
+          <!-- Section D: Related Clusters -->
+          <div class="cdSection" id="cdRelatedSection">
+            <div class="cdSectionLabel">
+              <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg>
+              Related Clusters
+            </div>
+            <div id="cdRelatedBody" class="cdRelatedList">
+              <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Finding connections...</span></div>
+            </div>
           </div>
         </div>
-        <div class="cdBody" id="cdBodyEl">
-          <div class="cdLoadingRow" style="grid-column:1/-1">
-            <span style="font-size:20px;opacity:0.2">◈</span><span>Loading articles…</span>
-          </div>
-        </div>
-        ${keywords.length ? `
-        <div class="cdFooter">
-          <div class="cdFooterLabel">Keywords</div>
-          <div class="cdKeywords">${keywords.map((k) => `<span class="cdKeyword">${esc(k)}</span>`).join("")}</div>
-        </div>` : ""}
       `;
       cdApplySnap("default", false);
       detailEl.classList.add("open");
@@ -15610,31 +15869,144 @@ const settingsToggle     = document.getElementById("settingsToggle");
         cdApplySnap(cdSnapState === "max" ? "default" : "max");
       });
 
-      // fetch articles
-      const bodyEl = document.getElementById("cdBodyEl");
-      try {
-        const ids = Array.isArray(node.top_article_ids) && node.top_article_ids.length
-          ? node.top_article_ids
-          : Array.isArray(node.article_ids) && node.article_ids.length
-            ? node.article_ids : null;
-        let articles = [];
-        if (ids && ids.length) {
-          const res = await fetch(`${BASE}/api/articles/by-ids?ids=${ids.slice(0, 20).join(",")}`);
-          if (res.ok) articles = await res.json();
-        } else if (node.thread_id) {
-          const res = await fetch(`${BASE}/api/articles/by-thread?thread_id=${node.thread_id}&limit=20`);
-          if (res.ok) articles = await res.json();
+      const threadId = node.thread_id || node.id;
+      const runId = state.run ? state.run.id : null;
+      let allArticles = [];
+
+      // Fire all 3 fetches concurrently
+      const articlesPromise = (async () => {
+        try {
+          const ids = Array.isArray(node.top_article_ids) && node.top_article_ids.length
+            ? node.top_article_ids
+            : Array.isArray(node.article_ids) && node.article_ids.length
+              ? node.article_ids : null;
+          let articles = [];
+          if (ids && ids.length) {
+            const res = await fetch(`${BASE}/api/articles/by-ids?ids=${ids.slice(0, 30).join(",")}`);
+            if (res.ok) articles = await res.json();
+          } else if (threadId) {
+            const res = await fetch(`${BASE}/api/articles/by-thread?thread_id=${threadId}&limit=30`);
+            if (res.ok) articles = await res.json();
+          }
+          return Array.isArray(articles) ? articles : [];
+        } catch (_) { return []; }
+      })();
+
+      const summaryPromise = (async () => {
+        if (!threadId) return null;
+        try {
+          const res = await fetch(`${BASE}/api/cluster-node/summary`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ thread_id: threadId })
+          });
+          if (res.ok) { const data = await res.json(); return data.summary || null; }
+          return null;
+        } catch (_) { return null; }
+      })();
+
+      const relatedPromise = (async () => {
+        if (!threadId) return [];
+        try {
+          const url = `${BASE}/api/clusters/related?thread_id=${threadId}${runId ? `&run_id=${runId}` : ""}`;
+          const res = await fetch(url);
+          if (res.ok) { const data = await res.json(); return Array.isArray(data) ? data : []; }
+          return [];
+        } catch (_) { return []; }
+      })();
+
+      // Populate sections as data arrives
+      // Timeline + Articles (from same fetch)
+      articlesPromise.then((articles) => {
+        if (state.selected !== node) return;
+        allArticles = articles;
+
+        // Timeline: sort chronologically
+        const timelineEl = document.getElementById("cdTimelineBody");
+        if (timelineEl) {
+          if (!articles.length) {
+            timelineEl.innerHTML = `<div class="cdLoadingRow" style="flex-direction:column;gap:4px"><span style="opacity:0.3">${fmtNum(node.article_count)} articles tracked</span></div>`;
+          } else {
+            const sorted = [...articles].sort((a, b) => new Date(a.published_at || 0) - new Date(b.published_at || 0));
+            timelineEl.innerHTML = `<div class="cdTimeline">${sorted.map(makeTimelineItem).join("")}</div>`;
+          }
         }
-        if (state.selected !== node) return; // panel changed while fetching
-        if (!Array.isArray(articles) || !articles.length) {
-          bodyEl.innerHTML = `<div class="cdLoadingRow" style="flex-direction:column;gap:4px;"><span style="font-size:22px;opacity:0.2;">◈</span><span>${fmtNum(node.article_count)} articles in this thread</span></div>`;
+
+        // Articles grid with filter tabs
+        const tabWrap = document.getElementById("cdTabBarWrap");
+        const gridEl = document.getElementById("cdArticlesBody");
+        if (tabWrap && gridEl) {
+          const videoCount = articles.filter(a => a.media_type === "video" || !!a.video_id).length;
+          const articleCount = articles.length - videoCount;
+          let activeFilter = "all";
+
+          if (videoCount > 0 && articleCount > 0) {
+            tabWrap.innerHTML = `<div class="cdTabBar">
+              <div class="cdTab active" data-filter="all">All (${articles.length})</div>
+              <div class="cdTab" data-filter="article">Articles (${articleCount})</div>
+              <div class="cdTab" data-filter="video">Videos (${videoCount})</div>
+            </div>`;
+            tabWrap.querySelectorAll(".cdTab").forEach(tab => {
+              tab.addEventListener("click", () => {
+                activeFilter = tab.dataset.filter;
+                tabWrap.querySelectorAll(".cdTab").forEach(t => t.classList.toggle("active", t === tab));
+                gridEl.innerHTML = renderArticleGrid(articles, activeFilter);
+              });
+            });
+          }
+
+          if (!articles.length) {
+            gridEl.innerHTML = `<div class="cdLoadingRow" style="grid-column:1/-1;flex-direction:column;gap:4px"><span style="font-size:22px;opacity:0.2;">\u25C8</span><span>${fmtNum(node.article_count)} articles in this thread</span></div>`;
+          } else {
+            gridEl.innerHTML = renderArticleGrid(articles, activeFilter);
+          }
+        }
+      });
+
+      // AI Summary
+      summaryPromise.then((summary) => {
+        if (state.selected !== node) return;
+        const el = document.getElementById("cdSummaryBody");
+        if (!el) return;
+        if (summary) {
+          el.innerHTML = `<div class="cdSummaryText">${esc(summary)}</div>`;
         } else {
-          bodyEl.innerHTML = articles.map(makeCdCard).join("");
+          el.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this thread.</div>`;
         }
-      } catch (_) {
-        if (state.selected === node && bodyEl)
-          bodyEl.innerHTML = `<div class="cdLoadingRow">Could not load articles.</div>`;
-      }
+      });
+
+      // Related Clusters
+      relatedPromise.then((related) => {
+        if (state.selected !== node) return;
+        const el = document.getElementById("cdRelatedBody");
+        if (!el) return;
+        if (!related.length) {
+          el.innerHTML = `<div class="cdLoadingRow"><span style="opacity:0.3">No related clusters found</span></div>`;
+          return;
+        }
+        el.innerHTML = related.map(g => {
+          const color = categoryColor(g.primary_category);
+          return `<div class="cdRelatedItem" data-cluster-id="${esc(g.cluster_id)}">
+            <div class="cdRelatedDot" style="background:${color}"></div>
+            <div class="cdRelatedLabel">${esc(g.label || g.summary || g.cluster_id)}</div>
+            <div class="cdRelatedMeta">${fmtNum(g.node_count)} threads \u00B7 ${fmtNum(g.article_count)} articles</div>
+          </div>`;
+        }).join("");
+
+        // Click a related cluster → fly camera to its centroid and highlight it
+        el.querySelectorAll(".cdRelatedItem").forEach(item => {
+          item.addEventListener("click", () => {
+            const clusterId = item.dataset.clusterId;
+            const group = state.groupMap.get(clusterId);
+            if (!group) return;
+            // Find the top node in this cluster and open its panel
+            const topNode = state.nodes
+              .filter(n => n.cluster_id === clusterId)
+              .sort((a, b) => (Number(b.importance) || 0) - (Number(a.importance) || 0))[0];
+            if (topNode) openNodePanel(topNode);
+          });
+        });
+      });
     }
 
     function setTooltip(item, event) {

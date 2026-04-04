@@ -1462,6 +1462,175 @@ app.get("/api/articles/by-thread", async (req, res) => {
   }
 });
 
+// POST /api/cluster-node/summary — 200-word unbiased Claude-generated description using deep article search
+app.post("/api/cluster-node/summary", async (req, res) => {
+  const { thread_id } = req.body || {};
+  const threadId = parseInt(thread_id, 10);
+  if (!threadId) return res.status(400).json({ error: "thread_id required" });
+
+  try {
+    // Deep article search: fetch all articles for this thread with full context
+    const { rows: articles } = await pool.query(`
+      SELECT
+        a.title, a.translated_title, a.summary, a.translated_summary,
+        a.published_at, a.media_type,
+        COALESCE(ns.name, ys.name) AS source_name,
+        co.name AS country_name
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      WHERE sta.thread_id = $1
+      ORDER BY sta.is_anchor DESC, a.published_at ASC
+      LIMIT 30
+    `, [threadId]);
+
+    // Also fetch the thread metadata
+    const { rows: threadRows } = await pool.query(`
+      SELECT title, description, primary_category, keywords
+      FROM story_threads WHERE id = $1
+    `, [threadId]);
+    const thread = threadRows[0];
+
+    if (!articles.length && !thread) {
+      return res.status(404).json({ error: "No data found for this thread" });
+    }
+
+    // Build deep context from actual article content
+    const articleContext = articles.map((a, i) => {
+      const title = a.translated_title || a.title || "Untitled";
+      const summary = a.translated_summary || a.summary || "";
+      const source = a.source_name || "Unknown source";
+      const country = a.country_name || "";
+      const date = a.published_at ? new Date(a.published_at).toISOString().slice(0, 10) : "";
+      const type = a.media_type === "video" ? " [Video]" : "";
+      return `${i + 1}. "${title}"${type} — ${source}${country ? `, ${country}` : ""}${date ? ` (${date})` : ""}\n   ${summary.slice(0, 300)}`;
+    }).join("\n");
+
+    const threadContext = thread
+      ? `Thread: "${thread.title}"\nCategory: ${thread.primary_category || "General"}\nDescription: ${thread.description || ""}\nKeywords: ${(thread.keywords || []).slice(0, 15).join(", ")}`
+      : "";
+
+    const response = await Anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 400,
+      messages: [{
+        role: "user",
+        content: `You are an impartial global news analyst. Using ONLY the article data below, write exactly 200 words (no more, no less). Structure: first paragraph provides the broader geopolitical or societal context; second paragraph summarizes the specific events and developments. Be factual, neutral, and unbiased — no opinions, no speculation, no markdown formatting, no introductory phrases.\n\n${threadContext}\n\nArticles:\n${articleContext}`,
+      }],
+    });
+
+    const summary = (response.content[0]?.text || "").trim();
+    res.json({ summary });
+  } catch (err) {
+    console.error("[cluster-node/summary]", err.message);
+    res.status(500).json({ error: "Summary generation failed" });
+  }
+});
+
+// GET /api/clusters/related?thread_id=X&run_id=Y — related clusters for a given thread's cluster
+app.get("/api/clusters/related", async (req, res) => {
+  const threadId = parseInt(req.query.thread_id, 10);
+  const runId = parseInt(req.query.run_id, 10);
+  if (!threadId) return res.status(400).json({ error: "thread_id required" });
+
+  try {
+    // Resolve the run_id if not provided — use latest completed run
+    let effectiveRunId = runId;
+    if (!effectiveRunId) {
+      const { rows: runRows } = await pool.query(`
+        SELECT id FROM cluster_runs WHERE status = 'completed'
+        ORDER BY completed_at DESC NULLS LAST LIMIT 1
+      `);
+      if (!runRows.length) return res.json([]);
+      effectiveRunId = runRows[0].id;
+    }
+
+    // Find this thread's cluster_id
+    const { rows: nodeRows } = await pool.query(`
+      SELECT cluster_id FROM cluster_nodes WHERE run_id = $1 AND thread_id = $2 LIMIT 1
+    `, [effectiveRunId, threadId]);
+    if (!nodeRows.length) return res.json([]);
+    const myClusterId = nodeRows[0].cluster_id;
+
+    // Find related clusters via edges that bridge between this cluster and others
+    const { rows: edgeRows } = await pool.query(`
+      SELECT DISTINCT
+        CASE
+          WHEN src.cluster_id = $2 THEN tgt.cluster_id
+          ELSE src.cluster_id
+        END AS related_cluster_id,
+        MAX(ce.weight) AS max_weight
+      FROM cluster_edges ce
+      JOIN cluster_nodes src ON src.run_id = $1 AND src.thread_id = ce.source_thread_id
+      JOIN cluster_nodes tgt ON tgt.run_id = $1 AND tgt.thread_id = ce.target_thread_id
+      WHERE ce.run_id = $1
+        AND (src.cluster_id = $2 OR tgt.cluster_id = $2)
+        AND src.cluster_id != tgt.cluster_id
+      GROUP BY related_cluster_id
+      ORDER BY max_weight DESC
+      LIMIT 8
+    `, [effectiveRunId, myClusterId]);
+
+    const relatedIds = edgeRows.map(r => r.related_cluster_id);
+
+    // Also find clusters with shared keywords/category (backup if few edge-based results)
+    if (relatedIds.length < 5) {
+      const { rows: myGroup } = await pool.query(`
+        SELECT primary_category, shared_properties FROM cluster_groups
+        WHERE run_id = $1 AND cluster_id = $2 LIMIT 1
+      `, [effectiveRunId, myClusterId]);
+
+      if (myGroup.length) {
+        const myProps = Array.isArray(myGroup[0].shared_properties) ? myGroup[0].shared_properties : [];
+        const myCat = myGroup[0].primary_category;
+
+        const { rows: candidateGroups } = await pool.query(`
+          SELECT cluster_id, primary_category, shared_properties
+          FROM cluster_groups
+          WHERE run_id = $1 AND cluster_id != $2
+        `, [effectiveRunId, myClusterId]);
+
+        candidateGroups.forEach(cg => {
+          if (relatedIds.includes(cg.cluster_id)) return;
+          const props = Array.isArray(cg.shared_properties) ? cg.shared_properties : [];
+          const overlap = myProps.filter(p => props.includes(p)).length;
+          const catMatch = cg.primary_category === myCat ? 1 : 0;
+          if (overlap > 0 || catMatch) {
+            relatedIds.push(cg.cluster_id);
+          }
+        });
+      }
+    }
+
+    if (!relatedIds.length) return res.json([]);
+
+    // Fetch full group info for related clusters
+    const { rows: groups } = await pool.query(`
+      SELECT
+        cg.cluster_id, cg.label, cg.summary, cg.primary_category,
+        cg.node_count, cg.article_count, cg.shared_properties
+      FROM cluster_groups cg
+      WHERE cg.run_id = $1 AND cg.cluster_id = ANY($2::text[])
+      ORDER BY cg.article_count DESC
+    `, [effectiveRunId, relatedIds.slice(0, 10)]);
+
+    res.json(groups.map(g => ({
+      cluster_id: g.cluster_id,
+      label: g.label,
+      summary: g.summary,
+      primary_category: g.primary_category,
+      node_count: parseInt(g.node_count, 10) || 0,
+      article_count: parseInt(g.article_count, 10) || 0,
+      shared_properties: Array.isArray(g.shared_properties) ? g.shared_properties : []
+    })));
+  } catch (err) {
+    console.error("[clusters/related]", err.message);
+    res.status(500).json({ error: "Failed to fetch related clusters" });
+  }
+});
+
 // GET /api/articles/recent?limit=60&hours=48 — random recent articles for global ticker
 app.get("/api/articles/recent", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 60, 100);
