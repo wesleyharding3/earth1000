@@ -16846,10 +16846,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (state.drag) {
         const dx = event.clientX - state.drag.startX;
         const dy = event.clientY - state.drag.startY;
-        state.yaw = state.drag.startYaw - dx * 0.0062;
-        state.pitch = state.drag.startPitch - dy * 0.0052;
-        state.lastInteractionAt = performance.now();
-        tooltipEl.classList.remove("on");
+        // Only start orbiting once movement exceeds click threshold
+        // This prevents camera drift during a simple click
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          state.drag.confirmed = true;
+        }
+        if (state.drag.confirmed) {
+          state.yaw = state.drag.startYaw - dx * 0.0062;
+          state.pitch = state.drag.startPitch - dy * 0.0052;
+          state.lastInteractionAt = performance.now();
+          tooltipEl.classList.remove("on");
+        }
         return;
       }
 
@@ -16861,26 +16868,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onPointerDown(event) {
+      // Capture what's under the cursor at click time, before any camera movement
+      state._clickTarget = pick(event);
       state.drag = {
         startX: event.clientX,
         startY: event.clientY,
         startYaw: state.yaw,
-        startPitch: state.pitch
+        startPitch: state.pitch,
+        confirmed: false
       };
       state.lastInteractionAt = performance.now();
       renderer.domElement.style.cursor = "grabbing";
     }
 
     function onPointerUp(event) {
-      const wasDrag = state.drag && (
-        Math.abs(event.clientX - state.drag.startX) > 5 ||
-        Math.abs(event.clientY - state.drag.startY) > 5
-      );
+      const wasDrag = state.drag && state.drag.confirmed;
+      const clickTarget = state._clickTarget;
       state.drag = null;
+      state._clickTarget = null;
       state.lastInteractionAt = performance.now();
       renderer.domElement.style.cursor = state.hovered ? "pointer" : "grab";
       if (!wasDrag) {
-        const hit = pick(event);
+        // Use the hit captured at pointerdown — camera hasn't moved
+        const hit = clickTarget || pick(event);
         if (hit && hit.kind === "node") openNodePanel(hit.data);
         else closeNodePanel();
       }
@@ -16891,12 +16901,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function onTouchStart(event) {
       if (event.touches.length !== 1) return;
       const t = event.touches[0];
-      touchStart = { x: t.clientX, y: t.clientY, time: performance.now() };
+      // Capture hit at touch-start before any camera movement
+      const synth = { clientX: t.clientX, clientY: t.clientY };
+      touchStart = { x: t.clientX, y: t.clientY, time: performance.now(), hit: pick(synth) };
       state.drag = {
         startX: t.clientX,
         startY: t.clientY,
         startYaw: state.yaw,
-        startPitch: state.pitch
+        startPitch: state.pitch,
+        confirmed: false
       };
       state.lastInteractionAt = performance.now();
     }
@@ -16906,26 +16919,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const t = event.touches[0];
       const dx = t.clientX - state.drag.startX;
       const dy = t.clientY - state.drag.startY;
-      state.yaw = state.drag.startYaw - dx * 0.0062;
-      state.pitch = state.drag.startPitch - dy * 0.0052;
-      state.lastInteractionAt = performance.now();
-      tooltipEl.classList.remove("on");
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        state.drag.confirmed = true;
+      }
+      if (state.drag.confirmed) {
+        state.yaw = state.drag.startYaw - dx * 0.0062;
+        state.pitch = state.drag.startPitch - dy * 0.0052;
+        state.lastInteractionAt = performance.now();
+        tooltipEl.classList.remove("on");
+      }
     }
 
     function onTouchEnd(event) {
       if (!touchStart) return;
       const t = event.changedTouches[0];
       if (!t) { touchStart = null; state.drag = null; return; }
-      const dx = Math.abs(t.clientX - touchStart.x);
-      const dy = Math.abs(t.clientY - touchStart.y);
-      const wasDrag = dx > 8 || dy > 8;
+      const wasDrag = state.drag && state.drag.confirmed;
+      const hitAtStart = touchStart.hit;
       state.drag = null;
       state.lastInteractionAt = performance.now();
 
       if (!wasDrag) {
-        // Build a synthetic event-like object with clientX/clientY for pick()
-        const synth = { clientX: t.clientX, clientY: t.clientY };
-        const hit = pick(synth);
+        // Use hit captured at touchstart — camera hasn't moved
+        const hit = hitAtStart || pick({ clientX: t.clientX, clientY: t.clientY });
         if (hit && hit.kind === "node") openNodePanel(hit.data);
         else closeNodePanel();
       }
