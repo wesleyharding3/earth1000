@@ -5561,7 +5561,7 @@ body.ticker-active #flowControls {
       /* ── Bottom tab bar — Apple HIG standard 49px + safe area ── */
       :root {
         --page-nav-height: 52px;
-        --global-ticker-height: 24px;
+        --global-ticker-height: 36px;
         --global-ticker-gap: 0px;
       }
       .tabItem {
@@ -5627,7 +5627,7 @@ body.ticker-active #flowControls {
       #accountDropdown {
         position: fixed !important;
         top: auto !important;
-        bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + 10px) !important;
+        bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 10px) !important;
         left: 10px;
         right: 10px;
         width: auto;
@@ -5635,31 +5635,22 @@ body.ticker-active #flowControls {
         overflow-y: auto;
       }
 
-      /* ── Mobile ticker: flush to bottom, tab bar sits above it ── */
+      /* ── Mobile ticker: flush to bottom, fills safe area via padding ── */
       #globalTicker {
         bottom: 0 !important;
         height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
-        padding-bottom: 0;
+        padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
         box-sizing: border-box;
         align-items: flex-start;
+        overflow: hidden !important;
         z-index: 997;
       }
-      #globalTicker::after {
-        content: "";
-        position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        height: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
-        background: rgba(0,0,6,0.94);
-        pointer-events: none;
-      }
       #pageNav {
-        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) - 1px);
+        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
         padding-bottom: 0;
       }
       body.ticker-active #pageNav {
-        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) - 1px);
+        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
         height: auto;
         min-height: var(--page-nav-height);
         padding-bottom: 0;
@@ -5710,12 +5701,12 @@ body.ticker-active #flowControls {
       }
       .gTickerSource,
       .gTickerLocation,
-      .gTickerDate { font-size: 7px; }
+      .gTickerDate { font-size: 9px; }
       .gTickerTitle,
-      .gTickerSummary { font-size: 9px; }
+      .gTickerSummary { font-size: 11px; }
       .gTickerDiv {
         margin: 0 12px;
-        font-size: 9px;
+        font-size: 11px;
         line-height: 1;
       }
 
