@@ -6297,15 +6297,17 @@ body.ticker-active #flowControls {
   
   const stars = [];
   const STAR_COUNT = 120;
-  
+
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
   }
-  
+
   function initStars() {
     stars.length = 0;
     for (let i = 0; i < STAR_COUNT; i++) {
+      const hue = Math.random() < 0.3 ? 35 + Math.random() * 20 : 200 + Math.random() * 60;
+      const sat = Math.random() < 0.3 ? 60 + Math.random() * 40 : 10 + Math.random() * 20;
       stars.push({
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
@@ -6313,50 +6315,58 @@ body.ticker-active #flowControls {
         twinkleSpeed: Math.random() * 0.02 + 0.005,
         twinklePhase: Math.random() * Math.PI * 2,
         baseOpacity: Math.random() * 0.4 + 0.3,
-        // Some stars are warmer (orange-ish), some cooler (white-blue)
-        hue: Math.random() < 0.3 ? 35 + Math.random() * 20 : 200 + Math.random() * 60,
-        saturation: Math.random() < 0.3 ? 60 + Math.random() * 40 : 10 + Math.random() * 20
+        // Pre-compute color strings to avoid per-frame string alloc
+        coreH: `${hue}, ${sat}%, 95%`,
+        glowH0: `${hue}, ${sat}%, 90%`,
+        glowH1: `${hue}, ${sat}%, 70%`,
+        glowH2: `${hue}, ${sat}%, 50%`,
+        gradient: null  // cached after first position-stable draw
       });
     }
   }
-  
+
   let raf;
   function draw(ts) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     for (const star of stars) {
       const twinkle = Math.sin(ts * star.twinkleSpeed + star.twinklePhase);
       const opacity = star.baseOpacity + twinkle * 0.3;
       const glowSize = star.size + twinkle * 0.5;
-      
-      // Outer glow
-      const gradient = ctx.createRadialGradient(
-        star.x, star.y, 0,
-        star.x, star.y, glowSize * 3
-      );
-      gradient.addColorStop(0, `hsla(${star.hue}, ${star.saturation}%, 90%, ${opacity * 0.8})`);
-      gradient.addColorStop(0.4, `hsla(${star.hue}, ${star.saturation}%, 70%, ${opacity * 0.3})`);
-      gradient.addColorStop(1, `hsla(${star.hue}, ${star.saturation}%, 50%, 0)`);
-      
+      const r = glowSize * 3;
+
+      // Cache gradient per star (position never changes, only opacity varies)
+      if (!star.gradient) {
+        star.gradient = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, r);
+        star.gradient.addColorStop(0, `hsla(${star.glowH0}, 1)`);
+        star.gradient.addColorStop(0.4, `hsla(${star.glowH1}, 0.4)`);
+        star.gradient.addColorStop(1, `hsla(${star.glowH2}, 0)`);
+        star._gradR = r;
+      }
+
+      // Outer glow — use globalAlpha for per-frame opacity instead of rebuilding gradient
+      ctx.globalAlpha = opacity * 0.8;
       ctx.beginPath();
-      ctx.arc(star.x, star.y, glowSize * 3, 0, Math.PI * 2);
-      ctx.fillStyle = gradient;
+      ctx.arc(star.x, star.y, star._gradR, 0, Math.PI * 2);
+      ctx.fillStyle = star.gradient;
       ctx.fill();
-      
+
       // Core
+      ctx.globalAlpha = opacity;
       ctx.beginPath();
       ctx.arc(star.x, star.y, glowSize * 0.5, 0, Math.PI * 2);
-      ctx.fillStyle = `hsla(${star.hue}, ${star.saturation}%, 95%, ${opacity})`;
+      ctx.fillStyle = `hsla(${star.coreH}, 1)`;
       ctx.fill();
     }
-    
+    ctx.globalAlpha = 1;
+
     // Only continue if loader is still visible
     const loader = document.getElementById('siteLoader');
     if (loader && !loader.classList.contains('el-fade')) {
       raf = requestAnimationFrame(draw);
     }
   }
-  
+
   resize();
   initStars();
   raf = requestAnimationFrame(draw);
@@ -16876,6 +16886,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
+    // Mobile touch fallback — pointer events can be unreliable on some mobile browsers
+    let touchStart = null;
+    function onTouchStart(event) {
+      if (event.touches.length !== 1) return;
+      const t = event.touches[0];
+      touchStart = { x: t.clientX, y: t.clientY, time: performance.now() };
+      state.drag = {
+        startX: t.clientX,
+        startY: t.clientY,
+        startYaw: state.yaw,
+        startPitch: state.pitch
+      };
+      state.lastInteractionAt = performance.now();
+    }
+
+    function onTouchMove(event) {
+      if (event.touches.length !== 1 || !state.drag) return;
+      const t = event.touches[0];
+      const dx = t.clientX - state.drag.startX;
+      const dy = t.clientY - state.drag.startY;
+      state.yaw = state.drag.startYaw - dx * 0.0062;
+      state.pitch = state.drag.startPitch - dy * 0.0052;
+      state.lastInteractionAt = performance.now();
+      tooltipEl.classList.remove("on");
+    }
+
+    function onTouchEnd(event) {
+      if (!touchStart) return;
+      const t = event.changedTouches[0];
+      if (!t) { touchStart = null; state.drag = null; return; }
+      const dx = Math.abs(t.clientX - touchStart.x);
+      const dy = Math.abs(t.clientY - touchStart.y);
+      const wasDrag = dx > 8 || dy > 8;
+      state.drag = null;
+      state.lastInteractionAt = performance.now();
+
+      if (!wasDrag) {
+        // Build a synthetic event-like object with clientX/clientY for pick()
+        const synth = { clientX: t.clientX, clientY: t.clientY };
+        const hit = pick(synth);
+        if (hit && hit.kind === "node") openNodePanel(hit.data);
+        else closeNodePanel();
+      }
+      touchStart = null;
+    }
+
     function onWheel(event) {
       event.preventDefault();
       state.distance += event.deltaY * 0.03;
@@ -16893,6 +16949,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("touchstart", onTouchStart, { passive: true });
+    renderer.domElement.addEventListener("touchmove", onTouchMove, { passive: true });
+    renderer.domElement.addEventListener("touchend", onTouchEnd, { passive: true });
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("resize", onResize);
 
@@ -18219,26 +18278,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const trailBlur=svgEl.querySelector('.el-trail-blur');
       const trailSegs=Array.from(svgEl.querySelectorAll('.el-trail-seg'));
       if (!star||!trailBlur) return;
-      let t0=null, raf;
+
+      // Set static filter once — no need to reapply every frame
+      star.style.filter='drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65))';
+
+      // Pre-compute static trail segment styles (stroke color & width never change)
+      trailSegs.forEach((seg,i)=>{
+        if (i < LAYER_CFG.length) {
+          const [, sw, baseOp] = LAYER_CFG[i];
+          seg.style.strokeWidth = sw;
+          seg.style.stroke = `rgba(255,${180+i*12},${60+i*15},${baseOp})`;
+        }
+      });
+
+      let t0=null, raf, lastFrame=-1;
       function frame(ts) {
         if (!t0) t0=ts;
         const nf=((ts-t0)%CYCLE)/CYCLE;
+
+        // Throttle to ~30fps for smooth-enough animation without GPU strain
+        const frameIdx = Math.floor(nf * 120);
+        if (frameIdx === lastFrame) { raf=requestAnimationFrame(frame); return; }
+        lastFrame = frameIdx;
+
         const [sx,sy]=orbitPos(nf);
-        star.setAttribute('transform',`translate(${sx.toFixed(2)},${sy.toFixed(2)})`);
+        star.setAttribute('transform',`translate(${sx.toFixed(1)},${sy.toFixed(1)})`);
         const op=depthOp(nf);
         star.style.opacity=op;
         trailBlur.setAttribute('d', buildTrailLayer(nf, TRAIL_FRAC, 1.0));
         trailBlur.style.opacity=(op*0.12).toFixed(2);
         trailSegs.forEach((seg,i)=>{
           if (i < LAYER_CFG.length) {
-            const [lenFrac, sw, baseOp] = LAYER_CFG[i];
+            const [lenFrac, , baseOp] = LAYER_CFG[i];
             seg.setAttribute('d', buildTrailLayer(nf, TRAIL_FRAC, lenFrac));
-            seg.style.strokeWidth = sw;
-            seg.style.stroke = `rgba(255,${180+i*12},${60+i*15},${baseOp})`;
             seg.style.opacity = (op * baseOp).toFixed(2);
           }
         });
-        star.style.filter='drop-shadow(0 0 7px rgba(255,210,60,.95)) drop-shadow(0 0 16px rgba(255,135,22,.65))';
         raf=requestAnimationFrame(frame);
       }
       raf=requestAnimationFrame(frame);
