@@ -5284,40 +5284,24 @@ body.ticker-active #flowControls {
       /* ── Mobile ticker: flush to bottom, fills safe area via padding ── */
       #globalTicker {
         bottom: 0 !important;
-        height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
-        padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
+        height: calc(var(--global-ticker-height) + env(safe-area-inset-bottom)) !important;
+        padding-bottom: env(safe-area-inset-bottom) !important;
         box-sizing: border-box !important;
         align-items: flex-start !important;
         overflow: hidden !important;
         z-index: 997;
       }
+
+      /* ── Nav always sits at absolute bottom; safe-area fills home indicator ── */
       #pageNav {
-        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
-        padding-bottom: 0;
+        bottom: 0 !important;
+        padding-bottom: env(safe-area-inset-bottom) !important;
       }
+      /* ── When ticker active: nav overlays ticker (transparent), pills float above ── */
       body.ticker-active #pageNav {
-        bottom: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
-        height: auto !important;
-        min-height: var(--page-nav-height) !important;
+        bottom: 0 !important;
         padding-bottom: 0 !important;
-        background: rgba(7, 9, 13, 0.93) !important;
-        backdrop-filter: blur(18px) !important;
-        -webkit-backdrop-filter: blur(18px) !important;
-        border-top: 1px solid rgba(255,180,80,0.13) !important;
-        align-items: stretch !important;
-        overflow: hidden !important;
-      }
-      body.ticker-active .tabItem {
-        margin-top: 0 !important;
-        min-height: var(--page-nav-height) !important;
-        padding: 9px 6px 7px !important;
-        background: transparent !important;
-        backdrop-filter: none !important;
-        -webkit-backdrop-filter: none !important;
-        border: none !important;
-        border-radius: 0 !important;
-        flex-direction: column !important;
-        gap: 4px !important;
+        /* desktop rules handle: transparent bg, height = ticker height, overflow visible, align flex-start */
       }
       .gTickerLabel {
         font-size: 7px;
