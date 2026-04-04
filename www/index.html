@@ -5293,8 +5293,8 @@ body.ticker-active #flowControls {
       /* ── Mobile ticker: flush to bottom, fills safe area via padding ── */
       #globalTicker {
         bottom: 0 !important;
-        height: calc(var(--global-ticker-height) + env(safe-area-inset-bottom)) !important;
-        padding-bottom: env(safe-area-inset-bottom) !important;
+        height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
+        padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
         box-sizing: border-box !important;
         align-items: flex-start !important;
         overflow: hidden !important;
@@ -5304,13 +5304,13 @@ body.ticker-active #flowControls {
       /* ── Nav always sits at absolute bottom; safe-area fills home indicator ── */
       #pageNav {
         bottom: 0 !important;
-        padding-bottom: env(safe-area-inset-bottom) !important;
+        padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
       }
       /* ── When ticker active: nav overlays ticker (transparent), pills float above ── */
       body.ticker-active #pageNav {
         bottom: 0 !important;
         padding-bottom: 0 !important;
-        /* desktop rules handle: transparent bg, height = ticker height, overflow visible, align flex-start */
+        /* ticker fills the safe area; nav is transparent overlay */
       }
       .gTickerLabel {
         font-size: 9px;
@@ -18819,6 +18819,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 body.ticker-active #globalTicker {
   bottom: 0;
   height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  box-sizing: border-box;
   z-index: 997;
   transition: opacity 0.3s ease, bottom 0.3s ease, height 0.3s ease;
 }
@@ -18831,6 +18833,7 @@ body.ticker-active #pageNav {
   overflow: visible;
   height: calc(var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   min-height: 0;
+  padding-bottom: 0;
 }
 body.ticker-active .tabItem {
   flex: 1;
