@@ -3063,7 +3063,7 @@ body.ticker-active #flowControls {
     /* ── HUD ── */
     #clusterHud {
       position: absolute;
-      top: 18px;
+      top: calc(18px + env(safe-area-inset-top, 0px));
       left: 18px;
       right: 18px;
       display: flex;
@@ -3141,7 +3141,7 @@ body.ticker-active #flowControls {
       position: absolute;
       left: 18px;
       right: 18px;
-      bottom: calc(22px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      bottom: calc(22px + var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       display: flex;
       align-items: flex-end;
       justify-content: space-between;
@@ -3325,12 +3325,12 @@ body.ticker-active #flowControls {
       transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
     }
     #clusterDetail.open {
-      bottom: 0;
+      bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       opacity: 1;
       pointer-events: all;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - var(--page-nav-height) - var(--global-ticker-height) - var(--global-ticker-gap) - var(--app-bottom-inset, 0px) - env(safe-area-inset-bottom));
       border-radius: 20px 20px 0 0;
     }
     /* drag handle */
@@ -3738,7 +3738,7 @@ body.ticker-active #flowControls {
         justify-content: flex-start;
       }
       #clusterDetail {
-        height: min(420px, calc(var(--app-height, 100vh) - 20px));
+        height: min(420px, calc(var(--app-height, 100vh) - 20px - var(--page-nav-height) - var(--global-ticker-height) - var(--global-ticker-gap)));
       }
       #clusterBottomBar {
         flex-direction: column;
@@ -4420,7 +4420,7 @@ body.ticker-active #flowControls {
     #nfQueryBar::before {
       content: '';
       position: absolute;
-      top: 0; left: 0; right: 0; height: 1px;
+      top: env(safe-area-inset-top, 0px); left: 0; right: 0; height: 1px;
       background: linear-gradient(90deg,
         transparent 0%,
         rgba(255,180,80,0.55) 30%,
@@ -15710,8 +15710,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     // ── Cluster detail panel snap heights ──
-    const CD_DEFAULT_H = () => Math.min(480, (window.innerHeight || screen.height) - 24);
-    const CD_MAX_H     = () => window.innerHeight || screen.height;
+    function getNavTickerHeight() {
+      const cs = getComputedStyle(document.documentElement);
+      return (parseFloat(cs.getPropertyValue('--page-nav-height')) || 39)
+           + (parseFloat(cs.getPropertyValue('--global-ticker-height')) || 36)
+           + (parseFloat(cs.getPropertyValue('--global-ticker-gap')) || 8)
+           + (parseFloat(cs.getPropertyValue('--app-bottom-inset')) || 0);
+    }
+    const CD_DEFAULT_H = () => Math.min(480, (window.innerHeight || screen.height) - 24 - getNavTickerHeight());
+    const CD_MAX_H     = () => (window.innerHeight || screen.height) - getNavTickerHeight();
     let cdSnapState = "default";
 
     function cdApplySnap(s, animate = true) {
