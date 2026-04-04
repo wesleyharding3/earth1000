@@ -16838,8 +16838,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       state.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(state.pointer, camera);
       const hits = raycaster.intersectObjects(state.interactive, false);
-      const hit = hits.find((entry) => entry.object && entry.object.userData && entry.object.userData.kind);
-      return hit ? hit.object.userData : null;
+      // Prioritize node hits over group cloud hits — cloud spheres are large and
+      // their front face is always closer to the camera than the node inside them
+      const nodeHit = hits.find((entry) => entry.object && entry.object.userData && entry.object.userData.kind === "node");
+      if (nodeHit) return nodeHit.object.userData;
+      const groupHit = hits.find((entry) => entry.object && entry.object.userData && entry.object.userData.kind === "group");
+      return groupHit ? groupHit.object.userData : null;
     }
 
     function onPointerMove(event) {
@@ -16868,8 +16872,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onPointerDown(event) {
-      // Capture what's under the cursor at click time, before any camera movement
-      state._clickTarget = pick(event);
       state.drag = {
         startX: event.clientX,
         startY: event.clientY,
@@ -16882,29 +16884,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onPointerUp(event) {
-      const wasDrag = state.drag && state.drag.confirmed;
-      const clickTarget = state._clickTarget;
+      if (state.drag && state.drag.confirmed) {
+        // Was a real drag — just clean up
+      }
       state.drag = null;
-      state._clickTarget = null;
       state.lastInteractionAt = performance.now();
       renderer.domElement.style.cursor = state.hovered ? "pointer" : "grab";
-      if (!wasDrag) {
-        // Use the hit captured at pointerdown — camera hasn't moved
-        const hit = clickTarget || pick(event);
-        if (hit && hit.kind === "node") openNodePanel(hit.data);
-        else closeNodePanel();
+    }
+
+    // Primary click handler — simple and reliable on all platforms
+    function onCanvasClick(event) {
+      // If drag was confirmed, the click is from a drag release — ignore
+      if (state._wasDrag) { state._wasDrag = false; return; }
+      state.lastInteractionAt = performance.now();
+      const hit = pick(event);
+      console.log("[cluster] click hit:", hit ? hit.kind : "none", hit && hit.data ? hit.data.title : "");
+      if (hit && hit.kind === "node") {
+        openNodePanel(hit.data);
+      } else {
+        closeNodePanel();
       }
     }
 
-    // Mobile touch fallback — pointer events can be unreliable on some mobile browsers
-    let touchStart = null;
+    // Touch drag for orbit — separate from click
+    let touchDrag = null;
     function onTouchStart(event) {
       if (event.touches.length !== 1) return;
       const t = event.touches[0];
-      // Capture hit at touch-start before any camera movement
-      const synth = { clientX: t.clientX, clientY: t.clientY };
-      touchStart = { x: t.clientX, y: t.clientY, time: performance.now(), hit: pick(synth) };
-      state.drag = {
+      touchDrag = {
         startX: t.clientX,
         startY: t.clientY,
         startYaw: state.yaw,
@@ -16915,37 +16922,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onTouchMove(event) {
-      if (event.touches.length !== 1 || !state.drag) return;
+      if (event.touches.length !== 1 || !touchDrag) return;
       const t = event.touches[0];
-      const dx = t.clientX - state.drag.startX;
-      const dy = t.clientY - state.drag.startY;
+      const dx = t.clientX - touchDrag.startX;
+      const dy = t.clientY - touchDrag.startY;
       if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-        state.drag.confirmed = true;
+        touchDrag.confirmed = true;
       }
-      if (state.drag.confirmed) {
-        state.yaw = state.drag.startYaw - dx * 0.0062;
-        state.pitch = state.drag.startPitch - dy * 0.0052;
+      if (touchDrag.confirmed) {
+        state.yaw = touchDrag.startYaw - dx * 0.0062;
+        state.pitch = touchDrag.startPitch - dy * 0.0052;
         state.lastInteractionAt = performance.now();
         tooltipEl.classList.remove("on");
       }
     }
 
     function onTouchEnd(event) {
-      if (!touchStart) return;
-      const t = event.changedTouches[0];
-      if (!t) { touchStart = null; state.drag = null; return; }
-      const wasDrag = state.drag && state.drag.confirmed;
-      const hitAtStart = touchStart.hit;
-      state.drag = null;
+      if (!touchDrag) return;
+      const wasDrag = touchDrag.confirmed;
+      touchDrag = null;
       state.lastInteractionAt = performance.now();
 
       if (!wasDrag) {
-        // Use hit captured at touchstart — camera hasn't moved
-        const hit = hitAtStart || pick({ clientX: t.clientX, clientY: t.clientY });
+        const t = event.changedTouches[0];
+        if (!t) return;
+        const hit = pick({ clientX: t.clientX, clientY: t.clientY });
+        console.log("[cluster] tap hit:", hit ? hit.kind : "none", hit && hit.data ? hit.data.title : "");
         if (hit && hit.kind === "node") openNodePanel(hit.data);
         else closeNodePanel();
+      } else {
+        state._wasDrag = true; // Suppress the click event that follows touchend
       }
-      touchStart = null;
     }
 
     function onWheel(event) {
@@ -16965,6 +16972,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     renderer.domElement.addEventListener("pointermove", onPointerMove);
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("click", onCanvasClick);
     renderer.domElement.addEventListener("touchstart", onTouchStart, { passive: true });
     renderer.domElement.addEventListener("touchmove", onTouchMove, { passive: true });
     renderer.domElement.addEventListener("touchend", onTouchEnd, { passive: true });
