@@ -5419,6 +5419,25 @@ body.ticker-active #flowControls {
         -webkit-overflow-scrolling: touch;
         scroll-behavior: smooth;
       }
+
+      /* ── Flow controls — prevent side overflow & nudge up ── */
+      #flowControls {
+        min-width: 0;
+        max-width: calc(100vw - 20px);
+        width: calc(100vw - 20px);
+        bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 28px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      }
+      body.ticker-active #flowControls {
+        bottom: calc(var(--global-ticker-height) + 28px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      }
+      .flowPanel {
+        padding: 12px 12px;
+      }
+
+      /* ── View sidebar — clear top-left control buttons ── */
+      .sidebarInner {
+        padding-top: calc(env(safe-area-inset-top, 0px) + 90px);
+      }
     }
   
 /* ── Border pulse animation ─────────────────────────────────── */
