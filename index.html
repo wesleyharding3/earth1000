@@ -5422,16 +5422,44 @@ body.ticker-active #flowControls {
 
       /* ── Flow controls — prevent side overflow & nudge up ── */
       #flowControls {
-        min-width: 0;
-        max-width: calc(100vw - 20px);
-        width: calc(100vw - 20px);
-        bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 28px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        min-width: 0 !important;
+        max-width: calc(100vw - 20px) !important;
+        width: calc(100vw - 20px) !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
+        box-sizing: border-box;
       }
       body.ticker-active #flowControls {
-        bottom: calc(var(--global-ticker-height) + 28px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        bottom: calc(var(--global-ticker-height) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
       }
       .flowPanel {
-        padding: 12px 12px;
+        padding: 12px 10px;
+        max-width: 100%;
+        overflow: hidden;
+      }
+      .flowPanelRow {
+        flex-wrap: wrap;
+      }
+      .flowPlaybackRow {
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .flowBtn {
+        font-size: 10px;
+        padding: 0 8px;
+      }
+      .flowLabel {
+        min-width: 0;
+        font-size: 9px;
+      }
+      .flowDateInput {
+        min-width: 0;
+        font-size: 11px;
+      }
+      .flowMinBar {
+        max-width: 100%;
+        box-sizing: border-box;
       }
 
       /* ── View sidebar — clear top-left control buttons ── */
