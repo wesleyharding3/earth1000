@@ -741,9 +741,12 @@ async function enrichThread(thread) {
   // stale history.
   const { rows: articlePool } = await pool.query(`
     WITH article_lang AS (
-      SELECT article_id, MIN(source_language) AS source_language
-      FROM article_keywords
-      GROUP BY article_id
+      SELECT ak.article_id, MIN(ak.source_language) AS source_language
+      FROM article_keywords ak
+      WHERE ak.article_id IN (
+        SELECT sta2.article_id FROM story_thread_articles sta2 WHERE sta2.thread_id = $1
+      )
+      GROUP BY ak.article_id
     )
     SELECT
       a.id, a.title, a.translated_title, a.summary, a.translated_summary,
