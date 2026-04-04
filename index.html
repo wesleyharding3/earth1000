@@ -3498,8 +3498,8 @@ body.ticker-active #flowControls {
     }
     .stats-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: repeat(2, minmax(0, 1fr));
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr;
       gap: 16px;
       width: 100%;
       flex: 1 1 auto;
@@ -3512,110 +3512,7 @@ body.ticker-active #flowControls {
       min-height: 0 !important;
       height: 100%;
     }
-    .stats-row .grm-widget {
-      width: 100% !important;
-      max-width: none !important;
-      margin-top: 0;
-    }
 
-    /* ── Population Tracker Widget ── */
-    .pop-widget {
-      width: 100%;
-      background: #10141c;
-      border: 1px solid rgba(255,255,255,0.10);
-      border-radius: 14px;
-      padding: 20px 24px 18px;
-      box-sizing: border-box;
-    }
-    .pop-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 16px;
-    }
-    .pop-header-left { display: flex; align-items: center; gap: 10px; }
-    .pop-pulse {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: #4ade80;
-      box-shadow: 0 0 6px #4ade80;
-      animation: popPulse 2.2s ease-in-out infinite;
-    }
-    @keyframes popPulse {
-      0%,100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: 0.5; transform: scale(0.85); }
-    }
-    .pop-title { font-size: 11px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.38); }
-    .pop-subtitle { font-size: 11px; color: rgba(255,255,255,0.35); margin-left: 4px; }
-    .pop-scope-tabs { display: flex; gap: 4px; }
-    .pop-scope-btn {
-      padding: calc(4px * var(--mobile-control-scale)) calc(12px * var(--mobile-control-scale)); font-size: calc(11px * var(--mobile-control-scale)); font-weight: 500;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
-      border-radius: calc(6px * var(--mobile-control-scale)); color: rgba(255,255,255,0.5); cursor: pointer;
-      transition: all 0.15s;
-    }
-    .pop-scope-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
-    .pop-scope-btn.active { background: rgba(74,222,128,0.15); border-color: rgba(74,222,128,0.4); color: #4ade80; }
-    .pop-search-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-    .pop-search-wrap { position: relative; flex: 1; min-width: 200px; max-width: 360px; }
-    .pop-search-input {
-      width: 100%; padding: 7px 32px 7px 12px; font-size: 12px;
-      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14);
-      border-radius: 8px; color: rgba(255,255,255,0.85); outline: none;
-      box-sizing: border-box; transition: border-color 0.15s;
-    }
-    .pop-search-input:focus { border-color: rgba(74,222,128,0.45); }
-    .pop-search-input::placeholder { color: rgba(255,255,255,0.28); }
-    .pop-search-icon { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: rgba(255,255,255,0.3); pointer-events: none; }
-    .pop-autocomplete {
-      display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
-      background: #1a2030; border: 1px solid rgba(255,255,255,0.14);
-      border-radius: 8px; z-index: 200; max-height: 200px; overflow-y: auto;
-    }
-    .pop-autocomplete.open { display: block; }
-    .pop-ac-item { padding: 8px 12px; font-size: 12px; color: rgba(255,255,255,0.7); cursor: pointer; transition: background 0.1s; }
-    .pop-ac-item:hover, .pop-ac-item.selected { background: rgba(74,222,128,0.12); color: #4ade80; }
-    .pop-ac-type { font-size: 10px; color: rgba(255,255,255,0.3); margin-left: 6px; }
-    .pop-selected-chip {
-      display: flex; align-items: center; gap: 8px;
-      padding: 4px 10px 4px 12px; background: rgba(74,222,128,0.12);
-      border: 1px solid rgba(74,222,128,0.35); border-radius: 20px;
-      font-size: 12px; color: #4ade80;
-    }
-    .pop-chip-x { cursor: pointer; opacity: 0.6; font-size: 11px; }
-    .pop-chip-x:hover { opacity: 1; }
-    .pop-counters { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
-    .pop-counter-card {
-      background: rgba(255,255,255,0.04); border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.08);
-      padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px;
-    }
-    .pop-counter-icon { color: rgba(255,255,255,0.4); flex-shrink: 0; padding-top: 2px; }
-    .pop-births .pop-counter-icon { color: #4ade80; }
-    .pop-deaths .pop-counter-icon { color: #f87171; }
-    .pop-netmig .pop-counter-icon { color: #60a5fa; }
-    .pop-netchange .pop-counter-icon { color: #a78bfa; }
-    .pop-counter-label { font-size: 10px; color: rgba(255,255,255,0.38); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 4px; }
-    .pop-counter-value { font-size: 20px; font-weight: 700; color: rgba(255,255,255,0.92); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
-    .pop-counter-rate { font-size: 11px; color: rgba(255,255,255,0.35); margin-top: 3px; font-variant-numeric: tabular-nums; }
-    .pop-births .pop-counter-value { color: #4ade80; }
-    .pop-deaths .pop-counter-value { color: #f87171; }
-    .pop-netmig .pop-counter-value { color: #60a5fa; }
-    .pop-netchange .pop-counter-value { color: #a78bfa; }
-    .pop-total-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
-    .pop-total-label { font-size: 11px; color: rgba(255,255,255,0.38); text-transform: uppercase; letter-spacing: 0.06em; }
-    .pop-total-value { font-size: 32px; font-weight: 800; color: rgba(255,255,255,0.95); font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
-    .pop-total-year { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
-    .pop-year-bar-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-    .pop-year-bar-label { font-size: 10px; color: rgba(255,255,255,0.3); white-space: nowrap; }
-    .pop-year-bar-track { flex: 1; height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden; }
-    .pop-year-bar-fill { height: 100%; background: linear-gradient(90deg,#4ade80,#22d3ee); border-radius: 2px; transition: width 1s linear; }
-    .pop-year-bar-pct { font-size: 10px; color: rgba(255,255,255,0.35); white-space: nowrap; min-width: 32px; text-align: right; }
-    .pop-stats-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 8px; margin-bottom: 16px; }
-    .pop-stat-box { background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.07); padding: 10px 12px; }
-    .pop-stat-label { font-size: 10px; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 5px; }
-    .pop-stat-value { font-size: 17px; font-weight: 700; color: rgba(255,255,255,0.88); font-variant-numeric: tabular-nums; }
-    .pop-stat-unit { font-size: 9.5px; color: rgba(255,255,255,0.28); margin-top: 2px; }
-    .pop-footer { display: flex; align-items: center; gap: 8px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 12px; }
-    .pop-footer-text { font-size: 10px; color: rgba(255,255,255,0.28); }
-    .pop-footer-dot { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,0.2); }
 
     /* ── Keyword Intelligence Widget ── */
     .kwi-widget {
@@ -4152,292 +4049,6 @@ body.ticker-active #flowControls {
     }
     .kwi-loading.visible { opacity: 1; pointer-events: all; }
 
-    /* ── Global Resource Monitor ── */
-    :root {
-      --grm-bg:       #0a0c10;
-      --grm-surface:  #10141c;
-      --grm-surface2: #161b26;
-      --grm-border:   rgba(255,255,255,0.07);
-      --grm-border2:  rgba(255,255,255,0.12);
-      --grm-gold:     #d4a843;
-      --grm-green:    #3de87a;
-      --grm-red:      #e8503d;
-      --grm-muted:    rgba(255,255,255,0.38);
-      --grm-text:     rgba(255,255,255,0.88);
-      --grm-accent:   #4a9eff;
-      --grm-gap:      10px;
-    }
-    .grm-widget {
-      width: 100%;
-      max-width: 760px;
-      background: var(--grm-surface);
-      border: 1px solid var(--grm-border2);
-      border-radius: 14px;
-      overflow: visible;
-      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      margin-top: 8px;
-    }
-    .grm-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 14px 18px 13px;
-      border-bottom: 1px solid var(--grm-border);
-      background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%);
-      position: relative;
-      border-radius: 14px 14px 0 0;
-    }
-    .grm-header-left { display: flex; align-items: center; gap: 10px; }
-    .grm-pulse {
-      width: 8px; height: 8px;
-      background: var(--grm-green);
-      border-radius: 50%;
-      box-shadow: 0 0 6px var(--grm-green);
-      animation: grmPulse 2s infinite;
-      flex-shrink: 0;
-    }
-    @keyframes grmPulse {
-      0%,100% { opacity:1; box-shadow: 0 0 6px var(--grm-green); }
-      50%      { opacity:.4; box-shadow: 0 0 2px var(--grm-green); }
-    }
-    .grm-title {
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: var(--grm-muted);
-    }
-    .grm-header-right { display: flex; align-items: center; gap: 8px; position: relative; }
-    .grm-add-btn {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      background: rgba(74,158,255,0.1);
-      border: 1px solid rgba(74,158,255,0.25);
-      color: var(--grm-accent);
-      font-family: inherit;
-      font-size: calc(10px * var(--mobile-control-scale));
-      font-weight: 600;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      padding: calc(5px * var(--mobile-control-scale)) calc(10px * var(--mobile-control-scale));
-      border-radius: calc(6px * var(--mobile-control-scale));
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .grm-add-btn:hover { background: rgba(74,158,255,0.18); border-color: rgba(74,158,255,0.5); }
-    .grm-dropdown {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      background: var(--grm-surface2);
-      border: 1px solid var(--grm-border2);
-      border-radius: 8px;
-      min-width: 200px;
-      overflow: hidden;
-      z-index: 9999;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
-      display: none;
-    }
-    .grm-dropdown.open { display: block; }
-    .grm-dropdown-header {
-      font-size: 9px;
-      letter-spacing: 0.15em;
-      text-transform: uppercase;
-      color: var(--grm-muted);
-      padding: 10px 14px 6px;
-      border-bottom: 1px solid var(--grm-border);
-    }
-    .grm-dropdown-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 9px 14px;
-      cursor: pointer;
-      transition: background 0.15s;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--grm-text);
-    }
-    .grm-dropdown-item:hover { background: rgba(255,255,255,0.05); }
-    .grm-dropdown-item.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
-    .grm-dropdown-item .grm-item-icon {
-      width: 22px; height: 22px;
-      border-radius: 5px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 12px; flex-shrink: 0;
-    }
-    .grm-dropdown-item .grm-item-sub {
-      font-size: 9px;
-      color: var(--grm-muted);
-      margin-top: 1px;
-      font-weight: 400;
-    }
-    .grm-grid {
-      padding: var(--grm-gap);
-      display: grid;
-      gap: var(--grm-gap);
-      transition: grid-template-columns 0.35s cubic-bezier(0.4,0,0.2,1);
-      flex: 1;
-      min-height: 0;
-      overflow: hidden;
-    }
-    /* 0: empty state fills space */
-    .grm-grid[data-count="0"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-    /* 1: single tracker, full width */
-    .grm-grid[data-count="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-    /* 2: stacked vertically — one column, two equal rows */
-    .grm-grid[data-count="2"] { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-    /* 3: two side-by-side on top, one full-width on bottom */
-    .grm-grid[data-count="3"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-    .grm-grid[data-count="3"] .grm-sub:nth-child(3) { grid-column: 1 / -1; }
-    /* 4: 2×2 grid */
-    .grm-grid[data-count="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-    /* Full-width bottom item in 3-tracker layout: centre content */
-    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-price-view {
-      align-items: center; justify-content: center; text-align: center;
-    }
-    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-price-row { justify-content: center; }
-    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-chart-view { flex: 1; display: flex; flex-direction: column; }
-    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-chart-header { justify-content: center; gap: 24px; }
-    .grm-grid[data-count="3"] .grm-sub:nth-child(3) .grm-canvas-wrap { flex: 1; }
-    .grm-sub {
-      background: var(--grm-surface2);
-      border: 1px solid var(--grm-border);
-      border-radius: 10px;
-      overflow: hidden;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      transition: all 0.35s cubic-bezier(0.4,0,0.2,1), border-color 0.2s;
-      animation: grmEnter 0.3s ease both;
-    }
-    @keyframes grmEnter {
-      from { opacity:0; transform: scale(0.96) translateY(4px); }
-      to   { opacity:1; transform: scale(1) translateY(0); }
-    }
-    .grm-sub:hover { border-color: rgba(255,255,255,0.14); }
-    .grm-sw-close {
-      position: absolute; top: 7px; right: 7px;
-      width: 18px; height: 18px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 4px;
-      display: flex; align-items: center; justify-content: center;
-      cursor: pointer;
-      opacity: 0;
-      transition: opacity 0.15s, background 0.15s;
-      z-index: 10;
-      color: var(--grm-muted);
-    }
-    .grm-sub:hover .grm-sw-close { opacity: 1; }
-    .grm-sw-close:hover { background: rgba(232,80,61,0.2); border-color: rgba(232,80,61,0.4); color: var(--grm-red); }
-    .grm-sw-mode {
-      position: absolute; top: 7px; left: 7px;
-      display: flex; gap: 3px;
-      opacity: 0;
-      transition: opacity 0.15s;
-      z-index: 10;
-    }
-    .grm-sub:hover .grm-sw-mode { opacity: 1; }
-    .grm-sw-mbtn {
-      width: calc(18px * var(--mobile-control-scale)); height: calc(18px * var(--mobile-control-scale));
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: calc(4px * var(--mobile-control-scale));
-      display: flex; align-items: center; justify-content: center;
-      cursor: pointer;
-      transition: all 0.15s;
-      color: var(--grm-muted);
-    }
-    .grm-sw-mbtn.active { background: rgba(74,158,255,0.15); border-color: rgba(74,158,255,0.35); color: var(--grm-accent); }
-    .grm-sw-mbtn:hover:not(.active) { background: rgba(255,255,255,0.1); color: var(--grm-text); }
-    .grm-price-view {
-      padding: 20px 16px 16px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      flex: 1;
-    }
-    .grm-commodity-label {
-      font-size: 9px; font-weight: 600;
-      letter-spacing: 0.18em; text-transform: uppercase;
-      color: var(--grm-muted); margin-bottom: 6px;
-      display: flex; align-items: center; gap: 6px;
-    }
-    .grm-commodity-icon {
-      width: 16px; height: 16px; border-radius: 3px;
-      display: flex; align-items: center; justify-content: center; font-size: 10px;
-    }
-    .grm-price-main {
-      font-size: 28px; font-weight: 700;
-      letter-spacing: -0.02em; line-height: 1;
-      font-family: 'JetBrains Mono', 'Courier New', monospace;
-      margin-bottom: 6px; transition: color 0.3s;
-    }
-    .grm-price-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .grm-badge {
-      display: inline-flex; align-items: center; gap: 3px;
-      font-family: 'JetBrains Mono', 'Courier New', monospace;
-      font-size: 10px; font-weight: 500;
-      padding: 2px 7px; border-radius: 4px;
-    }
-    .grm-badge.up { background: rgba(61,232,122,0.1); color: var(--grm-green); border: 1px solid rgba(61,232,122,0.2); }
-    .grm-badge.dn { background: rgba(232,80,61,0.1); color: var(--grm-red); border: 1px solid rgba(232,80,61,0.2); }
-    .grm-ts { font-family: 'JetBrains Mono', monospace; font-size: 8px; color: var(--grm-muted); letter-spacing: 0.05em; }
-    .grm-unit { font-size: 10px; color: var(--grm-muted); font-weight: 400; letter-spacing: 0.08em; }
-    .grm-chart-view {
-      flex: 1; display: flex; flex-direction: column;
-      padding: 20px 0 0; position: relative; overflow: hidden;
-    }
-    .grm-chart-header {
-      padding: 0 16px 8px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .grm-chart-label {
-      font-size: 9px; font-weight: 600;
-      letter-spacing: 0.18em; text-transform: uppercase;
-      color: var(--grm-muted);
-      display: flex; align-items: center; gap: 6px;
-    }
-    .grm-chart-price {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 13px; font-weight: 600;
-    }
-    .grm-chart-range { display: flex; gap: 3px; padding: 0 16px 6px; }
-    .grm-rbtn {
-      font-family: inherit; font-size: calc(8px * var(--mobile-control-scale)); font-weight: 600;
-      letter-spacing: 0.08em; padding: calc(2px * var(--mobile-control-scale)) calc(6px * var(--mobile-control-scale)); border-radius: calc(3px * var(--mobile-control-scale));
-      border: 1px solid var(--grm-border);
-      background: transparent; color: var(--grm-muted); cursor: pointer;
-      transition: all 0.15s;
-    }
-    .grm-rbtn.active, .grm-rbtn:hover {
-      background: rgba(74,158,255,0.12); border-color: rgba(74,158,255,0.3); color: var(--grm-accent);
-    }
-    .grm-canvas-wrap { flex: 1; min-height: 60px; position: relative; }
-    .grm-canvas-wrap canvas { width: 100%; height: 100%; display: block; }
-    .grm-empty {
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 10px; color: var(--grm-muted);
-      font-size: 11px; letter-spacing: 0.1em;
-      text-transform: uppercase; min-height: 180px;
-    }
-    .grm-empty svg { opacity: 0.3; }
-    .grm-footer {
-      padding: 8px 18px;
-      border-top: 1px solid var(--grm-border);
-      display: flex; align-items: center; justify-content: space-between;
-      border-radius: 0 0 14px 14px;
-    }
-    .grm-footer-text {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 8px; color: rgba(255,255,255,0.2);
-      letter-spacing: 0.1em; text-transform: uppercase;
-    }
-    .grm-footer-dot { width: 5px; height: 5px; background: var(--grm-green); border-radius: 50%; opacity: 0.5; }
     .pagePlaceholder {
       display: flex;
       flex-direction: column;
@@ -4537,7 +4148,7 @@ body.ticker-active #flowControls {
     ─────────────────────────────────────── */
     #nfQueryBar {
       flex-shrink: 0;
-      padding: 16px 20px 16px;
+      padding: max(16px, env(safe-area-inset-top, 0px)) 20px 16px;
       background: rgba(4, 7, 13, 0.82);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
@@ -4583,6 +4194,41 @@ body.ticker-active #flowControls {
       flex-shrink: 0;
       user-select: none;
       margin-right: 4px;
+    }
+
+    /* ── Collapse toggle button ── */
+    .nfCollapseBtn {
+      display: flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; flex-shrink: 0;
+      background: rgba(255,180,80,0.05);
+      border: 1px solid rgba(255,180,80,0.18);
+      border-radius: 50%;
+      color: rgba(255,180,80,0.50);
+      cursor: pointer;
+      transition: border-color 0.18s, color 0.18s, background 0.18s;
+      padding: 0;
+    }
+    .nfCollapseBtn:hover {
+      border-color: rgba(255,180,80,0.42);
+      color: rgba(255,200,100,0.90);
+      background: rgba(255,180,80,0.10);
+    }
+    .nfCollapseBtn svg {
+      width: 10px; height: 10px; display: block;
+      transition: transform 0.22s;
+    }
+    /* chevron points up (collapse) when expanded, down (expand) when collapsed */
+    #nfQueryBar.nf-collapsed .nfCollapseBtn svg { transform: rotate(0deg); }
+    #nfQueryBar:not(.nf-collapsed) .nfCollapseBtn svg { transform: rotate(180deg); }
+
+    /* ── Collapsed state: hide all filters ── */
+    #nfQueryBar.nf-collapsed .nfTopSpacer,
+    #nfQueryBar.nf-collapsed .nfTagWrap,
+    #nfQueryBar.nf-collapsed .nfMediaToggles,
+    #nfQueryBar.nf-collapsed .nfBiasWrap,
+    #nfQueryBar.nf-collapsed .nfTextWrap,
+    #nfQueryBar.nf-collapsed #nfBuilderRow {
+      display: none !important;
     }
 
     .nfTopSpacer { flex: 1; min-width: 12px; }
@@ -6350,43 +5996,6 @@ body.ticker-active #flowControls {
 
       <div class="stats-row">
 
-      <div class="grm-widget" id="grm">
-        <div class="grm-header">
-          <div class="grm-header-left">
-            <div class="grm-pulse"></div>
-            <span class="grm-title">Global Resource Monitor</span>
-          </div>
-          <div class="grm-header-right">
-            <button class="grm-add-btn" id="grmAddBtn" onclick="grmToggleDropdown()">
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M5 1V9M1 5H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-              </svg>
-              Add Resource
-            </button>
-            <div class="grm-dropdown" id="grmDropdown">
-              <div class="grm-dropdown-header">Commodities &amp; Resources</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="grm-grid" id="grmGrid" data-count="0">
-          <div class="grm-empty" id="grmEmpty">
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/>
-              <rect x="18" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/>
-              <rect x="2" y="18" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/>
-              <rect x="18" y="18" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.5"/>
-            </svg>
-            No resources tracked — add up to 4
-          </div>
-        </div>
-
-        <div class="grm-footer">
-          <span class="grm-footer-text">Live Market Data</span>
-          <div class="grm-footer-dot"></div>
-          <span class="grm-footer-text" id="grmFooterTime">—</span>
-        </div>
-      </div><!-- /grm-widget -->
 
       <!-- Keyword Intelligence Widget -->
       <div class="kwi-widget" id="kwi">
@@ -6509,167 +6118,6 @@ body.ticker-active #flowControls {
         </div>
       </div><!-- /kwi-widget -->
 
-      <!-- Population Tracker Widget (quadrant 3) -->
-      <div class="pop-widget" id="popWidget">
-        <div class="pop-header">
-          <div class="pop-header-left">
-            <div class="pop-pulse"></div>
-            <span class="pop-title">Population Tracker</span>
-            <span class="pop-subtitle">Live demographic simulation</span>
-          </div>
-          <div class="pop-header-right">
-            <div class="pop-scope-tabs">
-              <button class="pop-scope-btn active" data-scope="world" onclick="popSetScope('world')">World</button>
-              <button class="pop-scope-btn" data-scope="country" onclick="popSetScope('country')">Country</button>
-              <button class="pop-scope-btn" data-scope="city" onclick="popSetScope('city')">City</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Search row (hidden in world mode) -->
-        <div class="pop-search-row" id="popSearchRow" style="display:none;">
-          <div class="pop-search-wrap">
-            <input class="pop-search-input" id="popSearchInput" type="text"
-              placeholder="Search country or city…"
-              autocomplete="off"
-              oninput="popOnInput(this.value)"
-              onkeydown="popOnKey(event)"/>
-            <svg class="pop-search-icon" width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/>
-              <line x1="8.5" y1="8.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-            <div class="pop-autocomplete" id="popAC"></div>
-          </div>
-          <div class="pop-selected-chip" id="popChip" style="display:none;">
-            <span id="popChipLabel"></span>
-            <span class="pop-chip-x" onclick="popClearSelection()">✕</span>
-          </div>
-        </div>
-
-        <!-- Counter cards -->
-        <div class="pop-counters" id="popCounters">
-          <div class="pop-counter-card pop-births">
-            <div class="pop-counter-icon">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <circle cx="9" cy="6" r="3.5" stroke="currentColor" stroke-width="1.4"/>
-                <path d="M2 16c0-3.31 3.13-6 7-6s7 2.69 7 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                <line x1="9" y1="10" x2="9" y2="13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <div class="pop-counter-body">
-              <div class="pop-counter-label">Births this year</div>
-              <div class="pop-counter-value" id="popBirthCount">—</div>
-              <div class="pop-counter-rate" id="popBirthRate">—/sec</div>
-            </div>
-          </div>
-          <div class="pop-counter-card pop-deaths">
-            <div class="pop-counter-icon">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M9 2C6.24 2 4 4.24 4 7c0 1.9.96 3.57 2.4 4.57L6 15h6l-.4-3.43A5 5 0 0 0 14 7c0-2.76-2.24-5-5-5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-                <line x1="6" y1="15" x2="12" y2="15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <div class="pop-counter-body">
-              <div class="pop-counter-label">Deaths this year</div>
-              <div class="pop-counter-value" id="popDeathCount">—</div>
-              <div class="pop-counter-rate" id="popDeathRate">—/sec</div>
-            </div>
-          </div>
-          <div class="pop-counter-card pop-netmig">
-            <div class="pop-counter-icon">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M3 9h12M10 5l5 4-5 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <div class="pop-counter-body">
-              <div class="pop-counter-label">Net migration this year</div>
-              <div class="pop-counter-value" id="popMigCount">—</div>
-              <div class="pop-counter-rate" id="popMigRate">—/sec</div>
-            </div>
-          </div>
-          <div class="pop-counter-card pop-netchange">
-            <div class="pop-counter-icon">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <path d="M3 13 L9 5 L15 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </div>
-            <div class="pop-counter-body">
-              <div class="pop-counter-label">Net population change</div>
-              <div class="pop-counter-value" id="popNetCount">—</div>
-              <div class="pop-counter-rate" id="popNetRate">—/sec</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Population bar + total -->
-        <div class="pop-total-row">
-          <div class="pop-total-label">Current Population</div>
-          <div class="pop-total-value" id="popTotal">—</div>
-          <div class="pop-total-year" id="popTotalYear"></div>
-        </div>
-
-        <!-- Progress bar: year elapsed -->
-        <div class="pop-year-bar-wrap">
-          <div class="pop-year-bar-label">Year progress</div>
-          <div class="pop-year-bar-track">
-            <div class="pop-year-bar-fill" id="popYearFill"></div>
-          </div>
-          <div class="pop-year-bar-pct" id="popYearPct"></div>
-        </div>
-
-        <!-- Stats grid -->
-        <div class="pop-stats-grid">
-          <div class="pop-stat-box">
-            <div class="pop-stat-label">Birth Rate</div>
-            <div class="pop-stat-value" id="popStatBR">—</div>
-            <div class="pop-stat-unit">per 1,000/yr</div>
-          </div>
-          <div class="pop-stat-box">
-            <div class="pop-stat-label">Death Rate</div>
-            <div class="pop-stat-value" id="popStatDR">—</div>
-            <div class="pop-stat-unit">per 1,000/yr</div>
-          </div>
-          <div class="pop-stat-box">
-            <div class="pop-stat-label">Natural Increase</div>
-            <div class="pop-stat-value" id="popStatNI">—</div>
-            <div class="pop-stat-unit">per 1,000/yr</div>
-          </div>
-          <div class="pop-stat-box">
-            <div class="pop-stat-label">Net Migration Rate</div>
-            <div class="pop-stat-value" id="popStatMR">—</div>
-            <div class="pop-stat-unit">per 1,000/yr</div>
-          </div>
-          <div class="pop-stat-box">
-            <div class="pop-stat-label">Growth Rate</div>
-            <div class="pop-stat-value" id="popStatGR">—</div>
-            <div class="pop-stat-unit">% per year</div>
-          </div>
-          <div class="pop-stat-box">
-            <div class="pop-stat-label">Doubling Time</div>
-            <div class="pop-stat-value" id="popStatDT">—</div>
-            <div class="pop-stat-unit">years</div>
-          </div>
-        </div>
-
-        <div class="pop-footer">
-          <span class="pop-footer-text">Sources: UN DESA, World Bank, national statistics offices · 2024 estimates</span>
-          <div class="pop-footer-dot"></div>
-          <span class="pop-footer-text" id="popFooterTime">—</span>
-        </div>
-      </div><!-- /pop-widget -->
-
-      <!-- Quadrant 4: empty (reserved) -->
-      <div style="
-        background: rgba(255,255,255,0.015);
-        border: 1px dashed rgba(255,255,255,0.07);
-        border-radius: 14px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 200px;
-      ">
-        <span style="font-size:10px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:rgba(255,255,255,0.12);">Coming Soon</span>
-      </div>
 
       </div><!-- /stats-row -->
 
@@ -12854,11 +12302,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ── Position card + connector line ──
         function positionCard(sx, sy) {
-          const W=window.innerWidth, H=window.innerHeight, CW=278, CH=135, OFF=34;
+          const W=window.innerWidth, H=window.innerHeight, CW=Math.min(278, W-16), CH=135, OFF=34;
           let cx = sx+OFF, cy = sy-CH/2;
-          if (cx+CW > W-18)   cx = sx-OFF-CW;
+          if (cx+CW > W-8)    cx = sx-OFF-CW;
           if (cy < 82)        cy = sy+22;
           if (cy+CH > H-290)  cy = H-290-CH;
+          // Final clamp: keep card fully inside viewport on all sides
+          cx = Math.max(8, Math.min(cx, W-CW-8));
+          cy = Math.max(8, cy);
           card.style.left = cx+"px";
           card.style.top  = cy+"px";
           const ancX = cx < sx ? cx+CW : cx;
@@ -14777,6 +14228,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       <!-- Row 1: title · tag · text filter -->
       <div class="nfTopRow">
         <span class="nfPageTitle">News Feed</span>
+        <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
+          <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="2,3.5 5,6.5 8,3.5"/>
+          </svg>
+        </button>
         <div class="nfTopSpacer"></div>
         <div class="nfTagWrap" id="nfTagWrap">
           <div class="nfTagBtn" id="nfTagBtn">
@@ -15385,6 +14841,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const safeKw = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return esc(text).replace(new RegExp(safeKw, "gi"), m => `<mark>${m}</mark>`);
     }
+    // ── Filter collapse toggle (default: collapsed) ──
+    (function() {
+      const queryBar = document.getElementById('nfQueryBar');
+      const collapseBtn = document.getElementById('nfCollapseBtn');
+      queryBar.classList.add('nf-collapsed');
+      collapseBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        queryBar.classList.toggle('nf-collapsed');
+      });
+    })();
+
     function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
     function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
     function isoDate(d) { return d.toISOString().slice(0,10); }
@@ -16843,301 +16310,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 
 <script>
-// ───────────────────────────────────────────────────
-//  GLOBAL RESOURCE MONITOR
-// ───────────────────────────────────────────────────
-
-const GRM_CATALOG = {
-  gold:     { id:'gold',     label:'Gold',        symbol:'XAU', unit:'USD/oz',    icon:'⬡', iconBg:'rgba(212,168,67,0.15)',  color:'#d4a843', mock:{ price:2175.34, change:+1.24,  pct:+0.057 } },
-  silver:   { id:'silver',   label:'Silver',      symbol:'XAG', unit:'USD/oz',    icon:'◇', iconBg:'rgba(200,200,220,0.12)',color:'#c0c0d0', mock:{ price:24.61,   change:+0.18,  pct:+0.74  } },
-  oil:      { id:'oil',      label:'Crude Oil',   symbol:'WTI', unit:'USD/bbl',   icon:'◉', iconBg:'rgba(180,100,40,0.15)', color:'#c06028', mock:{ price:78.42,   change:-0.61,  pct:-0.77  } },
-  gas:      { id:'gas',      label:'Natural Gas', symbol:'NG',  unit:'USD/MMBtu', icon:'◈', iconBg:'rgba(100,180,220,0.15)',color:'#60b4dc', mock:{ price:1.88,    change:+0.03,  pct:+1.62  } },
-  lumber:   { id:'lumber',   label:'Lumber',      symbol:'LBR', unit:'USD/mbf',   icon:'▤', iconBg:'rgba(160,100,50,0.15)', color:'#a06432', mock:{ price:559,     change:-1.86,  pct:-0.33  } },
-  steel:    { id:'steel',    label:'Steel',       symbol:'STL', unit:'USD/ton',   icon:'▦', iconBg:'rgba(120,140,160,0.15)',color:'#7890a0', mock:{ price:3118,    change:+19,    pct:+0.61  } },
-  lithium:  { id:'lithium',  label:'Lithium',     symbol:'LI',  unit:'CNY/ton',   icon:'⬟', iconBg:'rgba(140,90,220,0.15)', color:'#9060dc', mock:{ price:154750,  change:-500,   pct:-0.32  } },
-  copper:   { id:'copper',   label:'Copper',      symbol:'HG',  unit:'USD/lb',    icon:'◆', iconBg:'rgba(180,100,60,0.15)', color:'#b46438', mock:{ price:3.87,    change:-0.02,  pct:-0.52  } },
-  platinum: { id:'platinum', label:'Platinum',    symbol:'XPT', unit:'USD/oz',    icon:'⬢', iconBg:'rgba(150,200,200,0.12)',color:'#90c8c0', mock:{ price:901.20,  change:+5.40,  pct:+0.60  } },
-  coal:     { id:'coal',     label:'Coal',        symbol:'MTF', unit:'USD/ton',   icon:'■', iconBg:'rgba(100,100,120,0.15)',color:'#808090', mock:{ price:127.50,  change:-1.20,  pct:-0.93  } },
-};
-
-let grmActive = [];
-const grmModes  = {};  // id -> 'price'|'chart'
-const grmRanges = {};  // id -> '1D'|'1W'|'1M'|'1Y'
-
-function grmGenHistory(base, n, vol) {
-  const pts = []; let p = base * (0.85 + Math.random()*0.1);
-  for (let i=0; i<n; i++) { p += (Math.random()-0.49)*vol; p=Math.max(p,base*0.6); pts.push(p); }
-  pts[pts.length-1] = base; return pts;
-}
-
-function grmHistory(id, range) {
-  const base = GRM_CATALOG[id].mock.price;
-  const vol  = base * 0.008;
-  const n    = {1:24,7:168,30:30,52:52}[{1:1,'1D':1,'1W':7,'1M':30,'1Y':52}[range]||30] || ({'1D':24,'1W':48,'1M':30,'1Y':52}[range]||30);
-  return grmGenHistory(base, n, vol * ({'1D':1,'1W':2,'1M':3,'1Y':4}[range]||2));
-}
-
-function grmFmt(p) {
-  if (p>=10000) return p.toLocaleString('en-US',{maximumFractionDigits:0});
-  if (p>=100)   return p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  return p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4});
-}
-
-function grmPriceHTML(id) {
-  const c=GRM_CATALOG[id], {price,change,pct}=c.mock, up=change>=0;
-  const ts=new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-  return `<div class="grm-price-view">
-    <div class="grm-commodity-label">
-      <span class="grm-commodity-icon" style="background:${c.iconBg};color:${c.color}">${c.icon}</span>
-      ${c.label} <span style="color:rgba(255,255,255,0.2)">•</span> <span>${c.symbol}</span>
-    </div>
-    <div class="grm-price-main" style="color:${up?'var(--grm-green)':'var(--grm-red)'}">
-      $${grmFmt(price)} <span class="grm-unit">${c.unit.split('/')[1]}</span>
-    </div>
-    <div class="grm-price-row">
-      <span class="grm-badge ${up?'up':'dn'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(2)}%</span>
-      <span class="grm-badge ${up?'up':'dn'}" style="font-size:9px">${up?'+':''}${change.toFixed(change<10?3:0)}</span>
-      <span class="grm-ts">as of ${ts}</span>
-    </div>
-  </div>`;
-}
-
-function grmChartHTML(id) {
-  const c=GRM_CATALOG[id], {price,change,pct}=c.mock, up=change>=0;
-  const range=grmRanges[id]||'1M';
-  return `<div class="grm-chart-view">
-    <div class="grm-chart-header">
-      <div class="grm-chart-label">
-        <span class="grm-commodity-icon" style="background:${c.iconBg};color:${c.color};width:16px;height:16px;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:10px">${c.icon}</span>
-        ${c.label}
-      </div>
-      <span class="grm-chart-price" style="color:${up?'var(--grm-green)':'var(--grm-red)'}">$${grmFmt(price)}</span>
-    </div>
-    <div class="grm-chart-range">
-      ${['1D','1W','1M','1Y'].map(r=>`<button class="grm-rbtn${r===range?' active':''}" onclick="grmSetRange('${id}','${r}')">${r}</button>`).join('')}
-    </div>
-    <div class="grm-canvas-wrap" id="grmCW-${id}">
-      <canvas id="grmC-${id}"></canvas>
-    </div>
-  </div>`;
-}
-
-function grmDrawChart(id) {
-  const range=grmRanges[id]||'1M';
-  const data=grmHistory(id,range);
-  const canvas=document.getElementById('grmC-'+id);
-  const wrap=document.getElementById('grmCW-'+id);
-  if (!canvas||!wrap) return;
-  const W=wrap.clientWidth||300, H=wrap.clientHeight||80, dpr=window.devicePixelRatio||1;
-  canvas.width=W*dpr; canvas.height=H*dpr;
-  canvas.style.width=W+'px'; canvas.style.height=H+'px';
-  const ctx=canvas.getContext('2d'); ctx.scale(dpr,dpr);
-  const min=Math.min(...data), max=Math.max(...data);
-  const pad={t:4,r:2,b:18,l:2};
-  const xS=i=>pad.l+(i/(data.length-1))*(W-pad.l-pad.r);
-  const yS=v=>pad.t+(1-(v-min)/(max-min||1))*(H-pad.t-pad.b);
-  const up=data[data.length-1]>=data[0];
-  const lc=up?'#3de87a':'#e8503d';
-  const grad=ctx.createLinearGradient(0,pad.t,0,H-pad.b);
-  grad.addColorStop(0,up?'rgba(61,232,122,0.18)':'rgba(232,80,61,0.18)');
-  grad.addColorStop(1,up?'rgba(61,232,122,0)':'rgba(232,80,61,0)');
-  ctx.beginPath();
-  data.forEach((v,i)=>{ const x=xS(i),y=yS(v); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
-  ctx.lineTo(xS(data.length-1),H-pad.b); ctx.lineTo(xS(0),H-pad.b); ctx.closePath();
-  ctx.fillStyle=grad; ctx.fill();
-  ctx.beginPath();
-  data.forEach((v,i)=>{ const x=xS(i),y=yS(v); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
-  ctx.strokeStyle=lc; ctx.lineWidth=1.5; ctx.lineJoin='round'; ctx.stroke();
-  ctx.beginPath(); ctx.arc(xS(data.length-1),yS(data[data.length-1]),3,0,Math.PI*2);
-  ctx.fillStyle=lc; ctx.fill();
-  ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.font='8px monospace';
-  ctx.textAlign='left'; ctx.fillText({'1D':'24h ago','1W':'7d ago','1M':'30d ago','1Y':'1yr ago'}[range]||'',4,H-4);
-  ctx.textAlign='right'; ctx.fillText('Now',W-4,H-4);
-}
-
-function grmBuildSub(id) {
-  const mode=grmModes[id]||'price';
-  const el=document.createElement('div');
-  el.className='grm-sub'; el.id='grm-sw-'+id; el.dataset.id=id;
-  el.innerHTML=`
-    <div class="grm-sw-mode">
-      <button class="grm-sw-mbtn${mode==='price'?' active':''}" title="Price" onclick="grmSetMode('${id}','price')">
-        <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M1 4.5h7M4.5 1v7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-      </button>
-      <button class="grm-sw-mbtn${mode==='chart'?' active':''}" title="Chart" onclick="grmSetMode('${id}','chart')">
-        <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><polyline points="1,7 3,4 5,5.5 8,2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-      </button>
-    </div>
-    <button class="grm-sw-close" onclick="grmRemove('${id}')" title="Remove">
-      <svg width="7" height="7" viewBox="0 0 7 7" fill="none"><path d="M1 1l5 5M6 1L1 6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-    </button>
-    ${mode==='price'?grmPriceHTML(id):grmChartHTML(id)}`;
-  return el;
-}
-
-function grmRefresh() {
-  const grid=document.getElementById('grmGrid');
-  const empty=document.getElementById('grmEmpty');
-  const n=grmActive.length;
-  grid.dataset.count=n;
-  Array.from(grid.querySelectorAll('.grm-sub')).forEach(el=>el.remove());
-  if (n===0) { empty.style.display='flex'; return; }
-  empty.style.display='none';
-  grmActive.forEach(id=>grid.appendChild(grmBuildSub(id)));
-  requestAnimationFrame(()=>{ grmActive.forEach(id=>{ if((grmModes[id]||'price')==='chart') grmDrawChart(id); }); });
-}
-
-function grmSaveState() {
-  try { localStorage.setItem('grm_active', JSON.stringify(grmActive)); } catch(_) {}
-}
-
-function grmAdd(id) {
-  if (grmActive.includes(id)||grmActive.length>=4) return;
-  grmModes[id]=grmModes[id]||'price'; grmRanges[id]=grmRanges[id]||'1M';
-  grmActive.push(id); grmCloseDropdown(); grmRefresh(); grmUpdateDropdown();
-  grmSaveState();
-}
-
-function grmRemove(id) {
-  grmActive=grmActive.filter(x=>x!==id); grmRefresh(); grmUpdateDropdown();
-  grmSaveState();
-}
-
-function grmSetMode(id,mode) {
-  grmModes[id]=mode;
-  const el=document.getElementById('grm-sw-'+id); if (!el) return;
-  el.querySelectorAll('.grm-sw-mbtn').forEach((b,i)=>b.classList.toggle('active',(i===0&&mode==='price')||(i===1&&mode==='chart')));
-  const old=el.querySelector('.grm-price-view,.grm-chart-view'); if (old) old.remove();
-  el.insertAdjacentHTML('beforeend',mode==='price'?grmPriceHTML(id):grmChartHTML(id));
-  if (mode==='chart') requestAnimationFrame(()=>grmDrawChart(id));
-}
-
-function grmSetRange(id,range) {
-  grmRanges[id]=range;
-  const el=document.getElementById('grm-sw-'+id); if (!el) return;
-  const old=el.querySelector('.grm-chart-view'); if (!old) return;
-  old.remove(); el.insertAdjacentHTML('beforeend',grmChartHTML(id));
-  requestAnimationFrame(()=>grmDrawChart(id));
-}
-
-function grmUpdateDropdown() {
-  document.querySelectorAll('.grm-dropdown-item[data-gid]').forEach(item=>{
-    const id=item.dataset.gid;
-    const active=grmActive.includes(id), full=grmActive.length>=4&&!active;
-    item.classList.toggle('disabled',active||full);
-    const sub=item.querySelector('.grm-item-sub');
-    if (sub) sub.textContent=active?'Already tracking':full?'Remove a widget first':GRM_CATALOG[id].unit;
-  });
-}
-
-function grmBuildDropdown() {
-  const dd=document.getElementById('grmDropdown');
-  const hdr=dd.querySelector('.grm-dropdown-header');
-  dd.innerHTML=''; dd.appendChild(hdr);
-  Object.values(GRM_CATALOG).forEach(c=>{
-    const div=document.createElement('div');
-    div.className='grm-dropdown-item'; div.dataset.gid=c.id;
-    div.onclick=()=>grmAdd(c.id);
-    div.innerHTML=`<div class="grm-item-icon" style="background:${c.iconBg};color:${c.color}">${c.icon}</div>
-      <div><div>${c.label} <span style="color:var(--grm-muted);font-size:9px">${c.symbol}</span></div>
-      <div class="grm-item-sub">${c.unit}</div></div>`;
-    dd.appendChild(div);
-  });
-  grmUpdateDropdown();
-}
-
-function grmToggleDropdown() {
-  document.getElementById('grmDropdown').classList.toggle('open');
-}
-function grmCloseDropdown() {
-  document.getElementById('grmDropdown').classList.remove('open');
-}
-
-document.addEventListener('click', e=>{
-  if (!e.target.closest('.grm-header-right')) grmCloseDropdown();
-});
-
-// Live tick
-// IDs served by real server-side data (all others stay simulated)
-const GRM_REAL = new Set(['gold','silver','oil','gas','lumber','steel']);
-
-// Poll /api/commodities — server refreshes every 12h, we poll every 10min
-async function grmPollServer() {
-  try {
-    const res  = await fetch('/api/commodities');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    Object.entries(data).forEach(([id, d]) => {
-      if (!GRM_CATALOG[id] || d.price == null) return;
-      const c    = GRM_CATALOG[id];
-      c.mock.price  = d.price;
-      c.mock.change = d.change ?? 0;
-      c.mock.pct    = d.pct    ?? 0;
-      c._updatedAt  = d.updatedAt;
-    });
-  } catch(e) {
-    // silently retain last known values on network error
-  }
-}
-
-// Visual ticker: micro-jitter for server-backed data, drift for simulated
-function grmTick() {
-  Object.values(GRM_CATALOG).forEach(c=>{
-    if (GRM_REAL.has(c.id)) {
-      // ±0.01% jitter so price looks alive between server polls
-      const jitter = (Math.random()-0.5) * c.mock.price * 0.0001;
-      c.mock.price = Math.max(c.mock.price + jitter, 0.01);
-    } else {
-      const drift = (Math.random()-0.499) * c.mock.price * 0.0003;
-      c.mock.price  = Math.max(c.mock.price + drift, 0.01);
-      c.mock.change += drift;
-      c.mock.pct    = (c.mock.change / (c.mock.price - c.mock.change)) * 100;
-    }
-  });
-
-  grmActive.forEach(id=>{
-    const mode = grmModes[id] || 'price';
-    const el   = document.getElementById('grm-sw-'+id); if (!el) return;
-    if (mode === 'price') {
-      const pv = el.querySelector('.grm-price-view'); if (!pv) return;
-      const tmp = document.createElement('div');
-      tmp.innerHTML = grmPriceHTML(id);
-      pv.replaceWith(tmp.querySelector('.grm-price-view'));
-    } else {
-      const cp = el.querySelector('.grm-chart-price'); if (!cp) return;
-      const c  = GRM_CATALOG[id];
-      cp.style.color = c.mock.change >= 0 ? 'var(--grm-green)' : 'var(--grm-red)';
-      cp.textContent = '$' + grmFmt(c.mock.price);
-    }
-  });
-}
-
-function grmClockTick() {
-  const el = document.getElementById('grmFooterTime');
-  if (el) el.textContent = new Date().toUTCString().slice(17,25) + ' UTC';
-}
-
-// Init — restore saved trackers from localStorage, or default to gold
-grmBuildDropdown();
-(function() {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('grm_active')); } catch(_) {}
-  const toLoad = (Array.isArray(saved) && saved.length > 0)
-    ? saved.filter(id => id in GRM_CATALOG).slice(0, 4)
-    : ['gold'];
-  toLoad.forEach(id => { grmModes[id] = 'price'; grmRanges[id] = '1M'; grmActive.push(id); });
-})();
-grmUpdateDropdown();
-grmClockTick();
-
-(async () => {
-  await grmPollServer();          // hydrate catalog with real prices before first render
-  grmRefresh();                   // first paint now shows real values
-  setInterval(grmPollServer, 10 * 60 * 1000);
-  setInterval(grmTick, 2000);
-  setInterval(grmClockTick, 1000);
-})();
-
 /* =========================================
    Keyword Intelligence Widget (kwi)
 ========================================= */
@@ -18373,270 +17545,6 @@ grmClockTick();
 })();
 </script>
 
-
-<script>
-// ───────────────────────────────────────────────────────────────────────────
-// POPULATION TRACKER WIDGET
-// ───────────────────────────────────────────────────────────────────────────
-(function() {
-
-  const WORLD = { name:'World', pop: 8119000000, br: 17.6, dr: 7.8, mr: 0 };
-
-  const COUNTRIES = [
-    ['Afghanistan',42240000,34.5,13.2,-2.1],['Albania',2832000,10.5,7.3,2.8],
-    ['Algeria',46814000,22.1,4.6,-0.9],['Angola',37885000,41.3,7.8,-0.1],
-    ['Argentina',46654000,15.5,7.9,-0.1],['Armenia',2777000,10.8,9.4,-5.1],
-    ['Australia',26774000,12.2,6.8,5.5],['Austria',9132000,9.3,9.9,4.1],
-    ['Azerbaijan',10145000,12.4,5.8,-1.2],['Bangladesh',172954000,18.1,5.5,-3.2],
-    ['Belarus',9384000,8.6,14.6,-3.0],['Belgium',11686000,10.2,9.9,4.3],
-    ['Bolivia',12079000,20.7,6.5,-0.7],['Bosnia',3210000,8.1,10.5,-2.4],
-    ['Brazil',216422000,13.3,7.0,0.1],['Bulgaria',6448000,7.8,18.3,-0.2],
-    ['Burkina Faso',23251000,36.9,8.0,-1.1],['Cambodia',17638000,18.2,5.8,-0.3],
-    ['Cameroon',28647000,35.6,8.2,-0.3],['Canada',38782000,9.9,8.1,6.3],
-    ['Central African Republic',5742000,34.5,12.6,-1.5],['Chad',18279000,41.6,11.5,-0.6],
-    ['Chile',19629000,12.3,6.7,1.0],['China',1409670000,9.5,7.9,-0.2],
-    ['Colombia',52085000,14.7,6.1,0.4],['DR Congo',102262000,40.6,8.5,-0.2],
-    ['Congo',6145000,36.5,8.2,-0.2],['Costa Rica',5212000,12.8,5.2,0.9],
-    ['Croatia',3874000,9.0,14.1,-1.7],['Cuba',11089000,9.2,9.5,-7.5],
-    ['Czech Republic',10875000,9.3,11.3,3.2],['Denmark',5946000,11.2,9.8,5.4],
-    ['Dominican Republic',11332000,18.2,7.0,-3.8],['Ecuador',18001000,17.3,6.0,-0.3],
-    ['Egypt',105914000,25.0,5.7,-0.1],['El Salvador',6364000,16.0,6.0,-10.1],
-    ['Ethiopia',128692000,32.1,6.2,-0.2],['Finland',5563000,8.6,10.7,2.5],
-    ['France',68373000,10.7,9.6,1.8],['Ghana',34121000,29.2,6.7,-0.4],
-    ['Greece',10341000,7.5,13.0,-0.2],['Guatemala',17844000,22.4,4.8,-1.9],
-    ['Guinea',13700000,36.7,8.1,-0.7],['Haiti',11724000,22.4,9.5,-6.2],
-    ['Honduras',10280000,20.3,4.8,-2.6],['Hungary',9710000,8.5,14.4,1.2],
-    ['India',1441720000,17.6,7.0,-0.1],['Indonesia',278696000,16.0,6.7,0.0],
-    ['Iran',89172000,14.5,5.1,-0.8],['Iraq',42717000,24.5,4.5,-0.6],
-    ['Ireland',5123000,11.0,6.8,7.5],['Israel',9754000,18.0,5.4,1.6],
-    ['Italy',58870000,6.7,12.5,2.6],['Ivory Coast',27478000,33.5,8.1,-0.3],
-    ['Jamaica',2820000,14.1,7.4,-9.2],['Japan',122631000,6.5,12.2,0.8],
-    ['Jordan',10820000,21.0,3.5,18.8],['Kazakhstan',19606000,19.2,6.6,-0.5],
-    ['Kenya',55864000,28.5,5.7,-0.2],['Kuwait',4915000,14.5,2.6,16.5],
-    ['Laos',7769000,21.3,5.9,-1.3],['Lebanon',5353000,12.6,6.1,-40.2],
-    ['Libya',7062000,18.7,5.0,0.2],['Madagascar',30325000,32.4,6.0,-0.1],
-    ['Malawi',20931000,30.7,5.9,-0.2],['Malaysia',34308000,14.3,5.4,1.9],
-    ['Mali',23294000,41.4,8.7,-3.5],['Mauritania',4735000,33.3,7.2,-3.8],
-    ['Mexico',129875000,16.2,6.3,-0.9],['Morocco',37840000,18.3,5.4,-3.2],
-    ['Mozambique',33897000,37.3,9.5,-0.3],['Myanmar',54578000,15.8,7.8,-1.2],
-    ['Nepal',30035000,17.3,5.7,-2.1],['Netherlands',17915000,10.1,9.5,3.8],
-    ['New Zealand',5224000,11.8,7.1,2.2],['Nicaragua',6948000,17.8,5.2,-8.1],
-    ['Niger',27202000,47.1,10.3,-0.3],['Nigeria',229152000,37.4,9.1,-0.2],
-    ['North Korea',26160000,13.7,9.5,0.0],['Norway',5452000,10.0,8.0,7.5],
-    ['Pakistan',245209000,24.4,6.3,-0.9],['Panama',4468000,17.0,5.0,1.1],
-    ['Papua New Guinea',10330000,27.2,7.0,-0.3],['Paraguay',6861000,19.4,5.6,-0.4],
-    ['Peru',33357000,16.5,5.5,-1.4],['Philippines',117337000,17.2,6.0,-1.7],
-    ['Poland',37635000,8.5,13.4,0.3],['Portugal',10247000,7.8,11.2,2.9],
-    ['Qatar',2695000,9.2,1.4,19.8],['Romania',19012000,8.5,14.3,-2.4],
-    ['Russia',144820000,9.0,14.8,-0.2],['Rwanda',14256000,29.8,5.4,-1.7],
-    ['Saudi Arabia',36947000,18.1,3.4,1.2],['Senegal',17763000,33.3,6.1,-2.7],
-    ['Serbia',6630000,8.8,14.6,-1.5],['Sierra Leone',8606000,35.0,12.8,-3.0],
-    ['Singapore',5917000,8.8,5.0,15.8],['Somalia',18143000,40.0,12.8,-5.2],
-    ['South Africa',60414000,19.1,9.0,-1.3],['South Korea',51745000,7.0,7.5,2.1],
-    ['South Sudan',11088000,38.7,12.8,-14.5],['Spain',47416000,7.2,9.7,4.7],
-    ['Sri Lanka',21893000,13.5,7.4,-5.4],['Sudan',47958000,36.2,7.4,-3.0],
-    ['Sweden',10612000,10.7,9.5,5.5],['Switzerland',8796000,10.2,8.6,9.3],
-    ['Syria',21324000,21.3,6.1,-45.3],['Taiwan',23588000,8.9,8.0,1.1],
-    ['Tanzania',65497000,36.8,5.6,-0.1],['Thailand',71668000,9.5,8.2,0.3],
-    ['Tunisia',12046000,15.2,6.3,-2.3],['Turkey',85816000,15.0,5.7,2.5],
-    ['Uganda',49284000,38.3,5.0,-0.3],['Ukraine',43529000,7.8,16.2,-13.0],
-    ['UAE',9770000,9.5,1.5,10.8],['United Kingdom',68350000,10.4,9.8,4.7],
-    ['United States',341814000,11.0,8.9,3.1],['Uruguay',3478000,12.8,9.4,-0.7],
-    ['Uzbekistan',36436000,20.3,5.6,-2.9],['Venezuela',28838000,17.0,7.0,-25.1],
-    ['Vietnam',98186000,15.1,6.5,-0.3],['Yemen',34449000,25.8,6.0,-3.2],
-    ['Zambia',20569000,35.2,6.8,-0.3],['Zimbabwe',16665000,33.8,7.6,-5.3],
-  ];
-
-  // [name, country, population, birthRate, deathRate, netMigRate]
-  const CITIES = [
-    ['Tokyo','Japan',37400000,6.8,12.0,3.5],['Delhi','India',33807000,20.5,6.2,5.8],
-    ['Shanghai','China',28516000,8.2,5.8,7.5],['Dhaka','Bangladesh',22478000,22.5,5.5,12.0],
-    ['Sao Paulo','Brazil',22430000,13.0,6.8,1.2],['Mexico City','Mexico',22085000,14.8,5.8,0.5],
-    ['Cairo','Egypt',21750000,28.3,5.2,2.1],['Beijing','China',21333000,7.5,5.5,5.0],
-    ['Mumbai','India',20960000,18.8,6.5,6.2],['Osaka','Japan',19059000,7.2,12.5,2.0],
-    ['Chongqing','China',17341000,9.5,7.0,6.5],['Karachi','Pakistan',17236000,28.5,7.0,8.5],
-    ['Istanbul','Turkey',15415000,15.2,4.8,5.0],['Kinshasa','DRC',15628000,42.0,9.5,2.5],
-    ['Lagos','Nigeria',15946000,38.5,9.8,5.5],['Buenos Aires','Argentina',15257000,14.2,8.2,1.5],
-    ['Kolkata','India',15333000,17.0,7.0,3.8],['Manila','Philippines',14406000,20.5,5.5,2.5],
-    ['Guangzhou','China',13964000,8.5,5.5,8.0],['Rio de Janeiro','Brazil',13634000,12.5,7.5,0.8],
-    ['Lahore','Pakistan',13979000,30.2,7.5,6.5],['Bangalore','India',13193000,16.5,5.5,10.5],
-    ['Shenzhen','China',12591000,11.5,3.5,15.0],['Moscow','Russia',12655000,9.5,12.5,5.5],
-    ['New York City','USA',18867000,11.8,7.8,4.5],['Los Angeles','USA',12458000,11.2,7.5,2.8],
-    ['Chennai','India',11324000,16.0,6.8,4.5],['Bogota','Colombia',11344000,14.5,5.8,2.5],
-    ['Jakarta','Indonesia',11249000,15.5,6.5,1.5],['Paris','France',11142000,11.2,9.0,3.5],
-    ['Lima','Peru',11204000,18.5,5.5,2.0],['Bangkok','Thailand',10899000,10.5,7.5,5.0],
-    ['Hyderabad','India',10534000,18.5,5.8,7.5],['Seoul','South Korea',9988000,6.5,6.8,2.5],
-    ['London','UK',9648000,11.5,8.5,8.0],['Tehran','Iran',9500000,14.8,5.2,0.8],
-    ['Chicago','USA',9533000,11.5,8.5,1.5],['Chengdu','China',9000000,10.5,6.5,8.0],
-    ['Ho Chi Minh City','Vietnam',9077000,16.0,5.5,4.5],['Luanda','Angola',9292000,40.0,8.0,3.5],
-    ['Ahmedabad','India',8650000,20.5,6.0,5.5],['Kuala Lumpur','Malaysia',8419000,14.5,4.8,7.5],
-    ['Baghdad','Iraq',7682000,27.0,5.0,1.5],['Dallas','USA',7637000,12.8,7.5,4.5],
-    ['Nairobi','Kenya',5545000,30.5,6.5,5.5],['Khartoum','Sudan',6540000,35.5,7.8,2.0],
-    ['Dar es Salaam','Tanzania',7405000,37.0,6.0,5.0],['Singapore','Singapore',5917000,8.8,5.0,15.8],
-    ['Sydney','Australia',5312000,11.8,6.5,8.5],['Melbourne','Australia',5078000,11.5,6.2,9.0],
-    ['Toronto','Canada',6418000,10.5,7.2,9.5],['Dubai','UAE',3604000,9.8,1.2,25.0],
-    ['Hong Kong','China',7491000,7.5,7.2,2.5],['Barcelona','Spain',5586000,7.8,9.2,5.5],
-    ['Berlin','Germany',3645000,9.5,10.5,6.5],['Madrid','Spain',6783000,7.5,9.8,4.5],
-    ['Rome','Italy',4355000,7.0,12.0,3.5],['Houston','USA',7340000,12.5,7.5,3.5],
-    ['Miami','USA',6265000,11.8,8.5,4.0],['Atlanta','USA',6323000,12.5,8.0,5.0],
-    ['Johannesburg','South Africa',5635000,20.5,9.5,2.5],['Cape Town','South Africa',4618000,18.5,9.8,2.0],
-    ['Casablanca','Morocco',4370000,18.5,5.5,0.5],['Addis Ababa','Ethiopia',5461000,33.0,6.5,3.5],
-    ['Accra','Ghana',3630000,30.5,7.5,3.5],['Riyadh','Saudi Arabia',7682000,18.5,3.2,4.5],
-    ['Doha','Qatar',2382000,9.5,1.2,25.5],['Dubai','UAE',3604000,9.8,1.2,25.0],
-    ['Kiev','Ukraine',2952000,8.5,15.5,-8.5],['Warsaw','Poland',1860000,9.5,10.5,5.5],
-    ['Vienna','Austria',1911000,10.5,9.5,8.5],['Amsterdam','Netherlands',921000,10.8,8.5,8.0],
-    ['Stockholm','Sweden',975000,11.5,9.0,9.5],['Oslo','Norway',1060000,11.2,8.5,12.0],
-    ['Lisbon','Portugal',2957000,8.2,11.0,4.5],['Athens','Greece',3154000,7.8,12.5,2.0],
-    ['Beirut','Lebanon',2200000,13.5,6.5,-25.0],['Amman','Jordan',4007000,22.5,3.8,12.0],
-    ['Tel Aviv','Israel',4343000,18.5,5.5,2.5],['Abu Dhabi','UAE',1482000,9.2,1.3,18.0],
-    ['Kabul','Afghanistan',4458000,38.5,14.5,-2.0],['Kathmandu','Nepal',1442000,18.5,5.5,3.5],
-    ['Colombo','Sri Lanka',752000,14.5,7.8,2.0],['Tashkent','Uzbekistan',2694000,20.5,6.0,0.5],
-    ['Pune','India',7242000,19.5,5.5,7.5],['Abidjan','Ivory Coast',5518000,34.0,8.5,4.5],
-    ['Seattle','USA',4044000,10.8,7.5,5.5],['Boston','USA',4898000,11.2,9.0,4.5],
-    ['San Francisco','USA',4749000,10.5,8.2,3.5],['Phoenix','USA',4946000,11.8,7.2,4.0],
-    ['Wuhan','China',8364000,9.5,7.0,5.0],['Nanjing','China',8847000,9.0,6.8,5.5],
-    ['Tianjin','China',14011000,8.8,6.2,4.5],['Hangzhou','China',8200000,9.5,6.2,7.5],
-    ['Surat','India',7784000,22.5,5.2,8.0],['Suzhou','China',7462000,9.0,6.5,9.0],
-    ['Osaka','Japan',19059000,7.2,12.5,2.0],['Fukuoka','Japan',2643000,7.8,11.5,2.5],
-    ['Sapporo','Japan',1973000,7.0,13.0,1.5],['Busan','South Korea',3413000,6.8,8.5,1.5],
-    ['Taipei','Taiwan',2685000,8.5,8.2,1.2],['Ho Chi Minh City','Vietnam',9077000,16.0,5.5,4.5],
-    ['Hanoi','Vietnam',5254000,17.5,5.2,4.0],['Yangon','Myanmar',5610000,18.5,7.5,2.5],
-    ['Colombo','Sri Lanka',752000,14.5,7.8,2.0],['Dhaka','Bangladesh',22478000,22.5,5.5,12.0],
-  ];
-
-  let popScope = 'world', popData = null, popAcItems = [], popAcIdx = -1;
-  let popInterval = null, popStartTime = null;
-  const YEAR_SECS = 365.25 * 24 * 3600;
-
-  function fmtPop(n) { return n ? Math.round(n).toLocaleString('en-US') : '—'; }
-  function fmtRate(r) {
-    const a = Math.abs(r);
-    const s = a < 0.001 ? (r*3600).toFixed(3)+'/hr' : r.toFixed(4)+'/sec';
-    return s;
-  }
-  function doublingTime(gr) { return (!gr || gr <= 0) ? '∞' : (70/gr).toFixed(1); }
-
-  function getRates(d) {
-    const p = d.pop;
-    const bpy = p*(d.br/1000), dpy = p*(d.dr/1000), mpy = p*((d.mr||0)/1000);
-    const npy = bpy - dpy + mpy;
-    return { bpy,dpy,mpy,npy,
-      bps:bpy/YEAR_SECS, dps:dpy/YEAR_SECS, mps:mpy/YEAR_SECS, nps:npy/YEAR_SECS,
-      gr:(npy/p)*100 };
-  }
-
-  function popInit() {
-    popStartTime = Date.now();
-    popData = { ...WORLD };
-    popRender();
-    if (popInterval) clearInterval(popInterval);
-    popInterval = setInterval(popTick, 250);
-  }
-
-  function popRender() { popTick(); }
-
-  function popTick() {
-    if (!popData) return;
-    const elapsed   = (Date.now() - popStartTime) / 1000;
-    const yearElapsed = elapsed % YEAR_SECS;
-    const yearFrac  = yearElapsed / YEAR_SECS;
-    const r = getRates(popData);
-
-    const births = Math.floor(r.bps * yearElapsed);
-    const deaths = Math.floor(r.dps * yearElapsed);
-    const mig    = Math.floor(r.mps * yearElapsed);
-    const net    = Math.floor(r.nps * yearElapsed);
-    const curPop = Math.round(popData.pop + r.nps * yearElapsed);
-
-    const $  = id => document.getElementById(id);
-    $('popBirthCount').textContent = births.toLocaleString('en-US');
-    $('popDeathCount').textContent = deaths.toLocaleString('en-US');
-    $('popMigCount').textContent   = (mig>=0?'+':'')+mig.toLocaleString('en-US');
-    $('popNetCount').textContent   = (net>=0?'+':'')+net.toLocaleString('en-US');
-    $('popBirthRate').textContent  = '+'+fmtRate(r.bps);
-    $('popDeathRate').textContent  = '-'+fmtRate(r.dps);
-    $('popMigRate').textContent    = (r.mps>=0?'+':'')+fmtRate(Math.abs(r.mps));
-    $('popNetRate').textContent    = (r.nps>=0?'+':'-')+Math.abs(r.nps).toFixed(4)+'/sec';
-    $('popTotal').textContent      = fmtPop(curPop);
-    $('popTotalYear').textContent  = new Date().getFullYear();
-    const pct = (yearFrac*100).toFixed(1);
-    $('popYearFill').style.width  = pct+'%';
-    $('popYearPct').textContent   = pct+'%';
-    $('popStatBR').textContent    = popData.br.toFixed(1);
-    $('popStatDR').textContent    = popData.dr.toFixed(1);
-    $('popStatNI').textContent    = (popData.br-popData.dr>=0?'+':'')+(popData.br-popData.dr).toFixed(1);
-    $('popStatMR').textContent    = ((popData.mr||0)>=0?'+':'')+((popData.mr||0).toFixed(1));
-    $('popStatGR').textContent    = (r.gr>=0?'+':'')+r.gr.toFixed(3);
-    $('popStatDT').textContent    = doublingTime(r.gr);
-    $('popFooterTime').textContent = 'Updated '+new Date().toLocaleTimeString();
-  }
-
-  window.popSetScope = function(scope) {
-    popScope = scope;
-    document.querySelectorAll('.pop-scope-btn').forEach(b=>b.classList.toggle('active',b.dataset.scope===scope));
-    const sr = document.getElementById('popSearchRow');
-    if (scope==='world') { sr.style.display='none'; popData={...WORLD}; }
-    else { sr.style.display='flex'; document.getElementById('popSearchInput').placeholder=scope==='country'?'Search country…':'Search city…'; popData={...WORLD}; }
-    popClearSelection(true);
-    popStartTime = Date.now();
-  };
-
-  window.popOnInput = function(val) {
-    const q = val.trim().toLowerCase();
-    const ac = document.getElementById('popAC');
-    popAcIdx = -1;
-    if (!q) { ac.classList.remove('open'); ac.innerHTML=''; return; }
-    const list = popScope==='country' ? COUNTRIES : CITIES;
-    const matches = list.filter(d=>d[0].toLowerCase().includes(q)).slice(0,10);
-    if (!matches.length) { ac.classList.remove('open'); return; }
-    popAcItems = matches;
-    ac.innerHTML = matches.map((d,i)=>
-      `<div class="pop-ac-item" data-idx="${i}" onclick="popSelectIdx(${i})">${d[0]}`+
-      (popScope==='city'?`<span class="pop-ac-type">${d[1]}</span>`:'')+`</div>`
-    ).join('');
-    ac.classList.add('open');
-  };
-
-  window.popOnKey = function(e) {
-    const ac = document.getElementById('popAC');
-    const items = ac.querySelectorAll('.pop-ac-item');
-    if (e.key==='ArrowDown'){e.preventDefault();popAcIdx=Math.min(popAcIdx+1,items.length-1);items.forEach((el,i)=>el.classList.toggle('selected',i===popAcIdx));}
-    else if(e.key==='ArrowUp'){e.preventDefault();popAcIdx=Math.max(popAcIdx-1,0);items.forEach((el,i)=>el.classList.toggle('selected',i===popAcIdx));}
-    else if(e.key==='Enter'&&popAcIdx>=0)popSelectIdx(popAcIdx);
-    else if(e.key==='Escape')ac.classList.remove('open');
-  };
-
-  window.popSelectIdx = function(i) {
-    const d = popAcItems[i]; if(!d) return;
-    document.getElementById('popAC').classList.remove('open');
-    document.getElementById('popSearchInput').value='';
-    const chip=document.getElementById('popChip');
-    document.getElementById('popChipLabel').textContent=d[0]+(popScope==='city'?', '+d[1]:'');
-    chip.style.display='flex';
-    if(popScope==='country') popData={name:d[0],pop:d[1],br:d[2],dr:d[3],mr:d[4]};
-    else popData={name:d[0],pop:d[2],br:d[3],dr:d[4],mr:d[5]};
-    popStartTime=Date.now();
-  };
-
-  window.popClearSelection = function(silent) {
-    document.getElementById('popChip').style.display='none';
-    document.getElementById('popChipLabel').textContent='';
-    document.getElementById('popSearchInput').value='';
-    document.getElementById('popAC').classList.remove('open');
-    if(!silent){popData={...WORLD};popStartTime=Date.now();}
-  };
-
-  // Start when stats page becomes visible
-  const sp = document.getElementById('pageStats');
-  if(sp){
-    new MutationObserver(()=>{ if(sp.classList.contains('active')&&!popInterval) popInit(); })
-      .observe(sp,{attributes:true,attributeFilter:['class']});
-    if(sp.classList.contains('active')) popInit();
-  }
-  setTimeout(()=>{ if(!popInterval) popInit(); },600);
-
-})();
-</script>
 
 
   <div id="hoverCard" class="hoverCard"></div>
