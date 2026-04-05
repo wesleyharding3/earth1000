@@ -16160,7 +16160,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           a.centroid.z - b.centroid.z
         );
         const originalCloseness = 1 - Math.min(1, originalDist / 42);
-        return Math.min(1, topical * 0.65 + categoryBoost + originalCloseness * 0.2);
+        return Math.min(1, topical * 0.35 + categoryBoost * 0.5 + originalCloseness * 0.1);
       }
 
       groups.forEach((group, index) => {
@@ -16192,9 +16192,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const dz = group._layout.z - other._layout.z;
             const dist = Math.max(0.001, Math.hypot(dx, dy, dz));
             const sim = similarity(group, other);
-            const desired = Math.max(18, 44 - sim * 14 + ((group.spread + other.spread) * 0.3));
-            const repel = 75 / (dist * dist);
-            const attract = sim > 0.08 ? (dist - desired) * 0.007 * sim * sim : 0;
+            const desired = Math.max(28, 56 - sim * 10 + ((group.spread + other.spread) * 0.3));
+            const repel = 120 / (dist * dist);
+            const attract = sim > 0.15 ? (dist - desired) * 0.003 * sim : 0;
             const mix = repel + attract;
             force.x += (dx / dist) * mix;
             force.y += (dy / dist) * mix;
