@@ -20216,7 +20216,7 @@ body.ticker-active .gTickerLabel {
 .bRecap.open { opacity: 1; pointer-events: all; }
 .bRecapHeader {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 24px 10px;
+  padding: max(18px, calc(env(safe-area-inset-top, 0px) + 10px)) 24px 10px;
   border-bottom: 1px solid rgba(255,255,255,0.1);
   flex-shrink: 0;
 }
@@ -20465,6 +20465,7 @@ body.ticker-active .gTickerLabel {
   border: 1px solid rgba(255,255,255,0.10);
   border-radius: 18px; padding: 24px;
   display: flex; flex-direction: column; gap: 18px;
+  pointer-events: all;
 }
 .bLauncherHeader {
   display: flex; align-items: center; justify-content: space-between;
@@ -21854,6 +21855,15 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Launcher event wiring ──────────────────────────────────────────────────
+  // Block backdrop clicks from passing through to underlying elements
+  document.getElementById('bLauncher')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('bLauncher')) closeBriefingLauncher();
+    e.stopPropagation();
+  });
+  document.querySelector('.bLauncherInner')?.addEventListener('click', e => {
+    e.stopPropagation();
+  });
+
   document.getElementById('bLauncherX')?.addEventListener('click', closeBriefingLauncher);
 
   document.getElementById('bLauncherStartToday')?.addEventListener('click', () => {
@@ -21917,11 +21927,11 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1), true));
   document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
 
-  // Recap: close button
+  // Recap: close button — fully tears down the briefing
   document.getElementById('bRecapClose')?.addEventListener('click', () => {
     stopDetailAudio();
     document.getElementById('bStoryDetail').classList.remove('open');
-    document.getElementById('bRecap').classList.remove('open');
+    closeBriefing();
   });
   // Story detail: back to summary grid
   document.getElementById('bSDBack')?.addEventListener('click', () => {
