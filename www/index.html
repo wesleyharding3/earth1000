@@ -16917,8 +16917,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function onPointerDown(event) {
       // Capture the hit NOW — the world rotates continuously, so by the
-      // time the click event fires the node may no longer be under the cursor
-      const hitAtDown = pick(event);
+      // time the click event fires the node may no longer be under the cursor.
+      // Nodes project to only 2-5 px on screen. If the raycast hits the large
+      // group cloud but misses the tiny node inside it, fall back to the node
+      // that pointermove already confirmed under the cursor (state.hovered).
+      const rawHit = pick(event);
+      const hitAtDown = (rawHit && rawHit.kind === "node") ? rawHit
+        : (state.hovered && state.hovered.kind === "node") ? state.hovered
+        : rawHit;
       state.drag = {
         startX: event.clientX,
         startY: event.clientY,
@@ -16969,8 +16975,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (event.touches.length !== 1) return;
       clusterPinchDist = null;
       const t = event.touches[0];
-      // Capture hit NOW before world rotation moves nodes away from touch point
-      const hitAtDown = pick({ clientX: t.clientX, clientY: t.clientY });
+      // Capture hit NOW before world rotation moves nodes away from touch point.
+      // Same sub-pixel fallback as pointerdown — prefer node from hover state
+      // when raycast only finds the large group cloud.
+      const rawHit = pick({ clientX: t.clientX, clientY: t.clientY });
+      const hitAtDown = (rawHit && rawHit.kind === "node") ? rawHit
+        : (state.hovered && state.hovered.kind === "node") ? state.hovered
+        : rawHit;
       touchDrag = {
         startX: t.clientX,
         startY: t.clientY,
