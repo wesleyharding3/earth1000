@@ -1462,6 +1462,56 @@ app.get("/api/articles/by-thread", async (req, res) => {
   }
 });
 
+// GET /api/threads/latest — top story threads with hero image from highest-scored article
+app.get("/api/threads/latest", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+    const { rows } = await pool.query(`
+      SELECT
+        st.id AS thread_id,
+        st.title,
+        st.description,
+        st.primary_category,
+        st.geographic_scope,
+        st.importance,
+        st.keywords,
+        st.article_count,
+        st.created_at,
+        st.last_updated_at,
+        hero.image_url       AS hero_image_url,
+        hero.catalog_image_url AS hero_catalog_image_url,
+        hero.source_name     AS hero_source_name,
+        hero.iso_code        AS hero_iso_code
+      FROM story_threads st
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          co.iso_code
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.thread_id = st.id
+          AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
+        ORDER BY sta.relevance_score DESC, a.published_at DESC
+        LIMIT 1
+      ) hero ON true
+      WHERE st.article_count >= 2
+      ORDER BY st.importance DESC, st.article_count DESC, st.last_updated_at DESC NULLS LAST
+      LIMIT $1
+    `, [limit]);
+    res.json(rows);
+  } catch (err) {
+    console.error("[threads/latest]", err.message);
+    res.status(500).json({ error: "Failed to fetch threads" });
+  }
+});
+
 // POST /api/cluster-node/summary — 200-word unbiased Claude-generated description using deep article search
 app.post("/api/cluster-node/summary", async (req, res) => {
   const { thread_id } = req.body || {};

@@ -35,7 +35,7 @@ try {
 const args = process.argv.slice(2);
 
 const DAYS = intArg('--days', 7);
-const LIMIT = intArg('--limit', 350);
+const LIMIT = intArg('--limit', 500);
 const PRESET = stringArg('--preset', DAYS === 7 ? '7d' : `${DAYS}d`);
 const ALGORITHM_VERSION = stringArg('--version', 'cluster-v1');
 const WITH_LABELS = args.includes('--with-labels');
