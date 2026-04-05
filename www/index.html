@@ -16169,7 +16169,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const isCentral = group.cluster_id === centralGroupId;
         const memberScale = isCentral
           ? Math.max(60, Math.min(120, group.spread * 5.5 + Math.sqrt(members.length) * 5.5))
-          : Math.max(22, Math.min(50, group.spread * 2.8 + Math.sqrt(members.length) * 2.8));
+          : Math.max(40, Math.min(80, group.spread * 3.8 + Math.sqrt(members.length) * 4.0));
         const centroid = group.centroid;
         const layout = members.map((member, index) => {
           const dx = member.position.x - centroid.x;
@@ -16186,12 +16186,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const dir = mag > 0.001
             ? { x: dx / mag, y: dy / mag, z: dz / mag }
             : fallback;
+          // Seed nodes on a shell at memberScale radius — avoids center clump
+          const shellRadius = memberScale * (0.6 + 0.4 * (index / Math.max(1, members.length - 1)));
           return {
             member,
             p: {
-              x: centroid.x + dir.x * (memberScale + mag * 0.55),
-              y: centroid.y + dir.y * (memberScale * 0.8 + mag * 0.5),
-              z: centroid.z + dir.z * (memberScale + mag * 0.55)
+              x: centroid.x + dir.x * shellRadius,
+              y: centroid.y + dir.y * shellRadius * 0.8,
+              z: centroid.z + dir.z * shellRadius
             }
           };
         });
@@ -16201,7 +16203,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const importance = Number(entry.member.importance) || 0;
             const articleCount = Number(entry.member.article_count) || 0;
             const baseRadius = 1.6 + importance * 0.1 + Math.log2(1 + articleCount) * 0.35;
-            const centripetal = isCentral ? 0.0004 : 0.0012;
+            const centripetal = isCentral ? 0.0004 : 0.0006;
             const force = {
               x: (centroid.x - entry.p.x) * centripetal,
               y: (centroid.y - entry.p.y) * centripetal,
@@ -16216,7 +16218,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const odz = entry.p.z - other.p.z;
               const dist = Math.max(0.001, Math.hypot(odx, ody, odz));
               const otherRadius = 1.6 + (Number(other.member.importance) || 0) * 0.1 + Math.log2(1 + (Number(other.member.article_count) || 0)) * 0.35;
-              const desired = baseRadius + otherRadius + (isCentral ? 30.0 : 10.0);
+              const desired = baseRadius + otherRadius + (isCentral ? 30.0 : 18.0);
               const repel = dist < desired ? (desired - dist) * 0.28 : 8 / (dist * dist);
               force.x += (odx / dist) * repel;
               force.y += (ody / dist) * repel;
@@ -16231,7 +16233,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // ── Normalisation pass: rescale so average inter-node distance ≈ TARGET_SPACING
         // Central cluster gets more spread; fringe clusters pulled tighter to normalise
-        const TARGET_SPACING = isCentral ? 52 : 16;
+        const TARGET_SPACING = isCentral ? 52 : 28;
         if (layout.length >= 2) {
           let totalDist = 0, pairs = 0;
           for (let i = 0; i < layout.length; i++) {
@@ -16259,7 +16261,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // ── Hard minimum-distance pass ──
         // After normalization, pairs can still be nearly coincident. Iteratively
         // push any pair closer than MIN_NODE_DIST apart, equally splitting the gap.
-        const MIN_NODE_DIST = isCentral ? 30.0 : 10.0;
+        const MIN_NODE_DIST = isCentral ? 30.0 : 18.0;
         for (let pass = 0; pass < 40; pass++) {
           let moved = false;
           for (let i = 0; i < layout.length; i++) {
