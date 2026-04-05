@@ -1472,7 +1472,7 @@ app.get("/api/threads/latest", async (req, res) => {
       SELECT
         id AS thread_id, title, description, primary_category,
         geographic_scope, importance, keywords, article_count,
-        created_at, last_updated_at
+        last_updated_at
       FROM story_threads
       WHERE article_count >= 2
       ORDER BY importance DESC, article_count DESC, last_updated_at DESC NULLS LAST
