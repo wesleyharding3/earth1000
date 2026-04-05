@@ -3379,6 +3379,7 @@ body.ticker-active #flowControls {
       bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       opacity: 1;
       pointer-events: all;
+      z-index: 10;
     }
     #clusterDetail.cdMaximized {
       height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - var(--page-nav-height) - var(--global-ticker-height) - var(--global-ticker-gap) - var(--app-bottom-inset, 0px) - env(safe-area-inset-bottom));
@@ -5336,6 +5337,8 @@ body.ticker-active #flowControls {
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 65%;
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
+    .nfCardFooterRight { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .nfCardTranslateBtn { position: static !important; margin: 0 !important; }
 
     /* Video card overlay */
     .nfCardImgWrap {
@@ -15512,10 +15515,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
               <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
             </div>
-            <div class="nfCardFooter">${origin}<div class="nfCardDate">${date}</div></div>
+            <div class="nfCardFooter">${origin}<div class="nfCardFooterRight"><div class="nfCardDate">${date}</div>${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
           </div>
         </div>
-        ${!a.translated_title && a.title ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}
       </div>`;
     }
 
@@ -17283,6 +17285,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onPointerDown(event) {
+      // Ignore interactions that originate within the open detail panel
+      if (detailEl.classList.contains('open')) {
+        const r = detailEl.getBoundingClientRect();
+        if (event.clientX >= r.left && event.clientX <= r.right &&
+            event.clientY >= r.top  && event.clientY <= r.bottom) return;
+      }
       // Capture the hit NOW — the world rotates continuously, so by the
       // time the click event fires the node may no longer be under the cursor.
       // Nodes project to only 2-5 px on screen. If the raycast hits the large
@@ -17311,6 +17319,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       renderer.domElement.style.cursor = state.hovered ? "pointer" : "grab";
       // If it was a clean click (no drag), act on the hit captured at pointerdown
       if (drag && !drag.confirmed) {
+        // Don't close panel for clicks within its bounds
+        if (detailEl.classList.contains('open')) {
+          const r = detailEl.getBoundingClientRect();
+          if (event.clientX >= r.left && event.clientX <= r.right &&
+              event.clientY >= r.top  && event.clientY <= r.bottom) return;
+        }
         const hit = drag.hitAtDown;
         if (hit && hit.kind === "node") {
           openNodePanel(hit.data);
@@ -17342,6 +17356,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (event.touches.length !== 1) return;
       clusterPinchDist = null;
       const t = event.touches[0];
+      // Ignore touches within the open detail panel
+      if (detailEl.classList.contains('open')) {
+        const r = detailEl.getBoundingClientRect();
+        if (t.clientX >= r.left && t.clientX <= r.right &&
+            t.clientY >= r.top  && t.clientY <= r.bottom) return;
+      }
       // Capture hit NOW before world rotation moves nodes away from touch point.
       // Same sub-pixel fallback as pointerdown — prefer node from hover state
       // when raycast only finds the large group cloud.
