@@ -9988,16 +9988,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncRegionsVisibility() {
         const active = window.__currentViewMode === "regions";
+        if (!active) return; // Don't reset other modes' visibility
 
         // Hide country + city nodes; earth dots stay on
-        targetCountryOpacity = active ? 0.0 : (window.__currentViewMode === "city" ? 0.0 : 1.0);
-        targetCityOpacity    = active ? 0.0 : (window.__currentViewMode === "city" ? 1.0 : 0.0);
+        targetCountryOpacity = 0.0;
+        targetCityOpacity    = 0.0;
         // targetEarthOpacity intentionally untouched
 
-
         // Swap boundary layers: national borders off, coastline-only on
-        boundaryLayer.setVisible(!active);
-        if (landBoundaryLayer) landBoundaryLayer.setVisible(active);
+        boundaryLayer.setVisible(false);
+        if (landBoundaryLayer) landBoundaryLayer.setVisible(true);
       }
 
       window.__syncRegionsVisibility = function() {
@@ -10233,9 +10233,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncEnvironmentVisibility() {
         const active = window.__currentViewMode === "environment";
+        if (!active) return; // Don't reset other modes' visibility
         // Hide country + city nodes
-        targetCountryOpacity = active ? 0.0 : (window.__currentViewMode === "city" ? 0.0 : 1.0);
-        targetCityOpacity    = active ? 0.0 : (window.__currentViewMode === "city" ? 1.0 : 0.0);
+        targetCountryOpacity = 0.0;
+        targetCityOpacity    = 0.0;
         // Keep national borders visible (environment has its own overlay, not region coastlines)
         boundaryLayer.setVisible(true);
         if (landBoundaryLayer) landBoundaryLayer.setVisible(false);
