@@ -3494,13 +3494,13 @@ body.ticker-active #flowControls {
     .cdCard:hover { border-color: rgba(212,168,67,0.3); background: rgba(212,168,67,0.04); }
     .cdCardImg {
       width: 100%;
-      height: 90px;
+      height: 140px;
       object-fit: cover;
       display: block;
       background: rgba(255,255,255,0.04);
     }
     .cdCardImgNone {
-      width: 100%; height: 50px;
+      width: 100%; height: 70px;
       background: linear-gradient(135deg, rgba(212,168,67,0.07), rgba(255,255,255,0.02));
     }
     .cdCardBody { padding: 8px 10px 10px; }
@@ -4506,6 +4506,8 @@ body.ticker-active #flowControls {
       flex-wrap: wrap;
       row-gap: 6px;
       margin-top: 6px;
+      position: relative;
+      padding-right: 160px;
     }
 
     .nfPageTitle {
@@ -4568,7 +4570,11 @@ body.ticker-active #flowControls {
       overflow: hidden;
       flex-shrink: 0;
       background: rgba(255,180,80,0.04);
-      margin-left: auto;
+      position: absolute;
+      right: 20px;
+      top: 50%;
+      transform: translateY(-50%);
+      z-index: 5;
     }
     .nfViewPill {
       display: flex; align-items: center;
@@ -14925,8 +14931,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="nfTopSpacer"></div>
         <!-- Threads / Feed toggle -->
         <div class="nfViewToggle" id="nfViewToggle">
-          <div class="nfViewPill" data-view="threads" id="nfViewThreads">Threads</div>
-          <div class="nfViewPill active" data-view="feed" id="nfViewFeed">Feed</div>
+          <div class="nfViewPill active" data-view="threads" id="nfViewThreads">Threads</div>
+          <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
         </div>
         <div class="nfTagWrap" id="nfTagWrap">
           <div class="nfTagBtn" id="nfTagBtn">
@@ -15565,7 +15571,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const threadsVp     = document.getElementById('nfThreadsViewport');
       const threadsGrid   = document.getElementById('nfThreadsGrid');
 
-      let currentView = 'feed';
+      let currentView = 'threads';
       let threadsLoaded = false;
       let threadsData = [];
 
@@ -15581,6 +15587,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       pillThreads.addEventListener('click', () => setView('threads'));
       pillFeed.addEventListener('click', () => setView('feed'));
+
+      // Default to threads view on load
+      setView('threads');
 
       function threadCardHTML(t) {
         const catColor = THREAD_CAT_COLORS[(t.primary_category || '').toLowerCase()] || THREAD_CAT_COLORS.default;
@@ -16140,7 +16149,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     let _typewriterAbort = null;
-    function typewriterText(el, text, charDelay = 12) {
+    function typewriterText(el, text, charDelay = 3) {
       if (_typewriterAbort) _typewriterAbort();
       let cancelled = false;
       _typewriterAbort = () => { cancelled = true; };
@@ -16192,10 +16201,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.source_country_count || 0)}</span><span class="cdMetaLabel">Countries</span></div>
             <div class="cdMetaItem"><span class="cdMetaNum" style="color:${catColor}">${fmtNum(node.importance || 0)}</span><span class="cdMetaLabel">Importance</span></div>
           </div>
-          ${keywords.length ? `
-          <div style="padding:4px 0 0;display:flex;flex-wrap:wrap;gap:4px;">
-            ${keywords.slice(0, 8).map((k) => `<span class="cdKeyword">${esc(k)}</span>`).join("")}
-          </div>` : ""}
         </div>
         <div class="cdSections" id="cdSectionsEl">
           <!-- Section A: AI Summary -->
