@@ -1466,49 +1466,59 @@ app.get("/api/articles/by-thread", async (req, res) => {
 app.get("/api/threads/latest", async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
-    const { rows } = await pool.query(`
+
+    // Step 1: get threads
+    const { rows: threads } = await pool.query(`
       SELECT
-        st.id AS thread_id,
-        st.title,
-        st.description,
-        st.primary_category,
-        st.geographic_scope,
-        st.importance,
-        st.keywords,
-        st.article_count,
-        st.created_at,
-        st.last_updated_at,
-        hero.image_url       AS hero_image_url,
-        hero.catalog_image_url AS hero_catalog_image_url,
-        hero.source_name     AS hero_source_name,
-        hero.iso_code        AS hero_iso_code
-      FROM story_threads st
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(a.image_url, img_a.public_url) AS image_url,
-          img_a.public_url AS catalog_image_url,
-          COALESCE(ns.name, ys.name) AS source_name,
-          co.iso_code
-        FROM story_thread_articles sta
-        JOIN news_articles a ON a.id = sta.article_id
-        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        LEFT JOIN countries co ON co.id = a.country_id
-        WHERE sta.thread_id = st.id
-          AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
-        ORDER BY sta.relevance_score DESC, a.published_at DESC
-        LIMIT 1
-      ) hero ON true
-      WHERE st.article_count >= 2
-      ORDER BY st.importance DESC, st.article_count DESC, st.last_updated_at DESC NULLS LAST
+        id AS thread_id, title, description, primary_category,
+        geographic_scope, importance, keywords, article_count,
+        created_at, last_updated_at
+      FROM story_threads
+      WHERE article_count >= 2
+      ORDER BY importance DESC, article_count DESC, last_updated_at DESC NULLS LAST
       LIMIT $1
     `, [limit]);
-    res.json(rows);
+
+    if (!threads.length) return res.json([]);
+
+    // Step 2: batch-fetch hero images for all threads
+    const threadIds = threads.map(t => t.thread_id);
+    const { rows: heroes } = await pool.query(`
+      SELECT DISTINCT ON (sta.thread_id)
+        sta.thread_id,
+        COALESCE(a.image_url, img_a.public_url) AS hero_image_url,
+        img_a.public_url AS hero_catalog_image_url,
+        COALESCE(ns.name, ys.name) AS hero_source_name,
+        co.iso_code AS hero_iso_code
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      WHERE sta.thread_id = ANY($1)
+        AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
+      ORDER BY sta.thread_id, sta.relevance_score DESC, a.published_at DESC
+    `, [threadIds]);
+
+    const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
+
+    const result = threads.map(t => {
+      const h = heroMap.get(t.thread_id);
+      return {
+        ...t,
+        hero_image_url: h?.hero_image_url || null,
+        hero_catalog_image_url: h?.hero_catalog_image_url || null,
+        hero_source_name: h?.hero_source_name || null,
+        hero_iso_code: h?.hero_iso_code || null
+      };
+    });
+
+    res.json(result);
   } catch (err) {
-    console.error("[threads/latest]", err.message);
-    res.status(500).json({ error: "Failed to fetch threads" });
+    console.error("[threads/latest]", err.message, err.stack);
+    res.status(500).json({ error: "Failed to fetch threads", detail: err.message });
   }
 });
 
