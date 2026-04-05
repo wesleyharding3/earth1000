@@ -3560,6 +3560,17 @@ body.ticker-active #flowControls {
       color: rgba(255,255,255,0.78);
       letter-spacing: 0.01em;
     }
+    .cdTypewriter::after {
+      content: "\u258C";
+      color: var(--grm-gold);
+      animation: cdCursorBlink 0.72s step-end infinite;
+      margin-left: 1px;
+    }
+    .cdTypewriter.done::after { display: none; }
+    @keyframes cdCursorBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
     .cdSummaryLoading {
       display: flex;
       align-items: center;
@@ -15706,6 +15717,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function closeNodePanel() {
+      if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
       detailEl.classList.remove("open");
       cdSnapState = "default";
       detailEl.style.height = "";
@@ -15760,6 +15772,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return `<div class="cdLoadingRow" style="grid-column:1/-1"><span style="opacity:0.3">No ${filter === "video" ? "videos" : "articles"} found</span></div>`;
       }
       return filtered.map(makeCdCard).join("");
+    }
+
+    let _typewriterAbort = null;
+    function typewriterText(el, text, charDelay = 12) {
+      if (_typewriterAbort) _typewriterAbort();
+      let cancelled = false;
+      _typewriterAbort = () => { cancelled = true; };
+      el.textContent = "";
+      el.classList.add("cdTypewriter");
+      el.classList.remove("done");
+      let i = 0;
+      function tick() {
+        if (cancelled) return;
+        if (i < text.length) {
+          // type in chunks for speed — 2 chars at a time, 3 for spaces
+          const chunk = text[i] === " " ? 3 : 2;
+          el.textContent += text.slice(i, i + chunk);
+          i += chunk;
+          setTimeout(tick, charDelay);
+        } else {
+          el.classList.add("done");
+          _typewriterAbort = null;
+        }
+      }
+      tick();
     }
 
     async function openNodePanel(node) {
@@ -15948,7 +15985,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const el = document.getElementById("cdSummaryBody");
         if (!el) return;
         if (summary) {
-          el.innerHTML = `<div class="cdSummaryText">${esc(summary)}</div>`;
+          el.innerHTML = `<div class="cdSummaryText"></div>`;
+          typewriterText(el.querySelector(".cdSummaryText"), summary);
         } else {
           el.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this thread.</div>`;
         }
@@ -15967,10 +16005,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const color = categoryColor(g.primary_category);
           return `<div class="cdRelatedItem" data-cluster-id="${esc(g.cluster_id)}">
             <div class="cdRelatedDot" style="background:${color}"></div>
-            <div class="cdRelatedLabel">${esc(g.label || g.summary || g.cluster_id)}</div>
+            <div class="cdRelatedLabel"></div>
             <div class="cdRelatedMeta">${fmtNum(g.node_count)} threads \u00B7 ${fmtNum(g.article_count)} articles</div>
           </div>`;
         }).join("");
+
+        // Typewriter each related cluster label with staggered starts
+        el.querySelectorAll(".cdRelatedItem").forEach((item, i) => {
+          const label = item.querySelector(".cdRelatedLabel");
+          const text = related[i].label || related[i].summary || related[i].cluster_id;
+          label.classList.add("cdTypewriter");
+          setTimeout(() => {
+            let ci = 0;
+            function tick() {
+              if (state.selected !== node) return;
+              if (ci < text.length) {
+                const chunk = text[ci] === " " ? 3 : 2;
+                label.textContent += text.slice(ci, ci + chunk);
+                ci += chunk;
+                setTimeout(tick, 10);
+              } else {
+                label.classList.add("done");
+              }
+            }
+            tick();
+          }, i * 120);
+        });
 
         // Click a related cluster → fly camera to its centroid and highlight it
         el.querySelectorAll(".cdRelatedItem").forEach(item => {
