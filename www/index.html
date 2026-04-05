@@ -867,11 +867,12 @@
       box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
       transition: left 0.36s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.28s ease;
       opacity: 0;
+      pointer-events: none;
       max-height: calc(var(--app-height, 100vh) - 100px);
       overflow-y: auto;
     }
 
-    #settingsSidebar.open { left: 20px; opacity: 1; }
+    #settingsSidebar.open { left: 20px; opacity: 1; pointer-events: all; }
 
     .sidebarTitle {
       font-size: 9.5px;
@@ -5612,8 +5613,12 @@ body.ticker-active #flowControls {
         padding-top: 0 !important;
         box-sizing: border-box !important;
         align-items: stretch !important;
-        overflow: hidden !important;
+        overflow: visible !important; /* allow label to extend into safe area */
         z-index: 997;
+      }
+      /* clip the scrolling track text only, not the label */
+      .gTickerTrackWrap {
+        overflow: hidden !important;
       }
 
       /* ── Nav always sits at absolute bottom; safe-area fills home indicator ── */
@@ -19752,13 +19757,15 @@ body.ticker-active .tabLabel {
   font-size: 6px;
 }
 body.ticker-active .gTickerLabel {
+  /* Extend orange background down through the safe area */
   padding-bottom: calc(4px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
-  height: calc(100% + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   margin-bottom: calc(-1 * (var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)));
+  height: calc(100% + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   padding-top: 0;
   display: flex;
   align-items: flex-end;
   box-sizing: border-box;
+  overflow: visible;
 }
 .gTickerLabel {
   flex-shrink: 0;
