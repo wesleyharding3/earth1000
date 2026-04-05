@@ -15802,9 +15802,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function goTo(idx, animate = true) {
       idx = Math.max(0, Math.min(PAGES - 1, idx));
+      const distance = Math.abs(idx - current);
       current = idx;
-      window.__currentPage = idx; 
-      track.style.transition = animate
+      window.__currentPage = idx;
+      // Skip animation when jumping more than 1 page to avoid
+      // sliding through heavy intermediate pages (e.g. Globe WebGL)
+      const shouldAnimate = animate && distance <= 1;
+      track.style.transition = shouldAnimate
         ? "left 0.48s cubic-bezier(0.32,0.72,0,1)"
         : "none";
       track.style.left = `${-idx * 100}vw`;
