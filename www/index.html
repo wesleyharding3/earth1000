@@ -5568,9 +5568,10 @@ body.ticker-active #flowControls {
         /* ticker fills the safe area; nav is transparent overlay */
       }
       .gTickerLabel {
-        font-size: 9px;
+        font-size: 10px;
         letter-spacing: 1.2px;
         padding: 0 10px;
+        padding-left: calc(10px + env(safe-area-inset-left, 0px));
         height: var(--global-ticker-height);
         min-height: var(--global-ticker-height);
         display: flex;
@@ -15423,39 +15424,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     });
 
-    let t2StartX = null, t2StartY = null, t2Locked = null;
-
-    window.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 2) {
-        t2StartX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-        t2StartY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        t2Locked = null;
-      }
-    }, { passive: true });
-
-    window.addEventListener("touchmove", (e) => {
-      if (e.touches.length !== 2 || t2StartX === null) return;
-      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      const dx = cx - t2StartX;
-      const dy = cy - t2StartY;
-      if (t2Locked === null) t2Locked = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
-      if (t2Locked === "h" && Math.abs(dx) > 8) {
-        track.style.transition = "none";
-        track.style.left = `${-(current * window.innerWidth) + dx}px`;
-      }
-    }, { passive: true });
-
-    window.addEventListener("touchend", (e) => {
-      if (t2StartX === null) return;
-      if (t2Locked === "h") {
-        const ex = (e.changedTouches[0].clientX +
-          (e.changedTouches[1]?.clientX ?? e.changedTouches[0].clientX)) / 2;
-        const dx = ex - t2StartX;
-        goTo(current + (Math.abs(dx) > 60 ? (dx < 0 ? 1 : -1) : 0));
-      }
-      t2StartX = null; t2StartY = null; t2Locked = null;
-    }, { passive: true });
+    // Two-finger swipe page navigation removed — interferes with pinch zoom
+    // and other two-finger controls. Pages are navigated via tab bar only.
 
     window.addEventListener("keydown", (e) => {
       if (e.target.tagName === "INPUT") return;
@@ -16890,8 +16860,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Touch drag for orbit — separate from click
     let touchDrag = null;
+    let clusterPinchDist = null;
+
     function onTouchStart(event) {
+      if (event.touches.length === 2) {
+        // Start pinch zoom
+        touchDrag = null; // cancel any single-finger drag
+        const dx = event.touches[0].clientX - event.touches[1].clientX;
+        const dy = event.touches[0].clientY - event.touches[1].clientY;
+        clusterPinchDist = Math.sqrt(dx * dx + dy * dy);
+        return;
+      }
       if (event.touches.length !== 1) return;
+      clusterPinchDist = null;
       const t = event.touches[0];
       touchDrag = {
         startX: t.clientX,
@@ -16904,22 +16885,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onTouchMove(event) {
+      // Pinch zoom with two fingers
+      if (event.touches.length === 2 && clusterPinchDist !== null) {
+        event.preventDefault();
+        const dx = event.touches[0].clientX - event.touches[1].clientX;
+        const dy = event.touches[0].clientY - event.touches[1].clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        state.distance += (clusterPinchDist - dist) * 0.15;
+        clusterPinchDist = dist;
+        state.lastInteractionAt = performance.now();
+        return;
+      }
       if (event.touches.length !== 1 || !touchDrag) return;
       const t = event.touches[0];
-      const dx = t.clientX - touchDrag.startX;
-      const dy = t.clientY - touchDrag.startY;
-      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+      const tdx = t.clientX - touchDrag.startX;
+      const tdy = t.clientY - touchDrag.startY;
+      if (Math.abs(tdx) > 8 || Math.abs(tdy) > 8) {
         touchDrag.confirmed = true;
       }
       if (touchDrag.confirmed) {
-        state.yaw = touchDrag.startYaw - dx * 0.0062;
-        state.pitch = touchDrag.startPitch - dy * 0.0052;
+        state.yaw = touchDrag.startYaw - tdx * 0.0062;
+        state.pitch = touchDrag.startPitch - tdy * 0.0052;
         state.lastInteractionAt = performance.now();
         tooltipEl.classList.remove("on");
       }
     }
 
     function onTouchEnd(event) {
+      if (event.touches.length < 2) clusterPinchDist = null;
       if (!touchDrag) return;
       const wasDrag = touchDrag.confirmed;
       touchDrag = null;
@@ -16955,8 +16948,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointerup", onPointerUp);
     renderer.domElement.addEventListener("click", onCanvasClick);
-    renderer.domElement.addEventListener("touchstart", onTouchStart, { passive: true });
-    renderer.domElement.addEventListener("touchmove", onTouchMove, { passive: true });
+    renderer.domElement.addEventListener("touchstart", onTouchStart, { passive: false });
+    renderer.domElement.addEventListener("touchmove", onTouchMove, { passive: false });
     renderer.domElement.addEventListener("touchend", onTouchEnd, { passive: true });
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("resize", onResize);
@@ -19564,18 +19557,32 @@ body.ticker-active .tabIcon {
 body.ticker-active .tabLabel {
   font-size: 6px;
 }
+body.ticker-active .gTickerLabel {
+  padding-bottom: calc(var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  height: calc(100% + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  margin-bottom: calc(-1 * (var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)));
+  align-items: flex-start;
+  padding-top: 0;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
 .gTickerLabel {
   flex-shrink: 0;
   background: #ff9940; color: #000;
-  font-size: 8px; font-weight: 800; letter-spacing: 1.35px; text-transform: uppercase;
+  font-size: 9px; font-weight: 800; letter-spacing: 1.35px; text-transform: uppercase;
   padding: 0 10px; height: 100%;
   display: flex; align-items: center; z-index: 1;
+  border-radius: 0;
+  position: relative;
+  margin-left: calc(-1 * env(safe-area-inset-left, 0px));
+  padding-left: calc(10px + env(safe-area-inset-left, 0px));
 }
 .gTickerTrackWrap {
   flex: 1; overflow: hidden; height: 100%;
-  display: flex; align-items: center;
-  mask-image: linear-gradient(to right, transparent 0%, black 1%, black 99%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 1%, black 99%, transparent 100%);
+  display: flex; align-items: center; justify-content: center;
+  mask-image: linear-gradient(to right, transparent 0%, black 2%, black 98%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, black 2%, black 98%, transparent 100%);
 }
 .gTickerTrack {
   display: inline-block; white-space: nowrap;
@@ -19589,15 +19596,15 @@ body.ticker-active .tabLabel {
 }
 .gTickerItem:hover { opacity: 0.75; }
 .gTickerSource {
-  font-size: 8px; font-weight: 700; letter-spacing: 1px;
+  font-size: 10px; font-weight: 700; letter-spacing: 1px;
   color: #ff9940; text-transform: uppercase;
 }
-.gTickerLocation { font-size: 8px; color: rgba(255,153,64,0.65); font-weight: 600; }
-.gTickerDate { font-size: 9px; color: rgba(255,255,255,0.35); }
-.gTickerTitle { font-size: 10px; font-weight: 600; color: #fff; }
-.gTickerSummary { font-size: 10px; color: rgba(255,255,255,0.5); }
+.gTickerLocation { font-size: 10px; color: rgba(255,153,64,0.65); font-weight: 600; }
+.gTickerDate { font-size: 10px; color: rgba(255,255,255,0.35); }
+.gTickerTitle { font-size: 12px; font-weight: 600; color: #fff; }
+.gTickerSummary { font-size: 11px; color: rgba(255,255,255,0.5); }
 .gTickerSep { color: rgba(255,153,64,0.3); }
-.gTickerDiv { color: #ff9940; margin: 0 20px; font-size: 11px; }
+.gTickerDiv { color: #ff9940; margin: 0 20px; font-size: 12px; }
 
 /* ── Video embed ── */
 .bVideoWrap {
