@@ -3041,7 +3041,7 @@ body.ticker-active #flowControls {
       width: 100%;
       flex: 1 1 auto;
       min-height: 0;
-      padding: 16px 20px 80px;
+      padding: 16px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
       box-sizing: border-box;
       align-content: stretch;
     }
@@ -3050,6 +3050,210 @@ body.ticker-active #flowControls {
       height: 100%;
     }
 
+
+    #statsTitle {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: #4ab8ff;
+      text-shadow: 0 0 10px rgba(74,184,255,0.9), 0 0 24px rgba(74,184,255,0.55), 0 0 48px rgba(74,184,255,0.25);
+      user-select: none;
+    }
+
+    /* ── Thread Detail Panel ── */
+    #clusterDetail {
+      position: fixed;
+      bottom: -100%;
+      left: 0;
+      width: 100%;
+      height: min(480px, calc(var(--app-height, 100vh) - 24px));
+      display: flex;
+      flex-direction: column;
+      border-radius: 22px 22px 0 0;
+      background: rgba(6, 10, 18, 0.94);
+      border-top: 2px solid var(--grm-gold);
+      border-left: 1px solid rgba(255,255,255,0.13);
+      border-right: 1px solid rgba(255,255,255,0.13);
+      color: var(--grm-text);
+      z-index: 200;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 -8px 48px rgba(0,0,0,0.65);
+      opacity: 0;
+      pointer-events: none;
+      transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
+    }
+    #clusterDetail.open {
+      bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      opacity: 1;
+      pointer-events: all;
+      z-index: 200;
+    }
+    #clusterDetail.cdMaximized {
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - var(--page-nav-height) - var(--global-ticker-height) - var(--global-ticker-gap) - var(--app-bottom-inset, 0px) - env(safe-area-inset-bottom));
+      border-radius: 20px 20px 0 0;
+    }
+    #cdResizeHandle {
+      position: absolute;
+      top: -14px; left: 50%;
+      transform: translateX(-50%);
+      padding: 6px 14px;
+      cursor: pointer;
+      z-index: 10;
+    }
+    #cdResizeArrow {
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.45);
+      transition: background 0.15s, color 0.15s, transform 0.3s cubic-bezier(0.32,0.72,0,1);
+    }
+    #cdResizeHandle:hover #cdResizeArrow { background: rgba(255,255,255,0.12); color: #fff; }
+    #cdResizeArrow svg { width: 12px; height: 12px; pointer-events: none; }
+    #cdResizeArrow.flipped svg { transform: rotate(180deg); }
+    .cdHeader {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+    }
+    .cdHeaderTop {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 2px;
+    }
+    .cdType {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--grm-gold); margin-bottom: 6px;
+    }
+    .cdTitle {
+      font-size: 15px; line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; color: #fff; flex: 1;
+    }
+    .cdClose {
+      width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+      border-radius: 3px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.5); font-size: 14px; cursor: pointer; flex-shrink: 0;
+      transition: background 0.12s, color 0.12s; line-height: 1;
+    }
+    .cdClose:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .cdMeta { display: flex; gap: 14px; margin-top: 8px; }
+    .cdMetaItem { display: flex; flex-direction: column; }
+    .cdMetaNum {
+      font-size: 14px; font-weight: 700; color: var(--grm-gold); font-variant-numeric: tabular-nums; line-height: 1;
+    }
+    .cdMetaLabel {
+      font-size: 9px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+      color: rgba(255,255,255,0.35); margin-top: 3px;
+    }
+    .cdSections {
+      flex: 1; overflow-y: auto; scroll-behavior: smooth;
+    }
+    .cdSections::-webkit-scrollbar { width: 4px; }
+    .cdSections::-webkit-scrollbar-track { background: transparent; }
+    .cdSections::-webkit-scrollbar-thumb { background: rgba(212,168,67,0.25); border-radius: 4px; }
+    .cdSection { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 14px 16px; }
+    .cdSection:last-child { border-bottom: none; }
+    .cdSectionLabel {
+      font-size: 8px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+      color: rgba(255,255,255,0.3); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+    }
+    .cdSectionLabel .cdSectionIcon { width: 14px; height: 14px; opacity: 0.4; }
+    .cdSummaryText {
+      font-size: 12.5px; line-height: 1.65; color: rgba(255,255,255,0.78); letter-spacing: 0.01em;
+    }
+    .cdTypewriter::after {
+      content: "\u258C"; color: var(--grm-gold);
+      animation: cdCursorBlink 0.72s step-end infinite; margin-left: 1px;
+    }
+    .cdTypewriter.done::after { display: none; }
+    @keyframes cdCursorBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+    .cdSummaryLoading {
+      display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,0.25); font-size: 11px;
+    }
+    .cdSummaryLoading .cdPulse {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--grm-gold);
+      animation: cdPulseAnim 1.2s ease-in-out infinite;
+    }
+    @keyframes cdPulseAnim { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
+    .cdTimeline { position: relative; padding-left: 20px; }
+    .cdTimeline::before {
+      content: ''; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 1px;
+      background: linear-gradient(to bottom, rgba(212,168,67,0.4), rgba(212,168,67,0.08));
+    }
+    .cdTimelineItem { position: relative; margin-bottom: 14px; cursor: pointer; transition: opacity 0.12s; }
+    .cdTimelineItem:hover { opacity: 0.85; }
+    .cdTimelineItem:last-child { margin-bottom: 0; }
+    .cdTimelineDot {
+      position: absolute; left: -18px; top: 3px; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--grm-gold); border: 1.5px solid rgba(6,10,18,0.9); box-shadow: 0 0 6px rgba(212,168,67,0.3);
+    }
+    .cdTimelineDot.video { background: #ff6b6b; box-shadow: 0 0 6px rgba(255,107,107,0.3); }
+    .cdTimelineDate {
+      font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.3); letter-spacing: 0.08em; margin-bottom: 2px;
+    }
+    .cdTimelineTitle { font-size: 11.5px; font-weight: 600; line-height: 1.35; color: rgba(255,255,255,0.82); }
+    .cdTimelineSource {
+      font-size: 9px; font-weight: 600; color: var(--grm-gold);
+      letter-spacing: 0.06em; text-transform: uppercase; margin-top: 2px;
+    }
+    .cdTimelineTag {
+      display: inline-block; font-size: 7.5px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; padding: 1.5px 4px; border-radius: 2px; margin-left: 6px; vertical-align: middle;
+    }
+    .cdTimelineTag.video { background: rgba(255,107,107,0.15); color: #ff6b6b; }
+    .cdTimelineTag.anchor { background: rgba(212,168,67,0.15); color: var(--grm-gold); }
+    .cdTabBar {
+      display: flex; gap: 2px; margin-bottom: 10px; background: rgba(255,255,255,0.03);
+      border-radius: 3px; padding: 2px;
+    }
+    .cdTab {
+      flex: 1; padding: 5px 0; text-align: center; font-size: 9px; font-weight: 700;
+      letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.35);
+      cursor: pointer; border-radius: 2px; transition: background 0.14s, color 0.14s;
+    }
+    .cdTab:hover { color: rgba(255,255,255,0.55); }
+    .cdTab.active { background: rgba(212,168,67,0.12); color: var(--grm-gold); }
+    .cdArticleGrid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;
+    }
+    .cdCard {
+      border-radius: 16px; border: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.03);
+      overflow: hidden; cursor: pointer; transition: border-color 0.14s, background 0.14s;
+    }
+    .cdCard:hover { border-color: rgba(212,168,67,0.3); background: rgba(212,168,67,0.04); }
+    .cdCardImg { width: 100%; height: 140px; object-fit: cover; display: block; background: rgba(255,255,255,0.04); }
+    .cdCardImgNone { width: 100%; height: 70px; background: linear-gradient(135deg, rgba(212,168,67,0.07), rgba(255,255,255,0.02)); }
+    .cdCardBody { padding: 8px 10px 10px; }
+    .cdCardMeta { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .cdCardSource { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--grm-gold); }
+    .cdCardDate { font-size: 9px; color: rgba(255,255,255,0.3); margin-left: auto; }
+    .cdCardTitle { font-size: 12px; font-weight: 600; line-height: 1.45; color: rgba(255,255,255,0.88); }
+    .cdCardVideo {
+      display: inline-block; font-size: 8px; font-weight: 700; letter-spacing: 0.1em;
+      text-transform: uppercase; color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.08);
+      border-radius: 2px; padding: 2px 5px; margin-bottom: 4px;
+    }
+    .cdLoadingRow {
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 24px 0; color: rgba(255,255,255,0.25); font-size: 12px;
+    }
+    .cdKeyword {
+      padding: 4px 8px; border-radius: 3px; background: rgba(212,168,67,0.09);
+      border: 1px solid rgba(212,168,67,0.2); color: rgba(212,168,67,0.8);
+      font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    }
+    .cdRelatedList { display: flex; flex-direction: column; gap: 6px; }
+    .cdRelatedItem {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.02);
+      cursor: pointer; transition: border-color 0.14s, background 0.14s;
+    }
+    .cdRelatedItem:hover { border-color: rgba(212,168,67,0.25); background: rgba(212,168,67,0.04); }
+    .cdRelatedDot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .cdRelatedLabel {
+      font-size: 11.5px; font-weight: 600; color: rgba(255,255,255,0.8);
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .cdRelatedMeta { font-size: 9px; color: rgba(255,255,255,0.3); white-space: nowrap; flex-shrink: 0; }
 
     /* ── Keyword Intelligence Widget ── */
     .kwi-widget {
@@ -14956,6 +15160,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 </div><!-- /pageTrack -->
 
+<div id="clusterDetail"></div>
+
 <!-- ── Article Detail Panel ── -->
 <div id="articleDetailPanel">
   <div class="adpHandle"></div>
@@ -19868,6 +20074,293 @@ body.ticker-active .gTickerLabel {
       }
     })();
   }
+})();
+</script>
+<script>
+// ── Thread Detail Panel (standalone) ──────────────────────────────────────
+(function setupThreadPanel() {
+  const BASE = window.__API_BASE || 'https://earth-wjr6.onrender.com';
+  const CATEGORY_COLORS = {
+    politics: "#4da8ff", economy: "#ffa733", military: "#ff4444",
+    diplomacy: "#3de87a", environment: "#40e8b0", technology: "#aa66ff",
+    society: "#e870d0", sports: "#ff66cc", culture: "#ffe040", default: "#6ab4ff"
+  };
+
+  const detailEl = document.getElementById('clusterDetail');
+  if (!detailEl) return;
+
+  let _selected = null;
+
+  function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function fmtNum(v) { return Number(v||0).toLocaleString("en-US"); }
+  function categoryColor(c) { return CATEGORY_COLORS[(c||"").toLowerCase()] || CATEGORY_COLORS.default; }
+  function keywordList(items, limit) {
+    if (!Array.isArray(items)) return [];
+    return items.map(i => typeof i === "string" ? i : (i && i.value ? i.value : "")).filter(Boolean).slice(0, limit);
+  }
+
+  function getNavTickerHeight() {
+    const cs = getComputedStyle(document.documentElement);
+    return (parseFloat(cs.getPropertyValue('--page-nav-height')) || 39)
+         + (parseFloat(cs.getPropertyValue('--global-ticker-height')) || 36)
+         + (parseFloat(cs.getPropertyValue('--global-ticker-gap')) || 8)
+         + (parseFloat(cs.getPropertyValue('--app-bottom-inset')) || 0);
+  }
+  const CD_DEFAULT_H = () => Math.min(480, (window.innerHeight || screen.height) - 24 - getNavTickerHeight());
+  const CD_MAX_H = () => (window.innerHeight || screen.height) - getNavTickerHeight();
+
+  let cdSnapState = "default";
+  function cdApplySnap(s, animate) {
+    cdSnapState = s;
+    const h = s === "max" ? CD_MAX_H() : CD_DEFAULT_H();
+    detailEl.style.transition = (animate !== false)
+      ? "bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease"
+      : "none";
+    detailEl.style.height = h + "px";
+    detailEl.classList.toggle("cdMaximized", s === "max");
+    const arrow = document.getElementById("cdResizeArrow");
+    if (arrow) arrow.classList.toggle("flipped", s === "max");
+  }
+
+  function closeNodePanel() {
+    if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
+    detailEl.classList.remove("open");
+    cdSnapState = "default";
+    detailEl.style.height = "";
+    _selected = null;
+  }
+
+  function makeCdCard(a) {
+    const img = (a.image_url || a.catalog_image_url || "").trim();
+    const flag = a.iso_code ? `https://flagcdn.com/w80/${a.iso_code.toLowerCase()}.png` : "";
+    const src = img || flag;
+    const isVideo = a.media_type === "video" || !!a.video_id;
+    const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+    const title = esc(a.translated_title || a.title || "");
+    const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
+    return `<div class="cdCard" onclick="openPanelArticle(this)" data-article='${dataAttr}' style="cursor:pointer">
+      ${src ? `<img class="cdCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">` : `<div class="cdCardImgNone"></div>`}
+      <div class="cdCardBody">
+        ${isVideo ? `<span class="cdCardVideo">▶ Video</span>` : ""}
+        <div class="cdCardMeta">
+          <span class="cdCardSource">${esc(a.source_name || "")}</span>
+          ${date ? `<span class="cdCardDate">${date}</span>` : ""}
+        </div>
+        <div class="cdCardTitle">${title}</div>
+      </div>
+    </div>`;
+  }
+
+  function makeTimelineItem(a) {
+    const isVideo = a.media_type === "video" || !!a.video_id;
+    const isAnchor = !!a.is_anchor;
+    const title = esc(a.translated_title || a.title || "Untitled");
+    const source = esc(a.source_name || "");
+    const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
+    const date = a.published_at
+      ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+      : "";
+    return `<div class="cdTimelineItem" onclick="openPanelArticle(this)" data-article='${dataAttr}' style="cursor:pointer">
+      <div class="cdTimelineDot${isVideo ? " video" : ""}"></div>
+      <div class="cdTimelineDate">${date}${isAnchor ? '<span class="cdTimelineTag anchor">Anchor</span>' : ""}${isVideo ? '<span class="cdTimelineTag video">Video</span>' : ""}</div>
+      <div class="cdTimelineTitle">${title}</div>
+      ${source ? `<div class="cdTimelineSource">${source}</div>` : ""}
+    </div>`;
+  }
+
+  function renderArticleGrid(articles, filter) {
+    const filtered = filter === "all" ? articles
+      : filter === "video" ? articles.filter(a => a.media_type === "video" || !!a.video_id)
+      : articles.filter(a => a.media_type !== "video" && !a.video_id);
+    if (!filtered.length) {
+      return `<div class="cdLoadingRow" style="grid-column:1/-1"><span style="opacity:0.3">No ${filter === "video" ? "videos" : "articles"} found</span></div>`;
+    }
+    return filtered.map(makeCdCard).join("");
+  }
+
+  let _typewriterAbort = null;
+  function typewriterText(el, text, charDelay) {
+    if (_typewriterAbort) _typewriterAbort();
+    charDelay = charDelay || 3;
+    let cancelled = false;
+    _typewriterAbort = () => { cancelled = true; };
+    el.textContent = "";
+    el.classList.add("cdTypewriter");
+    el.classList.remove("done");
+    let i = 0;
+    function tick() {
+      if (cancelled) return;
+      if (i < text.length) {
+        const chunk = text[i] === " " ? 3 : 2;
+        el.textContent += text.slice(i, i + chunk);
+        i += chunk;
+        setTimeout(tick, charDelay);
+      } else {
+        el.classList.add("done");
+        _typewriterAbort = null;
+      }
+    }
+    tick();
+  }
+
+  async function openNodePanel(node) {
+    _selected = node;
+    const keywords = keywordList(node.feature_keywords, 12);
+    const catColor = CATEGORY_COLORS[node.primary_category] || CATEGORY_COLORS.default;
+
+    detailEl.innerHTML = `
+      <button id="cdResizeHandle" aria-label="Resize panel">
+        <div id="cdResizeArrow">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="2.5,7.5 6,4 9.5,7.5"/>
+          </svg>
+        </div>
+      </button>
+      <div class="cdHeader">
+        <div class="cdHeaderTop">
+          <div style="flex:1;min-width:0;">
+            <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
+            <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
+          </div>
+          <div class="cdClose" id="cdCloseBtn">\u2715</div>
+        </div>
+        <div class="cdMeta">
+          <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.article_count)}</span><span class="cdMetaLabel">Articles</span></div>
+          <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.language_count || 0)}</span><span class="cdMetaLabel">Languages</span></div>
+          <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.source_country_count || 0)}</span><span class="cdMetaLabel">Countries</span></div>
+          <div class="cdMetaItem"><span class="cdMetaNum" style="color:${catColor}">${fmtNum(node.importance || 0)}</span><span class="cdMetaLabel">Importance</span></div>
+        </div>
+      </div>
+      <div class="cdSections" id="cdSectionsEl">
+        <div class="cdSection" id="cdSummarySection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v4M8 11v.01" stroke-linecap="round"/></svg>
+            Analysis
+          </div>
+          <div id="cdSummaryBody">
+            <div class="cdSummaryLoading"><div class="cdPulse"></div><span>Generating deep analysis...</span></div>
+          </div>
+        </div>
+        <div class="cdSection" id="cdTimelineSection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
+            Thread Timeline
+          </div>
+          <div id="cdTimelineBody">
+            <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading timeline...</span></div>
+          </div>
+        </div>
+        <div class="cdSection" id="cdArticlesSection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6h6M5 9h4" stroke-linecap="round"/></svg>
+            Sources
+          </div>
+          <div id="cdTabBarWrap"></div>
+          <div id="cdArticlesBody" class="cdArticleGrid">
+            <div class="cdLoadingRow" style="grid-column:1/-1"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading sources...</span></div>
+          </div>
+        </div>
+      </div>
+    `;
+    cdApplySnap("default", false);
+    detailEl.classList.add("open");
+
+    document.getElementById("cdCloseBtn").addEventListener("click", (e) => { e.stopPropagation(); closeNodePanel(); });
+    document.getElementById("cdResizeHandle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      cdApplySnap(cdSnapState === "max" ? "default" : "max");
+    });
+
+    const threadId = node.thread_id || node.id;
+    let allArticles = [];
+
+    const articlesPromise = (async () => {
+      try {
+        const ids = Array.isArray(node.top_article_ids) && node.top_article_ids.length
+          ? node.top_article_ids
+          : Array.isArray(node.article_ids) && node.article_ids.length
+            ? node.article_ids : null;
+        let articles = [];
+        if (ids && ids.length) {
+          const res = await fetch(`${BASE}/api/articles/by-ids?ids=${ids.slice(0, 30).join(",")}`);
+          if (res.ok) articles = await res.json();
+        } else if (threadId) {
+          const res = await fetch(`${BASE}/api/articles/by-thread?thread_id=${threadId}&limit=30`);
+          if (res.ok) articles = await res.json();
+        }
+        return Array.isArray(articles) ? articles : [];
+      } catch (_) { return []; }
+    })();
+
+    const summaryPromise = (async () => {
+      if (!threadId) return null;
+      try {
+        const res = await fetch(`${BASE}/api/cluster-node/summary`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ thread_id: threadId })
+        });
+        if (res.ok) { const data = await res.json(); return data.summary || null; }
+        return null;
+      } catch (_) { return null; }
+    })();
+
+    articlesPromise.then((articles) => {
+      if (_selected !== node) return;
+      allArticles = articles;
+      const timelineEl = document.getElementById("cdTimelineBody");
+      if (timelineEl) {
+        if (!articles.length) {
+          timelineEl.innerHTML = `<div class="cdLoadingRow" style="flex-direction:column;gap:4px"><span style="opacity:0.3">${fmtNum(node.article_count)} articles tracked</span></div>`;
+        } else {
+          const sorted = [...articles].sort((a, b) => new Date(a.published_at || 0) - new Date(b.published_at || 0));
+          timelineEl.innerHTML = `<div class="cdTimeline">${sorted.map(makeTimelineItem).join("")}</div>`;
+        }
+      }
+      const tabWrap = document.getElementById("cdTabBarWrap");
+      const gridEl = document.getElementById("cdArticlesBody");
+      if (tabWrap && gridEl) {
+        const videoCount = articles.filter(a => a.media_type === "video" || !!a.video_id).length;
+        const articleCount = articles.length - videoCount;
+        let activeFilter = "all";
+        if (videoCount > 0 && articleCount > 0) {
+          tabWrap.innerHTML = `<div class="cdTabBar">
+            <div class="cdTab active" data-filter="all">All (${articles.length})</div>
+            <div class="cdTab" data-filter="article">Articles (${articleCount})</div>
+            <div class="cdTab" data-filter="video">Videos (${videoCount})</div>
+          </div>`;
+          tabWrap.querySelectorAll(".cdTab").forEach(tab => {
+            tab.addEventListener("click", () => {
+              activeFilter = tab.dataset.filter;
+              tabWrap.querySelectorAll(".cdTab").forEach(t => t.classList.toggle("active", t === tab));
+              gridEl.innerHTML = renderArticleGrid(articles, activeFilter);
+            });
+          });
+        }
+        if (!articles.length) {
+          gridEl.innerHTML = `<div class="cdLoadingRow" style="grid-column:1/-1;flex-direction:column;gap:4px"><span style="font-size:22px;opacity:0.2;">\u25C8</span><span>${fmtNum(node.article_count)} articles in this thread</span></div>`;
+        } else {
+          gridEl.innerHTML = renderArticleGrid(articles, activeFilter);
+        }
+      }
+    });
+
+    summaryPromise.then((summary) => {
+      if (_selected !== node) return;
+      const el = document.getElementById("cdSummaryBody");
+      if (!el) return;
+      if (summary) {
+        el.innerHTML = `<div class="cdSummaryText"></div>`;
+        typewriterText(el.querySelector(".cdSummaryText"), summary);
+      } else {
+        el.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this thread.</div>`;
+      }
+    });
+  }
+
+  // Expose globals for news feed thread cards and page navigation
+  window.__clusterOpenNodePanel = openNodePanel;
+  window.__clusterCloseNodePanel = closeNodePanel;
 })();
 </script>
 </body>
