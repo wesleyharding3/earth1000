@@ -8545,7 +8545,7 @@ function computeCityTiers(cities) {
 
       // Coastline-only layer shown in regions mode (no internal borders)
       let landBoundaryLayer = null;
-      fetch("https://earth-wjr6.onrender.com/api/land/geojson")
+      fetch("ne_50m_land.geojson")
         .then(r => r.json())
         .then(data => {
           landBoundaryLayer = new GeoBoundaryLayer(scene, radius);
@@ -8697,6 +8697,9 @@ function computeCityTiers(cities) {
       }
 
       function updateNodeGlow() {
+        // Skip glow updates when neither country nor city nodes are visible
+        const m = window.__currentViewMode;
+        if (m === "regions" || m === "environment" || m === "ocean" || m === "transportation") return;
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeMaterial = currentViewMode === "country" ? countryMat : cityMat;
         const inactivePoints = currentViewMode === "country" ? cityPoints : countryPoints;
@@ -10088,7 +10091,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function buildEnvironmentNodes(meta) {
         // Remove old centroid points
         if (envPoints) { scene.remove(envPoints); envPoints = null; }
-        // Remove old halos
+        // Remove old halos (legacy — no longer created)
         envHalos.forEach(s => scene.remove(s));
         envHalos = [];
 
@@ -10108,25 +10111,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           cols.push(c.r, c.g, c.b);
           envData.push(e);
 
-          // ── area halo (only for entities with meaningful area)
-          const haloSize = _envHaloSize(e.area_km2);
-          if (haloSize > 0) {
-            const tex = _getEnvHaloTex(hexColor);
-            const mat = new THREE.SpriteMaterial({
-              map: tex,
-              transparent: true,
-              blending: THREE.AdditiveBlending,
-              depthWrite: false,
-              opacity: 0.0,
-            });
-            const sprite = new THREE.Sprite(mat);
-            // Position halo at globe surface
-            sprite.position.copy(lngLatToVec3(lng, lat, radius * 1.001));
-            sprite.scale.setScalar(haloSize * 2); // Sprite scale = diameter
-            sprite.userData.envHaloBaseSize = haloSize * 2;
-            scene.add(sprite);
-            envHalos.push(sprite);
-          }
+          // Halos removed — environment view shows nodes only
         });
 
         const geo = new THREE.BufferGeometry();
@@ -10193,13 +10178,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           envPoints.visible = active || envPoints.material.opacity > 0.01;
           envPoints.material.opacity += (envTargetOpacity - envPoints.material.opacity) * 0.04;
         }
-        // Fade halos in sync with centroid nodes
-        const haloTarget = envTargetOpacity * 0.85;
-        envHalos.forEach(sprite => {
-          const op = sprite.material.opacity;
-          sprite.visible = active || op > 0.005;
-          sprite.material.opacity += (haloTarget - op) * 0.04;
-        });
+        // Halos removed — environment view shows nodes only
       };
 
       // Hover label for environment nodes
@@ -12482,9 +12461,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         tierLayers.forEach(layer => {
           layer.mat.opacity +=
             (targetCityOpacity - layer.mat.opacity) * 0.018;
+          layer.mat.opacity = targetCityOpacity === 0 && layer.mat.opacity < 0.005 ? 0 : layer.mat.opacity;
         });
 
         countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.018;
+        if (targetCountryOpacity === 0 && countryMat.opacity < 0.005) countryMat.opacity = 0;
+        countryPoints.visible = countryMat.opacity > 0.001;
         earthMat.opacity   += (targetEarthOpacity   - earthMat.opacity)   * 0.018;
 
         if (window.__transTick) window.__transTick(0.016);
@@ -15768,8 +15750,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
         : "";
       const title = esc(a.translated_title || a.title || "");
-      const safe = (a.url || a.article_url || "").replace(/'/g, "%27");
-      return `<div class="cdCard" onclick="window.open('${safe}','_blank')">
+      const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
+      return `<div class="cdCard" onclick="openPanelArticle(this)" data-article='${dataAttr}' style="cursor:pointer">
         ${src ? `<img class="cdCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">` : `<div class="cdCardImgNone"></div>`}
         <div class="cdCardBody">
           ${isVideo ? `<span class="cdCardVideo">▶ Video</span>` : ""}
@@ -15787,11 +15769,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const isAnchor = !!a.is_anchor;
       const title = esc(a.translated_title || a.title || "Untitled");
       const source = esc(a.source_name || "");
-      const safe = (a.url || a.article_url || "").replace(/'/g, "%27");
+      const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
       const date = a.published_at
         ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
         : "";
-      return `<div class="cdTimelineItem" onclick="window.open('${safe}','_blank')">
+      return `<div class="cdTimelineItem" onclick="openPanelArticle(this)" data-article='${dataAttr}' style="cursor:pointer">
         <div class="cdTimelineDot${isVideo ? " video" : ""}"></div>
         <div class="cdTimelineDate">${date}${isAnchor ? '<span class="cdTimelineTag anchor">Anchor</span>' : ""}${isVideo ? '<span class="cdTimelineTag video">Video</span>' : ""}</div>
         <div class="cdTimelineTitle">${title}</div>
