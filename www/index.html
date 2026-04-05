@@ -3022,6 +3022,8 @@ body.ticker-active #flowControls {
       position: relative;
       flex-shrink: 0;
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
     #pageGlobe {
       background: #000;
@@ -3034,20 +3036,19 @@ body.ticker-active #flowControls {
       z-index: 1;
     }
     .stats-row {
-      display: grid;
-      grid-template-columns: 1fr;
-      grid-template-rows: 1fr;
+      display: flex;
+      flex-direction: column;
       gap: 16px;
       width: 100%;
-      flex: 1 1 auto;
+      flex: 1 1 0;
       min-height: 0;
+      overflow: hidden;
       padding: 16px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
       box-sizing: border-box;
-      align-content: stretch;
     }
     .stats-row > * {
       min-height: 0 !important;
-      height: 100%;
+      flex: 1 1 0;
     }
 
 
@@ -5456,9 +5457,10 @@ body.ticker-active #flowControls {
       /* ── Stats page — safe area insets for top bar & bottom nav ── */
       #statsHeader {
         padding-top: calc(env(safe-area-inset-top, 0px) + 20px);
+        flex-shrink: 0;
       }
       .stats-row {
-        padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
+        padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
       }
     }
 
@@ -20313,7 +20315,7 @@ body.ticker-active .gTickerLabel {
         if (!articles.length) {
           timelineEl.innerHTML = `<div class="cdLoadingRow" style="flex-direction:column;gap:4px"><span style="opacity:0.3">${fmtNum(node.article_count)} articles tracked</span></div>`;
         } else {
-          const sorted = [...articles].sort((a, b) => new Date(a.published_at || 0) - new Date(b.published_at || 0));
+          const sorted = [...articles].sort((a, b) => new Date(b.published_at || 0) - new Date(a.published_at || 0));
           timelineEl.innerHTML = `<div class="cdTimeline">${sorted.map(makeTimelineItem).join("")}</div>`;
         }
       }
