@@ -4189,20 +4189,21 @@ body.ticker-active #flowControls {
     .kwi-mode-tab {
       flex: 1 1 0;
       min-width: 0;
-      padding: calc(6px * var(--mobile-control-scale)) calc(4px * var(--mobile-control-scale));
+      padding: calc(6px * var(--mobile-control-scale)) calc(6px * var(--mobile-control-scale));
       background: transparent;
       border: none;
       border-radius: calc(6px * var(--mobile-control-scale));
       color: rgba(255,255,255,0.45);
-      font-size: calc(10px * var(--mobile-control-scale));
+      font-size: calc(9px * var(--mobile-control-scale));
       font-weight: 600;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.03em;
       text-transform: uppercase;
       cursor: pointer;
       transition: all 0.15s;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      text-align: center;
     }
     .kwi-mode-tab:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.04); }
     .kwi-mode-tab.active { color: #4a9eff; background: rgba(74,158,255,0.12); }
@@ -5939,15 +5940,18 @@ body.ticker-active #flowControls {
   display: none; position: fixed; inset: 0; z-index: 10001;
   background: rgba(0,0,0,0.82); backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  align-items: center; justify-content: center; padding: 16px;
+  align-items: center; justify-content: center;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
 }
 #pricingOverlay.open { display: flex; pointer-events: all; }
 #pricingCard {
   background: rgba(8,14,26,0.98); border: 1px solid rgba(212,168,67,0.22);
-  border-radius: 24px; padding: 36px 30px 28px; width: 560px;
-  max-width: calc(100vw - 32px); max-height: calc(100vh - 40px);
+  border-radius: 24px; padding: 28px 22px 22px; width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(var(--app-height, 100vh) - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   overflow-y: auto; box-shadow: 0 32px 100px rgba(0,0,0,0.85);
   position: relative;
+  -webkit-overflow-scrolling: touch;
 }
 #pricingClose {
   position: absolute; top: 16px; right: 18px;
@@ -5956,12 +5960,12 @@ body.ticker-active #flowControls {
 }
 #pricingClose:hover { color: #fff; }
 .pricingTitle { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 6px; }
-.pricingSubtitle { font-size: 13px; color: rgba(255,255,255,0.45); margin-bottom: 28px; }
+.pricingSubtitle { font-size: 13px; color: rgba(255,255,255,0.45); margin-bottom: 20px; }
 .pricingTiers { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
-@media (max-width: 520px) { .pricingTiers { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .pricingTiers { grid-template-columns: 1fr; gap: 8px; } }
 .pricingTierCard {
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 16px; padding: 20px 16px 18px; display: flex;
+  border-radius: 16px; padding: 16px 14px 14px; display: flex;
   flex-direction: column; gap: 0;
 }
 .pricingTierCard.current { border-color: rgba(212,168,67,0.5); background: rgba(212,168,67,0.06); }
@@ -5969,7 +5973,7 @@ body.ticker-active #flowControls {
 .pricingTierName { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(255,255,255,0.45); margin-bottom: 8px; }
 .pricingTierPrice { font-size: 28px; font-weight: 800; color: #fff; line-height: 1; }
 .pricingTierPrice span { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.4); margin-left: 3px; }
-.pricingTierFeatures { list-style: none; padding: 0; margin: 14px 0 18px; display: flex; flex-direction: column; gap: 7px; flex: 1; }
+.pricingTierFeatures { list-style: none; padding: 0; margin: 10px 0 14px; display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .pricingTierFeatures li { font-size: 12px; color: rgba(255,255,255,0.65); padding-left: 16px; position: relative; line-height: 1.4; }
 .pricingTierFeatures li::before { content: '·'; position: absolute; left: 4px; color: rgba(212,168,67,0.7); }
 .pricingTierCta {
@@ -6477,10 +6481,10 @@ body.ticker-active #flowControls {
 
         <!-- Mode tabs -->
         <div class="kwi-mode-tabs">
-          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">🔥 Trending</button>
-          <button class="kwi-mode-tab" data-mode="rising" onclick="kwiSetMode('rising')">📈 Rising</button>
-          <button class="kwi-mode-tab" data-mode="graph" onclick="kwiSetMode('graph')">📊 Graph</button>
-          <button class="kwi-mode-tab" data-mode="search" onclick="kwiSetMode('search')">🔍 Search</button>
+          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">Trending</button>
+          <button class="kwi-mode-tab" data-mode="rising" onclick="kwiSetMode('rising')">Rising</button>
+          <button class="kwi-mode-tab" data-mode="graph" onclick="kwiSetMode('graph')">Graph</button>
+          <button class="kwi-mode-tab" data-mode="search" onclick="kwiSetMode('search')">Search</button>
         </div>
 
         <!-- Location context (shows when country selected) -->
