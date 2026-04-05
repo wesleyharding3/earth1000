@@ -2337,7 +2337,7 @@ body.ticker-active #flowControls {
 .adpContent {
   flex: 1;
   overflow-y: auto;
-  padding: 20px 20px calc(20px + var(--app-bottom-inset, 0px));
+  padding: 20px 20px calc(var(--page-nav-height, 52px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 20px);
   -webkit-overflow-scrolling: touch;
 }
 
@@ -17370,7 +17370,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="adpVideoWrap">
           <iframe
             class="adpVideoFrame"
-            src="https://www.youtube.com/embed/${article.video_id}?autoplay=1&rel=0"
+            src="https://www.youtube.com/embed/${article.video_id}?autoplay=1&rel=0&enablejsapi=1"
             title="${safeTitle}"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             allowfullscreen
@@ -17709,6 +17709,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }).observe(document.body,{childList:true,subtree:true});
     document.addEventListener('DOMContentLoaded',()=>maybeInit(document));
   })();
+
+  // ── YouTube iframe error handler ───────────────────────────────────────────
+  window.addEventListener('message', function(e) {
+    try {
+      const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+      const isError = data.event === 'onError' ||
+        (data.event === 'infoDelivery' && data.info && data.info.error);
+      if (!isError) return;
+      const iframes = document.querySelectorAll('iframe[src*="youtube.com/embed"]');
+      for (const iframe of iframes) {
+        if (iframe.contentWindow === e.source) {
+          const wrap = iframe.closest('.adpVideoWrap');
+          if (wrap) { wrap.style.display = 'none'; break; }
+          const bWrap = document.getElementById('bVideoWrap');
+          if (bWrap && bWrap.contains(iframe)) {
+            bWrap.innerHTML = '';
+            bWrap.classList.remove('visible');
+          }
+          break;
+        }
+      }
+    } catch(_) {}
+  });
   </script>
 
 <!-- ═══════════════════════════════════════════════════════════════
@@ -20255,7 +20278,7 @@ body.ticker-active .tabLabel {
         <div class="bVideoMetaBar top">
           <span class="bVideoSource" id="bVideoSource">—</span>
         </div>
-        <iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1" allowfullscreen allow="autoplay; fullscreen"></iframe>
+        <iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"></iframe>
         <div class="bVideoMetaBar bottom">
           ${vidLoc ? `<span class="bVideoLocation">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
