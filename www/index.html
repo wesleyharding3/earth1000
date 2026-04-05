@@ -16824,38 +16824,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function onPointerDown(event) {
+      // Capture the hit NOW — the world rotates continuously, so by the
+      // time the click event fires the node may no longer be under the cursor
+      const hitAtDown = pick(event);
       state.drag = {
         startX: event.clientX,
         startY: event.clientY,
         startYaw: state.yaw,
         startPitch: state.pitch,
-        confirmed: false
+        confirmed: false,
+        hitAtDown: hitAtDown
       };
       state.lastInteractionAt = performance.now();
       renderer.domElement.style.cursor = "grabbing";
     }
 
     function onPointerUp(event) {
-      if (state.drag && state.drag.confirmed) {
-        // Was a real drag — just clean up
-      }
+      const drag = state.drag;
       state.drag = null;
       state.lastInteractionAt = performance.now();
       renderer.domElement.style.cursor = state.hovered ? "pointer" : "grab";
+      // If it was a clean click (no drag), act on the hit captured at pointerdown
+      if (drag && !drag.confirmed) {
+        const hit = drag.hitAtDown;
+        if (hit && hit.kind === "node") {
+          openNodePanel(hit.data);
+        } else {
+          closeNodePanel();
+        }
+      }
     }
 
-    // Primary click handler — simple and reliable on all platforms
+    // Fallback click handler — mostly for accessibility; primary selection
+    // is handled in onPointerUp above
     function onCanvasClick(event) {
-      // If drag was confirmed, the click is from a drag release — ignore
       if (state._wasDrag) { state._wasDrag = false; return; }
-      state.lastInteractionAt = performance.now();
-      const hit = pick(event);
-      console.log("[cluster] click hit:", hit ? hit.kind : "none", hit && hit.data ? hit.data.title : "");
-      if (hit && hit.kind === "node") {
-        openNodePanel(hit.data);
-      } else {
-        closeNodePanel();
-      }
     }
 
     // Touch drag for orbit — separate from click
@@ -16874,12 +16877,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (event.touches.length !== 1) return;
       clusterPinchDist = null;
       const t = event.touches[0];
+      // Capture hit NOW before world rotation moves nodes away from touch point
+      const hitAtDown = pick({ clientX: t.clientX, clientY: t.clientY });
       touchDrag = {
         startX: t.clientX,
         startY: t.clientY,
         startYaw: state.yaw,
         startPitch: state.pitch,
-        confirmed: false
+        confirmed: false,
+        hitAtDown: hitAtDown
       };
       state.lastInteractionAt = performance.now();
     }
@@ -16915,14 +16921,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (event.touches.length < 2) clusterPinchDist = null;
       if (!touchDrag) return;
       const wasDrag = touchDrag.confirmed;
+      const savedHit = touchDrag.hitAtDown;
       touchDrag = null;
       state.lastInteractionAt = performance.now();
 
       if (!wasDrag) {
-        const t = event.changedTouches[0];
-        if (!t) return;
-        const hit = pick({ clientX: t.clientX, clientY: t.clientY });
-        console.log("[cluster] tap hit:", hit ? hit.kind : "none", hit && hit.data ? hit.data.title : "");
+        // Use the hit captured at touchstart — world rotation makes re-picking unreliable
+        const hit = savedHit;
         if (hit && hit.kind === "node") openNodePanel(hit.data);
         else closeNodePanel();
       } else {
