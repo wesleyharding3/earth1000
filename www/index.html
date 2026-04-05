@@ -2238,11 +2238,13 @@ body.ticker-active #flowControls {
 
     .articleCardFooter {
       display: flex;
-      flex-direction: column;
-      align-items: flex-start;
+      flex-direction: row;
+      align-items: center;
+      flex-wrap: wrap;
       margin-top: auto;
       padding-top: 8px;
-      gap: 4px;
+      padding-right: 44px; /* leave room for absolute-positioned translate btn */
+      gap: 4px 8px;
       flex-shrink: 0;
       min-height: 32px;
     }
@@ -7392,17 +7394,30 @@ body.ticker-active #flowControls {
     function syncAppViewport() {
       const vv = window.visualViewport;
       const { width, height } = getViewportMetrics();
-      const bottomInset = Math.max(
+      const windowH = window.innerHeight || height;
+      const visH    = vv?.height || windowH;
+      const rawInset = Math.max(
         0,
-        Math.round((window.innerHeight || height) - ((vv?.height || height) + (vv?.offsetTop || 0)))
+        Math.round(windowH - (visH + (vv?.offsetTop || 0)))
       );
+
+      // If the computed inset is large (>100 px) the software keyboard is
+      // open and has shrunk the visual viewport — NOT a real hardware inset.
+      // In that case keep --app-height at the physical window height and
+      // leave --app-bottom-inset unchanged so the ticker/nav don't warp.
+      const keyboardOpen = rawInset > 100;
+      const appHeight    = keyboardOpen ? windowH : height;
+      const bottomInset  = keyboardOpen ? null : rawInset; // null = skip update
+
       const root = document.documentElement;
-      root.style.setProperty("--app-width", `${width}px`);
-      root.style.setProperty("--app-height", `${height}px`);
-      root.style.setProperty("--app-bottom-inset", `${bottomInset}px`);
-      renderer.setSize(width, height, false);
+      root.style.setProperty("--app-width",  `${width}px`);
+      root.style.setProperty("--app-height", `${appHeight}px`);
+      if (bottomInset !== null) {
+        root.style.setProperty("--app-bottom-inset", `${bottomInset}px`);
+      }
+      renderer.setSize(width, appHeight, false);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-      camera.aspect = width / Math.max(height, 1);
+      camera.aspect = width / Math.max(appHeight, 1);
       camera.updateProjectionMatrix();
     }
 
