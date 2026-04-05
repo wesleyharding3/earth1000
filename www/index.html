@@ -4503,6 +4503,7 @@ body.ticker-active #flowControls {
       gap: 8px;
       flex-wrap: wrap;
       row-gap: 6px;
+      margin-top: 6px;
     }
 
     .nfPageTitle {
@@ -15626,7 +15627,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       drag: null,
       yaw: -0.36,
       pitch: 0.2,
-      distance: (window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600) ? 300 : 260,
+      distance: (window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600) ? 420 : 260,
       lastInteractionAt: performance.now(),
       filamentData: [],
       sparks: [],
@@ -16979,7 +16980,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const dy = event.clientY - state.drag.startY;
         // Only start orbiting once movement exceeds click threshold
         // This prevents camera drift during a simple click
-        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
           state.drag.confirmed = true;
         }
         if (state.drag.confirmed) {
@@ -16991,11 +16992,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
 
-      const hovered = pick(event);
-      state.hovered = hovered;
-      renderer.domElement.style.cursor = hovered ? "pointer" : "grab";
-      if (hovered) setTooltip(hovered, event);
-      else tooltipEl.classList.remove("on");
+      const isMobilePointer = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600;
+      if (!isMobilePointer) {
+        const hovered = pick(event);
+        state.hovered = hovered;
+        renderer.domElement.style.cursor = hovered ? "pointer" : "grab";
+        if (hovered) setTooltip(hovered, event);
+        else tooltipEl.classList.remove("on");
+      }
     }
 
     function onPointerDown(event) {
@@ -17092,7 +17096,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const t = event.touches[0];
       const tdx = t.clientX - touchDrag.startX;
       const tdy = t.clientY - touchDrag.startY;
-      if (Math.abs(tdx) > 8 || Math.abs(tdy) > 8) {
+      if (Math.abs(tdx) > 16 || Math.abs(tdy) > 16) {
         touchDrag.confirmed = true;
       }
       if (touchDrag.confirmed) {
