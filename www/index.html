@@ -3610,17 +3610,8 @@ body.ticker-active #flowControls {
       color: rgba(255,255,255,0.78);
       letter-spacing: 0.01em;
     }
-    .cdTypewriter::after {
-      content: "\u258C";
-      color: var(--grm-gold);
-      animation: cdCursorBlink 0.72s step-end infinite;
-      margin-left: 1px;
-    }
+    .cdTypewriter::after { display: none; }
     .cdTypewriter.done::after { display: none; }
-    @keyframes cdCursorBlink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
-    }
     .cdSummaryLoading {
       display: flex;
       align-items: center;
@@ -4596,10 +4587,10 @@ body.ticker-active #flowControls {
     #newsFeedPage.nf-threads-mode .nfMediaToggles,
     #newsFeedPage.nf-threads-mode .nfBiasWrap,
     #newsFeedPage.nf-threads-mode .nfTextWrap,
-    #newsFeedPage.nf-threads-mode #nfBuilderRow,
-    #newsFeedPage.nf-threads-mode #nfMeta,
     #newsFeedPage.nf-threads-mode #nfWelcome,
-    #newsFeedPage.nf-threads-mode .nfCollapseBtn {
+    #newsFeedPage.nf-threads-mode .nfBuilderLineQuery,
+    #newsFeedPage.nf-threads-mode .nfSearchBtn,
+    #newsFeedPage.nf-threads-mode .nfClearBtn {
       display: none !important;
     }
 
@@ -5206,6 +5197,14 @@ body.ticker-active #flowControls {
     }
     .nfMetaCount strong { color: rgba(255,180,80,0.60); }
     .nfMetaPills { display: flex; gap: 5px; flex-wrap: wrap; }
+    #nfThreadsMeta {
+      flex-shrink: 0;
+      padding: 6px 20px 5px;
+      display: flex; align-items: center; gap: 7px;
+      background: rgba(8, 14, 24, 0.55);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      min-height: 28px;
+    }
     .nfMetaPill {
       display: inline-flex; align-items: center;
       height: 17px; padding: 0 7px;
@@ -14976,7 +14975,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>
 
         <div id="nfBuilderRow">
-          <div class="nfBuilderLine">
+          <div class="nfBuilderLine nfBuilderLineQuery">
             <div class="nfField grow">
               <span class="nfFieldLabel">Stories from</span>
               <div class="nfMultiWrap">
@@ -15024,7 +15023,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
-          <div class="nfBuilderLine">
+          <div class="nfBuilderLine nfBuilderLineDateRange">
             <div class="nfField grow">
               <span class="nfFieldLabel">Date range</span>
               <div class="nfDateRow">
@@ -15074,6 +15073,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       <div class="nfSpinRow" id="nfSpinRow">
         <div class="nfSpinner"></div>
       </div>
+    </div>
+    <!-- Threads meta -->
+    <div id="nfThreadsMeta" style="display:none">
+      <span class="nfMetaCount" id="nfThreadsMetaCount"></span>
     </div>
     <!-- Threads view -->
     <div id="nfThreadsViewport" style="display:none">
@@ -15570,6 +15573,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const feedViewport  = document.getElementById('nfViewport');
       const threadsVp     = document.getElementById('nfThreadsViewport');
       const threadsGrid   = document.getElementById('nfThreadsGrid');
+      const feedMeta      = document.getElementById('nfMeta');
+      const threadsMeta   = document.getElementById('nfThreadsMeta');
+      const threadsCount  = document.getElementById('nfThreadsMetaCount');
 
       let currentView = 'threads';
       let threadsLoaded = false;
@@ -15582,6 +15588,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         feedPage.classList.toggle('nf-threads-mode', view === 'threads');
         feedViewport.style.display = view === 'feed' ? '' : 'none';
         threadsVp.style.display    = view === 'threads' ? '' : 'none';
+        feedMeta.style.display     = view === 'feed' ? '' : 'none';
+        threadsMeta.style.display  = view === 'threads' ? '' : 'none';
         if (view === 'threads' && !threadsLoaded) loadThreads();
       }
 
@@ -15633,11 +15641,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }
 
+      function updateThreadsMeta() {
+        const totalArticles = threadsData.reduce((sum, t) => sum + (t.article_count || 0), 0);
+        const threadCount = threadsData.length;
+        threadsCount.innerHTML = `<strong>${threadCount.toLocaleString()}</strong> thread${threadCount !== 1 ? 's' : ''} · <strong>${totalArticles.toLocaleString()}</strong> article${totalArticles !== 1 ? 's' : ''}`;
+      }
+
       function renderThreads() {
         if (!threadsData.length) {
           threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No threads found</span></div>`;
+          threadsCount.innerHTML = '';
           return;
         }
+        updateThreadsMeta();
         threadsGrid.innerHTML = threadsData.map(threadCardHTML).join('');
         threadsGrid.querySelectorAll('.nfThreadCard').forEach(card => {
           card.addEventListener('click', () => {
