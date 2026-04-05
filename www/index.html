@@ -11627,10 +11627,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       window.addEventListener("wheel", e => {
+        if (window.__currentPage !== 1) return;
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
-        if (window.__currentPage !== 1) return;
         e.preventDefault();
         
         // Stop any in-progress camera animation
@@ -11662,11 +11662,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return Math.sqrt((touches[0].clientX-touches[1].clientX)**2 + (touches[0].clientY-touches[1].clientY)**2);
       }
 
-      window.addEventListener("touchstart", e => { if (e.touches.length === 2) initialPinchDistance = getDistance(e.touches); }, { passive: false });
+      window.addEventListener("touchstart", e => { if (window.__currentPage !== 1) return; if (e.touches.length === 2) initialPinchDistance = getDistance(e.touches); }, { passive: false });
       window.addEventListener("touchmove",  e => {
+        if (window.__currentPage !== 1) return;
         if (e.touches.length === 2 && initialPinchDistance !== null) {
           e.preventDefault();
-          
+
           // Stop any in-progress camera animation
           if (zoomingOut || focusTargetQuat) {
             zoomingOut = false;
@@ -11677,20 +11678,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             isFocused = false;
             selectedNodeIndex = null;
           }
-          
+
           // Extract yaw/pitch from current globeQuat before pinch zoom
           if (focusLocked) {
             const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
             globeYaw = yaw; globePitch = pitch;
             focusLocked = false;
           }
-          
+
           const currentDistance = getDistance(e.touches);
           zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
-      window.addEventListener("touchend", e => { if (e.touches.length < 2) initialPinchDistance = null; });
+      window.addEventListener("touchend", e => { if (window.__currentPage !== 1) return; if (e.touches.length < 2) initialPinchDistance = null; });
 
       const tickGroup = document.querySelector(".compass-ticks");
       if (tickGroup) {
