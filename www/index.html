@@ -4906,10 +4906,11 @@ body.ticker-active #flowControls {
     }
     .nfCardOrigin {
       font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 65%;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
-    .nfCardFooterRight { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .nfCardFooterLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow: hidden; }
+    .nfCardFooterRight { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: 6px; }
     .nfCardTranslateBtn { position: static !important; margin: 0 !important; }
 
     /* Video card overlay */
@@ -14975,7 +14976,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const c = countries.find(x => x.id === id); if (!c) return;
         const chip = document.createElement("div");
         chip.className = "nfChip";
-        chip.innerHTML = `${c.flag || ""} ${esc(c.name)}<span class="nfChipX" data-id="${id}">√ó</span>`;
+        chip.innerHTML = `${c.flag || ""} ${esc(c.name)}<span class="nfChipX" data-id="${id}">✕</span>`;
         chip.querySelector(".nfChipX").addEventListener("click", ev => {
           ev.stopPropagation();
           const sid = parseInt(ev.target.dataset.id);
@@ -15289,7 +15290,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
               <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
             </div>
-            <div class="nfCardFooter">${origin}<div class="nfCardFooterRight"><div class="nfCardDate">${date}</div>${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
+            <div class="nfCardFooter"><div class="nfCardFooterLeft">${origin}${date ? `<div class="nfCardDate">${date}</div>` : ""}</div><div class="nfCardFooterRight">${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
           </div>
         </div>
       </div>`;
