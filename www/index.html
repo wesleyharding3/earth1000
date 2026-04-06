@@ -4053,14 +4053,13 @@ body.ticker-active #flowControls {
       transition: background 0.2s, border-color 0.2s, transform 0.14s;
       display: flex;
       flex-direction: column;
-      height: 320px;
+      height: auto;
+      min-height: 180px;
     }
     .nfThreadCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfThreadCard:active { transform: translateY(0); }
     .nfThreadCardImg {
-      width: 100%; height: 150px;
-      object-fit: cover; object-position: center;
-      background: rgba(255,255,255,0.04);
+      width: 100%; height: auto;
       display: block; flex-shrink: 0;
     }
     .nfThreadCardImgPh {
@@ -6867,6 +6866,7 @@ body.ticker-active #flowControls {
   <script type="module">
 
     window.__currentPage = 1;
+    window.__globeActive = true;
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
     window.THREE = THREE;
 
@@ -11956,6 +11956,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function animate() {
         requestAnimationFrame(animate);
+        if (!window.__globeActive) return;
 
         if (isFocused && focusTargetQuat) {
           // Skip rebuildGlobeQuat entirely during focus — it overwrites globeQuat
@@ -15207,6 +15208,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function goTo(idx, animate = true) {
       idx = Math.max(0, Math.min(PAGES - 1, idx));
       const distance = Math.abs(idx - current);
+      const prevPage = current;
       // Close any open thread/node panel when changing pages
       window.__clusterCloseNodePanel?.();
       current = idx;
@@ -15218,6 +15220,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ? "left 0.48s cubic-bezier(0.32,0.72,0,1)"
         : "none";
       track.style.left = `${-idx * 100}vw`;
+      // Manage WebGL render loop: resume immediately when returning to globe,
+      // pause after the slide-out transition completes when leaving it.
+      if (idx === 1) {
+        window.__globeActive = true;
+      } else if (prevPage === 1) {
+        clearTimeout(window.__globePauseTimer);
+        window.__globePauseTimer = setTimeout(
+          () => { if (window.__currentPage !== 1) window.__globeActive = false; },
+          shouldAnimate ? 520 : 0
+        );
+      }
       dots.forEach((d, i) => d.classList.toggle("active", i === idx));
       document.getElementById("pageNav").style.pointerEvents = "all";
       const onGlobe = idx === 1;
