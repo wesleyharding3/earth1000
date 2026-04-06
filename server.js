@@ -1320,6 +1320,194 @@ app.get("/api/flows", async (req, res) => {
 });
 
 /* =========================================
+   Flows for a single article
+   Returns aggregate flows for all locations mentioned in the article
+========================================= */
+app.get("/api/flows/article/:id", async (req, res) => {
+  try {
+    const articleId = parseInt(req.params.id, 10);
+    if (!articleId) return res.status(400).json({ error: "Invalid article ID" });
+
+    const { rows } = await pool.query(`
+      SELECT
+        COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
+        COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
+        COALESCE(src_city.name, src_co.name)           AS src_place,
+        CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
+        CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+        src_co.iso_code AS src_iso,
+        COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
+        COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
+        COALESCE(dst_city.name, dst_co.name)           AS dst_place,
+        CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
+        CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
+        dst_co.iso_code AS dst_iso,
+        al.routing_type AS routing_type
+      FROM article_locations al
+      JOIN news_articles a   ON a.id = al.article_id
+      JOIN countries src_co  ON src_co.id = a.country_id
+      JOIN countries dst_co  ON dst_co.id = al.country_id
+      LEFT JOIN cities src_city ON src_city.id = a.city_id
+      LEFT JOIN cities dst_city ON dst_city.id = al.city_id
+      WHERE al.article_id = $1
+        AND al.routing_type IN ('content', 'source')
+    `, [articleId]);
+
+    if (!rows.length) return res.json({ flows: [] });
+
+    const flows = rows.map(r => ({
+      src: {
+        lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
+        place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso
+      },
+      dst: {
+        lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
+        place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso
+      },
+      count: 1,
+      routingType: r.routing_type
+    }));
+
+    res.json({ flows });
+  } catch (err) {
+    console.error("[flows/article]", err.message);
+    res.status(500).json({ error: "Failed to fetch article flows", detail: err.message });
+  }
+});
+
+/* =========================================
+   Flows for a thread (all articles in the thread)
+   Returns aggregate flows grouped by src→dst pair
+========================================= */
+app.get("/api/flows/thread/:id", async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.id, 10);
+    if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
+
+    const { rows } = await pool.query(`
+      WITH thread_flows AS (
+        SELECT
+          COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
+          COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
+          COALESCE(src_city.name, src_co.name)           AS src_place,
+          CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
+          CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+          src_co.iso_code AS src_iso,
+          COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
+          COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
+          COALESCE(dst_city.name, dst_co.name)           AS dst_place,
+          CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
+          CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
+          dst_co.iso_code AS dst_iso
+        FROM story_thread_articles sta
+        JOIN news_articles a        ON a.id = sta.article_id
+        JOIN article_locations al   ON al.article_id = a.id
+        JOIN countries src_co       ON src_co.id = a.country_id
+        JOIN countries dst_co       ON dst_co.id = al.country_id
+        LEFT JOIN cities src_city   ON src_city.id = a.city_id
+        LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
+        WHERE sta.thread_id = $1
+          AND al.routing_type IN ('content', 'source')
+      )
+      SELECT
+        src_lat, src_lon, src_place, src_id, src_type, src_iso,
+        dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
+        COUNT(*) AS flow_count
+      FROM thread_flows
+      GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
+               dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
+      ORDER BY flow_count DESC
+      LIMIT 100
+    `, [threadId]);
+
+    if (!rows.length) return res.json({ flows: [] });
+
+    const maxCount = parseInt(rows[0].flow_count) || 1;
+    const flows = rows.map(r => ({
+      src: {
+        lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
+        place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso
+      },
+      dst: {
+        lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
+        place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso
+      },
+      count: parseInt(r.flow_count)
+    }));
+
+    res.json({ flows, maxCount });
+  } catch (err) {
+    console.error("[flows/thread]", err.message);
+    res.status(500).json({ error: "Failed to fetch thread flows", detail: err.message });
+  }
+});
+
+/* =========================================
+   Thread Timeline — articles with timestamps and involved nations
+   Returns articles in chronological order with their mentioned countries
+========================================= */
+app.get("/api/threads/:id/timeline", async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.id, 10);
+    if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
+
+    const { rows } = await pool.query(`
+      SELECT
+        a.id,
+        COALESCE(a.translated_title, a.title) AS title,
+        a.published_at,
+        a.sentiment_score,
+        COALESCE(ns.name, ys.name) AS source_name,
+        src_co.name AS source_country,
+        src_co.iso_code AS source_iso,
+        ARRAY_AGG(DISTINCT dst_co.name) FILTER (WHERE dst_co.name IS NOT NULL) AS mentioned_countries,
+        ARRAY_AGG(DISTINCT dst_co.iso_code) FILTER (WHERE dst_co.iso_code IS NOT NULL) AS mentioned_isos
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries src_co ON src_co.id = a.country_id
+      LEFT JOIN article_locations al ON al.article_id = a.id AND al.routing_type IN ('content', 'source')
+      LEFT JOIN countries dst_co ON dst_co.id = al.country_id
+      WHERE sta.thread_id = $1
+      GROUP BY a.id, a.translated_title, a.title, a.published_at, a.sentiment_score,
+               ns.name, ys.name, src_co.name, src_co.iso_code
+      ORDER BY a.published_at ASC
+      LIMIT 200
+    `, [threadId]);
+
+    // Collect all unique countries involved
+    const allCountries = new Set();
+    rows.forEach(r => {
+      if (r.source_country) allCountries.add(r.source_country);
+      if (r.mentioned_countries) r.mentioned_countries.forEach(c => allCountries.add(c));
+    });
+
+    const timeline = rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      publishedAt: r.published_at,
+      sentiment: r.sentiment_score ? parseFloat(r.sentiment_score) : null,
+      sourceName: r.source_name,
+      sourceCountry: r.source_country,
+      sourceIso: r.source_iso,
+      mentionedCountries: r.mentioned_countries || [],
+      mentionedIsos: r.mentioned_isos || []
+    }));
+
+    res.json({
+      threadId,
+      totalArticles: timeline.length,
+      countries: [...allCountries],
+      timeline
+    });
+  } catch (err) {
+    console.error("[threads/timeline]", err.message);
+    res.status(500).json({ error: "Failed to fetch thread timeline", detail: err.message });
+  }
+});
+
+/* =========================================
    Ocean Temperature
 ========================================= */
 app.get("/api/ocean/temperature", async (req, res) => {

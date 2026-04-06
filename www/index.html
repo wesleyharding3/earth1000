@@ -2298,6 +2298,68 @@ body.ticker-active #flowControls {
 .articleTranslateBtn.done  { color: rgba(100,220,130,0.7);  border-color: rgba(100,220,130,0.3); cursor: default; }
 .articleTranslateBtn.error { color: rgba(220,100,100,0.7);  border-color: rgba(220,100,100,0.3); cursor: default; }
 
+/* ── Flow Arc button on cards ── */
+.cardFlowArcBtn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 12;
+  width: 30px; height: 30px;
+  background: rgba(0,0,0,0.60);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, transform 0.15s;
+  pointer-events: all;
+  padding: 0;
+}
+.cardFlowArcBtn:hover {
+  background: rgba(60,180,255,0.25);
+  border-color: rgba(60,180,255,0.55);
+  transform: scale(1.12);
+}
+.cardFlowArcBtn:active { transform: scale(0.95); }
+.cardFlowArcBtn svg { width: 16px; height: 16px; color: rgba(255,255,255,0.55); }
+.cardFlowArcBtn:hover svg { color: rgba(100,200,255,0.9); }
+
+/* Thread card flow button — position differently since thread cards have different layout */
+.nfThreadCard .cardFlowArcBtn { top: 8px; right: 8px; }
+
+/* ── Flow arc back button (return to article/thread after viewing arcs) ─��� */
+#flowArcBackBtn {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  gap: 7px;
+  background: rgba(10,14,28,0.80);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(100,200,255,0.25);
+  border-radius: 22px;
+  padding: 8px 18px 8px 14px;
+  color: rgba(255,255,255,0.88);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, transform 0.15s;
+  white-space: nowrap;
+}
+#flowArcBackBtn:hover {
+  background: rgba(40,80,140,0.55);
+  border-color: rgba(100,200,255,0.5);
+}
+#flowArcBackBtn:active { transform: translateX(-50%) scale(0.96); }
+#flowArcBackBtn svg { width: 14px; height: 14px; flex-shrink: 0; }
+#flowArcBackBtn.visible { display: flex; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    ARTICLE DETAIL VIEW - Full article panel
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -6863,6 +6925,22 @@ body.ticker-active #flowControls {
     <div class="ftRoute" id="ftRoute"></div>
   </div>
 
+  <!-- Back button for flow arc card navigation -->
+  <div id="flowArcBackBtn" onclick="window.__flowArcGoBack?.()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    <span id="flowArcBackLabel">Back</span>
+  </div>
+
+  <!-- Thread flow timeline -->
+  <div id="flowTimeline">
+    <div class="ftlHeader">
+      <div class="ftlTitle">Story Timeline</div>
+      <button class="ftlClose" onclick="hideFlowTimeline()">&#x2715;</button>
+    </div>
+    <div class="ftlCountries" id="ftlCountries"></div>
+    <div class="ftlTrack" id="ftlTrack"></div>
+  </div>
+
 
   <script type="module">
 
@@ -6928,10 +7006,12 @@ body.ticker-active #flowControls {
     const scene = new THREE.Scene();
     window.scene = scene; // expose for briefing player
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+    window.__camera = camera;
     const _isMobileView = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600;
     camera.position.z = _isMobileView ? 3.6 : 3;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
+    window.__renderer = renderer;
     document.getElementById("pageGlobe").appendChild(renderer.domElement);
     renderer.domElement.style.position = "absolute";
     renderer.domElement.style.top = "0";
@@ -10824,6 +10904,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           return `
             <div style="position:relative">
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
               <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
                 <div class="articleCardBody">
@@ -11858,6 +11939,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate to ${_tLang.label}">${_tLang.short}</button>`
               : "";
             return `<div style="position:relative">
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
               <div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
               <div class="articleCardBody">
@@ -13376,6 +13458,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowProgressBar").style.width = "0%";
     document.getElementById("flowDateTicks").innerHTML = "";
     flowDateSnapPoints = [];
+    // Clear persistent node labels, back button, and timeline from card flow arc button
+    window.clearFlowNodeLabels?.();
+    // Hide back button
+    const backBtn = document.getElementById("flowArcBackBtn");
+    if (backBtn) backBtn.classList.remove("visible");
+    // Hide timeline
+    document.getElementById("flowTimeline")?.classList.remove("visible");
   }
 
   /* ── Autocomplete setup ── */
@@ -14129,6 +14218,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         
         return `
           <div style="position:relative">
+            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
             <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${imageField}
               <div class="articleCardBody">
@@ -14159,7 +14249,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
   document.getElementById("flowControls").addEventListener("mousedown", e => e.stopPropagation());
   document.getElementById("flowControls").addEventListener("touchstart", e => e.stopPropagation(), {passive:true});
 
-})(); 
+  // Expose flow functions for cross-IIFE access (card flow arc buttons)
+  window.__flowCreateArc = createArc;
+  window.__flowClearArcs = function() { clearArcs(); };
+  window.__flowClosePanel = closeFlowPanel;
+  window.__flowSetOpen = function(open) {
+    flowModeOpen = open;
+    document.getElementById("flowModeBtn").classList.toggle("active", open);
+    document.getElementById("flowControls").classList.toggle("visible", open);
+    if (open) {
+      document.getElementById("flowControls").classList.add("minimized");
+      updateMinimizedStats();
+    }
+  };
+  window.__flowGetArcObjects = function() { return arcObjects; };
+  window.__flowPushArc = function(arc) { arcObjects.push(arc); };
+  window.__flowAssignLaneOffsets = assignFlowLaneOffsets;
+  window.__flowRemapForView = remapFlowForView;
+  window.__flowIsOpen = function() { return flowModeOpen; };
+
+})();
 
 
     class GeoBoundaryLayer {
@@ -14943,8 +15052,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const videoPrefix = isVideo ? `<span style="font-size:8px;opacity:0.6;margin-right:2px;">▶</span>` : "";
       const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
       return `
       <div style="position:relative">
+        ${flowArcBtn}
         <div class="nfCard" onclick="openFeedArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
           ${img}
           <div class="nfCardBody">
@@ -15050,7 +15161,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const cat   = esc((t.primary_category || 'story').toUpperCase());
         const count = t.article_count || 0;
         const dataAttr = JSON.stringify(t).replace(/'/g, "&#39;");
-        return `<div class="nfThreadCard" data-thread='${dataAttr}'>
+        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="showThreadFlows(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+        return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
@@ -15065,7 +15177,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="nfThreadCardKws">${kws.map(k => `<span class="nfThreadCardKw">${esc(k)}</span>`).join('')}</div>
             </div>
           </div>
-        </div>`;
+        </div></div>`;
       }
 
       async function loadThreads() {
@@ -15262,11 +15374,468 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (e.key === "ArrowRight") goTo(current + 1);
     });
 
+    // Expose for cross-IIFE access (flow arc button on cards)
+    window.__goToPage = goTo;
+
     goTo(1, false); // initialize to globe page
   })();
 
+  /* ── Show Flow Arcs from article/thread card button ── */
+
+  // Track where we came from so we can navigate back
+  let _flowArcOrigin = null; // { type: 'article'|'thread', page: number, label: string }
+
+  function showFlowArcBackBtn(label) {
+    const btn = document.getElementById("flowArcBackBtn");
+    const lbl = document.getElementById("flowArcBackLabel");
+    if (btn && lbl) {
+      lbl.textContent = label;
+      btn.classList.add("visible");
+    }
+  }
+
+  function hideFlowArcBackBtn() {
+    const btn = document.getElementById("flowArcBackBtn");
+    if (btn) btn.classList.remove("visible");
+    _flowArcOrigin = null;
+  }
+
+  window.__flowArcGoBack = function() {
+    if (!_flowArcOrigin) return;
+    const origin = _flowArcOrigin;
+
+    // Close flow arcs, labels, and timeline
+    window.__flowClosePanel?.();
+    hideFlowArcBackBtn();
+    document.getElementById("flowTimeline")?.classList.remove("visible");
+
+    // Navigate back to the origin page
+    window.__goToPage?.(origin.page);
+  };
+
+  window.showArticleFlows = async function(articleId, evt) {
+    if (evt) { evt.stopPropagation(); evt.preventDefault(); }
+    const API = window.__API || "https://earth-wjr6.onrender.com";
+    try {
+      // Remember where we came from
+      const originPage = window.__currentPage || 2;
+      _flowArcOrigin = { type: 'article', page: originPage, label: 'Back to News' };
+
+      // 1. Close any open node panel
+      window.__clusterCloseNodePanel?.();
+      // Close article detail if open
+      window.closeArticleDetail?.();
+
+      // 2. Navigate to globe (page index 1)
+      window.__goToPage?.(1);
+
+      // 3. Close existing flow panel if open, then clear arcs
+      if (window.__flowIsOpen?.()) {
+        window.__flowClearArcs?.();
+      }
+
+      // 4. Fetch flows for this article
+      const res = await fetch(`${API}/api/flows/article/${articleId}`);
+      const data = await res.json();
+      if (!data.flows || !data.flows.length) {
+        console.warn("No flows found for article", articleId);
+        hideFlowArcBackBtn();
+        return;
+      }
+
+      // 5. Activate flow mode (minimized)
+      window.__flowSetOpen?.(true);
+
+      // 6. Remap and render arcs
+      const flows = data.flows.map(f => window.__flowRemapForView?.(f) || f);
+      window.__flowAssignLaneOffsets?.(flows);
+      const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
+      flows.forEach(flow => {
+        const arc = window.__flowCreateArc?.(flow, maxCount);
+        if (arc) window.__flowPushArc?.(arc);
+      });
+
+      // 7. Update minimized stats
+      const statsEl = document.getElementById("flowMinStats");
+      if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
+
+      // 8. Collect unique node positions and create persistent labels
+      showFlowNodeLabels(flows);
+
+      // 9. Show back button
+      const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
+      showFlowArcBackBtn(backLabel);
+
+    } catch (e) {
+      console.error("showArticleFlows error:", e);
+    }
+  };
+
+  window.showThreadFlows = async function(threadId, evt) {
+    if (evt) { evt.stopPropagation(); evt.preventDefault(); }
+    const API = window.__API || "https://earth-wjr6.onrender.com";
+    try {
+      const originPage = window.__currentPage || 2;
+      _flowArcOrigin = { type: 'thread', page: originPage, label: 'Back to Threads' };
+
+      window.__clusterCloseNodePanel?.();
+      window.closeArticleDetail?.();
+      window.__goToPage?.(1);
+      if (window.__flowIsOpen?.()) {
+        window.__flowClearArcs?.();
+      }
+
+      const res = await fetch(`${API}/api/flows/thread/${threadId}`);
+      const data = await res.json();
+      if (!data.flows || !data.flows.length) {
+        console.warn("No flows found for thread", threadId);
+        hideFlowArcBackBtn();
+        return;
+      }
+
+      window.__flowSetOpen?.(true);
+
+      const flows = data.flows.map(f => window.__flowRemapForView?.(f) || f);
+      window.__flowAssignLaneOffsets?.(flows);
+      const maxCount = data.maxCount || Math.max(...flows.map(f => f.count || 1), 1);
+      flows.forEach(flow => {
+        const arc = window.__flowCreateArc?.(flow, maxCount);
+        if (arc) window.__flowPushArc?.(arc);
+      });
+
+      const statsEl = document.getElementById("flowMinStats");
+      if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
+
+      showFlowNodeLabels(flows);
+
+      const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
+      showFlowArcBackBtn(backLabel);
+
+      // Load and show the thread timeline
+      loadAndShowFlowTimeline(threadId);
+
+    } catch (e) {
+      console.error("showThreadFlows error:", e);
+    }
+  };
+
+  /* ── Persistent node labels for flow arc visualization ── */
+  function showFlowNodeLabels(flows) {
+    // Remove any previous labels
+    clearFlowNodeLabels();
+
+    // Collect unique nodes by id+type
+    const nodeMap = new Map();
+    for (const f of flows) {
+      const srcKey = `${f.src.type}:${f.src.id}`;
+      const dstKey = `${f.dst.type}:${f.dst.id}`;
+      if (!nodeMap.has(srcKey)) nodeMap.set(srcKey, f.src);
+      if (!nodeMap.has(dstKey)) nodeMap.set(dstKey, f.dst);
+    }
+
+    const container = document.createElement("div");
+    container.id = "flowNodeLabels";
+    container.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:90;";
+    document.body.appendChild(container);
+
+    const nodes = [...nodeMap.values()];
+    nodes.forEach(node => {
+      const label = document.createElement("div");
+      label.className = "flowNodeLabel";
+      label.textContent = node.place || "?";
+      container.appendChild(label);
+      label.__flowNode = node;
+    });
+
+    // Start animation loop for positioning
+    window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
+  }
+
+  function updateFlowNodeLabels() {
+    const container = document.getElementById("flowNodeLabels");
+    if (!container) return;
+
+    const camera = window.__camera;
+    const renderer = window.__renderer;
+    if (!camera || !renderer) {
+      window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
+      return;
+    }
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    const labels = container.querySelectorAll(".flowNodeLabel");
+    const GLOBE_RADIUS = 1.0;
+
+    labels.forEach(label => {
+      const node = label.__flowNode;
+      if (!node) return;
+
+      const lat = node.lat * Math.PI / 180;
+      const lon = -node.lon * Math.PI / 180;
+      const pos = new THREE.Vector3(
+        GLOBE_RADIUS * Math.cos(lat) * Math.cos(lon),
+        GLOBE_RADIUS * Math.sin(lat),
+        GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
+      );
+
+      // Check if point is facing camera
+      const camDir = camera.position.clone().normalize();
+      const dot = pos.clone().normalize().dot(camDir);
+
+      if (dot < 0.05) {
+        label.style.opacity = "0";
+        return;
+      }
+
+      const projected = pos.clone().project(camera);
+      const sx = (projected.x + 1) / 2 * rect.width + rect.left;
+      const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+
+      label.style.left = sx + "px";
+      label.style.top = (sy - 20) + "px";
+      label.style.opacity = String(Math.min(1, (dot - 0.05) * 4));
+    });
+
+    window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
+  }
+
+  window.clearFlowNodeLabels = function() {
+    clearFlowNodeLabels();
+  };
+
+  function clearFlowNodeLabels() {
+    const container = document.getElementById("flowNodeLabels");
+    if (container) container.remove();
+    if (window.__flowNodeLabelRAF) {
+      cancelAnimationFrame(window.__flowNodeLabelRAF);
+      window.__flowNodeLabelRAF = null;
+    }
+  }
+
+  /* ── Thread Flow Timeline ── */
+  async function loadAndShowFlowTimeline(threadId) {
+    const API = window.__API || "https://earth-wjr6.onrender.com";
+    try {
+      const res = await fetch(`${API}/api/threads/${threadId}/timeline`);
+      const data = await res.json();
+      if (!data.timeline || !data.timeline.length) return;
+
+      renderFlowTimeline(data);
+    } catch (e) {
+      console.error("loadFlowTimeline error:", e);
+    }
+  }
+
+  function renderFlowTimeline(data) {
+    const panel = document.getElementById("flowTimeline");
+    const countriesEl = document.getElementById("ftlCountries");
+    const trackEl = document.getElementById("ftlTrack");
+
+    // Render country pills
+    const FLAG_CDN = "https://flagcdn.com/w40/";
+    const uniqueCountries = new Map();
+    data.timeline.forEach(ev => {
+      (ev.mentionedIsos || []).forEach((iso, i) => {
+        const name = (ev.mentionedCountries || [])[i];
+        if (iso && name && !uniqueCountries.has(iso)) uniqueCountries.set(iso, name);
+      });
+      if (ev.sourceIso && ev.sourceCountry && !uniqueCountries.has(ev.sourceIso)) {
+        uniqueCountries.set(ev.sourceIso, ev.sourceCountry);
+      }
+    });
+
+    countriesEl.innerHTML = [...uniqueCountries.entries()].slice(0, 12).map(([iso, name]) =>
+      `<span class="ftlCountryPill"><img src="${FLAG_CDN}${iso.toLowerCase()}.png" alt="">${name}</span>`
+    ).join("");
+
+    // Render timeline events
+    trackEl.innerHTML = data.timeline.map(ev => {
+      const date = ev.publishedAt
+        ? new Date(ev.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+        : "";
+      const sentClass = ev.sentiment != null
+        ? (ev.sentiment < -0.2 ? "negative" : ev.sentiment > 0.2 ? "positive" : "")
+        : "";
+      const nations = (ev.mentionedCountries || []).slice(0, 4).map(c =>
+        `<span class="ftlEventNation">${c}</span>`
+      ).join("");
+      const title = (ev.title || "").replace(/</g, "&lt;");
+      return `<div class="ftlEvent ${sentClass}">
+        <div class="ftlEventDate">${date}</div>
+        <div class="ftlEventTitle">${title}</div>
+        <div class="ftlEventNations">${nations}</div>
+      </div>`;
+    }).join("");
+
+    panel.classList.add("visible");
+  }
+
+  window.hideFlowTimeline = function() {
+    document.getElementById("flowTimeline")?.classList.remove("visible");
+  };
+
+  function clearFlowTimeline() {
+    document.getElementById("flowTimeline")?.classList.remove("visible");
+  }
 
 </script>
+
+<style>
+.flowNodeLabel {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.88);
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(100,200,255,0.3);
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ── Thread Flow Timeline ── */
+#flowTimeline {
+  position: fixed;
+  bottom: 120px;
+  left: 12px;
+  right: 12px;
+  max-width: 600px;
+  margin: 0 auto;
+  z-index: 195;
+  display: none;
+  background: rgba(8,12,24,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(100,200,255,0.18);
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  max-height: 260px;
+  overflow: hidden;
+}
+#flowTimeline.visible { display: block; }
+
+.ftlHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ftlTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.7);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ftlClose {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.4);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.ftlClose:hover { color: rgba(255,255,255,0.7); background: rgba(255,255,255,0.08); }
+
+.ftlCountries {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.ftlCountryPill {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.6);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.ftlCountryPill img {
+  width: 12px;
+  height: 9px;
+  object-fit: cover;
+  border-radius: 1px;
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+
+.ftlTrack {
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  gap: 0;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,200,255,0.2) transparent;
+}
+.ftlTrack::-webkit-scrollbar { height: 4px; }
+.ftlTrack::-webkit-scrollbar-track { background: transparent; }
+.ftlTrack::-webkit-scrollbar-thumb { background: rgba(100,200,255,0.25); border-radius: 2px; }
+
+.ftlEvent {
+  flex-shrink: 0;
+  width: 160px;
+  padding: 6px 10px;
+  border-left: 2px solid rgba(100,200,255,0.2);
+  position: relative;
+  cursor: default;
+  transition: background 0.15s;
+}
+.ftlEvent:hover { background: rgba(255,255,255,0.04); }
+.ftlEvent::before {
+  content: '';
+  position: absolute;
+  left: -5px; top: 10px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: rgba(100,200,255,0.5);
+  border: 1.5px solid rgba(100,200,255,0.8);
+}
+.ftlEvent.negative::before { background: rgba(255,80,80,0.5); border-color: rgba(255,80,80,0.8); }
+.ftlEvent.positive::before { background: rgba(80,255,120,0.5); border-color: rgba(80,255,120,0.8); }
+
+.ftlEventDate {
+  font-size: 9px;
+  color: rgba(255,255,255,0.35);
+  margin-bottom: 3px;
+}
+.ftlEventTitle {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.82);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+.ftlEventNations {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.ftlEventNation {
+  font-size: 8px;
+  color: rgba(255,255,255,0.45);
+  background: rgba(255,255,255,0.05);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+</style>
 
 
 
@@ -20182,7 +20751,7 @@ body.ticker-active .gTickerLabel {
     const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
     const title = esc(a.translated_title || a.title || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
-    return `<div class="cdCard" onclick="openPanelArticle(this)" data-article='${dataAttr}' style="cursor:pointer">
+    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button><div class="cdCard" onclick="openPanelArticle(this)" data-article='${dataAttr}' style="cursor:pointer">
       ${src ? `<img class="cdCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">` : `<div class="cdCardImgNone"></div>`}
       <div class="cdCardBody">
         ${isVideo ? `<span class="cdCardVideo">▶ Video</span>` : ""}
@@ -20192,7 +20761,7 @@ body.ticker-active .gTickerLabel {
         </div>
         <div class="cdCardTitle">${title}</div>
       </div>
-    </div>`;
+    </div></div>`;
   }
 
   function makeTimelineItem(a) {
