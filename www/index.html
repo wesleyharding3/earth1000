@@ -14936,7 +14936,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const now = new Date(), past = new Date(now - 2 * 86400000);
       dateTo.value = isoDate(now); dateFrom.value = isoDate(past);
       syncDateClears();
-      runSearch();
+      /* Feed load is deferred until user switches to Feed tab */
     }).catch(e => console.error("Bootstrap:", e));
 
     function initMulti(w) {
@@ -15384,6 +15384,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       let currentView = 'threads';
       let threadsLoaded = false;
+      let feedBootstrapped = false;
       let threadsData = [];
 
       function setView(view) {
@@ -15396,6 +15397,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         feedMeta.style.display     = view === 'feed' ? '' : 'none';
         threadsMeta.style.display  = view === 'threads' ? '' : 'none';
         if (view === 'threads' && !threadsLoaded) loadThreads();
+        if (view === 'feed' && !feedBootstrapped) { feedBootstrapped = true; runSearch(); }
       }
 
       pillThreads.addEventListener('click', () => setView('threads'));

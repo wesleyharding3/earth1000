@@ -674,21 +674,26 @@ app.get("/api/news/search", async (req, res) => {
 
     const needsLocJoin = !!aboutIds?.length;
 
-    let limitClause;
-    if (limit) {
-      params.push(limit, offset);
-      const limitParam  = params.length - 1;
-      const offsetParam = params.length;
-      limitClause = `LIMIT $${limitParam} OFFSET $${offsetParam}`;
-    } else {
-      params.push(offset);
-      const offsetParam = params.length;
-      limitClause = `OFFSET $${offsetParam}`;
-    }
+    /* ── Fast count query (lightweight, no JOINs except when needed) ── */
+    const countParams = [...params];
+    const countJoin = needsLocJoin
+      ? `JOIN article_locations al ON al.article_id = a.id`
+      : "";
+    const countSql = `SELECT COUNT(DISTINCT a.id) AS total FROM news_articles a ${countJoin} ${whereClause}`;
 
-    const { rows } = await pool.query(`
+    /* ── Main data query ── */
+    // Fetch more than requested so JS re-ranking has room to diversify
+    const fetchLimit = (limit || 24) * 3;
+    params.push(fetchLimit, offset);
+    const limitParam  = params.length - 1;
+    const offsetParam = params.length;
+    const limitClause = `LIMIT $${limitParam} OFFSET $${offsetParam}`;
+
+    const [countResult, { rows }] = await Promise.all([
+      pool.query(countSql, countParams),
+      pool.query(`
       SELECT * FROM (
-        SELECT DISTINCT ON (a.id)
+        SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
           a.id,
           a.title,
           a.translated_title,
@@ -697,7 +702,7 @@ app.get("/api/news/search", async (req, res) => {
           a.summary,
           a.translated_summary,
           COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
+          img_a.public_url AS catalog_image_url,
           a.published_at,
           a.sentiment_score,
           l.iso_code_2 AS language,
@@ -709,9 +714,7 @@ app.get("/api/news/search", async (req, res) => {
           src_co.iso_code,
           src_co.name        AS country_name,
           src_co.flag        AS country_flag,
-          ci.name            AS city_name,
           COALESCE(cfb.boost_score, 1.0) AS country_boost,
-          COUNT(*) OVER()    AS total_count,
           -- Recency decay: half-life 6h, floor 0.02
           GREATEST(
             POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
@@ -723,11 +726,10 @@ app.get("/api/news/search", async (req, res) => {
           ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
         FROM news_articles a
         LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN languages  l  ON l.id = ns.language_id
         JOIN countries src_co    ON src_co.id   = a.country_id
         LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
-        LEFT JOIN cities ci       ON ci.id      = a.city_id
         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         ${needsLocJoin ? `
@@ -735,18 +737,20 @@ app.get("/api/news/search", async (req, res) => {
           JOIN countries about_co    ON about_co.id   = al.country_id
         ` : ""}
         ${whereClause}
-        ORDER BY a.id
+        ${needsLocJoin ? "ORDER BY a.id" : ""}
       ) sub
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
         * POWER(sub.country_boost, 2.0)
       ) DESC
       ${limitClause}
-    `, params);
+    `, params)
+    ]);
+
+    const total = parseInt(countResult.rows[0]?.total) || 0;
 
     let results = rows.map(r => ({
       ...r,
-      // Fix: boost² applied to the whole blended score, not just recency
       final_priority: (
         (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
       ) * Math.pow(r.country_boost || 1, 2.0)
@@ -772,7 +776,8 @@ app.get("/api/news/search", async (req, res) => {
       return pb - pa;
     });
 
-    const total = rows.length ? rows[0].total_count : 0;
+    // Trim back to requested limit after re-ranking
+    if (limit) results = results.slice(0, limit);
 
     res.json({ total, articles: results });
 
