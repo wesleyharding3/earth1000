@@ -1645,6 +1645,32 @@ body.ticker-active #flowControls {
 #flowControls.minimized .flowMinBar {
   display: flex;
 }
+#flowControls.minimized .flowMinBtn {
+  display: none;
+}
+/* Back-to-origin buttons inside flow controls */
+.flowOriginBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(100,180,255,0.12);
+  border: 1px solid rgba(100,180,255,0.3);
+  color: rgba(100,180,255,0.9);
+  border-radius: 14px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.flowOriginBtn:hover {
+  background: rgba(100,180,255,0.22);
+  border-color: rgba(100,180,255,0.5);
+}
+.flowOriginRow {
+  padding: 4px 0 2px;
+}
 .flowMinBar {
   display: none;
   background: rgba(8, 12, 20, 0.52);
@@ -6880,6 +6906,9 @@ body.ticker-active #flowControls {
     
     <!-- Minimized bar (shown when minimized) -->
     <div class="flowMinBar">
+      <button class="flowOriginBtn" id="flowMinOriginBtn" style="display:none;" title="Back to origin">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
       <span class="flowMinLabel">Flow</span>
       <span class="flowMinStats" id="flowMinStats">0 flows</span>
       <button class="flowExpandBtn" id="flowExpandBtn" title="Expand">↑</button>
@@ -6887,6 +6916,13 @@ body.ticker-active #flowControls {
     </div>
     
     <div class="flowPanel">
+      <!-- Back to origin (shown when triggered from article/thread card) -->
+      <div class="flowOriginRow" id="flowPanelOriginRow" style="display:none;">
+        <button class="flowOriginBtn" id="flowPanelOriginBtn" title="Back to origin">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span id="flowPanelOriginLabel">Back</span>
+        </button>
+      </div>
       <!-- Mode toggle -->
       <div class="flowPanelRow">
         <span class="flowLabel">Mode</span>
@@ -10496,7 +10532,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener("touchstart", (event) => {
         if (window.briefingActive) return;   // globe locked during briefing
         if (event.touches.length !== 1) return;
-        
+
+        // Skip node selection when flow mode is active
+        const flowControls = document.getElementById("flowControls");
+        if (flowControls && flowControls.classList.contains("visible")) return;
+
         // If panel is active and touch is outside panel, close it and don't select new node
         const touch = event.touches[0];
         const touchTarget = document.elementFromPoint(touch.clientX, touch.clientY);
@@ -13523,6 +13563,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (backBtn) backBtn.classList.remove("visible");
     document.getElementById("flowTimeline")?.classList.remove("visible");
     document.getElementById("flowArcInfoCard")?.classList.remove("visible");
+    // Hide embedded origin buttons
+    const minOrigin = document.getElementById("flowMinOriginBtn");
+    if (minOrigin) minOrigin.style.display = "none";
+    const panelOriginRow = document.getElementById("flowPanelOriginRow");
+    if (panelOriginRow) panelOriginRow.style.display = "none";
   }
 
   /* ── Autocomplete setup ── */
@@ -14127,24 +14172,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const flow = hitArc.flow;
     playSFX(SFX.article);
 
-    // Card-triggered flow arcs: show info card instead of opening panels
+    // Card-triggered flow arcs: open article detail or route article panel
     if (flow._cardTriggered) {
-      const infoCard = document.getElementById("flowArcInfoCard");
-      if (infoCard) {
-        document.getElementById("faiRoute").textContent = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
-        document.getElementById("faiTitle").textContent = flow.title || `${flow.count || 1} article${(flow.count || 1) !== 1 ? "s" : ""} on this route`;
-        const datePart = flow.publishedAt ? new Date(flow.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
-        const countPart = flow.count > 1 ? `${flow.count} articles` : "";
-        document.getElementById("faiMeta").textContent = [datePart, countPart].filter(Boolean).join(" · ");
-        infoCard.style.left = (e.clientX + 14) + "px";
-        infoCard.style.top = (e.clientY - 10) + "px";
-        // Keep within viewport
-        requestAnimationFrame(() => {
-          const r = infoCard.getBoundingClientRect();
-          if (r.right > window.innerWidth - 8) infoCard.style.left = (window.innerWidth - r.width - 8) + "px";
-          if (r.bottom > window.innerHeight - 8) infoCard.style.top = (window.innerHeight - r.height - 8) + "px";
-        });
-        infoCard.classList.add("visible");
+      // Hide any existing info card
+      document.getElementById("flowArcInfoCard")?.classList.remove("visible");
+
+      if (flow._sourceType === "article" && flow._article) {
+        // Single article: open article detail directly
+        if (window.openArticleDetail) {
+          window.openArticleDetail(flow._article, { type: 'flow' });
+        }
+      } else if (flow._sourceType === "thread" && flow._threadId) {
+        // Thread: show info card with route + article count, clicking opens route panel
+        if (flow.count > 1) {
+          // Multiple articles: open aggregate route panel for this thread route
+          openCardTriggeredRoutePanel(flow);
+        } else {
+          // Single article on this route: show info card
+          const infoCard = document.getElementById("flowArcInfoCard");
+          if (infoCard) {
+            document.getElementById("faiRoute").textContent = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
+            document.getElementById("faiTitle").textContent = flow.title || "1 article on this route";
+            const datePart = flow.publishedAt ? new Date(flow.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+            document.getElementById("faiMeta").textContent = datePart;
+            infoCard.style.left = (e.clientX + 14) + "px";
+            infoCard.style.top = (e.clientY - 10) + "px";
+            requestAnimationFrame(() => {
+              const r = infoCard.getBoundingClientRect();
+              if (r.right > window.innerWidth - 8) infoCard.style.left = (window.innerWidth - r.width - 8) + "px";
+              if (r.bottom > window.innerHeight - 8) infoCard.style.top = (window.innerHeight - r.height - 8) + "px";
+            });
+            infoCard.classList.add("visible");
+          }
+        }
       }
       return;
     }
@@ -14323,6 +14383,90 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } catch (err) {
       console.error("Failed to load aggregate route articles:", err);
       document.getElementById("aggRouteArticles").innerHTML = `<div class="articlesGrid"><div style="grid-column:1/-1;color:#f66;text-align:center;padding:20px;">Failed to load articles</div></div>`;
+    }
+  }
+
+  /* Open route articles panel for card-triggered thread flows */
+  async function openCardTriggeredRoutePanel(flow) {
+    const panel = document.getElementById("infoPanel");
+    const routeLabel = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
+    const articleCount = flow.count || 0;
+
+    panel.innerHTML = `
+      <div id="panelResizeHandle"><div id="panelResizeArrow"><svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6.5 5,3.5 8,6.5"/></svg></div></div>
+      <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(6,10,20,0.30);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding-bottom:10px;flex-shrink:0;">
+        <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:4px;padding-right:40px;">
+          <div style="font-size:1.15rem;font-weight:600;color:#fff;">${routeLabel}</div>
+        </div>
+        <div style="font-size:0.85rem;color:#888;margin-top:4px;">${articleCount} article${articleCount !== 1 ? "s" : ""} on this route</div>
+      </div>
+      <div id="aggRouteArticles" style="flex:1;overflow-y:auto;padding:10px 10px 40px;">
+        <div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);">Loading articles…</div>
+      </div>`;
+    panel.classList.add("active");
+    document.body.classList.add("panel-open");
+
+    // Close handler
+    panel.querySelector(".closePanel").addEventListener("click", () => {
+      panel.classList.remove("active");
+      panel.classList.remove("maximized");
+      document.body.classList.remove("panel-open");
+    });
+
+    // Fetch articles for this route
+    try {
+      const API = "https://earth-wjr6.onrender.com";
+      const params = new URLSearchParams({
+        src_id: flow.src?.id,
+        dst_id: flow.dst?.id,
+        src_type: flow.src?.type || "country",
+        dst_type: flow.dst?.type || "country"
+      });
+      const res = await fetch(`${API}/api/flows/thread/${flow._threadId}/route?${params}`);
+      const data = await res.json();
+      const articles = data.articles || [];
+      const container = document.getElementById("aggRouteArticles");
+      if (!articles.length) {
+        container.innerHTML = `<div style="text-align:center;padding:24px;color:rgba(255,255,255,0.3);">No articles found</div>`;
+        return;
+      }
+      const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
+      const cardsHtml = articles.map(article => {
+        const hasImage = article.image_url && article.image_url.trim();
+        const catalog = article.catalog_image_url || '';
+        const iso = (article.iso_code || '').toLowerCase();
+        let imageField;
+        if (hasImage) {
+          imageField = `<img class="articleCardImage" src="${article.image_url}" data-catalog="${catalog}" alt="" loading="lazy" onerror="imgFallback(this,'${FLAG_CDN_BASE}${iso}.png')">`;
+        } else if (catalog) {
+          imageField = `<img class="articleCardImage" src="${catalog}" alt="" loading="lazy">`;
+        } else if (iso) {
+          imageField = `<img class="articleCardImage" src="${FLAG_CDN_BASE}${iso}.png" alt="" loading="lazy" style="object-fit:contain;padding:16px;background:#080808;">`;
+        } else {
+          imageField = `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
+        }
+        const sourceLine = `${window.sourceBiasBadgeHTML(article.source_bias)}<span>${article.source_name || ""}</span>`;
+        return `
+          <div style="position:relative">
+            <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
+              ${imageField}
+              <div class="articleCardBody">
+                <div>
+                  <div class="articleCardSource">${sourceLine}</div>
+                  <div class="articleCardTitle">${article.title || ""}</div>
+                </div>
+                <div class="articleCardFooter">
+                  <div class="articleCardDate">${article.published_at ? new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : ""}</div>
+                </div>
+              </div>
+            </div>
+          </div>`;
+      }).join("");
+      container.innerHTML = `<div class="articlesGrid">${cardsHtml}</div>`;
+    } catch (err) {
+      console.error("Failed to load route articles:", err);
+      document.getElementById("aggRouteArticles").innerHTML = `<div style="text-align:center;padding:24px;color:#f66;">Failed to load articles</div>`;
     }
   }
 
@@ -15473,11 +15617,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       lbl.textContent = label;
       btn.classList.add("visible");
     }
+    // Also show embedded back buttons in flow controls
+    const minBtn = document.getElementById("flowMinOriginBtn");
+    if (minBtn) { minBtn.style.display = ""; minBtn.title = label; }
+    const panelRow = document.getElementById("flowPanelOriginRow");
+    const panelLbl = document.getElementById("flowPanelOriginLabel");
+    if (panelRow) panelRow.style.display = "";
+    if (panelLbl) panelLbl.textContent = label;
   }
 
   function hideFlowArcBackBtn() {
     const btn = document.getElementById("flowArcBackBtn");
     if (btn) btn.classList.remove("visible");
+    // Also hide embedded back buttons in flow controls
+    const minBtn = document.getElementById("flowMinOriginBtn");
+    if (minBtn) minBtn.style.display = "none";
+    const panelRow = document.getElementById("flowPanelOriginRow");
+    if (panelRow) panelRow.style.display = "none";
     _flowArcOrigin = null;
   }
 
@@ -15494,6 +15650,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Navigate back to the origin page
     window.__goToPage?.(origin.page);
   };
+
+  // Wire up embedded back-to-origin buttons in flow controls
+  document.getElementById("flowMinOriginBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.__flowArcGoBack?.();
+  });
+  document.getElementById("flowPanelOriginBtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.__flowArcGoBack?.();
+  });
 
   window.showArticleFlows = async function(articleId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
@@ -15538,9 +15704,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__flowSetOpen?.(true);
 
       // 6. Remap, tag as card-triggered, and render arcs
+      const articleObj = data.article || null;
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
+        remapped._sourceType = "article";
+        remapped._article = articleObj;
         return remapped;
       });
       window.__flowAssignLaneOffsets?.(flows);
@@ -15603,6 +15772,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
+        remapped._sourceType = "thread";
+        remapped._threadId = threadId;
         return remapped;
       });
       window.__flowAssignLaneOffsets?.(flows);

@@ -1330,8 +1330,20 @@ app.get("/api/flows/article/:id", async (req, res) => {
 
     const { rows } = await pool.query(`
       SELECT
+        a.id AS article_id,
         COALESCE(a.translated_title, a.title) AS title,
+        a.title AS original_title,
+        COALESCE(a.translated_summary, a.summary) AS summary,
         a.published_at,
+        a.article_url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        img_a.public_url AS catalog_image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        a.sentiment_score,
+        a.media_type,
+        a.video_id,
+        src_co.iso_code AS article_iso,
         COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
         COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
         COALESCE(src_city.name, src_co.name)           AS src_place,
@@ -1351,11 +1363,35 @@ app.get("/api/flows/article/:id", async (req, res) => {
       JOIN countries dst_co  ON dst_co.id = al.country_id
       LEFT JOIN cities src_city ON src_city.id = a.city_id
       LEFT JOIN cities dst_city ON dst_city.id = al.city_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
       WHERE al.article_id = $1
         AND al.routing_type IN ('content', 'source')
     `, [articleId]);
 
     if (!rows.length) return res.json({ flows: [] });
+
+    // Build article object from first row (same article for all flows)
+    const r0 = rows[0];
+    const article = {
+      id: r0.article_id,
+      title: r0.title,
+      translated_title: r0.title,
+      summary: r0.summary,
+      translated_summary: r0.summary,
+      published_at: r0.published_at,
+      article_url: r0.article_url,
+      image_url: r0.image_url,
+      catalog_image_url: r0.catalog_image_url,
+      source_name: r0.source_name,
+      source_bias: r0.source_bias,
+      sentiment_score: r0.sentiment_score,
+      media_type: r0.media_type,
+      video_id: r0.video_id,
+      iso_code: r0.article_iso
+    };
 
     const flows = rows.map(r => ({
       title: r.title,
@@ -1372,7 +1408,7 @@ app.get("/api/flows/article/:id", async (req, res) => {
       routingType: r.routing_type
     }));
 
-    res.json({ flows });
+    res.json({ flows, article });
   } catch (err) {
     console.error("[flows/article]", err.message);
     res.status(500).json({ error: "Failed to fetch article flows", detail: err.message });
@@ -1443,6 +1479,66 @@ app.get("/api/flows/thread/:id", async (req, res) => {
   } catch (err) {
     console.error("[flows/thread]", err.message);
     res.status(500).json({ error: "Failed to fetch thread flows", detail: err.message });
+  }
+});
+
+/* =========================================
+   Articles for a specific route within a thread
+   Used when clicking a flow arc in thread flow view
+========================================= */
+app.get("/api/flows/thread/:id/route", async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.id, 10);
+    const srcId = parseInt(req.query.src_id, 10);
+    const dstId = parseInt(req.query.dst_id, 10);
+    const srcType = req.query.src_type || "country";
+    const dstType = req.query.dst_type || "country";
+
+    if (!threadId || !srcId || !dstId) {
+      return res.status(400).json({ error: "thread_id, src_id, dst_id required" });
+    }
+
+    const srcJoin = srcType === "city" ? "a.city_id" : "a.country_id";
+    const dstJoin = dstType === "city" ? "al.city_id" : "al.country_id";
+
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        COALESCE(a.translated_title, a.title) AS title,
+        a.title AS original_title,
+        COALESCE(a.translated_summary, a.summary) AS summary,
+        a.published_at,
+        a.article_url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        img_a.public_url AS catalog_image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        a.media_type,
+        a.video_id,
+        src_co.iso_code AS iso_code,
+        src_co.name AS country_name,
+        src_city.name AS city_name
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      JOIN article_locations al ON al.article_id = a.id
+      JOIN countries src_co ON src_co.id = a.country_id
+      LEFT JOIN cities src_city ON src_city.id = a.city_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      WHERE sta.thread_id = $1
+        AND ${srcJoin} = $2
+        AND ${dstJoin} = $3
+        AND al.routing_type IN ('content', 'source')
+      ORDER BY a.id, a.published_at DESC
+      LIMIT 50
+    `, [threadId, srcId, dstId]);
+
+    res.json({ articles: rows });
+  } catch (err) {
+    console.error("[flows/thread/route]", err.message);
+    res.status(500).json({ error: "Failed to fetch route articles", detail: err.message });
   }
 });
 
