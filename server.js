@@ -1330,6 +1330,8 @@ app.get("/api/flows/article/:id", async (req, res) => {
 
     const { rows } = await pool.query(`
       SELECT
+        COALESCE(a.translated_title, a.title) AS title,
+        a.published_at,
         COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
         COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
         COALESCE(src_city.name, src_co.name)           AS src_place,
@@ -1356,6 +1358,8 @@ app.get("/api/flows/article/:id", async (req, res) => {
     if (!rows.length) return res.json({ flows: [] });
 
     const flows = rows.map(r => ({
+      title: r.title,
+      publishedAt: r.published_at,
       src: {
         lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
         place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso

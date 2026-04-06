@@ -2328,13 +2328,64 @@ body.ticker-active #flowControls {
 /* Thread card flow button — position differently since thread cards have different layout */
 .nfThreadCard .cardFlowArcBtn { top: 8px; right: 8px; }
 
+/* ── Flow arc click info card ── */
+#flowArcInfoCard {
+  position: fixed;
+  z-index: 650;
+  display: none;
+  background: rgba(8,12,24,0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(100,200,255,0.25);
+  border-radius: 12px;
+  padding: 12px 14px;
+  max-width: 280px;
+  pointer-events: all;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: flowInfoIn 0.18s ease-out;
+}
+@keyframes flowInfoIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+#flowArcInfoCard.visible { display: block; }
+.faiRoute {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(80,220,160,0.85);
+  margin-bottom: 6px;
+  letter-spacing: 0.03em;
+}
+.faiTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.9);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+.faiMeta {
+  font-size: 10px;
+  color: rgba(255,255,255,0.4);
+}
+.faiClose {
+  position: absolute;
+  top: 6px; right: 8px;
+  background: none; border: none;
+  color: rgba(255,255,255,0.3);
+  font-size: 13px; cursor: pointer;
+  padding: 2px 4px; line-height: 1;
+}
+.faiClose:hover { color: rgba(255,255,255,0.6); }
+
 /* ── Flow arc back button (return to article/thread after viewing arcs) ─��� */
 #flowArcBackBtn {
   position: fixed;
-  bottom: 72px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 200;
+  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  left: 14px;
+  transform: none;
+  z-index: 650;
   display: none;
   align-items: center;
   gap: 7px;
@@ -2356,7 +2407,7 @@ body.ticker-active #flowControls {
   background: rgba(40,80,140,0.55);
   border-color: rgba(100,200,255,0.5);
 }
-#flowArcBackBtn:active { transform: translateX(-50%) scale(0.96); }
+#flowArcBackBtn:active { transform: scale(0.96); }
 #flowArcBackBtn svg { width: 14px; height: 14px; flex-shrink: 0; }
 #flowArcBackBtn.visible { display: flex; }
 
@@ -6923,6 +6974,14 @@ body.ticker-active #flowControls {
     <div class="ftTitle" id="ftTitle"></div>
     <div class="ftMeta"  id="ftMeta"></div>
     <div class="ftRoute" id="ftRoute"></div>
+  </div>
+
+  <!-- Flow arc click info card -->
+  <div id="flowArcInfoCard">
+    <button class="faiClose" onclick="document.getElementById('flowArcInfoCard').classList.remove('visible')">&times;</button>
+    <div class="faiRoute" id="faiRoute"></div>
+    <div class="faiTitle" id="faiTitle"></div>
+    <div class="faiMeta" id="faiMeta"></div>
   </div>
 
   <!-- Back button for flow arc card navigation -->
@@ -13458,13 +13517,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowProgressBar").style.width = "0%";
     document.getElementById("flowDateTicks").innerHTML = "";
     flowDateSnapPoints = [];
-    // Clear persistent node labels, back button, and timeline from card flow arc button
+    // Clear persistent node labels, back button, timeline, and info card from card flow arc button
     window.clearFlowNodeLabels?.();
-    // Hide back button
     const backBtn = document.getElementById("flowArcBackBtn");
     if (backBtn) backBtn.classList.remove("visible");
-    // Hide timeline
     document.getElementById("flowTimeline")?.classList.remove("visible");
+    document.getElementById("flowArcInfoCard")?.classList.remove("visible");
   }
 
   /* ── Autocomplete setup ── */
@@ -14068,6 +14126,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!hitArc) return;
     const flow = hitArc.flow;
     playSFX(SFX.article);
+
+    // Card-triggered flow arcs: show info card instead of opening panels
+    if (flow._cardTriggered) {
+      const infoCard = document.getElementById("flowArcInfoCard");
+      if (infoCard) {
+        document.getElementById("faiRoute").textContent = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
+        document.getElementById("faiTitle").textContent = flow.title || `${flow.count || 1} article${(flow.count || 1) !== 1 ? "s" : ""} on this route`;
+        const datePart = flow.publishedAt ? new Date(flow.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+        const countPart = flow.count > 1 ? `${flow.count} articles` : "";
+        document.getElementById("faiMeta").textContent = [datePart, countPart].filter(Boolean).join(" · ");
+        infoCard.style.left = (e.clientX + 14) + "px";
+        infoCard.style.top = (e.clientY - 10) + "px";
+        // Keep within viewport
+        requestAnimationFrame(() => {
+          const r = infoCard.getBoundingClientRect();
+          if (r.right > window.innerWidth - 8) infoCard.style.left = (window.innerWidth - r.width - 8) + "px";
+          if (r.bottom > window.innerHeight - 8) infoCard.style.top = (window.innerHeight - r.height - 8) + "px";
+        });
+        infoCard.classList.add("visible");
+      }
+      return;
+    }
+
     if (flow.count) {
       openAggregateRoutePanel(flow);
     } else {
@@ -15404,10 +15485,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!_flowArcOrigin) return;
     const origin = _flowArcOrigin;
 
-    // Close flow arcs, labels, and timeline
+    // Close flow arcs, labels, timeline, and info card
     window.__flowClosePanel?.();
     hideFlowArcBackBtn();
     document.getElementById("flowTimeline")?.classList.remove("visible");
+    document.getElementById("flowArcInfoCard")?.classList.remove("visible");
 
     // Navigate back to the origin page
     window.__goToPage?.(origin.page);
@@ -15421,10 +15503,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const originPage = window.__currentPage || 2;
       _flowArcOrigin = { type: 'article', page: originPage, label: 'Back to News' };
 
-      // 1. Close any open node panel
+      // 1. Close any open panels
       window.__clusterCloseNodePanel?.();
-      // Close article detail if open
       window.closeArticleDetail?.();
+      // Close main info panel (#infoPanel) if open
+      const infoPanel = document.getElementById("infoPanel");
+      if (infoPanel?.classList.contains("active")) {
+        infoPanel.querySelector(".closePanel")?.click();
+      }
+      // Close region panel if open
+      const regionPanel = document.getElementById("regionPanel");
+      if (regionPanel?.classList.contains("active")) {
+        regionPanel.querySelector(".closePanel")?.click();
+      }
 
       // 2. Navigate to globe (page index 1)
       window.__goToPage?.(1);
@@ -15446,8 +15537,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 5. Activate flow mode (minimized)
       window.__flowSetOpen?.(true);
 
-      // 6. Remap and render arcs
-      const flows = data.flows.map(f => window.__flowRemapForView?.(f) || f);
+      // 6. Remap, tag as card-triggered, and render arcs
+      const flows = data.flows.map(f => {
+        const remapped = window.__flowRemapForView?.(f) || f;
+        remapped._cardTriggered = true;
+        return remapped;
+      });
       window.__flowAssignLaneOffsets?.(flows);
       const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
       flows.forEach(flow => {
@@ -15480,6 +15575,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__clusterCloseNodePanel?.();
       window.closeArticleDetail?.();
+      // Close main info panel (#infoPanel) if open
+      const infoPanel = document.getElementById("infoPanel");
+      if (infoPanel?.classList.contains("active")) {
+        infoPanel.querySelector(".closePanel")?.click();
+      }
+      const regionPanel = document.getElementById("regionPanel");
+      if (regionPanel?.classList.contains("active")) {
+        regionPanel.querySelector(".closePanel")?.click();
+      }
+
       window.__goToPage?.(1);
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
@@ -15495,7 +15600,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__flowSetOpen?.(true);
 
-      const flows = data.flows.map(f => window.__flowRemapForView?.(f) || f);
+      const flows = data.flows.map(f => {
+        const remapped = window.__flowRemapForView?.(f) || f;
+        remapped._cardTriggered = true;
+        return remapped;
+      });
       window.__flowAssignLaneOffsets?.(flows);
       const maxCount = data.maxCount || Math.max(...flows.map(f => f.count || 1), 1);
       flows.forEach(flow => {
