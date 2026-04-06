@@ -3923,29 +3923,42 @@ body.ticker-active #flowControls {
       pointer-events: none;
     }
 
-    /* ── Top row: page title + sort + tag + text search ── */
-    .nfTopRow {
+    /* ── Title row: page title + view toggle ── */
+    .nfTitleRow {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
-      flex-wrap: wrap;
-      row-gap: 6px;
       margin-top: 6px;
-      position: relative;
-      padding-right: 160px;
     }
 
     .nfPageTitle {
-      font-size: 13px;
+      font-size: 20px;
       font-weight: 700;
-      letter-spacing: 0.22em;
-      text-transform: uppercase;
-      color: #ffb84d;
-      text-shadow: 0 0 8px rgba(255,184,77,0.9), 0 0 20px rgba(255,150,40,0.55), 0 0 40px rgba(255,120,20,0.25);
-      flex-shrink: 0;
+      color: rgba(255,255,255,0.92);
       user-select: none;
-      margin-right: 4px;
+      flex-shrink: 0;
     }
+
+    .nfTitleActions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    /* ── Filter row: scrollable strip of filter controls ── */
+    .nfFiltersRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 2px;
+    }
+    .nfFiltersRow::-webkit-scrollbar { display: none; }
+    .nfFiltersRow > * { flex-shrink: 0; }
 
     /* ── Collapse toggle button ── */
     .nfCollapseBtn {
@@ -3975,17 +3988,11 @@ body.ticker-active #flowControls {
     #nfQueryBar.nf-collapsed .nfCollapseBtn svg { transform: rotate(0deg); }
     #nfQueryBar:not(.nf-collapsed) .nfCollapseBtn svg { transform: rotate(180deg); }
 
-    /* ── Collapsed state: hide all filters ── */
-    #nfQueryBar.nf-collapsed .nfTopSpacer,
-    #nfQueryBar.nf-collapsed .nfTagWrap,
-    #nfQueryBar.nf-collapsed .nfMediaToggles,
-    #nfQueryBar.nf-collapsed .nfBiasWrap,
-    #nfQueryBar.nf-collapsed .nfTextWrap,
+    /* ── Collapsed state: hide filter strip and builder ── */
+    #nfQueryBar.nf-collapsed .nfFiltersRow,
     #nfQueryBar.nf-collapsed #nfBuilderRow {
       display: none !important;
     }
-
-    .nfTopSpacer { flex: 1; min-width: 12px; }
 
     /* ── Threads / Feed view toggle ── */
     .nfViewToggle {
@@ -3995,11 +4002,6 @@ body.ticker-active #flowControls {
       overflow: hidden;
       flex-shrink: 0;
       background: rgba(255,180,80,0.04);
-      position: absolute;
-      right: 20px;
-      top: 50%;
-      transform: translateY(-50%);
-      z-index: 5;
     }
     .nfViewPill {
       display: flex; align-items: center;
@@ -4017,10 +4019,8 @@ body.ticker-active #flowControls {
     .nfViewPill:hover:not(.active) { color: rgba(255,180,80,0.60); }
 
     /* When in threads mode, hide feed-only filter controls */
-    #newsFeedPage.nf-threads-mode .nfTagWrap,
-    #newsFeedPage.nf-threads-mode .nfMediaToggles,
-    #newsFeedPage.nf-threads-mode .nfBiasWrap,
-    #newsFeedPage.nf-threads-mode .nfTextWrap,
+    #newsFeedPage.nf-threads-mode .nfFiltersRow,
+    #newsFeedPage.nf-threads-mode .nfCollapseBtn,
     #newsFeedPage.nf-threads-mode #nfWelcome,
     #newsFeedPage.nf-threads-mode .nfBuilderLineQuery,
     #newsFeedPage.nf-threads-mode .nfSearchBtn,
@@ -4053,17 +4053,18 @@ body.ticker-active #flowControls {
       transition: background 0.2s, border-color 0.2s, transform 0.14s;
       display: flex;
       flex-direction: column;
-      height: 420px;
+      height: 440px;
     }
     .nfThreadCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfThreadCard:active { transform: translateY(0); }
     .nfThreadCardImg {
-      width: 100%; height: auto; max-height: 240px;
-      object-fit: contain; object-position: center;
+      width: 100%; height: 200px;
+      object-fit: cover; object-position: center center;
+      background: rgba(255,255,255,0.05);
       display: block; flex-shrink: 0;
     }
     .nfThreadCardImgPh {
-      width: 100%; height: 150px;
+      width: 100%; height: 200px;
       background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
@@ -4178,7 +4179,7 @@ body.ticker-active #flowControls {
     .nfTagOpt.active .nfTagOptDot { background: rgba(255,180,80,1); box-shadow: 0 0 6px rgba(255,150,40,0.8); }
 
     /* Text search */
-    .nfTextWrap { display: flex; align-items: center; position: relative; flex: 1; max-width: 220px; min-width: 100px; flex-shrink: 1; }
+    .nfTextWrap { display: flex; align-items: center; position: relative; width: 160px; flex-shrink: 0; }
     .nfTextInput {
       width: 100%; height: 28px;
       padding: 0 28px 0 10px;
@@ -14356,20 +14357,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
   <div id="newsFeedPage">
     <!-- ── QUERY BAR ── -->
     <div id="nfQueryBar">
-      <!-- Row 1: title · tag · text filter -->
-      <div class="nfTopRow">
+      <!-- Row 1: title + view toggle -->
+      <div class="nfTitleRow">
         <span class="nfPageTitle">News Feed</span>
-        <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
-          <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="2,3.5 5,6.5 8,3.5"/>
-          </svg>
-        </button>
-        <div class="nfTopSpacer"></div>
-        <!-- Threads / Feed toggle -->
-        <div class="nfViewToggle" id="nfViewToggle">
-          <div class="nfViewPill active" data-view="threads" id="nfViewThreads">Threads</div>
-          <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
+        <div class="nfTitleActions">
+          <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
+            <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="2,3.5 5,6.5 8,3.5"/>
+            </svg>
+          </button>
+          <div class="nfViewToggle" id="nfViewToggle">
+            <div class="nfViewPill active" data-view="threads" id="nfViewThreads">Threads</div>
+            <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
+          </div>
         </div>
+      </div>
+      <!-- Row 2: filter strip (feed mode only, collapsible) -->
+      <div class="nfFiltersRow">
         <div class="nfTagWrap" id="nfTagWrap">
           <div class="nfTagBtn" id="nfTagBtn">
             <span class="nfTagDot"></span>
@@ -14401,7 +14405,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           <div class="nfBiasDrop" id="nfBiasDrop"></div>
         </div>
         <div class="nfTextWrap">
-          <input class="nfTextInput" id="nfTextFilter" type="text" placeholder="Filter loaded results…" autocomplete="off" />
+          <input class="nfTextInput" id="nfTextFilter" type="text" placeholder="Filter results…" autocomplete="off" />
           <span class="nfTextIcon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="11" cy="11" r="7"/>
