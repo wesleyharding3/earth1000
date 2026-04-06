@@ -673,25 +673,15 @@ app.get("/api/news/search", async (req, res) => {
       : "";
 
     const needsLocJoin = !!aboutIds?.length;
+    const effectiveLimit = limit || 24;
 
-    /* ── Fast count query (lightweight, no JOINs except when needed) ── */
-    const countParams = [...params];
-    const countJoin = needsLocJoin
-      ? `JOIN article_locations al ON al.article_id = a.id`
-      : "";
-    const countSql = `SELECT COUNT(DISTINCT a.id) AS total FROM news_articles a ${countJoin} ${whereClause}`;
-
-    /* ── Main data query ── */
-    // Fetch more than requested so JS re-ranking has room to diversify
-    const fetchLimit = (limit || 24) * 3;
-    params.push(fetchLimit, offset);
+    // Fetch 1 extra row to know if there are more pages (avoids expensive COUNT)
+    params.push(effectiveLimit + 1, offset);
     const limitParam  = params.length - 1;
     const offsetParam = params.length;
     const limitClause = `LIMIT $${limitParam} OFFSET $${offsetParam}`;
 
-    const [countResult, { rows }] = await Promise.all([
-      pool.query(countSql, countParams),
-      pool.query(`
+    const { rows } = await pool.query(`
       SELECT * FROM (
         SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
           a.id,
@@ -715,7 +705,6 @@ app.get("/api/news/search", async (req, res) => {
           src_co.name        AS country_name,
           src_co.flag        AS country_flag,
           COALESCE(cfb.boost_score, 1.0) AS country_boost,
-          -- Recency decay: half-life 6h, floor 0.02
           GREATEST(
             POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
             0.02
@@ -744,10 +733,11 @@ app.get("/api/news/search", async (req, res) => {
         * POWER(sub.country_boost, 2.0)
       ) DESC
       ${limitClause}
-    `, params)
-    ]);
+    `, params);
 
-    const total = parseInt(countResult.rows[0]?.total) || 0;
+    // Check if there's a next page, then trim the extra row
+    const hasMore = rows.length > effectiveLimit;
+    if (hasMore) rows.pop();
 
     let results = rows.map(r => ({
       ...r,
@@ -756,15 +746,13 @@ app.get("/api/news/search", async (req, res) => {
       ) * Math.pow(r.country_boost || 1, 2.0)
     }));
 
-    // Variation first: source diversity before country variance
-    results = diversityRerank(results.map(r => ({
-      ...r,
-      priority: r.final_priority
-    })));
+    // Light reranking only when we have enough rows to benefit
+    if (results.length >= 8) {
+      results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
+      results = countryVarianceRerank(results);
+    }
 
-    results = countryVarianceRerank(results);
-
-    // Final pass: only tiebreak by date within a very tight band (3%)
+    // Tiebreak by date within a tight priority band (3%)
     const PRIORITY_BAND = 0.03;
     results.sort((a, b) => {
       const pa = a.final_priority || 0;
@@ -776,10 +764,7 @@ app.get("/api/news/search", async (req, res) => {
       return pb - pa;
     });
 
-    // Trim back to requested limit after re-ranking
-    if (limit) results = results.slice(0, limit);
-
-    res.json({ total, articles: results });
+    res.json({ total: offset + results.length + (hasMore ? 1 : 0), articles: results });
 
   } catch (err) {
     console.error("Search error:", err.message);

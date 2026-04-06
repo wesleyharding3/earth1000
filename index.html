@@ -4066,10 +4066,11 @@ body.ticker-active #flowControls {
       position: relative;
       z-index: 50;
     }
-    #nfQueryBar::before {
+    /* Yellow accent line — below title row, above filters/date */
+    .nfTitleRow::after {
       content: '';
       position: absolute;
-      top: env(safe-area-inset-top, 0px); left: 0; right: 0; height: 1px;
+      bottom: -7px; left: 0; right: 0; height: 1px;
       background: linear-gradient(90deg,
         transparent 0%,
         rgba(255,180,80,0.55) 30%,
@@ -4086,6 +4087,8 @@ body.ticker-active #flowControls {
       justify-content: space-between;
       gap: 8px;
       margin-top: 6px;
+      position: relative;
+      padding-bottom: 6px;
     }
     /* On wider screens, keep title + toggle grouped on the left
        so the toggle never drifts to the far-right edge */
