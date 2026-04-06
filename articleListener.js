@@ -59,6 +59,29 @@ async function logScoringVerification() {
   console.log();
 }
 
+// Concurrency limiter — process at most this many articles simultaneously.
+// Without this, a burst of 200 notifications would open 200 concurrent DB
+// pipelines and exhaust the connection pool, starving the API server.
+const CONCURRENCY = 5;
+let _active = 0;
+const _queue = [];
+
+function enqueue(fn) {
+  _queue.push(fn);
+  _drain();
+}
+
+function _drain() {
+  while (_active < CONCURRENCY && _queue.length > 0) {
+    const fn = _queue.shift();
+    _active++;
+    fn().finally(() => {
+      _active--;
+      _drain();
+    });
+  }
+}
+
 // Dedup guard — the fetcher fires an explicit pg_notify AND the DB trigger
 // fires one too, so each insert produces two notifications. Track recently-seen
 // IDs for 10 seconds to silently skip the duplicate.
@@ -81,7 +104,7 @@ async function startArticleListener() {
   await listener.query("LISTEN new_article");
   console.log("👂 Listening for new articles...");
 
-  listener.on("notification", async (msg) => {
+  listener.on("notification", (msg) => {
     const articleId = parseInt(msg.payload);
     if (isDuplicate(articleId)) {
       console.log(`🔖 Skipping duplicate notify for article ${articleId}`);
@@ -90,38 +113,40 @@ async function startArticleListener() {
     console.log(`🔖 New article detected: ${articleId}`);
     scoringStats.attempted++;
 
-    try {
-      const result = await classifyArticle(articleId);
-      await routeArticle(articleId);
+    enqueue(async () => {
+      try {
+        const result = await classifyArticle(articleId);
+        await routeArticle(articleId);
 
-      // Deep NLP analysis — fire-and-forget, only for high-priority articles.
-      // Writes sentiment_score + article_entities. Never blocks pipeline.
-      deepAnalyzeArticle(articleId)
-        .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
+        // Deep NLP analysis — fire-and-forget, only for high-priority articles.
+        // Writes sentiment_score + article_entities. Never blocks pipeline.
+        deepAnalyzeArticle(articleId)
+          .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
 
-      // Resolve image after classify+route so article_tags and article_locations
-      // are already written — the resolver depends on both.
-      // Fire-and-forget so image failures never block scoring stats.
-      resolveImageForArticle(articleId, { surface: "feed" })
-        .then(r => {
-          if (r?.source === "fallback" || r?.source === "assignment") {
-            console.log(`🖼️  Image resolved [${articleId}]: ${r.source} (score: ${r.score ?? "—"})`);
-          }
-        })
-        .catch(err => console.warn(`⚠️  Image resolution failed [${articleId}]: ${err.message}`));
+        // Resolve image after classify+route so article_tags and article_locations
+        // are already written — the resolver depends on both.
+        // Fire-and-forget so image failures never block scoring stats.
+        resolveImageForArticle(articleId, { surface: "feed" })
+          .then(r => {
+            if (r?.source === "fallback" || r?.source === "assignment") {
+              console.log(`🖼️  Image resolved [${articleId}]: ${r.source} (score: ${r.score ?? "—"})`);
+            }
+          })
+          .catch(err => console.warn(`⚠️  Image resolution failed [${articleId}]: ${err.message}`));
 
-      if (result.success) {
-        scoringStats.succeeded++;
-      } else {
+        if (result.success) {
+          scoringStats.succeeded++;
+        } else {
+          scoringStats.failed++;
+          scoringStats.failedIds.push(articleId);
+          console.warn(`⚠️  Scoring returned no signal for article ${articleId}: ${result.reason}`);
+        }
+      } catch (err) {
         scoringStats.failed++;
         scoringStats.failedIds.push(articleId);
-        console.warn(`⚠️  Scoring returned no signal for article ${articleId}: ${result.reason}`);
+        console.error(`Processing failed for ${articleId}:`, err);
       }
-    } catch (err) {
-      scoringStats.failed++;
-      scoringStats.failedIds.push(articleId);
-      console.error(`Processing failed for ${articleId}:`, err);
-    }
+    });
   });
 
   listener.on("error", (err) => {

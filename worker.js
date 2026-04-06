@@ -1,3 +1,7 @@
+// Cap the fetcher's DB connections before any module loads the pool.
+// dotenv.config() does not override already-set env vars, so this sticks.
+process.env.DB_POOL_MAX = "8";
+
 require("dotenv").config();
 
 process.on("exit", (code) => {

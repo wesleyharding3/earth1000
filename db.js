@@ -5,6 +5,9 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
+// DB_POOL_MAX lets different processes cap their share of Postgres connections.
+// worker.js sets this to 8 so the fetcher can't crowd out the web server.
+// The web server defaults to 25.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -12,7 +15,7 @@ const pool = new Pool({
   },
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: 40  // bumped from 25 — fetcher + listener + concurrent web requests need headroom
+  max: parseInt(process.env.DB_POOL_MAX || "25", 10),
 });
 
 // Kill runaway queries after 45 seconds so they release their connection instead
