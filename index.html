@@ -19717,6 +19717,44 @@ body.ticker-active .gTickerLabel {
     activeTUListeners = [];
   }
 
+  // ── Briefing card renderer — article source with country next to source name ──
+  function makeBriefingCard(article) {
+    const FLAG_CDN_BASE = 'https://flagcdn.com/w40/';
+    const hasImage = article.image_url && article.image_url.trim() !== "";
+    const catalog  = article.catalog_image_url || '';
+
+    let imageField;
+    if (hasImage) {
+      imageField = `<img class="bCardImg" src="${article.image_url}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png'">`;
+    } else if (catalog) {
+      imageField = `<img class="bCardImg" src="${catalog}" alt="" loading="lazy" onerror="this.src='${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png'">`;
+    } else if (article.iso_code) {
+      imageField = `<img class="bCardImg" src="${FLAG_CDN_BASE}${article.iso_code.toLowerCase()}.png" alt="">`;
+    } else {
+      imageField = `<div class="bCardImgNone"></div>`;
+    }
+
+    const countryLabel = article.country_name || (article.iso_code ? article.iso_code.toUpperCase() : '');
+    const sourceWithCountry = countryLabel
+      ? `<span style="opacity:0.7">${article.source_name || ''}</span> · <span style="opacity:0.55;font-size:11px">${countryLabel}</span>`
+      : `<span style="opacity:0.7">${article.source_name || ''}</span>`;
+
+    const title = article.translated_title || article.title || '';
+    const date = article.published_at
+      ? new Date(article.published_at).toLocaleDateString("en-US", {month:"short", day:"numeric"})
+      : '';
+
+    return `
+      <div class="bCard" style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
+        ${imageField}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;color:rgba(255,255,255,0.65);">${sourceWithCountry}</div>
+          <div style="font-size:13px;font-weight:500;color:#fff;line-height:1.3;margin-top:2px;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${title}</div>
+          ${date ? `<div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:3px;">${date}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
   // ── Segment timing — uses accurate start_ms when generator baked it in ──
   function getSegmentOffset(idx) {
     if (!episode) return 0;

@@ -971,7 +971,7 @@ async function _deepEnrichThread(thread) {
   const textArts    = articles.filter(a => !a.video_id && a.article_url);
   if (!textArts.length) return null;
 
-  const target  = Math.ceil(textArts.length * 2 / 3);
+  const target  = Math.min(3, textArts.length);
   const toFetch = textArts.slice(0, target);
 
   // Fetch full text — reuse cached content if already substantial
