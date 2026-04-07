@@ -18606,6 +18606,118 @@ const settingsToggle     = document.getElementById("settingsToggle");
 /* ── Subtitle / voiceover text — hidden by design ── */
 .bSubtitle { display: none; }
 
+/* ── Data analytics panels (briefing playback) ─────────────────────────── */
+/* Right-side stack of chart cards. Mobile: bottom sheet with safe-area inset. */
+.bDataPanels {
+  position: absolute;
+  top: 50%;
+  right: max(24px, env(safe-area-inset-right, 0px));
+  transform: translateY(-50%);
+  width: min(320px, 30vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  transition: opacity 0.5s ease 0.4s;
+  pointer-events: all;
+  max-height: 70vh;
+  overflow-y: auto;
+  z-index: 4;
+}
+.bDataPanels::-webkit-scrollbar { width: 4px; }
+.bDataPanels::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 4px; }
+.bDataPanels.visible { opacity: 1; }
+.bDataPanel {
+  background: rgba(6,10,20,0.92);
+  border: 1px solid rgba(255,153,64,0.22);
+  border-radius: 10px;
+  padding: 12px 14px 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  color: #fff;
+}
+.bDataPanelHeader {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 8px; margin-bottom: 6px;
+}
+.bDataPanelTitle {
+  font-size: 12px; font-weight: 700; line-height: 1.3;
+  color: #fff; flex: 1;
+}
+.bDataPanelChartType {
+  font-size: 8px; font-weight: 800; letter-spacing: 1.2px;
+  color: #ff9940; text-transform: uppercase;
+  background: rgba(255,153,64,0.12);
+  border: 1px solid rgba(255,153,64,0.3);
+  border-radius: 4px; padding: 2px 6px;
+  flex-shrink: 0;
+}
+.bDataPanelSubtitle {
+  font-size: 10px; color: rgba(255,255,255,0.55);
+  margin-bottom: 8px; line-height: 1.4;
+}
+.bDataPanelChart {
+  width: 100%; height: 130px; position: relative;
+  margin-bottom: 8px;
+}
+.bDataPanelChart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.bDataPanelLegend {
+  display: flex; flex-wrap: wrap; gap: 4px 10px;
+  font-size: 9px; color: rgba(255,255,255,0.7);
+  margin-bottom: 6px;
+}
+.bDataPanelLegendItem { display: inline-flex; align-items: center; gap: 4px; }
+.bDataPanelLegendDot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.bDataPanelCaption {
+  font-size: 10px; color: rgba(255,255,255,0.7);
+  line-height: 1.45; margin-bottom: 6px;
+}
+.bDataPanelFooter {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; font-size: 9px; color: rgba(255,255,255,0.45);
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding-top: 6px;
+}
+.bDataPanelFooter a {
+  color: #60c8ff; text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 140px;
+}
+.bDataPanelFooter a:hover { text-decoration: underline; }
+.bDataPanelEstimate {
+  display: inline-block; padding: 1px 5px; border-radius: 3px;
+  background: rgba(255,200,80,0.18); color: #ffd266;
+  font-size: 8px; font-weight: 700; letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+/* Mobile: data panels become a bottom sheet above the ticker, swipe-able */
+@media (max-width: 720px) {
+  .bDataPanels {
+    position: absolute;
+    top: auto;
+    bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    left: env(safe-area-inset-left, 0px);
+    right: env(safe-area-inset-right, 0px);
+    transform: none;
+    width: auto;
+    flex-direction: row;
+    gap: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-height: none;
+    padding: 0 12px 10px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  }
+  .bDataPanels::-webkit-scrollbar { display: none; }
+  .bDataPanel {
+    flex: 0 0 78vw;
+    max-width: 320px;
+    scroll-snap-align: start;
+  }
+  .bDataPanelChart { height: 110px; }
+}
+
 /* ── Left article panel ── */
 .bArticlePanel {
   position: absolute; top: 50%; left: 24px;
@@ -19021,6 +19133,8 @@ body.ticker-active .gTickerLabel {
   border: 1px solid rgba(255,255,255,0.06); white-space: pre-wrap;
 }
 .bSDArticles { display: flex; flex-direction: column; gap: 8px; }
+.bSDDataPanels { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.bSDDataPanels .bDataPanel { width: 100%; }
 /* Expand bCard to full width inside detail */
 .bSDArticles .bCard {
   flex-direction: row; width: 100%;
@@ -19360,6 +19474,7 @@ body.ticker-active .gTickerLabel {
   <div class="bSubtitle" id="bSubtitle"></div>
   <div class="bVideoWrap" id="bVideoWrap"></div>
   <div class="bArticlePanel" id="bArticlePanel"></div>
+  <div class="bDataPanels" id="bDataPanels"></div>
   <div class="bCaptions" id="bCaptions"></div>
   <div class="bTicker" id="bTicker">
     <div class="bTickerLabel">Live</div>
@@ -19396,6 +19511,8 @@ body.ticker-active .gTickerLabel {
         </div>
         <div class="bSDSectionLabel">Transcript</div>
         <div class="bSDTranscript" id="bSDTranscript"></div>
+        <div class="bSDSectionLabel" id="bSDDataLabel" style="display:none">Data</div>
+        <div class="bSDDataPanels" id="bSDDataPanels"></div>
         <div class="bSDSectionLabel" id="bSDSourcesLabel">Sources</div>
         <div class="bSDArticles" id="bSDArticles"></div>
       </div>
@@ -19429,6 +19546,7 @@ body.ticker-active .gTickerLabel {
   let briefingTimers    = [];
   let activeTUListeners = [];
   let captionsOn    = false;
+  let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
   function clearBTimers() {
@@ -19546,6 +19664,9 @@ body.ticker-active .gTickerLabel {
     document.getElementById('bVideoWrap').classList.remove('visible');
     document.getElementById('bArticlePanel').innerHTML = '';
     document.getElementById('bArticlePanel').classList.remove('visible');
+    const dp = document.getElementById('bDataPanels');
+    if (dp) { dp.innerHTML = ''; dp.classList.remove('visible'); }
+    _panelsBySeg = {};
     document.getElementById('bTickerItem').innerHTML = '';
     stopTicker();
     document.getElementById('bCaptions').classList.remove('visible');
@@ -20116,9 +20237,221 @@ body.ticker-active .gTickerLabel {
     // ── Article panel + ticker (non-blocking) ──────────────────────────────
     loadArticlePanel(seg.article_ids?.length ? seg.article_ids : []);
 
+    // ── Data analytics panels for this segment ──────────────────────────────
+    renderDataPanelsForSegment(idx);
+
     updateDots();
     updatePlayBtn();
     updateCaptions(seg);
+  }
+
+  // ── Data analytics panel rendering ─────────────────────────────────────
+  // Pulls panels for this episode once on first call, then renders by segment.
+  async function ensurePanelsLoaded() {
+    if (!episode || _panelsBySeg.__loaded) return;
+    _panelsBySeg.__loaded = true;
+    try {
+      const res = await fetch(`${API}/api/briefing/${episode.id}/panels`);
+      if (!res.ok) return;
+      const json = await res.json();
+      _panelsBySeg = json.panels_by_segment || {};
+      _panelsBySeg.__loaded = true;
+    } catch (_) { /* non-fatal */ }
+  }
+
+  async function renderDataPanelsForSegment(segIdx) {
+    const wrap = document.getElementById('bDataPanels');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    wrap.classList.remove('visible');
+    await ensurePanelsLoaded();
+    const panels = _panelsBySeg[String(segIdx)];
+    if (!panels || !panels.length) return;
+    for (const p of panels) {
+      const card = document.createElement('div');
+      card.className = 'bDataPanel';
+      card.innerHTML = renderDataPanelHTML(p);
+      wrap.appendChild(card);
+    }
+    void wrap.offsetWidth;
+    wrap.classList.add('visible');
+  }
+
+  function renderDataPanelHTML(p) {
+    const data = (typeof p.data === 'string') ? JSON.parse(p.data) : (p.data || {});
+    const series = Array.isArray(data.series) ? data.series : [];
+    const labels = Array.isArray(data.labels) ? data.labels : [];
+    const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b'];
+    const svg = renderChartSVG(p.chart_type, labels, series, colors, data.unit);
+    const legend = series.length > 1 ? series.map((s, i) =>
+      `<span class="bDataPanelLegendItem"><span class="bDataPanelLegendDot" style="background:${colors[i % colors.length]}"></span>${escapeHtmlDP(s.name || '')}</span>`
+    ).join('') : '';
+    const estimateBadge = p.generated_by === 'ai_composed'
+      ? '<span class="bDataPanelEstimate">Estimate</span>' : '';
+    const sourceLink = p.source_url
+      ? `<a href="${escapeHtmlDP(p.source_url)}" target="_blank" rel="noopener">${escapeHtmlDP(p.source_name || 'source')}</a>`
+      : `<span>${escapeHtmlDP(p.source_name || '')}</span>`;
+    return `
+      <div class="bDataPanelHeader">
+        <div class="bDataPanelTitle">${escapeHtmlDP(p.title || '')}</div>
+        <span class="bDataPanelChartType">${escapeHtmlDP(p.chart_type || '')}</span>
+      </div>
+      ${p.subtitle ? `<div class="bDataPanelSubtitle">${escapeHtmlDP(p.subtitle)}</div>` : ''}
+      <div class="bDataPanelChart">${svg}</div>
+      ${legend ? `<div class="bDataPanelLegend">${legend}</div>` : ''}
+      ${p.caption ? `<div class="bDataPanelCaption">${escapeHtmlDP(p.caption)}</div>` : ''}
+      <div class="bDataPanelFooter">
+        ${sourceLink}
+        ${estimateBadge}
+      </div>`;
+  }
+
+  function escapeHtmlDP(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  // ── Inline SVG chart renderer (no external dep) ───────────────────────
+  // Supports: line, area, bar, stacked_bar, pie, scatter
+  function renderChartSVG(chartType, labels, series, colors, unit) {
+    const W = 280, H = 130, P = { l: 28, r: 8, t: 8, b: 22 };
+    const innerW = W - P.l - P.r;
+    const innerH = H - P.t - P.b;
+
+    function flatVals() {
+      const out = [];
+      for (const s of series) for (const v of (s.values || [])) if (v != null && !isNaN(v)) out.push(+v);
+      return out;
+    }
+
+    if (!series.length || !labels.length) {
+      return `<svg viewBox="0 0 ${W} ${H}"><text x="${W/2}" y="${H/2}" fill="rgba(255,255,255,0.4)" text-anchor="middle" font-size="11">no data</text></svg>`;
+    }
+
+    if (chartType === 'pie') {
+      const s0 = series[0]?.values || [];
+      const total = s0.reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+      const cx = W/2, cy = H/2, r = Math.min(innerW, innerH) / 2 - 4;
+      let acc = 0;
+      const slices = s0.map((v, i) => {
+        const frac = (Number(v) || 0) / total;
+        const a0 = acc * 2 * Math.PI - Math.PI/2;
+        acc += frac;
+        const a1 = acc * 2 * Math.PI - Math.PI/2;
+        const large = frac > 0.5 ? 1 : 0;
+        const x0 = cx + Math.cos(a0) * r, y0 = cy + Math.sin(a0) * r;
+        const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
+        return `<path d="M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z" fill="${colors[i % colors.length]}" stroke="rgba(0,0,0,0.6)" stroke-width="0.8"/>`;
+      }).join('');
+      return `<svg viewBox="0 0 ${W} ${H}">${slices}</svg>`;
+    }
+
+    if (chartType === 'scatter') {
+      const xs = (series[0]?.values || []).map(Number);
+      const ys = (series[1]?.values || (series[0]?.values || [])).map(Number);
+      const xMin = Math.min(...xs.filter(v => !isNaN(v)));
+      const xMax = Math.max(...xs.filter(v => !isNaN(v)));
+      const yMin = Math.min(...ys.filter(v => !isNaN(v)));
+      const yMax = Math.max(...ys.filter(v => !isNaN(v)));
+      const sx = v => P.l + ((v - xMin) / Math.max(1e-9, (xMax - xMin))) * innerW;
+      const sy = v => P.t + innerH - ((v - yMin) / Math.max(1e-9, (yMax - yMin))) * innerH;
+      const dots = xs.map((x, i) => {
+        const y = ys[i];
+        if (x == null || y == null || isNaN(x) || isNaN(y)) return '';
+        return `<circle cx="${sx(x).toFixed(1)}" cy="${sy(y).toFixed(1)}" r="3" fill="${colors[0]}" opacity="0.8"/>`;
+      }).join('');
+      return `<svg viewBox="0 0 ${W} ${H}">${axisFrame(P, innerW, innerH)}${dots}</svg>`;
+    }
+
+    if (chartType === 'bar' || chartType === 'stacked_bar') {
+      const isStack = chartType === 'stacked_bar';
+      const groupCount = labels.length;
+      const groupW = innerW / groupCount;
+      let yMax;
+      if (isStack) {
+        yMax = Math.max(...labels.map((_, i) =>
+          series.reduce((sum, s) => sum + (Number(s.values?.[i]) || 0), 0)
+        ));
+      } else {
+        yMax = Math.max(...flatVals());
+      }
+      yMax = yMax || 1;
+      const sy = v => P.t + innerH - (v / yMax) * innerH;
+
+      let bars = '';
+      labels.forEach((lab, i) => {
+        const x0 = P.l + i * groupW;
+        if (isStack) {
+          let acc = 0;
+          series.forEach((s, si) => {
+            const v = Number(s.values?.[i]) || 0;
+            const h = (v / yMax) * innerH;
+            const y = sy(acc + v);
+            bars += `<rect x="${x0 + groupW*0.15}" y="${y.toFixed(1)}" width="${(groupW*0.7).toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[si % colors.length]}"/>`;
+            acc += v;
+          });
+        } else {
+          const barW = (groupW * 0.7) / Math.max(1, series.length);
+          series.forEach((s, si) => {
+            const v = Number(s.values?.[i]) || 0;
+            const h = (v / yMax) * innerH;
+            const x = x0 + groupW*0.15 + si * barW;
+            bars += `<rect x="${x.toFixed(1)}" y="${sy(v).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${colors[si % colors.length]}"/>`;
+          });
+        }
+      });
+      return `<svg viewBox="0 0 ${W} ${H}">${axisFrame(P, innerW, innerH)}${yAxisLabels(P, innerH, 0, yMax, unit)}${bars}${xLabelsCondensed(P, innerW, innerH, labels)}</svg>`;
+    }
+
+    // LINE / AREA
+    const allVals = flatVals();
+    const yMin = Math.min(...allVals);
+    const yMax = Math.max(...allVals);
+    const yRange = yMax - yMin || 1;
+    const sx = i => P.l + (i / Math.max(1, labels.length - 1)) * innerW;
+    const sy = v => P.t + innerH - ((v - yMin) / yRange) * innerH;
+    let paths = '';
+    series.forEach((s, si) => {
+      const pts = (s.values || []).map((v, i) => v == null || isNaN(v) ? null : `${sx(i).toFixed(1)},${sy(+v).toFixed(1)}`).filter(Boolean);
+      if (!pts.length) return;
+      const d = 'M ' + pts.join(' L ');
+      const c = colors[si % colors.length];
+      if (chartType === 'area') {
+        const last = pts[pts.length - 1].split(',')[0];
+        const first = pts[0].split(',')[0];
+        paths += `<path d="${d} L ${last},${P.t + innerH} L ${first},${P.t + innerH} Z" fill="${c}" fill-opacity="0.18" stroke="none"/>`;
+      }
+      paths += `<path d="${d}" fill="none" stroke="${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+    });
+    return `<svg viewBox="0 0 ${W} ${H}">${axisFrame(P, innerW, innerH)}${yAxisLabels(P, innerH, yMin, yMax, unit)}${paths}${xLabelsCondensed(P, innerW, innerH, labels)}</svg>`;
+  }
+
+  function axisFrame(P, innerW, innerH) {
+    return `<line x1="${P.l}" y1="${P.t + innerH}" x2="${P.l + innerW}" y2="${P.t + innerH}" stroke="rgba(255,255,255,0.18)" stroke-width="0.8"/>` +
+           `<line x1="${P.l}" y1="${P.t}" x2="${P.l}" y2="${P.t + innerH}" stroke="rgba(255,255,255,0.18)" stroke-width="0.8"/>`;
+  }
+  function yAxisLabels(P, innerH, yMin, yMax, unit) {
+    const fmt = v => {
+      const a = Math.abs(v);
+      if (a >= 1e9) return (v/1e9).toFixed(1) + 'B';
+      if (a >= 1e6) return (v/1e6).toFixed(1) + 'M';
+      if (a >= 1e3) return (v/1e3).toFixed(1) + 'k';
+      if (a >= 10)  return v.toFixed(0);
+      if (a >= 1)   return v.toFixed(1);
+      return v.toFixed(2);
+    };
+    return `<text x="${P.l - 4}" y="${P.t + 8}" fill="rgba(255,255,255,0.45)" font-size="8" text-anchor="end">${fmt(yMax)}</text>` +
+           `<text x="${P.l - 4}" y="${P.t + innerH + 2}" fill="rgba(255,255,255,0.45)" font-size="8" text-anchor="end">${fmt(yMin)}</text>`;
+  }
+  function xLabelsCondensed(P, innerW, innerH, labels) {
+    if (!labels.length) return '';
+    const stride = Math.max(1, Math.ceil(labels.length / 5));
+    let out = '';
+    labels.forEach((l, i) => {
+      if (i % stride !== 0 && i !== labels.length - 1) return;
+      const x = P.l + (i / Math.max(1, labels.length - 1)) * innerW;
+      out += `<text x="${x.toFixed(1)}" y="${P.t + innerH + 12}" fill="rgba(255,255,255,0.5)" font-size="8" text-anchor="middle">${escapeHtmlDP(String(l).slice(0, 7))}</text>`;
+    });
+    return out;
   }
 
   // ── Left article panel card renderer ─────────────────────────────────────
@@ -20367,6 +20700,21 @@ body.ticker-active .gTickerLabel {
         const rect = trackEl.getBoundingClientRect();
         da.currentTime = ((e.clientX - rect.left) / rect.width) * da.duration;
       };
+    }
+
+    // Data panels (reuse cache populated by playback view)
+    const dataLabel    = document.getElementById('bSDDataLabel');
+    const dataPanelsEl = document.getElementById('bSDDataPanels');
+    if (dataPanelsEl) {
+      dataPanelsEl.innerHTML = '';
+      dataLabel.style.display = 'none';
+      ensurePanelsLoaded().then(() => {
+        const panels = (_panelsBySeg && _panelsBySeg[actualIdx]) || [];
+        if (panels.length) {
+          dataLabel.style.display = '';
+          dataPanelsEl.innerHTML = panels.map(p => renderDataPanelHTML(p)).join('');
+        }
+      }).catch(() => {});
     }
 
     // Sources

@@ -17,6 +17,11 @@ require('dotenv').config();
 const pool      = require('./db');
 const Anthropic = require('@anthropic-ai/sdk');
 const { resolveStoryContexts } = require('./storyTracker');
+const dataPanels = require('./dataPanelGenerator');
+
+// Data panel limits for custom location briefings (smaller than general)
+const LOC_PANELS_MIN = 2;
+const LOC_PANELS_MAX = 5;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -130,6 +135,25 @@ async function generateLocationBriefing(location) {
     // ── 8. Assemble segments JSON ─────────────────────────────────────────────
     const segments = buildSegments(narrative, threadData, allArcs, entityCoords);
 
+    // ── 8b. Generate data analytics panels (2-5 total across stories) ─────────
+    try {
+      const storyCount = segments.filter(s => s.type === 'story').length || 1;
+      const perStoryMax = Math.max(1, Math.ceil(LOC_PANELS_MAX / storyCount));
+      let totalPanels = 0;
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg.type !== 'story' || totalPanels >= LOC_PANELS_MAX) continue;
+        const cap = Math.min(perStoryMax, LOC_PANELS_MAX - totalPanels);
+        const threadCtx = threadData.find(t => String(t.id) === String(seg.thread_id));
+        const panels = await dataPanels.generatePanelsForSegment(seg, threadCtx, { min: 0, max: cap }).catch(() => []);
+        seg.data_panels = panels;
+        totalPanels += panels.length;
+      }
+      console.log(`[locBriefing] ${elapsed(t0)} ${totalPanels} data panel(s) generated`);
+    } catch (e) {
+      console.warn(`[locBriefing] panel generation failed: ${e.message}`);
+    }
+
     // ── 9. Optional ElevenLabs voiceover ──────────────────────────────────────
     let audioData = null;
     if (voiceover && ELEVENLABS_KEY) {
@@ -175,6 +199,19 @@ async function generateLocationBriefing(location) {
           generated_at = NOW()
       WHERE id = $4
     `, [narrative.headline, JSON.stringify(segments), audioData, episodeId]);
+
+    // ── 10b. Persist data panels for this episode ─────────────────────────────
+    try {
+      await pool.query(`SELECT delete_panels_for_episode($1)`, [episodeId]);
+      for (let i = 0; i < segments.length; i++) {
+        if (!segments[i].data_panels?.length) continue;
+        await dataPanels.savePanels(pool, segments[i].data_panels, {
+          type: 'briefing_segment', id: episodeId, segmentIndex: i,
+        });
+      }
+    } catch (e) {
+      console.warn(`[locBriefing] savePanels failed: ${e.message}`);
+    }
 
     console.log(`[locBriefing] ${elapsed(t0)} done — ${segments.length} segments${audioData ? ' + audio' : ''}`);
 

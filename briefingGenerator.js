@@ -24,15 +24,24 @@ const pool      = require('./db');
 const readline  = require('readline');
 const Anthropic = require('@anthropic-ai/sdk');
 const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
+const dataPanels = require('./dataPanelGenerator');
 
 const client         = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID_ENGLISH;
 
-const FORCE       = process.argv.includes('--force');
-const NO_AUDIO    = process.argv.includes('--no-audio');
-const FORCE_AUDIO = process.argv.includes('--force-audio'); // re-synthesise even if audio exists
-const PICK_MODE   = process.argv.includes('--pick');        // interactive thread selection
+const FORCE        = process.argv.includes('--force');
+const NO_AUDIO     = process.argv.includes('--no-audio');
+const FORCE_AUDIO  = process.argv.includes('--force-audio'); // re-synthesise even if audio exists
+const PICK_MODE    = process.argv.includes('--pick');        // interactive thread selection
+const PANELS_ONLY  = process.argv.includes('--panels-only'); // regenerate only data panels for today's episode
+const NO_PANELS    = process.argv.includes('--no-panels');   // skip data panel generation entirely
+
+// Data panel limits — 3..10 for general (auto) briefings, 2..5 for --pick / custom briefings
+const PANELS_MIN_GENERAL = 3;
+const PANELS_MAX_GENERAL = 10;
+const PANELS_MIN_PICK    = 2;
+const PANELS_MAX_PICK    = 5;
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const MAX_THREADS          = 10;  // stories in one briefing
@@ -171,6 +180,25 @@ async function run() {
 
   // Ensure preference learning table exists (idempotent)
   await ensureCurationTable();
+
+  // ── --panels-only fast path: regenerate only data panels for today's episode
+  if (PANELS_ONLY) {
+    const { rows } = await pool.query(
+      `SELECT id, segments FROM briefing_episodes WHERE user_id IS NULL AND target_date=$1 AND status='ready' ORDER BY id DESC LIMIT 1`,
+      [targetDate]
+    );
+    if (!rows.length) {
+      console.log(`✗ No ready briefing for ${targetDate}. Run without --panels-only first.`);
+      await pool.end();
+      return;
+    }
+    const ep = rows[0];
+    const segs = typeof ep.segments === 'string' ? JSON.parse(ep.segments) : ep.segments;
+    await regeneratePanelsForEpisode(ep.id, segs);
+    console.log(`✅ Panels regenerated for episode ${ep.id} in ${elapsed(t0)}`);
+    await pool.end();
+    return;
+  }
 
   // Check if already generated today
   if (!FORCE) {
@@ -375,9 +403,46 @@ async function run() {
     // ── 6. Build segments JSON ────────────────────────────────────────────
     let segments = await buildSegments(narrative, threadData, allArcs, entityCoords);
 
-    // ── 6a. Pick mode: interactive script review before TTS ───────────────
+    // ── 6a. Generate data analytics panels FIRST so they're visible in script review
+    if (!NO_PANELS) {
+      const minTotal = PICK_MODE ? PANELS_MIN_PICK : PANELS_MIN_GENERAL;
+      const maxTotal = PICK_MODE ? PANELS_MAX_PICK : PANELS_MAX_GENERAL;
+      const storyCount = segments.filter(s => s.type === 'story').length || 1;
+      // Distribute the global cap across stories — at least 0, up to ceil(max/stories)
+      const perStoryMax = Math.max(1, Math.ceil(maxTotal / storyCount));
+      const perStoryMin = 0;
+      console.log(`   [${elapsed(t0)}] Generating data panels (target ${minTotal}-${maxTotal} total, up to ${perStoryMax}/story)...`);
+
+      let totalPanels = 0;
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (seg.type !== 'story') continue;
+        if (totalPanels >= maxTotal) { seg.data_panels = []; continue; }
+        const remaining = maxTotal - totalPanels;
+        const cap = Math.min(perStoryMax, remaining);
+        const threadCtx = threadData.find(t => String(t.id) === String(seg.thread_id));
+        try {
+          const panels = await dataPanels.generatePanelsForSegment(seg, threadCtx, { min: perStoryMin, max: cap });
+          seg.data_panels = panels;
+          totalPanels += panels.length;
+          console.log(`   [${elapsed(t0)}] seg ${i} "${(seg.thread_title||'').slice(0,40)}" → ${panels.length} panel(s)${panels.length ? ' ('+panels.map(p=>p.adapter||p.generated_by).join(',')+')' : ''}`);
+        } catch (e) {
+          console.warn(`   ⚠ panel gen failed for seg ${i}: ${e.message}`);
+          seg.data_panels = [];
+        }
+      }
+
+      // If under the floor, that's fine — we don't force charts where they don't fit.
+      console.log(`   [${elapsed(t0)}] Total data panels: ${totalPanels}`);
+    }
+
+    // ── 6b. Pick mode: interactive script review (panels visible inline) ──
     if (PICK_MODE) {
-      segments = await reviewAndEditSegments(segments);
+      segments = await reviewAndEditSegments(segments, threadData);
+      // Then a dedicated panel review pass for edits/replacements
+      if (!NO_PANELS) {
+        segments = await reviewAndEditPanels(segments, threadData);
+      }
     }
 
     // ── 7. Generate ElevenLabs audio — per-segment for accurate seek offsets
@@ -474,6 +539,18 @@ async function run() {
     await saveSegmentLinks(episodeId, segments, storyContexts).catch(e =>
       console.warn(`   ⚠ storyTracker saveSegmentLinks failed (non-fatal): ${e.message}`)
     );
+
+    // ── 8b. Persist data panels for each segment ───────────────────────────
+    if (!NO_PANELS) {
+      await pool.query(`SELECT delete_panels_for_episode($1)`, [episodeId]).catch(() => {});
+      for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        if (!seg.data_panels?.length) continue;
+        await dataPanels.savePanels(pool, seg.data_panels, {
+          type: 'briefing_segment', id: episodeId, segmentIndex: i,
+        }).catch(e => console.warn(`   ⚠ savePanels seg ${i}: ${e.message}`));
+      }
+    }
 
     // ── 9. Save curation choice for preference learning ───────────────────
     if (PICK_MODE) {
@@ -1642,8 +1719,87 @@ async function promptThreadSelection(candidates) {
   return selected;
 }
 
+// ─── Pick Mode: Data Panel Review & Edit ───────────────────────────────────
+// Lets the user replace any segment's auto-generated panels with a hand-picked
+// set (preset menu) or fully custom-built panels via dataPanelGenerator.
+async function reviewAndEditPanels(segments, threadData) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+
+  console.log('\n╔══════════════════════════════════════════════════════════════════════╗');
+  console.log('║                     DATA PANEL REVIEW                                ║');
+  console.log('╚══════════════════════════════════════════════════════════════════════╝');
+  console.log('  Commands:  list  |  edit N  |  confirm  |  skip\n');
+
+  function listAll() {
+    segments.forEach((seg, i) => {
+      if (seg.type !== 'story') return;
+      const cnt = seg.data_panels?.length || 0;
+      const mark = cnt === 0 ? ' (no panels)' : '';
+      console.log(`  [${i}] "${(seg.thread_title||'').slice(0,50)}" — ${cnt} panel(s)${mark}`);
+      (seg.data_panels || []).forEach((p, k) => {
+        console.log(`        ${k+1}. [${p.chart_type}] ${p.title} — ${p.source_name||'?'}${p.generated_by==='ai_composed'?' ⚠':''}`);
+      });
+    });
+  }
+  listAll();
+
+  while (true) {
+    const cmd = (await ask('\npanels> ')).trim().toLowerCase();
+    if (!cmd) continue;
+    if (cmd === 'confirm' || cmd === 'skip' || cmd === 'done') break;
+    if (cmd === 'list') { listAll(); continue; }
+
+    const m = cmd.match(/^edit\s+(\d+)$/);
+    if (m) {
+      const idx = parseInt(m[1], 10);
+      if (idx < 0 || idx >= segments.length || segments[idx].type !== 'story') {
+        console.log('  ✗ not a story segment'); continue;
+      }
+      const seg = segments[idx];
+      const threadCtx = threadData.find(t => String(t.id) === String(seg.thread_id));
+      const replaced = await dataPanels.pickPanelsInteractive(seg, threadCtx, {
+        rl, max: PANELS_MAX_PICK,
+      });
+      seg.data_panels = replaced;
+      continue;
+    }
+    console.log('  Commands: list  |  edit N  |  confirm');
+  }
+  rl.close();
+  return segments;
+}
+
+// ─── --panels-only: regenerate panels in place for an existing episode ─────
+async function regeneratePanelsForEpisode(episodeId, segments) {
+  // Need threadData-equivalent context — pull thread titles via segments themselves
+  await pool.query(`SELECT delete_panels_for_episode($1)`, [episodeId]);
+  const minTotal = PANELS_MIN_GENERAL;
+  const maxTotal = PANELS_MAX_GENERAL;
+  const storyCount = segments.filter(s => s.type === 'story').length || 1;
+  const perStoryMax = Math.max(1, Math.ceil(maxTotal / storyCount));
+  let totalPanels = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg.type !== 'story') continue;
+    if (totalPanels >= maxTotal) continue;
+    const cap = Math.min(perStoryMax, maxTotal - totalPanels);
+    try {
+      const panels = await dataPanels.generatePanelsForSegment(seg, null, { min: 0, max: cap });
+      if (panels.length) {
+        await dataPanels.savePanels(pool, panels, { type: 'briefing_segment', id: episodeId, segmentIndex: i });
+        totalPanels += panels.length;
+        console.log(`   seg ${i} → ${panels.length} panel(s)`);
+      }
+    } catch (e) {
+      console.warn(`   ⚠ seg ${i}: ${e.message}`);
+    }
+  }
+  console.log(`   Total: ${totalPanels} panel(s)`);
+}
+
 // ─── Pick Mode: Script Review & Edit ──────────────────────────────────────
-async function reviewAndEditSegments(segments) {
+async function reviewAndEditSegments(segments, _threadData) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
 
@@ -1687,6 +1843,20 @@ async function reviewAndEditSegments(segments) {
     // Transition
     if (seg.transition) {
       console.log(`│  transition:  "${seg.transition}"`);
+    }
+
+    // Data panels (if any)
+    const panels = seg.data_panels || [];
+    if (panels.length) {
+      console.log(`│  data_panels (${panels.length}):`);
+      panels.forEach((p, i) => {
+        const tag = p.generated_by === 'ai_composed' ? '⚠ EST'
+                  : p.generated_by === 'manual'      ? '✎ MAN'
+                  : p.adapter ? p.adapter : p.source_name || 'real';
+        console.log(`│    [${i}] [${p.chart_type}] ${(p.title||'').slice(0,52)}  — ${tag}`);
+      });
+    } else if (seg.type === 'story') {
+      console.log(`│  data_panels: (none)`);
     }
 
     // Voiceover — word-wrapped at 72 chars

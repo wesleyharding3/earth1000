@@ -9,6 +9,7 @@ const { getRankedArticles, getRankedCityArticles } = require("./rankingService")
 const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 const { generateLocationBriefing } = require("./locationBriefingGenerator");
+const dataPanels = require("./dataPanelGenerator");
 const Anthropic = new (require('@anthropic-ai/sdk'))({ apiKey: process.env.ANTHROPIC_API_KEY });
 const { resolveImagesForArticles } = require("./imageResolver");
 const jwt = require("jsonwebtoken");
@@ -2126,6 +2127,65 @@ app.get("/api/briefing/voices", (req, res) => {
   // Sort alphabetically so the dropdown is consistent
   voices.sort((a, b) => a.language.localeCompare(b.language));
   res.json(voices);
+});
+
+// ── Data analytics panels ─────────────────────────────────────────────────
+// GET /api/briefing/:episodeId/panels — all panels for a briefing, grouped by segment_index
+app.get("/api/briefing/:episodeId/panels", async (req, res) => {
+  try {
+    const episodeId = parseInt(req.params.episodeId, 10);
+    if (!Number.isFinite(episodeId)) return res.status(400).json({ error: "bad id" });
+    const rows = await dataPanels.loadPanels(pool, { type: 'briefing_segment', id: episodeId });
+    // Group by segment_index for the frontend
+    const grouped = {};
+    for (const r of rows) {
+      const k = String(r.segment_index ?? '_');
+      (grouped[k] = grouped[k] || []).push(r);
+    }
+    res.json({ episode_id: episodeId, panels_by_segment: grouped, count: rows.length });
+  } catch (err) {
+    console.error("[briefing/panels]", err.message);
+    res.status(500).json({ error: "Failed to load panels" });
+  }
+});
+
+// GET /api/threads/:threadId/panels — lazy: generate on first view, cached afterwards
+app.get("/api/threads/:threadId/panels", async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.threadId, 10);
+    if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
+    let rows = await dataPanels.loadPanels(pool, { type: 'thread', id: threadId });
+    if (!rows.length) {
+      // Lazy generation: pull thread + recent articles, generate, cache
+      const { rows: thrRows } = await pool.query(
+        `SELECT id, title, primary_category, geographic_scope, keywords FROM story_threads WHERE id = $1`,
+        [threadId]
+      );
+      if (!thrRows.length) return res.status(404).json({ error: "thread not found" });
+      const thread = thrRows[0];
+      const { rows: arts } = await pool.query(`
+        SELECT a.id, a.title, a.translated_title, a.summary, a.translated_summary, a.published_at
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE sta.thread_id = $1
+        ORDER BY a.published_at DESC
+        LIMIT 8
+      `, [threadId]);
+      thread.articles = arts;
+      const generated = await dataPanels.generatePanelsForThread(thread, { min: 2, max: 5 }).catch(e => {
+        console.warn(`[threads/panels] generate failed: ${e.message}`);
+        return [];
+      });
+      if (generated.length) {
+        await dataPanels.savePanels(pool, generated, { type: 'thread', id: threadId });
+        rows = await dataPanels.loadPanels(pool, { type: 'thread', id: threadId });
+      }
+    }
+    res.json({ thread_id: threadId, panels: rows, count: rows.length });
+  } catch (err) {
+    console.error("[threads/panels]", err.message);
+    res.status(500).json({ error: "Failed to load thread panels" });
+  }
 });
 
 // POST /api/briefing/location — on-demand briefing for a city or country node
