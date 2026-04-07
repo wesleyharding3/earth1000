@@ -14922,7 +14922,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     ];
     const activeBiases = new Set(BIAS_OPTIONS.map(b => b.key));
     window.__nfArticles = articles;
-    const LIMIT = 24;
+    const LIMIT = 15;
     const viewport  = document.getElementById("nfViewport");
     const grid      = document.getElementById("nfGrid");
     const spinRow   = document.getElementById("nfSpinRow");
@@ -15068,7 +15068,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function syncMedia() {
         btnArticle.classList.toggle("active", mediaShowArticle);
         btnVideo.classList.toggle("active", mediaShowVideo);
-        if (searched) { renderCards(filtered()); updateMetaCount(); }
+        if (searched) { renderCards(filtered(), true); updateMetaCount(); }
       }
       btnArticle.addEventListener("click", () => { mediaShowArticle = !mediaShowArticle; syncMedia(); });
       btnVideo.addEventListener("click",   () => { mediaShowVideo   = !mediaShowVideo;   syncMedia(); });
@@ -15112,7 +15112,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (activeBiases.size === BIAS_OPTIONS.length) activeBiases.clear();
           else BIAS_OPTIONS.forEach(b => activeBiases.add(b.key));
           renderDrop(); renderDots();
-          if (searched) { renderCards(filtered()); updateMetaCount(); }
+          if (searched) { renderCards(filtered(), true); updateMetaCount(); }
         });
         drop.querySelectorAll(".nfBiasOpt").forEach(opt => {
           opt.addEventListener("click", (e) => {
@@ -15121,7 +15121,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (activeBiases.has(key)) activeBiases.delete(key);
             else activeBiases.add(key);
             renderDrop(); renderDots();
-            if (searched) { renderCards(filtered()); updateMetaCount(); }
+            if (searched) { renderCards(filtered(), true); updateMetaCount(); }
           });
         });
       }
@@ -15147,7 +15147,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       clearTimeout(textDebounce);
       textDebounce = setTimeout(() => {
         textFilter = textFilter_el.value.trim().toLowerCase();
-        renderCards(filtered()); updateMetaCount();
+        renderCards(filtered(), true); updateMetaCount();
       }, 160);
     });
 
@@ -15189,6 +15189,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function runSearch() {
       lastKeyword = kwEl.value.trim(); searched = true;
       articles = []; offset = 0; hasMore = true; loading = false;
+      _lastRenderedCount = 0;
       textFilter = ""; textFilter_el.value = "";
       welcome.style.display = "none";
       viewport.classList.add("on");
@@ -15259,12 +15260,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
 
-    function renderCards(list) {
+    let _lastRenderedCount = 0;
+    function renderCards(list, forceFullRebuild) {
       if (!list.length && !loading) {
         grid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No articles found</span></div>`;
+        _lastRenderedCount = 0;
         return;
       }
-      grid.innerHTML = list.map(cardHTML).join("");
+      // Append only new cards when loading more (avoids full DOM rebuild)
+      if (!forceFullRebuild && _lastRenderedCount > 0 && list.length > _lastRenderedCount) {
+        const newCards = list.slice(_lastRenderedCount).map(cardHTML).join("");
+        grid.insertAdjacentHTML("beforeend", newCards);
+      } else {
+        grid.innerHTML = list.map(cardHTML).join("");
+      }
+      _lastRenderedCount = list.length;
     }
 
     function updateMetaCount() {
