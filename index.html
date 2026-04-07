@@ -3227,13 +3227,15 @@ body.ticker-active #flowControls {
       transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
     }
     #clusterDetail.open {
-      bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      /* Sit flush with the bottom of the safe area — directly over the
+         nav buttons + ticker bar (covers them while open). */
+      bottom: env(safe-area-inset-bottom);
       opacity: 1;
       pointer-events: all;
       z-index: 200;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - var(--page-nav-height) - var(--global-ticker-height) - var(--global-ticker-gap) - var(--app-bottom-inset, 0px) - env(safe-area-inset-bottom));
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
       border-radius: 20px 20px 0 0;
     }
     #cdResizeHandle {
@@ -21048,16 +21050,19 @@ body.ticker-active .gTickerLabel {
   // ── Launcher event wiring ──────────────────────────────────────────────────
   // Block ALL pointer events from passing through the modal to underlying canvas/globe.
   // The globe picker runs on pointerdown/mousedown so click-only stopPropagation isn't enough.
+  // IMPORTANT: must be BUBBLE phase, not capture — capture-phase stopPropagation
+  // would kill events before they reach the inner buttons (start/X) themselves.
   const _launcherEl    = document.getElementById('bLauncher');
   const _launcherInner = document.querySelector('.bLauncherInner');
   ['click','mousedown','mouseup','pointerdown','pointerup','touchstart','touchend','wheel','contextmenu'].forEach(ev => {
     _launcherEl?.addEventListener(ev, e => {
+      // Click on the backdrop (not the inner panel) closes the launcher
       if (ev === 'click' && e.target === _launcherEl) closeBriefingLauncher();
       e.stopPropagation();
-    }, { capture: true });
+    });
     _launcherInner?.addEventListener(ev, e => {
       e.stopPropagation();
-    }, { capture: true });
+    });
   });
 
   document.getElementById('bLauncherX')?.addEventListener('click', closeBriefingLauncher);
