@@ -8427,15 +8427,18 @@ function computeCityTiers(cities) {
         let r = imageData[i]     / 255;
         let g = imageData[i + 1] / 255;
         let b = imageData[i + 2] / 255;
-        // Boost saturation around the local mean so muddy ocean / forest
-        // colors don't render as nearly-black.
+        // Gamma lift — sqrt raises dark ocean / forest pixels out of near-black
+        // (Blue Marble's oceans are ~(5,10,30)/255 which would otherwise render
+        // as almost-invisible near-black lines).
+        r = Math.sqrt(r); g = Math.sqrt(g); b = Math.sqrt(b);
+        // Saturation boost around the local mean so muddy colors stay vivid.
         const mn = Math.min(r, g, b);
-        const SAT = 1.7;
+        const SAT = 1.9;
         r = mn + (r - mn) * SAT;
         g = mn + (g - mn) * SAT;
         b = mn + (b - mn) * SAT;
-        // Lift brightness so the rim halo is clearly visible.
-        const LIFT = 0.32;
+        // Final brightness lift to guarantee legibility on the dark globe.
+        const LIFT = 0.22;
         r = Math.min(1, r + LIFT);
         g = Math.min(1, g + LIFT);
         b = Math.min(1, b + LIFT);
@@ -9814,16 +9817,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncRegionsVisibility() {
         const active = window.__currentViewMode === "regions";
-        if (!active) return; // Don't reset other modes' visibility
 
-        // Hide country + city nodes; earth dots stay on
-        targetCountryOpacity = 0.0;
-        targetCityOpacity    = 0.0;
-        // targetEarthOpacity intentionally untouched
+        if (active) {
+          // Hide country + city nodes; earth dots stay on
+          targetCountryOpacity = 0.0;
+          targetCityOpacity    = 0.0;
+          // targetEarthOpacity intentionally untouched
 
-        // Swap boundary layers: national borders off, coastline-only on
-        boundaryLayer.setVisible(false);
-        if (landBoundaryLayer) landBoundaryLayer.setVisible(true);
+          // Swap boundary layers: national borders off, coastline-only on
+          boundaryLayer.setVisible(false);
+          if (landBoundaryLayer) landBoundaryLayer.setVisible(true);
+        } else {
+          // Leaving regions mode — restore national border layer unless
+          // another overlay mode (ocean/transportation/etc.) takes over via
+          // its own sync. Safe to flip back because the other syncs also
+          // explicitly set boundaryLayer visibility.
+          boundaryLayer.setVisible(true);
+          if (landBoundaryLayer) landBoundaryLayer.setVisible(false);
+        }
       }
 
       window.__syncRegionsVisibility = function() {
@@ -11980,31 +11991,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
-          <div class="panelSortRow">
-            <div class="panelSortSegment">
-              <div class="panelSortOption active" data-sort="local">
-                <div class="panelSortDot"></div>
-                <span class="panelSortLabel">Local</span>
+          <div class="panelControlsToggle" id="panelControlsToggle">
+            <span class="panelControlsToggleLabel">Filters</span>
+            <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="2,3.5 5,6.5 8,3.5"/>
+            </svg>
+          </div>
+          <div class="panelControlsArea" id="panelControlsArea">
+            <div class="panelControlsRow1">
+              <div class="panelSortRow">
+                <div class="panelSortSegment">
+                  <div class="panelSortOption active" data-sort="local">
+                    <div class="panelSortDot"></div>
+                    <span class="panelSortLabel">Local</span>
+                  </div>
+                  <div class="panelSortOption" data-sort="global">
+                    <div class="panelSortDot"></div>
+                    <span class="panelSortLabel">Global</span>
+                  </div>
+                </div>
               </div>
-              <div class="panelSortOption" data-sort="global">
-                <div class="panelSortDot"></div>
-                <span class="panelSortLabel">Global</span>
+              <div class="panelMediaRow">
+                <div class="panelMediaSegment">
+                  <div class="panelMediaOption active" data-media="article">Article</div>
+                  <div class="panelMediaOption active" data-media="video">Video</div>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="panelMediaRow">
-            <div class="panelMediaSegment">
-              <div class="panelMediaOption active" data-media="article">Article</div>
-              <div class="panelMediaOption active" data-media="video">Video</div>
+            <div class="panelControlsRow2">
+              <div class="panelSearchPill">
+                <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+                <span class="panelSearchPillIcon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+                  </svg>
+                </span>
+              </div>
             </div>
-          </div>
-          <div class="panelSearchPill">
-            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-            <span class="panelSearchPillIcon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
-              </svg>
-            </span>
           </div>
           <div class="panelTabsWrapper" style="position:relative;">
             <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
@@ -12015,6 +12038,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
         fetchLocationStats("region", region.id);
+
+        // ── Controls minimize toggle (mobile) — match country/city panel ──
+        const controlsToggle = panel.querySelector("#panelControlsToggle");
+        const controlsArea   = panel.querySelector("#panelControlsArea");
+        if (controlsToggle && controlsArea) {
+          controlsToggle.addEventListener("click", () => {
+            const isMin = controlsArea.classList.toggle("minimized");
+            controlsToggle.classList.toggle("collapsed", isMin);
+          });
+        }
 
         const track    = panel.querySelector("#articlesTrack");
         const viewport = panel.querySelector("#articlesViewport");
@@ -14629,15 +14662,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
               float edgeMix = clamp(horizon * 1.35 + haloBand * 1.10, 0.0, 1.0);
               float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.018 * intensity;
 
-              // Centre stays bright/white-ish (line legibility); horizon picks
-              // up the actual earth colour at that lat/lon (ocean → blue,
-              // forest → green, desert → tan, ice → near-white, etc).
-              vec3 whiteCore = mix(baseCol, vec3(1.0), 0.55) * (0.86 + 0.14 * centerMask);
-              vec3 edgeHalo  = baseCol   * (2.30 * horizon + 0.85 * haloBand)
-                             + rimColor  * (0.55 * horizon + 0.20 * haloBand)
-                             + glowColor * (0.45 * haloBand + 0.18 * horizon);
-              vec3 finalColor = mix(whiteCore, whiteCore * 0.22 + edgeHalo, edgeMix) * intensity;
-              finalColor += shimmer * mix(vec3(1.0), baseCol + rimColor * 0.4 + glowColor * 0.4, edgeMix * 0.9) * 0.32;
+              // Line colour IS the earth colour at that lat/lon (ocean → blue,
+              // forest → green, desert → tan, ice → near-white). Centre is
+              // slightly brighter for legibility; horizons get a stronger glow.
+              vec3 whiteCore = baseCol * (0.95 + 0.22 * centerMask);
+              vec3 edgeHalo  = baseCol   * (2.55 * horizon + 1.05 * haloBand)
+                             + rimColor  * (0.28 * horizon + 0.10 * haloBand)
+                             + glowColor * (0.22 * haloBand + 0.08 * horizon);
+              vec3 finalColor = mix(whiteCore, whiteCore * 0.25 + edgeHalo, edgeMix) * intensity;
+              finalColor += shimmer * mix(vec3(1.0), baseCol + rimColor * 0.3 + glowColor * 0.3, edgeMix * 0.9) * 0.32;
 
               float alpha = opacity * visibility * clamp(0.74 + haloBand * 0.32 + horizon * 0.30, 0.0, 1.0);
               if (alpha < 0.01) discard;
