@@ -1783,6 +1783,13 @@ app.get("/api/threads/latest", async (req, res) => {
     if (!threads.length) return res.json([]);
 
     // Step 2: batch-fetch hero images for all threads
+    //
+    // Image preference (highest priority first):
+    //   1. An article in this thread that has a SCRAPED image (a.image_url) —
+    //      i.e. the actual photo from the source publisher. This is always
+    //      preferred over our generic catalog fallbacks.
+    //   2. An article whose only image is a catalog/bucket assignment.
+    //   3. Within each tier, sort by relevance_score then recency.
     const threadIds = threads.map(t => t.thread_id);
     const { rows: heroes } = await pool.query(`
       SELECT DISTINCT ON (sta.thread_id)
@@ -1800,7 +1807,11 @@ app.get("/api/threads/latest", async (req, res) => {
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = ANY($1)
         AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
-      ORDER BY sta.thread_id, sta.relevance_score DESC, a.published_at DESC
+      ORDER BY
+        sta.thread_id,
+        (a.image_url IS NOT NULL AND a.image_url <> '') DESC,  -- prefer scraped publisher image
+        sta.relevance_score DESC,
+        a.published_at DESC
     `, [threadIds]);
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
