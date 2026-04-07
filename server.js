@@ -21,8 +21,11 @@ const app = express();
 console.log("Node version:", process.version);
 const corsOptions = {
   origin: [
+    "https://earth00.com",
+    "https://www.earth00.com",
     "https://wesleyharding3.github.io",
     "https://earth0.onrender.com",
+    "https://earth-wjr6.onrender.com",
     "http://localhost:3000",
     "http://localhost:5500",
     "capacitor://localhost",
@@ -1742,19 +1745,38 @@ app.get("/api/articles/by-thread", async (req, res) => {
 });
 
 // GET /api/threads/latest — top story threads with hero image from highest-scored article
+//
+// Returns threads in ALL three live lifecycle states:
+//   active   — currently receiving new articles
+//   cooling  — no new articles in 14d, but still browsable
+//   dormant  — no new articles in 28d+; kept forever as historical arcs
+//
+// Merge-loser shells (article_count = 0) are excluded so the dedup pass
+// doesn't leave empty cards in the UI. Status is included in the response
+// so the front-end can badge / sort threads if it wants to.
 app.get("/api/threads/latest", async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
 
     // Step 1: get threads
     const { rows: threads } = await pool.query(`
       SELECT
         id AS thread_id, title, description, primary_category,
         geographic_scope, importance, keywords, article_count,
-        last_updated_at
+        status, last_updated_at
       FROM story_threads
       WHERE article_count >= 2
-      ORDER BY importance DESC, article_count DESC, last_updated_at DESC NULLS LAST
+        AND status IN ('active', 'cooling', 'dormant')
+      ORDER BY
+        CASE status
+          WHEN 'active'  THEN 0
+          WHEN 'cooling' THEN 1
+          WHEN 'dormant' THEN 2
+          ELSE 3
+        END,
+        importance DESC,
+        article_count DESC,
+        last_updated_at DESC NULLS LAST
       LIMIT $1
     `, [limit]);
 
