@@ -19124,7 +19124,9 @@ body.ticker-active .gTickerLabel {
 
 /* ── Captions — single sentence at a time, just above the control bar ── */
 .bCaptions {
-  position: absolute; bottom: 122px; left: 50%; transform: translateX(-50%);
+  position: absolute;
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 78px);
+  left: 50%; transform: translateX(-50%);
   max-width: min(720px, calc(100vw - 48px));
   background: rgba(0,0,0,0.74); backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -19142,16 +19144,22 @@ body.ticker-active .gTickerLabel {
   min-height: 1em;
 }
 .bCaptions.visible { opacity: 1; }
-.bCapWord {
+/* Character-by-character typewriter — each <span> is one glyph */
+.bCapChar {
   display: inline;
   opacity: 0;
-  transition: opacity 0.16s ease-out;
+  transition: opacity 0.06s linear;
 }
+.bCapChar.lit { opacity: 1; }
+/* Legacy word class kept for back-compat with any cached markup */
+.bCapWord { display: inline; opacity: 0; transition: opacity 0.16s ease-out; }
 .bCapWord.lit { opacity: 1; }
 
-/* ── Controls — sit just above the ticker ── */
+/* ── Controls — sit just above the bottom nav bar ── */
 .bControls {
-  position: absolute; bottom: 68px; left: 50%; transform: translateX(-50%);
+  position: absolute;
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 14px);
+  left: 50%; transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 10px;
   padding: 8px 12px;
   border-radius: 999px;
@@ -21029,14 +21037,37 @@ body.ticker-active .gTickerLabel {
     if (!s) { el.innerHTML = ''; _capCurSpans = []; return; }
     el.innerHTML = '';
     _capCurSpans = [];
-    s.words.forEach((wt, i) => {
-      if (i > 0) el.appendChild(document.createTextNode(' '));
-      const sp = document.createElement('span');
-      sp.className = 'bCapWord';
-      sp.textContent = wt.w;
-      el.appendChild(sp);
-      _capCurSpans.push(sp);
-    });
+    // Build a flat list of character spans with per-char timestamps so the
+    // sentence reveals letter-by-letter, perfectly synced to the audio.
+    // Each word's characters are spread linearly between word.t and the
+    // next word's t (or sentence end + a small tail).
+    const tailPad = 220; // ms after sentence-end for the final word's chars
+    for (let wi = 0; wi < s.words.length; wi++) {
+      const wt   = s.words[wi];
+      const next = s.words[wi + 1];
+      const tStart = wt.t;
+      const tEnd   = next ? next.t : (s.end + tailPad);
+      // Leading space between words
+      if (wi > 0) {
+        const sp = document.createElement('span');
+        sp.className = 'bCapChar';
+        sp.textContent = ' ';
+        sp._t = tStart; // space appears with the new word
+        el.appendChild(sp);
+        _capCurSpans.push(sp);
+      }
+      const chars = Array.from(wt.w);
+      const span  = Math.max(1, tEnd - tStart);
+      const dt    = span / chars.length;
+      chars.forEach((ch, ci) => {
+        const sp = document.createElement('span');
+        sp.className = 'bCapChar';
+        sp.textContent = ch;
+        sp._t = tStart + ci * dt;
+        el.appendChild(sp);
+        _capCurSpans.push(sp);
+      });
+    }
     _capCurRevealed = -1;
   }
 
@@ -21089,12 +21120,13 @@ body.ticker-active .gTickerLabel {
         _capRenderSentence(el, sIdx);
       }
 
-      // Reveal words within the current sentence
+      // Reveal characters within the current sentence (typewriter)
       const sent = _capSentences[_capCurSent];
-      if (sent) {
+      if (sent && _capCurSpans.length) {
         let target = _capCurRevealed;
-        for (let i = target + 1; i < sent.words.length; i++) {
-          if (sent.words[i].t <= audioMs) target = i;
+        for (let i = target + 1; i < _capCurSpans.length; i++) {
+          const sp = _capCurSpans[i];
+          if (sp._t != null && sp._t <= audioMs) target = i;
           else break;
         }
         if (target !== _capCurRevealed) {
