@@ -6097,6 +6097,14 @@ body.ticker-active #flowControls {
 
 <!-- Twinkling starfield for site loader -->
 <script>
+/* ── Global helper: source-bias badge (used by multiple panels) ── */
+window.sourceBiasBadgeHTML = function(bias) {
+  const raw = String(bias || 'unknown').toLowerCase();
+  const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw) ? raw : 'unknown';
+  const label = normalized.replace('_', ' ');
+  return `<span class="sourceBiasBadge ${normalized}" aria-label="${label}" title="${label}"></span>`;
+};
+
 (function() {
   const canvas = document.getElementById('loaderStarfield');
   if (!canvas) return;

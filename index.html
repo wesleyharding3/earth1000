@@ -328,6 +328,9 @@
     }
 
     #infoPanel button.closePanel {
+      position: absolute;
+      top: 10px;
+      right: 15px;
       background: #444;
       color: #fff;
       border: none;
@@ -335,7 +338,6 @@
       cursor: pointer;
       font-size: 12px;
       border-radius: 4px;
-      flex-shrink: 0;
     }
     #infoPanel button.closePanel:hover { background: #666; }
     .panelHeaderBtnGroup {
@@ -6097,6 +6099,14 @@ body.ticker-active #flowControls {
 
 <!-- Twinkling starfield for site loader -->
 <script>
+/* ── Global helper: source-bias badge (used by multiple panels) ── */
+window.sourceBiasBadgeHTML = function(bias) {
+  const raw = String(bias || 'unknown').toLowerCase();
+  const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw) ? raw : 'unknown';
+  const label = normalized.replace('_', ' ');
+  return `<span class="sourceBiasBadge ${normalized}" aria-label="${label}" title="${label}"></span>`;
+};
+
 (function() {
   const canvas = document.getElementById('loaderStarfield');
   if (!canvas) return;
@@ -10745,7 +10755,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>
           <div class="panelHeader" style="position:sticky;top:0;z-index:5;background:rgba(6,10,20,0.30);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
       padding-bottom:10px;flex-shrink:0;">
-            <div class="panelHeaderTopRow" style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:8px;">
+            <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
+            <button class="locBriefBtn" id="locBriefBtn" title="Generate location briefing">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M20.07 4.93a10 10 0 0 1 0 14.14M3.93 19.07a10 10 0 0 1 0-14.14"/>
+              </svg>
+            </button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:68px;gap:8px;">
               <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
                 ${node.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${node.flag}</span>` : ""}
                 <div style="min-width:0;">
@@ -10763,65 +10779,45 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 </div>
                 <div id="timePill" class="cityMetaPill"></div>
               </div>` : ""}
-              <div class="panelHeaderBtnGroup">
-                <button class="locBriefBtn" id="locBriefBtn" title="Generate location briefing">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M20.07 4.93a10 10 0 0 1 0 14.14M3.93 19.07a10 10 0 0 1 0-14.14"/>
-                  </svg>
-                </button>
-                <button class="closePanel" style="z-index:110;pointer-events:all;">✕</button>
-              </div>
             </div>
           </div>
-          <div class="panelControlsToggle" id="panelControlsToggle">
-            <span class="panelControlsToggleLabel">Filters</span>
-            <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="2,3.5 5,6.5 8,3.5"/>
-            </svg>
+          <div class="panelSortRow">
+            <div class="panelSortSegment">
+              <div class="panelSortOption active" data-sort="local">
+                <div class="panelSortDot"></div>
+                <span class="panelSortLabel">Local</span>
+              </div>
+              <div class="panelSortOption" data-sort="global">
+                <div class="panelSortDot"></div>
+                <span class="panelSortLabel">Global</span>
+              </div>
+            </div>
+            <div class="tagFilterWrapper" id="tagFilterWrapper">
+              <div class="tagFilterBtn" id="tagFilterBtn">
+                <span class="tagFilterDot"></span>
+                <span id="tagFilterLabel">All</span>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                     stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="2,3.5 5,6.5 8,3.5"/>
+                </svg>
+              </div>
+              <div class="tagDropdown" id="tagDropdown"></div>
+            </div>
           </div>
-          <div class="panelControlsArea" id="panelControlsArea">
-            <div class="panelControlsRow1">
-              <div class="panelSortRow">
-                <div class="panelSortSegment">
-                  <div class="panelSortOption active" data-sort="local">
-                    <div class="panelSortDot"></div>
-                    <span class="panelSortLabel">Local</span>
-                  </div>
-                  <div class="panelSortOption" data-sort="global">
-                    <div class="panelSortDot"></div>
-                    <span class="panelSortLabel">Global</span>
-                  </div>
-                </div>
-              </div>
-              <div class="panelMediaRow">
-                <div class="panelMediaSegment">
-                  <div class="panelMediaOption active" data-media="article">Article</div>
-                  <div class="panelMediaOption active" data-media="video">Video</div>
-                </div>
-              </div>
+          <div class="panelMediaRow">
+            <div class="panelMediaSegment">
+              <div class="panelMediaOption active" data-media="article">Article</div>
+              <div class="panelMediaOption active" data-media="video">Video</div>
             </div>
-            <div class="panelControlsRow2">
-              <div class="panelSearchPill">
-                <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-                <span class="panelSearchPillIcon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
-                  </svg>
-                </span>
-              </div>
-              <div class="tagFilterWrapper" id="tagFilterWrapper">
-                <div class="tagFilterBtn" id="tagFilterBtn">
-                  <span class="tagFilterDot"></span>
-                  <span id="tagFilterLabel">All</span>
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
-                       stroke="currentColor" stroke-width="1.8"
-                       stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="2,3.5 5,6.5 8,3.5"/>
-                  </svg>
-                </div>
-                <div class="tagDropdown" id="tagDropdown"></div>
-              </div>
-            </div>
+          </div>
+          <div class="panelSearchPill">
+            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+            <span class="panelSearchPillIcon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+              </svg>
+            </span>
           </div>
           <div class="panelTabsWrapper" style="position:relative;">
             <div class="panelNavArrow left hidden" id="panelArrowLeft">
@@ -10850,16 +10846,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
 
-        // ── Controls minimize toggle (mobile) ──
-        const controlsToggle = panel.querySelector("#panelControlsToggle");
-        const controlsArea = panel.querySelector("#panelControlsArea");
-        if (controlsToggle && controlsArea) {
-          controlsToggle.addEventListener("click", () => {
-            const isMin = controlsArea.classList.toggle("minimized");
-            controlsToggle.classList.toggle("collapsed", isMin);
-          });
-        }
-
         // ── Slides ──
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
         let currentSlide = 0;
@@ -10873,10 +10859,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
           const isArticles = currentSlide === 0;
           const hide = isArticles ? "" : "none";
-          const ctrlArea = panel.querySelector("#panelControlsArea");
-          const ctrlToggle = panel.querySelector("#panelControlsToggle");
-          if (ctrlArea) ctrlArea.style.display = hide;
-          if (ctrlToggle) ctrlToggle.style.display = isArticles ? "" : "none";
+          const sortRow = panel.querySelector(".panelSortRow");
+          const mediaRow = panel.querySelector(".panelMediaRow");
+          const searchPill = panel.querySelector(".panelSearchPill");
+          if (sortRow) sortRow.style.display = hide;
+          if (mediaRow) mediaRow.style.display = hide;
+          if (searchPill) searchPill.style.display = hide;
         }
 
         const arrowLeft  = panel.querySelector("#panelArrowLeft");
