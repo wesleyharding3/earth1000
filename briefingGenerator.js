@@ -478,27 +478,32 @@ async function run() {
 
       const audioBuffers    = [];
       const pieceDurationsMs = [];
+      const pieceWordTimings = [];
 
       for (let pi = 0; pi < textPieces.length; pi++) {
         const text = textPieces[pi];
-        if (!text) { audioBuffers.push(Buffer.alloc(0)); pieceDurationsMs.push(0); continue; }
+        if (!text) { audioBuffers.push(Buffer.alloc(0)); pieceDurationsMs.push(0); pieceWordTimings.push([]); continue; }
         try {
-          const buf = await synthesiseAudio(text);
-          audioBuffers.push(buf);
-          // ElevenLabs returns 128 kbps CBR MP3: bytes × 8 / 128 = milliseconds
-          pieceDurationsMs.push(Math.round((buf.byteLength * 8) / 128));
-          console.log(`   [${elapsed(t0)}] Piece ${pi + 1}/${textPieces.length} — ${(buf.byteLength / 1024).toFixed(0)}KB`);
+          const { buffer, wordTimings, durationMs } = await synthesiseAudio(text);
+          audioBuffers.push(buffer);
+          pieceDurationsMs.push(durationMs);
+          pieceWordTimings.push(wordTimings || []);
+          console.log(`   [${elapsed(t0)}] Piece ${pi + 1}/${textPieces.length} — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(wordTimings || []).length}w · ${(durationMs/1000).toFixed(1)}s`);
         } catch (err) {
           console.warn(`   ⚠ Audio piece ${pi} failed: ${err.message}`);
           audioBuffers.push(Buffer.alloc(0));
           pieceDurationsMs.push(0);
+          pieceWordTimings.push([]);
         }
       }
 
-      // Stamp each segment with its audio start offset so the player can seek accurately
+      // Stamp each segment with its audio start offset and per-word timings
+      // (relative to segment start) so the player can type captions in sync.
       let cumMs = 0;
       for (let si = 0; si < segments.length; si++) {
-        segments[si].start_ms = cumMs;
+        segments[si].start_ms     = cumMs;
+        segments[si].duration_ms  = pieceDurationsMs[si];
+        segments[si].word_timings = pieceWordTimings[si] || [];
         cumMs += pieceDurationsMs[si];
       }
 
@@ -1572,8 +1577,13 @@ function buildFullScript(narrative) {
 }
 
 // ─── ElevenLabs TTS ────────────────────────────────────────────────────────
+// Uses the /with-timestamps endpoint so we get per-character alignment data
+// for word-level caption sync. Returns { buffer, wordTimings, durationMs }.
+//   wordTimings: [{ w: 'Hello', t: 120, d: 380 }, ...]   (ms relative to start)
+//   durationMs:  precise audio length from alignment (more accurate than the
+//                CBR byte-rate estimate we were using before).
 async function synthesiseAudio(script) {
-  const url  = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`;
+  const url  = `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/with-timestamps`;
   const body = {
     text:       script,
     model_id:   'eleven_multilingual_v2',
@@ -1590,7 +1600,7 @@ async function synthesiseAudio(script) {
     headers: {
       'xi-api-key':   ELEVENLABS_KEY,
       'Content-Type': 'application/json',
-      'Accept':       'audio/mpeg',
+      'Accept':       'application/json',
     },
     body: JSON.stringify(body),
   });
@@ -1600,7 +1610,49 @@ async function synthesiseAudio(script) {
     throw new Error(`ElevenLabs error ${res.status}: ${errText}`);
   }
 
-  return Buffer.from(await res.arrayBuffer());
+  const json = await res.json();
+  if (!json || !json.audio_base64) {
+    throw new Error('ElevenLabs: missing audio_base64 in with-timestamps response');
+  }
+  const buffer = Buffer.from(json.audio_base64, 'base64');
+
+  // Build word-level timings from per-character alignment.
+  const align = json.alignment || json.normalized_alignment || null;
+  const wordTimings = [];
+  let durationMs = 0;
+  if (align && Array.isArray(align.characters) && Array.isArray(align.character_start_times_seconds)) {
+    const chars = align.characters;
+    const starts = align.character_start_times_seconds;
+    const ends   = align.character_end_times_seconds || starts;
+    let curWord  = '';
+    let curStart = -1;
+    let curEnd   = 0;
+    const flush = () => {
+      if (curWord) {
+        wordTimings.push({
+          w: curWord,
+          t: Math.round(curStart * 1000),
+          d: Math.max(0, Math.round((curEnd - curStart) * 1000)),
+        });
+      }
+      curWord = ''; curStart = -1; curEnd = 0;
+    };
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i];
+      const isWS = /\s/.test(ch);
+      if (isWS) { flush(); continue; }
+      if (curStart < 0) curStart = starts[i] ?? 0;
+      curWord += ch;
+      curEnd   = ends[i] ?? curStart;
+    }
+    flush();
+    if (ends.length) durationMs = Math.round((ends[ends.length - 1] || 0) * 1000);
+  }
+
+  // Fallback duration: CBR 128 kbps estimate from byte length
+  if (!durationMs) durationMs = Math.round((buffer.byteLength * 8) / 128);
+
+  return { buffer, wordTimings, durationMs };
 }
 
 // ─── Curation Table ────────────────────────────────────────────────────────

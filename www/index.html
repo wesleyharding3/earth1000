@@ -3308,6 +3308,8 @@ body.ticker-active #flowControls {
     .cdSections::-webkit-scrollbar-track { background: transparent; }
     .cdSections::-webkit-scrollbar-thumb { background: rgba(212,168,67,0.25); border-radius: 4px; }
     .cdSection { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 14px 16px; }
+    .cdDataPanels { display: flex; flex-direction: column; gap: 10px; }
+    .cdDataPanels .bDataPanel { width: 100%; }
     .cdSection:last-child { border-bottom: none; }
     .cdSectionLabel {
       font-size: 8px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
@@ -15598,6 +15600,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const PAGES = 3;
     let current = 1;
 
+    const pageStatsEl = document.getElementById("pageStats");
+    const pageGlobeEl = document.getElementById("pageGlobe");
+    const pageNewsEl  = document.getElementById("pageNews");
+    const pageEls     = [pageStatsEl, pageGlobeEl, pageNewsEl];
+
+    // Hide non-active pages with visibility:hidden so the browser skips
+    // painting/compositing them. Keep layout intact (no display:none) so
+    // canvas dimensions stay valid for next activation.
+    function setPageVisibility(idx) {
+      pageEls.forEach((el, i) => {
+        if (!el) return;
+        if (i === idx) {
+          el.style.visibility = "";
+          el.style.pointerEvents = "";
+        } else {
+          el.style.visibility = "hidden";
+          el.style.pointerEvents = "none";
+        }
+      });
+    }
+
     function goTo(idx, animate = true) {
       idx = Math.max(0, Math.min(PAGES - 1, idx));
       const distance = Math.abs(idx - current);
@@ -15607,8 +15630,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       current = idx;
       window.__currentPage = idx;
       // Skip animation when jumping more than 1 page to avoid
-      // sliding through heavy intermediate pages (e.g. Globe WebGL)
-      const shouldAnimate = animate && distance <= 1;
+      // sliding through heavy intermediate pages (e.g. Globe WebGL).
+      // Also skip animation for any transition involving the Stats page
+      // (page 0): the heavy KWI canvases + Globe WebGL composited together
+      // during a slide transition was causing crashes on mobile.
+      const involvesStats = idx === 0 || prevPage === 0;
+      const shouldAnimate = animate && distance <= 1 && !involvesStats;
       track.style.transition = shouldAnimate
         ? "left 0.48s cubic-bezier(0.32,0.72,0,1)"
         : "none";
@@ -15623,6 +15650,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
           () => { if (window.__currentPage !== 1) window.__globeActive = false; },
           shouldAnimate ? 520 : 0
         );
+      }
+      // Hide inactive pages to release GPU/memory pressure on mobile.
+      // For animated transitions, defer hiding the previous page until the
+      // slide finishes; for instant transitions, hide right away.
+      if (shouldAnimate) {
+        if (pageEls[idx]) {
+          pageEls[idx].style.visibility = "";
+          pageEls[idx].style.pointerEvents = "";
+        }
+        clearTimeout(window.__pageHideTimer);
+        window.__pageHideTimer = setTimeout(() => {
+          if (window.__currentPage === idx) setPageVisibility(idx);
+        }, 520);
+      } else {
+        clearTimeout(window.__pageHideTimer);
+        setPageVisibility(idx);
       }
       dots.forEach((d, i) => d.classList.toggle("active", i === idx));
       document.getElementById("pageNav").style.pointerEvents = "all";
@@ -18997,6 +19040,12 @@ body.ticker-active .gTickerLabel {
   opacity: 0; transition: opacity 0.35s ease;
 }
 .bCaptions.visible { opacity: 1; }
+.bCapWord {
+  display: inline;
+  opacity: 0;
+  transition: opacity 0.16s ease-out;
+}
+.bCapWord.lit { opacity: 1; }
 
 /* ── Controls — sit just above the ticker ── */
 .bControls {
@@ -20816,12 +20865,95 @@ body.ticker-active .gTickerLabel {
     if (btn) btn.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
   }
 
+  // ── Caption typewriter ────────────────────────────────────────────────────
+  // Reveals words in sync with audio.currentTime. Uses ElevenLabs character
+  // alignment (seg.word_timings) when available — perfectly synced to the
+  // narrator. Falls back to a constant word-rate when timings are absent.
+  let _capRAF    = 0;
+  let _capRunId  = 0;
+  let _capWords  = [];   // [{ w, t }]  ms relative to segment start
+  let _capSpans  = [];
+  let _capRevealed = -1;
+  let _capFallbackStart = 0;
+  let _capFallbackRate  = 0; // ms per word
+
+  function _capStop() {
+    if (_capRAF) cancelAnimationFrame(_capRAF);
+    _capRAF = 0;
+  }
+
+  function _capBuildDom(el, words) {
+    // Render each word as a span; unrevealed words are invisible but occupy
+    // space so the caption box doesn't reflow as words appear.
+    el.innerHTML = '';
+    _capSpans = [];
+    words.forEach((wt, i) => {
+      if (i > 0) el.appendChild(document.createTextNode(' '));
+      const s = document.createElement('span');
+      s.className = 'bCapWord';
+      s.textContent = wt.w;
+      el.appendChild(s);
+      _capSpans.push(s);
+    });
+  }
+
   function updateCaptions(seg) {
     const el = document.getElementById('bCaptions');
     if (!el) return;
+    _capStop();
+    _capRunId++;
+    const myRun = _capRunId;
     const text = seg?.voiceover_text || '';
-    el.textContent = text;
     el.classList.toggle('visible', captionsOn && !!text);
+    if (!text) { el.innerHTML = ''; _capWords = []; _capSpans = []; return; }
+
+    // Prefer real per-word timings from ElevenLabs alignment. If absent
+    // (e.g. older episodes), fall back to splitting voiceover_text and
+    // animating at a constant rate based on segment duration.
+    const real = Array.isArray(seg.word_timings) && seg.word_timings.length;
+    if (real) {
+      _capWords = seg.word_timings.map(wt => ({ w: wt.w, t: wt.t }));
+    } else {
+      const tokens = text.split(/\s+/).filter(Boolean);
+      _capWords = tokens.map(w => ({ w, t: -1 })); // -1 = use fallback rate
+    }
+    _capBuildDom(el, _capWords);
+    _capRevealed = -1;
+
+    // Fallback rate: estimate using audio.duration (preferred) or word-count
+    const estDur = (audio && isFinite(audio.duration) && audio.duration > 1)
+      ? audio.duration
+      : getSegmentDuration(segIdx);
+    _capFallbackRate  = _capWords.length ? (estDur * 1000) / _capWords.length : 0;
+    _capFallbackStart = performance.now();
+
+    const tick = () => {
+      if (myRun !== _capRunId) return; // a newer segment took over
+      const audioMs = (audio && isFinite(audio.currentTime))
+        ? audio.currentTime * 1000
+        : (performance.now() - _capFallbackStart);
+
+      // Find the highest index whose start time <= audioMs
+      let target = _capRevealed;
+      for (let i = target + 1; i < _capWords.length; i++) {
+        const t = _capWords[i].t;
+        const trigger = (t >= 0) ? t : (i * _capFallbackRate);
+        if (trigger <= audioMs) target = i;
+        else break;
+      }
+      if (target !== _capRevealed) {
+        for (let i = _capRevealed + 1; i <= target; i++) {
+          if (_capSpans[i]) _capSpans[i].classList.add('lit');
+        }
+        _capRevealed = target;
+      }
+      if (_capRevealed < _capWords.length - 1) {
+        _capRAF = requestAnimationFrame(tick);
+      } else {
+        _capRAF = 0;
+      }
+    };
+    _capRAF = requestAnimationFrame(tick);
   }
 
   function setCaptions(on) {
@@ -20956,13 +21088,18 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Launcher event wiring ──────────────────────────────────────────────────
-  // Block backdrop clicks from passing through to underlying elements
-  document.getElementById('bLauncher')?.addEventListener('click', e => {
-    if (e.target === document.getElementById('bLauncher')) closeBriefingLauncher();
-    e.stopPropagation();
-  });
-  document.querySelector('.bLauncherInner')?.addEventListener('click', e => {
-    e.stopPropagation();
+  // Block ALL pointer events from passing through the modal to underlying canvas/globe.
+  // The globe picker runs on pointerdown/mousedown so click-only stopPropagation isn't enough.
+  const _launcherEl    = document.getElementById('bLauncher');
+  const _launcherInner = document.querySelector('.bLauncherInner');
+  ['click','mousedown','mouseup','pointerdown','pointerup','touchstart','touchend','wheel','contextmenu'].forEach(ev => {
+    _launcherEl?.addEventListener(ev, e => {
+      if (ev === 'click' && e.target === _launcherEl) closeBriefingLauncher();
+      e.stopPropagation();
+    }, { capture: true });
+    _launcherInner?.addEventListener(ev, e => {
+      e.stopPropagation();
+    }, { capture: true });
   });
 
   document.getElementById('bLauncherX')?.addEventListener('click', closeBriefingLauncher);
@@ -21075,6 +21212,9 @@ body.ticker-active .gTickerLabel {
   } else {
     window.addEventListener('load', () => setTimeout(init, 2500));
   }
+
+  // Expose data panel renderer for the cluster thread panel (separate IIFE)
+  window.__renderDataPanelHTML = renderDataPanelHTML;
 })();
 </script>
 
@@ -21550,6 +21690,13 @@ body.ticker-active .gTickerLabel {
             <div class="cdSummaryLoading"><div class="cdPulse"></div><span>Generating deep analysis...</span></div>
           </div>
         </div>
+        <div class="cdSection" id="cdDataSection" style="display:none">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 13L6 8L9 11L14 4M14 4H10M14 4V8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Data
+          </div>
+          <div id="cdDataBody" class="cdDataPanels"></div>
+        </div>
         <div class="cdSection" id="cdTimelineSection">
           <div class="cdSectionLabel">
             <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
@@ -21665,6 +21812,25 @@ body.ticker-active .gTickerLabel {
         el.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this thread.</div>`;
       }
     });
+
+    // ── Data analytics panels (lazy-generated server-side, cached in DB) ──
+    if (threadId && window.__renderDataPanelHTML) {
+      (async () => {
+        try {
+          const res = await fetch(`${BASE}/api/threads/${threadId}/panels`);
+          if (!res.ok) return;
+          const json = await res.json();
+          if (_selected !== node) return;
+          const panels = Array.isArray(json.panels) ? json.panels : [];
+          if (!panels.length) return;
+          const sectionEl = document.getElementById("cdDataSection");
+          const bodyEl    = document.getElementById("cdDataBody");
+          if (!sectionEl || !bodyEl) return;
+          bodyEl.innerHTML = panels.map(p => `<div class="bDataPanel">${window.__renderDataPanelHTML(p)}</div>`).join("");
+          sectionEl.style.display = "";
+        } catch (_) { /* non-fatal */ }
+      })();
+    }
   }
 
   // Expose globals for news feed thread cards and page navigation
