@@ -105,6 +105,13 @@ async function run() {
     console.log(`   [${elapsed()}] Refreshed ${refreshed} evolving thread context(s)`);
   }
 
+  // Cross-batch + semantic dedup pass (no Claude). Catches the duplicates
+  // that batch-isolated Claude calls inevitably create — e.g. multiple
+  // "Trump-Iran" or "Strait of Hormuz" threads spawned by different batches.
+  console.log(`\n   [${elapsed()}] Running cross-batch similarity dedup...`);
+  const merged = await dedupSimilarThreads();
+  console.log(`   [${elapsed()}] Merged ${merged} duplicate thread(s)`);
+
   console.log(`\n   [${elapsed()}] Cooling down inactive threads...`);
   await coolDownInactiveThreads();
 
@@ -186,11 +193,14 @@ async function evaluateWithClaude(articles, existingThreads) {
     published_at: a.published_at
   }));
 
-  const existingData = existingThreads.slice(0, 30).map(t => ({
+  // Compact format keeps token usage manageable while letting Claude see
+  // ~150 active threads (vs the old 30) so it can correctly extend duplicates
+  // instead of spawning parallel "Trump-Iran" / "Iran-US war" / etc threads.
+  const existingData = existingThreads.slice(0, 150).map(t => ({
     id:       t.id,
     title:    t.title,
-    keywords: t.keywords,
-    category: t.primary_category
+    kw:       (t.keywords || []).slice(0, 3),
+    cat:      t.primary_category
   }));
 
   const prompt = `You are a senior news editor. Analyze these articles and identify distinct ongoing news story threads.
@@ -226,7 +236,7 @@ Return ONLY a valid JSON array, no explanation:
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
-    max_tokens: 2048,
+    max_tokens: 3072,
     messages:   [{ role: "user", content: prompt }]
   });
 
@@ -468,23 +478,197 @@ Return ONLY valid JSON:
   return JSON.parse(jsonMatch[0]);
 }
 
+// ─── Similarity Dedup ────────────────────────────────────────────────────────
+//
+// Catches near-duplicate active threads (Issues 3 + 6 from the audit).
+// Pure string/keyword similarity — no Claude. Two threads are considered
+// duplicates when EITHER:
+//   • title-token Jaccard ≥ 0.60      (e.g. "Trump Iran nuclear talks" ≈ "Trump Iran negotiations")
+//   • OR keyword Jaccard ≥ 0.70       (e.g. shared core keywords dominate)
+// AND they share the same primary_category (avoids cross-topic false merges).
+//
+// When duplicates are found, the older / higher-importance / larger thread
+// "wins" and the loser's articles are reassigned to the winner. The loser's
+// keywords are merged in and it is marked dormant (not deleted) so historical
+// continuity stays intact.
+
+const TITLE_STOPWORDS = new Set([
+  "the","a","an","of","in","on","at","to","for","and","or","but","with","from",
+  "by","as","is","are","was","were","be","been","being","it","its","this","that",
+  "these","those","over","under","after","before","new","says","say","said",
+  "amid","into","out","up","down","off","vs","versus"
+]);
+
+function tokenizeTitle(title) {
+  return new Set(
+    String(title || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]+/g, " ")
+      .split(/\s+/)
+      .filter(t => t.length >= 3 && !TITLE_STOPWORDS.has(t))
+  );
+}
+
+function jaccard(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+  let intersect = 0;
+  for (const x of setA) if (setB.has(x)) intersect++;
+  const union = setA.size + setB.size - intersect;
+  return union ? intersect / union : 0;
+}
+
+async function dedupSimilarThreads() {
+  const { rows: threads } = await pool.query(`
+    SELECT id, title, keywords, primary_category, importance, article_count, last_updated_at
+    FROM story_threads
+    WHERE status = 'active'
+      AND last_updated_at > NOW() - INTERVAL '21 days'
+    ORDER BY importance DESC, article_count DESC, last_updated_at DESC
+  `);
+
+  if (threads.length < 2) return 0;
+
+  // Pre-compute token/keyword sets
+  const enriched = threads.map(t => ({
+    ...t,
+    _titleTokens: tokenizeTitle(t.title),
+    _kwSet: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean))
+  }));
+
+  // Union-Find: group all transitively-similar threads
+  const parent = new Map(enriched.map(t => [t.id, t.id]));
+  const find = (x) => {
+    if (parent.get(x) !== x) parent.set(x, find(parent.get(x)));
+    return parent.get(x);
+  };
+  const union = (a, b) => {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  for (let i = 0; i < enriched.length; i++) {
+    for (let j = i + 1; j < enriched.length; j++) {
+      const a = enriched[i], b = enriched[j];
+      // Require category match to avoid e.g. politics ↔ sports false merges
+      if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) continue;
+
+      const titleSim = jaccard(a._titleTokens, b._titleTokens);
+      const kwSim    = jaccard(a._kwSet, b._kwSet);
+      if (titleSim >= 0.60 || kwSim >= 0.70) {
+        union(a.id, b.id);
+      }
+    }
+  }
+
+  // Group by root
+  const groups = new Map();
+  for (const t of enriched) {
+    const r = find(t.id);
+    if (!groups.has(r)) groups.set(r, []);
+    groups.get(r).push(t);
+  }
+
+  // For each group with >1 thread, pick a winner and merge losers into it
+  let merged = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+
+    // Winner: highest importance → most articles → most recent
+    group.sort((a, b) => {
+      const impDiff = (Number(b.importance) || 0) - (Number(a.importance) || 0);
+      if (impDiff) return impDiff;
+      const acDiff = (Number(b.article_count) || 0) - (Number(a.article_count) || 0);
+      if (acDiff) return acDiff;
+      return new Date(b.last_updated_at).getTime() - new Date(a.last_updated_at).getTime();
+    });
+    const winner = group[0];
+    const losers = group.slice(1);
+
+    for (const loser of losers) {
+      try {
+        // Merge keywords into winner
+        const mergedKeywords = mergeKeywords(winner.keywords || [], loser.keywords || []);
+
+        // Reassign articles (skip rows that already exist on winner)
+        await pool.query(`
+          INSERT INTO story_thread_articles (thread_id, article_id, relevance_score, is_anchor)
+          SELECT $1, sta.article_id, sta.relevance_score, FALSE
+          FROM story_thread_articles sta
+          WHERE sta.thread_id = $2
+          ON CONFLICT DO NOTHING
+        `, [winner.id, loser.id]);
+
+        // Recount winner article_count from the join table (authoritative)
+        await pool.query(`
+          UPDATE story_threads
+          SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1),
+              keywords      = $2::text[],
+              importance    = GREATEST(importance, $3),
+              last_updated_at = NOW()
+          WHERE id = $1
+        `, [winner.id, mergedKeywords, Number(loser.importance) || 0]);
+
+        // Drop loser's join rows so they don't double-count, then mark dormant
+        await pool.query(`DELETE FROM story_thread_articles WHERE thread_id = $1`, [loser.id]);
+        await pool.query(`
+          UPDATE story_threads
+          SET status = 'dormant',
+              article_count = 0,
+              last_updated_at = NOW()
+          WHERE id = $1
+        `, [loser.id]);
+
+        // Keep winner snapshot in sync for the rest of the loop
+        winner.keywords = mergedKeywords;
+        winner.importance = Math.max(Number(winner.importance) || 0, Number(loser.importance) || 0);
+
+        console.log(`   ✂  merged thread ${loser.id} ("${loser.title}") → ${winner.id} ("${winner.title}")`);
+        merged++;
+      } catch (err) {
+        console.error(`   ⚠ Failed to merge ${loser.id} → ${winner.id}: ${err.message}`);
+      }
+    }
+  }
+
+  return merged;
+}
+
 // ─── Maintenance ─────────────────────────────────────────────────────────────
 
 async function coolDownInactiveThreads() {
-  // Threads with no new articles in 5 days → cooling
-  await pool.query(`
+  // Lifecycle (relaxed to give threads more breathing room):
+  //   active   → cooling   after 14 days of no new articles
+  //   cooling  → dormant   after another 14 days (28 total)
+  //   dormant  → kept forever, indexed by date so we can later
+  //              tie old story arcs to new ones for continuity.
+
+  // active → cooling
+  const a = await pool.query(`
     UPDATE story_threads
     SET status = 'cooling'
     WHERE status = 'active'
-      AND last_updated_at < NOW() - INTERVAL '5 days'
+      AND last_updated_at < NOW() - INTERVAL '14 days'
   `);
-  // Threads cooling for 14 days → archived
-  await pool.query(`
+
+  // cooling → dormant
+  const c = await pool.query(`
     UPDATE story_threads
-    SET status = 'archived'
+    SET status = 'dormant'
     WHERE status = 'cooling'
       AND last_updated_at < NOW() - INTERVAL '14 days'
   `);
+
+  // Backfill: anything previously archived under the old policy
+  // becomes dormant so the historical arc is preserved.
+  const b = await pool.query(`
+    UPDATE story_threads
+    SET status = 'dormant'
+    WHERE status = 'archived'
+  `);
+
+  console.log(`   active→cooling: ${a.rowCount} | cooling→dormant: ${c.rowCount} | archived→dormant: ${b.rowCount}`);
 }
 
 // ─── DB Queries ───────────────────────────────────────────────────────────────
@@ -568,7 +752,7 @@ async function getActiveThreads() {
     WHERE status = 'active'
       AND last_updated_at > NOW() - INTERVAL '30 days'
     ORDER BY importance DESC, last_updated_at DESC
-    LIMIT 60
+    LIMIT 250
   `);
   return rows;
 }
