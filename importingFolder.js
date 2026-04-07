@@ -14,7 +14,7 @@ const pool = require("./db");
 // ─── Config ────────────────────────────────────────────────────────────────
 const BUCKET      = "news_imgs";
 const FOLDER      = "imgs";               // GCS prefix to list
-const PUBLIC_BASE = "https://earth00.com"; // public URL base — final: BASE/folder/file.jpg
+const PUBLIC_BASE = "https://storage.googleapis.com/earth00.com"; // public URL base — final: BASE/folder/file.jpg
 const BATCH_SIZE  = 100;                   // DB insert batch size
 const DRY_RUN     = process.argv.includes("--dry-run");
 

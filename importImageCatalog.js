@@ -6,7 +6,7 @@ require("dotenv").config();
 const path = require("path");
 const pool = require("./db");
 
-const BASE_URL = process.env.IMAGE_CATALOG_BASE_URL || "https://earth00.com";
+const BASE_URL = process.env.IMAGE_CATALOG_BASE_URL || "https://storage.googleapis.com/earth00.com";
 const PAGE_SIZE = 1000;
 const UPSERT_BATCH_SIZE = 200;
 const IMAGE_EXTENSIONS = new Set([
