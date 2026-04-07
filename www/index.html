@@ -8412,16 +8412,46 @@ function computeCityTiers(cities) {
         ringStates.push({ progress: 0, delay: i * ringBurstDelay, active: false });
       }
 
-      const boundaryLayer = new GeoBoundaryLayer(scene, radius);
+      // ── Earth-colour sampler for boundary lines ─────────────────────────
+      // Reads the already-loaded Blue Marble pixels (imageData) at the line's
+      // lat/lon so each boundary segment glows with the actual surface color
+      // beneath it (ocean → blue, forest → green, desert → tan, ice → white).
+      // Saturation + brightness are lifted so the glow stays legible against
+      // the dark globe.
+      function sampleEarthRGB(lat, lon) {
+        const u = (((lon + 180) % 360) + 360) % 360 / 360;
+        const v = Math.max(0, Math.min(1, (90 - lat) / 180));
+        const px = Math.min(canvas.width  - 1, Math.max(0, Math.floor(u * canvas.width)));
+        const py = Math.min(canvas.height - 1, Math.max(0, Math.floor(v * canvas.height)));
+        const i  = (py * canvas.width + px) * 4;
+        let r = imageData[i]     / 255;
+        let g = imageData[i + 1] / 255;
+        let b = imageData[i + 2] / 255;
+        // Boost saturation around the local mean so muddy ocean / forest
+        // colors don't render as nearly-black.
+        const mn = Math.min(r, g, b);
+        const SAT = 1.7;
+        r = mn + (r - mn) * SAT;
+        g = mn + (g - mn) * SAT;
+        b = mn + (b - mn) * SAT;
+        // Lift brightness so the rim halo is clearly visible.
+        const LIFT = 0.32;
+        r = Math.min(1, r + LIFT);
+        g = Math.min(1, g + LIFT);
+        b = Math.min(1, b + LIFT);
+        return [r, g, b];
+      }
+      window.__sampleEarthRGB = sampleEarthRGB;
+
+      const boundaryLayer = new GeoBoundaryLayer(scene, radius, sampleEarthRGB);
 
       // Coastline-only layer shown in regions mode (no internal borders)
       let landBoundaryLayer = null;
       fetch("ne_50m_land.geojson")
         .then(r => r.json())
         .then(data => {
-          landBoundaryLayer = new GeoBoundaryLayer(scene, radius);
+          landBoundaryLayer = new GeoBoundaryLayer(scene, radius, sampleEarthRGB);
           landBoundaryLayer.loadGeoJSON(data);
-          landBoundaryLayer.setColor("#8899bb");
           // Show immediately if regions mode is already active when this resolves
           const activeNow = window.__currentViewMode === "regions";
           landBoundaryLayer.setVisible(activeNow);
@@ -11761,8 +11791,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs) {
         const R = radius + 0.006;
-        const STEPS = 48;
-        const positions = [], lineDists = [], lineLens = [];
+        const STEPS = 96;
         const v0 = latLonToVec3Trans(lat0, lon0, 1);
         const v1 = latLonToVec3Trans(lat1, lon1, 1);
         const pts = [];
@@ -11772,37 +11801,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const lift = 1 + (arcHeight || 0.14) * Math.sin(t * Math.PI);
           pts.push(mid.multiplyScalar(R * lift));
         }
-        let totalLen = 0;
-        for (let i = 1; i < pts.length; i++) totalLen += pts[i].distanceTo(pts[i - 1]);
-        let cum = 0;
-        for (let i = 0; i < STEPS; i++) {
-          positions.push(pts[i].x, pts[i].y, pts[i].z,
-                         pts[i+1].x, pts[i+1].y, pts[i+1].z);
-          const sLen = pts[i+1].distanceTo(pts[i]);
-          lineDists.push(cum, cum + sLen);
-          lineLens.push(totalLen, totalLen);
-          cum += sLen;
-        }
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        geo.setAttribute('lineDist', new THREE.Float32BufferAttribute(lineDists, 1));
-        geo.setAttribute('lineLen',  new THREE.Float32BufferAttribute(lineLens,  1));
+        // Tube geometry gives us real screen-space thickness
+        // (WebGL ignores LineSegments linewidth on most platforms).
+        const curve = new THREE.CatmullRomCurve3(pts);
+        const TUBE_RADIUS = R * 0.014;
+        const geo = new THREE.TubeGeometry(curve, STEPS, TUBE_RADIUS, 10, false);
 
         const mat = new THREE.ShaderMaterial({
           transparent: true, depthWrite: false,
-          blending: THREE.AdditiveBlending,
+          blending: THREE.NormalBlending,   // darker, opaque-feeling fill
           uniforms: {
-            uColor:      { value: new THREE.Color(0xff9940) },
+            // Deeper, richer amber — darker than the prior 0xff9940
+            uColor:      { value: new THREE.Color(0xb35414) },
             uRevealEnd:  { value: 0.0 },
             uRevealRate: { value: 1.0 / (revealSecs || 2.5) },
             uTime:       { value: 0.0 },
           },
           vertexShader: `
-            attribute float lineDist;
-            attribute float lineLen;
             varying float vT;
+            varying vec2  vUv;
             void main() {
-              vT = lineLen > 0.0 ? lineDist / lineLen : 0.0;
+              vUv = uv;
+              vT  = uv.x;   // 0..1 along the tube length
               gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }`,
           fragmentShader: `
@@ -11810,25 +11830,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
             uniform float uRevealEnd;
             uniform float uTime;
             varying float vT;
+            varying vec2  vUv;
             void main() {
               if (vT > uRevealEnd + 0.008) discard;
-              // Leading-edge glow (bright head travelling along arc)
+              // Soft cylindrical shading across the cross-section
+              float r       = abs(vUv.y - 0.5) * 2.0;          // 0 center → 1 edge
+              float radial  = 1.0 - smoothstep(0.55, 1.0, r);
+              float core    = 1.0 - smoothstep(0.0,  0.55, r); // brighter core stripe
+              // Leading edge highlight
               float headDist = max(0.0, uRevealEnd - vT);
               float settled  = clamp((uRevealEnd - 0.85) / 0.15, 0.0, 1.0);
-              float leadGlow = exp(-headDist * 22.0) * (1.0 - settled * 0.7);
+              float leadGlow = exp(-headDist * 18.0) * (1.0 - settled * 0.5);
               // Steady pulse once arc is fully drawn
               float ph = mod(uTime * 0.38, 1.0);
               float d  = abs(vT - ph); d = min(d, 1.0 - d);
-              float pulse = smoothstep(0.11, 0.0, d) * settled;
-              // Base trail (dims slightly after head passes)
-              float base  = 0.52 * clamp(uRevealEnd, 0.0, 1.0);
-              float alpha = clamp(base + leadGlow * 0.85 + pulse * 0.55, 0.0, 0.95);
-              gl_FragColor = vec4(uColor * (1.6 + leadGlow * 3.5 + pulse * 2.2), alpha);
+              float pulse = smoothstep(0.10, 0.0, d) * settled;
+              vec3 col = uColor * (0.85 + core * 0.5)
+                       + vec3(0.45, 0.22, 0.05) * (leadGlow * 0.9 + pulse * 0.55);
+              float alpha = clamp(0.92 * radial + leadGlow * 0.15, 0.0, 0.96);
+              gl_FragColor = vec4(col, alpha);
             }`
         });
 
-        const mesh = new THREE.LineSegments(geo, mat);
+        const mesh = new THREE.Mesh(geo, mat);
         mesh.visible = true;
+        mesh.renderOrder = 5;
         scene.add(mesh);
         return mesh;
       };
@@ -14541,19 +14567,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 
     class GeoBoundaryLayer {
-      constructor(scene, radius) {
+      constructor(scene, radius, sampler = null) {
         this.scene = scene; this.radius = radius;
         this.group = new THREE.Group();
+        this.sampler = sampler;       // (lat, lon) → [r,g,b]  in 0..1
+        this.lastGeoJSON = null;
         this.coastMaterial = this.makeBoundaryMaterial(0.99, 1.0);
         this.borderMaterial = this.makeBoundaryMaterial(0.88, 0.92);
         this.shellAltitudes = [0.010, 0.013];
         this.scene.add(this.group);
       }
 
+      // Swap in a new earth-color sampler and rebuild any loaded geometry so
+      // the line colors immediately reflect the underlying satellite colors.
+      setSampler(sampler) {
+        this.sampler = sampler;
+        if (this.lastGeoJSON) this.loadGeoJSON(this.lastGeoJSON);
+      }
+
       makeBoundaryMaterial(opacity, intensity = 1.0) {
         return new THREE.ShaderMaterial({
           transparent: true,
           uniforms: {
+            // Used as fallback when no per-vertex earth color is supplied
             color:   { value: new THREE.Color("#9fb2ff") },
             rimColor: { value: new THREE.Color("#9b5cff") },
             glowColor: { value: new THREE.Color("#59ff9b") },
@@ -14561,12 +14597,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             intensity: { value: intensity }
           },
           vertexShader: `
+            attribute vec3 vertColor;
             varying float vDot;
+            varying vec3  vCol;
             void main() {
               vec4 worldPosition = modelMatrix * vec4(position, 1.0);
               vec3 normal = normalize(worldPosition.xyz);
               vec3 cameraDir = normalize(cameraPosition - worldPosition.xyz);
               vDot = dot(normal, cameraDir);
+              vCol = vertColor;
               gl_Position = projectionMatrix * viewMatrix * worldPosition;
             }`,
           fragmentShader: `
@@ -14576,7 +14615,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
             uniform float opacity;
             uniform float intensity;
             varying float vDot;
+            varying vec3  vCol;
             void main() {
+              // If vCol is (0,0,0) the JS code didn't provide a per-vertex
+              // earth sample — fall back to the static "color" uniform.
+              vec3 baseCol = (vCol.r + vCol.g + vCol.b > 0.0001) ? vCol : color;
+
               float facing = clamp(vDot, 0.0, 1.0);
               float visibility = smoothstep(0.0, 0.05, facing);
               float horizon = 1.0 - smoothstep(0.12, 0.38, facing);
@@ -14585,12 +14629,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
               float edgeMix = clamp(horizon * 1.35 + haloBand * 1.10, 0.0, 1.0);
               float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.018 * intensity;
 
-              vec3 whiteCore = mix(color, vec3(1.0), 0.58) * (0.86 + 0.14 * centerMask);
-              vec3 edgeHalo = rimColor * (2.10 * horizon + 0.58 * haloBand)
-                            + glowColor * (1.72 * haloBand + 0.52 * horizon)
-                            + color * (0.26 * haloBand);
+              // Centre stays bright/white-ish (line legibility); horizon picks
+              // up the actual earth colour at that lat/lon (ocean → blue,
+              // forest → green, desert → tan, ice → near-white, etc).
+              vec3 whiteCore = mix(baseCol, vec3(1.0), 0.55) * (0.86 + 0.14 * centerMask);
+              vec3 edgeHalo  = baseCol   * (2.30 * horizon + 0.85 * haloBand)
+                             + rimColor  * (0.55 * horizon + 0.20 * haloBand)
+                             + glowColor * (0.45 * haloBand + 0.18 * horizon);
               vec3 finalColor = mix(whiteCore, whiteCore * 0.22 + edgeHalo, edgeMix) * intensity;
-              finalColor += shimmer * mix(vec3(1.0), rimColor + glowColor + color * 0.8, edgeMix * 0.9) * 0.32;
+              finalColor += shimmer * mix(vec3(1.0), baseCol + rimColor * 0.4 + glowColor * 0.4, edgeMix * 0.9) * 0.32;
 
               float alpha = opacity * visibility * clamp(0.74 + haloBand * 0.32 + horizon * 0.30, 0.0, 1.0);
               if (alpha < 0.01) discard;
@@ -14633,6 +14680,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       buildEdgeSegments(edgeCoords, altitudes = this.shellAltitudes) {
         const positions = [];
+        const colors    = [];
+        const sampler   = this.sampler;
         edgeCoords.forEach(([start, end]) => {
           const denseEdge = [...this.densify([start, end], 5), end];
           altitudes.forEach(altitude => {
@@ -14642,10 +14691,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const a = this.latLonToVector3(lat0, lon0, altitude);
               const b = this.latLonToVector3(lat1, lon1, altitude);
               positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+              if (sampler) {
+                const ca = sampler(lat0, lon0);
+                const cb = sampler(lat1, lon1);
+                colors.push(ca[0], ca[1], ca[2], cb[0], cb[1], cb[2]);
+              } else {
+                colors.push(0, 0, 0, 0, 0, 0); // sentinel → shader uses fallback
+              }
             }
           });
         });
-        return positions;
+        return { positions, colors };
       }
 
       collectUniqueEdges(geojson) {
@@ -14695,6 +14751,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       loadGeoJSON(geojson) {
+        this.lastGeoJSON = geojson;
         this.clear();
         const edges = this.collectUniqueEdges(geojson);
         if (!edges.length) return;
@@ -14702,18 +14759,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const coastEdges = edges.filter(edge => edge.count === 1).map(edge => [edge.start, edge.end]);
         const borderEdges = edges.filter(edge => edge.count > 1).map(edge => [edge.start, edge.end]);
 
-        const coastPositions = this.buildEdgeSegments(coastEdges);
-        if (coastPositions.length) {
+        const coast = this.buildEdgeSegments(coastEdges);
+        if (coast.positions.length) {
           const coastGeometry = new THREE.BufferGeometry();
-          coastGeometry.setAttribute("position", new THREE.Float32BufferAttribute(coastPositions, 3));
+          coastGeometry.setAttribute("position",   new THREE.Float32BufferAttribute(coast.positions, 3));
+          coastGeometry.setAttribute("vertColor",  new THREE.Float32BufferAttribute(coast.colors,    3));
           const coastLines = new THREE.LineSegments(coastGeometry, this.coastMaterial);
           this.group.add(coastLines);
         }
 
-        const borderPositions = this.buildEdgeSegments(borderEdges);
-        if (borderPositions.length) {
+        const border = this.buildEdgeSegments(borderEdges);
+        if (border.positions.length) {
           const borderGeometry = new THREE.BufferGeometry();
-          borderGeometry.setAttribute("position", new THREE.Float32BufferAttribute(borderPositions, 3));
+          borderGeometry.setAttribute("position",  new THREE.Float32BufferAttribute(border.positions, 3));
+          borderGeometry.setAttribute("vertColor", new THREE.Float32BufferAttribute(border.colors,    3));
           const borderLines = new THREE.LineSegments(borderGeometry, this.borderMaterial);
           this.group.add(borderLines);
         }
@@ -19030,16 +19089,24 @@ body.ticker-active .gTickerLabel {
   flex-shrink: 0; white-space: nowrap;
 }
 
-/* ── Captions ── */
+/* ── Captions — single sentence at a time, just above the control bar ── */
 .bCaptions {
-  position: absolute; bottom: 126px; left: 50%; transform: translateX(-50%);
-  max-width: min(700px, calc(100vw - 48px));
-  background: rgba(0,0,0,0.72); backdrop-filter: blur(6px);
+  position: absolute; bottom: 122px; left: 50%; transform: translateX(-50%);
+  max-width: min(720px, calc(100vw - 48px));
+  background: rgba(0,0,0,0.74); backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 10px; padding: 10px 18px;
-  color: #fff; font-size: 14px; line-height: 1.55; text-align: center;
+  border-radius: 10px; padding: 8px 16px;
+  color: #fff; font-size: 14px; line-height: 1.45; text-align: center;
   pointer-events: none; z-index: 3;
-  opacity: 0; transition: opacity 0.35s ease;
+  opacity: 0; transition: opacity 0.25s ease;
+  /* keep sentence on a single (or tight 2-line) caption strip */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1em;
 }
 .bCaptions.visible { opacity: 1; }
 .bCapWord {
@@ -20220,6 +20287,20 @@ body.ticker-active .gTickerLabel {
         clearBTimers();  // clear any stale timers before setting new ones
         startGlobeTimers(curIdx, seg, realDur);
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
+
+        // Trigger the next segment ~180ms BEFORE the current audio actually
+        // ends. ElevenLabs adds a small bit of trailing silence to every
+        // clip, and starting the next clip slightly early lets its head
+        // overlap that silence — eliminating the audible gap between
+        // segments. For story segments with a video, keep the long pause.
+        if (!seg.video_id) {
+          clearTimeout(segTimer);
+          const advanceInMs = Math.max(120, Math.round(realDur * 1000) - 180);
+          segTimer = setTimeout(() => {
+            if (segIdx !== curIdx || !playing) return;
+            goToSegment(curIdx + 1);
+          }, advanceInMs);
+        }
       };
 
       if (sa.readyState >= 1) {
@@ -20229,6 +20310,8 @@ body.ticker-active .gTickerLabel {
         sa.addEventListener('loadedmetadata', onReady, { once: true });
       }
 
+      // Backup: ended-driven advance in case the early-advance timer was
+      // cleared (e.g. user paused). Video segments still use the long pause.
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
         clearTimeout(segTimer);
@@ -20263,7 +20346,7 @@ body.ticker-active .gTickerLabel {
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
-        }, Math.round(estDur * 1000) + 200);
+        }, Math.max(120, Math.round(estDur * 1000) - 180));
       }
     }
 
@@ -20867,36 +20950,61 @@ body.ticker-active .gTickerLabel {
     if (btn) btn.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
   }
 
-  // ── Caption typewriter ────────────────────────────────────────────────────
-  // Reveals words in sync with audio.currentTime. Uses ElevenLabs character
-  // alignment (seg.word_timings) when available — perfectly synced to the
-  // narrator. Falls back to a constant word-rate when timings are absent.
+  // ── Caption typewriter (sentence-by-sentence) ────────────────────────────
+  // Each segment's voiceover is split into sentences (by punctuation). At any
+  // moment only the currently-spoken sentence is shown, with its words typed
+  // in via the ElevenLabs character alignment (seg.word_timings). Falls back
+  // to a constant word-rate when timings are absent.
   let _capRAF    = 0;
   let _capRunId  = 0;
-  let _capWords  = [];   // [{ w, t }]  ms relative to segment start
-  let _capSpans  = [];
-  let _capRevealed = -1;
+  let _capSentences = [];   // [{ words:[{w,t}], start, end }]
+  let _capCurSent   = -1;
+  let _capCurSpans  = [];
+  let _capCurRevealed = -1;
   let _capFallbackStart = 0;
-  let _capFallbackRate  = 0; // ms per word
+  let _capFallbackRate  = 0;
 
   function _capStop() {
     if (_capRAF) cancelAnimationFrame(_capRAF);
     _capRAF = 0;
   }
 
-  function _capBuildDom(el, words) {
-    // Render each word as a span; unrevealed words are invisible but occupy
-    // space so the caption box doesn't reflow as words appear.
+  // Group a flat word_timings array into sentences. Punctuation is detected
+  // on the word token itself (the alignment payload includes trailing
+  // punctuation as part of the word). Falls back to one big sentence.
+  function _capBuildSentences(words) {
+    if (!words.length) return [];
+    const sentences = [];
+    let cur = [];
+    for (const wt of words) {
+      cur.push(wt);
+      if (/[.!?…]["')\]]?$/.test(wt.w)) {
+        sentences.push(cur);
+        cur = [];
+      }
+    }
+    if (cur.length) sentences.push(cur);
+    return sentences.map(ws => ({
+      words: ws,
+      start: ws[0].t,
+      end:   ws[ws.length - 1].t,
+    }));
+  }
+
+  function _capRenderSentence(el, sentenceIdx) {
+    const s = _capSentences[sentenceIdx];
+    if (!s) { el.innerHTML = ''; _capCurSpans = []; return; }
     el.innerHTML = '';
-    _capSpans = [];
-    words.forEach((wt, i) => {
+    _capCurSpans = [];
+    s.words.forEach((wt, i) => {
       if (i > 0) el.appendChild(document.createTextNode(' '));
-      const s = document.createElement('span');
-      s.className = 'bCapWord';
-      s.textContent = wt.w;
-      el.appendChild(s);
-      _capSpans.push(s);
+      const sp = document.createElement('span');
+      sp.className = 'bCapWord';
+      sp.textContent = wt.w;
+      el.appendChild(sp);
+      _capCurSpans.push(sp);
     });
+    _capCurRevealed = -1;
   }
 
   function updateCaptions(seg) {
@@ -20907,53 +21015,64 @@ body.ticker-active .gTickerLabel {
     const myRun = _capRunId;
     const text = seg?.voiceover_text || '';
     el.classList.toggle('visible', captionsOn && !!text);
-    if (!text) { el.innerHTML = ''; _capWords = []; _capSpans = []; return; }
+    if (!text) { el.innerHTML = ''; _capSentences = []; _capCurSpans = []; _capCurSent = -1; return; }
 
-    // Prefer real per-word timings from ElevenLabs alignment. If absent
-    // (e.g. older episodes), fall back to splitting voiceover_text and
-    // animating at a constant rate based on segment duration.
+    // Build word_timings (real or fallback) then group into sentences.
     const real = Array.isArray(seg.word_timings) && seg.word_timings.length;
-    if (real) {
-      _capWords = seg.word_timings.map(wt => ({ w: wt.w, t: wt.t }));
-    } else {
-      const tokens = text.split(/\s+/).filter(Boolean);
-      _capWords = tokens.map(w => ({ w, t: -1 })); // -1 = use fallback rate
-    }
-    _capBuildDom(el, _capWords);
-    _capRevealed = -1;
+    const flatWords = real
+      ? seg.word_timings.map(wt => ({ w: wt.w, t: wt.t }))
+      : text.split(/\s+/).filter(Boolean).map(w => ({ w, t: -1 }));
 
-    // Fallback rate: estimate using audio.duration (preferred) or word-count
+    // Fallback rate for missing alignment
     const estDur = (audio && isFinite(audio.duration) && audio.duration > 1)
       ? audio.duration
       : getSegmentDuration(segIdx);
-    _capFallbackRate  = _capWords.length ? (estDur * 1000) / _capWords.length : 0;
+    _capFallbackRate  = flatWords.length ? (estDur * 1000) / flatWords.length : 0;
     _capFallbackStart = performance.now();
 
+    // Synthesise per-word times when no alignment, so sentence boundaries
+    // still get usable start/end times.
+    if (!real) {
+      flatWords.forEach((w, i) => { w.t = Math.round(i * _capFallbackRate); });
+    }
+
+    _capSentences = _capBuildSentences(flatWords);
+    _capCurSent   = -1;
+
     const tick = () => {
-      if (myRun !== _capRunId) return; // a newer segment took over
+      if (myRun !== _capRunId) return;
       const audioMs = (audio && isFinite(audio.currentTime))
         ? audio.currentTime * 1000
         : (performance.now() - _capFallbackStart);
 
-      // Find the highest index whose start time <= audioMs
-      let target = _capRevealed;
-      for (let i = target + 1; i < _capWords.length; i++) {
-        const t = _capWords[i].t;
-        const trigger = (t >= 0) ? t : (i * _capFallbackRate);
-        if (trigger <= audioMs) target = i;
+      // Find which sentence we're in (the highest one whose start <= audioMs).
+      let sIdx = 0;
+      for (let i = 0; i < _capSentences.length; i++) {
+        if (_capSentences[i].start <= audioMs) sIdx = i;
         else break;
       }
-      if (target !== _capRevealed) {
-        for (let i = _capRevealed + 1; i <= target; i++) {
-          if (_capSpans[i]) _capSpans[i].classList.add('lit');
+      if (sIdx !== _capCurSent) {
+        _capCurSent = sIdx;
+        _capRenderSentence(el, sIdx);
+      }
+
+      // Reveal words within the current sentence
+      const sent = _capSentences[_capCurSent];
+      if (sent) {
+        let target = _capCurRevealed;
+        for (let i = target + 1; i < sent.words.length; i++) {
+          if (sent.words[i].t <= audioMs) target = i;
+          else break;
         }
-        _capRevealed = target;
+        if (target !== _capCurRevealed) {
+          for (let i = _capCurRevealed + 1; i <= target; i++) {
+            if (_capCurSpans[i]) _capCurSpans[i].classList.add('lit');
+          }
+          _capCurRevealed = target;
+        }
       }
-      if (_capRevealed < _capWords.length - 1) {
-        _capRAF = requestAnimationFrame(tick);
-      } else {
-        _capRAF = 0;
-      }
+
+      _capRAF = requestAnimationFrame(tick);
     };
     _capRAF = requestAnimationFrame(tick);
   }

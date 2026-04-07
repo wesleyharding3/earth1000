@@ -22,6 +22,10 @@
 require('dotenv').config();
 const pool      = require('./db');
 const readline  = require('readline');
+const fs        = require('fs');
+const path      = require('path');
+const os        = require('os');
+const { spawnSync } = require('child_process');
 const Anthropic = require('@anthropic-ai/sdk');
 const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
 const dataPanels = require('./dataPanelGenerator');
@@ -1851,6 +1855,40 @@ async function regeneratePanelsForEpisode(episodeId, segments) {
 }
 
 // ─── Pick Mode: Script Review & Edit ──────────────────────────────────────
+// ── Open the user's $EDITOR on a temp file containing `initial`, wait for
+// them to save and exit, then return the new contents (trimmed). Falls back
+// to nano on macOS / vim elsewhere if $EDITOR is unset. Returns null if the
+// user left the file empty or unchanged is false and they bailed.
+function openInEditor(initial, label = 'briefing-edit') {
+  const editor = process.env.VISUAL || process.env.EDITOR
+    || (process.platform === 'darwin' ? 'nano' : 'vim');
+  const tmp = path.join(os.tmpdir(), `${label}-${Date.now()}-${process.pid}.txt`);
+  // Header is stripped on read so user can see context but not have it land in script.
+  const header =
+`# Edit the voiceover below. Lines starting with '#' are stripped.
+# Save and exit your editor when done. Leave the body empty to cancel.
+# ──────────────────────────────────────────────────────────────────────
+`;
+  fs.writeFileSync(tmp, header + (initial || ''), 'utf8');
+  const r = spawnSync(editor, [tmp], { stdio: 'inherit' });
+  if (r.status !== 0 && r.error) {
+    console.log(`  ✗ Editor "${editor}" failed: ${r.error.message}`);
+    try { fs.unlinkSync(tmp); } catch (_) {}
+    return null;
+  }
+  let contents = '';
+  try { contents = fs.readFileSync(tmp, 'utf8'); } catch (_) { contents = ''; }
+  try { fs.unlinkSync(tmp); } catch (_) {}
+  // Strip comment lines and trim
+  const body = contents
+    .split(/\r?\n/)
+    .filter(l => !l.startsWith('#'))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return body || null;
+}
+
 async function reviewAndEditSegments(segments, _threadData) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
@@ -1927,12 +1965,13 @@ async function reviewAndEditSegments(segments, _threadData) {
 
   async function editSegment(seg, idx) {
     console.log('\n  Edit fields for segment ' + idx + ':');
-    console.log('    v  — voiceover_text');
-    console.log('    t  — transition');
-    console.log('    f  — globe_focus / globe_animate  (enter: lat lng zoom)');
-    console.log('    p  — primary node  (enter: city|country  name  lat  lon)');
-    console.log('    s  — secondary_locations  (add/remove: +name lat lon  or  -index)');
-    console.log('    a  — flow_arcs  (add/remove: +fromName lat lng toName lat lng  or  -index)');
+    console.log('    v   — voiceover_text  (opens $EDITOR for free-form editing)');
+    console.log('    vl  — voiceover_text  (single-line inline edit)');
+    console.log('    t   — transition');
+    console.log('    f   — globe_focus / globe_animate  (enter: lat lng zoom)');
+    console.log('    p   — primary node  (enter: city|country  name  lat  lon)');
+    console.log('    s   — secondary_locations  (add/remove: +name lat lon  or  -index)');
+    console.log('    a   — flow_arcs  (add/remove: +fromName lat lng toName lat lng  or  -index)');
     console.log('    done — finish editing this segment');
     console.log();
 
@@ -1941,6 +1980,17 @@ async function reviewAndEditSegments(segments, _threadData) {
       if (!cmd || cmd === 'done') break;
 
       if (cmd === 'v') {
+        // Open the user's $EDITOR with the current voiceover so they can
+        // freely rewrite, delete, or restructure sentences. Empty body = cancel.
+        const next = openInEditor(seg.voiceover_text || '', `seg-${idx}-voiceover`);
+        if (next == null) {
+          console.log('  · voiceover unchanged');
+        } else {
+          seg.voiceover_text = next;
+          console.log(`  ✓ voiceover updated (${next.split(/\s+/).length} words)`);
+        }
+
+      } else if (cmd === 'vl') {
         const val = (await ask('  voiceover_text> ')).trim();
         if (val) seg.voiceover_text = val;
 
@@ -2033,7 +2083,7 @@ async function reviewAndEditSegments(segments, _threadData) {
   console.log('║         SCRIPT REVIEW — verify nodes, arcs, and voiceover before TTS         ║');
   console.log('╚═══════════════════════════════════════════════════════════════════════════════╝');
   console.log(`  ${segments.length} segments total`);
-  console.log('  Commands:  confirm  |  edit N  |  show N  |  abort');
+  console.log('  Commands:  confirm  |  edit N  |  show N  |  delete N  |  abort');
   console.log();
 
   // Initial display: all segments
@@ -2076,7 +2126,29 @@ async function reviewAndEditSegments(segments, _threadData) {
       continue;
     }
 
-    console.log('  Commands:  confirm  |  edit N  |  show N  |  abort');
+    const deleteMatch = cmd.match(/^delete\s+(\d+)$/);
+    if (deleteMatch) {
+      const idx = parseInt(deleteMatch[1], 10);
+      if (idx < 0 || idx >= segments.length) {
+        console.log(`  ✗ Segment index out of range (0–${segments.length - 1})`);
+        continue;
+      }
+      const seg = segments[idx];
+      const label = `[${idx}] ${(seg.type || '?').toUpperCase()}` +
+        (seg.thread_title ? ` — ${seg.thread_title}` : '');
+      const confirm = (await ask(`  Delete ${label}?  (y/N)> `)).trim().toLowerCase();
+      if (confirm === 'y' || confirm === 'yes') {
+        segments.splice(idx, 1);
+        console.log(`  ✓ Deleted segment [${idx}]. ${segments.length} segments remain.`);
+        // Re-print so user sees the new numbering
+        segments.forEach((s, i) => printSegment(s, i));
+      } else {
+        console.log('  · cancelled');
+      }
+      continue;
+    }
+
+    console.log('  Commands:  confirm  |  edit N  |  show N  |  delete N  |  abort');
   }
 }
 
