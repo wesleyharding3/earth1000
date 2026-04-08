@@ -203,7 +203,7 @@ async function evaluateWithClaude(articles, existingThreads) {
     cat:      t.primary_category
   }));
 
-  const prompt = `You are a senior news editor. Analyze these articles and identify distinct ongoing news story threads.
+  const prompt = `You are the editorial filter for a GEOPOLITICAL MONITORING PLATFORM. Your job is to identify hard-news story threads that matter to people tracking world events, conflict, statecraft, and power. You are NOT a general news aggregator. Most articles you see should NOT become threads.
 
 EXISTING ACTIVE THREADS (check if any articles extend these):
 ${JSON.stringify(existingData, null, 2)}
@@ -211,23 +211,49 @@ ${JSON.stringify(existingData, null, 2)}
 ARTICLES TO ANALYZE:
 ${JSON.stringify(articleData, null, 2)}
 
-Instructions:
-- Group articles that are genuinely about the same ongoing story — even if they use different keywords
-- A "story thread" is a developing narrative that spans multiple articles/sources over time
-- Single articles can start a new thread if they represent a significant standalone story
-- Check existing threads first — prefer extending them over creating duplicates
-- Detect semantic connections SQL keyword matching would miss (e.g. "tariffs" + "trade war" + "WTO dispute" = same story)
-- Importance 1-10: 10 = major global event, 1 = minor local interest
+═══ WHAT QUALIFIES AS A THREAD ═══
+A thread MUST be about at least one of:
+- Armed conflict, military operations, terrorism, insurgency, weapons programs
+- Diplomacy, treaties, summits, sanctions, alliances, state-to-state disputes
+- Elections, coups, governance crises, protests with political stakes, regime changes
+- Cross-border economics with geopolitical weight (trade wars, tariffs, energy supply, currency crises, critical-mineral disputes)
+- Espionage, cyberattacks attributable to states, information warfare
+- Major natural disasters, disease outbreaks, or humanitarian crises with state-level response
+- Border incidents, migration crises, refugee flows
+- Named state actors, heads of state, ministers, generals, or geopolitically significant non-state actors (cartels, militias, terror groups)
 
-Return ONLY a valid JSON array, no explanation:
+A thread should name a PLACE, an ACTOR, or a concrete EVENT — not an abstract trend.
+
+═══ HARD REJECT — DO NOT CREATE THREADS FOR ═══
+- Lifestyle, tourism, recreation, food, fashion, dating, wellness
+- Domestic education trends, student loans, university policy debates, "AI in classrooms"
+- Cultural events, festivals, religious holidays, art shows, museum openings, awards
+- Entertainment: movies, TV, music, celebrity news, streaming
+- Sports — UNLESS the story is about state boycotts, doping scandals tied to governments, or athletes being used as political instruments
+- Technology product launches, consumer apps, startup funding
+- Personal finance, real estate trends, retail/shopping
+- Local crime, accidents, weather — unless it triggers a state-level response or has cross-border impact
+- Vague abstractions like "social hardship", "youth trends", "community coverage"
+- Op-eds, opinion pieces, editorials, "explainer" pieces with no news event
+
+If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not invent a thread to hold it. It is correct and expected to return an empty array if none of the articles qualify.
+
+═══ GROUPING RULES ═══
+- Group articles that are genuinely about the same ongoing story — even if they use different keywords
+- Check existing threads first — strongly prefer extending them over creating duplicates
+- Detect semantic connections SQL keyword matching would miss (e.g. "tariffs" + "trade war" + "WTO dispute" = same story)
+- A thread should have a sharp, specific title naming the actors/place/event — never a generic category label like "Sports and Entertainment Coverage" or "Higher Education Trends"
+- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
+
+Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and often correct:
 [
   {
     "existing_thread_id": null,
-    "title": "concise thread title (max 8 words)",
-    "description": "Two sentences describing the ongoing story and its significance.",
+    "title": "specific thread title naming actors/place/event (max 8 words)",
+    "description": "Two sentences describing the ongoing story and its geopolitical significance.",
     "article_ids": [array of article ids that belong to this thread],
     "anchor_article_id": id of the most representative article,
-    "primary_category": "politics|economy|military|diplomacy|environment|technology|society|sports|culture",
+    "primary_category": "politics|economy|military|diplomacy|environment|technology",
     "geographic_scope": "global|regional|local",
     "importance": 7,
     "keywords": ["array", "of", "5-10", "core", "keywords"]

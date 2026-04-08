@@ -86,6 +86,31 @@ async function ttlCached(key, ttlMs, producer) {
   return p;
 }
 
+// ── Country-name regex, built once at boot ─────────────────────────────────
+//
+// `/api/threads/latest` previously did a JOIN against the full countries
+// table with a per-row `~*` regex, which is N×M and crushes the query plan.
+// We now precompute a single `\m(name1|name2|...)\M` alternation and reuse it
+// for one regex eval per thread row instead of hundreds.
+let _countryRegexPromise = null;
+function getCountryRegex() {
+  if (_countryRegexPromise) return _countryRegexPromise;
+  _countryRegexPromise = (async () => {
+    const { rows } = await pool.query(
+      `SELECT name FROM countries WHERE name IS NOT NULL AND length(name) >= 4 ORDER BY length(name) DESC`
+    );
+    const escaped = rows
+      .map(r => r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    return `\\m(${escaped})\\M`;
+  })().catch(err => {
+    _countryRegexPromise = null;            // allow retry next call
+    console.error('[country-regex] build failed:', err.message);
+    return '\\m$^\\M';                      // never matches → safe fallback
+  });
+  return _countryRegexPromise;
+}
+
 const tradeTableColumnCache = new Map();
 const TRADE_VALUE_COLUMN_CANDIDATES = ["annual_profit", "annual_cost", "value", "total_value", "exports_value", "imports_value", "amount"];
 const TRADE_ITEM_COLUMN_CANDIDATES = ["name", "label", "product", "commodity", "item_name", "category"];
@@ -1793,6 +1818,7 @@ app.get("/api/threads/latest", async (req, res) => {
     // within the next refresh window.
     const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
     const _cached = await ttlCached(_cacheKey, 30_000, async () => {
+    const countryRegex = await getCountryRegex();
 
     // Step 1: get threads
     //
@@ -1804,91 +1830,168 @@ app.get("/api/threads/latest", async (req, res) => {
     //     Tier 2 — references 0 countries (uncontextualized stories)
     //   Within each tier we still respect status (active > cooling > dormant)
     //   and the original importance/article_count/recency order.
-    const params = [limit];
+    // params: $1=limit, $2=country_regex, then optional from/to
+    const params = [limit, countryRegex];
     const dateClauses = [];
     if (fromDate) { params.push(fromDate); dateClauses.push(`st.last_updated_at >= $${params.length}::date`); }
     if (toDate)   { params.push(toDate);   dateClauses.push(`st.last_updated_at <  ($${params.length}::date + INTERVAL '1 day')`); }
     const dateWhere = dateClauses.length ? `AND ${dateClauses.join(' AND ')}` : '';
 
+    // Single-pass query: filter the candidate set in one CTE, then join the
+    // article-country aggregate over only that filtered set. The two title
+    // checks are inline column expressions — one cheap regex eval per row
+    // instead of N×M cross joins.
     const { rows: threads } = await pool.query(`
-      WITH thread_country_counts AS (
+      WITH candidate_threads AS (
+        SELECT
+          st.id AS thread_id, st.title, st.description, st.primary_category,
+          st.geographic_scope, st.importance, st.keywords, st.article_count,
+          st.status, st.last_updated_at,
+          (st.title IS NOT NULL AND st.title ~* $2) AS title_mentions_country,
+          (st.title IS NOT NULL AND (
+              st.title ~* '\\m(coverage|roundup|round-up|overview|highlights|miscellaneous|recap|digest|wrap[- ]?up|hub|trending|topics)\\M'
+           OR st.title ~* '\\m(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\s+and\\s+(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\M'
+           OR st.title ~* '^(general|various|misc|other)\\M'
+          )) AS title_is_generic
+        FROM story_threads st
+        WHERE st.article_count >= 2
+          AND st.status IN ('active', 'cooling', 'dormant')
+          ${dateWhere}
+      ),
+      thread_country_counts AS (
         SELECT
           sta.thread_id,
           COUNT(DISTINCT a.country_id) AS country_count
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
         WHERE a.country_id IS NOT NULL
+          AND sta.thread_id IN (SELECT thread_id FROM candidate_threads)
         GROUP BY sta.thread_id
-      ),
-      -- Threads whose TITLE mentions a real country name (word-boundary
-      -- match). Stories about actual places get a heavy ranking boost over
-      -- abstract political/social headlines. Length >= 4 filters out noise
-      -- from any 1-3 char rows; word-boundary anchors avoid sub-string
-      -- false-positives like "iran" matching "iranian" — though demonym
-      -- forms are intentionally allowed via the length cap on co.name.
-      thread_title_has_country AS (
-        SELECT DISTINCT st.id AS thread_id
-        FROM story_threads st
-        JOIN countries co
-          ON co.name IS NOT NULL
-         AND length(co.name) >= 4
-         AND st.title ~* ('\\m' || co.name || '\\M')
-        WHERE st.title IS NOT NULL
-      ),
-      -- Catch-all "aggregator" threads with vague, category-bucket titles
-      -- like "Sports and Entertainment Coverage", "Lifestyle Roundup",
-      -- "Trending Topics" — these are noise, not stories. We push them
-      -- to the bottom of the list (below the country-mention tier) but
-      -- keep them browsable.
-      thread_title_is_generic AS (
-        SELECT id AS thread_id
-        FROM story_threads
-        WHERE title IS NOT NULL
-          AND (
-            title ~* '\\m(coverage|roundup|round-up|overview|highlights|miscellaneous|recap|digest|wrap[- ]?up|hub|trending|topics)\\M'
-            OR title ~* '\\m(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\s+and\\s+(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\M'
-            OR title ~* '^(general|various|misc|other)\\M'
-          )
       )
       SELECT
-        st.id AS thread_id, st.title, st.description, st.primary_category,
-        st.geographic_scope, st.importance, st.keywords, st.article_count,
-        st.status, st.last_updated_at,
+        ct.thread_id, ct.title, ct.description, ct.primary_category,
+        ct.geographic_scope, ct.importance, ct.keywords, ct.article_count,
+        ct.status, ct.last_updated_at,
         COALESCE(tcc.country_count, 0)::int AS country_count,
-        (tthc.thread_id IS NOT NULL) AS title_mentions_country,
-        (ttig.thread_id IS NOT NULL) AS title_is_generic
-      FROM story_threads st
-      LEFT JOIN thread_country_counts tcc      ON tcc.thread_id  = st.id
-      LEFT JOIN thread_title_has_country tthc  ON tthc.thread_id = st.id
-      LEFT JOIN thread_title_is_generic  ttig  ON ttig.thread_id = st.id
-      WHERE st.article_count >= 2
-        AND st.status IN ('active', 'cooling', 'dormant')
-        ${dateWhere}
+        ct.title_mentions_country,
+        ct.title_is_generic
+      FROM candidate_threads ct
+      LEFT JOIN thread_country_counts tcc ON tcc.thread_id = ct.thread_id
       ORDER BY
-        CASE st.status
+        CASE ct.status
           WHEN 'active'  THEN 0
           WHEN 'cooling' THEN 1
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
-        -- Generic catch-all aggregator titles ("Sports and Entertainment
-        -- Coverage", "Lifestyle Roundup", "Trending Topics", etc.) drop to
-        -- the absolute bottom of every status tier. Real stories first.
-        CASE WHEN ttig.thread_id IS NOT NULL THEN 1 ELSE 0 END,
-        -- Heavy penalty for threads whose titles don't name a real place.
-        -- Abstract / ideological / "social abstraction" stories drop to the
-        -- bottom of every status tier but remain in the list.
-        CASE WHEN tthc.thread_id IS NOT NULL THEN 0 ELSE 1 END,
+        CASE WHEN ct.title_is_generic THEN 1 ELSE 0 END,
+        CASE WHEN ct.title_mentions_country THEN 0 ELSE 1 END,
         CASE
           WHEN COALESCE(tcc.country_count, 0) >= 2 THEN 0
           WHEN COALESCE(tcc.country_count, 0) = 1 THEN 1
           ELSE 2
         END,
-        st.importance DESC,
-        st.article_count DESC,
-        st.last_updated_at DESC NULLS LAST
-      LIMIT $1
+        ct.importance DESC,
+        ct.article_count DESC,
+        ct.last_updated_at DESC NULLS LAST
+      LIMIT ($1 * 3)
     `, params);
+
+    // ── Diversity rerank (greedy MMR) ───────────────────────────────────────
+    // The SQL above gives us a fundamentally-correct ranking but tends to
+    // bunch near-duplicate subjects (e.g. three "Easter Sunday Mass" threads,
+    // five Trump threads in a row, etc.). We rerank in JS so the top of the
+    // feed surfaces a wider variety of stories. We over-fetch by 3x and slice
+    // back to `limit` after diversification.
+    //
+    // Three signals stack:
+    //   1. Significant TITLE tokens shared with any prior pick — biggest hammer.
+    //      Catches the "three Easter threads" case where keyword arrays may
+    //      diverge but the user-visible headlines obviously repeat.
+    //   2. Keyword-array overlap with prior picks — softer, broader signal.
+    //   3. Same primary_category as any pick in a small recent window.
+    const TITLE_TOKEN_PENALTY = 8.0;  // per shared significant title token
+    const KW_PENALTY          = 2.0;  // per overlapping keyword w/ a prior pick
+    const CAT_PENALTY         = 0.7;  // per same primary_category in recent window
+    const RECENCY_WINDOW      = 8;    // category penalty only for last N picks
+
+    const TITLE_STOPWORDS = new Set([
+      'the','a','an','and','or','but','of','in','on','at','to','for','from','by',
+      'with','as','is','are','was','were','be','been','being','it','its','this',
+      'that','these','those','his','her','their','our','your','my','i','we','they',
+      'he','she','him','them','us','you','me','about','after','before','over','out',
+      'up','down','off','into','through','during','until','while','than','then',
+      'so','if','not','no','yes','too','very','more','most','some','any','all',
+      'new','says','said','will','would','could','should','may','might','can',
+      'has','have','had','do','does','did','amid','amidst','vs','versus','plus',
+      'also','again','still','just','like','what','who','when','where','why','how',
+      'live','update','updates','breaking','exclusive','today','tomorrow','yesterday',
+      'thread','story','stories','news','report','reports','reporting'
+    ]);
+    function titleTokens(title) {
+      if (!title) return [];
+      return String(title)
+        .toLowerCase()
+        .replace(/[^a-z0-9\s'-]+/g, ' ')
+        .split(/\s+/)
+        .map(t => t.replace(/^['-]+|['-]+$/g, ''))
+        .filter(t => t.length >= 4 && !TITLE_STOPWORDS.has(t));
+    }
+
+    function diversifyRerank(rows, want) {
+      if (rows.length <= 1) return rows;
+      const remaining = rows.map((r, i) => ({
+        row: r,
+        baseRank: i,
+        titleTokens: titleTokens(r.title)
+      }));
+      const picked      = [];
+      const seenKw      = new Map();   // keyword → times seen
+      const seenTitleTk = new Map();   // significant title token → times seen
+      while (picked.length < want && remaining.length) {
+        let bestIdx = 0, bestScore = Infinity;
+        for (let i = 0; i < remaining.length; i++) {
+          const cand = remaining[i];
+          let penalty = 0;
+          // Title-token overlap — the dominant penalty.
+          for (const t of cand.titleTokens) {
+            penalty += (seenTitleTk.get(t) || 0) * TITLE_TOKEN_PENALTY;
+          }
+          // Keyword overlap — softer.
+          const kws = Array.isArray(cand.row.keywords) ? cand.row.keywords : [];
+          for (const kw of kws) {
+            const k = String(kw || '').toLowerCase().trim();
+            if (!k) continue;
+            penalty += (seenKw.get(k) || 0) * KW_PENALTY;
+          }
+          // Category bunching in the most recent window.
+          const cat = cand.row.primary_category || '';
+          if (cat) {
+            const recent = picked.slice(-RECENCY_WINDOW);
+            const sameCatRecent = recent.filter(p => (p.primary_category || '') === cat).length;
+            penalty += sameCatRecent * CAT_PENALTY;
+          }
+          const score = cand.baseRank + penalty;
+          if (score < bestScore) { bestScore = score; bestIdx = i; }
+        }
+        const chosenWrap = remaining.splice(bestIdx, 1)[0];
+        const chosen = chosenWrap.row;
+        picked.push(chosen);
+        for (const t of chosenWrap.titleTokens) {
+          seenTitleTk.set(t, (seenTitleTk.get(t) || 0) + 1);
+        }
+        const ckws = Array.isArray(chosen.keywords) ? chosen.keywords : [];
+        for (const kw of ckws) {
+          const k = String(kw || '').toLowerCase().trim();
+          if (!k) continue;
+          seenKw.set(k, (seenKw.get(k) || 0) + 1);
+        }
+      }
+      return picked;
+    }
+    const diversified = diversifyRerank(threads, limit);
+    threads.length = 0;
+    threads.push(...diversified);
 
     if (!threads.length) return [];
 

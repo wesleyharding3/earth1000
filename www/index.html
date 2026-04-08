@@ -15686,27 +15686,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       async function loadThreads() {
         threadsGrid.innerHTML = skels(1);
         try {
-          const params = new URLSearchParams({ limit: 1000 });
+          // Fetch a sane initial slice. The lazy renderer paints these in
+          // chunks of 15; if the user scrolls past the slice, we can grow
+          // it on demand later. Big initial fetches were the cause of the
+          // slow first-paint at app open.
+          const params = new URLSearchParams({ limit: 250 });
           if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
           if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
           const res = await fetch(`${API}/api/threads/latest?${params}`);
           if (!res.ok) throw new Error('Failed');
           threadsData = await res.json();
           threadsLoaded = true;
-          // Set default date range to the span covered by the loaded threads
-          // (only on the very first load, before the user has touched the inputs)
-          if (threadsData.length && !threadsFromInput?.value && !threadsToInput?.value) {
-            const dates = threadsData
-              .map(t => t.last_updated_at ? new Date(t.last_updated_at) : null)
-              .filter(Boolean);
-            if (dates.length) {
-              const minDate = new Date(Math.min(...dates));
-              const maxDate = new Date(Math.max(...dates));
-              if (threadsFromInput) threadsFromInput.value = minDate.toISOString().slice(0, 10);
-              if (threadsToInput)   threadsToInput.value   = maxDate.toISOString().slice(0, 10);
-              updateThreadsDateClearBtns();
-            }
-          }
           renderThreads();
         } catch (e) {
           threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
