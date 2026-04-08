@@ -293,7 +293,7 @@ async function main() {
     }
 
     const rows = await withRetry('SELECT batch', () => pool.query(
-      `SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary
+      `SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary, a.language
          FROM news_articles a
         WHERE ${whereBits.join(' AND ')}
         ORDER BY a.id ASC

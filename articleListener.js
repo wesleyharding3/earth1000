@@ -14,7 +14,7 @@ const { scoreArticle: lexiconScoreArticle } = require("./sentimentLexicon");
 async function applyLexiconSentiment(articleId) {
   try {
     const { rows } = await pool.query(
-      `SELECT id, title, summary, translated_title, translated_summary, sentiment_score
+      `SELECT id, title, summary, translated_title, translated_summary, language, sentiment_score
          FROM news_articles WHERE id = $1`,
       [articleId]
     );
