@@ -4837,6 +4837,41 @@ body.ticker-active #flowControls {
       display: flex; align-items: center; gap: 5px;
       flex-shrink: 0;
     }
+    .nfThreadsDateToggle {
+      display: inline-flex; align-items: center; gap: 4px;
+      height: 22px; padding: 0 8px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 7px;
+      color: rgba(255,255,255,0.55);
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      font-family: inherit;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: color 0.18s, border-color 0.18s, background 0.18s;
+    }
+    .nfThreadsDateToggle svg {
+      width: 9px; height: 9px;
+      transition: transform 0.2s;
+    }
+    .nfThreadsDateToggle:hover {
+      color: rgba(255,210,110,0.85);
+      border-color: rgba(255,180,80,0.30);
+      background: rgba(255,180,80,0.06);
+    }
+    .nfThreadsDateToggle.open {
+      color: rgba(255,210,110,0.95);
+      border-color: rgba(255,180,80,0.36);
+      background: rgba(255,180,80,0.10);
+    }
+    .nfThreadsDateToggle.open svg { transform: rotate(180deg); }
+    .nfThreadsDateToggle.has-value::after {
+      content: '';
+      width: 5px; height: 5px; border-radius: 50%;
+      background: rgba(255,180,80,0.85);
+      margin-left: 1px;
+    }
     .nfThreadsDateField {
       position: relative; display: flex; align-items: center;
     }
@@ -15076,7 +15111,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <!-- Threads meta + date filter -->
     <div id="nfThreadsMeta" style="display:none">
       <span class="nfMetaCount" id="nfThreadsMetaCount"></span>
-      <div class="nfThreadsDateFilter">
+      <button type="button" class="nfThreadsDateToggle" id="nfThreadsDateToggle" title="Filter by date">
+        <span>Date</span>
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 5 6 8 9 5"/></svg>
+      </button>
+      <div class="nfThreadsDateFilter" id="nfThreadsDateFilter" style="display:none">
         <div class="nfThreadsDateField">
           <input type="date" id="nfThreadsFrom" class="nfThreadsDateInput" title="From date" />
           <button class="nfThreadsDateClear" id="nfThreadsFromClear" style="display:none" title="Clear">✕</button>
@@ -15682,6 +15721,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const threadsToClear   = document.getElementById('nfThreadsToClear');
       const threadsToInput   = document.getElementById('nfThreadsTo');
       const threadsFromClear = document.getElementById('nfThreadsFromClear');
+      const threadsDateToggleBtn = document.getElementById('nfThreadsDateToggle');
+      const threadsDateFilterEl  = document.getElementById('nfThreadsDateFilter');
+      threadsDateToggleBtn?.addEventListener('click', () => {
+        if (!threadsDateFilterEl) return;
+        const isOpen = threadsDateFilterEl.style.display !== 'none';
+        threadsDateFilterEl.style.display = isOpen ? 'none' : 'flex';
+        threadsDateToggleBtn.classList.toggle('open', !isOpen);
+      });
 
       async function loadThreads() {
         threadsGrid.innerHTML = skels(1);
@@ -15706,6 +15753,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function updateThreadsDateClearBtns() {
         if (threadsFromClear) threadsFromClear.style.display = threadsFromInput?.value ? 'block' : 'none';
         if (threadsToClear)   threadsToClear.style.display   = threadsToInput?.value   ? 'block' : 'none';
+        const hasValue = !!(threadsFromInput?.value || threadsToInput?.value);
+        threadsDateToggleBtn?.classList.toggle('has-value', hasValue);
       }
 
       // Wire date inputs — reload on change with a short debounce
