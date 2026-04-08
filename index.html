@@ -2143,6 +2143,90 @@ body.ticker-active #flowControls {
       border-left: 1px solid rgba(255,255,255,0.08);
     }
 
+    /* ── Unified toggles row (desktop + mobile): puts the Local/Global
+       segment and the Article/Video segment side-by-side, equally sized, on a
+       single line below the node title. Also used by the region panel. ── */
+    .panelControlsRow1 {
+      display: flex !important;
+      gap: 10px;
+      align-items: stretch;
+      padding: 4px 16px 8px 16px;
+      flex-shrink: 0;
+    }
+    .panelControlsRow1 .panelSortRow {
+      flex: 1;
+      padding: 0 !important;
+      gap: 0 !important;
+      margin: 0;
+    }
+    .panelControlsRow1 .panelSortSegment {
+      margin-right: 0 !important;
+      border-radius: 18px;
+      flex: 1;
+    }
+    .panelControlsRow1 .panelMediaRow {
+      flex: 1;
+      padding: 0 !important;
+      margin: 0;
+    }
+    .panelControlsRow1 .panelMediaSegment {
+      width: 100%;
+      flex: 1;
+    }
+    .panelControlsRow1 .panelMediaOption {
+      flex: 1;
+      min-width: 0;
+      min-height: 32px;
+      padding: 6px 0;
+    }
+    .panelControlsRow1 .panelSortOption {
+      min-height: 32px;
+      padding: 6px 0;
+    }
+    .panelControlsRow1 .panelSortLabel,
+    .panelControlsRow1 .panelMediaOption {
+      font-size: 9px !important;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+    }
+
+    /* Desktop title row: title cleanly left-aligned on its own top line. */
+    .panelTitleRowDesktop {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 2px 68px 6px 0;
+      min-width: 0;
+    }
+    .panelTitleRowDesktop > .panelTitleTextWrap {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+    }
+    .panelTitleRowDesktop h2 {
+      margin: 0;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .panelTitleRowDesktop h4 {
+      margin: 2px 0 0 0;
+      opacity: 0.7;
+      text-align: left;
+    }
+    .panelTitleMetaRight {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
     /* ===============================
        Panel Article Cards
     =============================== */
@@ -2365,11 +2449,11 @@ body.ticker-active #flowControls {
 
 #semHeatPanel {
   position: fixed;
-  top: 90px;
-  right: 16px;
+  bottom: 96px;
+  left: 16px;
   z-index: 995;
   width: 320px;
-  max-height: calc(100vh - 180px);
+  max-height: calc(100vh - 220px);
   background: rgba(6, 10, 20, 0.30);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -6326,6 +6410,43 @@ window.sourceBiasBadgeHTML = function(bias) {
       }
     }).observe(loader, { attributes: true, attributeFilter: ['class'] });
   }
+})();
+</script>
+
+<!-- ── Preload: warm up threads + feed while the globe boots so the
+     news panel isn't empty the first time the user opens it. ── -->
+<script>
+(function preloadNewsfeedContent() {
+  const API = window.__API || 'https://earth-wjr6.onrender.com';
+  // Signal that a preload is in flight; consumers can `await` this.
+  window.__preloadReady = new Promise((resolve) => {
+    let done = 0;
+    const finish = () => { done++; if (done >= 2) resolve(); };
+    // Hard ceiling: never block the app for more than 4s on preload.
+    setTimeout(resolve, 4000);
+
+    // Threads — limit 10 so the grid has a healthy first paint.
+    fetch(`${API}/api/threads/latest?limit=10`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        if (Array.isArray(data) && data.length) window.__preloadedThreads = data;
+      })
+      .catch(() => {})
+      .finally(finish);
+
+    // Feed — default search (no filters) to get the most recent articles.
+    fetch(`${API}/api/news/search?limit=10&offset=0`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const arts = Array.isArray(data) ? data : (data.articles || []);
+        if (arts.length) {
+          window.__preloadedFeed = arts;
+          if (data && data.total != null) window.__preloadedFeedTotal = data.total;
+        }
+      })
+      .catch(() => {})
+      .finally(finish);
+  });
 })();
 </script>
 
@@ -11033,38 +11154,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M20.07 4.93a10 10 0 0 1 0 14.14M3.93 19.07a10 10 0 0 1 0-14.14"/>
               </svg>
             </button>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;padding-right:68px;gap:8px;">
-              <div style="min-width:0;flex:1;display:flex;align-items:center;gap:10px;">
-                ${node.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${node.flag}</span>` : ""}
-                <div style="min-width:0;">
-                  <h2 style="margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${node.name}</h2>
-                  ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${node.country}</h4>` : ""}
-                </div>
+            <div class="panelTitleRowDesktop">
+              ${node.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${node.flag}</span>` : ""}
+              <div class="panelTitleTextWrap">
+                <h2>${node.name}</h2>
+                ${showCountry ? `<h4>${node.country}</h4>` : ""}
               </div>
-              ${panelStatsHTML()}
-              ${isCity ? `
-              <div id="cityMetaPills">
-                <div id="weatherPill" class="cityMetaPill" title="Click to toggle °C / °F">
-                  <span class="wIcon">–</span>
-                  <span class="wTemp">–</span>
-                  <span class="wUnit">°F</span>
-                </div>
-                <div id="timePill" class="cityMetaPill"></div>
-              </div>` : ""}
+              <div class="panelTitleMetaRight">
+                ${panelStatsHTML()}
+                ${isCity ? `
+                <div id="cityMetaPills">
+                  <div id="weatherPill" class="cityMetaPill" title="Click to toggle °C / °F">
+                    <span class="wIcon">–</span>
+                    <span class="wTemp">–</span>
+                    <span class="wUnit">°F</span>
+                  </div>
+                  <div id="timePill" class="cityMetaPill"></div>
+                </div>` : ""}
+              </div>
             </div>
           </div>
-          <div class="panelSortRow">
-            <div class="panelSortSegment">
-              <div class="panelSortOption active" data-sort="local">
-                <div class="panelSortDot"></div>
-                <span class="panelSortLabel">Local</span>
-              </div>
-              <div class="panelSortOption" data-sort="global">
-                <div class="panelSortDot"></div>
-                <span class="panelSortLabel">Global</span>
+          <div class="panelControlsRow1">
+            <div class="panelSortRow">
+              <div class="panelSortSegment">
+                <div class="panelSortOption active" data-sort="local">
+                  <div class="panelSortDot"></div>
+                  <span class="panelSortLabel">Local</span>
+                </div>
+                <div class="panelSortOption" data-sort="global">
+                  <div class="panelSortDot"></div>
+                  <span class="panelSortLabel">Global</span>
+                </div>
               </div>
             </div>
-            <div class="tagFilterWrapper" id="tagFilterWrapper">
+            <div class="panelMediaRow">
+              <div class="panelMediaSegment">
+                <div class="panelMediaOption active" data-media="article">Article</div>
+                <div class="panelMediaOption active" data-media="video">Video</div>
+              </div>
+            </div>
+            <div class="tagFilterWrapper" id="tagFilterWrapper" style="flex-shrink:0;align-self:center;">
               <div class="tagFilterBtn" id="tagFilterBtn">
                 <span class="tagFilterDot"></span>
                 <span id="tagFilterLabel">All</span>
@@ -11075,12 +11204,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 </svg>
               </div>
               <div class="tagDropdown" id="tagDropdown"></div>
-            </div>
-          </div>
-          <div class="panelMediaRow">
-            <div class="panelMediaSegment">
-              <div class="panelMediaOption active" data-media="article">Article</div>
-              <div class="panelMediaOption active" data-media="video">Video</div>
             </div>
           </div>
           <div class="panelSearchPill">
@@ -11131,9 +11254,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
           const isArticles = currentSlide === 0;
           const hide = isArticles ? "" : "none";
+          const controlsRow = panel.querySelector(".panelControlsRow1");
           const sortRow = panel.querySelector(".panelSortRow");
           const mediaRow = panel.querySelector(".panelMediaRow");
           const searchPill = panel.querySelector(".panelSearchPill");
+          if (controlsRow) controlsRow.style.display = isArticles ? "flex" : "none";
           if (sortRow) sortRow.style.display = hide;
           if (mediaRow) mediaRow.style.display = hide;
           if (searchPill) searchPill.style.display = hide;
@@ -13179,14 +13304,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       animate();
 
       // ── Dismiss site loader now that globe is running ──
+      // Also wait for the threads + feed preload so the newsfeed isn't empty
+      // the first time the user opens it. The preload promise self-resolves
+      // after a 4s ceiling so a slow API can never block the app.
       (function dismissSiteLoader() {
         const loader = document.getElementById("siteLoader");
         if (!loader) return;
-        // Small delay so first frame renders before fade
-        setTimeout(() => {
-          loader.classList.add("el-fade");
-          setTimeout(() => { loader.style.display = "none"; }, 650);
-        }, 320);
+        const preloadP = window.__preloadReady || Promise.resolve();
+        Promise.resolve(preloadP).then(() => {
+          // Small delay so first frame renders before fade
+          setTimeout(() => {
+            loader.classList.add("el-fade");
+            setTimeout(() => { loader.style.display = "none"; }, 650);
+          }, 320);
+        });
       })();
       }
     
@@ -15497,7 +15628,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       textFilter = ""; textFilter_el.value = "";
       welcome.style.display = "none";
       viewport.classList.add("on");
-      grid.innerHTML = skels(12);
+      // Hydrate first paint from the preload so the feed isn't blank.
+      const isDefaultQuery =
+        !lastKeyword && !currentTag && !fromSel.size && !aboutSel.size &&
+        !dateFrom.value && !dateTo.value;
+      if (isDefaultQuery && Array.isArray(window.__preloadedFeed) && window.__preloadedFeed.length) {
+        articles = window.__preloadedFeed.slice();
+        window.__nfArticles = articles;
+        if (window.__preloadedFeedTotal != null) totalCount = window.__preloadedFeedTotal;
+        renderCards(filtered());
+        updateMetaCount();
+      } else {
+        grid.innerHTML = skels(12);
+      }
       spinRow.classList.remove("on");
       searchBtn.classList.add("busy");
       searchBtn.innerHTML = `<div class="nfSpinner" style="border-top-color:rgba(255,210,120,0.7);width:13px;height:13px;border-width:2px;margin:0;"></div> Searching…`;
@@ -15784,7 +15927,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       async function loadThreads() {
-        threadsGrid.innerHTML = skels(1);
+        // Hydrate instantly from the preload (fired at page boot) so the
+        // threads grid is populated the moment the user opens the panel.
+        if (Array.isArray(window.__preloadedThreads) && window.__preloadedThreads.length) {
+          threadsData = window.__preloadedThreads;
+          threadsLoaded = true;
+          renderThreads();
+        } else {
+          threadsGrid.innerHTML = skels(1);
+        }
         try {
           const res = await fetch(`${API}/api/threads/latest?limit=200`);
           if (!res.ok) throw new Error('Failed');
@@ -15792,7 +15943,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           threadsLoaded = true;
           renderThreads();
         } catch (e) {
-          threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
+          if (!threadsLoaded) {
+            threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
+          }
         }
       }
 

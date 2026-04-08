@@ -6535,6 +6535,39 @@ window.sourceBiasBadgeHTML = function(bias) {
 })();
 </script>
 
+<!-- ── Preload: warm up threads + feed while the globe boots so the
+     news panel isn't empty the first time the user opens it. ── -->
+<script>
+(function preloadNewsfeedContent() {
+  const API = window.__API || 'https://earth-wjr6.onrender.com';
+  window.__preloadReady = new Promise((resolve) => {
+    let done = 0;
+    const finish = () => { done++; if (done >= 2) resolve(); };
+    setTimeout(resolve, 4000); // ceiling
+
+    fetch(`${API}/api/threads/latest?limit=10`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        if (Array.isArray(data) && data.length) window.__preloadedThreads = data;
+      })
+      .catch(() => {})
+      .finally(finish);
+
+    fetch(`${API}/api/news/search?limit=10&offset=0`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const arts = Array.isArray(data) ? data : (data.articles || []);
+        if (arts.length) {
+          window.__preloadedFeed = arts;
+          if (data && data.total != null) window.__preloadedFeedTotal = data.total;
+        }
+      })
+      .catch(() => {})
+      .finally(finish);
+  });
+})();
+</script>
+
 <!-- SVG gradient defs shared by site + panel loaders -->
 <svg width="0" height="0" style="position:absolute;pointer-events:none">
   <defs>
@@ -13409,14 +13442,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       animate();
 
       // ── Dismiss site loader now that globe is running ──
+      // Wait for the threads + feed preload so the newsfeed has content
+      // ready. The preload promise self-resolves after a 4s ceiling so a
+      // slow API can never block the app.
       (function dismissSiteLoader() {
         const loader = document.getElementById("siteLoader");
         if (!loader) return;
-        // Small delay so first frame renders before fade
-        setTimeout(() => {
-          loader.classList.add("el-fade");
-          setTimeout(() => { loader.style.display = "none"; }, 650);
-        }, 320);
+        const preloadP = window.__preloadReady || Promise.resolve();
+        Promise.resolve(preloadP).then(() => {
+          setTimeout(() => {
+            loader.classList.add("el-fade");
+            setTimeout(() => { loader.style.display = "none"; }, 650);
+          }, 320);
+        });
       })();
       }
     
@@ -15780,7 +15818,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       textFilter = ""; textFilter_el.value = "";
       welcome.style.display = "none";
       viewport.classList.add("on");
-      grid.innerHTML = skels(12);
+      // Hydrate first paint from the preload so the feed isn't blank.
+      const isDefaultQuery =
+        !lastKeyword && !currentTag && !fromSel.size && !aboutSel.size &&
+        !dateFrom.value && !dateTo.value;
+      if (isDefaultQuery && Array.isArray(window.__preloadedFeed) && window.__preloadedFeed.length) {
+        articles = window.__preloadedFeed.slice();
+        window.__nfArticles = articles;
+        if (window.__preloadedFeedTotal != null) totalCount = window.__preloadedFeedTotal;
+        renderCards(filtered());
+        updateMetaCount();
+      } else {
+        grid.innerHTML = skels(12);
+      }
       spinRow.classList.remove("on");
       searchBtn.classList.add("busy");
       searchBtn.innerHTML = `<div class="nfSpinner" style="border-top-color:rgba(255,210,120,0.7);width:13px;height:13px;border-width:2px;margin:0;"></div> Searching…`;
@@ -16096,7 +16146,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       async function loadThreads() {
         if (threadsInFlight) return threadsInFlight;
 
-        threadsGrid.innerHTML = skels(1);
+        // Hydrate instantly from the preload (fired at page boot) so the
+        // threads grid is populated the moment the user opens the panel.
+        if (Array.isArray(window.__preloadedThreads) && window.__preloadedThreads.length && !threadsLoaded) {
+          threadsData = window.__preloadedThreads;
+          threadsLoaded = true;
+          renderThreads();
+        } else {
+          threadsGrid.innerHTML = skels(1);
+        }
 
         threadsInFlight = (async () => {
           try {
