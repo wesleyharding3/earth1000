@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Earth00</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="shortcut icon" href="favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
@@ -1130,7 +1135,7 @@
 /* ── Flow Controls Panel ── */
 #flowControls {
   position: fixed;
-  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 600;
@@ -1144,7 +1149,22 @@
 }
 #flowControls.visible { display: flex; }
 body.ticker-active #flowControls {
-  bottom: calc(var(--global-ticker-height) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  bottom: calc(var(--global-ticker-height) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+}
+
+/* News Flows title (top-left of flow panel) */
+.flowPanelTitle {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(80,255,160,1);
+  text-shadow: 0 0 10px rgba(0,220,130,0.45);
+  pointer-events: none;
+  z-index: 10;
 }
 
 .flowPanel {
