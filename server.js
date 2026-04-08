@@ -1759,24 +1759,49 @@ app.get("/api/threads/latest", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
 
     // Step 1: get threads
+    //
+    // Country-aware ranking:
+    //   We count how many DISTINCT countries each thread's articles touch and
+    //   bucket threads into 3 priority tiers:
+    //     Tier 0 — references 2+ countries (cross-border / global stories)
+    //     Tier 1 — references exactly 1 country (single-country stories)
+    //     Tier 2 — references 0 countries (uncontextualized stories)
+    //   Within each tier we still respect status (active > cooling > dormant)
+    //   and the original importance/article_count/recency order.
     const { rows: threads } = await pool.query(`
+      WITH thread_country_counts AS (
+        SELECT
+          sta.thread_id,
+          COUNT(DISTINCT a.country_id) AS country_count
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE a.country_id IS NOT NULL
+        GROUP BY sta.thread_id
+      )
       SELECT
-        id AS thread_id, title, description, primary_category,
-        geographic_scope, importance, keywords, article_count,
-        status, last_updated_at
-      FROM story_threads
-      WHERE article_count >= 2
-        AND status IN ('active', 'cooling', 'dormant')
+        st.id AS thread_id, st.title, st.description, st.primary_category,
+        st.geographic_scope, st.importance, st.keywords, st.article_count,
+        st.status, st.last_updated_at,
+        COALESCE(tcc.country_count, 0)::int AS country_count
+      FROM story_threads st
+      LEFT JOIN thread_country_counts tcc ON tcc.thread_id = st.id
+      WHERE st.article_count >= 2
+        AND st.status IN ('active', 'cooling', 'dormant')
       ORDER BY
-        CASE status
+        CASE st.status
           WHEN 'active'  THEN 0
           WHEN 'cooling' THEN 1
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
-        importance DESC,
-        article_count DESC,
-        last_updated_at DESC NULLS LAST
+        CASE
+          WHEN COALESCE(tcc.country_count, 0) >= 2 THEN 0
+          WHEN COALESCE(tcc.country_count, 0) = 1 THEN 1
+          ELSE 2
+        END,
+        st.importance DESC,
+        st.article_count DESC,
+        st.last_updated_at DESC NULLS LAST
       LIMIT $1
     `, [limit]);
 
