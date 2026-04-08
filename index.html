@@ -10274,13 +10274,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__regionsTick = function(delta) {
         const active = window.__currentViewMode === "regions";
-        regionTargetOpacity = active ? 1.0 : 0.0;
+        const _semHide = !!window.__semHeatActive;
+        regionTargetOpacity = (active && !_semHide) ? 1.0 : 0.0;
 
 
         // Fade centroid nodes — hard-hide in ocean/transportation regardless of opacity
         if (regionPoints) {
           const mode = window.__currentViewMode;
-          const blocked = mode === "ocean" || mode === "transportation";
+          const blocked = mode === "ocean" || mode === "transportation" || _semHide;
           regionPoints.visible = !blocked && (active || regionPoints.material.opacity > 0.01);
           regionPoints.material.opacity += (regionTargetOpacity - regionPoints.material.opacity) * 0.04;
         }
@@ -10439,10 +10440,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let envTargetOpacity = 0.0;
       window.__environmentTick = function() {
         const active = window.__currentViewMode === "environment";
-        envTargetOpacity = active ? 1.0 : 0.0;
+        const _semHide = !!window.__semHeatActive;
+        envTargetOpacity = (active && !_semHide) ? 1.0 : 0.0;
 
         if (envPoints) {
-          envPoints.visible = active || envPoints.material.opacity > 0.01;
+          envPoints.visible = !_semHide && (active || envPoints.material.opacity > 0.01);
           envPoints.material.opacity += (envTargetOpacity - envPoints.material.opacity) * 0.04;
         }
         // Halos removed — environment view shows nodes only
@@ -12759,16 +12761,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         updateCompass();
         updateScaleBar();
 
+        const _semFade = window.__semHeatActive ? 0 : 1;
         tierLayers.forEach(layer => {
+          const _tCity = targetCityOpacity * _semFade;
           layer.mat.opacity +=
-            (targetCityOpacity - layer.mat.opacity) * 0.08;
-          layer.mat.opacity = targetCityOpacity === 0 && layer.mat.opacity < 0.01 ? 0 : layer.mat.opacity;
+            (_tCity - layer.mat.opacity) * 0.08;
+          layer.mat.opacity = _tCity === 0 && layer.mat.opacity < 0.01 ? 0 : layer.mat.opacity;
           layer.pts.visible = layer.mat.opacity > 0.001;
         });
 
-        countryMat.opacity += (targetCountryOpacity - countryMat.opacity) * 0.08;
-        if (targetCountryOpacity === 0 && countryMat.opacity < 0.01) countryMat.opacity = 0;
+        const _tCountry = targetCountryOpacity * _semFade;
+        countryMat.opacity += (_tCountry - countryMat.opacity) * 0.08;
+        if (_tCountry === 0 && countryMat.opacity < 0.01) countryMat.opacity = 0;
         countryPoints.visible = countryMat.opacity > 0.001;
+        if (typeof ringGroup !== 'undefined' && ringGroup) ringGroup.visible = countryPoints.visible;
         earthMat.opacity   += (targetEarthOpacity   - earthMat.opacity)   * 0.018;
 
         if (window.__transTick) window.__transTick(0.016);
@@ -22491,7 +22497,9 @@ body.ticker-active .gTickerLabel {
   const state = {
     mode: 'coverage',
     ctl:  'keyword',
-    points: [],
+    points: [],          // merged legacy list (kept for inspector fallback)
+    countryPoints: [],   // articles where city_id IS NULL
+    cityPoints: [],      // articles where city_id IS NOT NULL
     series: null,
     seriesIdx: 0,
     playing: false,
@@ -22499,6 +22507,57 @@ body.ticker-active .gTickerLabel {
     loading: false,
     threadsLoaded: false
   };
+
+  // ── Country polygon index (loaded from custom.geo.json) ────────────────
+  // Maps ISO (and name, lowercased) → array of polygon rings where each
+  // ring is [[lon,lat], ...]. Used by the country-wash pass to paint a soft
+  // floor inside the country's actual shape.
+  let _countryGeoIdxPromise = null;
+  let _countryGeoIdx        = null;
+  function ensureCountryGeoIdx() {
+    if (_countryGeoIdx)        return Promise.resolve(_countryGeoIdx);
+    if (_countryGeoIdxPromise) return _countryGeoIdxPromise;
+    _countryGeoIdxPromise = fetch('custom.geo.json')
+      .then(r => r.json())
+      .then(gj => {
+        const byIso  = new Map();
+        const byName = new Map();
+        const features = gj.features || [];
+        for (const f of features) {
+          const props = f.properties || {};
+          const iso =
+            (props.iso_a2    || props.ISO_A2 ||
+             props.iso_a2_eh || props.ISO_A2_EH ||
+             props.wb_a2     || props.WB_A2 ||
+             props.postal    || '').toString().trim().toUpperCase();
+          const name =
+            (props.admin || props.ADMIN ||
+             props.name  || props.NAME  ||
+             props.name_long || props.sovereignt || '').toString().trim().toLowerCase();
+          const rings = [];
+          const geom = f.geometry;
+          if (!geom) continue;
+          if (geom.type === 'Polygon') {
+            rings.push(geom.coordinates);  // [outerRing, hole, hole…]
+          } else if (geom.type === 'MultiPolygon') {
+            for (const poly of geom.coordinates) rings.push(poly);
+          }
+          const entry = { iso, name, rings };
+          if (iso && iso !== '-99') byIso.set(iso, entry);
+          if (name)                 byName.set(name, entry);
+        }
+        _countryGeoIdx = { byIso, byName };
+        return _countryGeoIdx;
+      })
+      .catch(err => {
+        console.warn('[semHeat] custom.geo.json failed to load:', err);
+        _countryGeoIdx = { byIso: new Map(), byName: new Map() };
+        return _countryGeoIdx;
+      });
+    return _countryGeoIdxPromise;
+  }
+  // Kick off load when module initializes (cheap — will be reused)
+  ensureCountryGeoIdx();
 
   // ── Continuous heatmap sphere (equirectangular canvas wrapping the globe) ──
   let heatSphere  = null;
@@ -22557,6 +22616,7 @@ body.ticker-active .gTickerLabel {
       heatCtx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
       if (heatTexture) heatTexture.needsUpdate = true;
     }
+    if (heatSphere) heatSphere.visible = false;
     markerMeshes = [];
   }
 
@@ -22598,83 +22658,367 @@ body.ticker-active .gTickerLabel {
     return { r, g, b };
   }
 
-  function renderPoints(points) {
-    const sphere = ensureHeatSphere();
-    if (!sphere || !heatCtx || !heatCanvas) return;
+  // ── Two-pass heatmap render ─────────────────────────────────────────
+  //   Pass A — country wash: soft polygon fill scaled to each country's
+  //            share of total coverage. Rasterized to an offscreen canvas,
+  //            blurred, then composited with 'lighter'.
+  //   Pass B — city clusters: radial gaussians at each city's lat/lon.
+  // City kernels are always boosted above the wash floor so clusters are
+  // never buried by dense countries.
 
-    const W = heatCanvas.width;
-    const H = heatCanvas.height;
+  // Tunables
+  const COUNTRY_WASH_ALPHA_FLOOR = 0.05;
+  const COUNTRY_WASH_ALPHA_CEIL  = 0.28;   // hard ceiling — cities stay readable
+  const COUNTRY_WASH_BLUR_PX     = 12;
+  const CITY_KERNEL_RADIUS_FRAC  = 0.020;  // slightly tighter than v1 so wash + cluster coexist
+  const CITY_ALPHA_FLOOR_BOOST   = 0.22;   // minimum alpha floor cities get above the wash
+  const CITY_ALPHA_CEIL          = 0.95;
 
-    // 1. Dull opaque base — envelops the entire globe in a dim mask
-    heatCtx.globalCompositeOperation = 'source-over';
-    heatCtx.fillStyle = 'rgba(8, 12, 22, 0.45)';
-    heatCtx.fillRect(0, 0, W, H);
+  // Longitude-split an equirectangular polygon that crosses the antimeridian
+  // (Russia, Fiji, etc). Returns an array of ring segments each safe to draw.
+  function _splitRingAtAntimeridian(ring) {
+    if (!ring || ring.length < 2) return [ring];
+    let crosses = false;
+    for (let i = 1; i < ring.length; i++) {
+      if (Math.abs(ring[i][0] - ring[i-1][0]) > 180) { crosses = true; break; }
+    }
+    if (!crosses) return [ring];
+    // Duplicate the ring shifted by ±360 and clip each to its half.
+    // Cheap approximation: render twice, translated, then clip to canvas
+    // bounds — simpler than true clipping. We'll just return the original
+    // ring twice with a flag so the caller can translate.
+    return [ring, ring];  // caller handles translation via wrap-around drawing
+  }
 
-    if (!points || !points.length) {
-      heatTexture.needsUpdate = true;
-      return;
+  function _drawCountryPolygon(ctx, rings, W, H, fillStyle) {
+    // rings = [outerRing, hole1, hole2, …] in [lon,lat] order
+    ctx.beginPath();
+    for (let ri = 0; ri < rings.length; ri++) {
+      const r = rings[ri];
+      for (let i = 0; i < r.length; i++) {
+        const lon = r[i][0], lat = r[i][1];
+        const x = ((lon + 180) / 360) * W;
+        const y = ((90 - lat)  / 180) * H;
+        if (i === 0) ctx.moveTo(x, y);
+        else         ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+    }
+    ctx.fillStyle = fillStyle;
+    ctx.fill('evenodd');
+  }
+
+  // Check whether any pair of consecutive vertices in the outer ring jumps
+  // > 180° in longitude — signals the country crosses the antimeridian.
+  function _polygonCrossesAntimeridian(rings) {
+    const outer = rings[0];
+    if (!outer || outer.length < 2) return false;
+    for (let i = 1; i < outer.length; i++) {
+      if (Math.abs(outer[i][0] - outer[i-1][0]) > 180) return true;
+    }
+    return false;
+  }
+
+  // Normalize a ring into the [0, 360) longitude frame to avoid the seam,
+  // then we'll draw twice (once at original, once shifted).
+  function _shiftRingLonPositive(rings) {
+    return rings.map(ring =>
+      ring.map(([lon, lat]) => [lon < 0 ? lon + 360 : lon, lat])
+    );
+  }
+
+  function renderCountryWash(ctx, countryPoints, W, H, geoIdx) {
+    if (!countryPoints || !countryPoints.length || !geoIdx) return 0;
+
+    // Normalization: per-country share of total country-level coverage.
+    const totalN = countryPoints.reduce((s, p) => s + (p.n || 0), 0) || 1;
+    const maxShare = countryPoints.reduce(
+      (m, p) => Math.max(m, (p.n || 0) / totalN), 0
+    ) || 1;
+
+    // Offscreen canvas: draw the polygons sharp, blur once at the end.
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const octx = off.getContext('2d');
+    octx.clearRect(0, 0, W, H);
+    octx.globalCompositeOperation = 'lighter';
+
+    let drawn = 0;
+
+    for (const p of countryPoints) {
+      if (!p || p.n == null) continue;
+      const iso = (p.iso || '').toString().trim().toUpperCase();
+      let entry = iso ? geoIdx.byIso.get(iso) : null;
+      if (!entry && p.name) {
+        entry = geoIdx.byName.get(String(p.name).toLowerCase());
+      }
+      if (!entry || !entry.rings || !entry.rings.length) continue;
+
+      // Share of global country-level coverage, gamma-corrected, then
+      // rescaled so the busiest country hits the ceiling and quiet ones
+      // still paint a visible floor.
+      const share     = Math.min(1, (p.n || 0) / totalN);
+      const rel       = share / maxShare;
+      const intensity = Math.pow(rel, 0.55);
+      const alpha     =
+        COUNTRY_WASH_ALPHA_FLOOR +
+        (COUNTRY_WASH_ALPHA_CEIL - COUNTRY_WASH_ALPHA_FLOOR) * intensity;
+
+      const c = colorStopsFor(p, intensity);
+      const fill = `rgba(${c.r},${c.g},${c.b},${alpha})`;
+
+      // Each `entry.rings` is an array of polygons; each polygon is
+      // [outerRing, hole1, …]. Draw each polygon with even-odd fill.
+      for (const polyRings of entry.rings) {
+        // If polygon crosses the seam, draw twice in the [0,360) frame
+        // and again shifted by -W px so the map wraps correctly.
+        if (_polygonCrossesAntimeridian(polyRings)) {
+          const shifted = _shiftRingLonPositive(polyRings);
+          // First draw in the [0,360) frame (x may exceed W — no wrap)
+          _drawCountryPolygon(octx, shifted, W, H, fill);
+          // Second pass: translate by -W so the portion that was > W
+          // lands correctly on the western half of the canvas.
+          octx.save();
+          octx.translate(-W, 0);
+          _drawCountryPolygon(octx, shifted, W, H, fill);
+          octx.restore();
+        } else {
+          _drawCountryPolygon(octx, polyRings, W, H, fill);
+        }
+      }
+      drawn++;
     }
 
-    // ── Normalization ───────────────────────────────────────────────────
-    // LINEAR share of the max ("parts per max") rather than log10. Log
-    // flattened everything — a country with 10 articles read at ~50% when
-    // max was 1000, so every populated country lit up. With a linear
-    // share + mild gamma, only true concentrations glow.
-    const maxN = points.reduce((a, p) => Math.max(a, p.n), 0) || 1;
+    // Blur + composite onto main heat canvas
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    if (typeof ctx.filter === 'string') {
+      ctx.filter = `blur(${COUNTRY_WASH_BLUR_PX}px)`;
+    }
+    ctx.drawImage(off, 0, 0);
+    ctx.filter = 'none';
+    ctx.restore();
 
-    heatCtx.globalCompositeOperation = 'lighter';
+    return drawn;
+  }
 
-    for (const p of points) {
+  function renderCityClusters(ctx, cityPoints, W, H) {
+    if (!cityPoints || !cityPoints.length) return 0;
+    const maxN = cityPoints.reduce((a, p) => Math.max(a, p.n || 0), 0) || 1;
+
+    ctx.globalCompositeOperation = 'lighter';
+
+    let drawn = 0;
+    for (const p of cityPoints) {
       if (!isFinite(p.lat) || !isFinite(p.lon)) continue;
 
       const cx = ((p.lon + 180) / 360) * W;
       const cy = ((90  - p.lat) / 180) * H;
 
-      const share     = Math.min(1, p.n / maxN);
-      const intensity = Math.pow(share, 0.65);   // mild gamma
+      const share     = Math.min(1, (p.n || 0) / maxN);
+      const intensity = Math.pow(share, 0.62);
 
-      // Middle-ground kernel — lands between the too-tight W*0.020
-      // ("spot on top of the node") and the too-dispersed W*0.028
-      // ("halo creeping into neighbours"). ~60px at full intensity on
-      // a 2048 canvas.
-      const baseRadius = W * 0.024;
-      const radius     = baseRadius * (0.68 + 1.50 * intensity);
+      const baseRadius = W * CITY_KERNEL_RADIUS_FRAC;
+      const radius     = baseRadius * (0.62 + 1.55 * intensity);
 
-      // Latitude correction with a tighter floor so high-latitude blobs
-      // don't smear across the canvas width.
       const latRad   = p.lat * Math.PI / 180;
       const xStretch = 1 / Math.max(0.55, Math.cos(latRad));
       const rx       = radius * xStretch;
 
       const c  = colorStopsFor(p, intensity);
-      // Low base alpha so faint countries stay dim; only true hotspots
-      // approach full opacity. Falloff sits between the tight and soft
-      // variants we ping-ponged between.
-      const a0 = 0.18 + 0.78 * intensity;
-      const a1 = a0 * 0.35;
+      // Boosted alpha floor so even small-n cities punch through the wash.
+      const a0 = Math.min(
+        CITY_ALPHA_CEIL,
+        CITY_ALPHA_FLOOR_BOOST + 0.72 * intensity
+      );
+      const a1 = a0 * 0.32;
 
       const drawAt = (x, y) => {
-        heatCtx.save();
-        heatCtx.translate(x, y);
-        heatCtx.scale(xStretch, 1);
-        const g = heatCtx.createRadialGradient(0, 0, 0, 0, 0, radius);
-        g.addColorStop(0.0,  `rgba(${c.r},${c.g},${c.b},${a0})`);
-        g.addColorStop(0.31, `rgba(${c.r},${c.g},${c.b},${a1})`);
-        g.addColorStop(1.0,  `rgba(${c.r},${c.g},${c.b},0)`);
-        heatCtx.fillStyle = g;
-        heatCtx.beginPath();
-        heatCtx.arc(0, 0, radius, 0, Math.PI * 2);
-        heatCtx.fill();
-        heatCtx.restore();
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(xStretch, 1);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+        g.addColorStop(0.00, `rgba(${c.r},${c.g},${c.b},${a0})`);
+        g.addColorStop(0.30, `rgba(${c.r},${c.g},${c.b},${a1})`);
+        g.addColorStop(1.00, `rgba(${c.r},${c.g},${c.b},0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       };
 
       drawAt(cx, cy);
       if (cx - rx < 0) drawAt(cx + W, cy);
       if (cx + rx > W) drawAt(cx - W, cy);
+      drawn++;
+    }
+    return drawn;
+  }
+
+  // ── Core frame painter ─────────────────────────────────────────────
+  // Paints a single heatmap frame into the supplied 2D context. The
+  // context is fully cleared first — no dim base fill, so areas with
+  // zero coverage are left transparent and the globe shows through.
+  // Returns true if the frame has any coverage, false if it was empty.
+  function paintFrameTo(ctx, payload) {
+    if (!heatCanvas) return false;
+    const W = heatCanvas.width;
+    const H = heatCanvas.height;
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.filter = 'none';
+    ctx.clearRect(0, 0, W, H);
+
+    let countryPts = [];
+    let cityPts    = [];
+    if (Array.isArray(payload)) {
+      cityPts = payload;
+    } else if (payload && typeof payload === 'object') {
+      countryPts = payload.country_points || [];
+      cityPts    = payload.city_points    || [];
     }
 
-    heatCtx.globalCompositeOperation = 'source-over';
+    const empty = !countryPts.length && !cityPts.length;
+    if (empty) {
+      ctx.restore();
+      return false;
+    }
+
+    if (_countryGeoIdx) {
+      renderCountryWash(ctx, countryPts, W, H, _countryGeoIdx);
+    }
+    renderCityClusters(ctx, cityPts, W, H);
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+    return true;
+  }
+
+  // Keep the heat sphere hidden when there is nothing to show so the
+  // globe's own surface is visible with no dim overlay at all.
+  function setHeatVisible(hasCoverage) {
+    if (heatSphere) heatSphere.visible = !!hasCoverage;
+  }
+
+  // Main render — accepts either the new shape { country_points, city_points }
+  // or the legacy flat array (treated as city-style points). Used by the
+  // non-playback path (initial load, mode switch, control changes).
+  function renderPoints(payload) {
+    const sphere = ensureHeatSphere();
+    if (!sphere || !heatCtx || !heatCanvas) return;
+
+    // Cancel any in-flight crossfade — this is a hard draw.
+    if (_xfadeRafId) { cancelAnimationFrame(_xfadeRafId); _xfadeRafId = null; }
+
+    const hasCoverage = paintFrameTo(heatCtx, payload);
     heatTexture.needsUpdate = true;
+    setHeatVisible(hasCoverage);
+
+    // If the polygon index wasn't ready we re-run once it loads so the
+    // country wash appears on the next frame.
+    if (!_countryGeoIdx) {
+      ensureCountryGeoIdx().then(() => {
+        renderPoints({
+          country_points: state.countryPoints,
+          city_points:    state.cityPoints
+        });
+      });
+    }
+  }
+
+  // ── Timeseries crossfade ───────────────────────────────────────────
+  // Keeps two offscreen buffers (prev + next) and interpolates between
+  // them to produce a smooth blend between adjacent buckets. Eliminates
+  // the strobe-light effect of the previous hard-swap approach.
+  const XFADE_MS = 480;
+  let _xfadeRafId   = null;
+  let _frameBufPrev = null;
+  let _frameBufNext = null;
+  function _getBuf(which) {
+    const W = heatCanvas.width, H = heatCanvas.height;
+    if (which === 'prev') {
+      if (!_frameBufPrev) {
+        _frameBufPrev = document.createElement('canvas');
+        _frameBufPrev.width = W; _frameBufPrev.height = H;
+      }
+      return _frameBufPrev;
+    }
+    if (!_frameBufNext) {
+      _frameBufNext = document.createElement('canvas');
+      _frameBufNext.width = W; _frameBufNext.height = H;
+    }
+    return _frameBufNext;
+  }
+
+  function renderPointsCrossfade(payload, ms) {
+    const sphere = ensureHeatSphere();
+    if (!sphere || !heatCtx || !heatCanvas) return;
+
+    ms = ms || XFADE_MS;
+    const W = heatCanvas.width, H = heatCanvas.height;
+
+    // Snapshot whatever's currently on the main canvas into prev buffer.
+    const prev = _getBuf('prev');
+    const pctx = prev.getContext('2d');
+    pctx.setTransform(1, 0, 0, 1, 0, 0);
+    pctx.globalCompositeOperation = 'source-over';
+    pctx.globalAlpha = 1;
+    pctx.clearRect(0, 0, W, H);
+    pctx.drawImage(heatCanvas, 0, 0);
+
+    // Paint the new frame into the next buffer.
+    const next = _getBuf('next');
+    const nctx = next.getContext('2d');
+    const hasCoverage = paintFrameTo(nctx, payload);
+
+    // If the polygon index wasn't loaded yet, kick off an async reload
+    // for when it becomes available.
+    if (!_countryGeoIdx) {
+      ensureCountryGeoIdx().then(() => {
+        renderPointsCrossfade({
+          country_points: state.countryPoints,
+          city_points:    state.cityPoints
+        }, 1);
+      });
+    }
+
+    // The sphere must be visible during the fade if either side has
+    // coverage, so the prev frame can actually fade out.
+    setHeatVisible(true);
+
+    if (_xfadeRafId) cancelAnimationFrame(_xfadeRafId);
+    const t0 = performance.now();
+    const tick = () => {
+      const raw = Math.min(1, (performance.now() - t0) / ms);
+      // Ease in-out cubic for a smooth blend.
+      const t = raw < 0.5
+        ? 4 * raw * raw * raw
+        : 1 - Math.pow(-2 * raw + 2, 3) / 2;
+
+      heatCtx.save();
+      heatCtx.setTransform(1, 0, 0, 1, 0, 0);
+      heatCtx.globalCompositeOperation = 'source-over';
+      heatCtx.clearRect(0, 0, W, H);
+      heatCtx.globalAlpha = 1 - t;
+      heatCtx.drawImage(prev, 0, 0);
+      heatCtx.globalAlpha = t;
+      heatCtx.drawImage(next, 0, 0);
+      heatCtx.globalAlpha = 1;
+      heatCtx.restore();
+      heatTexture.needsUpdate = true;
+
+      if (raw < 1) {
+        _xfadeRafId = requestAnimationFrame(tick);
+      } else {
+        _xfadeRafId = null;
+        setHeatVisible(hasCoverage);
+      }
+    };
+    _xfadeRafId = requestAnimationFrame(tick);
   }
 
   let _glowTex = null, _dotTex = null;
@@ -22728,21 +23072,31 @@ body.ticker-active .gTickerLabel {
   function updateStats(payload) {
     if (!payload) { statsEl.textContent = '—'; return; }
     const s = payload.stats || {};
-    const pts = payload.points || [];
+    const countries = s.countries != null ? s.countries : (payload.country_points || []).length;
+    const cities    = s.cities    != null ? s.cities    : (payload.city_points    || []).length;
     const scored = s.scored || 0;
     const tot    = s.articles || 0;
     const pct    = tot ? ((scored / tot) * 100).toFixed(1) : '0.0';
     statsEl.innerHTML =
-      `<b>${tot.toLocaleString()}</b> articles · <b>${pts.length}</b> countries · ` +
+      `<b>${tot.toLocaleString()}</b> articles · <b>${countries}</b> countries · <b>${cities}</b> cities · ` +
       `sentiment coverage <b>${pct}%</b> (${scored.toLocaleString()} scored)`;
   }
 
   function updateStatsFromPoints(points) {
+    // `points` here is the merged list; compute country/city split from
+    // presence of city_id.
+    const cities = points.filter(p => p && p.city_id != null).length;
+    const countryKeys = new Set();
+    for (const p of points) {
+      if (!p) continue;
+      if (p.country_id != null) countryKeys.add(p.country_id);
+      else if (p.iso)           countryKeys.add(String(p.iso).toUpperCase());
+    }
     const tot = points.reduce((s, p) => s + p.n, 0);
     const scored = points.reduce((s, p) => s + (p.sent_n || 0), 0);
     const pct = tot ? ((scored / tot) * 100).toFixed(1) : '0.0';
     statsEl.innerHTML =
-      `<b>${tot.toLocaleString()}</b> articles · <b>${points.length}</b> countries · ` +
+      `<b>${tot.toLocaleString()}</b> articles · <b>${countryKeys.size}</b> countries · <b>${cities}</b> cities · ` +
       `sentiment coverage <b>${pct}%</b>`;
   }
 
@@ -22799,8 +23153,18 @@ body.ticker-active .gTickerLabel {
       tsSlider.value = state.seriesIdx;
       renderSeriesFrame();
     } else {
-      state.points = data.points || [];
-      renderPoints(state.points);
+      state.countryPoints = data.country_points || [];
+      state.cityPoints    = data.city_points    || [];
+      // Merged list for inspector / fallback callers. Every city point keeps
+      // its country_id so the inspector can roll them up per-country.
+      state.points = [
+        ...state.countryPoints,
+        ...state.cityPoints
+      ];
+      renderPoints({
+        country_points: state.countryPoints,
+        city_points:    state.cityPoints
+      });
       updateStats(data);
     }
     updateLegend();
@@ -22810,9 +23174,13 @@ body.ticker-active .gTickerLabel {
     if (!state.series) return;
     const b = state.series.buckets[state.seriesIdx];
     if (!b) return;
-    const points = b.points || [];
+    const countryPoints = b.country_points || [];
+    const cityPoints    = b.city_points    || [];
+    state.countryPoints = countryPoints;
+    state.cityPoints    = cityPoints;
+    const points = b.points || [...countryPoints, ...cityPoints];
     state.points = points;
-    renderPoints(points);
+    renderPointsCrossfade({ country_points: countryPoints, city_points: cityPoints });
     updateStatsFromPoints(points);
     const d = new Date(b.t);
     const fmt = state.series.bucket === 'hour'
@@ -22865,7 +23233,12 @@ body.ticker-active .gTickerLabel {
     state.mode = pill.dataset.mode;
     updateLegend();
     if (state.series) { renderSeriesFrame(); }
-    else { renderPoints(state.points); }
+    else {
+      renderPoints({
+        country_points: state.countryPoints,
+        city_points:    state.cityPoints
+      });
+    }
   });
 
   ctlTabs.addEventListener('click', (e) => {
@@ -22940,7 +23313,7 @@ body.ticker-active .gTickerLabel {
   // leader line from the click point to the panel.
   // ══════════════════════════════════════════════════════════════════════
   const EARTH_RADIUS_MI = 3958.7613;
-  const INSPECTOR_RADIUS_MI = 500;
+  const INSPECTOR_RADIUS_MI = 2000;
 
   // DOM nodes for the inspector popup (created lazily, one instance).
   let inspectorEl   = null;
@@ -23007,7 +23380,7 @@ body.ticker-active .gTickerLabel {
           <button class="semHeatInspClose" title="Close" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;">✕</button>
         </div>
       </div>
-      <div class="semHeatInspSubtitle" style="font-size:9.5px;opacity:0.55;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">within 500 mi of click</div>
+      <div class="semHeatInspSubtitle" style="font-size:9.5px;opacity:0.55;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">within 2000 mi of click</div>
       <div class="semHeatInspBody" style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
     `;
     document.body.appendChild(inspectorEl);
@@ -23098,7 +23471,7 @@ body.ticker-active .gTickerLabel {
     if (state.mode === 'sentiment') {
       title.textContent = 'Regional Sentiment';
       if (!nearby.length) {
-        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 500 mi.</div>`;
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 2000 mi.</div>`;
       } else {
         const rows = nearby
           .filter(({p}) => p.avg_sent != null && p.sent_n)
@@ -23110,7 +23483,7 @@ body.ticker-active .gTickerLabel {
           }))
           .sort((a, b) => b.sent - a.sent);
         if (!rows.length) {
-          body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 500 mi.</div>`;
+          body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 2000 mi.</div>`;
         } else {
           body.innerHTML = rows.map((r) => {
             const t = (r.sent + 1) / 2;
@@ -23130,15 +23503,31 @@ body.ticker-active .gTickerLabel {
       // percentage is truly "global coverage" not "local share").
       const globalTotal = pts.reduce((s, p) => s + (p.n || 0), 0) || 1;
       if (!nearby.length) {
-        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No coverage within 500 mi.</div>`;
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No coverage within 2000 mi.</div>`;
       } else {
-        const rows = nearby
-          .map(({p, d}) => ({
-            name: labelFor(p),
-            n:    p.n || 0,
-            pct:  ((p.n || 0) / globalTotal) * 100,
-            d
-          }))
+        // Roll both country-level and city-level points up to their country
+        // bucket so the ranked list reads as a single country leaderboard.
+        const byCountry = new Map();
+        for (const { p } of nearby) {
+          const key =
+            p.country_id != null ? 'cid:' + p.country_id :
+            (p.iso ? 'iso:' + String(p.iso).toUpperCase() : 'nm:' + (labelFor(p) || 'unk'));
+          const label =
+            p.country_name ||
+            (p.country_id != null && p.city_id == null ? labelFor(p) : null) ||
+            (p.country_id != null ? labelFor({ iso_code: p.iso, country_id: p.country_id }) : labelFor(p));
+          const existing = byCountry.get(key);
+          if (existing) {
+            existing.n += p.n || 0;
+          } else {
+            byCountry.set(key, {
+              name: label || labelFor(p),
+              n: p.n || 0
+            });
+          }
+        }
+        const rows = [...byCountry.values()]
+          .map(r => ({ name: r.name, n: r.n, pct: (r.n / globalTotal) * 100 }))
           .sort((a, b) => b.n - a.n);
         const localTotal = rows.reduce((s, r) => s + r.n, 0) || 1;
         const localPct = (localTotal / globalTotal) * 100;

@@ -1728,8 +1728,8 @@ app.get("/api/heatmap", async (req, res) => {
       bucket === "day"  ? `date_trunc('day',  a.published_at)` :
       null;
 
-    // cache key
-    const _cacheKey = `heatmap:${mode}:${bucket}:${keyword}:${threadId||''}:${days}:${fromIso||''}:${toIso||''}`;
+    // cache key — v2 adds the country-wash + city-cluster split
+    const _cacheKey = `heatmap:v2:${mode}:${bucket}:${keyword}:${threadId||''}:${days}:${fromIso||''}:${toIso||''}`;
     const _cached = await ttlCached(_cacheKey, 60_000, async () => {
       const params = [];
       const where  = [];
@@ -1755,11 +1755,12 @@ app.get("/api/heatmap", async (req, res) => {
 
       const whereSql = `WHERE ${where.join(' AND ')}`;
 
-      // Country-level aggregation via article_locations
       const selectBucket = bucketExpr ? `${bucketExpr} AS t,` : ``;
       const groupBucket  = bucketExpr ? `${bucketExpr},` : ``;
 
-      const sql = `
+      // Country-level rows = articles with NO city (country_id set, city_id null).
+      // These feed the soft per-country "wash" layer on the client.
+      const sqlCountry = `
         SELECT
           ${selectBucket}
           c.id   AS country_id,
@@ -1771,45 +1772,119 @@ app.get("/api/heatmap", async (req, res) => {
           COUNT(a.sentiment_score)::int AS sent_n,
           AVG(a.sentiment_score)::float AS avg_sent
         FROM news_articles a
-        JOIN article_locations al ON al.article_id = a.id
-        JOIN countries c ON c.id = al.country_id
+        JOIN countries c ON c.id = a.country_id
         ${whereSql}
-          AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+          AND a.country_id IS NOT NULL
+          AND a.city_id    IS NULL
+          AND c.latitude   IS NOT NULL
+          AND c.longitude  IS NOT NULL
         GROUP BY ${groupBucket} c.id, c.name, c.iso_code, c.latitude, c.longitude
         ORDER BY ${bucketExpr ? 't,' : ''} n DESC
         LIMIT ${bucketExpr ? 20000 : 500}
       `;
 
+      // City-level rows = articles with a city_id. These form their own
+      // centers of gravity on the client.
+      const sqlCity = `
+        SELECT
+          ${selectBucket}
+          ci.id AS city_id,
+          ci.country_id AS country_id,
+          co.iso_code AS iso,
+          co.name AS country_name,
+          ci.name AS name,
+          ci.latitude  AS lat,
+          ci.longitude AS lon,
+          COUNT(*)::int AS n,
+          COUNT(a.sentiment_score)::int AS sent_n,
+          AVG(a.sentiment_score)::float AS avg_sent
+        FROM news_articles a
+        JOIN cities ci    ON ci.id = a.city_id
+        LEFT JOIN countries co ON co.id = ci.country_id
+        ${whereSql}
+          AND a.city_id   IS NOT NULL
+          AND ci.latitude  IS NOT NULL
+          AND ci.longitude IS NOT NULL
+        GROUP BY ${groupBucket} ci.id, ci.country_id, co.iso_code, co.name, ci.name, ci.latitude, ci.longitude
+        ORDER BY ${bucketExpr ? 't,' : ''} n DESC
+        LIMIT ${bucketExpr ? 40000 : 1500}
+      `;
+
       const client = await pool.connect();
       try {
         await client.query(`SET LOCAL statement_timeout = 60000`);
-        const { rows } = await client.query(sql, params);
-        return rows;
+        const [cRes, ciRes] = await Promise.all([
+          client.query(sqlCountry, params),
+          client.query(sqlCity,    params)
+        ]);
+        return { countryRows: cRes.rows, cityRows: ciRes.rows };
       } finally {
         client.release();
       }
     });
 
-    const rows = _cached;
+    const { countryRows, cityRows } = _cached;
+
+    const mapCountry = (r) => ({
+      country_id: r.country_id,
+      name: r.name,
+      iso: r.iso ? String(r.iso).trim() : null,
+      lat: parseFloat(r.lat),
+      lon: parseFloat(r.lon),
+      n: r.n,
+      sent_n: r.sent_n,
+      avg_sent: r.avg_sent == null ? null : parseFloat(r.avg_sent)
+    });
+    const mapCity = (r) => ({
+      city_id: r.city_id,
+      country_id: r.country_id,
+      iso: r.iso ? String(r.iso).trim() : null,
+      country_name: r.country_name || null,
+      name: r.name,
+      lat: parseFloat(r.lat),
+      lon: parseFloat(r.lon),
+      n: r.n,
+      sent_n: r.sent_n,
+      avg_sent: r.avg_sent == null ? null : parseFloat(r.avg_sent)
+    });
 
     if (!bucketExpr) {
-      const points = rows.map(r => ({
-        country_id: r.country_id,
-        name: r.name,
-        iso: r.iso ? String(r.iso).trim() : null,
-        lat: parseFloat(r.lat),
-        lon: parseFloat(r.lon),
-        n:  r.n,
-        sent_n: r.sent_n,
-        avg_sent: r.avg_sent == null ? null : parseFloat(r.avg_sent)
-      }));
-      const totalArticles = points.reduce((s, p) => s + p.n, 0);
-      const totalScored   = points.reduce((s, p) => s + p.sent_n, 0);
+      const country_points = countryRows.map(mapCountry);
+      const city_points    = cityRows.map(mapCity);
+
+      // Legacy `points` = merged view kept for any caller still on v1 schema.
+      // Country-level rows positioned at country centroid; city-level rows at
+      // city centroid. Rolled up into a single flat list.
+      const legacyPoints = [
+        ...country_points,
+        ...city_points.map(p => ({
+          country_id: p.country_id,
+          name: p.country_name || p.name,
+          iso: p.iso,
+          lat: p.lat, lon: p.lon,
+          n: p.n, sent_n: p.sent_n, avg_sent: p.avg_sent
+        }))
+      ];
+
+      const totalArticles =
+        country_points.reduce((s, p) => s + p.n, 0) +
+        city_points.reduce((s, p) => s + p.n, 0);
+      const totalScored =
+        country_points.reduce((s, p) => s + p.sent_n, 0) +
+        city_points.reduce((s, p) => s + p.sent_n, 0);
+      const uniqueCountries = new Set([
+        ...country_points.map(p => p.country_id),
+        ...city_points.map(p => p.country_id)
+      ]).size;
+
       return res.json({
         mode, bucket: 'none',
-        points,
+        country_points,
+        city_points,
+        points: legacyPoints,
         stats: {
-          countries: points.length,
+          countries: uniqueCountries,
+          cities: city_points.length,
           articles: totalArticles,
           scored: totalScored,
           sentiment_coverage: totalArticles ? (totalScored / totalArticles) : 0
@@ -1817,25 +1892,38 @@ app.get("/api/heatmap", async (req, res) => {
       });
     }
 
-    // Bucketed response: group rows by timestamp
+    // Bucketed response: group rows by timestamp, split country vs city.
     const byT = new Map();
-    for (const r of rows) {
+    const ensure = (key) => {
+      if (!byT.has(key)) byT.set(key, { country_points: [], city_points: [] });
+      return byT.get(key);
+    };
+    for (const r of countryRows) {
       const key = r.t instanceof Date ? r.t.toISOString() : r.t;
-      if (!byT.has(key)) byT.set(key, []);
-      byT.get(key).push({
-        country_id: r.country_id,
-        name: r.name,
-        iso: r.iso ? String(r.iso).trim() : null,
-        lat: parseFloat(r.lat),
-        lon: parseFloat(r.lon),
-        n:  r.n,
-        sent_n: r.sent_n,
-        avg_sent: r.avg_sent == null ? null : parseFloat(r.avg_sent)
-      });
+      ensure(key).country_points.push(mapCountry(r));
+    }
+    for (const r of cityRows) {
+      const key = r.t instanceof Date ? r.t.toISOString() : r.t;
+      ensure(key).city_points.push(mapCity(r));
     }
     const buckets = [...byT.entries()]
       .sort((a, b) => a[0] < b[0] ? -1 : 1)
-      .map(([t, points]) => ({ t, points }));
+      .map(([t, o]) => ({
+        t,
+        country_points: o.country_points,
+        city_points:    o.city_points,
+        // legacy merged list for older clients
+        points: [
+          ...o.country_points,
+          ...o.city_points.map(p => ({
+            country_id: p.country_id,
+            name: p.country_name || p.name,
+            iso: p.iso,
+            lat: p.lat, lon: p.lon,
+            n: p.n, sent_n: p.sent_n, avg_sent: p.avg_sent
+          }))
+        ]
+      }));
     res.json({ mode, bucket, buckets });
   } catch (err) {
     console.error("[heatmap]", err.message);
