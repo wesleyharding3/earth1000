@@ -4155,15 +4155,9 @@ app.get("/api/stats/location", async (req, res) => {
 });
 
 /* =========================================
-   Static Files & Frontend
+   Health Check
 ========================================= */
-app.use(express.static(path.join(__dirname, 'www')));
-
-/* =========================================
-   Health Check / SPA Fallback
-========================================= */
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, 'www/index.html')));
-app.get("*", (req, res) => res.sendFile(path.join(__dirname, 'www/index.html')));
+app.get("/", (req, res) => res.send("API is running"));
 
 /* =========================================
    Start
