@@ -30,6 +30,8 @@
 'use strict';
 
 const pool = require('./db');
+const fs   = require('fs');
+const path = require('path');
 const { scoreArticle } = require('./sentimentLexicon');
 
 // ─── Args ───────────────────────────────────────────────────────────────────
@@ -42,9 +44,13 @@ function optVal(name)    {
 
 const DRY       = flag('dry');
 const VERBOSE   = flag('verbose');
+const STATUS    = flag('status');   // print current DB coverage + exit
+const NO_RESUME = flag('no-resume'); // ignore checkpoint and start from id=0
+const RESET     = flag('reset');     // delete checkpoint before starting
 const LIMIT     = parseInt(optVal('limit'), 10) || null;
 const SINCE     = optVal('since');
 const BATCH     = parseInt(optVal('batch'), 10) || 500;
+const CHECKPOINT_PATH = path.join(__dirname, '.backfillSentiment.progress.json');
 
 // ─── Stats ──────────────────────────────────────────────────────────────────
 const stats = {
@@ -69,18 +75,176 @@ function classify(s) {
 function humanDuration(ms) {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
-  return `${m}m${s}s`;
+  if (ms < 3600_000) {
+    const m = Math.floor(ms / 60_000);
+    const s = Math.round((ms % 60_000) / 1000);
+    return `${m}m${s.toString().padStart(2, '0')}s`;
+  }
+  const h = Math.floor(ms / 3600_000);
+  const m = Math.floor((ms % 3600_000) / 60_000);
+  return `${h}h${m.toString().padStart(2, '0')}m`;
+}
+
+// ─── Checkpoint file (live progress you can `cat` from another terminal) ───
+function writeCheckpoint(extra) {
+  const elapsed = Date.now() - stats.startedAt;
+  const rate    = stats.scanned / Math.max(0.001, elapsed / 1000);
+  const payload = {
+    pid: process.pid,
+    started_at: new Date(stats.startedAt).toISOString(),
+    updated_at: new Date().toISOString(),
+    elapsed_ms: elapsed,
+    elapsed: humanDuration(elapsed),
+    rows_per_sec: Math.round(rate),
+    scanned: stats.scanned,
+    matched: stats.matched,
+    unmatched: stats.null_after,
+    written: stats.written,
+    batches: stats.batches,
+    last_id: extra?.lastId ?? null,
+    total_null: extra?.totalNull ?? null,
+    percent_complete: extra?.totalNull
+      ? +(((stats.scanned) / (LIMIT || extra.totalNull)) * 100).toFixed(2)
+      : null,
+    eta: extra?.eta ?? null,
+    distribution: { ...stats.bucketHist },
+    mode: DRY ? 'dry' : 'live',
+    limit: LIMIT,
+    since: SINCE || null
+  };
+  try {
+    fs.writeFileSync(CHECKPOINT_PATH, JSON.stringify(payload, null, 2));
+  } catch (e) { /* checkpoint is best-effort */ }
+}
+
+function clearCheckpoint() {
+  try { fs.unlinkSync(CHECKPOINT_PATH); } catch (e) { /* ignore */ }
+}
+
+function loadCheckpoint() {
+  try {
+    if (!fs.existsSync(CHECKPOINT_PATH)) return null;
+    const cp = JSON.parse(fs.readFileSync(CHECKPOINT_PATH, 'utf8'));
+    // Guard against cross-run mode mismatch (don't resume live from a dry run)
+    if (cp.mode && cp.mode !== (DRY ? 'dry' : 'live')) return null;
+    return cp;
+  } catch (e) { return null; }
+}
+
+// ── Retry wrapper: survives connection drops / statement timeouts ───────────
+// The pool will transparently reconnect on the next query, but we need to
+// catch the error and retry with exponential backoff so a network blip or
+// transient Render Postgres hiccup doesn't kill a multi-hour backfill.
+async function withRetry(label, fn, { tries = 6, baseMs = 800 } = {}) {
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    if (_shuttingDown) throw new Error('shutdown in progress');
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      // Pool-closed errors mean we're shutting down — stop immediately.
+      if (/Cannot use a pool after calling end/i.test(err.message || '')) throw err;
+      const transient =
+        err.code === 'ECONNRESET' ||
+        err.code === 'ECONNREFUSED' ||
+        err.code === 'ETIMEDOUT' ||
+        err.code === '57014' ||        // query_canceled (statement_timeout)
+        err.code === '08006' ||        // connection_failure
+        err.code === '08003' ||        // connection_does_not_exist
+        err.code === '08001' ||        // sqlclient_unable_to_establish_sqlconnection
+        /terminat|reset|timeout|ECONN|Connection/i.test(err.message || '');
+      if (!transient) throw err;
+      const wait = baseMs * Math.pow(2, i);
+      console.warn(`\n⚠️  ${label} failed (${err.code || err.message}) — retry ${i + 1}/${tries} in ${wait}ms`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
+// ─── `--status` short-circuit: print current DB coverage and exit ──────────
+async function printStatus() {
+  const { rows } = await pool.query(`
+    SELECT
+      COUNT(*)::bigint                                  AS total,
+      COUNT(sentiment_score)::bigint                    AS scored,
+      COUNT(*) FILTER (WHERE sentiment_score IS NULL)::bigint AS null_rows,
+      ROUND(AVG(sentiment_score)::numeric, 4)           AS avg_sent,
+      MIN(published_at)                                 AS earliest,
+      MAX(published_at)                                 AS latest
+    FROM news_articles
+  `);
+  const r = rows[0];
+  const total  = Number(r.total);
+  const scored = Number(r.scored);
+  const nulls  = Number(r.null_rows);
+  const pct    = total ? ((scored / total) * 100).toFixed(2) : '0.00';
+
+  console.log('📊 sentiment_score coverage');
+  console.log(`   total articles : ${total.toLocaleString()}`);
+  console.log(`   scored         : ${scored.toLocaleString()} (${pct}%)`);
+  console.log(`   null           : ${nulls.toLocaleString()}`);
+  console.log(`   avg score      : ${r.avg_sent ?? '—'}`);
+  console.log(`   range          : ${r.earliest?.toISOString?.() || '—'}  →  ${r.latest?.toISOString?.() || '—'}`);
+
+  // If a backfill is currently running, show its checkpoint
+  if (fs.existsSync(CHECKPOINT_PATH)) {
+    try {
+      const cp = JSON.parse(fs.readFileSync(CHECKPOINT_PATH, 'utf8'));
+      console.log('');
+      console.log('🏃 active backfill checkpoint:');
+      console.log(`   pid            : ${cp.pid}`);
+      console.log(`   started        : ${cp.started_at}`);
+      console.log(`   updated        : ${cp.updated_at}`);
+      console.log(`   elapsed        : ${cp.elapsed}`);
+      console.log(`   scanned        : ${cp.scanned.toLocaleString()}${cp.total_null ? ` / ${cp.total_null.toLocaleString()}` : ''}`);
+      console.log(`   written        : ${cp.written.toLocaleString()}`);
+      console.log(`   rate           : ${cp.rows_per_sec} rows/s`);
+      if (cp.percent_complete != null) console.log(`   progress       : ${cp.percent_complete}%`);
+      if (cp.eta) console.log(`   eta            : ${cp.eta}`);
+    } catch (e) {
+      console.log(`(couldn't read checkpoint file: ${e.message})`);
+    }
+  }
+  await pool.end();
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 async function main() {
+  if (STATUS) { await printStatus(); return; }
+  if (RESET) { clearCheckpoint(); console.log('🗑  checkpoint cleared'); }
+
+  // Try to resume from an existing checkpoint
+  const resumeCp = NO_RESUME ? null : loadCheckpoint();
+  let resumeLastId = 0;
+  if (resumeCp) {
+    resumeLastId = resumeCp.last_id || 0;
+    // Carry forward counters so stats + ETA stay coherent across resumes
+    stats.scanned    = resumeCp.scanned || 0;
+    stats.matched    = resumeCp.matched || 0;
+    stats.null_after = resumeCp.unmatched || 0;
+    stats.written    = resumeCp.written || 0;
+    stats.batches    = resumeCp.batches || 0;
+    if (resumeCp.distribution) {
+      for (const k of Object.keys(stats.bucketHist)) {
+        if (typeof resumeCp.distribution[k] === 'number') {
+          stats.bucketHist[k] = resumeCp.distribution[k];
+        }
+      }
+    }
+  }
+
   console.log('🎯 backfillSentiment starting');
   console.log(`   mode      : ${DRY ? 'DRY RUN (no writes)' : 'LIVE'}`);
   console.log(`   batch     : ${BATCH}`);
   if (LIMIT) console.log(`   limit     : ${LIMIT}`);
   if (SINCE) console.log(`   since     : ${SINCE}`);
+  if (resumeCp) {
+    console.log(`   resuming  : last_id=${resumeLastId}  prev_scanned=${stats.scanned.toLocaleString()}  prev_written=${stats.written.toLocaleString()}`);
+  } else {
+    console.log(`   resume    : (no checkpoint — starting from id=0)`);
+  }
   console.log('');
 
   // Pre-count (scope only; we'll advance via id cursor inside the loop)
@@ -90,10 +254,10 @@ async function main() {
     preCountParams.push(SINCE);
     preCountWhere.push(`a.published_at >= $${preCountParams.length}::date`);
   }
-  const { rows: countRows } = await pool.query(
+  const countRows = await withRetry('pre-count', () => pool.query(
     `SELECT COUNT(*)::bigint AS n FROM news_articles a WHERE ${preCountWhere.join(' AND ')}`,
     preCountParams
-  );
+  ).then(r => r.rows));
   const totalNull = parseInt(countRows[0].n, 10);
   console.log(`   null rows to process: ${totalNull.toLocaleString()}${LIMIT ? ` (limited to ${LIMIT.toLocaleString()})` : ''}`);
   console.log('');
@@ -111,7 +275,7 @@ async function main() {
   //     naturally skips both "just-updated" rows (now non-null) and
   //     "unmatched" rows (no signal words; left NULL but > lastId next pass).
   //   - Works identically in DRY mode because we still advance the cursor.
-  let lastId = 0;
+  let lastId = resumeLastId;
   let keepGoing = true;
 
   while (keepGoing) {
@@ -128,14 +292,14 @@ async function main() {
       whereBits.push(`a.published_at >= $${params.length}::date`);
     }
 
-    const { rows } = await pool.query(
+    const rows = await withRetry('SELECT batch', () => pool.query(
       `SELECT a.id, a.title, a.summary, a.translated_title, a.translated_summary
          FROM news_articles a
         WHERE ${whereBits.join(' AND ')}
         ORDER BY a.id ASC
         LIMIT ${fetchLimit}`,
       params
-    );
+    ).then(r => r.rows));
 
     if (!rows.length) { keepGoing = false; break; }
 
@@ -160,31 +324,53 @@ async function main() {
     if (!DRY && updates.length) {
       const ids    = updates.map(u => u[0]);
       const scores = updates.map(u => u[1]);
-      const result = await pool.query(
+      const result = await withRetry('UPDATE batch', () => pool.query(
         `UPDATE news_articles a
             SET sentiment_score = v.score
            FROM (SELECT UNNEST($1::int[]) AS id, UNNEST($2::float8[]) AS score) v
           WHERE a.id = v.id
             AND a.sentiment_score IS NULL`,
         [ids, scores]
-      );
+      ));
       stats.written += result.rowCount || 0;
     }
 
     stats.batches++;
-    if (VERBOSE || stats.batches % 10 === 0) {
-      const pct = LIMIT ? ((stats.scanned / LIMIT) * 100).toFixed(1)
-                        : ((stats.scanned / totalNull) * 100).toFixed(1);
-      const rate = stats.scanned / Math.max(0.001, (Date.now() - stats.startedAt) / 1000);
-      console.log(
-        `  batch ${stats.batches.toString().padStart(4)}  ` +
-        `scanned=${stats.scanned.toLocaleString().padStart(10)}  ` +
-        `matched=${stats.matched.toLocaleString().padStart(10)}  ` +
-        `written=${stats.written.toLocaleString().padStart(10)}  ` +
-        `${pct}%  ${rate.toFixed(0)}/s`
-      );
+
+    // ── Progress + ETA (every batch) ─────────────────────────────────────
+    const target   = LIMIT || totalNull;
+    const pctNum   = Math.min(100, (stats.scanned / target) * 100);
+    const pct      = pctNum.toFixed(1);
+    const elapsed  = Date.now() - stats.startedAt;
+    const rate     = stats.scanned / Math.max(0.001, elapsed / 1000);
+    const remaining = Math.max(0, target - stats.scanned);
+    const etaMs    = rate > 0 ? (remaining / rate) * 1000 : 0;
+    const etaHuman = etaMs > 0 ? humanDuration(etaMs) : '—';
+
+    _lastKnown = { lastId, totalNull, eta: etaHuman };
+    writeCheckpoint(_lastKnown);
+
+    // Always print every batch in a single terse line — small enough to be
+    // unobtrusive, detailed enough to see rate/ETA live.
+    // Use \r when not verbose so terminals overwrite the previous line;
+    // verbose mode uses \n so you get a full scrollback.
+    const barW = 24;
+    const filled = Math.round((pctNum / 100) * barW);
+    const bar = '█'.repeat(filled) + '░'.repeat(barW - filled);
+    const line =
+      `  ${bar} ${pct.padStart(5)}%  ` +
+      `${stats.scanned.toLocaleString().padStart(9)}/${target.toLocaleString()}  ` +
+      `w=${stats.written.toLocaleString().padStart(7)}  ` +
+      `${rate.toFixed(0).padStart(4)}/s  ` +
+      `elapsed ${humanDuration(elapsed)}  eta ${etaHuman}`;
+
+    if (VERBOSE || !process.stdout.isTTY) {
+      console.log(line);
+    } else {
+      process.stdout.write('\r' + line);
     }
   }
+  if (!VERBOSE && process.stdout.isTTY) process.stdout.write('\n');
 
   const elapsed = Date.now() - stats.startedAt;
   console.log('');
@@ -210,11 +396,34 @@ async function main() {
   console.log(`     positive      [0.2 .. 0.6]   ${bar(h.pos)}`);
   console.log(`     very-positive [0.6 .. 1]     ${bar(h.vpos)}`);
   console.log('');
+  console.log(`   checkpoint   : ${CHECKPOINT_PATH}`);
 
+  clearCheckpoint();
   await pool.end();
 }
 
+// Graceful shutdown: leave a final checkpoint so you can resume where you
+// stopped. Only writes if we actually made progress.
+let _shuttingDown = false;
+let _lastKnown = { lastId: 0, totalNull: null }; // updated from the main loop
+function gracefulExit(signal) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  console.log(`\n⏸  caught ${signal} — writing final checkpoint and exiting…`);
+  if (stats.batches > 0) {
+    writeCheckpoint(_lastKnown);
+    console.log(`   checkpoint saved — resume with: node backfillSentiment.js${DRY ? ' --dry' : ''}`);
+  } else {
+    console.log('   (no progress yet — nothing to checkpoint)');
+  }
+  pool.end().finally(() => process.exit(0));
+}
+process.on('SIGINT',  () => gracefulExit('SIGINT'));
+process.on('SIGTERM', () => gracefulExit('SIGTERM'));
+
 main().catch(err => {
+  if (_shuttingDown) return; // already handling SIGINT/SIGTERM
   console.error('❌ backfill failed:', err);
+  if (stats.batches > 0) writeCheckpoint(_lastKnown);
   pool.end().finally(() => process.exit(1));
 });
