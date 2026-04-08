@@ -1816,6 +1816,68 @@ app.get("/api/threads/latest", async (req, res) => {
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
 
+    // Step 3: For any thread whose articles had NO images at all (neither
+    // scraped nor previously assigned), pull a contextual fallback directly
+    // from the bucket catalog by matching the thread's own keywords +
+    // primary_category. This guarantees every card has an image.
+    //
+    // Selection rule (per thread):
+    //   1. Prefer assets whose keywords overlap the thread's keywords
+    //   2. Then assets whose primary_category matches
+    //   3. Then assets whose generic_category matches the thread's category
+    //   4. Within each tier: highest priority, then least-used (variety),
+    //      then random tiebreaker
+    const orphanThreads = threads.filter(t => !heroMap.has(t.thread_id));
+    if (orphanThreads.length) {
+      const orphanPayload = orphanThreads.map(t => ({
+        id: t.thread_id,
+        keywords: Array.isArray(t.keywords) ? t.keywords : [],
+        primary_category: t.primary_category || null
+      }));
+
+      const { rows: bucketHeroes } = await pool.query(`
+        WITH thread_meta AS (
+          SELECT
+            (elem->>'id')::int AS thread_id,
+            ARRAY(SELECT jsonb_array_elements_text(elem->'keywords'))::text[] AS keywords,
+            elem->>'primary_category' AS primary_category
+          FROM jsonb_array_elements($1::jsonb) AS elem
+        )
+        SELECT tm.thread_id, ia.public_url
+        FROM thread_meta tm
+        LEFT JOIN LATERAL (
+          SELECT public_url
+          FROM image_assets
+          WHERE is_active = TRUE
+            AND (
+                 (COALESCE(array_length(tm.keywords, 1), 0) > 0 AND keywords && tm.keywords)
+              OR (tm.primary_category IS NOT NULL AND primary_category = tm.primary_category)
+              OR (tm.primary_category IS NOT NULL AND generic_category = tm.primary_category)
+              OR generic_category = 'general'
+            )
+          ORDER BY
+            (COALESCE(array_length(tm.keywords, 1), 0) > 0 AND keywords && tm.keywords)::int DESC,
+            (tm.primary_category IS NOT NULL AND primary_category = tm.primary_category)::int DESC,
+            (tm.primary_category IS NOT NULL AND generic_category = tm.primary_category)::int DESC,
+            priority DESC,
+            usage_count ASC,
+            RANDOM()
+          LIMIT 1
+        ) ia ON TRUE
+        WHERE ia.public_url IS NOT NULL
+      `, [JSON.stringify(orphanPayload)]);
+
+      for (const row of bucketHeroes) {
+        heroMap.set(row.thread_id, {
+          thread_id: row.thread_id,
+          hero_image_url: row.public_url,
+          hero_catalog_image_url: row.public_url,
+          hero_source_name: null,
+          hero_iso_code: null
+        });
+      }
+    }
+
     const result = threads.map(t => {
       const h = heroMap.get(t.thread_id);
       return {
