@@ -1138,7 +1138,7 @@
 /* ── Flow Controls Panel ── */
 #flowControls {
   position: fixed;
-  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 600;
@@ -1152,7 +1152,30 @@
 }
 #flowControls.visible { display: flex; }
 body.ticker-active #flowControls {
-  bottom: calc(var(--global-ticker-height) + 14px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  bottom: calc(var(--global-ticker-height) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+}
+
+/* News Flows title (top-left of flow panel) */
+.flowPanelTitle {
+  position: absolute;
+  top: 10px;
+  left: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(80,255,160,1);
+  text-shadow: 0 0 10px rgba(0,220,130,0.45);
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Mobile flow date inputs: hide year field (webkit) */
+.flowDateInput::-webkit-datetime-edit-year-field {
+  display: none;
+}
+.flowDateInput::-webkit-datetime-edit-text:last-of-type {
+  display: none;
 }
 
 .flowPanel {
@@ -1161,7 +1184,7 @@ body.ticker-active #flowControls {
       -webkit-backdrop-filter: blur(6px);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 20px;
-  padding: 14px 18px;
+  padding: 32px 18px 14px 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1609,7 +1632,7 @@ body.ticker-active #flowControls {
 .flowCloseBtn {
   position: absolute;
   top: 8px;
-  right: 8px;
+  right: 10px;
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
   border-radius: calc(12px * var(--mobile-control-scale));
@@ -1634,7 +1657,7 @@ body.ticker-active #flowControls {
 .flowMinBtn {
   position: absolute;
   top: 8px;
-  right: calc(38px * var(--mobile-control-scale));
+  right: calc(40px * var(--mobile-control-scale));
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
   border-radius: calc(12px * var(--mobile-control-scale));
@@ -4302,19 +4325,8 @@ body.ticker-active #flowControls {
       position: relative;
       z-index: 50;
     }
-    /* Yellow accent line — below title row, above filters/date */
-    .nfTitleRow::after {
-      content: '';
-      position: absolute;
-      bottom: -7px; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(255,180,80,0.55) 30%,
-        rgba(255,140,40,0.80) 50%,
-        rgba(255,180,80,0.55) 70%,
-        transparent 100%);
-      pointer-events: none;
-    }
+    /* Yellow accent line — removed on mobile per design */
+    .nfTitleRow::after { display: none; }
 
     /* ── Title row: page title + view toggle ── */
     .nfTitleRow {
@@ -5925,7 +5937,7 @@ body.ticker-active #flowControls {
         bottom: calc(var(--global-ticker-height) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
       }
       .flowPanel {
-        padding: 12px 10px;
+        padding: 30px 10px 12px 10px;
         max-width: 100%;
         overflow: hidden;
       }
@@ -7327,7 +7339,8 @@ window.sourceBiasBadgeHTML = function(bias) {
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
-    
+    <button class="flowCloseBtn" id="flowCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
+
     <!-- Minimized bar (shown when minimized) -->
     <div class="flowMinBar">
       <button class="flowOriginBtn" id="flowMinOriginBtn" style="display:none;" title="Back to origin">
@@ -7340,6 +7353,7 @@ window.sourceBiasBadgeHTML = function(bias) {
     </div>
     
     <div class="flowPanel">
+      <div class="flowPanelTitle">News Flows</div>
       <!-- Back to origin (shown when triggered from article/thread card) -->
       <div class="flowOriginRow" id="flowPanelOriginRow" style="display:none;">
         <button class="flowOriginBtn" id="flowPanelOriginBtn" title="Back to origin">
