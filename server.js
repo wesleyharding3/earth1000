@@ -58,6 +58,34 @@ function parseOptionalPositiveInt(value, fallback = null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+// ── Tiny TTL cache + single-flight for hot read endpoints ────────────────────
+//
+// Coalesces concurrent requests for the same key into one DB query, then
+// serves the result from memory until the TTL expires. Cuts feed/threads
+// load to a single query per key per window even under fan-out from many
+// clients hitting the page at once. New articles still appear within `ttlMs`
+// of being inserted, so the live feel is preserved.
+const _ttlCache = new Map();        // key → { expires, value }
+const _ttlInflight = new Map();     // key → Promise
+async function ttlCached(key, ttlMs, producer) {
+  const now = Date.now();
+  const hit = _ttlCache.get(key);
+  if (hit && hit.expires > now) return hit.value;
+  const inflight = _ttlInflight.get(key);
+  if (inflight) return inflight;
+  const p = (async () => {
+    try {
+      const value = await producer();
+      _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
+      return value;
+    } finally {
+      _ttlInflight.delete(key);
+    }
+  })();
+  _ttlInflight.set(key, p);
+  return p;
+}
+
 const tradeTableColumnCache = new Map();
 const TRADE_VALUE_COLUMN_CANDIDATES = ["annual_profit", "annual_cost", "value", "total_value", "exports_value", "imports_value", "amount"];
 const TRADE_ITEM_COLUMN_CANDIDATES = ["name", "label", "product", "commodity", "item_name", "category"];
@@ -1760,6 +1788,12 @@ app.get("/api/threads/latest", async (req, res) => {
     const fromDate = req.query.from_date || null;  // ISO date string e.g. "2026-03-01"
     const toDate   = req.query.to_date   || null;
 
+    // 30s in-memory TTL — coalesces concurrent requests for the same
+    // (limit, from, to) tuple into one query. New threads still surface
+    // within the next refresh window.
+    const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
+    const _cached = await ttlCached(_cacheKey, 30_000, async () => {
+
     // Step 1: get threads
     //
     // Country-aware ranking:
@@ -1814,7 +1848,7 @@ app.get("/api/threads/latest", async (req, res) => {
       LIMIT $1
     `, params);
 
-    if (!threads.length) return res.json([]);
+    if (!threads.length) return [];
 
     // Step 2: batch-fetch hero images for all threads
     //
@@ -1923,7 +1957,10 @@ app.get("/api/threads/latest", async (req, res) => {
       };
     });
 
-    res.json(result);
+    return result;
+    });
+
+    res.json(_cached);
   } catch (err) {
     console.error("[threads/latest]", err.message, err.stack);
     res.status(500).json({ error: "Failed to fetch threads", detail: err.message });
@@ -2104,26 +2141,33 @@ app.get("/api/articles/recent", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 60, 100);
   const hours = Math.min(parseInt(req.query.hours) || 48, 168);
   try {
-    const { rows } = await pool.query(`
-      SELECT
-        a.id, a.title, a.translated_title, a.summary,
-        a.published_at, a.url,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        COALESCE(ns.name, ys.name) AS source_name,
-        ns.source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        co.name AS country_name, co.iso_code
-      FROM news_articles a
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      WHERE a.published_at >= NOW() - ($2 || ' hours')::interval
-        AND a.title IS NOT NULL
-      ORDER BY RANDOM()
-      LIMIT $1
-    `, [limit, hours]);
+    // 20s in-memory TTL — global ticker fans out heavily; one query per
+    // (limit, hours) per window is plenty. Yes, the random sample becomes
+    // shared across users in the window — that's fine and avoids hammering
+    // the DB with ORDER BY RANDOM() on every page open.
+    const rows = await ttlCached(`articles/recent:${limit}:${hours}`, 20_000, async () => {
+      const { rows } = await pool.query(`
+        SELECT
+          a.id, a.title, a.translated_title, a.summary,
+          a.published_at, a.url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          ns.source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          co.name AS country_name, co.iso_code
+        FROM news_articles a
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE a.published_at >= NOW() - ($2 || ' hours')::interval
+          AND a.title IS NOT NULL
+        ORDER BY RANDOM()
+        LIMIT $1
+      `, [limit, hours]);
+      return rows;
+    });
     res.json(rows);
   } catch (err) {
     console.error("[articles/recent]", err.message);
