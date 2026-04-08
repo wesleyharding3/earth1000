@@ -203,7 +203,41 @@ async function evaluateWithClaude(articles, existingThreads) {
     cat:      t.primary_category
   }));
 
-  const prompt = `You are the editorial filter for a GEOPOLITICAL MONITORING PLATFORM. Your job is to identify hard-news story threads that matter to people tracking world events, conflict, statecraft, and power. You are NOT a general news aggregator. Most articles you see should NOT become threads.
+  const prompt = `You are the editorial filter for a GEOPOLITICAL MONITORING PLATFORM. Your job is to identify STORY ARCS that are unfolding on the global political scale. You are NOT a general news aggregator. You are NOT a country directory. You are NOT a government-notices board. Most articles you see should NOT become threads — a thread has a high bar.
+
+═══ WHAT A THREAD IS ═══
+A thread is a specific STORY ARC unfolding over time — a war, a political shift, a major disaster, an election with global stakes, a diplomatic crisis, a sanctions regime, a cross-border economic rupture. It has:
+  • Named actors doing named things
+  • Verifiable events with dates, casualties, outcomes
+  • Global or regional-with-global-scope significance
+  • Multi-source corroboration (a one-off report is not an arc)
+
+A thread is NOT:
+  • A summary of what's happening in one country ("Nepal Government Administrative Announcements")
+  • A topic label about a sector ("Vietnam Renewable Energy Investment Surge")
+  • A routine government action ("Spain Tax Returns Campaign 2025")
+  • A local political squabble ("Polish Political Defamation Dispute")
+  • A subnational/regional political event with no global significance ("BJP Foundation Day in Rajasthan", "Chile Regional Cabinet Formation")
+  • A commercial/industrial announcement ("ArcelorMittal-Nippon Steel Plant Groundbreaking", "Pamesa Group Launches Gravita Ceramic Technology")
+  • A research / science / academic story ("Swedish Cancer Research Breakthroughs")
+  • A domestic crime / weather / routine news item ("Italian Crime: Property Theft", "Mexico Weather Crisis Cold Front")
+  • A chamber-of-commerce / youth council / business association leadership change
+  • A news-of-news meta story ("US Election Coverage and Political Communication Strategy")
+
+═══ REGIONAL ≠ GLOBAL ═══
+If the story deals with a country's INTERNAL politics at a REGIONAL / subnational scale — skip it. Regional cabinet formations, state-level party activities, provincial assembly elections, chamber-of-commerce leadership, youth council recruitment — all REJECT. Exceptions: presidential elections, regime changes, coups, major national political shifts with international implications.
+
+═══ GLOBAL-SCALE REGIONAL EVENTS ARE OK ═══
+A regional event CAN be a thread if it has global scope:
+  • A severe earthquake, flood, or wildfire that triggers international aid
+  • An armed conflict or insurgency, even if geographically contained
+  • A refugee crisis
+  • A major epidemic outbreak
+  • A national political shift (regime change, coup, constitutional crisis)
+  • A cross-border dispute or incident
+
+═══ MANUFACTURING / COMMERCIAL NEWS ═══
+Obscure information about factories, plants, industries, real estate markets, commercial launches, research breakthroughs, and tax campaigns is NOT relevant UNLESS it directly connects to a breaking story at the global level (e.g. a factory destroyed in an airstrike, a steel plant sanctioned by the US, a commercial deal at the center of a trade war). Absent that connection, REJECT.
 
 EXISTING ACTIVE THREADS (check if any articles extend these):
 ${JSON.stringify(existingData, null, 2)}
@@ -354,6 +388,58 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     /\bweather\s+(updates|patterns|conditions|forecast)\b/i,
     /\bdaily\s+(news|updates|roundup|briefing)\b/i,
     /\b(news|coverage)\s+(briefs|brief|wrap|wrapup|wrap-up)\b/i,
+    // Regional / subnational politics
+    /\b(foundation|party|anniversary)\s+day\s+(celebration|celebrations)\b/i,
+    /\b(cabinet|government)\s+(formation|reshuffle|reshuffling|reshuffles)\b/i,
+    /\b(leadership|chamber|council|committee|board)\s+(election|appointment|appointments|selection|recruitment)\b/i,
+    /\bchamber\s+of\s+commerce\b/i,
+    /\b(youth|provincial|regional|municipal|district|local|village|town|county)\s+(council|assembly|committee|board)\b/i,
+    /\bgovernment\s+leadership\s+(appointments?|changes?|reshuffle)\b/i,
+    /\bregional\s+cabinet\b/i,
+    /\bdefamation\s+(dispute|case|lawsuit|suit|charges?)\b/i,
+    // Routine government administration
+    /\b(license|permit|passport|visa)\s+(processing|issuance|applications?|renewal)\b/i,
+    /\b(recruitment|hiring)\s+(announcement|drive|campaign|notice)\b/i,
+    /\bpersonnel\s+(meetings?|changes?|announcements?|updates?)\b/i,
+    /\btax\s+(returns?|filing|season|campaign)\s+(campaign|opens?|opening|deadline|filing|begins?)/i,
+    /\btax\s+(returns?|filing)\b/i,
+    /\b(transport|transportation)\s+department\b/i,
+    /\b(ministry|department)\s+(personnel|operations|activities|meetings?|announcements?)\b/i,
+    // Commercial / industrial / factory
+    /\b(plant|factory|mill|refinery|smelter)\s+(opens?|opening|launches?|launched|development|expansion|groundbreaking|inauguration|construction)\b/i,
+    /\bgroundbreaking\b/i,
+    /\b(steel|cement|ceramic|textile|glass|aluminum|copper|plastic)\s+(plant|industry|mill|market|technology|sector|factory)\b/i,
+    /\brenewable\s+energy\s+(investment|surge|growth|expansion)\b/i,
+    /\bmanufacturing\s+(sector|plant|expansion|growth|investment|boom)\b/i,
+    /\b(real\s+estate|property)\s+(market|guidance|prices|listings)\b/i,
+    /\bprice\s+controls?\b/i,
+    /\bmarket\s+liberalization\b/i,
+    /\b(group|company|corporation|corp|ltd|inc)\s+launches?\b/i,
+    /\blaunches?\s+(product|technology|platform|service|app|brand|ceramic|steel|cement)\b/i,
+    /\bindustry\s+(expansion|growth|development|investment)\b/i,
+    // Research / science / academic
+    /\b(research|scientific|medical|academic)\s+(breakthrough|breakthroughs|funding|grants?|awards?)\b/i,
+    /\b(cancer|viral|medical|clinical|biomedical)\s+research\b/i,
+    /\bresearch\s+funding\s+awards?\b/i,
+    // Domestic crime / violations
+    /\b(crime|theft|robbery|burglary|fraud)\s*:/i,
+    /\b(property|petty)\s+(theft|crime)\b/i,
+    /\bhouse\s+arrest\s+violations?\b/i,
+    // Weather
+    /\b(weather\s+crisis|cold\s+front|severe\s+(weather|conditions|storm|cold)|heat\s+wave|rain\s+forecast)\b/i,
+    // News-of-news / coverage meta
+    /\b(communication|campaign|political|election)\s+strategy\b/i,
+    /\belection\s+coverage\b/i,
+    /\bnews\s+(update|updates|headlines|briefing|briefings|roundup|recap|digest)\b/i,
+    /\bheadlines?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i,
+    // Vague "resilience / engagement / presence"
+    /\b(economic|political|social|regional)\s+resilience\b/i,
+    /\bamid\s+(global|regional)\s+(tensions?|challenges?|uncertainty|pressure)\b/i,
+    /\bdiplomatic\s+(engagement|presence|activities|initiatives|outreach)\b/i,
+    /\breconstruction\s+and\s+(international|diplomatic|foreign)\b/i,
+    // Routine maritime / inspection
+    /\b(maritime|port|harbor|airport|border)\s+(authority|agency)\s+(inspection|inspections|operations|activities)\b/i,
+    /\b(boat|vessel|ship|vehicle|customs)\s+inspections?\b/i,
   ];
   // Structural "topic bucket" detector — catches single-country summary
   // titles with no concrete event, like "Brazil Political Accountability
@@ -387,6 +473,20 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     "commercial","financial","educational","environmental","institutional","strategic",
     "operational","constitutional","democratic","municipal","provincial","state",
     "ministerial","governmental","parliamentary","executive","ongoing","general","various",
+    "resilience","dispute","disputes","formation","presence","engagement","engagements",
+    "surge","surges","guidance","recruitment","appointments","appointment","headlines",
+    "celebrations","celebration","processing","returns","campaign","campaigns","controls",
+    "control","prices","price","liberalization","breakthrough","breakthroughs","awards",
+    "funding","grants","grant","inspection","inspections","reconstruction","meetings",
+    "personnel","licensing","license","licenses","crime","crimes","theft","thefts",
+    "violations","violation","weather","forecast","conditions","severe",
+    "cold","warm","front","fronts","market","markets","cement","steel","ceramic",
+    "manufacturing","factory","factories","plant","plants","expansion","expansions",
+    "groundbreaking","inauguration","product","products","platform","service","research",
+    "science","scientific","cancer","viral","medical","clinical","academic","chamber",
+    "commerce","council","councils","authority","authorities","ministry","department",
+    "departments","tax","taxes","filing","filings","boat","boats","vessel","vessels",
+    "maritime","port","ports",
   ]);
   const CONCRETE_SIGNAL_RE = new RegExp([
     String.raw`\d`,

@@ -11,9 +11,11 @@
  * accumulated before the prompt + reject filter were added.
  *
  * Usage:
- *   node auditJunkThreads.js                # dry-run (default, no writes)
- *   node auditJunkThreads.js --apply        # actually delete
- *   node auditJunkThreads.js --apply --dormant   # mark as dormant instead of hard-deleting
+ *   node auditJunkThreads.js                       # dry-run (default, no writes)
+ *   node auditJunkThreads.js --apply               # actually delete
+ *   node auditJunkThreads.js --apply --dormant     # mark as dormant instead of hard-deleting
+ *   node auditJunkThreads.js --apply --clean-orphans  # also delete dormant threads with 0 articles (merge-losers)
+ *   node auditJunkThreads.js --apply --min-arts=2  # also delete threads with fewer than N articles
  *
  * Match rule: a thread is junk if EITHER
  *   • primary_category is not in the geopolitical allow-list, OR
@@ -26,8 +28,10 @@
 require("dotenv").config();
 const pool = require("./db");
 
-const APPLY   = process.argv.includes("--apply");
-const DORMANT = process.argv.includes("--dormant");
+const APPLY         = process.argv.includes("--apply");
+const DORMANT       = process.argv.includes("--dormant");
+const CLEAN_ORPHANS = process.argv.includes("--clean-orphans");
+const MIN_ARTS      = parseInt(process.argv.find(a => a.startsWith("--min-arts="))?.split("=")[1] || "0", 10);
 
 // Categories that belong on a geopolitical monitoring platform.
 // Anything outside this set (society, sports, culture, lifestyle, etc.) is junk.
@@ -87,6 +91,67 @@ const JUNK_TITLE_PATTERNS = [
   /\bweather\s+(updates|patterns|conditions|forecast)\b/i,
   /\bdaily\s+(news|updates|roundup|briefing)\b/i,
   /\b(news|coverage)\s+(briefs|brief|wrap|wrapup|wrap-up)\b/i,
+
+  // ─── Regional / subnational politics (not geopolitical) ──────────────
+  /\b(foundation|party|anniversary)\s+day\s+(celebration|celebrations)\b/i,
+  /\b(cabinet|government)\s+(formation|reshuffle|reshuffling|reshuffles)\b/i,
+  /\b(leadership|chamber|council|committee|board)\s+(election|appointment|appointments|selection|recruitment)\b/i,
+  /\bchamber\s+of\s+commerce\b/i,
+  /\b(youth|provincial|regional|municipal|district|local|village|town|county)\s+(council|assembly|committee|board)\b/i,
+  /\bgovernment\s+leadership\s+(appointments?|changes?|reshuffle)\b/i,
+  /\bregional\s+cabinet\b/i,
+  /\bdefamation\s+(dispute|case|lawsuit|suit|charges?)\b/i,
+
+  // ─── Routine government administration ──────────────────────────────
+  /\b(license|permit|passport|visa)\s+(processing|issuance|applications?|renewal)\b/i,
+  /\b(recruitment|hiring)\s+(announcement|drive|campaign|notice)\b/i,
+  /\bpersonnel\s+(meetings?|changes?|announcements?|updates?)\b/i,
+  /\btax\s+(returns?|filing|season|campaign)\s+(campaign|opens?|opening|deadline|filing|begins?)/i,
+  /\btax\s+(returns?|filing)\b/i,
+  /\b(transport|transportation)\s+department\b/i,
+  /\b(ministry|department)\s+(personnel|operations|activities|meetings?|announcements?)\b/i,
+
+  // ─── Commercial / industrial / factory news ─────────────────────────
+  /\b(plant|factory|mill|refinery|smelter)\s+(opens?|opening|launches?|launched|development|expansion|groundbreaking|inauguration|construction)\b/i,
+  /\bgroundbreaking\b/i,
+  /\b(steel|cement|ceramic|textile|glass|aluminum|copper|plastic)\s+(plant|industry|mill|market|technology|sector|factory)\b/i,
+  /\brenewable\s+energy\s+(investment|surge|growth|expansion)\b/i,
+  /\bmanufacturing\s+(sector|plant|expansion|growth|investment|boom)\b/i,
+  /\b(real\s+estate|property)\s+(market|guidance|prices|listings)\b/i,
+  /\bprice\s+controls?\b/i,
+  /\bmarket\s+liberalization\b/i,
+  /\b(group|company|corporation|corp|ltd|inc)\s+launches?\b/i,
+  /\blaunches?\s+(product|technology|platform|service|app|brand|ceramic|steel|cement)\b/i,
+  /\bindustry\s+(expansion|growth|development|investment)\b/i,
+
+  // ─── Research / science / academic (non-event) ──────────────────────
+  /\b(research|scientific|medical|academic)\s+(breakthrough|breakthroughs|funding|grants?|awards?)\b/i,
+  /\b(cancer|viral|medical|clinical|biomedical)\s+research\b/i,
+  /\bresearch\s+funding\s+awards?\b/i,
+
+  // ─── Domestic crime / violations (non-geopolitical) ─────────────────
+  /\b(crime|theft|robbery|burglary|fraud)\s*:/i,
+  /\b(property|petty)\s+(theft|crime)\b/i,
+  /\bhouse\s+arrest\s+violations?\b/i,
+
+  // ─── Weather (non-geopolitical) ─────────────────────────────────────
+  /\b(weather\s+crisis|cold\s+front|severe\s+(weather|conditions|storm|cold)|heat\s+wave|rain\s+forecast)\b/i,
+
+  // ─── News-of-news / coverage meta / headlines roundup ───────────────
+  /\b(communication|campaign|political|election)\s+strategy\b/i,
+  /\belection\s+coverage\b/i,
+  /\bnews\s+(update|updates|headlines|briefing|briefings|roundup|recap|digest)\b/i,
+  /\bheadlines?\s+(january|february|march|april|may|june|july|august|september|october|november|december)\b/i,
+
+  // ─── Vague "resilience / engagement / presence" framings ────────────
+  /\b(economic|political|social|regional)\s+resilience\b/i,
+  /\bamid\s+(global|regional)\s+(tensions?|challenges?|uncertainty|pressure)\b/i,
+  /\bdiplomatic\s+(engagement|presence|activities|initiatives|outreach)\b/i,
+  /\breconstruction\s+and\s+(international|diplomatic|foreign)\b/i,
+
+  // ─── Routine maritime / inspection / operations ─────────────────────
+  /\b(maritime|port|harbor|airport|border)\s+(authority|agency)\s+(inspection|inspections|operations|activities)\b/i,
+  /\b(boat|vessel|ship|vehicle|customs)\s+inspections?\b/i,
 ];
 
 // ─── Structural "topic bucket" detector ──────────────────────────────────────
@@ -136,6 +201,21 @@ const ABSTRACT_TOPIC_NOUNS = new Set([
   "commercial","financial","educational","environmental","institutional","strategic",
   "operational","constitutional","democratic","municipal","provincial","state",
   "ministerial","governmental","parliamentary","executive","ongoing","general","various",
+  // Extras exposed by real examples
+  "resilience","dispute","disputes","formation","presence","engagement","engagements",
+  "surge","surges","guidance","recruitment","appointments","appointment","headlines",
+  "celebrations","celebration","processing","returns","campaign","campaigns","controls",
+  "control","prices","price","liberalization","breakthrough","breakthroughs","awards",
+  "funding","grants","grant","inspection","inspections","reconstruction","meetings",
+  "personnel","licensing","license","licenses","crime","crimes","theft","thefts",
+  "violations","violation","weather","climate","forecast","conditions","severe",
+  "cold","warm","front","fronts","market","markets","cement","steel","ceramic",
+  "manufacturing","factory","factories","plant","plants","expansion","expansions",
+  "groundbreaking","inauguration","launches","launch","launched","product","products",
+  "technology","platform","service","research","science","scientific","cancer","viral",
+  "medical","clinical","academic","chamber","commerce","council","councils","authority",
+  "authorities","ministry","department","departments","appointees","tax","taxes",
+  "filing","filings","boat","boats","vessel","vessels","maritime","port","ports",
 ]);
 
 // Words that indicate a CONCRETE event, action, named actor, or quantitative claim.
@@ -215,10 +295,24 @@ async function main() {
   const reasonCounts = new Map();
 
   for (const t of threads) {
-    const reason = classifyJunk(t);
+    let reason = classifyJunk(t);
+    // Orphan merge-losers: dormant threads with no articles left.
+    // auditDedupThreads.js marks these dormant after merging, but they're
+    // pure DB bloat and the frontend already hides them — safe to hard delete.
+    if (!reason && CLEAN_ORPHANS && t.status === "dormant" && Number(t.article_count) === 0) {
+      reason = "orphan-dormant";
+    }
+    // Thin threads: single-article (or MIN_ARTS-1 article) threads without
+    // multi-source corroboration. A real story arc needs ≥2 sources.
+    if (!reason && MIN_ARTS > 0 && Number(t.article_count) < MIN_ARTS) {
+      reason = `thin<${MIN_ARTS}`;
+    }
     if (!reason) continue;
     junk.push({ thread: t, reason });
-    const bucket = reason.startsWith("category=") ? reason : reason.split(":")[0] + ":pattern";
+    const bucket = reason.startsWith("category=") ? reason
+                : reason.startsWith("orphan") ? "orphan-dormant"
+                : reason.startsWith("thin") ? reason
+                : reason.split(":")[0] + ":pattern";
     reasonCounts.set(bucket, (reasonCounts.get(bucket) || 0) + 1);
   }
 
