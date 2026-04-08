@@ -543,9 +543,11 @@
       width: var(--touch-icon-size);
       height: var(--touch-icon-size);
       border-radius: 50%;
-      background: rgba(0, 0, 0, 0.70);
-      border: 1px solid rgba(255, 255, 255, 0.20);
-      color: rgba(255, 255, 255, 0.80);
+      background: rgba(8, 12, 24, 0.82);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 160, 80, 0.35);
+      color: rgba(255, 200, 140, 0.9);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -557,15 +559,17 @@
     }
 
     .iconBtn:hover {
-      background: rgba(25, 25, 25, 0.90);
-      border-color: rgba(255, 255, 255, 0.40);
+      background: rgba(255, 160, 80, 0.18);
+      border-color: rgba(255, 160, 80, 0.55);
+      color: rgba(255, 215, 160, 1);
       transform: scale(1.06);
     }
 
     .iconBtn.active {
-      background: rgba(35, 35, 35, 0.95);
-      border-color: rgba(255, 255, 255, 0.50);
-      box-shadow: 0 0 16px rgba(255, 255, 255, 0.12);
+      background: rgba(255, 160, 80, 0.22);
+      border-color: rgba(255, 160, 80, 0.70);
+      color: rgba(255, 220, 170, 1);
+      box-shadow: 0 0 16px rgba(255, 160, 80, 0.25);
     }
 
     .iconBtn svg { width: calc(17px * var(--mobile-control-scale)); height: calc(17px * var(--mobile-control-scale)); flex-shrink: 0; }
@@ -2420,8 +2424,8 @@ body.ticker-active #flowControls {
 
 .semHeatLoading { text-align: center; padding: 8px; font-size: 11px; color: rgba(255,200,140,0.7); }
 
-#semHeatToggleBtn { position: fixed; top: 90px; right: 16px; z-index: 994; width: 40px; height: 40px; border-radius: 50%; background: rgba(8,12,24,0.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,160,80,0.35); color: rgba(255,200,140,0.9); display: none; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.5); transition: transform 0.15s, background 0.15s; }
-#semHeatToggleBtn:hover { transform: scale(1.08); background: rgba(255,160,80,0.18); }
+#semHeatToggleBtn { position: absolute; top: 20px; right: 88px; z-index: 30; width: 44px; height: 44px; border-radius: 50%; background: rgba(8,12,24,0.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,160,80,0.35); color: rgba(255,200,140,0.9); display: none; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.5); transition: transform 0.15s, background 0.15s, border-color 0.15s; }
+#semHeatToggleBtn:hover { transform: scale(1.08); background: rgba(255,160,80,0.18); border-color: rgba(255,160,80,0.55); }
 #semHeatToggleBtn svg { width: 20px; height: 20px; }
 
 /* ── Flow arc click info card ── */
@@ -5519,6 +5523,13 @@ body.ticker-active #flowControls {
         width: 44px;
         height: 44px;
       }
+      #semHeatToggleBtn {
+        top: calc(env(safe-area-inset-top, 0px) + 10px);
+        right: 58px; /* 8 + 44 + 6 gap */
+        width: 40px;
+        height: 40px;
+      }
+      #semHeatToggleBtn svg { width: 18px; height: 18px; }
       #scaleBar {
         top: calc(env(safe-area-inset-top, 0px) + 62px);
         right: 8px;
