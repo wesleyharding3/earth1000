@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Earth00 — Icon</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #000;
+    width: 1024px; height: 1024px; overflow: hidden;
+  }
+  #stage {
+    position: relative;
+    width: 1024px; height: 1024px;
+    background: radial-gradient(ellipse at center, #0a0d14 0%, #000 75%);
+    overflow: hidden;
+  }
+
+  /* Background starfield (static) */
+  #stars {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+
+  /* Loader centered, scaled up to fill the icon canvas nicely */
+  .el-loader {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .el-globe-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+  }
+  .el-globe {
+    width: 760px; height: 760px;
+    display: block; overflow: visible;
+  }
+
+  /* Globe grid — same orange as production loader */
+  .el-grid ellipse, .el-grid path {
+    fill: none;
+    stroke: rgba(255,160,40,0.28);
+    stroke-width: 0.8;
+  }
+  .el-grid ellipse:first-child {
+    stroke: rgba(255,160,40,0.55);
+    stroke-width: 1.1;
+  }
+
+  .el-trail-blur {
+    fill: none;
+    stroke: rgba(255,180,60,0.35);
+    stroke-width: 1;
+    stroke-linecap: round;
+    filter: url(#elTrailBlur);
+  }
+  .el-trail-seg {
+    fill: none;
+    stroke-linecap: round;
+    filter: url(#elTrailBlur);
+  }
+  .el-star {
+    fill: rgba(255,222,75,1);
+    filter: drop-shadow(0 0 14px rgba(255,210,60,.95))
+            drop-shadow(0 0 32px rgba(255,135,22,.75));
+  }
+
+  /* Italic serif "e" overlay — scaled to match large globe */
+  .el-e {
+    position: absolute;
+    bottom: 48px; left: 32px;
+    z-index: 1;
+    pointer-events: none;
+    font-family: "Georgia", "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 900;
+    font-size: 420px;
+    line-height: 1;
+    color: rgba(255,175,50,1);
+    text-shadow:
+      0 0 60px  rgba(255,140,30,0.75),
+      0 0 140px rgba(255,100,20,0.45);
+    letter-spacing: -0.04em;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="stars" width="1024" height="1024"></canvas>
+
+  <div class="el-loader">
+    <div class="el-globe-wrap">
+      <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+        <g class="el-grid">
+          <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+          <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+          <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+          <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+          <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+          <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+          <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+          <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+          <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+          <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+          <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
+          <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
+          <path d="M0,-100 Q8,-60 0,100"/>
+          <path d="M0,-100 Q-8,-60 0,100"/>
+        </g>
+        <!-- Shooting star + trails, tilted -32deg same as production loader -->
+        <g id="starGroup" transform="rotate(-32)">
+          <path class="el-trail-blur" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <polygon class="el-star"
+            points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
+        </g>
+      </svg>
+      <div class="el-e">e</div>
+    </div>
+  </div>
+
+  <!-- SVG defs: trail blur filter (same as production) -->
+  <svg width="0" height="0" style="position:absolute;pointer-events:none">
+    <defs>
+      <filter id="elTrailBlur" x="-50%" y="-100%" width="200%" height="300%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur2"/>
+        <feMerge>
+          <feMergeNode in="blur2"/>
+          <feMergeNode in="blur1"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+  </svg>
+</div>
+
+<script>
+/* ── Freeze-frame loader renderer ─────────────────────────────
+   Reuses the orbit + trail math from the production site loader
+   (www/index.html ~line 17812) but runs it ONCE at a chosen frac
+   instead of animating, so we get a stable "action shot" of the
+   star traveling across the top-front of the globe.
+*/
+(function(){
+  const RX = 112, RY = 36, TRAIL_FRAC = 0.22;
+  // Same tail layer config as production
+  const LAYER_CFG = [
+    [1.00, 1.0, 0.12],
+    [0.75, 1.8, 0.18],
+    [0.50, 2.8, 0.28],
+    [0.35, 4.0, 0.40],
+    [0.20, 5.5, 0.55],
+    [0.08, 7.0, 0.75],
+  ];
+
+  function orbitPos(f) {
+    const a = f * 2 * Math.PI;
+    return [RX * Math.cos(a), -RY * Math.sin(a)];
+  }
+  function buildTrail(headFrac, fullLen, layerLenFrac) {
+    const len = fullLen * layerLenFrac;
+    const N = Math.max(8, Math.floor(24 * layerLenFrac));
+    let d = '';
+    for (let i = 0; i <= N; i++) {
+      const f = ((headFrac - len*(1 - i/N)) % 1 + 1) % 1;
+      const [x, y] = orbitPos(f);
+      d += i === 0 ? `M${x.toFixed(2)},${y.toFixed(2)}` : `L${x.toFixed(2)},${y.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  // frac = 0.22 → star is near the front-top of the orbit,
+  // trailing behind from the right.  depthOp would be near max here.
+  const headFrac = 0.22;
+  const [sx, sy] = orbitPos(headFrac);
+
+  const group = document.getElementById('starGroup');
+  const star  = group.querySelector('.el-star');
+  const blur  = group.querySelector('.el-trail-blur');
+  const segs  = Array.from(group.querySelectorAll('.el-trail-seg'));
+
+  star.setAttribute('transform', `translate(${sx.toFixed(1)},${sy.toFixed(1)})`);
+
+  blur.setAttribute('d', buildTrail(headFrac, TRAIL_FRAC, 1.0));
+  blur.style.opacity = 0.9;
+
+  segs.forEach((seg, i) => {
+    if (i >= LAYER_CFG.length) return;
+    const [lenFrac, sw, baseOp] = LAYER_CFG[i];
+    seg.style.strokeWidth = sw;
+    seg.style.stroke = `rgba(255,${180 + i*12},${60 + i*15},${baseOp})`;
+    seg.setAttribute('d', buildTrail(headFrac, TRAIL_FRAC, lenFrac));
+    seg.style.opacity = Math.min(1, baseOp * 1.6);
+  });
+
+  /* ── Static background starfield ────────────────────────── */
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  // Seeded pseudo-random so the snapshot is deterministic
+  let seed = 1337;
+  function rand() { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+  const N = 160;
+  for (let i = 0; i < N; i++) {
+    const x = rand() * 1024;
+    const y = rand() * 1024;
+    const size = rand() * 1.8 + 0.4;
+    const warm = rand() < 0.3;
+    const hue = warm ? (35 + rand()*20) : (200 + rand()*60);
+    const sat = warm ? (60 + rand()*40) : (10 + rand()*20);
+    const op  = rand() * 0.5 + 0.3;
+    const r = size * 3;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0,   `hsla(${hue}, ${sat}%, 90%, ${op})`);
+    g.addColorStop(0.4, `hsla(${hue}, ${sat}%, 70%, ${op*0.4})`);
+    g.addColorStop(1,   `hsla(${hue}, ${sat}%, 50%, 0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, 95%, ${op})`;
+    ctx.beginPath(); ctx.arc(x, y, size * 0.55, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Mark ready so the screenshot tool can wait if needed
+  document.documentElement.dataset.ready = '1';
+})();
+</script>
+</body>
+</html>
