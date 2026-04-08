@@ -10394,6 +10394,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
         envPoints = new THREE.Points(geo, mat);
         envPoints.renderOrder = 2;
+        envPoints.userData.__nodeMarker = 'environment';
         scene.add(envPoints);
       }
 
@@ -22632,12 +22633,12 @@ body.ticker-active .gTickerLabel {
       const share     = Math.min(1, p.n / maxN);
       const intensity = Math.pow(share, 0.65);   // mild gamma
 
-      // Slightly wider kernel — at full intensity ~70px on a 2048-wide
-      // canvas. Dispersed a bit more than before so the hottest spots
-      // aren't quite so centralized, while still staying local enough to
-      // clearly read as "concentrations near country nodes".
-      const baseRadius = W * 0.028;
-      const radius     = baseRadius * (0.72 + 1.55 * intensity);
+      // Middle-ground kernel — lands between the too-tight W*0.020
+      // ("spot on top of the node") and the too-dispersed W*0.028
+      // ("halo creeping into neighbours"). ~60px at full intensity on
+      // a 2048 canvas.
+      const baseRadius = W * 0.024;
+      const radius     = baseRadius * (0.68 + 1.50 * intensity);
 
       // Latitude correction with a tighter floor so high-latitude blobs
       // don't smear across the canvas width.
@@ -22647,10 +22648,10 @@ body.ticker-active .gTickerLabel {
 
       const c  = colorStopsFor(p, intensity);
       // Low base alpha so faint countries stay dim; only true hotspots
-      // approach full opacity. Slightly softer falloff so the gradient
-      // breathes without smearing into neighbours.
+      // approach full opacity. Falloff sits between the tight and soft
+      // variants we ping-ponged between.
       const a0 = 0.18 + 0.78 * intensity;
-      const a1 = a0 * 0.38;
+      const a1 = a0 * 0.35;
 
       const drawAt = (x, y) => {
         heatCtx.save();
@@ -22658,7 +22659,7 @@ body.ticker-active .gTickerLabel {
         heatCtx.scale(xStretch, 1);
         const g = heatCtx.createRadialGradient(0, 0, 0, 0, 0, radius);
         g.addColorStop(0.0,  `rgba(${c.r},${c.g},${c.b},${a0})`);
-        g.addColorStop(0.34, `rgba(${c.r},${c.g},${c.b},${a1})`);
+        g.addColorStop(0.31, `rgba(${c.r},${c.g},${c.b},${a1})`);
         g.addColorStop(1.0,  `rgba(${c.r},${c.g},${c.b},0)`);
         heatCtx.fillStyle = g;
         heatCtx.beginPath();
@@ -22946,8 +22947,11 @@ body.ticker-active .gTickerLabel {
   let inspectorSvg  = null;
   let inspectorLine = null;
   let inspectorDot  = null;
-  // World-space anchor for the leader line (updated every frame while open).
-  let inspectorAnchor3 = null; // THREE.Vector3
+  // Anchor stored in heatSphere-LOCAL space so that when the scene is
+  // rotated (scene.quaternion = globeQuat) the leader line follows the
+  // point on the globe. Each frame we transform through heatSphere's
+  // current world matrix.
+  let inspectorAnchorLocal = null; // THREE.Vector3 in heatSphere local space
   let inspectorRafId   = null;
   let inspectorMinimized = false;
 
@@ -23044,7 +23048,7 @@ body.ticker-active .gTickerLabel {
   }
 
   function closeInspectorPopup() {
-    inspectorAnchor3 = null;
+    inspectorAnchorLocal = null;
     if (inspectorEl) inspectorEl.style.display = 'none';
     if (inspectorSvg) inspectorSvg.style.display = 'none';
     if (inspectorRafId) { cancelAnimationFrame(inspectorRafId); inspectorRafId = null; }
@@ -23061,7 +23065,7 @@ body.ticker-active .gTickerLabel {
     return 2 * EARTH_RADIUS_MI * Math.asin(Math.min(1, Math.sqrt(a)));
   }
 
-  function openInspectorAt(lat, lon, worldPoint) {
+  function openInspectorAt(lat, lon, localPoint) {
     ensureInspectorDom();
 
     // Pull countries within 500 mi from the currently rendered heatmap points.
@@ -23153,8 +23157,9 @@ body.ticker-active .gTickerLabel {
       }
     }
 
-    // Anchor + show
-    inspectorAnchor3 = worldPoint.clone();
+    // Anchor + show (stored in heatSphere local space so the leader
+    // line follows globe rotation automatically).
+    inspectorAnchorLocal = localPoint.clone();
     inspectorEl.style.display  = 'block';
     inspectorSvg.style.display = 'block';
     inspectorMinimized = false;
@@ -23175,21 +23180,32 @@ body.ticker-active .gTickerLabel {
   function startInspectorTracking() {
     if (inspectorRafId) cancelAnimationFrame(inspectorRafId);
     const tick = () => {
-      if (!inspectorAnchor3 || !window.__semHeatActive) { inspectorRafId = null; return; }
+      if (!inspectorAnchorLocal || !window.__semHeatActive) { inspectorRafId = null; return; }
       const cam = window.__camera;
       const rend = window.__renderer;
-      if (cam && rend && inspectorEl.style.display !== 'none') {
-        // Project world anchor to screen
-        const v = inspectorAnchor3.clone().project(cam);
+      if (cam && rend && heatSphere && inspectorEl.style.display !== 'none') {
+        // Transform the local-space anchor into current world-space
+        // through the heatSphere's matrix. Because the scene is rotated
+        // by globeQuat, this automatically drags the leader along with
+        // the globe as the user drags.
+        heatSphere.updateMatrixWorld();
+        const worldAnchor = inspectorAnchorLocal.clone().applyMatrix4(heatSphere.matrixWorld);
+
+        const v = worldAnchor.clone().project(cam);
         const rect = rend.domElement.getBoundingClientRect();
         const sx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
         const sy = rect.top  + (-v.y * 0.5 + 0.5) * rect.height;
 
-        // Hide the dot if the point is on the back of the globe
-        const toCam = new window.THREE.Vector3().subVectors(cam.position, inspectorAnchor3);
-        const normal = inspectorAnchor3.clone().normalize();
-        const facing = toCam.normalize().dot(normal) > 0;
-        inspectorDot.style.display = facing ? '' : 'none';
+        // Hide the dot if the point is on the back of the globe.
+        // "Facing" = the outward surface normal at this point (the
+        // direction from sphere center to the anchor) points toward
+        // the camera.
+        const sphereCenter = new window.THREE.Vector3();
+        heatSphere.getWorldPosition(sphereCenter);
+        const outward = worldAnchor.clone().sub(sphereCenter).normalize();
+        const viewDir = cam.position.clone().sub(worldAnchor).normalize();
+        const facing = outward.dot(viewDir) > 0;
+        inspectorDot.style.display  = facing ? '' : 'none';
         inspectorLine.style.display = facing ? '' : 'none';
 
         // Panel anchor: use left-center of panel as line target
@@ -23218,18 +23234,37 @@ body.ticker-active .gTickerLabel {
     inspectorRafId = requestAnimationFrame(tick);
   }
 
-  // ── Click handler bound to the renderer's canvas while heatmap active ──
-  let _heatClickHandler = null;
+  // ── Tap handlers bound to the renderer's canvas while heatmap active.
+  //    We intentionally use pointerdown + pointerup (with tap detection)
+  //    rather than a plain "click" so the inspector also fires inside
+  //    iOS WKWebView, where "click" is sometimes eaten by the globe's
+  //    own touch handlers. A pointer that moves >8px or stays down for
+  //    >500ms is treated as a drag and ignored.
+  let _heatPointerDown = null; // { x, y, t }
+  let _heatPointerDownHandler = null;
+  let _heatPointerUpHandler   = null;
   function enableHeatClickInspector() {
     const rend = window.__renderer;
-    if (!rend || _heatClickHandler) return;
+    if (!rend || _heatPointerDownHandler) return;
     const dom = rend.domElement;
-    _heatClickHandler = (e) => {
+
+    _heatPointerDownHandler = (e) => {
       if (!window.__semHeatActive) return;
-      // Ignore clicks that originated inside the semantic panel or the
-      // inspector popup itself (stopPropagation handles most of this but
-      // belt + braces).
-      if (e.target && (e.target.closest && (e.target.closest('#semHeatPanel') || e.target.closest('#semHeatInspector')))) return;
+      if (e.target && e.target.closest && (e.target.closest('#semHeatPanel') || e.target.closest('#semHeatInspector'))) {
+        _heatPointerDown = null;
+        return;
+      }
+      _heatPointerDown = { x: e.clientX, y: e.clientY, t: Date.now() };
+    };
+
+    _heatPointerUpHandler = (e) => {
+      if (!window.__semHeatActive || !_heatPointerDown) return;
+      const dx = e.clientX - _heatPointerDown.x;
+      const dy = e.clientY - _heatPointerDown.y;
+      const dt = Date.now() - _heatPointerDown.t;
+      _heatPointerDown = null;
+      if (Math.hypot(dx, dy) > 8 || dt > 600) return; // it's a drag
+      if (e.target && e.target.closest && (e.target.closest('#semHeatPanel') || e.target.closest('#semHeatInspector'))) return;
 
       const THREE = window.THREE;
       const cam   = window.__camera;
@@ -23245,24 +23280,38 @@ body.ticker-active .gTickerLabel {
       const hits = rc.intersectObject(heatSphere, false);
       if (!hits.length) return;
       const hit = hits[0];
-      const v = hit.point.clone().normalize();
-      const lat = Math.asin(Math.max(-1, Math.min(1, v.y))) * 180 / Math.PI;
-      // Globe projection: x = -sin(phi)cos(theta), z = sin(phi)sin(theta),
-      // theta = (lon + 180) * π/180. So theta = atan2(z, -x) mod 2π, then
-      // lon = theta*180/π - 180.
-      let theta = Math.atan2(v.z, -v.x);
+
+      // hit.point is WORLD space — but the scene is rotated by
+      // globeQuat, so to get real lat/lon we must convert into
+      // heatSphere LOCAL space first. This was the cause of the
+      // "only works in one hemisphere" bug.
+      heatSphere.updateMatrixWorld();
+      const local = heatSphere.worldToLocal(hit.point.clone());
+      const vL = local.clone().normalize();
+      const lat = Math.asin(Math.max(-1, Math.min(1, vL.y))) * 180 / Math.PI;
+      let theta = Math.atan2(vL.z, -vL.x);
       if (theta < 0) theta += 2 * Math.PI;
       const lon = theta * 180 / Math.PI - 180;
-      openInspectorAt(lat, lon, hit.point);
+
+      openInspectorAt(lat, lon, local);
       e.stopPropagation();
     };
-    dom.addEventListener('click', _heatClickHandler, true);
+
+    dom.addEventListener('pointerdown', _heatPointerDownHandler, true);
+    dom.addEventListener('pointerup',   _heatPointerUpHandler,   true);
   }
   function disableHeatClickInspector() {
     const rend = window.__renderer;
-    if (!rend || !_heatClickHandler) return;
-    rend.domElement.removeEventListener('click', _heatClickHandler, true);
-    _heatClickHandler = null;
+    if (!rend) return;
+    if (_heatPointerDownHandler) {
+      rend.domElement.removeEventListener('pointerdown', _heatPointerDownHandler, true);
+      _heatPointerDownHandler = null;
+    }
+    if (_heatPointerUpHandler) {
+      rend.domElement.removeEventListener('pointerup', _heatPointerUpHandler, true);
+      _heatPointerUpHandler = null;
+    }
+    _heatPointerDown = null;
   }
 
   window.__semHeatOpen = function (opts) {
