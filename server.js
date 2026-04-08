@@ -1819,14 +1819,48 @@ app.get("/api/threads/latest", async (req, res) => {
         JOIN news_articles a ON a.id = sta.article_id
         WHERE a.country_id IS NOT NULL
         GROUP BY sta.thread_id
+      ),
+      -- Threads whose TITLE mentions a real country name (word-boundary
+      -- match). Stories about actual places get a heavy ranking boost over
+      -- abstract political/social headlines. Length >= 4 filters out noise
+      -- from any 1-3 char rows; word-boundary anchors avoid sub-string
+      -- false-positives like "iran" matching "iranian" — though demonym
+      -- forms are intentionally allowed via the length cap on co.name.
+      thread_title_has_country AS (
+        SELECT DISTINCT st.id AS thread_id
+        FROM story_threads st
+        JOIN countries co
+          ON co.name IS NOT NULL
+         AND length(co.name) >= 4
+         AND st.title ~* ('\\m' || co.name || '\\M')
+        WHERE st.title IS NOT NULL
+      ),
+      -- Catch-all "aggregator" threads with vague, category-bucket titles
+      -- like "Sports and Entertainment Coverage", "Lifestyle Roundup",
+      -- "Trending Topics" — these are noise, not stories. We push them
+      -- to the bottom of the list (below the country-mention tier) but
+      -- keep them browsable.
+      thread_title_is_generic AS (
+        SELECT id AS thread_id
+        FROM story_threads
+        WHERE title IS NOT NULL
+          AND (
+            title ~* '\\m(coverage|roundup|round-up|overview|highlights|miscellaneous|recap|digest|wrap[- ]?up|hub|trending|topics)\\M'
+            OR title ~* '\\m(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\s+and\\s+(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\M'
+            OR title ~* '^(general|various|misc|other)\\M'
+          )
       )
       SELECT
         st.id AS thread_id, st.title, st.description, st.primary_category,
         st.geographic_scope, st.importance, st.keywords, st.article_count,
         st.status, st.last_updated_at,
-        COALESCE(tcc.country_count, 0)::int AS country_count
+        COALESCE(tcc.country_count, 0)::int AS country_count,
+        (tthc.thread_id IS NOT NULL) AS title_mentions_country,
+        (ttig.thread_id IS NOT NULL) AS title_is_generic
       FROM story_threads st
-      LEFT JOIN thread_country_counts tcc ON tcc.thread_id = st.id
+      LEFT JOIN thread_country_counts tcc      ON tcc.thread_id  = st.id
+      LEFT JOIN thread_title_has_country tthc  ON tthc.thread_id = st.id
+      LEFT JOIN thread_title_is_generic  ttig  ON ttig.thread_id = st.id
       WHERE st.article_count >= 2
         AND st.status IN ('active', 'cooling', 'dormant')
         ${dateWhere}
@@ -1837,6 +1871,14 @@ app.get("/api/threads/latest", async (req, res) => {
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
+        -- Generic catch-all aggregator titles ("Sports and Entertainment
+        -- Coverage", "Lifestyle Roundup", "Trending Topics", etc.) drop to
+        -- the absolute bottom of every status tier. Real stories first.
+        CASE WHEN ttig.thread_id IS NOT NULL THEN 1 ELSE 0 END,
+        -- Heavy penalty for threads whose titles don't name a real place.
+        -- Abstract / ideological / "social abstraction" stories drop to the
+        -- bottom of every status tier but remain in the list.
+        CASE WHEN tthc.thread_id IS NOT NULL THEN 0 ELSE 1 END,
         CASE
           WHEN COALESCE(tcc.country_count, 0) >= 2 THEN 0
           WHEN COALESCE(tcc.country_count, 0) = 1 THEN 1
