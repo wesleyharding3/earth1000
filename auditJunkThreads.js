@@ -89,6 +89,100 @@ const JUNK_TITLE_PATTERNS = [
   /\b(news|coverage)\s+(briefs|brief|wrap|wrapup|wrap-up)\b/i,
 ];
 
+// ─── Structural "topic bucket" detector ──────────────────────────────────────
+//
+// Catches titles like:
+//   "Canada Federal Workplace Policy and Urban Infrastructure"
+//   "Brazil Political Accountability and Legislative Debates"
+//   "Uganda Education and Digital Health Transformation"
+//   "Turkey Regional News and Politics"
+//   "Nigeria Police Reform and Security Investment"
+//   "Rwanda News Broadcasting and National Updates"
+//   "Paraguay Economic Reforms Manufacturing Sector"
+//
+// The pattern: [Country] + 2+ abstract topic nouns, no concrete event signal.
+// These are topic labels, not stories.
+
+const ABSTRACT_TOPIC_NOUNS = new Set([
+  // Governance / policy
+  "policy","policies","politics","governance","administration","administrative","reform","reforms",
+  "regulation","regulations","regulatory","legislation","legislative","legal","judicial",
+  "bureaucratic","institutional","accountability","transparency","oversight",
+  "transformation","modernization","digitalization","reorganization","restructuring",
+  // Sector labels
+  "sector","sectors","industry","industries","manufacturing","agriculture","mining",
+  "fishing","forestry","construction","banking","finance","financial","commerce",
+  "trade","tourism","education","healthcare","health","welfare","housing",
+  "infrastructure","transportation","transport","logistics","telecommunications",
+  "broadcasting","media","technology","technological","digital","innovation",
+  // Generic abstract nouns
+  "developments","development","challenges","challenge","issues","issue","concerns",
+  "concern","matters","trends","trend","topics","topic","updates","update","affairs",
+  "coverage","news","reports","reporting","investment","investments","initiative",
+  "initiatives","program","programs","projects","project","strategy","strategies",
+  "framework","frameworks","priorities","priority","agenda","agendas","activities",
+  "operations","situation","conditions","environment","landscape","outlook","overview",
+  "summary","status","progress","perspective","context","background",
+  "debate","debates","discussion","discussions","dialogue","consultation","review",
+  "assessment","analysis","focus","attention","emphasis","approach","approaches",
+  // Themes
+  "inequality","poverty","unemployment","employment","labor","labour","workplace",
+  "workforce","wages","welfare","wellbeing","sustainability","climate",
+  "energy","security","safety","defense","defence","intelligence","cybersecurity",
+  "diplomacy","relations","cooperation","integration","corruption",
+  // Adjectives that pair with nouns to form topic buckets
+  "federal","national","regional","local","urban","rural","domestic","public","civil",
+  "social","community","societal","cultural","economic","political","industrial",
+  "commercial","financial","educational","environmental","institutional","strategic",
+  "operational","constitutional","democratic","municipal","provincial","state",
+  "ministerial","governmental","parliamentary","executive","ongoing","general","various",
+]);
+
+// Words that indicate a CONCRETE event, action, named actor, or quantitative claim.
+// Presence of any of these "rescues" a title from being flagged as a topic bucket.
+const CONCRETE_SIGNAL_RE = new RegExp([
+  // Numbers (years, counts, casualties, dates)
+  String.raw`\d`,
+  // Action verbs
+  String.raw`\b(killed|kills|kill|dies|died|dead|injured|wounded|attacks?|attacked|strikes?|struck|bombed|shot|shoots?|arrested|elected|fired|resigns?|resigned|signed|signs?|launched|launches?|invaded|invades?|seized|seizes?|captured|captures?|sanctioned|imposed|imposes?|raids?|raided|protests?|protested|votes?|voted|wins?|won|loses?|lost|meets?|met|visits?|visited|announced|announces?|declared|declares?|approved|approves?|rejected|rejects?|condemned|condemns?|denounced|denies|denied|calls?|called|orders?|ordered|halts?|halted|suspends?|suspended|releases?|released|frees?|freed|expels?|expelled|deports?|deported|evacuates?|evacuated|destroyed|destroys?|crashes?|crashed|erupts?|erupted|hits?|hit|topples?|toppled|ousts?|ousted|deploys?|deployed|withdraws?|withdrew|escalates?|escalated|threatens?|threatened|warns?|warned|sues?|sued|charges?|charged|indicts?|indicted|jails?|jailed|frees?|negotiates?|negotiated|brokers?|brokered|ratifies?|ratified|vetoes?|vetoed|invokes?|invoked|files?|filed)\b`,
+  // Titles / named roles
+  String.raw`\b(president|prime\s+minister|minister|chancellor|king|queen|sultan|emir|general|admiral|colonel|ambassador|envoy|spokesperson|secretary|premier|governor|senator|deputy|mp)\b`,
+  // Conflict / event nouns
+  String.raw`\b(coup|war|invasion|airstrike|missile|drone|ceasefire|treaty|summit|election|referendum|sanctions|tariff|tariffs|protest|riot|earthquake|tsunami|wildfire|flood|hurricane|cyclone|outbreak|epidemic|pandemic|hostage|kidnap|kidnapped|shooting|massacre|assassination|raid|blockade|embargo|deal|accord|pact|verdict|ruling|indictment|impeachment|crash|explosion|attack|strike|offensive|withdrawal|retreat|surge|breakthrough|deadlock)\b`
+].join("|"), "i");
+
+function tokenizeForTopicCheck(title) {
+  return String(title || "")
+    .toLowerCase()
+    .replace(/[^a-z\s]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function looksLikeTopicBucket(title) {
+  if (!title) return false;
+  // If the title has any concrete event/action/actor signal, it's not a bucket.
+  if (CONCRETE_SIGNAL_RE.test(title)) return false;
+  const tokens = tokenizeForTopicCheck(title);
+  if (tokens.length < 3) return false;
+  let abstractCount = 0;
+  for (const tok of tokens) {
+    if (ABSTRACT_TOPIC_NOUNS.has(tok)) abstractCount++;
+  }
+  // Aggressive: a real story is named events/actors/places.
+  // A non-story is "[Country] [topic] [topic] [topic]".
+  // 2+ abstract nouns → topic bucket. (covers "Brazil Political Accountability and Legislative Debates")
+  if (abstractCount >= 2) return true;
+  // 1 abstract noun + "and"/"&" → also a topic bucket pairing.
+  // ("Turkey Regional News and Politics" — regional/news/politics all in set, but
+  //  even "X Reform and Y" with one abstract head is still a bucket.)
+  if (abstractCount >= 1 && /\b(and|&)\b/i.test(title)) return true;
+  // Final catch: very short titles (3-5 tokens) where ≥40% are abstract nouns.
+  // ("Paraguay Economic Reforms Manufacturing Sector" — 4 of 5 tokens.)
+  if (tokens.length <= 6 && abstractCount / tokens.length >= 0.4) return true;
+  return false;
+}
+
 function classifyJunk(thread) {
   const cat = String(thread.primary_category || "").toLowerCase();
   if (cat && !ALLOWED_CATEGORIES.has(cat)) {
@@ -97,6 +191,9 @@ function classifyJunk(thread) {
   const title = String(thread.title || "");
   for (const re of JUNK_TITLE_PATTERNS) {
     if (re.test(title)) return `title:${re.source.slice(0, 50)}`;
+  }
+  if (looksLikeTopicBucket(title)) {
+    return `topic-bucket`;
   }
   return null;
 }

@@ -237,6 +237,32 @@ A thread should name a PLACE, an ACTOR, or a concrete EVENT — not an abstract 
 - Op-eds, opinion pieces, editorials, "explainer" pieces with no news event
 - ROUTINE GOVERNMENT ACTIVITY without a specific event or decision: "Nepal Government Administrative Announcements", "Cyprus Legal System and Governance Challenges", "Country X Policy Developments", "Country Y Regulatory Updates", "Road Safety and Infrastructure Issues", "Health Crisis and Economic Inequality". These are TOPIC LABELS, not stories. If a routine government article is relevant to an existing thread (a named conflict, election, sanctions regime, etc.), ATTACH it to that thread via existing_thread_id. Otherwise OMIT it. Do not create a new thread that just pairs a country name with abstract governance/legal/administrative/infrastructure nouns.
 
+═══ THE SINGLE-COUNTRY-SUMMARY TEST (CRITICAL) ═══
+The most common failure mode is creating a thread that is just "a summary of developments from one country without a clear story arc." Examples of titles that MUST be rejected:
+  • "Canada Federal Workplace Policy and Urban Infrastructure"
+  • "Brazil Political Accountability and Legislative Debates"
+  • "Uganda Education and Digital Health Transformation"
+  • "Turkey Regional News and Politics"
+  • "Nigeria Police Reform and Security Investment"
+  • "Rwanda News Broadcasting and National Updates"
+  • "Paraguay Economic Reforms Manufacturing Sector"
+  • "Nepal Government Administrative Announcements"
+  • "Cyprus Legal System and Governance Challenges"
+
+These all share the same shape: [Country] + [Abstract Topic A] + (and) + [Abstract Topic B]. They name no actor, no event, no decision, no date. They are TOPIC LABELS for "stuff happening in country X right now." That is not what this platform indexes.
+
+A thread is a STORY ARC: a specific event or development unfolding over time, with named actors and verifiable actions. Routine government news from a single country is not an arc — at most it should attach to an existing arc (e.g. an ongoing election, an active conflict, an active sanctions regime).
+
+═══ TITLE FORMAT REQUIREMENTS ═══
+A valid thread title MUST contain at least ONE of:
+  • A named person (head of state, minister, general, opposition leader, etc.)
+  • A named place beyond just a country (city, region, base, border crossing)
+  • A specific action verb in past or present (strikes, signs, arrests, evacuates, imposes, vetoes, withdraws, votes, etc.)
+  • A specific event noun (coup, election, treaty, ceasefire, airstrike, earthquake, hostage release, indictment, etc.)
+  • A number (casualty count, vote tally, year, sanctions amount, etc.)
+
+If you cannot write a title meeting at least one of those criteria, DO NOT create the thread. Return an empty array if necessary.
+
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
 
@@ -329,6 +355,59 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     /\bdaily\s+(news|updates|roundup|briefing)\b/i,
     /\b(news|coverage)\s+(briefs|brief|wrap|wrapup|wrap-up)\b/i,
   ];
+  // Structural "topic bucket" detector — catches single-country summary
+  // titles with no concrete event, like "Brazil Political Accountability
+  // and Legislative Debates" or "Uganda Education and Digital Health
+  // Transformation". These are topic labels, not stories.
+  const ABSTRACT_TOPIC_NOUNS = new Set([
+    "policy","policies","politics","governance","administration","administrative","reform","reforms",
+    "regulation","regulations","regulatory","legislation","legislative","legal","judicial",
+    "bureaucratic","institutional","accountability","transparency","oversight",
+    "transformation","modernization","digitalization","reorganization","restructuring",
+    "sector","sectors","industry","industries","manufacturing","agriculture","mining",
+    "fishing","forestry","construction","banking","finance","financial","commerce",
+    "trade","tourism","education","healthcare","health","welfare","housing",
+    "infrastructure","transportation","transport","logistics","telecommunications",
+    "broadcasting","media","technology","technological","digital","innovation",
+    "developments","development","challenges","challenge","issues","issue","concerns",
+    "concern","matters","trends","trend","topics","topic","updates","update","affairs",
+    "coverage","news","reports","reporting","investment","investments","initiative",
+    "initiatives","program","programs","projects","project","strategy","strategies",
+    "framework","frameworks","priorities","priority","agenda","agendas","activities",
+    "operations","situation","conditions","environment","landscape","outlook","overview",
+    "summary","status","progress","perspective","context","background",
+    "debate","debates","discussion","discussions","dialogue","consultation","review",
+    "assessment","analysis","focus","attention","emphasis","approach","approaches",
+    "inequality","poverty","unemployment","employment","labor","labour","workplace",
+    "workforce","wages","welfare","wellbeing","sustainability","climate",
+    "energy","security","safety","defense","defence","intelligence","cybersecurity",
+    "diplomacy","relations","cooperation","integration","corruption",
+    "federal","national","regional","local","urban","rural","domestic","public","civil",
+    "social","community","societal","cultural","economic","political","industrial",
+    "commercial","financial","educational","environmental","institutional","strategic",
+    "operational","constitutional","democratic","municipal","provincial","state",
+    "ministerial","governmental","parliamentary","executive","ongoing","general","various",
+  ]);
+  const CONCRETE_SIGNAL_RE = new RegExp([
+    String.raw`\d`,
+    String.raw`\b(killed|kills|kill|dies|died|dead|injured|wounded|attacks?|attacked|strikes?|struck|bombed|shot|shoots?|arrested|elected|fired|resigns?|resigned|signed|signs?|launched|launches?|invaded|invades?|seized|seizes?|captured|captures?|sanctioned|imposed|imposes?|raids?|raided|protests?|protested|votes?|voted|wins?|won|loses?|lost|meets?|met|visits?|visited|announced|announces?|declared|declares?|approved|approves?|rejected|rejects?|condemned|condemns?|denounced|denies|denied|calls?|called|orders?|ordered|halts?|halted|suspends?|suspended|releases?|released|frees?|freed|expels?|expelled|deports?|deported|evacuates?|evacuated|destroyed|destroys?|crashes?|crashed|erupts?|erupted|hits?|hit|topples?|toppled|ousts?|ousted|deploys?|deployed|withdraws?|withdrew|escalates?|escalated|threatens?|threatened|warns?|warned|sues?|sued|charges?|charged|indicts?|indicted|jails?|jailed|negotiates?|negotiated|brokers?|brokered|ratifies?|ratified|vetoes?|vetoed|invokes?|invoked|files?|filed)\b`,
+    String.raw`\b(president|prime\s+minister|minister|chancellor|king|queen|sultan|emir|general|admiral|colonel|ambassador|envoy|spokesperson|secretary|premier|governor|senator|deputy|mp)\b`,
+    String.raw`\b(coup|war|invasion|airstrike|missile|drone|ceasefire|treaty|summit|election|referendum|sanctions|tariff|tariffs|protest|riot|earthquake|tsunami|wildfire|flood|hurricane|cyclone|outbreak|epidemic|pandemic|hostage|kidnap|kidnapped|shooting|massacre|assassination|raid|blockade|embargo|deal|accord|pact|verdict|ruling|indictment|impeachment|crash|explosion|attack|strike|offensive|withdrawal|retreat|surge|breakthrough|deadlock)\b`
+  ].join('|'), 'i');
+  function looksLikeTopicBucket(title) {
+    if (!title) return false;
+    if (CONCRETE_SIGNAL_RE.test(title)) return false;
+    const tokens = String(title).toLowerCase().replace(/[^a-z\s]+/g, ' ').split(/\s+/).filter(Boolean);
+    if (tokens.length < 3) return false;
+    let abstractCount = 0;
+    for (const tok of tokens) {
+      if (ABSTRACT_TOPIC_NOUNS.has(tok)) abstractCount++;
+    }
+    if (abstractCount >= 2) return true;
+    if (abstractCount >= 1 && /\b(and|&)\b/i.test(title)) return true;
+    if (tokens.length <= 6 && abstractCount / tokens.length >= 0.4) return true;
+    return false;
+  }
   function isJunkThreadDef(def) {
     const cat = String(def.primary_category || '').toLowerCase();
     if (cat && !ALLOWED_CATEGORIES.has(cat)) return `category=${cat}`;
@@ -336,6 +415,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     for (const re of JUNK_TITLE_PATTERNS) {
       if (re.test(title)) return `title-pattern:${re.source.slice(0,40)}`;
     }
+    if (looksLikeTopicBucket(title)) return `topic-bucket`;
     return null;
   }
 
