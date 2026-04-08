@@ -4,6 +4,7 @@ const { classifyArticle } = require("./scoringEngine");
 const { routeArticle } = require("./locationRouter");
 const { resolveImageForArticle } = require("./imageResolver");
 const { deepAnalyzeArticle } = require("./deepAnalyzer");
+const { processArticleById: extractEntitiesForArticle } = require("./entityResolver");
 
 // Track scoring results across the current fetch run
 const scoringStats = {
@@ -122,6 +123,29 @@ async function startArticleListener() {
         // Writes sentiment_score + article_entities. Never blocks pipeline.
         deepAnalyzeArticle(articleId)
           .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
+
+        // ─── Timelines knowledge-graph extraction (PAUSED) ──────────────────
+        // Fire-and-forget call to entityResolver.processArticleById, which:
+        //   • runs Claude entity extraction (entityExtractor.js)
+        //   • resolves Wikidata QIDs via wbsearchentities (entityResolver.js)
+        //   • persists to entities / article_entity_mentions / article_referenced_dates
+        //   • is idempotent (skips already-processed articles)
+        //
+        // CURRENTLY DISABLED to avoid Claude costs until we have paying users
+        // to justify the spend. The full pipeline is wired and tested — flip
+        // the env var TIMELINES_EXTRACTION_ENABLED=true to turn it on. No code
+        // changes required. The backfill script (backfillEntities.js) is also
+        // ready and gated behind --go / --limit flags.
+        if (process.env.TIMELINES_EXTRACTION_ENABLED === 'true') {
+          extractEntitiesForArticle(articleId)
+            .then(r => {
+              if (r?.skipped) return;
+              const ents = r?.summary?.entities?.length ?? 0;
+              const dates = r?.summary?.dates_inserted ?? 0;
+              if (ents || dates) console.log(`🧬 Entities extracted [${articleId}]: ${ents} entity mention(s), ${dates} historical date(s)`);
+            })
+            .catch(err => console.warn(`⚠️  Entity extraction failed [${articleId}]: ${err.message}`));
+        }
 
         // Resolve image after classify+route so article_tags and article_locations
         // are already written — the resolver depends on both.
