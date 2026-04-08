@@ -55,6 +55,38 @@ const JUNK_TITLE_PATTERNS = [
   /\bhigher\s+education\s+ai\b/i,
   /\bspanish\s+cultural\b/i,
   /\bcentral\s+american\s+tourism\b/i,
+
+  // Vague administrative/governance "non-stories" — titles like
+  // "Nepal Government Administrative Announcements" or
+  // "Cyprus Legal System and Governance Challenges". These mention a country
+  // but describe no actual event, no actor, no decision — just abstract topics.
+  /\badministrative\s+(announcements|updates|matters|affairs|notices|developments)\b/i,
+  /\bgovernance\s+(challenges|issues|topics|matters|developments|updates|concerns)\b/i,
+  /\blegal\s+system\s+(and|challenges|issues|developments|updates|reform)\b/i,
+  /\bjudicial\s+(system|developments|updates|matters)\b/i,
+  /\bregulatory\s+(updates|developments|landscape|environment|matters)\b/i,
+  /\bpolicy\s+(developments|updates|landscape|matters|discussions|debates)\b/i,
+  /\b(bureaucratic|institutional)\s+(reform|reforms|challenges|updates)\b/i,
+  /\bpublic\s+(administration|sector)\s+(updates|reforms|challenges|developments)\b/i,
+  /\bcivil\s+service\s+(reform|updates|matters)\b/i,
+  /\binfrastructure\s+(issues|challenges|concerns|topics|matters)\b/i,
+  /\b(road|transportation|transport)\s+safety\s+(crisis|issues|concerns|matters)\b/i,
+  /\beconomic\s+(inequality|challenges|concerns|topics|matters|conditions)\b/i,
+  /\bhealth\s+(crisis|concerns|challenges|topics|matters|issues)\s+and\b/i,
+  /\b(industrial|workplace)\s+safety\s+(and|incidents|concerns|matters)\b/i,
+
+  // "[Country/topic] X and Y" abstract pairings — two vague nouns AND'd together
+  // is almost always a topic bucket, not a story.
+  /\b(challenges|issues|developments|updates|concerns|matters|trends|reforms|topics)\s+and\s+(challenges|issues|developments|updates|concerns|matters|trends|reforms|topics|governance|administration|policy|reform)\b/i,
+  /\b(governance|administration|legal|judicial|regulatory|policy|bureaucratic)\s+(and|&)\s+(governance|administration|legal|judicial|regulatory|policy|bureaucratic|challenges|issues|reforms|developments|updates)\b/i,
+
+  // Other vague non-story buckets
+  /\breligious\s+(observances|celebrations|holidays|practices)\b/i,
+  /\bglobal\s+celebrations\b/i,
+  /\bpractical\s+observances\b/i,
+  /\bweather\s+(updates|patterns|conditions|forecast)\b/i,
+  /\bdaily\s+(news|updates|roundup|briefing)\b/i,
+  /\b(news|coverage)\s+(briefs|brief|wrap|wrapup|wrap-up)\b/i,
 ];
 
 function classifyJunk(thread) {

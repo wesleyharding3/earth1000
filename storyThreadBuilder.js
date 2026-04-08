@@ -235,6 +235,10 @@ A thread should name a PLACE, an ACTOR, or a concrete EVENT — not an abstract 
 - Local crime, accidents, weather — unless it triggers a state-level response or has cross-border impact
 - Vague abstractions like "social hardship", "youth trends", "community coverage"
 - Op-eds, opinion pieces, editorials, "explainer" pieces with no news event
+- ROUTINE GOVERNMENT ACTIVITY without a specific event or decision: "Nepal Government Administrative Announcements", "Cyprus Legal System and Governance Challenges", "Country X Policy Developments", "Country Y Regulatory Updates", "Road Safety and Infrastructure Issues", "Health Crisis and Economic Inequality". These are TOPIC LABELS, not stories. If a routine government article is relevant to an existing thread (a named conflict, election, sanctions regime, etc.), ATTACH it to that thread via existing_thread_id. Otherwise OMIT it. Do not create a new thread that just pairs a country name with abstract governance/legal/administrative/infrastructure nouns.
+
+═══ THE TWO-VAGUE-NOUNS TEST ═══
+If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
 
 If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not invent a thread to hold it. It is correct and expected to return an empty array if none of the articles qualify.
 
@@ -299,6 +303,31 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     /\b(general|various|miscellaneous|other)\s+(coverage|news|topics|updates)\b/i,
     /\bcoverage\s+(roundup|recap|digest|hub)\b/i,
     /^\s*(general|various|miscellaneous|other)\b/i,
+    // Vague administrative / governance non-stories. Government routine
+    // announcements should attach to existing geopolitical threads when
+    // relevant — they should never spawn their own thread.
+    /\badministrative\s+(announcements|updates|matters|affairs|notices|developments)\b/i,
+    /\bgovernance\s+(challenges|issues|topics|matters|developments|updates|concerns)\b/i,
+    /\blegal\s+system\s+(and|challenges|issues|developments|updates|reform)\b/i,
+    /\bjudicial\s+(system|developments|updates|matters)\b/i,
+    /\bregulatory\s+(updates|developments|landscape|environment|matters)\b/i,
+    /\bpolicy\s+(developments|updates|landscape|matters|discussions|debates)\b/i,
+    /\b(bureaucratic|institutional)\s+(reform|reforms|challenges|updates)\b/i,
+    /\bpublic\s+(administration|sector)\s+(updates|reforms|challenges|developments)\b/i,
+    /\bcivil\s+service\s+(reform|updates|matters)\b/i,
+    /\binfrastructure\s+(issues|challenges|concerns|topics|matters)\b/i,
+    /\b(road|transportation|transport)\s+safety\s+(crisis|issues|concerns|matters)\b/i,
+    /\beconomic\s+(inequality|challenges|concerns|topics|matters|conditions)\b/i,
+    /\bhealth\s+(crisis|concerns|challenges|topics|matters|issues)\s+and\b/i,
+    /\b(industrial|workplace)\s+safety\s+(and|incidents|concerns|matters)\b/i,
+    /\b(challenges|issues|developments|updates|concerns|matters|trends|reforms|topics)\s+and\s+(challenges|issues|developments|updates|concerns|matters|trends|reforms|topics|governance|administration|policy|reform)\b/i,
+    /\b(governance|administration|legal|judicial|regulatory|policy|bureaucratic)\s+(and|&)\s+(governance|administration|legal|judicial|regulatory|policy|bureaucratic|challenges|issues|reforms|developments|updates)\b/i,
+    /\breligious\s+(observances|celebrations|holidays|practices)\b/i,
+    /\bglobal\s+celebrations\b/i,
+    /\bpractical\s+observances\b/i,
+    /\bweather\s+(updates|patterns|conditions|forecast)\b/i,
+    /\bdaily\s+(news|updates|roundup|briefing)\b/i,
+    /\b(news|coverage)\s+(briefs|brief|wrap|wrapup|wrap-up)\b/i,
   ];
   function isJunkThreadDef(def) {
     const cat = String(def.primary_category || '').toLowerCase();
