@@ -32,6 +32,9 @@ const APPLY         = process.argv.includes("--apply");
 const DORMANT       = process.argv.includes("--dormant");
 const CLEAN_ORPHANS = process.argv.includes("--clean-orphans");
 const MIN_ARTS      = parseInt(process.argv.find(a => a.startsWith("--min-arts="))?.split("=")[1] || "0", 10);
+const SHOW_LIMIT    = parseInt(process.argv.find(a => a.startsWith("--show="))?.split("=")[1] || "50", 10);
+const OUT_FILE      = process.argv.find(a => a.startsWith("--out="))?.split("=")[1] || null;
+const GROUP_BY_REASON = process.argv.includes("--group");
 
 // Categories that belong on a geopolitical monitoring platform.
 // Anything outside this set (society, sports, culture, lifestyle, etc.) is junk.
@@ -326,17 +329,79 @@ async function main() {
   }
   console.log("");
 
-  // Print first 50 examples so the user can sanity-check
-  console.log("── first 50 junk threads ──");
-  for (const { thread, reason } of junk.slice(0, 50)) {
+  // Print examples for sanity-check. Two modes:
+  //  • default: flat list, truncated at --show=N (default 50)
+  //  • --group: group by reason bucket so you can see what each pattern caught
+  //  • --out=path: dump ALL flagged threads to a file for full review
+  const formatRow = ({ thread, reason }) => {
     const tag = `[${thread.id}] cat=${thread.primary_category || "—"} arts=${thread.article_count} imp=${thread.importance}`;
-    console.log(`  ${tag.padEnd(48)}  "${thread.title}"`);
-    console.log(`  ${"".padEnd(48)}    ↳ ${reason}`);
+    return `  ${tag.padEnd(48)}  "${thread.title}"\n  ${"".padEnd(48)}    ↳ ${reason}`;
+  };
+
+  if (GROUP_BY_REASON) {
+    console.log(`── junk threads grouped by reason (showing up to ${SHOW_LIMIT} per group) ──`);
+    const byReason = new Map();
+    for (const j of junk) {
+      const key = j.reason.startsWith("category=") ? j.reason
+                : j.reason.startsWith("orphan") ? "orphan-dormant"
+                : j.reason.startsWith("thin") ? j.reason
+                : j.reason.split(":")[0] + ":pattern";
+      if (!byReason.has(key)) byReason.set(key, []);
+      byReason.get(key).push(j);
+    }
+    const sorted = [...byReason.entries()].sort((a, b) => b[1].length - a[1].length);
+    for (const [key, items] of sorted) {
+      console.log(`\n── ${key}  (${items.length}) ──`);
+      for (const item of items.slice(0, SHOW_LIMIT)) {
+        console.log(formatRow(item));
+      }
+      if (items.length > SHOW_LIMIT) {
+        console.log(`  … and ${items.length - SHOW_LIMIT} more in this group`);
+      }
+    }
+    console.log("");
+  } else {
+    console.log(`── first ${SHOW_LIMIT} junk threads ──`);
+    for (const item of junk.slice(0, SHOW_LIMIT)) {
+      console.log(formatRow(item));
+    }
+    if (junk.length > SHOW_LIMIT) {
+      console.log(`  … and ${junk.length - SHOW_LIMIT} more (use --show=N or --group or --out=file.txt to see more)`);
+    }
+    console.log("");
   }
-  if (junk.length > 50) {
-    console.log(`  … and ${junk.length - 50} more`);
+
+  // Dump ALL flagged threads to a file if requested
+  if (OUT_FILE) {
+    const fs = require("fs");
+    const lines = [
+      `# auditJunkThreads dump — ${new Date().toISOString()}`,
+      `# total flagged: ${junk.length}`,
+      `# breakdown:`,
+      ...sortedReasons.map(([r, n]) => `#   ${String(n).padStart(5)}  ${r}`),
+      ``,
+    ];
+    // Group the file dump by reason so it's actually usable
+    const byReason = new Map();
+    for (const j of junk) {
+      const key = j.reason.startsWith("category=") ? j.reason
+                : j.reason.startsWith("orphan") ? "orphan-dormant"
+                : j.reason.startsWith("thin") ? j.reason
+                : j.reason.split(":")[0] + ":pattern";
+      if (!byReason.has(key)) byReason.set(key, []);
+      byReason.get(key).push(j);
+    }
+    const sortedFile = [...byReason.entries()].sort((a, b) => b[1].length - a[1].length);
+    for (const [key, items] of sortedFile) {
+      lines.push(`\n## ${key}  (${items.length})`);
+      for (const { thread, reason } of items) {
+        lines.push(`  [${thread.id}] cat=${thread.primary_category || "—"} arts=${thread.article_count} imp=${thread.importance} status=${thread.status}  "${thread.title}"`);
+        lines.push(`      ↳ ${reason}`);
+      }
+    }
+    fs.writeFileSync(OUT_FILE, lines.join("\n") + "\n", "utf8");
+    console.log(`📄 wrote full dump to ${OUT_FILE}`);
   }
-  console.log("");
 
   if (!APPLY) {
     console.log("🔍 dry-run complete. Re-run with --apply to delete (or --apply --dormant to soft-delete).");

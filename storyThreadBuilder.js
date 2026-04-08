@@ -287,15 +287,53 @@ These all share the same shape: [Country] + [Abstract Topic A] + (and) + [Abstra
 
 A thread is a STORY ARC: a specific event or development unfolding over time, with named actors and verifiable actions. Routine government news from a single country is not an arc — at most it should attach to an existing arc (e.g. an ongoing election, an active conflict, an active sanctions regime).
 
-═══ TITLE FORMAT REQUIREMENTS ═══
+═══ TITLE FORMAT REQUIREMENTS (CRITICAL) ═══
 A valid thread title MUST contain at least ONE of:
   • A named person (head of state, minister, general, opposition leader, etc.)
-  • A named place beyond just a country (city, region, base, border crossing)
-  • A specific action verb in past or present (strikes, signs, arrests, evacuates, imposes, vetoes, withdraws, votes, etc.)
-  • A specific event noun (coup, election, treaty, ceasefire, airstrike, earthquake, hostage release, indictment, etc.)
-  • A number (casualty count, vote tally, year, sanctions amount, etc.)
+  • A named place beyond just a country (city, region, base, border crossing, strait, waterway)
+  • A specific action verb in past or present (strikes, signs, arrests, evacuates, imposes, vetoes, withdraws, votes, launches, invades, seizes, etc.)
+  • A specific event noun (coup, election, treaty, ceasefire, airstrike, earthquake, hostage release, indictment, summit, accord, sanction, embargo, etc.)
+  • A number (casualty count, vote tally, year, sanctions amount, deadline, etc.)
 
-If you cannot write a title meeting at least one of those criteria, DO NOT create the thread. Return an empty array if necessary.
+**Examples of GOOD titles (story-centric):**
+  • "Turkey Unveils Long-Range Tayfun Missile Capability"
+  • "Russia and China Block UN Hormuz Resolution"
+  • "Armenia-Azerbaijan Transit Corridor Opens After Ceasefire"
+  • "Israeli Consulate Attacked in Istanbul: Iran Links Suspected"
+  • "Poland Demands US Investigation Into Citizen Death in Russian Custody"
+
+**Examples of BAD titles (vague, abstract, no narrative):**
+  • "Taiwan Diplomatic Outreach During Regional Tensions" → vague sentiment, no event
+  • "Lebanon Political Stability Warning from Aoun" → abstract concern, not an event
+  • "Armenia-Azerbaijani Tensions Over Karabakh Region" → too generic; should say WHAT happened (reconciliation, military buildup, etc.)
+  • "US-China Space Race Competition Intensifies" → no specific event, no action
+
+If you cannot write a title with story-centric narrative structure, DO NOT create the thread. Return an empty array if necessary.
+
+═══ AGGRESSIVE CROSS-COUNTRY LINKING ═══
+When articles relate to the same geopolitical development across multiple countries or regions, LINK them into ONE thread rather than splitting them:
+
+ANTI-PATTERN (wrong — splits the story):
+  • Thread 1: "Poland Demands Investigation Into Citizen Death in Russian Custody"
+  • Thread 2: "Ukraine Detention Center Staffing Under Scrutiny"
+  • Thread 3: "Baltic States Condemn Russian POW Treatment"
+
+CORRECT PATTERN (one unified narrative):
+  • Thread: "Eastern Europe POW Crisis: Poland, Ukraine, Baltics Demand Russian Accountability"
+    - Includes Poland citizen death + Ukraine detention + Baltic statements
+    - Shows the regional escalation and coordination
+
+Another example:
+ANTI-PATTERN:
+  • "Armenia Court Detention Decision David Minasyan"
+  • "Armenia-Azerbaijan Transit Corridor Opening"
+  • "Armenia-Azerbaijani Tensions Over Karabakh Region"
+
+CORRECT:
+  • "Armenia-Azerbaijan Reconciliation Stalls: Corridor Talks Amid Detention Crackdown"
+    - Links the corridor progress + internal repression + regional tensions into one narrative
+
+The goal: show readers the FULL picture of how a geopolitical development is unfolding, not scattered fragments.
 
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
