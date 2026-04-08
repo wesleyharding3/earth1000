@@ -15602,6 +15602,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let threadsLoaded = false;
       let feedBootstrapped = false;
       let threadsData = [];
+      // Lazy-render in chunks of 15 so big result sets don't stall the page.
+      const THREADS_PAGE_SIZE = 15;
+      let threadsRendered = 0;
 
       function setView(view) {
         currentView = view;
@@ -15748,16 +15751,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
         updateThreadsMeta();
-        threadsGrid.innerHTML = threadsData.map(threadCardHTML).join('');
-        threadsGrid.querySelectorAll('.nfThreadCard').forEach(card => {
-          card.addEventListener('click', () => {
-            try {
-              const t = JSON.parse(card.dataset.thread);
-              openThreadInPanel(t);
-            } catch(e) { console.warn('Failed to open thread:', e); }
-          });
-        });
+        threadsGrid.innerHTML = '';
+        threadsRendered = 0;
+        appendNextThreadPage();
       }
+
+      // Append the next THREADS_PAGE_SIZE cards to the grid and wire click
+      // handlers. Idempotent — bails if everything's already rendered.
+      function appendNextThreadPage() {
+        if (threadsRendered >= threadsData.length) return;
+        const slice = threadsData.slice(threadsRendered, threadsRendered + THREADS_PAGE_SIZE);
+        const tmp = document.createElement('div');
+        tmp.innerHTML = slice.map(threadCardHTML).join('');
+        const newCards = Array.from(tmp.children);
+        newCards.forEach(node => {
+          const card = node.querySelector?.('.nfThreadCard') || node;
+          if (card && card.classList?.contains('nfThreadCard')) {
+            card.addEventListener('click', () => {
+              try {
+                const t = JSON.parse(card.dataset.thread);
+                openThreadInPanel(t);
+              } catch(e) { console.warn('Failed to open thread:', e); }
+            });
+          }
+          threadsGrid.appendChild(node);
+        });
+        threadsRendered += slice.length;
+      }
+
+      // Wire infinite scroll on the threads viewport — paginate when the
+      // user is within 400px of the bottom. Guard with a flag so a single
+      // long scroll doesn't trigger multiple appends in the same frame.
+      let _threadsScrollPending = false;
+      threadsVp?.addEventListener('scroll', () => {
+        if (_threadsScrollPending) return;
+        if (threadsRendered >= threadsData.length) return;
+        if (threadsVp.scrollTop + threadsVp.clientHeight < threadsVp.scrollHeight - 400) return;
+        _threadsScrollPending = true;
+        requestAnimationFrame(() => {
+          appendNextThreadPage();
+          _threadsScrollPending = false;
+        });
+      });
 
       function openThreadInPanel(t) {
         // Build a node-like object compatible with the cluster's openNodePanel
@@ -20077,6 +20112,11 @@ body.ticker-active .gTickerLabel {
 
   // ── Location Briefing Options + Request ──────────────────────────────────
   window.showLocBriefingOptions = function showLocBriefingOptions(node, type) {
+    // Pro-gate: location briefings are a paid feature.
+    if (typeof window.__checkTier === 'function' && !window.__checkTier('pro')) {
+      window.__openPricing?.('Location briefings are a Pro feature.');
+      return;
+    }
     const panel = document.getElementById('infoPanel');
     panel.querySelectorAll('.locBriefOptions,.locBriefLoading').forEach(el => el.remove());
 
@@ -21395,6 +21435,11 @@ body.ticker-active .gTickerLabel {
   const customTags = new Set();
 
   function openBriefingLauncher() {
+    // Pro-gate: news briefings are a paid feature.
+    if (typeof window.__checkTier === 'function' && !window.__checkTier('pro')) {
+      window.__openPricing?.('News briefings are a Pro feature.');
+      return;
+    }
     const el = document.getElementById('bLauncherTodaySection');
     if (episode && episode.status === 'ready') {
       document.getElementById('bLauncherTodayHeadline').textContent = episode.headline || '';
