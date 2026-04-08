@@ -79,7 +79,7 @@ class UnionFind {
     return this.parent[x];
   }
   union(x, y) {
-    const px = this.find(x), py = this.find(y);
+    let px = this.find(x), py = this.find(y);
     if (px === py) return;
     if (this.rank[px] < this.rank[py]) [px, py] = [py, px];
     this.parent[py] = px;
