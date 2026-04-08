@@ -2401,7 +2401,8 @@ body.ticker-active #flowControls {
   z-index: 995;
   width: 320px;
   max-height: calc(100vh - 180px);
-  background: rgba(8,12,24,0.88);
+  /* Translucent glass — matches #infoPanel */
+  background: rgba(6, 10, 20, 0.30);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid rgba(255,160,80,0.25);
@@ -2420,22 +2421,29 @@ body.ticker-active #flowControls {
 #semHeatPanel.visible { display: flex; animation: semHeatIn 0.18s ease-out; }
 @keyframes semHeatIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 
+/* Minimized state — collapses to just the header */
+#semHeatPanel.minimized { max-height: none; overflow: hidden; gap: 0; padding-bottom: 6px; }
+#semHeatPanel.minimized .semHeatBody { display: none; }
+
 .semHeatHeader {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px;
   padding-bottom: 6px;
   border-bottom: 1px solid rgba(255,255,255,0.08);
 }
+#semHeatPanel.minimized .semHeatHeader { border-bottom: none; padding-bottom: 0; }
 .semHeatTitle {
   font-size: 13px; font-weight: 700;
   color: rgba(255,200,140,0.95);
   letter-spacing: 0.02em;
 }
-.semHeatClose {
-  background: none; border: none; color: rgba(255,255,255,0.4);
+.semHeatHeaderActions { display: flex; align-items: center; gap: 2px; }
+.semHeatClose, .semHeatMin {
+  background: none; border: none; color: rgba(255,255,255,0.45);
   font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px;
 }
-.semHeatClose:hover { color: rgba(255,255,255,0.85); }
+.semHeatMin { font-size: 20px; padding-bottom: 6px; }
+.semHeatClose:hover, .semHeatMin:hover { color: rgba(255,255,255,0.9); }
 
 .semHeatSection { display: flex; flex-direction: column; gap: 6px; }
 .semHeatLabel {
@@ -5713,19 +5721,31 @@ body.ticker-active #flowControls {
         line-height: 1;
       }
 
-      /* ── Top controls: move into safe area and shrink a bit ── */
+      /* Semantic heatmap panel — push down on mobile so it clears the
+         shrunken top nav and sits comfortably in the middle of the screen. */
+      #semHeatPanel {
+        top: calc(env(safe-area-inset-top, 0px) + 70px);
+        right: 8px;
+        left: 8px;
+        width: auto;
+        max-width: 340px;
+        margin-left: auto;
+      }
+
+      /* ── Top controls: move into safe area, shrink, hug the left edge
+         so the cluster doesn't crowd the compass on the right ── */
       #topLeftCluster {
         top: calc(env(safe-area-inset-top, 0px) + 10px);
-        left: 8px;
-        gap: 6px;
+        left: 4px;
+        gap: 4px;
       }
       .iconBtn {
-        width: 40px;
-        height: 40px;
+        width: 34px !important;
+        height: 34px !important;
       }
       .iconBtn svg {
-        width: 15px;
-        height: 15px;
+        width: 13px;
+        height: 13px;
       }
       #citySearch.expanded,
       #searchResults { width: 180px; }
@@ -7398,78 +7418,82 @@ window.sourceBiasBadgeHTML = function(bias) {
   <div id="semHeatPanel">
     <div class="semHeatHeader">
       <div class="semHeatTitle">Semantic Heatmap</div>
-      <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
-    </div>
-
-    <!-- Display mode: coverage / sentiment -->
-    <div class="semHeatSection">
-      <div class="semHeatLabel">Display mode</div>
-      <div class="semHeatPillRow" id="semHeatModeRow">
-        <div class="semHeatPill active" data-mode="coverage">Coverage</div>
-        <div class="semHeatPill" data-mode="sentiment">Sentiment</div>
-        <div class="semHeatPill" data-mode="volume">Volume</div>
-      </div>
-      <div class="semHeatLegend">
-        <span id="semHeatLegendLeft">low</span>
-        <div class="semHeatLegendBar coverage" id="semHeatLegendBar"></div>
-        <span id="semHeatLegendRight">high</span>
+      <div class="semHeatHeaderActions">
+        <button class="semHeatMin" id="semHeatMinBtn" title="Minimize">−</button>
+        <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
       </div>
     </div>
 
-    <!-- Input controls: keyword / thread / time-series -->
-    <div class="semHeatSection">
-      <div class="semHeatLabel">Query</div>
-      <div class="semHeatCtlTabs" id="semHeatCtlTabs">
-        <div class="semHeatCtlTab active" data-ctl="keyword">Keyword</div>
-        <div class="semHeatCtlTab" data-ctl="thread">Thread</div>
-        <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
-      </div>
-
-      <div class="semHeatCtlPanel active" data-panel="keyword">
-        <div class="semHeatKwRow">
-          <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
-          <button type="button" class="semHeatGoBtn" id="semHeatGoBtn">Enter</button>
+    <div class="semHeatBody">
+      <!-- Display mode: coverage / sentiment -->
+      <div class="semHeatSection">
+        <div class="semHeatLabel">Display mode</div>
+        <div class="semHeatPillRow" id="semHeatModeRow">
+          <div class="semHeatPill active" data-mode="coverage">Coverage</div>
+          <div class="semHeatPill" data-mode="sentiment">Sentiment</div>
         </div>
-        <div style="display:flex;gap:6px;">
-          <select class="semHeatSelect" id="semHeatKwDays" style="flex:1;">
-            <option value="1">Last 24h</option>
-            <option value="3">Last 3 days</option>
-            <option value="7" selected>Last 7 days</option>
-            <option value="30">Last 30 days</option>
-          </select>
+        <div class="semHeatLegend">
+          <span id="semHeatLegendLeft">low</span>
+          <div class="semHeatLegendBar coverage" id="semHeatLegendBar"></div>
+          <span id="semHeatLegendRight">high</span>
         </div>
       </div>
 
-      <div class="semHeatCtlPanel" data-panel="thread">
-        <select class="semHeatSelect" id="semHeatThreadSel">
-          <option value="">— Loading breaking stories… —</option>
-        </select>
-        <div style="font-size:10px;color:rgba(255,255,255,0.4);">Top breaking global story threads</div>
+      <!-- Input controls: keyword / thread / time-series -->
+      <div class="semHeatSection">
+        <div class="semHeatLabel">Query</div>
+        <div class="semHeatCtlTabs" id="semHeatCtlTabs">
+          <div class="semHeatCtlTab active" data-ctl="keyword">Keyword</div>
+          <div class="semHeatCtlTab" data-ctl="thread">Thread</div>
+          <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
+        </div>
+
+        <div class="semHeatCtlPanel active" data-panel="keyword">
+          <div class="semHeatKwRow">
+            <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+            <button type="button" class="semHeatGoBtn" id="semHeatGoBtn">Enter</button>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <select class="semHeatSelect" id="semHeatKwDays" style="flex:1;">
+              <option value="1">Last 24h</option>
+              <option value="3">Last 3 days</option>
+              <option value="7" selected>Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="semHeatCtlPanel" data-panel="thread">
+          <select class="semHeatSelect" id="semHeatThreadSel">
+            <option value="">— Loading breaking stories… —</option>
+          </select>
+          <div style="font-size:10px;color:rgba(255,255,255,0.4);">Top breaking global story threads</div>
+        </div>
+
+        <div class="semHeatCtlPanel" data-panel="timeseries">
+          <div style="display:flex;gap:6px;">
+            <select class="semHeatSelect" id="semHeatTsRange" style="flex:1;">
+              <option value="1">24 hours</option>
+              <option value="3">3 days</option>
+              <option value="7" selected>7 days</option>
+              <option value="14">14 days</option>
+            </select>
+            <select class="semHeatSelect" id="semHeatTsBucket" style="flex:1;">
+              <option value="hour">hourly</option>
+              <option value="day" selected>daily</option>
+            </select>
+          </div>
+          <div class="semHeatTsRow">
+            <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause">▶</button>
+            <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset">↺</button>
+            <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1" />
+          </div>
+          <div class="semHeatTsLabel" id="semHeatTsLabel" style="text-align:left;">—</div>
+        </div>
       </div>
 
-      <div class="semHeatCtlPanel" data-panel="timeseries">
-        <div style="display:flex;gap:6px;">
-          <select class="semHeatSelect" id="semHeatTsRange" style="flex:1;">
-            <option value="1">24 hours</option>
-            <option value="3">3 days</option>
-            <option value="7" selected>7 days</option>
-            <option value="14">14 days</option>
-          </select>
-          <select class="semHeatSelect" id="semHeatTsBucket" style="flex:1;">
-            <option value="hour">hourly</option>
-            <option value="day" selected>daily</option>
-          </select>
-        </div>
-        <div class="semHeatTsRow">
-          <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause">▶</button>
-          <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset">↺</button>
-          <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1" />
-        </div>
-        <div class="semHeatTsLabel" id="semHeatTsLabel" style="text-align:left;">—</div>
-      </div>
+      <div class="semHeatStats" id="semHeatStats">—</div>
     </div>
-
-    <div class="semHeatStats" id="semHeatStats">—</div>
   </div>
 
   <!-- Thread flow timeline -->
@@ -10254,6 +10278,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let regionHoverEraseTimer = null;
 
       function updateRegionHoverLabels() {
+        if (window.__semHeatActive) {
+          if (regionHoveredIndex !== null) { regionHoveredIndex = null; hideHoverCard(); }
+          return;
+        }
         if (window.__currentViewMode !== "regions" || !regionPoints || !regionPositions) {
           if (regionHoveredIndex !== null) { regionHoveredIndex = null; hideHoverCard(); }
           return;
@@ -10505,6 +10533,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let envHoveredIndex = null;
 
       function updateEnvironmentHoverLabels() {
+        if (window.__semHeatActive) {
+          if (envHoveredIndex !== null) { envHoveredIndex = null; hideHoverCard(); }
+          return;
+        }
         if (window.__currentViewMode !== "environment" || !envPoints || !envData.length) {
           if (envHoveredIndex !== null) { envHoveredIndex = null; hideHoverCard(); }
           return;
@@ -10740,6 +10772,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function updateHoverLabels() {
         // During briefing the player manages its own hover card — don't interfere
         if (window.briefingActive) return;
+        if (window.__semHeatActive) { hideHoverCard(); return; }
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
@@ -10907,6 +10940,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("click", event => {
         if (window.briefingActive) return;   // globe locked during briefing
+        if (window.__semHeatActive) return;  // heatmap mode disables node selection
         // If a touch-initiated node selection just happened, skip this click.
         // Threshold is 1500ms to account for Capacitor WKWebView bridge latency,
         // which can delay the JS click handler well past the usual ~300ms iOS synthetic-click delay.
@@ -11018,6 +11052,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.addEventListener("touchstart", (event) => {
         if (window.briefingActive) return;   // globe locked during briefing
+        if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
 
         // Skip node selection when flow mode is active
@@ -13346,6 +13381,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             && !isFocused
             && ambientSpeed > 0
             && !window.briefingActive
+            && !window.__semHeatActive
             && currentViewMode !== "ocean"
             && currentViewMode !== "transportation"
             && !document.getElementById("infoPanel")?.classList.contains("active")
@@ -22796,29 +22832,67 @@ body.ticker-active .gTickerLabel {
     threadsLoaded: false
   };
 
-  // ── Globe overlay: build a group of country markers on the globe sphere ──
+  // ── Globe overlay: a single sphere mesh wrapping the globe with a
+  // procedurally-painted equirectangular canvas texture. This blends
+  // every point into one continuous heatmap and draws a dull opaque
+  // mask over the entire earth.
+  let heatSphere  = null;
+  let heatCanvas  = null;
+  let heatCtx     = null;
+  let heatTexture = null;
+  // Legacy sprite refs kept so stray references don't error
   let group = null;
   let markerMeshes = [];
 
-  function ensureGroup() {
+  function ensureHeatSphere() {
     const THREE = window.THREE;
     const scene = window.scene;
     if (!THREE || !scene) return null;
-    if (!group) {
-      group = new THREE.Group();
-      group.name = 'semHeatGroup';
-      group.renderOrder = 4;
-      scene.add(group);
-    }
-    return group;
+    if (heatSphere) return heatSphere;
+
+    heatCanvas = document.createElement('canvas');
+    heatCanvas.width  = 2048;
+    heatCanvas.height = 1024;
+    heatCtx = heatCanvas.getContext('2d');
+
+    heatTexture = new THREE.CanvasTexture(heatCanvas);
+    heatTexture.wrapS = THREE.RepeatWrapping;
+    heatTexture.wrapT = THREE.ClampToEdgeWrapping;
+    heatTexture.anisotropy = 4;
+    heatTexture.needsUpdate = true;
+
+    const geom = new THREE.SphereGeometry(1.014, 128, 96);
+    const mat  = new THREE.MeshBasicMaterial({
+      map: heatTexture,
+      transparent: true,
+      opacity: 0.94,
+      depthWrite: false,
+      side: THREE.FrontSide
+    });
+    heatSphere = new THREE.Mesh(geom, mat);
+    heatSphere.name = 'semHeatSphere';
+    heatSphere.renderOrder = 5;
+    scene.add(heatSphere);
+    return heatSphere;
+  }
+
+  function removeHeatSphere() {
+    if (!heatSphere) return;
+    window.scene?.remove(heatSphere);
+    heatSphere.geometry?.dispose();
+    if (heatSphere.material?.map) heatSphere.material.map.dispose();
+    heatSphere.material?.dispose();
+    heatSphere  = null;
+    heatTexture = null;
+    heatCtx     = null;
+    heatCanvas  = null;
   }
 
   function clearMarkers() {
-    if (!group) return;
-    for (const m of markerMeshes) {
-      group.remove(m);
-      if (m.geometry) m.geometry.dispose();
-      if (m.material) m.material.dispose();
+    // Clear the painted canvas (retains the sphere; removal is done in close)
+    if (heatCtx && heatCanvas) {
+      heatCtx.clearRect(0, 0, heatCanvas.width, heatCanvas.height);
+      if (heatTexture) heatTexture.needsUpdate = true;
     }
     markerMeshes = [];
   }
@@ -22834,85 +22908,98 @@ body.ticker-active .gTickerLabel {
     );
   }
 
-  // Color for a given mode + point
-  function colorFor(p, maxN) {
-    const THREE = window.THREE;
-    if (state.mode === 'sentiment') {
-      if (p.avg_sent == null || p.sent_n === 0) return new THREE.Color(0.35, 0.35, 0.40);
-      const t = (p.avg_sent + 1) / 2;
-      return new THREE.Color(
-        t < 0.5 ? 1 : 2 * (1 - t),
-        t > 0.5 ? 1 : 2 * t,
-        0.25
-      );
-    }
-    // coverage / volume: blue → cyan → white ramp by log(n)/log(max)
-    const ln = Math.log10(1 + p.n);
-    const lm = Math.log10(1 + Math.max(maxN, 1));
-    const t  = lm > 0 ? Math.min(1, ln / lm) : 0;
-    return new THREE.Color(0.25 + 0.60 * t, 0.55 + 0.45 * t, 0.95);
-  }
+  // ── Continuous heatmap painted into an equirectangular canvas that
+  //    wraps the globe. Produces a real blended heatmap and a dull
+  //    opaque mask over the entire earth.
 
-  function radiusFor(p, maxN) {
-    const ln = Math.log10(1 + p.n);
-    const lm = Math.log10(1 + Math.max(maxN, 1));
-    const t  = lm > 0 ? ln / lm : 0;
-    // Volume mode exaggerates size; sentiment/coverage stay moderate
-    const base = (state.mode === 'volume') ? 0.022 : 0.014;
-    const max  = (state.mode === 'volume') ? 0.085 : 0.055;
-    return base + (max - base) * t;
+  function colorStopsFor(p, intensity) {
+    if (state.mode === 'sentiment') {
+      if (p.avg_sent == null || p.sent_n === 0) {
+        return { r: 150, g: 150, b: 160 };
+      }
+      const t = (p.avg_sent + 1) / 2; // 0 negative, 1 positive
+      const r = Math.round(t < 0.5 ? 255 : 255 * (1 - 2 * (t - 0.5)));
+      const g = Math.round(t > 0.5 ? 230 : 230 * (2 * t));
+      return { r, g, b: 70 };
+    }
+    // coverage: blue → cyan → white ramp
+    const r = Math.round(60  + 195 * intensity);
+    const g = Math.round(150 + 105 * intensity);
+    const b = 255;
+    return { r, g, b };
   }
 
   function renderPoints(points) {
-    const THREE = window.THREE;
-    const g = ensureGroup();
-    if (!g || !THREE) return;
-    clearMarkers();
-    if (!points || !points.length) return;
+    const sphere = ensureHeatSphere();
+    if (!sphere || !heatCtx || !heatCanvas) return;
+
+    const W = heatCanvas.width;
+    const H = heatCanvas.height;
+
+    // 1. Dull opaque base — envelops the entire globe in a dim mask
+    heatCtx.globalCompositeOperation = 'source-over';
+    heatCtx.fillStyle = 'rgba(8, 12, 22, 0.55)';
+    heatCtx.fillRect(0, 0, W, H);
+
+    if (!points || !points.length) {
+      heatTexture.needsUpdate = true;
+      return;
+    }
 
     const maxN = points.reduce((a, p) => Math.max(a, p.n), 0);
-    const GLOBE_RADIUS = 1.0; // matches existing scene
-    const LIFT = 1.006;
 
-    // Use one merged instanced mesh for perf
-    const geom = new THREE.CircleGeometry(1, 24);
-    // Billboard so circles face the camera — use sprite materials instead
+    // 2. Blend heat spots additively so adjacent regions merge smoothly
+    heatCtx.globalCompositeOperation = 'lighter';
+
     for (const p of points) {
       if (!isFinite(p.lat) || !isFinite(p.lon)) continue;
-      const pos = latLonToV3(p.lat, p.lon, GLOBE_RADIUS * LIFT);
-      const col = colorFor(p, maxN);
-      const rad = radiusFor(p, maxN);
 
-      // Outer soft disk
-      const mat = new THREE.SpriteMaterial({
-        map: getGlowTexture(),
-        color: col,
-        transparent: true,
-        opacity: 0.85,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending
-      });
-      const sprite = new THREE.Sprite(mat);
-      sprite.position.copy(pos);
-      sprite.scale.set(rad * 3.5, rad * 3.5, 1);
-      sprite.userData = { point: p };
-      g.add(sprite);
-      markerMeshes.push(sprite);
+      // Equirectangular projection
+      const cx = ((p.lon + 180) / 360) * W;
+      const cy = ((90  - p.lat) / 180) * H;
 
-      // Inner solid dot for strong reading
-      const mat2 = new THREE.SpriteMaterial({
-        map: getDotTexture(),
-        color: col,
-        transparent: true,
-        opacity: 0.95,
-        depthWrite: false
-      });
-      const dot = new THREE.Sprite(mat2);
-      dot.position.copy(pos);
-      dot.scale.set(rad * 1.2, rad * 1.2, 1);
-      g.add(dot);
-      markerMeshes.push(dot);
+      const ln = Math.log10(1 + p.n);
+      const lm = Math.log10(1 + Math.max(maxN, 1));
+      const intensity = lm > 0 ? Math.min(1, ln / lm) : 0;
+
+      // Radius scales with intensity. Compensate horizontally for the
+      // equirectangular squeeze toward the poles so the sphere texture
+      // shows roughly circular blobs at all latitudes.
+      const baseRadius = W * 0.055;
+      const radius     = baseRadius * (0.55 + 0.95 * intensity);
+      const latRad     = p.lat * Math.PI / 180;
+      const xStretch   = 1 / Math.max(0.25, Math.cos(latRad));
+      const rx         = radius * xStretch;
+      const ry         = radius;
+
+      const c = colorStopsFor(p, intensity);
+      const a0 = Math.min(1, 0.55 + 0.55 * intensity);
+      const a1 = a0 * 0.45;
+
+      const drawAt = (x, y) => {
+        // Use an elliptical gradient via canvas transform
+        heatCtx.save();
+        heatCtx.translate(x, y);
+        heatCtx.scale(xStretch, 1);
+        const g = heatCtx.createRadialGradient(0, 0, 0, 0, 0, radius);
+        g.addColorStop(0.0,  `rgba(${c.r},${c.g},${c.b},${a0})`);
+        g.addColorStop(0.45, `rgba(${c.r},${c.g},${c.b},${a1})`);
+        g.addColorStop(1.0,  `rgba(${c.r},${c.g},${c.b},0)`);
+        heatCtx.fillStyle = g;
+        heatCtx.beginPath();
+        heatCtx.arc(0, 0, radius, 0, Math.PI * 2);
+        heatCtx.fill();
+        heatCtx.restore();
+      };
+
+      drawAt(cx, cy);
+      // Antimeridian wrap so blobs near ±180° remain continuous
+      if (cx - rx < 0)     drawAt(cx + W, cy);
+      if (cx + rx > W)     drawAt(cx - W, cy);
     }
+
+    heatCtx.globalCompositeOperation = 'source-over';
+    heatTexture.needsUpdate = true;
   }
 
   // Cached procedural textures
@@ -23173,8 +23260,22 @@ body.ticker-active .gTickerLabel {
   }
   threadSel.addEventListener('change', reload);
 
+  // ── Minimize button ────────────────────────────────────────────────────
+  const minBtn = document.getElementById('semHeatMinBtn');
+  if (minBtn) {
+    minBtn.addEventListener('click', () => {
+      const minimized = panel.classList.toggle('minimized');
+      minBtn.textContent = minimized ? '+' : '−';
+      minBtn.title       = minimized ? 'Expand' : 'Minimize';
+    });
+  }
+
   // ── Open / close API ───────────────────────────────────────────────────
   window.__semHeatOpen = function (opts) {
+    window.__semHeatActive = true;
+    document.body.classList.add('sem-heatmap-active');
+    panel.classList.remove('minimized');
+    if (minBtn) { minBtn.textContent = '−'; minBtn.title = 'Minimize'; }
     panel.classList.add('visible');
     toggleBtn.style.display = 'none';
     updateLegend();
@@ -23219,9 +23320,13 @@ body.ticker-active .gTickerLabel {
   };
 
   window.__semHeatClose = function () {
+    window.__semHeatActive = false;
+    document.body.classList.remove('sem-heatmap-active');
     panel.classList.remove('visible');
+    panel.classList.remove('minimized');
     stopPlayback();
     clearMarkers();
+    removeHeatSphere();
     updateToggleBtnVisibility();
   };
 
