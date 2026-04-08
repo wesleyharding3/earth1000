@@ -8,6 +8,11 @@
   <link rel="apple-touch-icon" href="/favicon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Pre-warm TLS + DNS for the API origin so the first /api/* fetch at
+       bootup doesn't pay for a full handshake. Shaves ~300-800ms off the
+       first thread / feed load on mobile. -->
+  <link rel="preconnect" href="https://earth-wjr6.onrender.com" crossorigin>
+  <link rel="dns-prefetch" href="https://earth-wjr6.onrender.com">
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -4231,6 +4236,49 @@ body.ticker-active #flowControls {
       flex-direction: column;
       height: 440px;
     }
+
+    /* ── Skeleton card placeholders (used while feed/threads are fetching) ── */
+    @keyframes nfSkelShimmer {
+      0%   { background-position: -400px 0; }
+      100% { background-position:  400px 0; }
+    }
+    .nfSkelCard {
+      background: rgba(255,255,255,0.035);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      height: 440px;
+    }
+    .nfSkelImg {
+      width: 100%; height: 200px;
+      background:
+        linear-gradient(90deg,
+          rgba(255,255,255,0.04) 0%,
+          rgba(255,255,255,0.09) 50%,
+          rgba(255,255,255,0.04) 100%);
+      background-size: 800px 100%;
+      animation: nfSkelShimmer 1.6s linear infinite;
+    }
+    .nfSkelBody {
+      padding: 14px 13px 14px;
+      display: flex; flex-direction: column; gap: 10px; flex: 1;
+    }
+    .nfSkelLine {
+      height: 10px;
+      border-radius: 5px;
+      background:
+        linear-gradient(90deg,
+          rgba(255,255,255,0.05) 0%,
+          rgba(255,255,255,0.11) 50%,
+          rgba(255,255,255,0.05) 100%);
+      background-size: 800px 100%;
+      animation: nfSkelShimmer 1.6s linear infinite;
+    }
+    .nfSkelLineCat    { width: 30%; height: 8px; }
+    .nfSkelLineTitle  { width: 92%; height: 14px; margin-top: 4px; }
+    .nfSkelLineTitle2 { width: 75%; height: 14px; }
+    .nfSkelLineMeta   { width: 45%; height: 9px; margin-top: auto; }
     .nfThreadCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfThreadCard:active { transform: translateY(0); }
     .nfThreadCardImg {
@@ -15732,24 +15780,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
         threadsDateToggleBtn.classList.toggle('open', !isOpen);
       });
 
+      // In-flight dedupe: if loadThreads() is called while a previous fetch
+      // is still running (e.g. the user taps Feed then Threads again before
+      // the first request resolves), return the SAME promise instead of
+      // firing a second concurrent request. Avoids the "two overlapping
+      // fetches clobber each other" race that caused the loading spinner
+      // to flicker on/off during rapid view switches.
+      let threadsInFlight = null;
+
       async function loadThreads() {
-        threadsGrid.innerHTML = skels(1);
-        try {
-          // Fetch a sane initial slice. The lazy renderer paints these in
-          // chunks of 15; if the user scrolls past the slice, we can grow
-          // it on demand later. Big initial fetches were the cause of the
-          // slow first-paint at app open.
-          const params = new URLSearchParams({ limit: 250 });
-          if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
-          if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
-          const res = await fetch(`${API}/api/threads/latest?${params}`);
-          if (!res.ok) throw new Error('Failed');
-          threadsData = await res.json();
-          threadsLoaded = true;
-          renderThreads();
-        } catch (e) {
-          threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
-        }
+        if (threadsInFlight) return threadsInFlight;
+
+        // Visible skeleton grid — 8 card placeholders so the loading state
+        // is obvious while the fetch resolves. (Used to render only 1.)
+        threadsGrid.innerHTML = skels(8);
+
+        threadsInFlight = (async () => {
+          try {
+            // Fetch a sane initial slice. The lazy renderer paints these in
+            // chunks of 15; if the user scrolls past the slice, we can grow
+            // it on demand later. Big initial fetches were the cause of the
+            // slow first-paint at app open.
+            const params = new URLSearchParams({ limit: 250 });
+            if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
+            if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
+            const res = await fetch(`${API}/api/threads/latest?${params}`);
+            if (!res.ok) throw new Error('Failed');
+            threadsData = await res.json();
+            threadsLoaded = true;
+            renderThreads();
+          } catch (e) {
+            threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
+          } finally {
+            threadsInFlight = null;
+          }
+        })();
+
+        return threadsInFlight;
       }
 
       function updateThreadsDateClearBtns() {
