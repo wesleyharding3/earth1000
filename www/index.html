@@ -2477,6 +2477,34 @@ body.ticker-active #flowControls {
 .semHeatInput:focus, .semHeatSelect:focus { border-color: rgba(255,160,80,0.5); }
 .semHeatSelect option { background: #0b1220; color: #fff; }
 
+/* Keyword row: input + explicit Go / Enter button */
+.semHeatKwRow {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.semHeatKwRow .semHeatInput { flex: 1; }
+.semHeatGoBtn {
+  flex-shrink: 0;
+  background: rgba(255,160,80,0.18);
+  border: 1px solid rgba(255,160,80,0.45);
+  color: rgba(255,210,150,1);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 7px 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.semHeatGoBtn:hover {
+  background: rgba(255,160,80,0.32);
+  border-color: rgba(255,160,80,0.70);
+  transform: scale(1.02);
+}
+.semHeatGoBtn:active { transform: scale(0.96); }
+
 .semHeatCtlTabs { display: flex; gap: 4px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 3px; }
 .semHeatCtlTab {
   flex: 1;
@@ -2542,33 +2570,10 @@ body.ticker-active #flowControls {
   color: rgba(255,200,140,0.7);
 }
 
-/* Open button that triggers the panel (floating, top-right of globe) */
-#semHeatToggleBtn {
-  position: absolute;
-  top: 20px;
-  right: 88px; /* To the left of compass (20 + 56 + 12 gap) */
-  z-index: 30;
-  width: var(--touch-icon-size);
-  height: var(--touch-icon-size);
-  border-radius: 50%;
-  background: rgba(8, 12, 24, 0.82);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 160, 80, 0.35);
-  color: rgba(255, 200, 140, 0.9);
-  display: none; /* hidden by default; shown on globe page */
-  align-items: center; justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
-  transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
-}
-#semHeatToggleBtn:hover {
-  transform: scale(1.06);
-  background: rgba(255, 160, 80, 0.18);
-  border-color: rgba(255, 160, 80, 0.55);
-  color: rgba(255, 215, 160, 1);
-}
-#semHeatToggleBtn svg { width: calc(17px * var(--mobile-control-scale)); height: calc(17px * var(--mobile-control-scale)); flex-shrink: 0; }
+/* Semantic heatmap toggle button — sits inside #topLeftCluster and
+   inherits all sizing/color from .iconBtn. Hidden by default; JS sets
+   display:flex when the globe page is active. */
+#semHeatToggleBtn { display: none; }
 
 /* ── Flow arc click info card ── */
 #flowArcInfoCard {
@@ -5731,16 +5736,6 @@ body.ticker-active #flowControls {
         width: 44px;
         height: 44px;
       }
-      #semHeatToggleBtn {
-        top: calc(env(safe-area-inset-top, 0px) + 10px);
-        right: 58px; /* 8 + 44 + 6 gap */
-        width: 40px;
-        height: 40px;
-      }
-      #semHeatToggleBtn svg {
-        width: 15px;
-        height: 15px;
-      }
       #scaleBar {
         top: calc(env(safe-area-inset-top, 0px) + 62px);
         right: 8px;
@@ -5957,13 +5952,15 @@ body.ticker-active #flowControls {
   /* Icon buttons — stronger contrast and larger targets on touch */
   .iconBtn {
     touch-action: manipulation;
-    background: rgba(0, 0, 0, 0.82);
-    border-color: rgba(255, 255, 255, 0.32);
+    background: rgba(8, 12, 24, 0.82);
+    border-color: rgba(255, 160, 80, 0.45);
+    color: rgba(255, 200, 140, 0.95);
     box-shadow: 0 2px 16px rgba(0, 0, 0, 0.60);
   }
   .iconBtn:active {
-    background: rgba(40, 40, 40, 0.95);
-    border-color: rgba(255, 255, 255, 0.55);
+    background: rgba(255, 160, 80, 0.22);
+    border-color: rgba(255, 160, 80, 0.70);
+    color: rgba(255, 220, 170, 1);
     transform: scale(0.94);
   }
 
@@ -6841,6 +6838,22 @@ window.sourceBiasBadgeHTML = function(bias) {
       <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
       <div id="searchResults"></div>
     </div>
+    <!-- Semantic Heatmap toggle button -->
+    <div class="iconBtn" id="semHeatToggleBtn" title="Open Semantic Heatmap" onclick="window.__semHeatOpen?.()" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M3 12h18"/>
+        <path d="M12 3c3 3.5 3 14.5 0 18"/>
+        <path d="M12 3c-3 3.5-3 14.5 0 18"/>
+        <circle cx="8" cy="9" r="1.2" fill="currentColor"/>
+        <circle cx="16" cy="14" r="1.2" fill="currentColor"/>
+        <circle cx="10" cy="16" r="1.0" fill="currentColor"/>
+      </svg>
+      <div class="btnTooltip">
+        <div class="btnTooltipTitle btnTooltipAccent">Semantic Heatmap</div>
+        <div class="btnTooltipSub">Visualize coverage, sentiment &amp; volume by keyword</div>
+      </div>
+    </div>
   </div>
 
  <div id="viewSidebar">
@@ -7381,19 +7394,6 @@ window.sourceBiasBadgeHTML = function(bias) {
     <span id="flowArcBackLabel">Back</span>
   </div>
 
-  <!-- Semantic Heatmap toggle button (globe page, top-right) -->
-  <div id="semHeatToggleBtn" title="Open Semantic Heatmap" onclick="window.__semHeatOpen?.()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="9"/>
-      <path d="M3 12h18"/>
-      <path d="M12 3c3 3.5 3 14.5 0 18"/>
-      <path d="M12 3c-3 3.5-3 14.5 0 18"/>
-      <circle cx="8" cy="9" r="1.2" fill="currentColor"/>
-      <circle cx="16" cy="14" r="1.2" fill="currentColor"/>
-      <circle cx="10" cy="16" r="1.0" fill="currentColor"/>
-    </svg>
-  </div>
-
   <!-- Semantic Heatmap control panel -->
   <div id="semHeatPanel">
     <div class="semHeatHeader">
@@ -7426,7 +7426,10 @@ window.sourceBiasBadgeHTML = function(bias) {
       </div>
 
       <div class="semHeatCtlPanel active" data-panel="keyword">
-        <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+        <div class="semHeatKwRow">
+          <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+          <button type="button" class="semHeatGoBtn" id="semHeatGoBtn">Enter</button>
+        </div>
         <div style="display:flex;gap:6px;">
           <select class="semHeatSelect" id="semHeatKwDays" style="flex:1;">
             <option value="1">Last 24h</option>
@@ -22739,6 +22742,14 @@ body.ticker-active .gTickerLabel {
 (function semanticHeatmap() {
   'use strict';
 
+  // ── API base ─────────────────────────────────────────────────────────
+  // Must use the full API origin. A relative URL breaks in two places:
+  //   • Desktop web (earth00.com) → resolves to earth00.com/api/... → 400
+  //   • iOS Capacitor WKWebView   → resolves to capacitor://localhost/api/...
+  //     which throws "the string did not match the expected pattern"
+  //     because capacitor://... isn't in allowNavigation.
+  const API = window.__API_BASE || window.__API || 'https://earth-wjr6.onrender.com';
+
   const panel     = document.getElementById('semHeatPanel');
   const toggleBtn = document.getElementById('semHeatToggleBtn');
   const modeRow   = document.getElementById('semHeatModeRow');
@@ -22982,7 +22993,7 @@ body.ticker-active .gTickerLabel {
     statsEl.textContent = 'Loading…';
     const q = new URLSearchParams(params);
     try {
-      const r = await fetch('/api/heatmap?' + q.toString());
+      const r = await fetch(`${API}/api/heatmap?` + q.toString());
       if (!r.ok) throw new Error('http ' + r.status);
       const j = await r.json();
       return j;
@@ -23125,12 +23136,27 @@ body.ticker-active .gTickerLabel {
     clearTimeout(_kwTimer);
     _kwTimer = setTimeout(reload, 450);
   });
+  kwInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { clearTimeout(_kwTimer); reload(); }
+  });
+  const goBtn = document.getElementById('semHeatGoBtn');
+  if (goBtn) goBtn.addEventListener('click', () => { clearTimeout(_kwTimer); reload(); });
   kwDays.addEventListener('change', reload);
+
+  // ── Block pointer/mouse/wheel/touch events from bubbling out of the
+  //    panel to the globe's window-level listeners (otherwise clicks on
+  //    the panel end up rotating the globe / opening tooltips behind it).
+  ['mousedown','mouseup','click','mousemove','pointerdown','pointerup',
+   'pointermove','wheel','touchstart','touchmove','touchend','dblclick',
+   'contextmenu'].forEach(ev => {
+    panel.addEventListener(ev, e => e.stopPropagation(), { passive: false });
+    if (toggleBtn) toggleBtn.addEventListener(ev, e => e.stopPropagation(), { passive: false });
+  });
 
   // ── Load thread list for dropdown ──────────────────────────────────────
   async function loadThreadList() {
     try {
-      const r = await fetch('/api/threads/latest?limit=60');
+      const r = await fetch(`${API}/api/threads/latest?limit=60`);
       const j = await r.json();
       const arr = Array.isArray(j) ? j : (j.threads || []);
       state.threadsLoaded = true;
