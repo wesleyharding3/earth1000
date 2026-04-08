@@ -1756,7 +1756,9 @@ app.get("/api/articles/by-thread", async (req, res) => {
 // so the front-end can badge / sort threads if it wants to.
 app.get("/api/threads/latest", async (req, res) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 1000);
+    const limit    = Math.min(parseInt(req.query.limit, 10) || 1000, 1000);
+    const fromDate = req.query.from_date || null;  // ISO date string e.g. "2026-03-01"
+    const toDate   = req.query.to_date   || null;
 
     // Step 1: get threads
     //
@@ -1768,6 +1770,12 @@ app.get("/api/threads/latest", async (req, res) => {
     //     Tier 2 — references 0 countries (uncontextualized stories)
     //   Within each tier we still respect status (active > cooling > dormant)
     //   and the original importance/article_count/recency order.
+    const params = [limit];
+    const dateClauses = [];
+    if (fromDate) { params.push(fromDate); dateClauses.push(`st.last_updated_at >= $${params.length}::date`); }
+    if (toDate)   { params.push(toDate);   dateClauses.push(`st.last_updated_at <  ($${params.length}::date + INTERVAL '1 day')`); }
+    const dateWhere = dateClauses.length ? `AND ${dateClauses.join(' AND ')}` : '';
+
     const { rows: threads } = await pool.query(`
       WITH thread_country_counts AS (
         SELECT
@@ -1787,6 +1795,7 @@ app.get("/api/threads/latest", async (req, res) => {
       LEFT JOIN thread_country_counts tcc ON tcc.thread_id = st.id
       WHERE st.article_count >= 2
         AND st.status IN ('active', 'cooling', 'dormant')
+        ${dateWhere}
       ORDER BY
         CASE st.status
           WHEN 'active'  THEN 0
@@ -1803,7 +1812,7 @@ app.get("/api/threads/latest", async (req, res) => {
         st.article_count DESC,
         st.last_updated_at DESC NULLS LAST
       LIMIT $1
-    `, [limit]);
+    `, params);
 
     if (!threads.length) return res.json([]);
 

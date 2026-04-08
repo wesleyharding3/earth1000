@@ -4826,11 +4826,42 @@ body.ticker-active #flowControls {
     .nfMetaPills { display: flex; gap: 5px; flex-wrap: wrap; }
     #nfThreadsMeta {
       flex-shrink: 0;
-      padding: 6px 20px 5px;
-      display: flex; align-items: center; gap: 7px;
+      padding: 6px 14px 5px;
+      display: flex; align-items: center; justify-content: space-between; gap: 7px;
       background: rgba(8, 14, 24, 0.55);
       border-bottom: 1px solid rgba(255,255,255,0.05);
       min-height: 28px;
+      flex-wrap: wrap;
+    }
+    .nfThreadsDateFilter {
+      display: flex; align-items: center; gap: 5px;
+      flex-shrink: 0;
+    }
+    .nfThreadsDateField {
+      position: relative; display: flex; align-items: center;
+    }
+    .nfThreadsDateInput {
+      height: 22px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 7px;
+      color: rgba(255,255,255,0.65);
+      font-size: 10px; font-family: inherit;
+      padding: 0 6px;
+      outline: none;
+      width: 104px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .nfThreadsDateInput:focus { border-color: rgba(212,168,67,0.45); }
+    .nfThreadsDateInput::-webkit-calendar-picker-indicator { filter: invert(0.4); cursor: pointer; width: 10px; }
+    .nfThreadsDateClear {
+      position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: rgba(255,255,255,0.35);
+      font-size: 9px; cursor: pointer; padding: 0; line-height: 1;
+    }
+    .nfThreadsDateSep {
+      font-size: 9px; color: rgba(255,255,255,0.2); flex-shrink: 0;
     }
     .nfMetaPill {
       display: inline-flex; align-items: center;
@@ -11834,7 +11865,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Tube geometry gives us real screen-space thickness
         // (WebGL ignores LineSegments linewidth on most platforms).
         const curve = new THREE.CatmullRomCurve3(pts);
-        const TUBE_RADIUS = R * 0.014;
+        const TUBE_RADIUS = R * 0.0105;
         const geo = new THREE.TubeGeometry(curve, STEPS, TUBE_RADIUS, 10, false);
 
         const mat = new THREE.ShaderMaterial({
@@ -13628,6 +13659,44 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return `${node.type || "node"}:${label}:${lat}:${lon}`;
   }
 
+  /* ── Deduplicate flows that land on the same rendered endpoints ──────────
+   * After remapFlowForView(), a city source (e.g. Tehran) and a country
+   * source (e.g. Iran) both get remapped to the same country coordinates,
+   * producing two visually identical arcs. We forbid more than one arc per
+   * (src_country, dst_country) pair by keying on lat/lon rounded to 1 dp.
+   *
+   * Individual mode: keep first occurrence, drop duplicates.
+   * Aggregate mode: merge duplicate pairs by summing their counts.
+   */
+  function deduplicateFlowsByEndpoints(flows) {
+    const seen = new Set();
+    return flows.filter(flow => {
+      const sk = `${Number(flow.src.lat).toFixed(1)},${Number(flow.src.lon).toFixed(1)}`;
+      const dk = `${Number(flow.dst.lat).toFixed(1)},${Number(flow.dst.lon).toFixed(1)}`;
+      if (sk === dk) return false; // self-loop — skip
+      const key = `${sk}→${dk}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function mergeAggregateFlowsByEndpoints(flows) {
+    const map = new Map();
+    for (const flow of flows) {
+      const sk = `${Number(flow.src.lat).toFixed(1)},${Number(flow.src.lon).toFixed(1)}`;
+      const dk = `${Number(flow.dst.lat).toFixed(1)},${Number(flow.dst.lon).toFixed(1)}`;
+      if (sk === dk) continue;
+      const key = `${sk}→${dk}`;
+      if (map.has(key)) {
+        map.get(key).count = (map.get(key).count || 1) + (flow.count || 1);
+      } else {
+        map.set(key, { ...flow, count: flow.count || 1 });
+      }
+    }
+    return [...map.values()];
+  }
+
   function assignFlowLaneOffsets(flows) {
     const pairDirections = new Map();
 
@@ -13833,7 +13902,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       if (flowMode === "aggregate") {
         const flows = Array.isArray(data.flows) ? data.flows : [];
-        flowData = flows.map(remapFlowForView);
+        flowData = mergeAggregateFlowsByEndpoints(flows.map(remapFlowForView));
         assignFlowLaneOffsets(flowData);
         const maxCount = data.maxCount || 1;
 
@@ -13852,7 +13921,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } else {
         // Handle both { flows: [...] } and direct array responses
         const flows = Array.isArray(data.flows) ? data.flows : (Array.isArray(data) ? data : []);
-        flowData = flows.map(remapFlowForView);
+        flowData = deduplicateFlowsByEndpoints(flows.map(remapFlowForView));
         assignFlowLaneOffsets(flowData);
         document.getElementById("flowStats").innerHTML = 
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
@@ -15004,9 +15073,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="nfSpinner"></div>
       </div>
     </div>
-    <!-- Threads meta -->
+    <!-- Threads meta + date filter -->
     <div id="nfThreadsMeta" style="display:none">
       <span class="nfMetaCount" id="nfThreadsMetaCount"></span>
+      <div class="nfThreadsDateFilter">
+        <div class="nfThreadsDateField">
+          <input type="date" id="nfThreadsFrom" class="nfThreadsDateInput" title="From date" />
+          <button class="nfThreadsDateClear" id="nfThreadsFromClear" style="display:none" title="Clear">✕</button>
+        </div>
+        <span class="nfThreadsDateSep">→</span>
+        <div class="nfThreadsDateField">
+          <input type="date" id="nfThreadsTo" class="nfThreadsDateInput" title="To date" />
+          <button class="nfThreadsDateClear" id="nfThreadsToClear" style="display:none" title="Clear">✕</button>
+        </div>
+      </div>
     </div>
     <!-- Threads view -->
     <div id="nfThreadsViewport" style="display:none">
@@ -15595,18 +15675,65 @@ const settingsToggle     = document.getElementById("settingsToggle");
         </div></div>`;
       }
 
+      const threadsFromInput = document.getElementById('nfThreadsFrom');
+      const threadsToClear   = document.getElementById('nfThreadsToClear');
+      const threadsToInput   = document.getElementById('nfThreadsTo');
+      const threadsFromClear = document.getElementById('nfThreadsFromClear');
+
       async function loadThreads() {
         threadsGrid.innerHTML = skels(1);
         try {
-          const res = await fetch(`${API}/api/threads/latest?limit=200`);
+          const params = new URLSearchParams({ limit: 1000 });
+          if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
+          if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
+          const res = await fetch(`${API}/api/threads/latest?${params}`);
           if (!res.ok) throw new Error('Failed');
           threadsData = await res.json();
           threadsLoaded = true;
+          // Set default date range to the span covered by the loaded threads
+          // (only on the very first load, before the user has touched the inputs)
+          if (threadsData.length && !threadsFromInput?.value && !threadsToInput?.value) {
+            const dates = threadsData
+              .map(t => t.last_updated_at ? new Date(t.last_updated_at) : null)
+              .filter(Boolean);
+            if (dates.length) {
+              const minDate = new Date(Math.min(...dates));
+              const maxDate = new Date(Math.max(...dates));
+              if (threadsFromInput) threadsFromInput.value = minDate.toISOString().slice(0, 10);
+              if (threadsToInput)   threadsToInput.value   = maxDate.toISOString().slice(0, 10);
+              updateThreadsDateClearBtns();
+            }
+          }
           renderThreads();
         } catch (e) {
           threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
         }
       }
+
+      function updateThreadsDateClearBtns() {
+        if (threadsFromClear) threadsFromClear.style.display = threadsFromInput?.value ? 'block' : 'none';
+        if (threadsToClear)   threadsToClear.style.display   = threadsToInput?.value   ? 'block' : 'none';
+      }
+
+      // Wire date inputs — reload on change with a short debounce
+      let threadsDateDebounce = null;
+      function onThreadsDateChange() {
+        updateThreadsDateClearBtns();
+        clearTimeout(threadsDateDebounce);
+        threadsDateDebounce = setTimeout(() => { threadsLoaded = false; loadThreads(); }, 400);
+      }
+      threadsFromInput?.addEventListener('change', onThreadsDateChange);
+      threadsToInput?.addEventListener('change', onThreadsDateChange);
+
+      // Clear buttons
+      threadsFromClear?.addEventListener('click', () => {
+        if (threadsFromInput) threadsFromInput.value = '';
+        onThreadsDateChange();
+      });
+      threadsToClear?.addEventListener('click', () => {
+        if (threadsToInput) threadsToInput.value = '';
+        onThreadsDateChange();
+      });
 
       function updateThreadsMeta() {
         const totalArticles = threadsData.reduce((sum, t) => sum + (t.article_count || 0), 0);
@@ -18892,6 +19019,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   text-transform: uppercase;
 }
 
+/* Mobile: push the "Earth Briefing" title + segment dots down below the
+   top-of-screen nav buttons (which sit at safe-area-inset-top + ~10px and
+   are 40px tall). Without this, the dots row clipped above the safe area. */
+@media (max-width: 720px) {
+  .bDotsMeta {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 60px);
+  }
+}
+
 /* Mobile: data panels become a bottom sheet above the ticker, swipe-able */
 @media (max-width: 720px) {
   .bDataPanels {
@@ -19166,10 +19302,11 @@ body.ticker-active .gTickerLabel {
   flex-shrink: 0; white-space: nowrap;
 }
 
-/* ── Captions — single sentence at a time, just above the control bar ── */
+/* ── Captions — single sentence at a time, above the control bar ── */
+/* Bottom offset = control bar bottom offset (14px) + control bar height (~62px) + 16px gap = 92px */
 .bCaptions {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 78px);
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 92px);
   left: 50%; transform: translateX(-50%);
   max-width: min(720px, calc(100vw - 48px));
   background: rgba(0,0,0,0.74); backdrop-filter: blur(6px);
@@ -19933,6 +20070,9 @@ body.ticker-active .gTickerLabel {
     stopTicker();
     document.getElementById('bCaptions').classList.remove('visible');
     updatePlayBtn();
+    // Notify the global ticker (and anything else) that the briefing is gone
+    // so it can re-measure now that #globalTicker is laid out again.
+    try { window.dispatchEvent(new Event('earth:briefing-closed')); } catch (_) {}
   }
 
   // ── Location Briefing Options + Request ──────────────────────────────────
@@ -20516,7 +20656,23 @@ body.ticker-active .gTickerLabel {
     loadArticlePanel(seg.article_ids?.length ? seg.article_ids : []);
 
     // ── Data analytics panels for this segment ──────────────────────────────
-    renderDataPanelsForSegment(idx);
+    // Cards (article + video) appear first; if this segment also has data
+    // panels, swap them in at the segment midpoint so the user sees cards,
+    // then data — never both at once.
+    renderDataPanelsForSegment(idx).then((panelCount) => {
+      if (segIdx !== idx) return;
+      if (!panelCount) return;
+      const halfMs = Math.max(1500, Math.round(getSegmentDuration(idx) * 1000 * 0.5));
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        const ap = document.getElementById('bArticlePanel');
+        const vw = document.getElementById('bVideoWrap');
+        const dp = document.getElementById('bDataPanels');
+        if (ap) ap.classList.remove('visible');
+        if (vw) vw.classList.remove('visible');
+        if (dp) dp.classList.add('visible');
+      }, halfMs));
+    });
 
     updateDots();
     updatePlayBtn();
@@ -20539,21 +20695,23 @@ body.ticker-active .gTickerLabel {
 
   async function renderDataPanelsForSegment(segIdx) {
     const wrap = document.getElementById('bDataPanels');
-    if (!wrap) return;
+    if (!wrap) return 0;
     wrap.innerHTML = '';
     wrap.classList.remove('visible');
     await ensurePanelsLoaded();
     const panels = _panelsBySeg[String(segIdx)];
-    if (!panels || !panels.length) return;
+    if (!panels || !panels.length) return 0;
     for (const p of panels) {
       const card = document.createElement('div');
       card.className = 'bDataPanel';
       card.innerHTML = renderDataPanelHTML(p);
       wrap.appendChild(card);
     }
-    // Force layout flush, then fade in
+    // Force layout flush. Visibility is toggled by the segment scheduler in
+    // goToSegment so article/video cards display first, then swap out for the
+    // data panels at the segment midpoint.
     void wrap.offsetWidth;
-    wrap.classList.add('visible');
+    return panels.length;
   }
 
   function renderDataPanelHTML(p) {
@@ -21582,11 +21740,44 @@ body.ticker-active .gTickerLabel {
     el.innerHTML = half + '<span class="gTickerDiv">◆</span>' + half;
     void el.offsetWidth;
     el.classList.remove('reset');
+    _measureAndApplyDuration(el);
+  }
+
+  // Measures the rendered track and sets a safe animationDuration. The
+  // measurement is meaningless when the element is hidden (display:none → the
+  // briefing overlay does this), and previously caused the ticker to lock in
+  // a 24s loop and snap to a ridiculous speed when the briefing closed. We
+  // now skip the apply when the element isn't laid out, and retry on the
+  // next frame so reasonable durations always win.
+  function _measureAndApplyDuration(el, attempt = 0) {
     requestAnimationFrame(() => {
       const halfW = el.scrollWidth / 2;
-      el.style.animationDuration = `${Math.max(24, halfW / SPEED).toFixed(1)}s`;
+      const laidOut = el.offsetParent !== null && halfW > 0;
+      if (!laidOut) {
+        // Re-measure when the element becomes visible again. Cap retries so
+        // we don't spin forever, then fall back to a content-aware estimate.
+        if (attempt < 60) {
+          setTimeout(() => _measureAndApplyDuration(el, attempt + 1), 250);
+        } else {
+          // Last-resort estimate: ~12px per character of plain text per half.
+          const txtLen = (el.textContent || '').length / 2;
+          const estW   = Math.max(2000, txtLen * 12);
+          el.style.animationDuration = `${Math.max(60, estW / SPEED).toFixed(1)}s`;
+        }
+        return;
+      }
+      // Hard floor of 60s prevents pathologically fast scrolls even if a
+      // measurement comes back tiny for any reason.
+      el.style.animationDuration = `${Math.max(60, halfW / SPEED).toFixed(1)}s`;
     });
   }
+
+  // Re-measure when the briefing closes (the ticker is hidden during a
+  // briefing, so any _start that ran in that window mis-measured).
+  window.addEventListener('earth:briefing-closed', () => {
+    const el = document.getElementById('gTickerTrack');
+    if (el) _measureAndApplyDuration(el);
+  });
 
   // ── Click handler ─────────────────────────────────────────────────────────
   window._gTickerClick = function(el) {
