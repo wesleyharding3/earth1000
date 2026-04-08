@@ -2361,6 +2361,201 @@ body.ticker-active #flowControls {
 /* Thread card flow button — position differently since thread cards have different layout */
 .nfThreadCard .cardFlowArcBtn { top: 8px; right: 8px; }
 
+/* ── Heatmap button on thread cards (sits next to flow arc button) ── */
+.cardHeatmapBtn {
+  position: absolute;
+  top: 8px;
+  right: 46px; /* sits to the left of .cardFlowArcBtn (which is at right:8px, width 30 + margin 8) */
+  z-index: 12;
+  width: 30px; height: 30px;
+  background: rgba(0,0,0,0.60);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, transform 0.15s;
+  pointer-events: all;
+  padding: 0;
+}
+.cardHeatmapBtn:hover {
+  background: rgba(255,140,60,0.25);
+  border-color: rgba(255,160,60,0.55);
+  transform: scale(1.12);
+}
+.cardHeatmapBtn:active { transform: scale(0.95); }
+.cardHeatmapBtn svg { width: 16px; height: 16px; color: rgba(255,255,255,0.55); }
+.cardHeatmapBtn:hover svg { color: rgba(255,190,120,0.95); }
+
+/* ── Semantic Heatmap control panel ── */
+#semHeatPanel {
+  position: fixed;
+  top: 90px;
+  right: 16px;
+  z-index: 640;
+  width: 320px;
+  max-height: calc(100vh - 180px);
+  background: rgba(8,12,24,0.88);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,160,80,0.25);
+  border-radius: 14px;
+  padding: 14px 14px 12px 14px;
+  color: rgba(255,255,255,0.9);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.55);
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+}
+#semHeatPanel.visible { display: flex; animation: semHeatIn 0.18s ease-out; }
+@keyframes semHeatIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+.semHeatHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.semHeatTitle {
+  font-size: 13px; font-weight: 700;
+  color: rgba(255,200,140,0.95);
+  letter-spacing: 0.02em;
+}
+.semHeatClose {
+  background: none; border: none; color: rgba(255,255,255,0.4);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px;
+}
+.semHeatClose:hover { color: rgba(255,255,255,0.85); }
+
+.semHeatSection { display: flex; flex-direction: column; gap: 6px; }
+.semHeatLabel {
+  font-size: 10px; font-weight: 600;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+.semHeatPillRow { display: flex; gap: 6px; flex-wrap: wrap; }
+.semHeatPill {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.65);
+  font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+.semHeatPill:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.9); }
+.semHeatPill.active {
+  background: rgba(255,160,80,0.18);
+  border-color: rgba(255,160,80,0.55);
+  color: rgba(255,210,150,1);
+}
+
+.semHeatInput, .semHeatSelect {
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.9);
+  font-size: 12px;
+  padding: 7px 10px;
+  box-sizing: border-box;
+  outline: none;
+}
+.semHeatInput:focus, .semHeatSelect:focus { border-color: rgba(255,160,80,0.5); }
+.semHeatSelect option { background: #0b1220; color: #fff; }
+
+.semHeatCtlTabs { display: flex; gap: 4px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 3px; }
+.semHeatCtlTab {
+  flex: 1;
+  text-align: center;
+  padding: 6px 4px;
+  border-radius: 6px;
+  font-size: 10px; font-weight: 700;
+  color: rgba(255,255,255,0.5);
+  cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  transition: all 0.15s;
+}
+.semHeatCtlTab.active {
+  background: rgba(255,160,80,0.20);
+  color: rgba(255,210,150,1);
+}
+.semHeatCtlPanel { display: none; }
+.semHeatCtlPanel.active { display: flex; flex-direction: column; gap: 6px; }
+
+.semHeatTsRow { display: flex; align-items: center; gap: 8px; }
+.semHeatTsBtn {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.9);
+  border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-width: 36px;
+}
+.semHeatTsBtn:hover { background: rgba(255,160,80,0.18); border-color: rgba(255,160,80,0.45); }
+.semHeatSlider { flex: 1; accent-color: rgba(255,160,80,0.9); }
+.semHeatTsLabel {
+  font-size: 10px; color: rgba(255,255,255,0.55);
+  min-width: 76px; text-align: right; font-variant-numeric: tabular-nums;
+}
+
+.semHeatStats {
+  font-size: 10px;
+  color: rgba(255,255,255,0.5);
+  padding-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  line-height: 1.5;
+}
+.semHeatStats b { color: rgba(255,210,150,0.95); font-weight: 700; }
+
+.semHeatLegend {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; color: rgba(255,255,255,0.55);
+}
+.semHeatLegendBar {
+  flex: 1; height: 8px; border-radius: 4px;
+  background: linear-gradient(to right, #e74c3c, #f1c40f, #2ecc71);
+}
+.semHeatLegendBar.coverage {
+  background: linear-gradient(to right, rgba(60,140,255,0.2), rgba(60,180,255,0.55), rgba(120,230,255,1));
+}
+
+.semHeatLoading {
+  text-align: center;
+  padding: 8px;
+  font-size: 11px;
+  color: rgba(255,200,140,0.7);
+}
+
+/* Open button that triggers the panel (floating, top-right of globe) */
+#semHeatToggleBtn {
+  position: fixed;
+  top: 90px;
+  right: 16px;
+  z-index: 639;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: rgba(8,12,24,0.82);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,160,80,0.35);
+  color: rgba(255,200,140,0.9);
+  display: none; /* hidden by default; shown on globe page */
+  align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+  transition: transform 0.15s, background 0.15s;
+}
+#semHeatToggleBtn:hover { transform: scale(1.08); background: rgba(255,160,80,0.18); }
+#semHeatToggleBtn svg { width: 20px; height: 20px; }
+
 /* ── Flow arc click info card ── */
 #flowArcInfoCard {
   position: fixed;
@@ -4236,49 +4431,6 @@ body.ticker-active #flowControls {
       flex-direction: column;
       height: 440px;
     }
-
-    /* ── Skeleton card placeholders (used while feed/threads are fetching) ── */
-    @keyframes nfSkelShimmer {
-      0%   { background-position: -400px 0; }
-      100% { background-position:  400px 0; }
-    }
-    .nfSkelCard {
-      background: rgba(255,255,255,0.035);
-      border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 16px;
-      overflow: hidden;
-      display: flex; flex-direction: column;
-      height: 440px;
-    }
-    .nfSkelImg {
-      width: 100%; height: 200px;
-      background:
-        linear-gradient(90deg,
-          rgba(255,255,255,0.04) 0%,
-          rgba(255,255,255,0.09) 50%,
-          rgba(255,255,255,0.04) 100%);
-      background-size: 800px 100%;
-      animation: nfSkelShimmer 1.6s linear infinite;
-    }
-    .nfSkelBody {
-      padding: 14px 13px 14px;
-      display: flex; flex-direction: column; gap: 10px; flex: 1;
-    }
-    .nfSkelLine {
-      height: 10px;
-      border-radius: 5px;
-      background:
-        linear-gradient(90deg,
-          rgba(255,255,255,0.05) 0%,
-          rgba(255,255,255,0.11) 50%,
-          rgba(255,255,255,0.05) 100%);
-      background-size: 800px 100%;
-      animation: nfSkelShimmer 1.6s linear infinite;
-    }
-    .nfSkelLineCat    { width: 30%; height: 8px; }
-    .nfSkelLineTitle  { width: 92%; height: 14px; margin-top: 4px; }
-    .nfSkelLineTitle2 { width: 75%; height: 14px; }
-    .nfSkelLineMeta   { width: 45%; height: 9px; margin-top: auto; }
     .nfThreadCard:hover { background: rgba(255,255,255,0.075); border-color: rgba(255,255,255,0.20); transform: translateY(-2px); }
     .nfThreadCard:active { transform: translateY(0); }
     .nfThreadCardImg {
@@ -7203,6 +7355,94 @@ window.sourceBiasBadgeHTML = function(bias) {
   <div id="flowArcBackBtn" onclick="window.__flowArcGoBack?.()">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
     <span id="flowArcBackLabel">Back</span>
+  </div>
+
+  <!-- Semantic Heatmap toggle button (globe page, top-right) -->
+  <div id="semHeatToggleBtn" title="Open Semantic Heatmap" onclick="window.__semHeatOpen?.()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/>
+      <path d="M3 12h18"/>
+      <path d="M12 3c3 3.5 3 14.5 0 18"/>
+      <path d="M12 3c-3 3.5-3 14.5 0 18"/>
+      <circle cx="8" cy="9" r="1.2" fill="currentColor"/>
+      <circle cx="16" cy="14" r="1.2" fill="currentColor"/>
+      <circle cx="10" cy="16" r="1.0" fill="currentColor"/>
+    </svg>
+  </div>
+
+  <!-- Semantic Heatmap control panel -->
+  <div id="semHeatPanel">
+    <div class="semHeatHeader">
+      <div class="semHeatTitle">Semantic Heatmap</div>
+      <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
+    </div>
+
+    <!-- Display mode: coverage / sentiment -->
+    <div class="semHeatSection">
+      <div class="semHeatLabel">Display mode</div>
+      <div class="semHeatPillRow" id="semHeatModeRow">
+        <div class="semHeatPill active" data-mode="coverage">Coverage</div>
+        <div class="semHeatPill" data-mode="sentiment">Sentiment</div>
+        <div class="semHeatPill" data-mode="volume">Volume</div>
+      </div>
+      <div class="semHeatLegend">
+        <span id="semHeatLegendLeft">low</span>
+        <div class="semHeatLegendBar coverage" id="semHeatLegendBar"></div>
+        <span id="semHeatLegendRight">high</span>
+      </div>
+    </div>
+
+    <!-- Input controls: keyword / thread / time-series -->
+    <div class="semHeatSection">
+      <div class="semHeatLabel">Query</div>
+      <div class="semHeatCtlTabs" id="semHeatCtlTabs">
+        <div class="semHeatCtlTab active" data-ctl="keyword">Keyword</div>
+        <div class="semHeatCtlTab" data-ctl="thread">Thread</div>
+        <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
+      </div>
+
+      <div class="semHeatCtlPanel active" data-panel="keyword">
+        <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+        <div style="display:flex;gap:6px;">
+          <select class="semHeatSelect" id="semHeatKwDays" style="flex:1;">
+            <option value="1">Last 24h</option>
+            <option value="3">Last 3 days</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="semHeatCtlPanel" data-panel="thread">
+        <select class="semHeatSelect" id="semHeatThreadSel">
+          <option value="">— Loading breaking stories… —</option>
+        </select>
+        <div style="font-size:10px;color:rgba(255,255,255,0.4);">Top breaking global story threads</div>
+      </div>
+
+      <div class="semHeatCtlPanel" data-panel="timeseries">
+        <div style="display:flex;gap:6px;">
+          <select class="semHeatSelect" id="semHeatTsRange" style="flex:1;">
+            <option value="1">24 hours</option>
+            <option value="3">3 days</option>
+            <option value="7" selected>7 days</option>
+            <option value="14">14 days</option>
+          </select>
+          <select class="semHeatSelect" id="semHeatTsBucket" style="flex:1;">
+            <option value="hour">hourly</option>
+            <option value="day" selected>daily</option>
+          </select>
+        </div>
+        <div class="semHeatTsRow">
+          <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause">▶</button>
+          <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset">↺</button>
+          <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1" />
+        </div>
+        <div class="semHeatTsLabel" id="semHeatTsLabel" style="text-align:left;">—</div>
+      </div>
+    </div>
+
+    <div class="semHeatStats" id="semHeatStats">—</div>
   </div>
 
   <!-- Thread flow timeline -->
@@ -15746,7 +15986,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           : '';
         const dataAttr = JSON.stringify(t).replace(/'/g, "&#39;");
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="showThreadFlows(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
-        return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
+        const threadTitleAttr = (t.title || 'Untitled thread').replace(/"/g, '&quot;').replace(/'/g, "&#39;");
+        const threadHeatBtn = `<button class="cardHeatmapBtn" onclick="window.__semHeatOpenForThread(${t.thread_id},'${threadTitleAttr}',event)" title="Open sentiment heatmap on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3.5 3 14.5 0 18"/><path d="M12 3c-3 3.5-3 14.5 0 18"/><circle cx="8" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="16" cy="14" r="1.3" fill="currentColor" stroke="none"/><circle cx="10" cy="16" r="1.0" fill="currentColor" stroke="none"/></svg></button>`;
+        return `<div style="position:relative">${threadHeatBtn}${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
@@ -15791,17 +16033,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       async function loadThreads() {
         if (threadsInFlight) return threadsInFlight;
 
-        // Visible skeleton grid — 8 card placeholders so the loading state
-        // is obvious while the fetch resolves. (Used to render only 1.)
-        threadsGrid.innerHTML = skels(8);
+        threadsGrid.innerHTML = skels(1);
 
         threadsInFlight = (async () => {
           try {
             // Fetch a sane initial slice. The lazy renderer paints these in
             // chunks of 15; if the user scrolls past the slice, we can grow
-            // it on demand later. Big initial fetches were the cause of the
-            // slow first-paint at app open.
-            const params = new URLSearchParams({ limit: 250 });
+            // it on demand later. Dropped from 250 → 80: the user only sees
+            // ~5 cards before scrolling and the smaller payload (~80 KB vs
+            // 250 KB) cuts cold-open latency roughly 3x on mobile.
+            const params = new URLSearchParams({ limit: 80 });
             if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
             if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
             const res = await fetch(`${API}/api/threads/latest?${params}`);
@@ -22466,6 +22707,480 @@ body.ticker-active .gTickerLabel {
   // Expose globals for news feed thread cards and page navigation
   window.__clusterOpenNodePanel = openNodePanel;
   window.__clusterCloseNodePanel = closeNodePanel;
+})();
+</script>
+
+<!-- ═════════════════════ Semantic Heatmap ═════════════════════ -->
+<script>
+(function semanticHeatmap() {
+  'use strict';
+
+  const panel     = document.getElementById('semHeatPanel');
+  const toggleBtn = document.getElementById('semHeatToggleBtn');
+  const modeRow   = document.getElementById('semHeatModeRow');
+  const ctlTabs   = document.getElementById('semHeatCtlTabs');
+  const kwInput   = document.getElementById('semHeatKw');
+  const kwDays    = document.getElementById('semHeatKwDays');
+  const threadSel = document.getElementById('semHeatThreadSel');
+  const tsRange   = document.getElementById('semHeatTsRange');
+  const tsBucket  = document.getElementById('semHeatTsBucket');
+  const tsSlider  = document.getElementById('semHeatTsSlider');
+  const tsLabel   = document.getElementById('semHeatTsLabel');
+  const playBtn   = document.getElementById('semHeatPlayBtn');
+  const tsReset   = document.getElementById('semHeatTsReset');
+  const statsEl   = document.getElementById('semHeatStats');
+  const legendBar = document.getElementById('semHeatLegendBar');
+  const legendL   = document.getElementById('semHeatLegendLeft');
+  const legendR   = document.getElementById('semHeatLegendRight');
+
+  // Show floating toggle button only while globe page is active
+  function updateToggleBtnVisibility() {
+    if (!toggleBtn) return;
+    const isGlobe = (window.__currentPage === 1);
+    toggleBtn.style.display = isGlobe ? 'flex' : 'none';
+  }
+  updateToggleBtnVisibility();
+  // Watch page changes
+  const _origGoTo = window.__goToPage;
+  if (typeof _origGoTo === 'function') {
+    window.__goToPage = function (n) { _origGoTo(n); updateToggleBtnVisibility(); };
+  }
+  // Also poll as a safety net (cheap)
+  setInterval(updateToggleBtnVisibility, 700);
+
+  // ── State ────────────────────────────────────────────────────────────────
+  const state = {
+    mode: 'coverage',       // coverage | sentiment | volume
+    ctl:  'keyword',        // keyword | thread | timeseries
+    points: [],             // current snapshot points
+    series: null,           // { buckets: [{t, points}] } or null
+    seriesIdx: 0,
+    playing: false,
+    playTimer: null,
+    loading: false,
+    threadsLoaded: false
+  };
+
+  // ── Globe overlay: build a group of country markers on the globe sphere ──
+  let group = null;
+  let markerMeshes = [];
+
+  function ensureGroup() {
+    const THREE = window.THREE;
+    const scene = window.scene;
+    if (!THREE || !scene) return null;
+    if (!group) {
+      group = new THREE.Group();
+      group.name = 'semHeatGroup';
+      group.renderOrder = 4;
+      scene.add(group);
+    }
+    return group;
+  }
+
+  function clearMarkers() {
+    if (!group) return;
+    for (const m of markerMeshes) {
+      group.remove(m);
+      if (m.geometry) m.geometry.dispose();
+      if (m.material) m.material.dispose();
+    }
+    markerMeshes = [];
+  }
+
+  function latLonToV3(lat, lon, r) {
+    const THREE = window.THREE;
+    const phi   = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+    return new THREE.Vector3(
+      -r * Math.sin(phi) * Math.cos(theta),
+       r * Math.cos(phi),
+       r * Math.sin(phi) * Math.sin(theta)
+    );
+  }
+
+  // Color for a given mode + point
+  function colorFor(p, maxN) {
+    const THREE = window.THREE;
+    if (state.mode === 'sentiment') {
+      if (p.avg_sent == null || p.sent_n === 0) return new THREE.Color(0.35, 0.35, 0.40);
+      const t = (p.avg_sent + 1) / 2;
+      return new THREE.Color(
+        t < 0.5 ? 1 : 2 * (1 - t),
+        t > 0.5 ? 1 : 2 * t,
+        0.25
+      );
+    }
+    // coverage / volume: blue → cyan → white ramp by log(n)/log(max)
+    const ln = Math.log10(1 + p.n);
+    const lm = Math.log10(1 + Math.max(maxN, 1));
+    const t  = lm > 0 ? Math.min(1, ln / lm) : 0;
+    return new THREE.Color(0.25 + 0.60 * t, 0.55 + 0.45 * t, 0.95);
+  }
+
+  function radiusFor(p, maxN) {
+    const ln = Math.log10(1 + p.n);
+    const lm = Math.log10(1 + Math.max(maxN, 1));
+    const t  = lm > 0 ? ln / lm : 0;
+    // Volume mode exaggerates size; sentiment/coverage stay moderate
+    const base = (state.mode === 'volume') ? 0.022 : 0.014;
+    const max  = (state.mode === 'volume') ? 0.085 : 0.055;
+    return base + (max - base) * t;
+  }
+
+  function renderPoints(points) {
+    const THREE = window.THREE;
+    const g = ensureGroup();
+    if (!g || !THREE) return;
+    clearMarkers();
+    if (!points || !points.length) return;
+
+    const maxN = points.reduce((a, p) => Math.max(a, p.n), 0);
+    const GLOBE_RADIUS = 1.0; // matches existing scene
+    const LIFT = 1.006;
+
+    // Use one merged instanced mesh for perf
+    const geom = new THREE.CircleGeometry(1, 24);
+    // Billboard so circles face the camera — use sprite materials instead
+    for (const p of points) {
+      if (!isFinite(p.lat) || !isFinite(p.lon)) continue;
+      const pos = latLonToV3(p.lat, p.lon, GLOBE_RADIUS * LIFT);
+      const col = colorFor(p, maxN);
+      const rad = radiusFor(p, maxN);
+
+      // Outer soft disk
+      const mat = new THREE.SpriteMaterial({
+        map: getGlowTexture(),
+        color: col,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(pos);
+      sprite.scale.set(rad * 3.5, rad * 3.5, 1);
+      sprite.userData = { point: p };
+      g.add(sprite);
+      markerMeshes.push(sprite);
+
+      // Inner solid dot for strong reading
+      const mat2 = new THREE.SpriteMaterial({
+        map: getDotTexture(),
+        color: col,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false
+      });
+      const dot = new THREE.Sprite(mat2);
+      dot.position.copy(pos);
+      dot.scale.set(rad * 1.2, rad * 1.2, 1);
+      g.add(dot);
+      markerMeshes.push(dot);
+    }
+  }
+
+  // Cached procedural textures
+  let _glowTex = null, _dotTex = null;
+  function getGlowTexture() {
+    const THREE = window.THREE;
+    if (_glowTex) return _glowTex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.25, 'rgba(255,255,255,0.7)');
+    grad.addColorStop(0.6, 'rgba(255,255,255,0.18)');
+    grad.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    _glowTex = new THREE.CanvasTexture(c);
+    _glowTex.needsUpdate = true;
+    return _glowTex;
+  }
+  function getDotTexture() {
+    const THREE = window.THREE;
+    if (_dotTex) return _dotTex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const ctx = c.getContext('2d');
+    const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0.0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.95)');
+    grad.addColorStop(0.7, 'rgba(255,255,255,0.5)');
+    grad.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 64, 64);
+    _dotTex = new THREE.CanvasTexture(c);
+    _dotTex.needsUpdate = true;
+    return _dotTex;
+  }
+
+  // ── Legend update ──────────────────────────────────────────────────────
+  function updateLegend() {
+    if (state.mode === 'sentiment') {
+      legendBar.classList.remove('coverage');
+      legendL.textContent = 'negative';
+      legendR.textContent = 'positive';
+    } else {
+      legendBar.classList.add('coverage');
+      legendL.textContent = 'low';
+      legendR.textContent = 'high';
+    }
+  }
+
+  // ── Stats footer ───────────────────────────────────────────────────────
+  function updateStats(payload) {
+    if (!payload) { statsEl.textContent = '—'; return; }
+    const s = payload.stats || {};
+    const pts = payload.points || [];
+    const scored = s.scored || 0;
+    const tot    = s.articles || 0;
+    const pct    = tot ? ((scored / tot) * 100).toFixed(1) : '0.0';
+    statsEl.innerHTML =
+      `<b>${tot.toLocaleString()}</b> articles · <b>${pts.length}</b> countries · ` +
+      `sentiment coverage <b>${pct}%</b> (${scored.toLocaleString()} scored)`;
+  }
+
+  function updateStatsFromPoints(points) {
+    const tot = points.reduce((s, p) => s + p.n, 0);
+    const scored = points.reduce((s, p) => s + (p.sent_n || 0), 0);
+    const pct = tot ? ((scored / tot) * 100).toFixed(1) : '0.0';
+    statsEl.innerHTML =
+      `<b>${tot.toLocaleString()}</b> articles · <b>${points.length}</b> countries · ` +
+      `sentiment coverage <b>${pct}%</b>`;
+  }
+
+  // ── Fetch snapshot ─────────────────────────────────────────────────────
+  async function fetchSnapshot(params) {
+    state.loading = true;
+    statsEl.textContent = 'Loading…';
+    const q = new URLSearchParams(params);
+    try {
+      const r = await fetch('/api/heatmap?' + q.toString());
+      if (!r.ok) throw new Error('http ' + r.status);
+      const j = await r.json();
+      return j;
+    } catch (e) {
+      statsEl.textContent = 'Error: ' + e.message;
+      return null;
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  // ── Load & render for current state ────────────────────────────────────
+  async function reload() {
+    state.series = null;
+    stopPlayback();
+
+    const params = { mode: state.mode };
+    if (state.ctl === 'keyword') {
+      params.days = kwDays.value || '7';
+      const kw = (kwInput.value || '').trim();
+      if (kw) params.keyword = kw;
+    } else if (state.ctl === 'thread') {
+      const tid = parseInt(threadSel.value, 10);
+      if (!tid) {
+        clearMarkers();
+        statsEl.textContent = 'Pick a thread to see its geographic footprint.';
+        return;
+      }
+      params.thread_id = tid;
+      params.days = 30;
+    } else if (state.ctl === 'timeseries') {
+      params.days = tsRange.value || '7';
+      params.bucket = tsBucket.value || 'day';
+      const kw = (kwInput.value || '').trim();
+      if (kw) params.keyword = kw;
+    }
+
+    const data = await fetchSnapshot(params);
+    if (!data) return;
+
+    if (data.bucket && data.bucket !== 'none' && Array.isArray(data.buckets)) {
+      state.series = data;
+      state.seriesIdx = Math.max(0, data.buckets.length - 1);
+      tsSlider.min = 0;
+      tsSlider.max = Math.max(0, data.buckets.length - 1);
+      tsSlider.value = state.seriesIdx;
+      renderSeriesFrame();
+    } else {
+      state.points = data.points || [];
+      renderPoints(state.points);
+      updateStats(data);
+    }
+    updateLegend();
+  }
+
+  function renderSeriesFrame() {
+    if (!state.series) return;
+    const b = state.series.buckets[state.seriesIdx];
+    if (!b) return;
+    const points = b.points || [];
+    state.points = points;
+    renderPoints(points);
+    updateStatsFromPoints(points);
+    const d = new Date(b.t);
+    const fmt = state.series.bucket === 'hour'
+      ? d.toISOString().slice(0, 13).replace('T', ' ') + ':00 UTC'
+      : d.toISOString().slice(0, 10);
+    tsLabel.textContent = `${fmt}  (${state.seriesIdx + 1}/${state.series.buckets.length})`;
+  }
+
+  // ── Time-series playback ───────────────────────────────────────────────
+  function startPlayback() {
+    if (!state.series) return;
+    state.playing = true;
+    playBtn.textContent = '❚❚';
+    const tick = () => {
+      if (!state.playing || !state.series) return;
+      state.seriesIdx = (state.seriesIdx + 1) % state.series.buckets.length;
+      tsSlider.value = state.seriesIdx;
+      renderSeriesFrame();
+      state.playTimer = setTimeout(tick, 650);
+    };
+    state.playTimer = setTimeout(tick, 650);
+  }
+  function stopPlayback() {
+    state.playing = false;
+    playBtn.textContent = '▶';
+    if (state.playTimer) { clearTimeout(state.playTimer); state.playTimer = null; }
+  }
+
+  playBtn.addEventListener('click', () => {
+    if (state.playing) stopPlayback(); else startPlayback();
+  });
+  tsReset.addEventListener('click', () => {
+    stopPlayback();
+    state.seriesIdx = 0;
+    tsSlider.value = 0;
+    renderSeriesFrame();
+  });
+  tsSlider.addEventListener('input', () => {
+    stopPlayback();
+    state.seriesIdx = parseInt(tsSlider.value, 10) || 0;
+    renderSeriesFrame();
+  });
+  tsRange.addEventListener('change', reload);
+  tsBucket.addEventListener('change', reload);
+
+  // ── Mode pill handling ─────────────────────────────────────────────────
+  modeRow.addEventListener('click', (e) => {
+    const pill = e.target.closest('.semHeatPill');
+    if (!pill) return;
+    [...modeRow.querySelectorAll('.semHeatPill')].forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    state.mode = pill.dataset.mode;
+    updateLegend();
+    // Re-color without refetching
+    if (state.series) { renderSeriesFrame(); }
+    else { renderPoints(state.points); }
+  });
+
+  // ── Control tab handling ───────────────────────────────────────────────
+  ctlTabs.addEventListener('click', (e) => {
+    const tab = e.target.closest('.semHeatCtlTab');
+    if (!tab) return;
+    const which = tab.dataset.ctl;
+    [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p => {
+      p.classList.toggle('active', p.dataset.panel === which);
+    });
+    state.ctl = which;
+    if (which === 'thread' && !state.threadsLoaded) loadThreadList();
+    reload();
+  });
+
+  // ── Keyword input ──────────────────────────────────────────────────────
+  let _kwTimer = null;
+  kwInput.addEventListener('input', () => {
+    if (state.ctl !== 'keyword' && state.ctl !== 'timeseries') return;
+    clearTimeout(_kwTimer);
+    _kwTimer = setTimeout(reload, 450);
+  });
+  kwDays.addEventListener('change', reload);
+
+  // ── Load thread list for dropdown ──────────────────────────────────────
+  async function loadThreadList() {
+    try {
+      const r = await fetch('/api/threads/latest?limit=60');
+      const j = await r.json();
+      const arr = Array.isArray(j) ? j : (j.threads || []);
+      state.threadsLoaded = true;
+      threadSel.innerHTML = '<option value="">— Select a breaking story —</option>' +
+        arr.slice(0, 60).map(t => {
+          const id = t.thread_id || t.id;
+          const title = (t.title || 'Untitled').replace(/</g, '&lt;');
+          const count = t.article_count || 0;
+          return `<option value="${id}">${title} · ${count} articles</option>`;
+        }).join('');
+    } catch (e) {
+      threadSel.innerHTML = '<option value="">— Failed to load threads —</option>';
+    }
+  }
+  threadSel.addEventListener('change', reload);
+
+  // ── Open / close API ───────────────────────────────────────────────────
+  window.__semHeatOpen = function (opts) {
+    panel.classList.add('visible');
+    toggleBtn.style.display = 'none';
+    updateLegend();
+    if (opts && opts.threadId) {
+      // Switch to thread tab and select it
+      state.ctl = 'thread';
+      [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t =>
+        t.classList.toggle('active', t.dataset.ctl === 'thread'));
+      [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p =>
+        p.classList.toggle('active', p.dataset.panel === 'thread'));
+      if (!state.threadsLoaded) {
+        loadThreadList().then(() => {
+          threadSel.value = String(opts.threadId);
+          // ensure option exists (create if not)
+          if (threadSel.value !== String(opts.threadId)) {
+            const opt = document.createElement('option');
+            opt.value = String(opts.threadId);
+            opt.textContent = opts.threadTitle || ('Thread #' + opts.threadId);
+            opt.selected = true;
+            threadSel.appendChild(opt);
+          }
+          reload();
+        });
+      } else {
+        threadSel.value = String(opts.threadId);
+        if (threadSel.value !== String(opts.threadId)) {
+          const opt = document.createElement('option');
+          opt.value = String(opts.threadId);
+          opt.textContent = opts.threadTitle || ('Thread #' + opts.threadId);
+          opt.selected = true;
+          threadSel.appendChild(opt);
+        }
+        reload();
+      }
+      // Also jump to the globe page if we're not on it
+      if (window.__currentPage !== 1 && typeof window.__goToPage === 'function') {
+        window.__goToPage(1);
+      }
+    } else {
+      reload();
+    }
+  };
+
+  window.__semHeatClose = function () {
+    panel.classList.remove('visible');
+    stopPlayback();
+    clearMarkers();
+    updateToggleBtnVisibility();
+  };
+
+  // Click from thread card — flips to thread mode with the given id
+  window.__semHeatOpenForThread = function (threadId, threadTitle, evt) {
+    if (evt && evt.stopPropagation) evt.stopPropagation();
+    window.__semHeatOpen({ threadId: threadId, threadTitle: threadTitle });
+  };
+
 })();
 </script>
 

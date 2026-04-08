@@ -5,6 +5,36 @@ const { routeArticle } = require("./locationRouter");
 const { resolveImageForArticle } = require("./imageResolver");
 const { deepAnalyzeArticle } = require("./deepAnalyzer");
 const { processArticleById: extractEntitiesForArticle } = require("./entityResolver");
+const { scoreArticle: lexiconScoreArticle } = require("./sentimentLexicon");
+
+// ── Lexicon-based sentiment (zero-cost, 100% coverage) ─────────────────────
+// Runs on every new article to guarantee sentiment_score is never NULL.
+// deepAnalyzer.js (Claude Haiku) still runs in parallel for high-priority
+// articles and will overwrite this score with a higher-quality reading.
+async function applyLexiconSentiment(articleId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, title, summary, translated_title, translated_summary, sentiment_score
+         FROM news_articles WHERE id = $1`,
+      [articleId]
+    );
+    const row = rows[0];
+    if (!row) return;
+    // Never overwrite an existing (likely Haiku) score.
+    if (row.sentiment_score != null) return;
+    const { score, matched } = lexiconScoreArticle(row);
+    if (!matched) return;
+    await pool.query(
+      `UPDATE news_articles
+          SET sentiment_score = $1
+        WHERE id = $2
+          AND sentiment_score IS NULL`,
+      [score, articleId]
+    );
+  } catch (err) {
+    console.warn(`⚠️  Lexicon sentiment failed [${articleId}]: ${err.message}`);
+  }
+}
 
 // Track scoring results across the current fetch run
 const scoringStats = {
@@ -118,6 +148,12 @@ async function startArticleListener() {
       try {
         const result = await classifyArticle(articleId);
         await routeArticle(articleId);
+
+        // Lexicon sentiment — zero-cost baseline on every article so the
+        // sentiment heatmap has 100% coverage. deepAnalyzer (below) will
+        // overwrite this with a Haiku-quality score for priority articles.
+        applyLexiconSentiment(articleId)
+          .catch(err => console.warn(`⚠️  Lexicon sentiment failed [${articleId}]: ${err.message}`));
 
         // Deep NLP analysis — fire-and-forget, only for high-priority articles.
         // Writes sentiment_score + article_entities. Never blocks pipeline.

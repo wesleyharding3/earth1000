@@ -1699,6 +1699,151 @@ app.get("/api/ocean/temperature", async (req, res) => {
 });
 
 /* =========================================
+   Semantic Heatmap
+   Aggregates articles by country for the globe heatmap view.
+   Supports coverage (article counts), sentiment (avg score), and
+   optional time-bucketed series for playback.
+   Params:
+     mode        coverage|sentiment|volume  (affects server-side sort only)
+     days        int (default 7, max 90)
+     from,to     ISO dates (override days if provided)
+     keyword     ILIKE filter on title/summary/translated_title
+     thread_id   scope to a single story thread
+     bucket      none|day|hour (default none)
+     level       country (city reserved for future)
+========================================= */
+app.get("/api/heatmap", async (req, res) => {
+  try {
+    const mode     = (req.query.mode || "coverage").toLowerCase();
+    const bucket   = (req.query.bucket || "none").toLowerCase();
+    const keyword  = (req.query.keyword || "").trim();
+    const threadId = parseInt(req.query.thread_id, 10) || null;
+    const daysRaw  = parseInt(req.query.days, 10);
+    const days     = Math.min(Math.max(isNaN(daysRaw) ? 7 : daysRaw, 1), 90);
+    const fromIso  = req.query.from || null;
+    const toIso    = req.query.to   || null;
+
+    const bucketExpr =
+      bucket === "hour" ? `date_trunc('hour', a.published_at)` :
+      bucket === "day"  ? `date_trunc('day',  a.published_at)` :
+      null;
+
+    // cache key
+    const _cacheKey = `heatmap:${mode}:${bucket}:${keyword}:${threadId||''}:${days}:${fromIso||''}:${toIso||''}`;
+    const _cached = await ttlCached(_cacheKey, 60_000, async () => {
+      const params = [];
+      const where  = [];
+
+      if (fromIso && toIso) {
+        params.push(fromIso); where.push(`a.published_at >= $${params.length}::timestamptz`);
+        params.push(toIso);   where.push(`a.published_at <  $${params.length}::timestamptz`);
+      } else {
+        where.push(`a.published_at > NOW() - ($${params.length + 1}::int || ' days')::interval`);
+        params.push(days);
+      }
+
+      if (threadId) {
+        params.push(threadId);
+        where.push(`EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id AND sta.thread_id = $${params.length})`);
+      }
+
+      if (keyword) {
+        params.push(`%${keyword}%`);
+        const p = `$${params.length}`;
+        where.push(`(a.title ILIKE ${p} OR a.translated_title ILIKE ${p} OR a.summary ILIKE ${p})`);
+      }
+
+      const whereSql = `WHERE ${where.join(' AND ')}`;
+
+      // Country-level aggregation via article_locations
+      const selectBucket = bucketExpr ? `${bucketExpr} AS t,` : ``;
+      const groupBucket  = bucketExpr ? `${bucketExpr},` : ``;
+
+      const sql = `
+        SELECT
+          ${selectBucket}
+          c.id   AS country_id,
+          c.name AS name,
+          c.iso_code AS iso,
+          c.latitude  AS lat,
+          c.longitude AS lon,
+          COUNT(*)::int AS n,
+          COUNT(a.sentiment_score)::int AS sent_n,
+          AVG(a.sentiment_score)::float AS avg_sent
+        FROM news_articles a
+        JOIN article_locations al ON al.article_id = a.id
+        JOIN countries c ON c.id = al.country_id
+        ${whereSql}
+          AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+        GROUP BY ${groupBucket} c.id, c.name, c.iso_code, c.latitude, c.longitude
+        ORDER BY ${bucketExpr ? 't,' : ''} n DESC
+        LIMIT ${bucketExpr ? 20000 : 500}
+      `;
+
+      const client = await pool.connect();
+      try {
+        await client.query(`SET LOCAL statement_timeout = 60000`);
+        const { rows } = await client.query(sql, params);
+        return rows;
+      } finally {
+        client.release();
+      }
+    });
+
+    const rows = _cached;
+
+    if (!bucketExpr) {
+      const points = rows.map(r => ({
+        country_id: r.country_id,
+        name: r.name,
+        iso: r.iso ? String(r.iso).trim() : null,
+        lat: parseFloat(r.lat),
+        lon: parseFloat(r.lon),
+        n:  r.n,
+        sent_n: r.sent_n,
+        avg_sent: r.avg_sent == null ? null : parseFloat(r.avg_sent)
+      }));
+      const totalArticles = points.reduce((s, p) => s + p.n, 0);
+      const totalScored   = points.reduce((s, p) => s + p.sent_n, 0);
+      return res.json({
+        mode, bucket: 'none',
+        points,
+        stats: {
+          countries: points.length,
+          articles: totalArticles,
+          scored: totalScored,
+          sentiment_coverage: totalArticles ? (totalScored / totalArticles) : 0
+        }
+      });
+    }
+
+    // Bucketed response: group rows by timestamp
+    const byT = new Map();
+    for (const r of rows) {
+      const key = r.t instanceof Date ? r.t.toISOString() : r.t;
+      if (!byT.has(key)) byT.set(key, []);
+      byT.get(key).push({
+        country_id: r.country_id,
+        name: r.name,
+        iso: r.iso ? String(r.iso).trim() : null,
+        lat: parseFloat(r.lat),
+        lon: parseFloat(r.lon),
+        n:  r.n,
+        sent_n: r.sent_n,
+        avg_sent: r.avg_sent == null ? null : parseFloat(r.avg_sent)
+      });
+    }
+    const buckets = [...byT.entries()]
+      .sort((a, b) => a[0] < b[0] ? -1 : 1)
+      .map(([t, points]) => ({ t, points }));
+    res.json({ mode, bucket, buckets });
+  } catch (err) {
+    console.error("[heatmap]", err.message);
+    res.status(500).json({ error: "Failed to fetch heatmap", detail: err.message });
+  }
+});
+
+/* =========================================
    Trade Stats
 ========================================= */
 app.get("/api/exports", async (req, res) => {
