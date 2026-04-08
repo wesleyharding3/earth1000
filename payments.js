@@ -13,6 +13,11 @@
  *   PAYPAL_PLAN_ID_ENTERPRISE  (from PayPal dashboard — $25/month)
  *   PAYPAL_ENV                 ('sandbox' or 'live', defaults to 'sandbox')
  *
+ *   APPLE_BUNDLE_ID            (e.g. com.earth00.app — must match capacitor.config.json)
+ *   APPLE_PRODUCT_ID_PRO       (App Store Connect subscription product id, e.g. earth00.pro.monthly)
+ *   APPLE_PRODUCT_ID_ENTERPRISE(App Store Connect subscription product id, e.g. earth00.enterprise.monthly)
+ *   APPLE_ENV                  ('sandbox' or 'production', defaults to 'sandbox')
+ *
  *   SUPABASE_URL               (your Supabase project URL)
  *   SUPABASE_SERVICE_ROLE_KEY  (from Supabase → Settings → API → service_role key)
  *                               ⚠️  Never expose this in the frontend — server-only
@@ -29,6 +34,20 @@ const PAYPAL_PLAN = {
   pro:        process.env.PAYPAL_PLAN_ID_PRO,
   enterprise: process.env.PAYPAL_PLAN_ID_ENTERPRISE,
 };
+
+const APPLE_BUNDLE_ID = process.env.APPLE_BUNDLE_ID || 'com.earth00.app';
+const APPLE_PRODUCT = {
+  pro:        process.env.APPLE_PRODUCT_ID_PRO,
+  enterprise: process.env.APPLE_PRODUCT_ID_ENTERPRISE,
+};
+function getAppleEnv() {
+  return process.env.APPLE_ENV === 'production' ? 'production' : 'sandbox';
+}
+function appleProductToTier(productId) {
+  if (productId === APPLE_PRODUCT.enterprise) return 'enterprise';
+  if (productId === APPLE_PRODUCT.pro)        return 'pro';
+  return null;
+}
 
 function getPayPalEnv() {
   return process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox';
@@ -330,6 +349,178 @@ router.post('/paypal/webhook', async (req, res) => {
     }
   } catch (err) {
     console.error('[paypal/webhook]', err.message);
+  }
+
+  res.sendStatus(200);
+});
+
+// ─── Apple StoreKit / In-App Purchase ─────────────────────────────────────
+//
+// Flow:
+//   1. iOS app fetches /apple/config to discover product ids + bundle id.
+//   2. User taps "Subscribe via Apple". The Capacitor IAP plugin (e.g.
+//      @capgo/capacitor-purchases or cordova-plugin-purchase) opens the
+//      native StoreKit sheet. On success the plugin returns a signed
+//      JWS transaction (JWSTransaction in StoreKit 2).
+//   3. App POSTs that JWS to /apple/activate. Server decodes, validates
+//      bundleId + productId + expiresDate, and writes a row to Supabase
+//      `subscriptions` with provider='apple'.
+//   4. Apple sends server-to-server notifications (App Store Server
+//      Notifications V2) to /apple/webhook for renew/expire/refund. We
+//      decode the signedPayload and update Supabase accordingly.
+//
+// ⚠️ SECURITY — `decodeAppleJws` below decodes WITHOUT verifying Apple's
+//    signature. This is fine for scaffolding/sandbox testing but MUST be
+//    replaced before going live. The official lib is:
+//
+//        npm i @apple/app-store-server-library
+//
+//    It exposes SignedDataVerifier which validates the JWS chain against
+//    Apple's root CA. Replace decodeAppleJws() with verifier.verifyAndDecode*().
+//    See: https://github.com/apple/app-store-server-library-node
+
+function decodeAppleJws(jws) {
+  // ⚠️ Scaffold-only: signature NOT verified. Replace before production.
+  const parts = String(jws || '').split('.');
+  if (parts.length !== 3) throw new Error('Invalid JWS');
+  const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+  const payload = Buffer.from(b64 + pad, 'base64').toString('utf8');
+  return JSON.parse(payload);
+}
+
+router.get('/apple/config', (_req, res) => {
+  if (!APPLE_BUNDLE_ID || !APPLE_PRODUCT.pro || !APPLE_PRODUCT.enterprise) {
+    return res.status(503).json({
+      error: 'Apple IAP configuration is incomplete',
+      hasBundleId:           Boolean(APPLE_BUNDLE_ID),
+      hasProductIdPro:       Boolean(APPLE_PRODUCT.pro),
+      hasProductIdEnterprise:Boolean(APPLE_PRODUCT.enterprise),
+    });
+  }
+  res.json({
+    bundleId:               APPLE_BUNDLE_ID,
+    env:                    getAppleEnv(),
+    productIdPro:           APPLE_PRODUCT.pro,
+    productIdEnterprise:    APPLE_PRODUCT.enterprise,
+  });
+});
+
+// Called by the iOS client immediately after a successful StoreKit purchase.
+// Body: { signedTransaction: "<JWS string from StoreKit 2>", tier: "pro"|"enterprise" }
+router.post('/apple/activate', requireAuth, async (req, res) => {
+  const { signedTransaction, tier } = req.body || {};
+  if (!signedTransaction || !['pro', 'enterprise'].includes(tier)) {
+    return res.status(400).json({ error: 'signedTransaction and tier required' });
+  }
+
+  try {
+    const tx = decodeAppleJws(signedTransaction);
+
+    if (tx.bundleId && tx.bundleId !== APPLE_BUNDLE_ID) {
+      return res.status(400).json({ error: `bundleId mismatch (got ${tx.bundleId})` });
+    }
+
+    const tierFromProduct = appleProductToTier(tx.productId);
+    if (!tierFromProduct) {
+      return res.status(400).json({ error: `Unknown productId: ${tx.productId}` });
+    }
+    if (tierFromProduct !== tier) {
+      return res.status(400).json({ error: 'Tier mismatch between product and request' });
+    }
+
+    // expiresDate is ms since epoch in StoreKit 2 JWS
+    const periodEnd = tx.expiresDate ? new Date(Number(tx.expiresDate)) : null;
+    if (periodEnd && periodEnd.getTime() < Date.now()) {
+      return res.status(400).json({ error: 'Transaction already expired' });
+    }
+
+    await upsertSubscription({
+      userId:        req.user.id,
+      tier,
+      provider:      'apple',
+      // originalTransactionId is stable across renewals — perfect provider_sub_id
+      providerSubId: String(tx.originalTransactionId || tx.transactionId),
+      // appAccountToken lets us tie a StoreKit purchase to our user (set this
+      // on the iOS side when calling Product.purchase). Optional but useful.
+      providerCusId: tx.appAccountToken || null,
+      periodEnd,
+      status:        'active',
+    });
+
+    console.log(`[apple] Activated subscription user=${req.user.id} tier=${tier} env=${getAppleEnv()}`);
+    res.json({ success: true, tier });
+  } catch (err) {
+    console.error('[payments/apple/activate]', err.message);
+    res.status(500).json({
+      error: 'Failed to activate Apple subscription',
+      detail: err.message,
+    });
+  }
+});
+
+// App Store Server Notifications V2 webhook.
+// Configure URL in App Store Connect → App → App Information → App Store
+// Server Notifications. Apple POSTs: { signedPayload: "<JWS>" }
+router.post('/apple/webhook', async (req, res) => {
+  try {
+    const { signedPayload } = req.body || {};
+    if (!signedPayload) { res.sendStatus(200); return; }
+
+    const notification = decodeAppleJws(signedPayload);
+    const { notificationType, subtype, data } = notification || {};
+    if (!data?.signedTransactionInfo) { res.sendStatus(200); return; }
+
+    const tx = decodeAppleJws(data.signedTransactionInfo);
+    const originalTransactionId = String(tx.originalTransactionId || tx.transactionId || '');
+    const tier = appleProductToTier(tx.productId);
+
+    // Look up which user this subscription belongs to (recorded by /apple/activate)
+    const { data: row } = await sba
+      .from('subscriptions')
+      .select('user_id')
+      .eq('provider_sub_id', originalTransactionId)
+      .maybeSingle();
+    const userId = row?.user_id || null;
+
+    console.log(`[apple/webhook] type=${notificationType} subtype=${subtype || '-'} user=${userId || '?'} tx=${originalTransactionId}`);
+
+    if (!userId) { res.sendStatus(200); return; }
+
+    switch (notificationType) {
+      case 'SUBSCRIBED':
+      case 'DID_RENEW':
+      case 'DID_CHANGE_RENEWAL_STATUS':
+      case 'OFFER_REDEEMED': {
+        if (tier) {
+          await upsertSubscription({
+            userId,
+            tier,
+            provider:      'apple',
+            providerSubId: originalTransactionId,
+            providerCusId: tx.appAccountToken || null,
+            periodEnd:     tx.expiresDate ? new Date(Number(tx.expiresDate)) : null,
+            status:        'active',
+          });
+        }
+        break;
+      }
+      case 'DID_FAIL_TO_RENEW':
+      case 'GRACE_PERIOD_EXPIRED':
+        await setSubscriptionStatus(userId, 'past_due');
+        break;
+      case 'EXPIRED':
+      case 'REVOKE':
+      case 'REFUND':
+      case 'REFUND_DECLINED':
+        await cancelSubscription(userId);
+        break;
+      default:
+        // Unhandled types: CONSUMPTION_REQUEST, PRICE_INCREASE, RENEWAL_EXTENDED, etc.
+        break;
+    }
+  } catch (err) {
+    console.error('[apple/webhook]', err.message);
   }
 
   res.sendStatus(200);
