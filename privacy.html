@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — earth00</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0d;
+      --surface: #141414;
+      --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.87);
+      --muted: rgba(255,255,255,0.45);
+      --accent: #4ade80;
+      --link: #60a5fa;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.75;
+      padding: 0;
+    }
+
+    /* ─── Top bar ──────────────────────────────────────────────────────────── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,13,13,0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 24px;
+      height: 52px;
+    }
+
+    .topbar-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .topbar-home:hover { opacity: 1; }
+    .topbar-home svg { flex-shrink: 0; }
+
+    .topbar-sep { color: var(--border); font-size: 18px; }
+    .topbar-title { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+    /* ─── Layout ───────────────────────────────────────────────────────────── */
+    .layout {
+      display: flex;
+      gap: 40px;
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+    }
+
+    /* ─── Sidebar TOC ──────────────────────────────────────────────────────── */
+    .toc {
+      flex-shrink: 0;
+      width: 220px;
+      position: sticky;
+      top: 68px;
+      align-self: flex-start;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+    .toc::-webkit-scrollbar { width: 4px; }
+    .toc::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .toc-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-left: 12px;
+    }
+    .toc a {
+      display: block;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      line-height: 1.4;
+    }
+    .toc a:hover {
+      color: var(--text);
+      border-left-color: var(--accent);
+    }
+
+    /* ─── Main content ─────────────────────────────────────────────────────── */
+    .content { flex: 1; min-width: 0; }
+
+    .page-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .page-title {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .page-date {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 40px;
+    }
+
+    /* Summary box */
+    .summary-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 40px;
+    }
+    .summary-box h2 {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .summary-point {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+    .summary-point:last-child { margin-bottom: 0; }
+    .summary-dot {
+      flex-shrink: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-top: 8px;
+    }
+
+    /* Sections */
+    .policy-section {
+      margin-bottom: 48px;
+      scroll-margin-top: 72px;
+    }
+    .policy-section h2 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .policy-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 20px;
+      margin-bottom: 8px;
+      color: rgba(255,255,255,0.7);
+    }
+    .policy-section p {
+      margin-bottom: 14px;
+      color: rgba(255,255,255,0.78);
+    }
+    .policy-section ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 14px 0;
+    }
+    .policy-section ul li {
+      position: relative;
+      padding-left: 18px;
+      margin-bottom: 6px;
+      color: rgba(255,255,255,0.78);
+      font-size: 14px;
+    }
+    .policy-section ul li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 9px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+    .policy-section a { color: var(--link); text-decoration: none; }
+    .policy-section a:hover { text-decoration: underline; }
+
+    .in-short {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(74,222,128,0.08);
+      border: 1px solid rgba(74,222,128,0.2);
+      border-radius: 6px;
+      padding: 2px 10px;
+      margin-bottom: 12px;
+      letter-spacing: 0.02em;
+    }
+
+    /* Table */
+    .policy-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 16px 0 20px;
+    }
+    .policy-table th {
+      text-align: left;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .policy-table td {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      color: rgba(255,255,255,0.75);
+      vertical-align: top;
+    }
+    .policy-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+    .yes { color: var(--accent); font-weight: 600; }
+    .no  { color: var(--muted); }
+
+    /* Contact box */
+    .contact-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.75);
+      line-height: 1.6;
+    }
+    .contact-box a { color: var(--link); text-decoration: none; }
+    .contact-box a:hover { text-decoration: underline; }
+
+    /* Footer */
+    .page-footer {
+      text-align: center;
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .page-footer a { color: var(--link); text-decoration: none; }
+    .page-footer a:hover { text-decoration: underline; }
+
+    /* Responsive */
+    @media (max-width: 720px) {
+      .toc { display: none; }
+      .layout { padding: 32px 16px 80px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Top bar -->
+<nav class="topbar">
+  <a class="topbar-home" href="/">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 8L8 3L13 8V13H10V10H6V13H3V8Z" fill="currentColor"/>
+    </svg>
+    earth00
+  </a>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-title">Privacy Policy</span>
+</nav>
+
+<div class="layout">
+
+  <!-- Sidebar TOC -->
+  <aside class="toc">
+    <div class="toc-label">Contents</div>
+    <a href="#s1">1. What We Collect</a>
+    <a href="#s2">2. How We Process</a>
+    <a href="#s3">3. Legal Bases</a>
+    <a href="#s4">4. When We Share</a>
+    <a href="#s5">5. AI Products</a>
+    <a href="#s6">6. Social Logins</a>
+    <a href="#s7">7. Retention</a>
+    <a href="#s8">8. Security</a>
+    <a href="#s9">9. Minors</a>
+    <a href="#s10">10. Your Rights</a>
+    <a href="#s11">11. Do Not Track</a>
+    <a href="#s12">12. US Residents</a>
+    <a href="#s13">13. Other Regions</a>
+    <a href="#s14">14. Updates</a>
+    <a href="#s15">15. Contact Us</a>
+    <a href="#s16">16. Review / Delete Data</a>
+  </aside>
+
+  <!-- Main content -->
+  <main class="content">
+
+    <div class="page-eyebrow">Legal</div>
+    <h1 class="page-title">Privacy Policy</h1>
+    <p class="page-date">Last updated April 08, 2026</p>
+
+    <p>This Privacy Notice for <strong>earth00</strong> ("we," "us," or "our") describes how and why we might access, collect, store, use, and/or share ("process") your personal information when you use our services ("Services"), including when you:</p>
+    <ul style="margin: 14px 0 14px 0; list-style: none; padding: 0;">
+      <li style="position:relative;padding-left:18px;margin-bottom:6px;color:rgba(255,255,255,0.78);font-size:14px;"><span style="position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:0.6;display:block;"></span>Visit our website at <a href="https://earth00.com">https://earth00.com</a> or any website of ours that links to this Privacy Notice</li>
+      <li style="position:relative;padding-left:18px;margin-bottom:6px;color:rgba(255,255,255,0.78);font-size:14px;"><span style="position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:0.6;display:block;"></span>Download and use our mobile application (earth00), or any other application of ours that links to this Privacy Notice</li>
+      <li style="position:relative;padding-left:18px;margin-bottom:6px;color:rgba(255,255,255,0.78);font-size:14px;"><span style="position:absolute;left:0;top:9px;width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:0.6;display:block;"></span>Engage with us in other related ways, including any marketing or events</li>
+    </ul>
+    <p>Questions or concerns? Contact us at <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>.</p>
+
+    <!-- Summary box -->
+    <div class="summary-box" style="margin-top:32px;">
+      <h2>Summary of Key Points</h2>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Personal information we process:</strong> We may process personal information depending on how you interact with our Services.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Sensitive information:</strong> We do not process sensitive personal information.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Third-party data:</strong> We do not collect any information from third parties.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>How we process:</strong> To provide, improve, and administer our Services, communicate with you, for security and fraud prevention, and to comply with law.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Sharing:</strong> We may share information in specific situations with specific third parties.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Your rights:</strong> Depending on your location, you may have certain rights regarding your personal information. The easiest way to exercise them is by <a href="https://app.termly.io/notify/2e32a16e-7dd9-4067-adae-b9e48c17e044">submitting a data subject access request</a>.</div></div>
+    </div>
+
+    <!-- Section 1 -->
+    <section class="policy-section" id="s1">
+      <h2>1. What Information Do We Collect?</h2>
+      <span class="in-short">In Short</span>
+      <p>We collect personal information that you provide to us.</p>
+
+      <h3>Personal Information Provided by You</h3>
+      <p>The personal information we collect may include:</p>
+      <ul>
+        <li>Names</li>
+        <li>Email addresses</li>
+        <li>Usernames</li>
+        <li>Passwords</li>
+      </ul>
+      <p><strong>Sensitive Information.</strong> We do not process sensitive information.</p>
+
+      <h3>Social Media Login Data</h3>
+      <p>We may provide you with the option to register using your existing social media account (Facebook, X, etc.). If you choose to do this, we will collect certain profile information from the social media provider, as described in Section 6.</p>
+
+      <h3>Application Data</h3>
+      <p>If you use our mobile application, we may also collect:</p>
+      <ul>
+        <li><strong>Geolocation Information.</strong> We may request access to location-based information to provide certain location-based services. You may change our access in your device's settings.</li>
+        <li><strong>Push Notifications.</strong> We may request to send you push notifications. You may turn them off in your device's settings.</li>
+      </ul>
+
+      <h3>Information Automatically Collected</h3>
+      <span class="in-short">In Short</span>
+      <p>Some information — such as your IP address and browser/device characteristics — is collected automatically when you visit our Services.</p>
+      <ul>
+        <li><strong>Log and Usage Data.</strong> IP address, device information, browser type, activity timestamps, pages viewed, searches, error reports, and hardware settings.</li>
+      </ul>
+
+      <h3>Google API</h3>
+      <p>Our use of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    </section>
+
+    <!-- Section 2 -->
+    <section class="policy-section" id="s2">
+      <h2>2. How Do We Process Your Information?</h2>
+      <span class="in-short">In Short</span>
+      <p>We process your information to provide, improve, and administer our Services, communicate with you, for security and fraud prevention, and to comply with law.</p>
+      <ul>
+        <li>To facilitate account creation and authentication and otherwise manage user accounts.</li>
+        <li>To request feedback and contact you about your use of our Services.</li>
+        <li>To identify usage trends and improve the Services.</li>
+        <li>To save or protect an individual's vital interest, such as to prevent harm.</li>
+      </ul>
+    </section>
+
+    <!-- Section 3 -->
+    <section class="policy-section" id="s3">
+      <h2>3. What Legal Bases Do We Rely On?</h2>
+      <span class="in-short">In Short</span>
+      <p>We only process your personal information when we have a valid legal reason to do so.</p>
+
+      <h3>EU / UK (GDPR)</h3>
+      <ul>
+        <li><strong>Consent.</strong> You can withdraw consent at any time by contacting us.</li>
+        <li><strong>Legitimate Interests.</strong> To analyze how our Services are used so we can improve them.</li>
+        <li><strong>Legal Obligations.</strong> To comply with law, cooperate with law enforcement, or exercise legal rights.</li>
+        <li><strong>Vital Interests.</strong> To protect your safety or the safety of a third party.</li>
+      </ul>
+
+      <h3>Canada</h3>
+      <p>We process your information with your express or implied consent, or in exceptional cases permitted under applicable Canadian law (e.g., fraud detection, legal obligations, publicly available information).</p>
+    </section>
+
+    <!-- Section 4 -->
+    <section class="policy-section" id="s4">
+      <h2>4. When and With Whom Do We Share Your Personal Information?</h2>
+      <span class="in-short">In Short</span>
+      <p>We may share information in specific situations described below.</p>
+      <ul>
+        <li><strong>Business Transfers.</strong> We may share or transfer your information in connection with any merger, sale of company assets, financing, or acquisition.</li>
+      </ul>
+    </section>
+
+    <!-- Section 5 -->
+    <section class="policy-section" id="s5">
+      <h2>5. Do We Offer Artificial Intelligence-Based Products?</h2>
+      <span class="in-short">In Short</span>
+      <p>We offer products, features, or tools powered by artificial intelligence, machine learning, or similar technologies.</p>
+
+      <h3>AI Service Providers</h3>
+      <p>We provide AI Products through third-party service providers, including <strong>Anthropic</strong>. Your input, output, and relevant personal information may be shared with and processed by these providers to enable your use of our AI Products.</p>
+
+      <h3>Our AI Products</h3>
+      <ul>
+        <li>Natural language processing</li>
+        <li>AI insights</li>
+        <li>Text analysis</li>
+        <li>AI predictive analytics</li>
+      </ul>
+      <p>All personal information processed using our AI Products is handled in line with this Privacy Notice and our agreement with third parties.</p>
+    </section>
+
+    <!-- Section 6 -->
+    <section class="policy-section" id="s6">
+      <h2>6. How Do We Handle Your Social Logins?</h2>
+      <span class="in-short">In Short</span>
+      <p>If you register or log in using a social media account, we may have access to certain information about you.</p>
+      <p>We use the information we receive only for the purposes described in this Privacy Notice. We do not control, and are not responsible for, other uses of your personal information by your third-party social media provider. We recommend reviewing their privacy notice.</p>
+    </section>
+
+    <!-- Section 7 -->
+    <section class="policy-section" id="s7">
+      <h2>7. How Long Do We Keep Your Information?</h2>
+      <span class="in-short">In Short</span>
+      <p>We keep your information for as long as necessary to fulfill the purposes outlined in this Privacy Notice unless otherwise required by law.</p>
+      <p>We will only keep your personal information for as long as necessary, or as required by law. When we have no ongoing legitimate business need to process your personal information, we will either delete or anonymize it.</p>
+    </section>
+
+    <!-- Section 8 -->
+    <section class="policy-section" id="s8">
+      <h2>8. How Do We Keep Your Information Safe?</h2>
+      <span class="in-short">In Short</span>
+      <p>We aim to protect your personal information through appropriate organizational and technical security measures.</p>
+      <p>Despite our safeguards, no electronic transmission over the Internet can be guaranteed to be 100% secure. Transmission of personal information to and from our Services is at your own risk. You should only access the Services within a secure environment.</p>
+    </section>
+
+    <!-- Section 9 -->
+    <section class="policy-section" id="s9">
+      <h2>9. Do We Collect Information From Minors?</h2>
+      <span class="in-short">In Short</span>
+      <p>We do not knowingly collect data from or market to children under 18 years of age.</p>
+      <p>By using the Services, you represent that you are at least 18 years old. If we learn that personal information from users under 18 has been collected, we will deactivate the account and promptly delete such data. Please contact us at <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a> if you become aware of any such data.</p>
+    </section>
+
+    <!-- Section 10 -->
+    <section class="policy-section" id="s10">
+      <h2>10. What Are Your Privacy Rights?</h2>
+      <span class="in-short">In Short</span>
+      <p>Depending on your location, you may have rights that allow you greater access to and control over your personal information.</p>
+
+      <p>In the EEA, UK, Switzerland, and Canada you may have the right to:</p>
+      <ul>
+        <li>Request access and obtain a copy of your personal information</li>
+        <li>Request rectification or erasure</li>
+        <li>Restrict the processing of your personal information</li>
+        <li>Data portability (where applicable)</li>
+        <li>Not be subject to solely automated decision-making</li>
+        <li>Object to the processing of your personal information</li>
+      </ul>
+
+      <p>If you are in the EEA or UK and believe we are unlawfully processing your data, you may complain to your Member State data protection authority or the UK data protection authority. If you are in Switzerland, you may contact the Federal Data Protection and Information Commissioner.</p>
+
+      <h3>Withdrawing Consent</h3>
+      <p>You may withdraw your consent at any time by contacting us using the details in Section 15 or updating your account preferences. This does not affect the lawfulness of processing before withdrawal.</p>
+
+      <h3>Account Information</h3>
+      <p>You may review or change your account information or terminate your account by logging into your account settings or contacting us. Upon termination, we will deactivate or delete your account from our active databases, though we may retain some information to prevent fraud or comply with legal requirements.</p>
+
+      <p>Email us at <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a> with any questions about your privacy rights.</p>
+    </section>
+
+    <!-- Section 11 -->
+    <section class="policy-section" id="s11">
+      <h2>11. Controls for Do-Not-Track Features</h2>
+      <p>Most web browsers include a Do-Not-Track ("DNT") feature. At this stage, no uniform technology standard for recognizing and implementing DNT signals has been finalized. We do not currently respond to DNT browser signals. If a standard is adopted in the future, we will inform you in a revised version of this Privacy Notice.</p>
+      <p>California law requires us to let you know how we respond to DNT signals. Because there is currently no industry or legal standard for recognizing DNT signals, we do not respond to them at this time.</p>
+    </section>
+
+    <!-- Section 12 -->
+    <section class="policy-section" id="s12">
+      <h2>12. Do United States Residents Have Specific Privacy Rights?</h2>
+      <span class="in-short">In Short</span>
+      <p>If you are a resident of California, Colorado, Connecticut, Delaware, Florida, Indiana, Iowa, Kentucky, Maryland, Minnesota, Montana, Nebraska, New Hampshire, New Jersey, Oregon, Rhode Island, Tennessee, Texas, Utah, or Virginia, you may have the right to request access to, correct inaccuracies in, or delete your personal information, and to withdraw consent.</p>
+
+      <h3>Categories of Personal Information We Collect</h3>
+      <table class="policy-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Examples</th>
+            <th>Collected</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>A. Identifiers</td><td>Name, email address, IP address, account name</td><td class="yes">YES</td></tr>
+          <tr><td>B. CA Customer Records</td><td>Name, contact information, financial information</td><td class="yes">YES</td></tr>
+          <tr><td>C. Protected classifications</td><td>Gender, age, race, national origin</td><td class="no">NO</td></tr>
+          <tr><td>D. Commercial information</td><td>Transaction information, purchase history</td><td class="yes">YES</td></tr>
+          <tr><td>E. Biometric information</td><td>Fingerprints, voiceprints</td><td class="no">NO</td></tr>
+          <tr><td>F. Internet/network activity</td><td>Browsing history, search history, online behavior</td><td class="no">NO</td></tr>
+          <tr><td>G. Geolocation data</td><td>Device location</td><td class="no">NO</td></tr>
+          <tr><td>H. Audio/sensory information</td><td>Images, audio, video recordings</td><td class="no">NO</td></tr>
+          <tr><td>I. Professional information</td><td>Job title, work history</td><td class="no">NO</td></tr>
+          <tr><td>J. Education information</td><td>Student records</td><td class="no">NO</td></tr>
+          <tr><td>K. Inferences</td><td>Profiles of preferences and characteristics</td><td class="no">NO</td></tr>
+          <tr><td>L. Sensitive personal information</td><td></td><td class="no">NO</td></tr>
+        </tbody>
+      </table>
+
+      <p>We retain collected personal information as follows:</p>
+      <ul>
+        <li>Category A — As long as the user has an account with us</li>
+        <li>Category B — As long as the user has an account with us</li>
+        <li>Category D — As long as the user has an account with us</li>
+      </ul>
+
+      <h3>Your Rights</h3>
+      <ul>
+        <li>Right to know whether or not we are processing your personal data</li>
+        <li>Right to access your personal data</li>
+        <li>Right to correct inaccuracies in your personal data</li>
+        <li>Right to request deletion of your personal data</li>
+        <li>Right to obtain a copy of your personal data</li>
+        <li>Right to non-discrimination for exercising your rights</li>
+        <li>Right to opt out of processing for targeted advertising, sale of personal data, or profiling</li>
+      </ul>
+
+      <h3>How to Exercise Your Rights</h3>
+      <p>Contact us by <a href="https://app.termly.io/notify/2e32a16e-7dd9-4067-adae-b9e48c17e044" target="_blank" rel="noopener">submitting a data subject access request</a>, by emailing <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>, or by referring to the contact details in Section 15.</p>
+
+      <h3>Appeals</h3>
+      <p>If we decline your request, you may appeal by emailing <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>. If your appeal is denied, you may submit a complaint to your state attorney general.</p>
+    </section>
+
+    <!-- Section 13 -->
+    <section class="policy-section" id="s13">
+      <h2>13. Do Other Regions Have Specific Privacy Rights?</h2>
+
+      <h3>Australia and New Zealand</h3>
+      <p>We collect and process your personal information under the obligations set by Australia's Privacy Act 1988 and New Zealand's Privacy Act 2020. At any time, you have the right to request access to or correction of your personal information. You may contact us using the details in Section 15.</p>
+      <p>If you believe we are unlawfully processing your personal information, you have the right to submit a complaint to the Office of the Australian Information Commissioner or the Office of New Zealand Privacy Commissioner.</p>
+
+      <h3>Republic of South Africa</h3>
+      <p>At any time, you have the right to request access to or correction of your personal information. If you are unsatisfied with how we address any complaint, you may contact:</p>
+      <p>The Information Regulator (South Africa)<br>
+      General enquiries: <a href="mailto:enquiries@inforegulator.org.za">enquiries@inforegulator.org.za</a><br>
+      Complaints: <a href="mailto:PAIAComplaints@inforegulator.org.za">PAIAComplaints@inforegulator.org.za</a> &amp; <a href="mailto:POPIAComplaints@inforegulator.org.za">POPIAComplaints@inforegulator.org.za</a></p>
+    </section>
+
+    <!-- Section 14 -->
+    <section class="policy-section" id="s14">
+      <h2>14. Do We Make Updates to This Notice?</h2>
+      <span class="in-short">In Short</span>
+      <p>Yes, we will update this notice as necessary to stay compliant with relevant laws.</p>
+      <p>We may update this Privacy Notice from time to time. The updated version will be indicated by an updated "Last updated" date at the top of this page. We encourage you to review this Privacy Notice frequently.</p>
+    </section>
+
+    <!-- Section 15 -->
+    <section class="policy-section" id="s15">
+      <h2>15. How Can You Contact Us About This Notice?</h2>
+      <p>If you have questions or comments about this notice, please contact us at:</p>
+      <div class="contact-box">
+        <strong>earth00</strong><br>
+        <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>
+      </div>
+    </section>
+
+    <!-- Section 16 -->
+    <section class="policy-section" id="s16">
+      <h2>16. How Can You Review, Update, or Delete the Data We Collect From You?</h2>
+      <p>Based on applicable laws, you may have the right to request access to the personal information we collect from you, correct inaccuracies, or delete your personal information. You may also have the right to withdraw your consent to our processing of your personal information.</p>
+      <p>To request to review, update, or delete your personal information, please <a href="https://app.termly.io/notify/2e32a16e-7dd9-4067-adae-b9e48c17e044" target="_blank" rel="noopener">fill out and submit a data subject access request</a>.</p>
+    </section>
+
+  </main>
+</div>
+
+<footer class="page-footer">
+  <a href="/">earth00</a> &nbsp;·&nbsp;
+  Privacy Policy &nbsp;·&nbsp;
+  Questions? <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>
+</footer>
+
+</body>
+</html>
