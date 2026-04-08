@@ -8340,6 +8340,7 @@ function computeCityTiers(cities) {
       });
 
       const cityPoints = new THREE.Points(cityGeo, raycastMat);
+      cityPoints.userData.__nodeMarker = 'city';
       scene.add(cityPoints);
 
       // ── Tier layers ───────────────────────────────────────────────
@@ -8395,6 +8396,7 @@ function computeCityTiers(cities) {
         });
 
         const pts = new THREE.Points(geo, mat);
+        pts.userData.__nodeMarker = 'cityTier';
         scene.add(pts);
 
         tierLayers.push({
@@ -8846,9 +8848,11 @@ function computeCityTiers(cities) {
         vertexColors: true
       });
       const countryPoints = new THREE.Points(countryGeo, countryMat);
+      countryPoints.userData.__nodeMarker = 'country';
       scene.add(countryPoints);
 
       const ringGroup = new THREE.Group();
+      ringGroup.userData.__nodeMarker = 'countryRings';
       scene.add(ringGroup);
       const ringCount = 3;
       const ringMeshes = [];
@@ -10247,6 +10251,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
         regionPoints = new THREE.Points(geo, mat);
         regionPoints.renderOrder = 2;
+        regionPoints.userData.__nodeMarker = 'region';
         scene.add(regionPoints);
         
         // Expose for ambient headlines (different scope)
@@ -22955,6 +22960,28 @@ body.ticker-active .gTickerLabel {
     markerMeshes = [];
   }
 
+  // ── Hide/restore country/city/region node meshes while the heatmap is
+  //    active so nothing distracts from the gradient. We snapshot each
+  //    tagged mesh's prior visibility so close() restores it exactly.
+  const _nodeVisSnapshot = [];
+  function hideNodeMarkers() {
+    const scene = window.scene;
+    if (!scene) return;
+    _nodeVisSnapshot.length = 0;
+    scene.traverse((obj) => {
+      if (obj && obj.userData && obj.userData.__nodeMarker) {
+        _nodeVisSnapshot.push([obj, obj.visible]);
+        obj.visible = false;
+      }
+    });
+  }
+  function restoreNodeMarkers() {
+    for (const [obj, vis] of _nodeVisSnapshot) {
+      if (obj) obj.visible = vis;
+    }
+    _nodeVisSnapshot.length = 0;
+  }
+
   function latLonToV3(lat, lon, r) {
     const THREE = window.THREE;
     const phi   = (90 - lat) * (Math.PI / 180);
@@ -23023,10 +23050,12 @@ body.ticker-active .gTickerLabel {
       const share     = Math.min(1, p.n / maxN);
       const intensity = Math.pow(share, 0.65);   // mild gamma
 
-      // Tight kernel — at full intensity ~50px on a 2048-wide canvas.
-      // Was 112-169px which produced one giant continent-spanning halo.
-      const baseRadius = W * 0.020;
-      const radius     = baseRadius * (0.65 + 1.45 * intensity);
+      // Slightly wider kernel — at full intensity ~70px on a 2048-wide
+      // canvas. Dispersed a bit more than before so the hottest spots
+      // aren't quite so centralized, while still staying local enough to
+      // clearly read as "concentrations near country nodes".
+      const baseRadius = W * 0.028;
+      const radius     = baseRadius * (0.72 + 1.55 * intensity);
 
       // Latitude correction with a tighter floor so high-latitude blobs
       // don't smear across the canvas width.
@@ -23036,10 +23065,10 @@ body.ticker-active .gTickerLabel {
 
       const c  = colorStopsFor(p, intensity);
       // Low base alpha so faint countries stay dim; only true hotspots
-      // approach full opacity. Sharper falloff prevents the soft outer
-      // ring from bleeding into neighbours.
+      // approach full opacity. Slightly softer falloff so the gradient
+      // breathes without smearing into neighbours.
       const a0 = 0.18 + 0.78 * intensity;
-      const a1 = a0 * 0.32;
+      const a1 = a0 * 0.38;
 
       const drawAt = (x, y) => {
         heatCtx.save();
@@ -23047,7 +23076,7 @@ body.ticker-active .gTickerLabel {
         heatCtx.scale(xStretch, 1);
         const g = heatCtx.createRadialGradient(0, 0, 0, 0, 0, radius);
         g.addColorStop(0.0,  `rgba(${c.r},${c.g},${c.b},${a0})`);
-        g.addColorStop(0.28, `rgba(${c.r},${c.g},${c.b},${a1})`);
+        g.addColorStop(0.34, `rgba(${c.r},${c.g},${c.b},${a1})`);
         g.addColorStop(1.0,  `rgba(${c.r},${c.g},${c.b},0)`);
         heatCtx.fillStyle = g;
         heatCtx.beginPath();
@@ -23334,6 +23363,313 @@ body.ticker-active .gTickerLabel {
     });
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  // Click inspector — when the heatmap is active, any tap on the globe
+  // pops a transparent panel listing the top countries within 500 miles
+  // of the tap (by % global coverage or avg sentiment) with an SVG
+  // leader line from the tap point to the panel.
+  // ══════════════════════════════════════════════════════════════════════
+  const EARTH_RADIUS_MI = 3958.7613;
+  const INSPECTOR_RADIUS_MI = 500;
+
+  let inspectorEl   = null;
+  let inspectorSvg  = null;
+  let inspectorLine = null;
+  let inspectorDot  = null;
+  let inspectorAnchor3 = null;
+  let inspectorRafId   = null;
+  let inspectorMinimized = false;
+
+  function ensureInspectorDom() {
+    if (inspectorEl) return inspectorEl;
+    inspectorSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    inspectorSvg.setAttribute('id', 'semHeatInspectorSvg');
+    Object.assign(inspectorSvg.style, {
+      position: 'fixed', inset: '0', width: '100%', height: '100%',
+      pointerEvents: 'none', zIndex: '996', display: 'none'
+    });
+    inspectorLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    inspectorLine.setAttribute('stroke', 'rgba(255,200,120,0.75)');
+    inspectorLine.setAttribute('stroke-width', '1.2');
+    inspectorLine.setAttribute('stroke-dasharray', '4 3');
+    inspectorDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    inspectorDot.setAttribute('r', '4');
+    inspectorDot.setAttribute('fill', 'rgba(255,200,120,0.9)');
+    inspectorDot.setAttribute('stroke', 'rgba(255,255,255,0.9)');
+    inspectorDot.setAttribute('stroke-width', '1');
+    inspectorSvg.appendChild(inspectorLine);
+    inspectorSvg.appendChild(inspectorDot);
+    document.body.appendChild(inspectorSvg);
+
+    inspectorEl = document.createElement('div');
+    inspectorEl.id = 'semHeatInspector';
+    Object.assign(inspectorEl.style, {
+      position: 'fixed',
+      top: '180px', left: '50%',
+      transform: 'translateX(-50%)',
+      width: '240px', maxHeight: '320px',
+      zIndex: '997',
+      background: 'rgba(6,10,20,0.30)',
+      backdropFilter: 'blur(14px)',
+      webkitBackdropFilter: 'blur(14px)',
+      border: '1px solid rgba(255,160,80,0.28)',
+      borderRadius: '12px',
+      padding: '10px 12px 10px 12px',
+      color: 'rgba(255,255,255,0.92)',
+      font: '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      boxShadow: '0 10px 40px rgba(0,0,0,0.55)',
+      display: 'none',
+      overflow: 'hidden',
+      pointerEvents: 'auto'
+    });
+    inspectorEl.innerHTML = `
+      <div class="semHeatInspHeader" style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:6px;">
+        <div class="semHeatInspTitle" style="font-size:11px;font-weight:700;color:rgba(255,200,140,0.95);letter-spacing:0.04em;">Percentage Global Coverage</div>
+        <div style="display:flex;align-items:center;gap:0;">
+          <button class="semHeatInspMin" title="Minimize" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:18px;line-height:1;cursor:pointer;padding:2px 6px;">−</button>
+          <button class="semHeatInspClose" title="Close" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;">✕</button>
+        </div>
+      </div>
+      <div class="semHeatInspSubtitle" style="font-size:9.5px;opacity:0.55;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">within 500 mi of tap</div>
+      <div class="semHeatInspBody" style="max-height:230px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;-webkit-overflow-scrolling:touch;"></div>
+    `;
+    document.body.appendChild(inspectorEl);
+
+    inspectorEl.querySelector('.semHeatInspClose').addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeInspectorPopup();
+    });
+    inspectorEl.querySelector('.semHeatInspMin').addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleInspectorMin();
+    });
+    ['mousedown','mouseup','click','pointerdown','pointerup','pointermove','wheel',
+     'touchstart','touchmove','touchend','dblclick','contextmenu'].forEach(ev => {
+      inspectorEl.addEventListener(ev, (e) => e.stopPropagation(), { passive: false });
+      inspectorSvg.addEventListener(ev, (e) => e.stopPropagation(), { passive: false });
+    });
+    return inspectorEl;
+  }
+
+  function toggleInspectorMin() {
+    if (!inspectorEl) return;
+    inspectorMinimized = !inspectorMinimized;
+    const body = inspectorEl.querySelector('.semHeatInspBody');
+    const sub  = inspectorEl.querySelector('.semHeatInspSubtitle');
+    const btn  = inspectorEl.querySelector('.semHeatInspMin');
+    if (inspectorMinimized) {
+      body.style.display = 'none';
+      sub.style.display  = 'none';
+      btn.textContent    = '+';
+    } else {
+      body.style.display = '';
+      sub.style.display  = '';
+      btn.textContent    = '−';
+    }
+  }
+
+  function closeInspectorPopup() {
+    inspectorAnchor3 = null;
+    if (inspectorEl) inspectorEl.style.display = 'none';
+    if (inspectorSvg) inspectorSvg.style.display = 'none';
+    if (inspectorRafId) { cancelAnimationFrame(inspectorRafId); inspectorRafId = null; }
+  }
+
+  function haversineMi(lat1, lon1, lat2, lon2) {
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+              Math.sin(dLon/2)**2;
+    return 2 * EARTH_RADIUS_MI * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  function openInspectorAt(lat, lon, worldPoint) {
+    ensureInspectorDom();
+
+    const pts = state.points || [];
+    const nearby = [];
+    for (const p of pts) {
+      if (!isFinite(p.lat) || !isFinite(p.lon)) continue;
+      const d = haversineMi(lat, lon, p.lat, p.lon);
+      if (d <= INSPECTOR_RADIUS_MI) nearby.push({ p, d });
+    }
+
+    const globeCountries = Array.isArray(window.__globeCountries) ? window.__globeCountries : [];
+    const isoName = new Map();
+    for (const c of globeCountries) {
+      const iso = (c.iso_code || c.iso || c.code || '').toUpperCase();
+      if (iso) isoName.set(iso, c.name || c.country || iso);
+    }
+    const labelFor = (p) => {
+      return p.country_name || p.name || p.country ||
+             (p.iso_code && isoName.get(String(p.iso_code).toUpperCase())) ||
+             p.iso_code || 'Unknown';
+    };
+
+    const body  = inspectorEl.querySelector('.semHeatInspBody');
+    const title = inspectorEl.querySelector('.semHeatInspTitle');
+    if (state.mode === 'sentiment') {
+      title.textContent = 'Regional Sentiment';
+      if (!nearby.length) {
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 500 mi.</div>`;
+      } else {
+        const rows = nearby
+          .filter(({p}) => p.avg_sent != null && p.sent_n)
+          .map(({p, d}) => ({
+            name: labelFor(p),
+            sent: Number(p.avg_sent),
+            n:    p.sent_n || 0,
+            d
+          }))
+          .sort((a, b) => b.sent - a.sent);
+        if (!rows.length) {
+          body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 500 mi.</div>`;
+        } else {
+          body.innerHTML = rows.map((r) => {
+            const t = (r.sent + 1) / 2;
+            const hue = Math.round(10 + 110 * t);
+            const sentTxt = (r.sent >= 0 ? '+' : '') + r.sent.toFixed(2);
+            return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;border-bottom:1px solid rgba(255,255,255,0.05);">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(r.name)}</span>
+              <span style="font-variant-numeric:tabular-nums;color:hsla(${hue},80%,65%,0.95);font-weight:600;">${sentTxt}</span>
+              <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${r.n}</span>
+            </div>`;
+          }).join('');
+        }
+      }
+    } else {
+      title.textContent = 'Percentage Global Coverage';
+      const globalTotal = pts.reduce((s, p) => s + (p.n || 0), 0) || 1;
+      if (!nearby.length) {
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No coverage within 500 mi.</div>`;
+      } else {
+        const rows = nearby
+          .map(({p, d}) => ({
+            name: labelFor(p),
+            n:    p.n || 0,
+            pct:  ((p.n || 0) / globalTotal) * 100,
+            d
+          }))
+          .sort((a, b) => b.n - a.n);
+        const localTotal = rows.reduce((s, r) => s + r.n, 0) || 1;
+        const localPct = (localTotal / globalTotal) * 100;
+        body.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 6px;margin-bottom:4px;border-bottom:1px dashed rgba(255,255,255,0.12);">
+            <span style="opacity:0.65;">Region total</span>
+            <span style="font-variant-numeric:tabular-nums;color:rgba(255,210,140,0.95);font-weight:700;">${localPct.toFixed(2)}%</span>
+          </div>
+        ` + rows.map((r) => {
+          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;border-bottom:1px solid rgba(255,255,255,0.05);">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(r.name)}</span>
+            <span style="font-variant-numeric:tabular-nums;color:rgba(160,215,255,0.95);font-weight:600;">${r.pct.toFixed(2)}%</span>
+            <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${r.n.toLocaleString()}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    inspectorAnchor3 = worldPoint.clone();
+    inspectorEl.style.display  = 'block';
+    inspectorSvg.style.display = 'block';
+    inspectorMinimized = false;
+    const minBtnEl = inspectorEl.querySelector('.semHeatInspMin');
+    if (minBtnEl) minBtnEl.textContent = '−';
+    inspectorEl.querySelector('.semHeatInspBody').style.display = '';
+    inspectorEl.querySelector('.semHeatInspSubtitle').style.display = '';
+
+    startInspectorTracking();
+  }
+
+  function startInspectorTracking() {
+    if (inspectorRafId) cancelAnimationFrame(inspectorRafId);
+    const tick = () => {
+      if (!inspectorAnchor3 || !window.__semHeatActive) { inspectorRafId = null; return; }
+      const cam = window.__camera;
+      const rend = window.__renderer;
+      if (cam && rend && inspectorEl.style.display !== 'none') {
+        const v = inspectorAnchor3.clone().project(cam);
+        const rect = rend.domElement.getBoundingClientRect();
+        const sx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
+        const sy = rect.top  + (-v.y * 0.5 + 0.5) * rect.height;
+
+        const toCam = new window.THREE.Vector3().subVectors(cam.position, inspectorAnchor3);
+        const normal = inspectorAnchor3.clone().normalize();
+        const facing = toCam.normalize().dot(normal) > 0;
+        inspectorDot.style.display = facing ? '' : 'none';
+        inspectorLine.style.display = facing ? '' : 'none';
+
+        const pRect = inspectorEl.getBoundingClientRect();
+        const candidates = [
+          { x: pRect.left,                 y: pRect.top + pRect.height/2 },
+          { x: pRect.right,                y: pRect.top + pRect.height/2 },
+          { x: pRect.left + pRect.width/2, y: pRect.top },
+          { x: pRect.left + pRect.width/2, y: pRect.bottom }
+        ];
+        let best = candidates[0], bestD = Infinity;
+        for (const c of candidates) {
+          const d = (c.x - sx)**2 + (c.y - sy)**2;
+          if (d < bestD) { bestD = d; best = c; }
+        }
+        inspectorLine.setAttribute('x1', sx);
+        inspectorLine.setAttribute('y1', sy);
+        inspectorLine.setAttribute('x2', best.x);
+        inspectorLine.setAttribute('y2', best.y);
+        inspectorDot.setAttribute('cx', sx);
+        inspectorDot.setAttribute('cy', sy);
+      }
+      inspectorRafId = requestAnimationFrame(tick);
+    };
+    inspectorRafId = requestAnimationFrame(tick);
+  }
+
+  let _heatClickHandler = null;
+  function enableHeatClickInspector() {
+    const rend = window.__renderer;
+    if (!rend || _heatClickHandler) return;
+    const dom = rend.domElement;
+    _heatClickHandler = (e) => {
+      if (!window.__semHeatActive) return;
+      if (e.target && (e.target.closest && (e.target.closest('#semHeatPanel') || e.target.closest('#semHeatInspector')))) return;
+
+      const THREE = window.THREE;
+      const cam   = window.__camera;
+      if (!THREE || !cam || !heatSphere) return;
+
+      const rect = dom.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+       -((e.clientY - rect.top)  / rect.height) * 2 + 1
+      );
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(ndc, cam);
+      const hits = rc.intersectObject(heatSphere, false);
+      if (!hits.length) return;
+      const hit = hits[0];
+      const v = hit.point.clone().normalize();
+      const lat = Math.asin(Math.max(-1, Math.min(1, v.y))) * 180 / Math.PI;
+      let theta = Math.atan2(v.z, -v.x);
+      if (theta < 0) theta += 2 * Math.PI;
+      const lon = theta * 180 / Math.PI - 180;
+      openInspectorAt(lat, lon, hit.point);
+      e.stopPropagation();
+    };
+    dom.addEventListener('click', _heatClickHandler, true);
+  }
+  function disableHeatClickInspector() {
+    const rend = window.__renderer;
+    if (!rend || !_heatClickHandler) return;
+    rend.domElement.removeEventListener('click', _heatClickHandler, true);
+    _heatClickHandler = null;
+  }
+
   // ── Open / close API ───────────────────────────────────────────────────
   window.__semHeatOpen = function (opts) {
     window.__semHeatActive = true;
@@ -23342,6 +23678,8 @@ body.ticker-active .gTickerLabel {
     if (minBtn) { minBtn.textContent = '−'; minBtn.title = 'Minimize'; }
     panel.classList.add('visible');
     toggleBtn.style.display = 'none';
+    hideNodeMarkers();
+    enableHeatClickInspector();
     updateLegend();
     if (opts && opts.threadId) {
       // Switch to thread tab and select it
@@ -23391,6 +23729,9 @@ body.ticker-active .gTickerLabel {
     stopPlayback();
     clearMarkers();
     removeHeatSphere();
+    restoreNodeMarkers();
+    disableHeatClickInspector();
+    closeInspectorPopup();
     updateToggleBtnVisibility();
   };
 
