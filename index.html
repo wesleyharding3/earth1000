@@ -142,15 +142,18 @@
     .el-panel-loader .el-dots { margin-top: 10px; gap: 5px; }
     .el-panel-loader .el-dots span { width: 5px; height: 5px; }
 
-    /* Larger globe loader for the news feed grid */
-    #nfGrid .el-panel-loader {
+    /* Larger globe loader for the news feed grid AND threads grid
+       (both use skels() which emits .el-feed-loader). Keeping the class
+       selector makes feed + threads loaders visually identical without
+       affecting .el-node-loader variants used elsewhere. */
+    .el-panel-loader.el-feed-loader {
       min-height: calc(var(--app-height, 100vh) - 320px);
       place-self: center stretch;
     }
-    #nfGrid .el-panel-loader .el-globe-wrap .el-globe { width: 150px; height: 150px; }
-    #nfGrid .el-panel-loader .el-e { font-size: 78px; bottom: 8px; left: 5px; }
-    #nfGrid .el-panel-loader .el-dots { margin-top: 14px; gap: 8px; }
-    #nfGrid .el-panel-loader .el-dots span { width: 6px; height: 6px; }
+    .el-panel-loader.el-feed-loader .el-globe-wrap .el-globe { width: 150px; height: 150px; }
+    .el-panel-loader.el-feed-loader .el-e { font-size: 78px; bottom: 8px; left: 5px; }
+    .el-panel-loader.el-feed-loader .el-dots { margin-top: 14px; gap: 8px; }
+    .el-panel-loader.el-feed-loader .el-dots span { width: 6px; height: 6px; }
 
     canvas { display: block; }
 
@@ -2424,9 +2427,9 @@ body.ticker-active #flowControls {
 
 .semHeatLoading { text-align: center; padding: 8px; font-size: 11px; color: rgba(255,200,140,0.7); }
 
-#semHeatToggleBtn { position: absolute; top: 20px; right: 88px; z-index: 30; width: 44px; height: 44px; border-radius: 50%; background: rgba(8,12,24,0.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,160,80,0.35); color: rgba(255,200,140,0.9); display: none; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.5); transition: transform 0.15s, background 0.15s, border-color 0.15s; }
-#semHeatToggleBtn:hover { transform: scale(1.08); background: rgba(255,160,80,0.18); border-color: rgba(255,160,80,0.55); }
-#semHeatToggleBtn svg { width: 20px; height: 20px; }
+#semHeatToggleBtn { position: absolute; top: 20px; right: 88px; z-index: 30; width: var(--touch-icon-size); height: var(--touch-icon-size); border-radius: 50%; background: rgba(8, 12, 24, 0.82); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 160, 80, 0.35); color: rgba(255, 200, 140, 0.9); display: none; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4); transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s; }
+#semHeatToggleBtn:hover { transform: scale(1.06); background: rgba(255, 160, 80, 0.18); border-color: rgba(255, 160, 80, 0.55); color: rgba(255, 215, 160, 1); }
+#semHeatToggleBtn svg { width: calc(17px * var(--mobile-control-scale)); height: calc(17px * var(--mobile-control-scale)); flex-shrink: 0; }
 
 /* ── Flow arc click info card ── */
 #flowArcInfoCard {
@@ -5529,7 +5532,10 @@ body.ticker-active #flowControls {
         width: 40px;
         height: 40px;
       }
-      #semHeatToggleBtn svg { width: 18px; height: 18px; }
+      #semHeatToggleBtn svg {
+        width: 15px;
+        height: 15px;
+      }
       #scaleBar {
         top: calc(env(safe-area-inset-top, 0px) + 62px);
         right: 8px;
