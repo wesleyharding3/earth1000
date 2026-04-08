@@ -23313,7 +23313,7 @@ body.ticker-active .gTickerLabel {
   // leader line from the click point to the panel.
   // ══════════════════════════════════════════════════════════════════════
   const EARTH_RADIUS_MI = 3958.7613;
-  const INSPECTOR_RADIUS_MI = 2000;
+  const INSPECTOR_RADIUS_MI = 1000;
 
   // DOM nodes for the inspector popup (created lazily, one instance).
   let inspectorEl   = null;
@@ -23374,15 +23374,45 @@ body.ticker-active .gTickerLabel {
     });
     inspectorEl.innerHTML = `
       <div class="semHeatInspHeader" style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,0.08);margin-bottom:6px;">
-        <div class="semHeatInspTitle" style="font-size:11px;font-weight:700;color:rgba(255,200,140,0.95);letter-spacing:0.04em;">Percentage Global Coverage</div>
+        <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+          <button class="semHeatInspBack" title="Back" style="display:none;background:none;border:none;color:rgba(255,210,140,0.85);font-size:13px;line-height:1;cursor:pointer;padding:2px 4px;">←</button>
+          <div class="semHeatInspTitle" style="font-size:11px;font-weight:700;color:rgba(255,200,140,0.95);letter-spacing:0.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Percentage Global Coverage</div>
+        </div>
         <div style="display:flex;align-items:center;gap:0;">
           <button class="semHeatInspMin" title="Minimize" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:18px;line-height:1;cursor:pointer;padding:2px 6px;">−</button>
           <button class="semHeatInspClose" title="Close" style="background:none;border:none;color:rgba(255,255,255,0.55);font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;">✕</button>
         </div>
       </div>
-      <div class="semHeatInspSubtitle" style="font-size:9.5px;opacity:0.55;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">within 2000 mi of click</div>
-      <div class="semHeatInspBody" style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+      <div class="semHeatInspSubtitle" style="font-size:9.5px;opacity:0.55;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px;">within 1000 mi of click</div>
+      <div class="semHeatInspBody" style="max-height:280px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:4px;padding-right:2px;"></div>
     `;
+    // One-time hover / row style injection
+    if (!document.getElementById('semHeatInspStyle')) {
+      const st = document.createElement('style');
+      st.id = 'semHeatInspStyle';
+      st.textContent = `
+        .semHeatInspRow {
+          display:flex;align-items:center;justify-content:space-between;gap:8px;
+          padding:5px 6px;border-radius:6px;
+          border-bottom:1px solid rgba(255,255,255,0.05);
+          cursor:pointer; transition:background 0.15s, box-shadow 0.15s, transform 0.1s;
+        }
+        .semHeatInspRow:hover {
+          background: rgba(255,200,140,0.10);
+          box-shadow: inset 0 0 0 1px rgba(255,200,140,0.22), 0 0 10px rgba(255,160,80,0.12);
+        }
+        .semHeatInspRow:active { transform: scale(0.985); }
+        .semHeatInspRow.static { cursor:default; }
+        .semHeatInspRow.static:hover { background:transparent; box-shadow:none; }
+        .semHeatInspBody::-webkit-scrollbar { width: 6px; }
+        .semHeatInspBody::-webkit-scrollbar-thumb {
+          background: rgba(255,200,140,0.25); border-radius: 3px;
+        }
+        .semHeatInspBody::-webkit-scrollbar-track { background: transparent; }
+        .semHeatInspBack:hover { color: rgba(255,230,180,1) !important; }
+      `;
+      document.head.appendChild(st);
+    }
     document.body.appendChild(inspectorEl);
 
     // Wire up the close + minimize buttons
@@ -23393,6 +23423,19 @@ body.ticker-active .gTickerLabel {
     inspectorEl.querySelector('.semHeatInspMin').addEventListener('click', (e) => {
       e.stopPropagation();
       toggleInspectorMin();
+    });
+    // Back button (drill-down → ranking)
+    inspectorEl.querySelector('.semHeatInspBack').addEventListener('click', (e) => {
+      e.stopPropagation();
+      renderInspectorCountryRanking();
+    });
+    // Delegated row click → drill into that country
+    inspectorEl.querySelector('.semHeatInspBody').addEventListener('click', (e) => {
+      const row = e.target.closest('.semHeatInspRow');
+      if (!row || row.classList.contains('static')) return;
+      const key = row.dataset.countryKey;
+      if (!key) return;
+      renderInspectorCountryDetail(key);
     });
     // Block event bubbling so clicks inside the popup don't trigger another inspect.
     ['mousedown','mouseup','click','pointerdown','pointerup','pointermove','wheel',
@@ -23467,11 +23510,11 @@ body.ticker-active .gTickerLabel {
 
     // Rank: coverage mode → share of nearby n; sentiment mode → avg sentiment.
     const body  = inspectorEl.querySelector('.semHeatInspBody');
-    const title = inspectorEl.querySelector('.semHeatInspTitle');
     if (state.mode === 'sentiment') {
-      title.textContent = 'Regional Sentiment';
+      _inspectorCtx = null;
+      _setInspectorTitle('Regional Sentiment', false, `within ${INSPECTOR_RADIUS_MI} mi of click`);
       if (!nearby.length) {
-        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 2000 mi.</div>`;
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 1000 mi.</div>`;
       } else {
         const rows = nearby
           .filter(({p}) => p.avg_sent != null && p.sent_n)
@@ -23483,7 +23526,7 @@ body.ticker-active .gTickerLabel {
           }))
           .sort((a, b) => b.sent - a.sent);
         if (!rows.length) {
-          body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 2000 mi.</div>`;
+          body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 1000 mi.</div>`;
         } else {
           body.innerHTML = rows.map((r) => {
             const t = (r.sent + 1) / 2;
@@ -23498,52 +23541,48 @@ body.ticker-active .gTickerLabel {
         }
       }
     } else {
-      title.textContent = 'Percentage Global Coverage';
-      // Global total across the whole currently-rendered dataset (so the
-      // percentage is truly "global coverage" not "local share").
+      // Build & cache a country-rollup view so the drill-down can reuse it.
       const globalTotal = pts.reduce((s, p) => s + (p.n || 0), 0) || 1;
-      if (!nearby.length) {
-        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No coverage within 2000 mi.</div>`;
-      } else {
-        // Roll both country-level and city-level points up to their country
-        // bucket so the ranked list reads as a single country leaderboard.
-        const byCountry = new Map();
-        for (const { p } of nearby) {
-          const key =
-            p.country_id != null ? 'cid:' + p.country_id :
-            (p.iso ? 'iso:' + String(p.iso).toUpperCase() : 'nm:' + (labelFor(p) || 'unk'));
-          const label =
-            p.country_name ||
-            (p.country_id != null && p.city_id == null ? labelFor(p) : null) ||
-            (p.country_id != null ? labelFor({ iso_code: p.iso, country_id: p.country_id }) : labelFor(p));
-          const existing = byCountry.get(key);
-          if (existing) {
-            existing.n += p.n || 0;
-          } else {
-            byCountry.set(key, {
-              name: label || labelFor(p),
-              n: p.n || 0
-            });
-          }
+      const byCountry = new Map();
+      for (const { p } of nearby) {
+        const key =
+          p.country_id != null ? 'cid:' + p.country_id :
+          (p.iso ? 'iso:' + String(p.iso).toUpperCase() : 'nm:' + (labelFor(p) || 'unk'));
+        const label =
+          p.country_name ||
+          (p.country_id != null && p.city_id == null ? labelFor(p) : null) ||
+          (p.country_id != null ? labelFor({ iso_code: p.iso, country_id: p.country_id }) : labelFor(p));
+        let bucket = byCountry.get(key);
+        if (!bucket) {
+          bucket = {
+            key,
+            name: label || labelFor(p),
+            countryId: p.country_id ?? null,
+            iso: p.iso || null,
+            n: 0,
+            countryLevelN: 0,  // articles with city_id NULL
+            cities: []         // [{ name, n, city_id }]
+          };
+          byCountry.set(key, bucket);
         }
-        const rows = [...byCountry.values()]
-          .map(r => ({ name: r.name, n: r.n, pct: (r.n / globalTotal) * 100 }))
-          .sort((a, b) => b.n - a.n);
-        const localTotal = rows.reduce((s, r) => s + r.n, 0) || 1;
-        const localPct = (localTotal / globalTotal) * 100;
-        body.innerHTML = `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px 6px;margin-bottom:4px;border-bottom:1px dashed rgba(255,255,255,0.12);">
-            <span style="opacity:0.65;">Region total</span>
-            <span style="font-variant-numeric:tabular-nums;color:rgba(255,210,140,0.95);font-weight:700;">${localPct.toFixed(2)}%</span>
-          </div>
-        ` + rows.map((r) => {
-          return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;border-bottom:1px solid rgba(255,255,255,0.05);">
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(r.name)}</span>
-            <span style="font-variant-numeric:tabular-nums;color:rgba(160,215,255,0.95);font-weight:600;">${r.pct.toFixed(2)}%</span>
-            <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${r.n.toLocaleString()}</span>
-          </div>`;
-        }).join('');
+        bucket.n += p.n || 0;
+        if (p.city_id != null) {
+          bucket.cities.push({
+            name: p.name || 'Unknown city',
+            n: p.n || 0,
+            city_id: p.city_id
+          });
+        } else {
+          bucket.countryLevelN += p.n || 0;
+        }
       }
+      _inspectorCtx = {
+        mode: 'coverage',
+        globalTotal,
+        byCountry,
+        rangeMi: INSPECTOR_RADIUS_MI
+      };
+      renderInspectorCountryRanking();
     }
 
     // Anchor + show (stored in heatSphere local space so the leader
@@ -23558,6 +23597,142 @@ body.ticker-active .gTickerLabel {
     inspectorEl.querySelector('.semHeatInspSubtitle').style.display = '';
 
     startInspectorTracking();
+  }
+
+  // ── Inspector drill-down state ───────────────────────────────────
+  // Populated each time openInspectorAt() runs in coverage mode; lets
+  // the click-through into a specific country reuse the same cached
+  // snapshot without recomputing distances.
+  let _inspectorCtx = null;
+
+  function _setInspectorTitle(txt, showBack, subtitle) {
+    if (!inspectorEl) return;
+    const tEl   = inspectorEl.querySelector('.semHeatInspTitle');
+    const bEl   = inspectorEl.querySelector('.semHeatInspBack');
+    const subEl = inspectorEl.querySelector('.semHeatInspSubtitle');
+    if (tEl)   tEl.textContent = txt;
+    if (bEl)   bEl.style.display = showBack ? '' : 'none';
+    if (subEl && subtitle != null) subEl.textContent = subtitle;
+  }
+
+  function renderInspectorCountryRanking() {
+    if (!inspectorEl || !_inspectorCtx) return;
+    const body = inspectorEl.querySelector('.semHeatInspBody');
+    const { globalTotal, byCountry, rangeMi } = _inspectorCtx;
+
+    _setInspectorTitle(
+      'Percentage Global Coverage',
+      false,
+      `within ${rangeMi} mi of click`
+    );
+
+    const rows = [...byCountry.values()]
+      .map(r => ({
+        key: r.key,
+        name: r.name,
+        n: r.n,
+        pct: (r.n / globalTotal) * 100,
+        cityCount: r.cities.length
+      }))
+      .sort((a, b) => b.n - a.n);
+
+    if (!rows.length) {
+      body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No coverage within ${rangeMi} mi.</div>`;
+      return;
+    }
+
+    const localTotal = rows.reduce((s, r) => s + r.n, 0) || 1;
+    const localPct = (localTotal / globalTotal) * 100;
+    body.innerHTML = `
+      <div class="semHeatInspRow static" style="border-bottom:1px dashed rgba(255,255,255,0.12);">
+        <span style="opacity:0.65;">Region total</span>
+        <span style="font-variant-numeric:tabular-nums;color:rgba(255,210,140,0.95);font-weight:700;">${localPct.toFixed(2)}%</span>
+      </div>
+    ` + rows.map((r) => {
+      return `<div class="semHeatInspRow" data-country-key="${escapeHtml(r.key)}">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(r.name)}${r.cityCount ? ` <span style="opacity:0.45;font-size:9.5px;">· ${r.cityCount} ${r.cityCount === 1 ? 'city' : 'cities'}</span>` : ''}</span>
+        <span style="font-variant-numeric:tabular-nums;color:rgba(160,215,255,0.95);font-weight:600;">${r.pct.toFixed(2)}%</span>
+        <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${r.n.toLocaleString()}</span>
+      </div>`;
+    }).join('');
+
+    // Scroll back to top whenever we return to the ranking view.
+    body.scrollTop = 0;
+  }
+
+  function renderInspectorCountryDetail(key) {
+    if (!inspectorEl || !_inspectorCtx) return;
+    const bucket = _inspectorCtx.byCountry.get(key);
+    if (!bucket) return;
+    const body = inspectorEl.querySelector('.semHeatInspBody');
+    const { globalTotal, rangeMi } = _inspectorCtx;
+
+    _setInspectorTitle(
+      bucket.name || 'Country',
+      true,
+      `national breakdown · ${rangeMi} mi`
+    );
+
+    const nationalPct = (bucket.n / globalTotal) * 100;
+
+    // City list sorted by n desc. Percentages are computed against the
+    // country's own total so they sum to 100% across country + cities.
+    const cityRows = bucket.cities
+      .slice()
+      .sort((a, b) => b.n - a.n)
+      .map(c => ({
+        name: c.name,
+        n: c.n,
+        pct: bucket.n ? (c.n / bucket.n) * 100 : 0
+      }));
+
+    // "Remaining" = country-level (city_id IS NULL) articles attributable
+    // to the country but not pinned to a specific city.
+    const remainingN   = bucket.countryLevelN;
+    const remainingPct = bucket.n ? (remainingN / bucket.n) * 100 : 0;
+
+    let html = `
+      <div class="semHeatInspRow static" style="border-bottom:1px dashed rgba(255,255,255,0.12);padding-bottom:6px;">
+        <span style="opacity:0.72;font-weight:600;">Total national coverage</span>
+        <span style="font-variant-numeric:tabular-nums;color:rgba(255,210,140,0.95);font-weight:700;">${nationalPct.toFixed(2)}%</span>
+      </div>
+      <div class="semHeatInspRow static" style="border-bottom:1px solid rgba(255,255,255,0.05);">
+        <span style="opacity:0.55;font-size:10px;">${bucket.n.toLocaleString()} articles in region</span>
+        <span style="opacity:0.55;font-size:10px;">${bucket.cities.length} ${bucket.cities.length === 1 ? 'city' : 'cities'}</span>
+      </div>
+    `;
+
+    if (!cityRows.length && !remainingN) {
+      html += `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No city-level breakdown available.</div>`;
+    } else {
+      html += `
+        <div class="semHeatInspRow static" style="margin-top:4px;padding-top:6px;border-top:1px dashed rgba(255,255,255,0.10);border-bottom:none;">
+          <span style="opacity:0.55;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;">% of national</span>
+          <span></span>
+        </div>
+      `;
+      if (cityRows.length) {
+        html += cityRows.map(c => `
+          <div class="semHeatInspRow static">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(c.name)}</span>
+            <span style="font-variant-numeric:tabular-nums;color:rgba(160,215,255,0.95);font-weight:600;">${c.pct.toFixed(2)}%</span>
+            <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${c.n.toLocaleString()}</span>
+          </div>
+        `).join('');
+      }
+      if (remainingN > 0) {
+        html += `
+          <div class="semHeatInspRow static" style="opacity:0.8;">
+            <span style="flex:1;font-style:italic;opacity:0.75;">Other (country-level)</span>
+            <span style="font-variant-numeric:tabular-nums;color:rgba(160,215,255,0.85);font-weight:600;">${remainingPct.toFixed(2)}%</span>
+            <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${remainingN.toLocaleString()}</span>
+          </div>
+        `;
+      }
+    }
+
+    body.innerHTML = html;
+    body.scrollTop = 0;
   }
 
   function escapeHtml(s) {
