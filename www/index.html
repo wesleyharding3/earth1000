@@ -23312,7 +23312,7 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Timeseries crossfade ───────────────────────────────────────────
-  const XFADE_MS = 480;
+  const XFADE_MS = 1100;
   let _xfadeRafId   = null;
   let _frameBufPrev = null;
   let _frameBufNext = null;
@@ -23370,14 +23370,21 @@ body.ticker-active .gTickerLabel {
         ? 4 * raw * raw * raw
         : 1 - Math.pow(-2 * raw + 2, 3) / 2;
 
+      // Proper linear crossfade via additive compositing:
+      // draw prev at (1-t) alpha, then add next at t alpha with
+      // 'lighter' so pixels sum to (1-t)*prev + t*next. This removes
+      // the mid-fade dim dip (which read as a strobe) and lets cells
+      // that exist only in prev fade out symmetrically.
       heatCtx.save();
       heatCtx.setTransform(1, 0, 0, 1, 0, 0);
       heatCtx.globalCompositeOperation = 'source-over';
       heatCtx.clearRect(0, 0, W, H);
       heatCtx.globalAlpha = 1 - t;
       heatCtx.drawImage(prev, 0, 0);
+      heatCtx.globalCompositeOperation = 'lighter';
       heatCtx.globalAlpha = t;
       heatCtx.drawImage(next, 0, 0);
+      heatCtx.globalCompositeOperation = 'source-over';
       heatCtx.globalAlpha = 1;
       heatCtx.restore();
       heatTexture.needsUpdate = true;
@@ -23571,7 +23578,7 @@ body.ticker-active .gTickerLabel {
       state.seriesIdx = (state.seriesIdx + 1) % state.series.buckets.length;
       tsSlider.value = state.seriesIdx;
       renderSeriesFrame();
-      state.playTimer = setTimeout(tick, 650);
+      state.playTimer = setTimeout(tick, 1200);
     };
     state.playTimer = setTimeout(tick, 650);
   }

@@ -22956,7 +22956,7 @@ body.ticker-active .gTickerLabel {
   // Keeps two offscreen buffers (prev + next) and interpolates between
   // them to produce a smooth blend between adjacent buckets. Eliminates
   // the strobe-light effect of the previous hard-swap approach.
-  const XFADE_MS = 480;
+  const XFADE_MS = 1100;
   let _xfadeRafId   = null;
   let _frameBufPrev = null;
   let _frameBufNext = null;
@@ -23021,14 +23021,24 @@ body.ticker-active .gTickerLabel {
         ? 4 * raw * raw * raw
         : 1 - Math.pow(-2 * raw + 2, 3) / 2;
 
+      // Proper linear crossfade via additive compositing:
+      //   1. Draw prev scaled to (1-t) alpha on a cleared canvas.
+      //   2. Add next scaled to t alpha using 'lighter' so both
+      //      layers sum pixel-wise -> (1-t)*prev + t*next for rgb AND
+      //      alpha. This removes the mid-fade dim dip AND lets cells
+      //      that exist only in prev fade out symmetrically. The old
+      //      source-over approach had a non-linear dip that read as a
+      //      strobe.
       heatCtx.save();
       heatCtx.setTransform(1, 0, 0, 1, 0, 0);
       heatCtx.globalCompositeOperation = 'source-over';
       heatCtx.clearRect(0, 0, W, H);
       heatCtx.globalAlpha = 1 - t;
       heatCtx.drawImage(prev, 0, 0);
+      heatCtx.globalCompositeOperation = 'lighter';
       heatCtx.globalAlpha = t;
       heatCtx.drawImage(next, 0, 0);
+      heatCtx.globalCompositeOperation = 'source-over';
       heatCtx.globalAlpha = 1;
       heatCtx.restore();
       heatTexture.needsUpdate = true;
@@ -23220,7 +23230,7 @@ body.ticker-active .gTickerLabel {
       state.seriesIdx = (state.seriesIdx + 1) % state.series.buckets.length;
       tsSlider.value = state.seriesIdx;
       renderSeriesFrame();
-      state.playTimer = setTimeout(tick, 650);
+      state.playTimer = setTimeout(tick, 1200);
     };
     state.playTimer = setTimeout(tick, 650);
   }
