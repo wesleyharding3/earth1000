@@ -278,8 +278,50 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   let created = 0, updated = 0;
   const refreshIds = new Set();
 
+  // Hard reject categories that don't belong on a geopolitical platform.
+  // Acts as a server-side safety net in case Claude ignores the prompt rules.
+  const ALLOWED_CATEGORIES = new Set([
+    'politics','economy','military','diplomacy','environment','technology'
+  ]);
+  // Title-level junk filter — catches the abstract/lifestyle/fluff titles
+  // the prompt is supposed to reject. Lower-cased substring match.
+  const JUNK_TITLE_PATTERNS = [
+    /\bstudent\b.*\b(financial|hardship|loan|debt)\b/i,
+    /\b(higher|secondary|primary)\s+education\b/i,
+    /\btourism\b/i,
+    /\brecreation\b/i,
+    /\bcultural\s+(event|festival|celebration)/i,
+    /\bfestival\b/i,
+    /\b(lifestyle|wellness|food|fashion|dating|shopping|retail)\b/i,
+    /\bentertainment\s+(coverage|news|industry)\b/i,
+    /\b(sports|entertainment|lifestyle|culture|arts)\s+and\s+(sports|entertainment|lifestyle|culture|arts|society|business)\b/i,
+    /\b(celebrity|movie|film|tv|streaming|album|concert)\b/i,
+    /\b(general|various|miscellaneous|other)\s+(coverage|news|topics|updates)\b/i,
+    /\bcoverage\s+(roundup|recap|digest|hub)\b/i,
+    /^\s*(general|various|miscellaneous|other)\b/i,
+  ];
+  function isJunkThreadDef(def) {
+    const cat = String(def.primary_category || '').toLowerCase();
+    if (cat && !ALLOWED_CATEGORIES.has(cat)) return `category=${cat}`;
+    const title = String(def.title || '');
+    for (const re of JUNK_TITLE_PATTERNS) {
+      if (re.test(title)) return `title-pattern:${re.source.slice(0,40)}`;
+    }
+    return null;
+  }
+
   for (const def of defs) {
     if (!def.article_ids?.length) continue;
+
+    // Only reject NEW threads — never block extensions of existing threads,
+    // since those decisions were already made.
+    if (!def.existing_thread_id) {
+      const reason = isJunkThreadDef(def);
+      if (reason) {
+        console.log(`   🚫 Rejected non-geopolitical thread "${def.title}" (${reason})`);
+        continue;
+      }
+    }
 
     try {
       if (def.existing_thread_id) {
@@ -486,7 +528,7 @@ Return ONLY valid JSON:
 {
   "title": "updated thread title",
   "description": "Two sentences describing the current state of the story and why it matters now.",
-  "primary_category": "politics|economy|military|diplomacy|environment|technology|society|sports|culture",
+  "primary_category": "politics|economy|military|diplomacy|environment|technology",
   "geographic_scope": "global|regional|local",
   "importance": 7,
   "keywords": ["array", "of", "5-10", "current", "keywords"]
