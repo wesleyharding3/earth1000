@@ -132,6 +132,10 @@ async function main() {
           [thread.id]
         );
       } else {
+        // Clear FK references first. segment_story_links points at briefing
+        // segments — those briefings already played, so dropping the link
+        // is harmless (the briefing rows themselves are not touched).
+        await pool.query(`DELETE FROM segment_story_links WHERE thread_id = $1`, [thread.id]);
         await pool.query(`DELETE FROM story_thread_articles WHERE thread_id = $1`, [thread.id]);
         await pool.query(`DELETE FROM story_threads WHERE id = $1`, [thread.id]);
       }
