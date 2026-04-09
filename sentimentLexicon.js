@@ -1466,4 +1466,87 @@ function scoreArticle(row) {
   return { score: s, matched: s !== null };
 }
 
-module.exports = { scoreText, scoreArticle, tokenize };
+/**
+ * extractSignalWords(text, lang) -> [{ word, weight, polarity, negated, intensified }]
+ *
+ * Returns every lexicon-matched token in the input text with its effective
+ * weight after negation/intensifier modifiers, in order of absolute magnitude
+ * (strongest first). Intended for UI highlighting of "why this article scored
+ * positive/negative" — not for numeric scoring (use scoreText for that).
+ *
+ * Only supports English + the other alt-lexicon languages via word boundary
+ * matching. CJK/substring languages are skipped (returns []) since highlight
+ * positions don't map cleanly to tokens there.
+ */
+function extractSignalWords(text, lang) {
+  if (!text) return [];
+  const code = (lang || 'en').toLowerCase().slice(0, 2);
+  if (SUBSTRING_LANGS.has(code)) return []; // CJK/Thai/Viet — skip highlighting
+
+  const tokens = tokenize(text);
+  if (!tokens.length) return [];
+
+  const altLex = (code !== 'en' && LEXICONS[code]) ? LEXICONS[code] : null;
+  const signals = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    let base = 0;
+    if (altLex) {
+      if (altLex[tok] !== undefined) base = altLex[tok];
+    } else {
+      if (NEGATIVE[tok] !== undefined)      base = NEGATIVE[tok];
+      else if (POSITIVE[tok] !== undefined) base = POSITIVE[tok];
+    }
+    if (base === 0) continue;
+
+    let w = base;
+    let intensified = false;
+    for (let k = 1; k <= 2 && i - k >= 0; k++) {
+      const pv = tokens[i - k];
+      if (INTENSIFIERS[pv] !== undefined) { w *= INTENSIFIERS[pv]; intensified = true; break; }
+      if (DAMPENERS[pv]    !== undefined) { w *= DAMPENERS[pv];    break; }
+    }
+
+    let negated = false;
+    for (let k = 1; k <= 3 && i - k >= 0; k++) {
+      const pv = tokens[i - k];
+      if (NEGATORS.has(pv) || pv.endsWith("n't")) { negated = true; break; }
+    }
+    if (negated) w = -w * 0.75;
+
+    signals.push({
+      word: tok,
+      weight: w,
+      polarity: w > 0 ? "pos" : "neg",
+      negated,
+      intensified
+    });
+  }
+
+  // Strongest first, capped to keep payload reasonable.
+  signals.sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+  return signals.slice(0, 20);
+}
+
+/**
+ * extractArticleSignals(row) -> { score, matched_words }
+ *
+ * Convenience wrapper: picks the best text (translated > original) and
+ * returns both the article's sentiment score AND the list of signal words
+ * that produced it, ready to ship to the frontend.
+ */
+function extractArticleSignals(row) {
+  if (!row) return { score: null, matched_words: [] };
+  const hasTranslation = !!(row.translated_title || row.translated_summary);
+  const title   = hasTranslation ? (row.translated_title   || '') : (row.title   || '');
+  const summary = hasTranslation ? (row.translated_summary || '') : (row.summary || '');
+  const combined = `${title}. ${summary}`.trim();
+  const lang = hasTranslation ? 'en' : (row.language || 'en');
+  return {
+    score: scoreText(combined, lang),
+    matched_words: extractSignalWords(combined, lang)
+  };
+}
+
+module.exports = { scoreText, scoreArticle, tokenize, extractSignalWords, extractArticleSignals };

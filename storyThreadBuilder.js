@@ -1,9 +1,19 @@
 /**
- * storyThreadBuilder.js
+ * storyThreadBuilder.js  —  BREAKING META-STORY BUILDER
  *
- * Nightly job — processes recent articles (last 48h) into story threads.
- * Uses SQL keyword co-occurrence for pre-clustering, then Claude Sonnet
- * to evaluate clusters, detect cross-cluster connections, and name threads.
+ * Runs every ~30 minutes and processes recent articles (last 48h) into
+ * breaking "meta-story" threads. Threads here are NOT umbrella arcs (that's
+ * what storyTimelineBuilder.js is for) — they are the tight, right-now view
+ * of what the world's press is COLLECTIVELY surfacing via cross-source
+ * signal convergence.
+ *
+ * Convergence rule: a story only persists as a thread if ≥3 distinct sources
+ * write about it within a 24h window. That's the signal that a story has
+ * broken from a local report into "everyone is talking about this now."
+ *
+ * Storage: writes to the existing `story_threads` table, using the new
+ * `breaking_signal_score`, `distinct_source_count`, and `last_breaking_ping_at`
+ * columns added in 20260409_story_timelines_and_thread_recast.sql.
  *
  * Usage:
  *   node storyThreadBuilder.js            — process last 48 hours
@@ -19,8 +29,10 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
 const CLAUDE_BATCH    = 30;    // articles per Claude call
-const MIN_CLUSTER     = 2;     // min articles to form a cluster
+const MIN_CLUSTER     = 2;     // min articles to form a cluster (Claude sees singletons too)
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
+const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
+const CONVERGENCE_WINDOW_HOURS = 24;
 const FRESH_PRIORITY_HOURS = 6;
 const FRESH_PRIORITY_LIMIT = 100;
 const TOTAL_ARTICLE_LIMIT  = 300;
@@ -203,14 +215,15 @@ async function evaluateWithClaude(articles, existingThreads) {
     cat:      t.primary_category
   }));
 
-  const prompt = `You are the editorial filter for a GEOPOLITICAL MONITORING PLATFORM. Your job is to identify STORY ARCS that are unfolding on the global political scale. You are NOT a general news aggregator. You are NOT a country directory. You are NOT a government-notices board. Most articles you see should NOT become threads — a thread has a high bar.
+  const prompt = `You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
 
-═══ WHAT A THREAD IS ═══
-A thread is a specific STORY ARC unfolding over time — a war, a political shift, a major disaster, an election with global stakes, a diplomatic crisis, a sanctions regime, a cross-border economic rupture. It has:
-  • Named actors doing named things
-  • Verifiable events with dates, casualties, outcomes
-  • Global or regional-with-global-scope significance
-  • Multi-source corroboration (a one-off report is not an arc)
+═══ BREAKING META-STORY DEFINITION ═══
+A thread here is a SHARP, RIGHT-NOW story that has broken from a single report into a multi-source moment:
+  • Multiple distinct outlets in the dataset are reporting on it
+  • Named actors doing named things, with verifiable events and dates
+  • It is less than 48 hours old in terms of the peak of its signal
+  • It is a CONCRETE event — not a broader arc. If you find yourself reaching for "ongoing tensions" or "long-running dispute," that belongs on Timelines, not here.
+  • A thread = the meta-story made from many stories. The picture only makes sense because multiple sources converge on it.
 
 A thread is NOT:
   • A summary of what's happening in one country ("Nepal Government Administrative Announcements")
@@ -591,6 +604,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         `, [def.importance, def.article_ids.length, def.keywords || [], threadId]);
 
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
+        await recomputeBreakingSignal(threadId);
         if (current) {
           existingThreadMap.set(threadId, {
             ...current,
@@ -620,6 +634,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
 
         const threadId = rows[0].id;
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
+        await recomputeBreakingSignal(threadId);
         existingThreadMap.set(Number(threadId), {
           id: Number(threadId),
           title: def.title,
@@ -663,6 +678,48 @@ async function insertArticles(threadId, articleIds, anchorId, importance, validI
       VALUES ($1, $2, $3, $4)
       ON CONFLICT DO NOTHING
     `, [threadId, numericId, score, numericId === Number(anchorId)]);
+  }
+}
+
+// Cross-source signal convergence: recompute distinct_source_count and
+// breaking_signal_score for a single thread. Score formula:
+//   breaking_signal_score = distinct_sources_24h * recency_factor * avg_base_priority
+// where recency_factor decays from 1.0 (fresh) toward 0.2 over 48h. Threads
+// with distinct_sources_24h < MIN_SOURCES_FOR_BREAKING still persist but
+// are flagged low-signal; the /api/threads/latest ranking weights by score.
+async function recomputeBreakingSignal(threadId) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) FILTER (
+          WHERE a.published_at > NOW() - INTERVAL '${CONVERGENCE_WINDOW_HOURS} hours'
+        )::int AS distinct_sources_24h,
+        COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS distinct_sources_total,
+        COALESCE(AVG(a.base_priority), 0) AS avg_bp,
+        COALESCE(MAX(a.base_priority), 0) AS max_bp,
+        MAX(a.published_at) AS last_pub
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      WHERE sta.thread_id = $1
+    `, [threadId]);
+    const r = rows[0] || {};
+    const distinct24 = Number(r.distinct_sources_24h || 0);
+    const distinctTotal = Number(r.distinct_sources_total || 0);
+    const avgBp = Number(r.avg_bp || 0);
+    const maxBp = Number(r.max_bp || 0);
+    const lastPub = r.last_pub ? new Date(r.last_pub).getTime() : Date.now();
+    const ageH = Math.max(0, (Date.now() - lastPub) / 3600000);
+    const recency = Math.max(0.2, Math.exp(-ageH / 36));
+    const score = Number((distinct24 * recency * (0.4 + avgBp + 0.25 * maxBp)).toFixed(4));
+    await pool.query(`
+      UPDATE story_threads
+      SET distinct_source_count  = $1,
+          breaking_signal_score  = $2,
+          last_breaking_ping_at  = CASE WHEN $1 >= ${MIN_SOURCES_FOR_BREAKING} THEN NOW() ELSE last_breaking_ping_at END
+      WHERE id = $3
+    `, [distinctTotal, score, threadId]);
+  } catch (e) {
+    console.warn(`   ⚠ recomputeBreakingSignal(${threadId}) failed: ${e.message}`);
   }
 }
 

@@ -16,6 +16,7 @@ const jwt = require("jsonwebtoken");
 const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
+const { extractArticleSignals } = require("./sentimentLexicon");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -490,8 +491,9 @@ app.get("/api/news/city/:cityId", async (req, res) => {
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
+    const ambient = req.query.ambient === "1" || req.query.ambient === "true";
 
-    const ranked = await getRankedCityArticles(parseInt(req.params.cityId), { limit, offset, tagId });
+    const ranked = await getRankedCityArticles(parseInt(req.params.cityId), { limit, offset, tagId, ambient });
     res.json(ranked);
   } catch (err) {
     console.error("City news error:", err.message);
@@ -570,8 +572,9 @@ app.get("/api/news/country/:countryId", async (req, res) => {
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
+    const ambient = req.query.ambient === "1" || req.query.ambient === "true";
 
-    const ranked = await getRankedArticles(parseInt(req.params.countryId), { limit, offset, tagId });
+    const ranked = await getRankedArticles(parseInt(req.params.countryId), { limit, offset, tagId, ambient });
     res.json(ranked);
   } catch (err) {
     console.error("Country news error:", err.message);
@@ -2047,6 +2050,417 @@ app.get("/api/articles/by-thread", async (req, res) => {
 
 // GET /api/threads/latest — top story threads with hero image from highest-scored article
 //
+// ═══════════════════════════════════════════════════════════════════════════
+// TIMELINES — umbrella arcs (broad, 7-day, parabolic-weighted)
+// Mirrors /api/threads/latest in shape so the frontend can render timeline
+// cards with the same card component. See storyTimelineBuilder.js.
+// ═══════════════════════════════════════════════════════════════════════════
+app.get("/api/timelines/latest", async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const _cacheKey = `timelines/latest:${limit}`;
+    const _cached = await ttlCached(_cacheKey, 30_000, async () => {
+      const { rows: timelines } = await pool.query(`
+        SELECT
+          t.id AS timeline_id, t.title, t.description, t.scope,
+          t.primary_category, t.geographic_scope, t.importance, t.keywords,
+          t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
+          t.historical_anchors, t.status, t.last_updated_at,
+          COALESCE((
+            SELECT COUNT(DISTINCT a.country_id)
+            FROM story_timeline_articles sta
+            JOIN news_articles a ON a.id = sta.article_id
+            WHERE sta.timeline_id = t.id AND a.country_id IS NOT NULL
+          ), 0)::int AS country_count
+        FROM story_timelines t
+        WHERE t.status IN ('active','cooling','dormant')
+          AND t.article_count >= 2
+        ORDER BY
+          CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
+          t.importance DESC,
+          t.parabolic_weight_sum DESC,
+          t.last_updated_at DESC NULLS LAST
+        LIMIT $1
+      `, [limit]);
+
+      if (!timelines.length) return [];
+
+      // Hero images: prefer scraped publisher image on the highest-weighted article
+      const timelineIds = timelines.map(t => t.timeline_id);
+      const { rows: heroes } = await pool.query(`
+        SELECT DISTINCT ON (sta.timeline_id)
+          sta.timeline_id,
+          COALESCE(a.image_url, img_a.public_url) AS hero_image_url,
+          img_a.public_url AS hero_catalog_image_url,
+          COALESCE(ns.name, ys.name) AS hero_source_name,
+          co.iso_code AS hero_iso_code
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.timeline_id = ANY($1)
+          AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
+        ORDER BY
+          sta.timeline_id,
+          (a.image_url IS NOT NULL AND a.image_url <> '') DESC,
+          sta.parabolic_weight DESC,
+          a.published_at DESC
+      `, [timelineIds]);
+
+      const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
+      return timelines.map(t => {
+        const h = heroMap.get(t.timeline_id);
+        return {
+          ...t,
+          // Frontend compatibility: render timeline cards via the same grid
+          // code that renders thread cards. Provide `thread_id` alias too.
+          thread_id: t.timeline_id,
+          hero_image_url: h?.hero_image_url || null,
+          hero_catalog_image_url: h?.hero_catalog_image_url || null,
+          hero_source_name: h?.hero_source_name || null,
+          hero_iso_code: h?.hero_iso_code || null
+        };
+      });
+    });
+    res.json(_cached);
+  } catch (err) {
+    console.error("[timelines/latest]", err.message);
+    res.status(500).json({ error: "Failed to fetch timelines", detail: err.message });
+  }
+});
+
+// GET /api/timelines/:id/articles — articles in a timeline, ordered by weight
+app.get("/api/timelines/:id/articles", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+    const { rows } = await pool.query(`
+      SELECT
+        a.id,
+        COALESCE(a.translated_title, a.title) AS title,
+        a.title AS original_title,
+        COALESCE(a.translated_summary, a.summary) AS summary,
+        a.published_at,
+        a.url, a.article_url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        co.iso_code, co.name AS country_name, ci.name AS city_name,
+        a.media_type, a.video_id,
+        sta.parabolic_weight, sta.is_anchor
+      FROM story_timeline_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities    ci ON ci.id = a.city_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      WHERE sta.timeline_id = $1
+      ORDER BY sta.parabolic_weight DESC, a.published_at DESC
+      LIMIT 200
+    `, [timelineId]);
+    res.json({ articles: rows });
+  } catch (err) {
+    console.error("[timelines/articles]", err.message);
+    res.status(500).json({ error: "Failed to fetch timeline articles" });
+  }
+});
+
+// GET /api/flows/timeline/:id — flow arcs for a timeline (same shape as
+// /api/flows/thread/:id so the existing __flowCreateArc can render it).
+app.get("/api/flows/timeline/:id", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+
+    const { rows } = await pool.query(`
+      WITH tl_flows AS (
+        SELECT
+          COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
+          COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
+          COALESCE(src_city.name, src_co.name)           AS src_place,
+          CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
+          CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+          src_co.iso_code AS src_iso,
+          COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
+          COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
+          COALESCE(dst_city.name, dst_co.name)           AS dst_place,
+          CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
+          CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
+          dst_co.iso_code AS dst_iso
+        FROM story_timeline_articles sta
+        JOIN news_articles a        ON a.id = sta.article_id
+        JOIN article_locations al   ON al.article_id = a.id
+        JOIN countries src_co       ON src_co.id = a.country_id
+        JOIN countries dst_co       ON dst_co.id = al.country_id
+        LEFT JOIN cities src_city   ON src_city.id = a.city_id
+        LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
+        WHERE sta.timeline_id = $1
+          AND al.routing_type IN ('content', 'source')
+      )
+      SELECT
+        src_lat, src_lon, src_place, src_id, src_type, src_iso,
+        dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
+        COUNT(*) AS flow_count
+      FROM tl_flows
+      GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
+               dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
+      ORDER BY flow_count DESC
+      LIMIT 100
+    `, [timelineId]);
+
+    if (!rows.length) return res.json({ flows: [] });
+
+    const maxCount = parseInt(rows[0].flow_count) || 1;
+    const flows = rows.map(r => ({
+      src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
+             place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso },
+      dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
+             place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso },
+      count: parseInt(r.flow_count)
+    }));
+
+    res.json({ flows, maxCount });
+  } catch (err) {
+    console.error("[flows/timeline]", err.message);
+    res.status(500).json({ error: "Failed to fetch timeline flows", detail: err.message });
+  }
+});
+
+// GET /api/flows/timeline/:id/route — articles for one src→dst on a timeline
+app.get("/api/flows/timeline/:id/route", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    const srcId = parseInt(req.query.src_id, 10);
+    const dstId = parseInt(req.query.dst_id, 10);
+    const srcType = req.query.src_type || "country";
+    const dstType = req.query.dst_type || "country";
+    if (!timelineId || !srcId || !dstId) {
+      return res.status(400).json({ error: "timeline_id, src_id, dst_id required" });
+    }
+    const srcJoin = srcType === "city" ? "a.city_id" : "a.country_id";
+    const dstJoin = dstType === "city" ? "al.city_id" : "al.country_id";
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        COALESCE(a.translated_title, a.title) AS title,
+        a.title AS original_title,
+        COALESCE(a.translated_summary, a.summary) AS summary,
+        a.published_at, a.article_url,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        a.media_type, a.video_id,
+        src_co.iso_code AS iso_code,
+        src_co.name AS country_name, src_city.name AS city_name
+      FROM story_timeline_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      JOIN article_locations al ON al.article_id = a.id
+      JOIN countries src_co ON src_co.id = a.country_id
+      LEFT JOIN cities src_city ON src_city.id = a.city_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      WHERE sta.timeline_id = $1
+        AND ${srcJoin} = $2
+        AND ${dstJoin} = $3
+        AND al.routing_type IN ('content', 'source')
+      ORDER BY a.id, a.published_at DESC
+      LIMIT 50
+    `, [timelineId, srcId, dstId]);
+    res.json({ articles: rows });
+  } catch (err) {
+    console.error("[flows/timeline/route]", err.message);
+    res.status(500).json({ error: "Failed to fetch timeline route articles" });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/sentiment/country/:iso
+//
+// Feeds the Regional Sentiment interpanel. Returns the last-7-day corpus of
+// articles for the given country with their sentiment score AND the signal
+// words that produced the score (computed live from sentimentLexicon). Each
+// article is ranked positive → negative so the UI can render a gradient of
+// mood from tone at the top to doom at the bottom.
+app.get("/api/sentiment/country/:iso", async (req, res) => {
+  try {
+    const iso = (req.params.iso || "").trim().toUpperCase();
+    if (!iso) return res.status(400).json({ error: "iso required" });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 150, 300);
+    const days  = Math.min(parseInt(req.query.days, 10)  || 7,   30);
+
+    const { rows } = await pool.query(`
+      SELECT
+        a.id,
+        COALESCE(a.translated_title, a.title)     AS title,
+        a.title                                    AS original_title,
+        COALESCE(a.translated_summary, a.summary) AS summary,
+        a.translated_title, a.translated_summary,
+        a.language,
+        a.published_at, a.article_url, a.url,
+        COALESCE(a.image_url, img_a.public_url)   AS image_url,
+        COALESCE(ns.name, ys.name)                AS source_name,
+        COALESCE(ns.bias, 'unknown')              AS source_bias,
+        a.media_type, a.video_id,
+        co.iso_code, co.name AS country_name,
+        ci.name AS city_name,
+        a.sentiment_score
+      FROM news_articles a
+      JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities ci ON ci.id = a.city_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      WHERE co.iso_code = $1
+        AND a.published_at > NOW() - ($2 || ' days')::interval
+        AND a.sentiment_score IS NOT NULL
+      ORDER BY a.sentiment_score DESC NULLS LAST, a.published_at DESC
+      LIMIT $3
+    `, [iso, String(days), limit]);
+
+    // Attach signal words to each article on the fly.
+    const articles = rows.map(r => {
+      const { matched_words } = extractArticleSignals(r);
+      // Don't ship raw translated_* fields back — client only needs final
+      // title/summary and the matched_words list for highlighting.
+      const { translated_title, translated_summary, language, ...rest } = r;
+      return { ...rest, matched_words };
+    });
+
+    res.json({ iso_code: iso, count: articles.length, articles });
+  } catch (err) {
+    console.error("[sentiment/country]", err.message);
+    res.status(500).json({ error: "Failed to fetch country sentiment", detail: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/keywords/:keyword/references
+//
+// Feeds the Keyword → References interpanel. Returns every article that
+// mentions the given keyword (case-insensitive match against title +
+// summary + translated variants + article_keywords join), ranked by
+// base_priority DESC then published_at DESC. This mirrors the sentiment
+// interpanel's list shape so the same front-end renderer can handle both.
+app.get("/api/keywords/:keyword/references", async (req, res) => {
+  try {
+    const keyword = (req.params.keyword || "").trim();
+    if (!keyword) return res.status(400).json({ error: "keyword required" });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 150, 300);
+    const days  = Math.min(parseInt(req.query.days, 10)  || 14,  60);
+    const pat   = `%${keyword.toLowerCase()}%`;
+
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (a.id)
+        a.id,
+        COALESCE(a.translated_title, a.title)     AS title,
+        a.title                                    AS original_title,
+        COALESCE(a.translated_summary, a.summary) AS summary,
+        a.published_at, a.article_url, a.url,
+        COALESCE(a.image_url, img_a.public_url)   AS image_url,
+        COALESCE(ns.name, ys.name)                AS source_name,
+        COALESCE(ns.bias, 'unknown')              AS source_bias,
+        a.media_type, a.video_id,
+        co.iso_code, co.name AS country_name,
+        ci.name AS city_name,
+        a.base_priority,
+        a.sentiment_score
+      FROM news_articles a
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN cities ci ON ci.id = a.city_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      WHERE a.published_at > NOW() - ($2 || ' days')::interval
+        AND (
+          LOWER(a.title)              LIKE $1
+          OR LOWER(a.summary)         LIKE $1
+          OR LOWER(COALESCE(a.translated_title,  '')) LIKE $1
+          OR LOWER(COALESCE(a.translated_summary,'')) LIKE $1
+        )
+      ORDER BY a.id, a.base_priority DESC NULLS LAST, a.published_at DESC
+      LIMIT $3
+    `, [pat, String(days), limit]);
+
+    // Second-pass sort: by score, since DISTINCT ON forced id ordering.
+    rows.sort((a, b) => {
+      const ap = a.base_priority || 0;
+      const bp = b.base_priority || 0;
+      if (bp !== ap) return bp - ap;
+      return new Date(b.published_at) - new Date(a.published_at);
+    });
+
+    res.json({ keyword, count: rows.length, articles: rows });
+  } catch (err) {
+    console.error("[keywords/references]", err.message);
+    res.status(500).json({ error: "Failed to fetch keyword references", detail: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/threads/by-country/:iso
+//
+// Feeds the sentiment/coverage interpanel. Returns every active or cooling
+// thread that has at least one article in the given country within the
+// lookback window, ranked by importance (or article count). Shaped to match
+// the bar-list contract so it can be merged with articles/videos in the
+// front-end interpanel renderer.
+app.get("/api/threads/by-country/:iso", async (req, res) => {
+  try {
+    const iso = (req.params.iso || "").trim().toUpperCase();
+    if (!iso) return res.status(400).json({ error: "iso required" });
+    const limit = Math.min(parseInt(req.query.limit, 10) || 40, 100);
+    const days  = Math.min(parseInt(req.query.days,  10) || 7,  30);
+
+    const { rows } = await pool.query(`
+      SELECT
+        t.id                    AS thread_id,
+        t.title,
+        t.description,
+        t.importance,
+        t.article_count,
+        t.status,
+        t.primary_category,
+        t.first_seen_at,
+        t.last_updated_at,
+        t.breaking_signal_score,
+        t.distinct_source_count,
+        COUNT(DISTINCT a.id) AS in_country_articles,
+        AVG(a.sentiment_score) FILTER (WHERE a.sentiment_score IS NOT NULL)
+                             AS avg_sentiment,
+        MAX(a.published_at) FILTER (WHERE a.country_id = co.id)
+                             AS last_in_country_at
+      FROM story_threads t
+      JOIN story_thread_articles sta ON sta.thread_id = t.id
+      JOIN news_articles a           ON a.id = sta.article_id
+      JOIN countries co              ON co.id = a.country_id
+      WHERE co.iso_code = $1
+        AND a.published_at > NOW() - ($2 || ' days')::interval
+        AND t.status IN ('active', 'cooling')
+        AND COALESCE(t.article_count, 0) > 0
+      GROUP BY t.id, co.id
+      ORDER BY t.importance DESC NULLS LAST,
+               COUNT(DISTINCT a.id) DESC,
+               t.last_updated_at DESC
+      LIMIT $3
+    `, [iso, String(days), limit]);
+
+    res.json({ iso_code: iso, count: rows.length, threads: rows });
+  } catch (err) {
+    console.error("[threads/by-country]", err.message);
+    res.status(500).json({ error: "Failed to fetch country threads", detail: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Returns threads in ALL three live lifecycle states:
 //   active   — currently receiving new articles
 //   cooling  — no new articles in 14d, but still browsable
@@ -3976,6 +4390,12 @@ app.get("/api/news/region/:regionId", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const regionId = parseInt(req.params.regionId);
     const feed = req.query.feed || "local"; // "local" or "global"
+    const ambient = req.query.ambient === "1" || req.query.ambient === "true";
+    // Ambient gate: tier 2/3/4 sources + base_priority >= 2.0. Appended to both
+    // the local/global branches below via an inline CTE-style filter.
+    const ambientFilter = ambient
+      ? `AND COALESCE(ns.fetch_tier, 1) IN (2, 3, 4) AND COALESCE(a.base_priority, 0) >= 2.0`
+      : "";
 
     let query;
     if (feed === "global") {
@@ -4015,6 +4435,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         WHERE ci_mention.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
+          ${ambientFilter}
         ORDER BY a.id, a.published_at DESC
         ${limit ? "LIMIT $2" : ""}
         OFFSET $${limit ? 3 : 2}
@@ -4055,6 +4476,7 @@ app.get("/api/news/region/:regionId", async (req, res) => {
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         WHERE ci.region_id = $1
           AND a.published_at > NOW() - INTERVAL '7 days'
+          ${ambientFilter}
         ORDER BY a.published_at DESC
         ${limit ? "LIMIT $2" : ""}
         OFFSET $${limit ? 3 : 2}
@@ -4294,6 +4716,34 @@ function runKeywordCron(label = "") {
 
 setTimeout(() => runKeywordCron(" startup"), 60_000);           // ~1 min after boot
 setInterval(() => runKeywordCron(), 4 * 60 * 60 * 1000).unref?.(); // every 4h
+
+// ── Story builder automation ─────────────────────────────────────────────
+// Both builders call pool.end() when done, so they must run as child
+// processes. Threads (48h breaking meta-story) run every 30 minutes so
+// cross-source convergence is fresh. Timelines (7d umbrella arcs) run
+// every 2h since they're slower-moving.
+function spawnBuilder(scriptName, label) {
+  const tag = `[${label}]`;
+  console.log(`${tag} starting...`);
+  const proc = spawn(process.execPath, [path.join(__dirname, scriptName)], {
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  proc.stdout.on("data", d => process.stdout.write(d));
+  proc.stderr.on("data", d => process.stderr.write(d));
+  proc.on("exit", code => console.log(`${tag} exited (code ${code})`));
+  proc.on("error", err => console.error(`${tag} spawn error: ${err.message}`));
+}
+
+// Breaking threads — 48h window, cross-source convergence. Staggered 3 min
+// after boot so keywordCron gets first dibs on the DB pool.
+setTimeout(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder startup"), 3 * 60_000);
+setInterval(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder"),   30 * 60 * 1000).unref?.(); // every 30m
+
+// Umbrella timelines — 7d window, parabolic weighting. Staggered 6 min
+// after boot so it doesn't collide with threadBuilder startup.
+setTimeout(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder startup"), 6 * 60_000);
+setInterval(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder"), 2 * 60 * 60 * 1000).unref?.(); // every 2h
 
 startArticleListener().catch(console.error);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
