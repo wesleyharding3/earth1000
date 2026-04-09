@@ -10400,6 +10400,7 @@ function computeCityTiers(cities) {
 
       let touchStartX = 0, touchStartY = 0;
       let touchThresholdMet = false;
+      let touchMoved = false;  // ANY pixel of motion since touchstart
       
       window.addEventListener("touchstart", e => {
         if (e.touches.length !== 1) return;
@@ -10422,6 +10423,7 @@ function computeCityTiers(cities) {
         touchDragging = true;
         touchTapMoved = false;
         touchThresholdMet = false;  // Reset threshold flag
+        touchMoved = false;         // reset — track ANY movement during this touch
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
         touchPrevX = e.touches[0].clientX;
@@ -10430,7 +10432,12 @@ function computeCityTiers(cities) {
 
       window.addEventListener("touchmove", e => {
         if (!touchDragging || e.touches.length !== 1) return;
-        
+
+        // Record ANY pixel of motion so touchend can stamp the cooloff
+        // even when the drag never crossed TOUCH_DRAG_THRESHOLD.
+        const _tx = e.touches[0].clientX, _ty = e.touches[0].clientY;
+        if (_tx !== touchStartX || _ty !== touchStartY) touchMoved = true;
+
         // Check if we've moved enough to be considered a real drag (not tap jitter).
         // Use a wider threshold for touch — thumbs naturally drift 3-5px on landing.
         if (!touchThresholdMet) {
@@ -10469,7 +10476,9 @@ function computeCityTiers(cities) {
       }, { passive: true });
 
       window.addEventListener("touchend", () => {
-        if (touchThresholdMet) touchDragEndTime = Date.now();
+        // Stamp cooloff on ANY movement so a short rotation that lands
+        // the fingertip over a node can't commit to selecting it.
+        if (touchMoved || touchThresholdMet) touchDragEndTime = Date.now();
         touchDragging = false;
       });
 
@@ -12082,7 +12091,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // If a touch drag just ended, suppress the synthetic click at the release
         // point. Long cooloff (1200ms) so a fast drag+release can't accidentally
         // select a node beneath the release point.
-        if (Date.now() - touchDragEndTime < 1200) return;
+        if (Date.now() - touchDragEndTime < 2400) return;
 
         // Skip this handler when flow mode is active, or when card-
         // triggered flow arcs are on screen (suppression flag).
@@ -12193,7 +12202,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
         // If a drag just ended, suppress node selection for the cooloff window
-        if (Date.now() - touchDragEndTime < 1200) return;
+        if (Date.now() - touchDragEndTime < 2400) return;
         // Don't start a new node selection if the touch lands inside the
         // settings sidebar — controls there must never trigger globe picks.
         const _tt = event.touches[0];
@@ -17324,8 +17333,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
       const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+      const heatBtn = `<button class="cardHeatmapBtn" onclick="event.stopPropagation();window.__semHeatOpen?.()" title="Open sentiment heatmap on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3.5 3 14.5 0 18"/><path d="M12 3c-3 3.5-3 14.5 0 18"/><circle cx="8" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="16" cy="14" r="1.3" fill="currentColor" stroke="none"/><circle cx="10" cy="16" r="1.0" fill="currentColor" stroke="none"/></svg></button>`;
       return `
       <div style="position:relative">
+        ${heatBtn}
         ${flowArcBtn}
         <div class="nfCard" onclick="openFeedArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
           ${img}
