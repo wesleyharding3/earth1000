@@ -2765,20 +2765,177 @@ body.ticker-active #flowControls {
   position: fixed;
   z-index: 650;
   display: none;
+  flex-direction: column;
   background: rgba(8,12,24,0.88);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(100,200,255,0.25);
   border-radius: 12px;
   padding: 12px 14px;
-  max-width: 280px;
+  width: 320px;
+  max-width: 92vw;
+  max-height: 68vh;
+  overflow: hidden;
   pointer-events: all;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   animation: flowInfoIn 0.18s ease-out;
 }
 @keyframes flowInfoIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-#flowArcInfoCard.visible { display: block; }
+#flowArcInfoCard.visible { display: flex; }
+.faiHead { cursor: pointer; padding-right: 18px; }
+.faiHead:hover .faiExpandHint { color: rgba(100,200,255,0.85); }
+#flowArcInfoCard.expanded .faiHead { border-bottom: 1px dashed rgba(255,255,255,0.12); padding-bottom: 8px; margin-bottom: 8px; }
+#flowArcInfoCard.expanded .faiExpandHint::after { content: " (click to collapse)"; }
+.faiExpandHint {
+  font-size: 9px;
+  color: rgba(100,200,255,0.55);
+  letter-spacing: 0.05em;
+  margin-top: 4px;
+  text-transform: uppercase;
+  transition: color 0.15s;
+}
+.faiArcList { display: none; flex-direction: column; gap: 4px; margin-top: 8px; }
+#flowArcInfoCard.fan .faiArcList { display: flex; }
+#flowArcInfoCard.fan .faiHead .faiTitle,
+#flowArcInfoCard.fan .faiHead .faiExpandHint { display: none; }
+.faiArcRow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border-left: 3px solid rgba(100,200,255,0.55);
+  cursor: pointer; transition: background 0.12s;
+}
+.faiArcRow:hover { background: rgba(100,200,255,0.12); }
+.faiArcRow .faiArcLabel {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: rgba(255,255,255,0.88);
+}
+.faiArcRow .faiArcCount {
+  flex: 0 0 auto;
+  font-size: 9.5px; opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.faiBody {
+  display: none;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 52vh;
+}
+#flowArcInfoCard.expanded .faiBody { display: block; }
+#flowArcInfoCard .sigBarList { margin-top: 0; padding-top: 0; border-top: none; gap: 6px; }
+
+/* ── Inside the flow arc info card, the expanded bar row is rendered in
+      the full "articleCard" style of the news briefing panel — one whole
+      article filling the micro panel's body area: image on top, amber
+      source pill, full title (no ellipsis), full summary, footer w/ link. */
+#flowArcInfoCard .sigBarRow {
+  max-height: none;
+  overflow: visible;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(255,255,255,0.09);
+  border-left: 3px solid var(--sb-color, rgba(255,255,255,0.25));
+  border-radius: 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.12s ease;
+}
+#flowArcInfoCard .sigBarRow:hover {
+  background: rgba(255,255,255,0.065);
+  border-color: rgba(255,200,140,0.32);
+  transform: translateY(-1px);
+}
+/* Collapsed bar view (multi-item route with >1 article in the bar list) */
+#flowArcInfoCard .sigBarRow:not(.expanded) {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  max-height: 30px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+#flowArcInfoCard .sigBarRow:not(.expanded) .sigBarExpanded { display: none; }
+
+/* Expanded = news-briefing articleCard layout */
+#flowArcInfoCard .sigBarRow.expanded {
+  padding: 0;
+  box-shadow: none;
+  background: rgba(255,255,255,0.04);
+  overflow: hidden;
+}
+#flowArcInfoCard .sigBarRow.expanded .sigBarType,
+#flowArcInfoCard .sigBarRow.expanded .sigBarScore,
+#flowArcInfoCard .sigBarRow.expanded .sigBarSource {
+  display: none;  /* absorbed by the meta pill + footer below */
+}
+#flowArcInfoCard .sigBarRow.expanded .sigBarExpanded {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+}
+#flowArcInfoCard .sigBarRow.expanded .sigBarImg {
+  order: 0;
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 0;
+  margin: 0;
+  display: block;
+  flex-shrink: 0;
+}
+#flowArcInfoCard .sigBarRow.expanded .sigBarMeta {
+  order: 1;
+  padding: 10px 12px 4px;
+  margin: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,180,80,0.85);
+  opacity: 1;
+}
+/* Title is a direct child of .sigBarRow, not of .sigBarExpanded, so we
+   can't interleave it between image and summary via CSS order alone —
+   flex order only works among siblings of the same container. We put it
+   at the top of the card (above the image) instead, which reads cleanly
+   in a micro panel and matches the caption-over-hero variant used in
+   several briefing layouts. */
+#flowArcInfoCard .sigBarRow.expanded > .sigBarTitle {
+  order: 0;
+  padding: 12px 12px 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: rgba(255,255,255,0.95);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  display: block;
+}
+#flowArcInfoCard .sigBarRow.expanded > .sigBarExpanded { order: 1; }
+/* Summary text lives in the last non-meta div inside .sigBarExpanded */
+#flowArcInfoCard .sigBarRow.expanded .sigBarExpanded > div:not(.sigBarMeta) {
+  order: 3;
+  padding: 0 12px 8px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.72);
+}
+#flowArcInfoCard .sigBarRow.expanded .sigBarOpen {
+  order: 4;
+  margin: 4px 12px 12px;
+  align-self: flex-start;
+}
 .faiRoute {
   font-size: 10px;
   font-weight: 600;
@@ -7822,12 +7979,21 @@ window.sourceBiasBadgeHTML = function(bias) {
   <!-- Country polygon disambiguation fan -->
   <div id="countryFan"></div>
 
-  <!-- Flow arc click info card -->
+  <!-- Flow arc click info card — expandable micro panel -->
   <div id="flowArcInfoCard">
     <button class="faiClose" onclick="document.getElementById('flowArcInfoCard').classList.remove('visible')">&times;</button>
-    <div class="faiRoute" id="faiRoute"></div>
-    <div class="faiTitle" id="faiTitle"></div>
-    <div class="faiMeta" id="faiMeta"></div>
+    <div class="faiHead" id="faiHead">
+      <div class="faiRoute" id="faiRoute"></div>
+      <div class="faiTitle" id="faiTitle"></div>
+      <div class="faiMeta" id="faiMeta"></div>
+      <div class="faiExpandHint" id="faiExpandHint">click to view articles ↓</div>
+    </div>
+    <!-- Fan list (shown when multiple arcs were within click radius) -->
+    <div class="faiArcList" id="faiArcList"></div>
+    <!-- Article bar list (shown when expanded on a single arc) -->
+    <div class="faiBody" id="faiBody">
+      <div class="sigBarList" id="faiBarList"></div>
+    </div>
   </div>
 
   <!-- Back button for flow arc card navigation -->
@@ -15287,7 +15453,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (flow.count) {
           // Aggregate mode tooltip
           ftTitle.textContent = `${flow.count.toLocaleString()} articles`;
-          ftMeta.textContent  = `Avg sentiment: ${flow.avgSentiment?.toFixed(2) || "—"}`;
+          ftMeta.textContent  = '';
           ftRoute.textContent = `${flow.src.place} → ${flow.dst.place}`;
         } else {
           // Individual mode tooltip
@@ -15306,7 +15472,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     renderer.domElement.style.cursor = hit ? 'pointer' : '';
   });
 
-  /* Click on flow arc to open article detail */
+  /* Click on flow arc(s). The click radius is deliberately generous so that
+     clustered arcs at the same endpoint (e.g. an article/thread panel routed
+     to its flow destinations) are all catchable from a single tap. When
+     more than one arc falls inside the click radius, the info card
+     disambiguates with a fan list. Otherwise the single hit opens the
+     expandable article bar-list in place. */
+  const FLOW_CLICK_RADIUS_PX = 64;   // was 28 — widened for fan-out
+  const FLOW_MAX_FAN         = 8;
+
   function handleFlowArcClick(e) {
     if (!flowModeOpen || window.__currentPage !== 1) return;
 
@@ -15315,103 +15489,302 @@ const settingsToggle     = document.getElementById("settingsToggle");
     mousePosFlow.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     raycasterFlow.setFromCamera(mousePosFlow, camera);
 
-    // Try raycaster first, then screen-space fallback
-    let hitArc = null;
+    const clickX = e.clientX, clickY = e.clientY;
+    // Collect every candidate arc within the click radius. Direct raycaster
+    // hits land at dist=0 so they always rank first.
+    const candidates = new Map(); // arc -> dist
+    const considerArc = (arc, dist) => {
+      if (!arc || !arc.flow) return;
+      const prev = candidates.get(arc);
+      if (prev == null || dist < prev) candidates.set(arc, dist);
+    };
 
     for (const arc of arcObjects) {
+      if (!arc.flow) continue;
       arc.mesh.updateMatrixWorld(true);
       if (!arc.mesh.geometry.boundingSphere) arc.mesh.geometry.computeBoundingSphere();
       const xs = raycasterFlow.intersectObject(arc.mesh);
-      if (xs.length && arc.flow) { hitArc = arc; break; }
-    }
-
-    // Screen-space fallback: project arc midpoints and find closest to click
-    if (!hitArc && arcObjects.length) {
-      let bestDist = 28; // max pixel distance threshold
-      const clickX = e.clientX, clickY = e.clientY;
-      for (const arc of arcObjects) {
-        if (!arc.flow || !arc.curve) continue;
-        // Sample 5 points along the arc
-        for (let t = 0.15; t <= 0.85; t += 0.175) {
-          const pt = arc.curve.getPoint(t);
-          const v = pt.clone();
-          v.applyMatrix4(arc.mesh.matrixWorld);
-          v.project(camera);
-          const sx = (v.x * 0.5 + 0.5) * rect.width + rect.left;
-          const sy = (-v.y * 0.5 + 0.5) * rect.height + rect.top;
-          const d = Math.hypot(sx - clickX, sy - clickY);
-          if (d < bestDist) { bestDist = d; hitArc = arc; }
-        }
+      if (xs.length) { considerArc(arc, 0); continue; }
+      if (!arc.curve) continue;
+      let best = Infinity;
+      // Denser sampling than before so the wider radius isn't starved.
+      for (let t = 0.08; t <= 0.92; t += 0.08) {
+        const pt = arc.curve.getPoint(t);
+        const v = pt.clone();
+        v.applyMatrix4(arc.mesh.matrixWorld);
+        v.project(camera);
+        const sx = (v.x * 0.5 + 0.5) * rect.width + rect.left;
+        const sy = (-v.y * 0.5 + 0.5) * rect.height + rect.top;
+        const d = Math.hypot(sx - clickX, sy - clickY);
+        if (d < best) best = d;
       }
+      if (best <= FLOW_CLICK_RADIUS_PX) considerArc(arc, best);
     }
 
-    if (!hitArc) return;
-    const flow = hitArc.flow;
+    if (!candidates.size) return;
+
+    // Sort by distance, cap at FLOW_MAX_FAN.
+    const ordered = [...candidates.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, FLOW_MAX_FAN)
+      .map(([arc]) => arc);
+
     playSFX(SFX.article);
+    showFlowArcCard(ordered, e);
+  }
+  window.addEventListener("click", handleFlowArcClick);
 
-    // Card-triggered flow arcs: open article detail or route article panel
-    if (flow._cardTriggered) {
-      // Hide any existing info card
-      document.getElementById("flowArcInfoCard")?.classList.remove("visible");
+  /* ─── Expandable flow arc info card ───────────────────────────────────
+     Drives the #flowArcInfoCard micro panel. Supports:
+       • Fan list when multiple arcs are in click range
+       • Click-to-expand into an inline article bar list (reuses the same
+         __renderSignalBarList renderer as the sentiment/keyword interpanels)
+       • Clicking a bar opens the article panel via openArticleDetail
+     ─────────────────────────────────────────────────────────────────── */
+  function showFlowArcCard(arcs, e) {
+    const infoCard = document.getElementById("flowArcInfoCard");
+    if (!infoCard || !arcs || !arcs.length) return;
 
-      if (flow._sourceType === "article" && flow._article) {
-        // Single article: open article detail directly
-        if (window.openArticleDetail) {
-          window.openArticleDetail(flow._article, { type: 'flow' });
-        }
-      } else if (flow._sourceType === "thread" && flow._threadId) {
-        // Thread: show info card with route + article count, clicking opens route panel
-        if (flow.count > 1) {
-          // Multiple articles: open aggregate route panel for this thread route
-          openCardTriggeredRoutePanel(flow);
-        } else {
-          // Single article on this route: show info card
-          const infoCard = document.getElementById("flowArcInfoCard");
-          if (infoCard) {
-            document.getElementById("faiRoute").textContent = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
-            document.getElementById("faiTitle").textContent = flow.title || "1 article on this route";
-            const datePart = flow.publishedAt ? new Date(flow.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
-            document.getElementById("faiMeta").textContent = datePart;
-            infoCard.style.left = (e.clientX + 14) + "px";
-            infoCard.style.top = (e.clientY - 10) + "px";
-            requestAnimationFrame(() => {
-              const r = infoCard.getBoundingClientRect();
-              if (r.right > window.innerWidth - 8) infoCard.style.left = (window.innerWidth - r.width - 8) + "px";
-              if (r.bottom > window.innerHeight - 8) infoCard.style.top = (window.innerHeight - r.height - 8) + "px";
-            });
-            infoCard.classList.add("visible");
-          }
-        }
-      }
+    const head       = document.getElementById("faiHead");
+    const routeEl    = document.getElementById("faiRoute");
+    const titleEl    = document.getElementById("faiTitle");
+    const metaEl     = document.getElementById("faiMeta");
+    const fanEl      = document.getElementById("faiArcList");
+    const bodyEl     = document.getElementById("faiBody");
+    const barListEl  = document.getElementById("faiBarList");
+    const hintEl     = document.getElementById("faiExpandHint");
+
+    infoCard.classList.remove("fan", "expanded");
+    bodyEl.scrollTop = 0;
+    barListEl.innerHTML = '';
+
+    // Position card at click point, clamping to viewport.
+    infoCard.style.left = (e.clientX + 14) + "px";
+    infoCard.style.top  = (e.clientY - 10) + "px";
+    infoCard.classList.add("visible");
+    requestAnimationFrame(() => {
+      const r = infoCard.getBoundingClientRect();
+      if (r.right  > window.innerWidth  - 8) infoCard.style.left = (window.innerWidth  - r.width  - 8) + "px";
+      if (r.bottom > window.innerHeight - 8) infoCard.style.top  = (window.innerHeight - r.height - 8) + "px";
+    });
+
+    // Fan disambiguation when more than one arc was in click range.
+    if (arcs.length > 1) {
+      infoCard.classList.add("fan");
+      const first = arcs[0].flow;
+      routeEl.textContent = `${arcs.length} routes under cursor`;
+      titleEl.textContent = '';
+      metaEl.textContent  = 'pick one:';
+
+      fanEl.innerHTML = arcs.map((arc, i) => {
+        const f = arc.flow;
+        const label = `${f.src?.place || '?'} → ${f.dst?.place || '?'}`;
+        const cnt   = f.count != null ? `${f.count}` : '1';
+        return `<div class="faiArcRow" data-arc-idx="${i}">
+          <span class="faiArcLabel">${escapeFlowLabel(label)}</span>
+          <span class="faiArcCount">${cnt}</span>
+        </div>`;
+      }).join('');
+
+      fanEl.onclick = (ev) => {
+        const row = ev.target.closest('.faiArcRow');
+        if (!row) return;
+        const idx = parseInt(row.dataset.arcIdx, 10);
+        const chosen = arcs[idx];
+        if (!chosen) return;
+        infoCard.classList.remove("fan");
+        _showFlowArcSingle(chosen.flow, e);
+      };
       return;
     }
 
-    if (flow.count) {
-      openAggregateRoutePanel(flow);
-    } else {
-      const article = {
-        id: flow.id,
-        title: flow.title,
-        translated_title: flow.title,
-        summary: flow.summary || '',
-        translated_summary: flow.summary || '',
-        source_name: flow.sourceName,
-        published_at: flow.publishedAt,
-        article_url: flow.articleUrl,
-        image_url: flow.imageUrl,
-        iso_code: flow.src?.iso || flow.dst?.iso,
-        country_name: flow.dst?.place,
-        sentiment_score: flow.sentiment
-      };
-      window.__flowSeqIndex = seqIndex;
-      window.__flowProgress = flowProgress;
-      window.__flowPlaying = flowPlaying;
-      if (window.openArticleDetail) {
-        window.openArticleDetail(article, { type: 'flow' });
+    _showFlowArcSingle(arcs[0].flow, e);
+
+    function _showFlowArcSingle(flow, ev) {
+      routeEl.textContent = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
+      if (flow.count != null) {
+        titleEl.textContent = `${flow.count.toLocaleString()} article${flow.count === 1 ? '' : 's'} on this route`;
+        metaEl.textContent  = '';
+      } else {
+        titleEl.textContent = flow.title || "1 article on this route";
+        const datePart = flow.publishedAt ? new Date(flow.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+        metaEl.textContent = [flow.sourceName || '', datePart].filter(Boolean).join(' · ');
       }
+      hintEl.textContent = 'click to view articles ↓';
+
+      head.onclick = () => {
+        const expanded = infoCard.classList.toggle("expanded");
+        if (!expanded) return;
+        // Lazy load the article list on first expansion.
+        if (barListEl.dataset.loadedFor === String(_flowRouteKey(flow))) return;
+        _loadFlowArcArticles(flow, barListEl);
+      };
+
+      // If this flow is already a single known article (count == null and
+      // carries id+title), we can auto-seed a one-item bar list without
+      // hitting the network — still behind the expand gate so the card
+      // stays compact by default.
     }
   }
-  window.addEventListener("click", handleFlowArcClick);
+
+  function _flowRouteKey(flow) {
+    if (!flow) return '';
+    const s = flow.src || {}, d = flow.dst || {};
+    return `${s.type || ''}:${s.id || s.place || ''}>${d.type || ''}:${d.id || d.place || ''}`;
+  }
+
+  function escapeFlowLabel(s) {
+    return String(s || '').replace(/[&<>"']/g, (c) => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
+  async function _loadFlowArcArticles(flow, barListEl) {
+    const key = _flowRouteKey(flow);
+    barListEl.dataset.loadedFor = key;
+    barListEl.innerHTML = '<div class="sigBarLoading">Loading articles…</div>';
+
+    // Single-article flow (count == null): build a one-row bar list
+    // from the fields already on `flow` — no network needed.
+    if (flow.count == null && flow.id) {
+      const one = [{
+        type: 'article',
+        id:   flow.id,
+        title: flow.title || '(untitled)',
+        summary: flow.summary || '',
+        image_url: flow.imageUrl,
+        source_name: flow.sourceName,
+        source_bias: flow.sourceBias,
+        published_at: flow.publishedAt,
+        article_url: flow.articleUrl,
+        country_name: flow.dst?.place,
+        sentiment_score: flow.sentiment,
+        media_type: flow.mediaType,
+        video_id:   flow.videoId,
+        _flowArticle: {
+          id: flow.id,
+          title: flow.title,
+          translated_title: flow.title,
+          summary: flow.summary || '',
+          translated_summary: flow.summary || '',
+          image_url: flow.imageUrl,
+          source_name: flow.sourceName,
+          source_bias: flow.sourceBias || 'unknown',
+          published_at: flow.publishedAt,
+          article_url: flow.articleUrl,
+          iso_code: flow.src?.iso || flow.dst?.iso,
+          country_name: flow.dst?.place,
+          sentiment_score: flow.sentiment
+        }
+      }];
+      barListEl.innerHTML = '';
+      window.__renderSignalBarList(barListEl, one, { highlight: false, scoreField: 'sentiment_score' });
+      barListEl._flowItems = one;
+      _wireFlowBarListClicks(barListEl);
+      // Auto-expand the lone row so the full article card is visible
+      // immediately — the whole point of the expand gate is to avoid
+      // clutter on multi-item routes, not to hide a single card.
+      const only = barListEl.querySelector('.sigBarRow');
+      if (only) only.classList.add('expanded');
+      return;
+    }
+
+    try {
+      const params = new URLSearchParams();
+      params.set("mode", "individual");
+      params.set("limit", "80");
+      if (flow.src) {
+        if (flow.src.type === 'city')    params.set("from_city",    flow.src.id);
+        else if (flow.src.id != null)    params.set("from_country", flow.src.id);
+      }
+      if (flow.dst) {
+        if (flow.dst.type === 'city')    params.set("about_city",   flow.dst.id);
+        else if (flow.dst.id != null)    params.set("about_country", flow.dst.id);
+      }
+      const API = window.__API || window.__API_BASE || 'https://earth-wjr6.onrender.com';
+      const resp = await fetch(`${API}/api/flows?${params}`);
+      const data = await resp.json();
+      const items = (data.flows || []).map(f => ({
+        type: (f.mediaType === 'video' || f.videoId) ? 'video' : 'article',
+        id:   f.id,
+        title: f.translatedTitle || f.title,
+        summary: f.translatedSummary || f.summary,
+        image_url: f.imageUrl,
+        source_name: f.sourceName,
+        source_bias: f.sourceBias,
+        published_at: f.publishedAt,
+        article_url: f.articleUrl,
+        country_name: f.dst?.place,
+        sentiment_score: f.sentiment,
+        media_type: f.mediaType,
+        video_id:   f.videoId,
+        _flowArticle: {
+          id: f.id,
+          title: f.translatedTitle || f.title,
+          translated_title: f.translatedTitle || null,
+          summary: f.summary || '',
+          translated_summary: f.translatedSummary || null,
+          image_url: f.imageUrl,
+          source_name: f.sourceName,
+          source_bias: f.sourceBias || 'unknown',
+          published_at: f.publishedAt,
+          article_url: f.articleUrl,
+          iso_code: f.src?.iso || f.dst?.iso,
+          country_name: f.dst?.place,
+          sentiment_score: f.sentiment
+        }
+      }));
+      if (!items.length) {
+        barListEl.innerHTML = '<div class="sigBarEmpty">No articles on this route.</div>';
+        return;
+      }
+      barListEl.innerHTML = '';
+      window.__renderSignalBarList(barListEl, items, { highlight: false, scoreField: 'sentiment_score' });
+      // Stash the enriched article objects so the click handler can
+      // pass them intact to openArticleDetail.
+      barListEl._flowItems = items;
+      _wireFlowBarListClicks(barListEl);
+    } catch (err) {
+      console.error('[flow arc card] load failed', err);
+      barListEl.innerHTML = '<div class="sigBarEmpty">Failed to load articles.</div>';
+      delete barListEl.dataset.loadedFor;
+    }
+  }
+
+  // Flow card click wiring. Row-body clicks fall through to the base
+  // __renderSignalBarList handler, which toggles expand/collapse — so
+  // clicking a collapsed bar expands it into the full article card, and
+  // clicking the expanded card minimizes it back to a bar.
+  //
+  // Only the inline "Open article ↗" link is intercepted: inside the
+  // flow card we re-route it to openArticleDetail (passing the stashed
+  // full article object) instead of letting it navigate to the external
+  // URL. That keeps the "bar → card → article panel" progression
+  // entirely inside the app.
+  function _wireFlowBarListClicks(barListEl) {
+    if (barListEl._flowClickWired) return;
+    barListEl._flowClickWired = true;
+    barListEl.addEventListener('click', (ev) => {
+      const openLink = ev.target.closest('.sigBarOpen');
+      if (!openLink) return;            // let row body clicks pass through
+      // Threads already have their own "Open thread →" handler inside
+      // __renderSignalBarList — don't hijack those.
+      const row = openLink.closest('.sigBarRow');
+      if (!row || row.dataset.kind === 'thread') return;
+
+      ev.stopPropagation();
+      ev.preventDefault();
+      const idx = parseInt(row.dataset.idx, 10);
+      const items = barListEl._flowItems || [];
+      const picked = items[idx];
+      const article = (picked && picked._flowArticle) || null;
+      if (article && typeof window.openArticleDetail === 'function') {
+        // Close the floating card so the article panel is unobstructed.
+        document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+        window.openArticleDetail(article, { type: 'flow' });
+      }
+    }, true); // capture so we beat the external-link default
+  }
 
   /* Open panel showing articles for an aggregate route */
   async function openAggregateRoutePanel(flow) {
@@ -15454,7 +15827,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           <div style="font-size:1.15rem;font-weight:600;color:#fff;">${routeLabel}</div>
         </div>
         <div style="font-size:0.85rem;color:#888;margin-top:4px;">
-          ${flow.count.toLocaleString()} articles · Avg sentiment: ${flow.avgSentiment?.toFixed(2) || "—"}
+          ${flow.count.toLocaleString()} articles
         </div>
       </div>
       <div id="aggRouteArticles">
