@@ -10475,11 +10475,29 @@ function computeCityTiers(cities) {
         touchPrevY = e.touches[0].clientY;
       }, { passive: true });
 
+      // Pending node pick computed at touchstart but deferred to touchend so
+      // a touch that turns out to be a drag never selects anything. Only
+      // a stationary tap (no movement, short duration) commits the pick.
+      let _pendingTouchPick = null;
+      let _pendingTouchPickTime = 0;
+      const TOUCH_TAP_MAX_MS = 500;
+
       window.addEventListener("touchend", () => {
         // Stamp cooloff on ANY movement so a short rotation that lands
         // the fingertip over a node can't commit to selecting it.
         if (touchMoved || touchThresholdMet) touchDragEndTime = Date.now();
         touchDragging = false;
+
+        // Fire the deferred pick only if the touch was a true stationary tap.
+        const pick = _pendingTouchPick;
+        const pickTime = _pendingTouchPickTime;
+        _pendingTouchPick = null;
+        _pendingTouchPickTime = 0;
+        if (!pick) return;
+        if (touchMoved || touchThresholdMet) return;
+        if (Date.now() - pickTime > TOUCH_TAP_MAX_MS) return;
+        if (Date.now() - touchDragEndTime < 2400) return;
+        try { pick(); } catch (_) {}
       });
 
       let dragStartX = 0, dragStartY = 0;
@@ -12198,6 +12216,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       window.addEventListener("touchstart", (event) => {
+        // Clear any stale deferred pick from a previous touch.
+        _pendingTouchPick = null;
+        _pendingTouchPickTime = 0;
         if (window.briefingActive) return;   // globe locked during briefing
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
@@ -12247,7 +12268,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
 
-        // Region mode
+        // Region mode — stash the pick, fire from touchend if stationary tap
         if (currentViewMode === "regions") {
           if (!regionPoints || !regionPositions) return;
           raycaster.params.Points.threshold = Math.max(0.026, camera.position.z * 0.020);
@@ -12262,12 +12283,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 const td = rayTransvDist(raycaster.ray, nodePos);
                 if (td > perNodeThresh(raycaster.params.Points.threshold, regionNearestDist[index])) return;
               }
-              touchNodeSelectTime = Date.now();
-              lockAmbientRotation();
-              isFocused = true; preFocusZoom = camera.position.z;
               const r = regionData[index];
-              focusRegion(r);
-              queueFocusPanelOpen(() => openRegionPanel(r), { immediate: true });
+              _pendingTouchPick = () => {
+                touchNodeSelectTime = Date.now();
+                lockAmbientRotation();
+                isFocused = true; preFocusZoom = camera.position.z;
+                focusRegion(r);
+                queueFocusPanelOpen(() => openRegionPanel(r), { immediate: true });
+              };
+              _pendingTouchPickTime = Date.now();
             }
           }
           return;
@@ -12298,17 +12322,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (px < TOUCH_PX && px < bestPx) { bestPx = px; bestIdx = i; }
         }
         if (bestIdx !== null) {
-          touchNodeSelectTime = Date.now();
-          lockAmbientRotation();
-          selectedNodeIndex = bestIdx; isFocused = true;
-          preFocusZoom = camera.position.z;
-          if (currentViewMode === "country") {
-            focusCountry(activeData[bestIdx]);
-            queueFocusPanelOpen(() => openNodePanel(activeData[bestIdx], "country"), { immediate: true });
-          } else {
-            focusCity(activeData[bestIdx]);
-            queueFocusPanelOpen(() => openNodePanel(activeData[bestIdx], "city"), { immediate: true });
-          }
+          const pickedIdx = bestIdx;
+          const pickedData = activeData[pickedIdx];
+          const pickedMode = currentViewMode;
+          _pendingTouchPick = () => {
+            touchNodeSelectTime = Date.now();
+            lockAmbientRotation();
+            selectedNodeIndex = pickedIdx; isFocused = true;
+            preFocusZoom = camera.position.z;
+            if (pickedMode === "country") {
+              focusCountry(pickedData);
+              queueFocusPanelOpen(() => openNodePanel(pickedData, "country"), { immediate: true });
+            } else {
+              focusCity(pickedData);
+              queueFocusPanelOpen(() => openNodePanel(pickedData, "city"), { immediate: true });
+            }
+          };
+          _pendingTouchPickTime = Date.now();
         }
       }, { passive: true });
 
@@ -25385,6 +25415,44 @@ body.ticker-active .gTickerLabel {
   const CITY_ALPHA_FLOOR_BOOST   = 0.22;
   const CITY_ALPHA_CEIL          = 0.95;
 
+  // Cached land mask — keeps the heatmap confined to country polygons.
+  let _landMaskCanvas = null;
+  let _landMaskW = 0;
+  let _landMaskH = 0;
+  function _ensureLandMask(W, H, geoIdx) {
+    if (!geoIdx) return null;
+    if (_landMaskCanvas && _landMaskW === W && _landMaskH === H) return _landMaskCanvas;
+    const mc = document.createElement('canvas');
+    mc.width = W; mc.height = H;
+    const mx = mc.getContext('2d');
+    mx.clearRect(0, 0, W, H);
+    mx.fillStyle = '#ffffff';
+    const iterEntry = (entry) => {
+      if (!entry || !entry.rings || !entry.rings.length) return;
+      for (const polyRings of entry.rings) {
+        if (_polygonCrossesAntimeridian(polyRings)) {
+          const shifted = _shiftRingLonPositive(polyRings);
+          _drawCountryPolygon(mx, shifted, W, H, '#ffffff');
+          mx.save(); mx.translate(-W, 0);
+          _drawCountryPolygon(mx, shifted, W, H, '#ffffff');
+          mx.restore();
+        } else {
+          _drawCountryPolygon(mx, polyRings, W, H, '#ffffff');
+        }
+      }
+    };
+    const seen = new Set();
+    for (const entry of geoIdx.byIso.values()) {
+      if (!entry || seen.has(entry)) continue;
+      seen.add(entry);
+      iterEntry(entry);
+    }
+    _landMaskCanvas = mc;
+    _landMaskW = W;
+    _landMaskH = H;
+    return mc;
+  }
+
   function _drawCountryPolygon(ctx, rings, W, H, fillStyle) {
     ctx.beginPath();
     for (let ri = 0; ri < rings.length; ri++) {
@@ -25564,6 +25632,20 @@ body.ticker-active .gTickerLabel {
       renderCountryWash(ctx, countryPts, W, H, _countryGeoIdx);
     }
     renderCityClusters(ctx, cityPts, W, H);
+
+    // Clip heatmap to land — stops the country-wash blur and city-cluster
+    // radial gradients from bleeding into the ocean.
+    if (_countryGeoIdx) {
+      const mask = _ensureLandMask(W, H, _countryGeoIdx);
+      if (mask) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.globalAlpha = 1;
+        ctx.filter = 'none';
+        ctx.drawImage(mask, 0, 0);
+        ctx.restore();
+      }
+    }
 
     ctx.globalCompositeOperation = 'source-over';
     ctx.restore();
