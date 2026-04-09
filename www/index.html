@@ -8275,7 +8275,6 @@ window.sourceBiasBadgeHTML = function(bias) {
       <span class="flowMinLabel">Flow</span>
       <span class="flowMinStats" id="flowMinStats">0 flows</span>
       <button class="flowExpandBtn" id="flowExpandBtn" title="Expand">↑</button>
-      <button class="flowMinCloseBtn" id="flowMinCloseBtn" title="Close">✕</button>
     </div>
     
     <div class="flowPanel">
@@ -15726,11 +15725,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowControls").classList.remove("minimized");
   });
 
-  // Close button in minimized bar
-  document.getElementById("flowMinCloseBtn").addEventListener("click", (e) => {
-    e.stopPropagation();
-    closeFlowPanel();
-  });
+  // Minimized-bar close button removed — only the in-panel ✕ remains.
 
   // Update minimized stats display
   function updateMinimizedStats() {
@@ -17543,7 +17538,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const threadsMeta   = document.getElementById('nfThreadsMeta');
       const threadsCount  = document.getElementById('nfThreadsMetaCount');
 
-      let currentView = 'timelines';
+      let currentView = 'threads';
       let threadsLoaded   = false;
       let timelinesLoaded = false;
       let feedBootstrapped = false;
@@ -17590,8 +17585,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       pillThreads.addEventListener('click',   () => setView('threads'));
       pillFeed.addEventListener('click',      () => setView('feed'));
 
-      // Default to Timelines view on load (broad umbrella arcs).
-      setView('timelines');
+      // Default to Threads view on load.
+      setView('threads');
 
       function threadCardHTML(t) {
         const catColor = THREAD_CAT_COLORS[(t.primary_category || '').toLowerCase()] || THREAD_CAT_COLORS.default;
@@ -20434,10 +20429,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       : '';
 
     const _adpTLang = window.getUserTargetLang ? window.getUserTargetLang() : { short: 'EN', label: 'English' };
-    const _adpNeedsTrans = window.articleNeedsTranslation ? window.articleNeedsTranslation(article) : false;
-    const adpTranslateBtn = _adpNeedsTrans
-      ? `<button class="adpTranslateBtn articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_adpTLang.label}">${_adpTLang.short}</button>`
-      : '';
+    // Always surface the translate button on the maximized article panel.
+    const adpTranslateBtn = `<button class="adpTranslateBtn articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_adpTLang.label}">${_adpTLang.short}</button>`;
     const sourceBlock = `
       <div class="adpSource">
         ${sourceLogo}
