@@ -7539,21 +7539,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div>
     </div>
-    <div id="searchWrapper">
-      <div class="iconBtn" id="searchIconBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="7"/>
-          <line x1="16.5" y1="16.5" x2="22" y2="22"/>
-        </svg>
-        <div class="btnTooltip">
-          <div class="btnTooltipTitle">Search</div>
-          <div class="btnTooltipSub">Find any city or country on the globe</div>
-        </div>
-      </div>
-      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
-      <div id="searchResults"></div>
-    </div>
     <!-- Semantic Heatmap toggle button -->
     <div class="iconBtn" id="semHeatToggleBtn" title="Open Semantic Heatmap" onclick="window.__semHeatOpen?.()" style="display:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -7569,6 +7554,21 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="btnTooltipTitle btnTooltipAccent">Semantic Heatmap</div>
         <div class="btnTooltipSub">Visualize coverage, sentiment &amp; volume by keyword</div>
       </div>
+    </div>
+    <div id="searchWrapper">
+      <div class="iconBtn" id="searchIconBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="16.5" y1="16.5" x2="22" y2="22"/>
+        </svg>
+        <div class="btnTooltip">
+          <div class="btnTooltipTitle">Search</div>
+          <div class="btnTooltipSub">Find any city or country on the globe</div>
+        </div>
+      </div>
+      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
+      <div id="searchResults"></div>
     </div>
   </div>
 
@@ -27840,6 +27840,8 @@ body.ticker-active .gTickerLabel {
     if (!isCountryView()) return;
     if (window.__semHeatActive) return;
     if (window.briefingActive) return;
+    // Block polygon selection entirely while flow arcs are open.
+    if (window.__flowIsOpen?.()) return;
     // Suppress the synthetic click that fires at the release point of a
     // mouse drag — otherwise rotating the globe with the cursor over a
     // country selects it on release. Only the immediately-following

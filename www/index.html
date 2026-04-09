@@ -7777,21 +7777,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div>
     </div>
-    <div id="searchWrapper">
-      <div class="iconBtn" id="searchIconBtn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="7"/>
-          <line x1="16.5" y1="16.5" x2="22" y2="22"/>
-        </svg>
-        <div class="btnTooltip">
-          <div class="btnTooltipTitle">Search</div>
-          <div class="btnTooltipSub">Find any city or country on the globe</div>
-        </div>
-      </div>
-      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
-      <div id="searchResults"></div>
-    </div>
     <!-- Semantic Heatmap toggle button -->
     <div class="iconBtn" id="semHeatToggleBtn" title="Open Semantic Heatmap" onclick="window.__semHeatOpen?.()" style="display:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -7807,6 +7792,21 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="btnTooltipTitle btnTooltipAccent">Semantic Heatmap</div>
         <div class="btnTooltipSub">Visualize coverage, sentiment &amp; volume by keyword</div>
       </div>
+    </div>
+    <div id="searchWrapper">
+      <div class="iconBtn" id="searchIconBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="7"/>
+          <line x1="16.5" y1="16.5" x2="22" y2="22"/>
+        </svg>
+        <div class="btnTooltip">
+          <div class="btnTooltipTitle">Search</div>
+          <div class="btnTooltipSub">Find any city or country on the globe</div>
+        </div>
+      </div>
+      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
+      <div id="searchResults"></div>
     </div>
   </div>
 
@@ -12178,9 +12178,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // which can delay the JS click handler well past the usual ~300ms iOS synthetic-click delay.
         if (Date.now() - touchNodeSelectTime < 1500) return;
         // If a touch drag just ended, suppress the synthetic click at the release
-        // point. Long cooloff (1200ms) so a fast drag+release can't accidentally
-        // select a node beneath the release point.
-        if (Date.now() - touchDragEndTime < 5000) return;
+        // point. Short cooloff — just enough to reject the synthetic click
+        // that fires immediately on drag release.
+        if (Date.now() - touchDragEndTime < 50) return;
 
         // Skip this handler when flow mode is active, or when card-
         // triggered flow arcs are on screen (suppression flag).
@@ -12293,11 +12293,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.briefingActive) return;   // globe locked during briefing
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
-        // Short cooloff only — 300ms is enough to reject the accidental
-        // tap immediately after a fling release. The previous 5000ms was
-        // blocking every stationary tap for 5 full seconds after any
-        // prior drag, which broke city / regions / country selection.
-        if (Date.now() - touchDragEndTime < 300) return;
+        // Short cooloff — 50ms is enough to reject the synthetic tap that
+        // fires at the release point of a drag, without delaying deliberate
+        // follow-up taps.
+        if (Date.now() - touchDragEndTime < 50) return;
         // Don't start a new node selection if the touch lands inside the
         // settings sidebar — controls there must never trigger globe picks.
         const _tt = event.touches[0];
@@ -27612,6 +27611,8 @@ body.ticker-active .gTickerLabel {
     if (!isCountryView()) return;
     if (window.__semHeatActive) return;
     if (window.briefingActive) return;
+    // Block polygon selection entirely while flow arcs are open.
+    if (window.__flowIsOpen?.()) return;
     // Don't hijack taps when card-triggered flow arcs are on screen —
     // the briefing flowArticleCard expects the globe to be "quiet".
     if (window.__flowCardSuppressGlobeInteractions) return;
