@@ -10480,7 +10480,7 @@ function computeCityTiers(cities) {
       // a stationary tap (no movement, short duration) commits the pick.
       let _pendingTouchPick = null;
       let _pendingTouchPickTime = 0;
-      const TOUCH_TAP_MAX_MS = 500;
+      const TOUCH_TAP_MAX_MS = 350;
 
       window.addEventListener("touchend", () => {
         // Stamp cooloff on ANY movement so a short rotation that lands
@@ -10496,7 +10496,7 @@ function computeCityTiers(cities) {
         if (!pick) return;
         if (touchMoved || touchThresholdMet) return;
         if (Date.now() - pickTime > TOUCH_TAP_MAX_MS) return;
-        if (Date.now() - touchDragEndTime < 2400) return;
+        if (Date.now() - touchDragEndTime < 5000) return;
         try { pick(); } catch (_) {}
       });
 
@@ -12109,7 +12109,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // If a touch drag just ended, suppress the synthetic click at the release
         // point. Long cooloff (1200ms) so a fast drag+release can't accidentally
         // select a node beneath the release point.
-        if (Date.now() - touchDragEndTime < 2400) return;
+        if (Date.now() - touchDragEndTime < 5000) return;
 
         // Skip this handler when flow mode is active, or when card-
         // triggered flow arcs are on screen (suppression flag).
@@ -12223,7 +12223,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
         // If a drag just ended, suppress node selection for the cooloff window
-        if (Date.now() - touchDragEndTime < 2400) return;
+        if (Date.now() - touchDragEndTime < 5000) return;
         // Don't start a new node selection if the touch lands inside the
         // settings sidebar — controls there must never trigger globe picks.
         const _tt = event.touches[0];
