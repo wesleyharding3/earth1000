@@ -2919,10 +2919,15 @@ body.ticker-active #flowControls {
     }
 
 .articleCardOrigin {
+  /* Illuminated location label — matches the amber accent palette so
+     the origin reads as a live geographic tag rather than dull footer
+     text. */
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.35);
-  font-weight: 500;
-  letter-spacing: 0.03em;
+  color: rgba(255, 200, 120, 0.92);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 6px rgba(255,180,80,0.45),
+               0 0 14px rgba(255,170,60,0.22);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2930,6 +2935,12 @@ body.ticker-active #flowControls {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+.articleCardOrigin::before {
+  background: #ffc070 !important;
+  box-shadow: 0 0 6px rgba(255,180,80,0.85),
+              0 0 12px rgba(255,170,60,0.5);
+  opacity: 1 !important;
 }
 /* CSS-drawn location dot — no emoji, renders identically on every platform */
 .articleCardOrigin::before,
@@ -5998,8 +6009,22 @@ body.ticker-active #flowControls {
       align-items: flex-end; margin-top: auto; padding-top: 5px; gap: 6px;
     }
     .nfCardOrigin {
-      font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
+      /* Illuminated location label — matches the amber accent used on
+         the source pill and accent pulse line so the origin reads as
+         a live geographic tag rather than muted footer text. */
+      font-size: 9px;
+      color: rgba(255,200,120,0.92);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-shadow: 0 0 6px rgba(255,180,80,0.45),
+                   0 0 14px rgba(255,170,60,0.22);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nfCardOrigin::before {
+      background: #ffc070 !important;
+      box-shadow: 0 0 6px rgba(255,180,80,0.85),
+                  0 0 12px rgba(255,170,60,0.5);
+      opacity: 1 !important;
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
     .nfCardFooterLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow: hidden; }
@@ -18764,9 +18789,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         article: captured.article || null,
       };
 
-      // 1. Close any open panels
+      // 1. Close any open panels EXCEPT the article detail — we want the
+      //    article card visible on the globe page alongside its flow arcs.
       window.__clusterCloseNodePanel?.();
-      window.closeArticleDetail?.();
       // Close main info panel (#infoPanel) if open
       const infoPanel = document.getElementById("infoPanel");
       if (infoPanel?.classList.contains("active")) {
@@ -18838,6 +18863,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 9. Show back button
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
+
+      // 10. Surface the article card alongside the arcs so the user can
+      //     see which article these flows belong to. Uses context 'flow'
+      //     so the article detail's close doesn't tear down the arcs.
+      if (articleObj && typeof window.openArticleDetail === "function") {
+        window.openArticleDetail(articleObj, { type: 'flow' });
+      }
 
     } catch (e) {
       console.error("showArticleFlows error:", e);

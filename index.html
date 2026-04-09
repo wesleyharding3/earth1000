@@ -2599,10 +2599,15 @@ body.ticker-active #flowControls {
     }
 
 .articleCardOrigin {
+  /* Illuminated location label (briefing cards) — matches the amber
+     accent palette used by .nfCardOrigin so both card styles read as
+     live geographic tags rather than dull footer text. */
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.35);
-  font-weight: 500;
-  letter-spacing: 0.03em;
+  color: rgba(255, 200, 120, 0.92);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 6px rgba(255,180,80,0.45),
+               0 0 14px rgba(255,170,60,0.22);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2610,6 +2615,12 @@ body.ticker-active #flowControls {
   display: flex;
   align-items: center;
   gap: 5px;
+}
+.articleCardOrigin::before {
+  background: #ffc070 !important;
+  box-shadow: 0 0 6px rgba(255,180,80,0.85),
+              0 0 12px rgba(255,170,60,0.5);
+  opacity: 1 !important;
 }
 /* CSS-drawn location dot — no emoji, renders identically on every platform */
 .articleCardOrigin::before,
@@ -4826,6 +4837,25 @@ body.ticker-active #flowControls {
         flex: 1 1 100%;
         order: 4;
       }
+      /* The pulsing canvas IS the bottom separator line on desktop —
+         drop its flex-row placement and pin it to the query bar's
+         bottom edge. The static border-bottom / outer box-shadow of
+         #nfQueryBar are also removed below so this is the only line. */
+      #nfQueryBar {
+        border-bottom: none;
+        box-shadow: inset 0 1px 0 rgba(255,180,80,0.09);
+      }
+      #nfQueryBar > #nfAccentCanvas {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: -3px;
+        width: auto;
+        height: 6px;
+        margin: 0;
+        flex: 0 0 auto;
+        order: 0;
+      }
     }
 
     .nfPageTitle {
@@ -5695,8 +5725,22 @@ body.ticker-active #flowControls {
       align-items: flex-end; margin-top: auto; padding-top: 5px; gap: 6px;
     }
     .nfCardOrigin {
-      font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
+      /* Illuminated location label — matches the amber accent used on
+         the source pill and accent pulse line so the origin reads as
+         a live geographic tag rather than muted footer text. */
+      font-size: 9px;
+      color: rgba(255,200,120,0.92);
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-shadow: 0 0 6px rgba(255,180,80,0.45),
+                   0 0 14px rgba(255,170,60,0.22);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .nfCardOrigin::before {
+      background: #ffc070 !important;
+      box-shadow: 0 0 6px rgba(255,180,80,0.85),
+                  0 0 12px rgba(255,170,60,0.5);
+      opacity: 1 !important;
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
     .nfCardFooterLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow: hidden; }
@@ -9908,9 +9952,11 @@ function computeCityTiers(cities) {
       let weatherUseFahrenheit = true; // default °F; click pill to toggle
       let dragging = false;
       let prevX = 0, prevY = 0;
+      let mouseMoved = false;   // any pixel of movement since mousedown — independent of DRAG_THRESHOLD
       let touchDragging = false;
       let touchPrevX = 0, touchPrevY = 0;
       let touchTapMoved = false;
+      let touchMoved = false;   // any pixel of movement since touchstart — independent of TOUCH_DRAG_THRESHOLD
 
       function clearFocusPanelTimer() {
         if (!focusPanelTimer) return;
@@ -9957,17 +10003,20 @@ function computeCityTiers(cities) {
         dragging = true;
         dragStartX = e.clientX; dragStartY = e.clientY;
         dragThresholdMet = false;
+        mouseMoved = false;    // reset — track ANY movement during this drag
         // Always reset prevX/prevY on fresh mousedown — prevents snap when
         // resuming drag after panel close (stale coords cause huge first delta)
         prevX = e.clientX; prevY = e.clientY;
       });
 
       window.addEventListener("mouseup", () => {
-        // If this release came after a real drag (threshold met), stamp the
-        // end-time so the subsequent `click` event can be suppressed — stops
-        // the globe from selecting whatever node happens to be under the
-        // cursor at the exact moment the user lets go of a drag.
-        if (dragThresholdMet) mouseDragEndTime = Date.now();
+        // Stamp end-time whenever ANY movement happened during the drag,
+        // not just once past DRAG_THRESHOLD. A deliberate drag that loops
+        // back near the start point, or a short sub-threshold rotation
+        // that still nudges the globe, should still suppress the
+        // subsequent `click` so node selection can't land on whatever's
+        // under the cursor at the moment of release.
+        if (mouseMoved || dragThresholdMet) mouseDragEndTime = Date.now();
         dragging = false;
       });
       
@@ -10023,6 +10072,7 @@ function computeCityTiers(cities) {
         lastTouchTime = Date.now();
         touchDragging = true;
         touchTapMoved = false;
+        touchMoved = false;         // reset — track ANY movement during this touch
         touchThresholdMet = false;  // Reset threshold flag
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
@@ -10032,7 +10082,13 @@ function computeCityTiers(cities) {
 
       window.addEventListener("touchmove", e => {
         if (!touchDragging || e.touches.length !== 1) return;
-        
+
+        // Record ANY pixel of motion so touchend can stamp the cooloff
+        // even when the drag never crossed TOUCH_DRAG_THRESHOLD or when
+        // it happened to loop back near the starting position.
+        const _tx = e.touches[0].clientX, _ty = e.touches[0].clientY;
+        if (_tx !== touchStartX || _ty !== touchStartY) touchMoved = true;
+
         // Check if we've moved enough to be considered a real drag (not tap jitter).
         // Use a wider threshold for touch — thumbs naturally drift 3-5px on landing.
         if (!touchThresholdMet) {
@@ -10071,7 +10127,10 @@ function computeCityTiers(cities) {
       }, { passive: true });
 
       window.addEventListener("touchend", () => {
-        if (touchThresholdMet) touchDragEndTime = Date.now();
+        // Stamp cooloff on ANY movement — not just past TOUCH_DRAG_THRESHOLD
+        // — so a short rotation that lands the fingertip over a node can't
+        // commit to selecting it.
+        if (touchMoved || touchThresholdMet) touchDragEndTime = Date.now();
         touchDragging = false;
       });
 
@@ -10080,7 +10139,13 @@ function computeCityTiers(cities) {
 
       window.addEventListener("mousemove", e => {
         if (!dragging) return;
-        
+
+        // Record ANY pixel of motion so the mouseup handler can tell the
+        // difference between a pure click (no movement) and a drag that
+        // happens to end over a node — even when the movement never
+        // crossed DRAG_THRESHOLD.
+        if (e.clientX !== dragStartX || e.clientY !== dragStartY) mouseMoved = true;
+
         // Check if we've moved enough to be considered a real drag (not click jitter)
         if (!dragThresholdMet) {
           const totalMoved = Math.abs(e.clientX - dragStartX) + Math.abs(e.clientY - dragStartY);
@@ -11710,7 +11775,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // selection is re-enabled. Generous by design: prevents the release
       // point of a reorientation gesture from landing on whatever node
       // happens to be underneath.
-      const DRAG_SELECT_COOLOFF_MS = 2500;
+      const DRAG_SELECT_COOLOFF_MS = 3500;
       window.__dragSelectCooloffMs = DRAG_SELECT_COOLOFF_MS;
 
       window.addEventListener("click", event => {
@@ -17814,9 +17879,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const originPage = window.__currentPage || 2;
       _flowArcOrigin = { type: 'article', page: originPage, label: 'Back to News' };
 
-      // 1. Close any open panels
+      // 1. Close any open panels EXCEPT the article detail — the caller
+      //    wants the article card to remain on-screen alongside the flow
+      //    arcs so you can see what's being visualized.
       window.__clusterCloseNodePanel?.();
-      window.closeArticleDetail?.();
       // Close main info panel (#infoPanel) if open
       const infoPanel = document.getElementById("infoPanel");
       if (infoPanel?.classList.contains("active")) {
@@ -17874,6 +17940,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 9. Show back button
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
+
+      // 10. Surface the article card alongside the arcs so the user can
+      //     see which article these flows belong to. Uses context 'flow'
+      //     so the panel routes a "Back to Flow" button and the article
+      //     detail close doesn't tear down the arcs.
+      if (articleObj && typeof window.openArticleDetail === "function") {
+        window.openArticleDetail(articleObj, { type: 'flow' });
+      }
 
     } catch (e) {
       console.error("showArticleFlows error:", e);
