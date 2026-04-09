@@ -16404,6 +16404,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowClearArcs = function() { clearArcs(); };
   window.__flowClosePanel = closeFlowPanel;
   window.__flowSetOpen = function(open) {
+    // Mutual exclusion: the sentiment heatmap must never be active at the
+    // same time as flow arcs. Tear it down before enabling flow mode.
+    if (open) {
+      try {
+        if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
+          window.__semHeatClose();
+        }
+      } catch (_) {}
+    }
     flowModeOpen = open;
     document.getElementById("flowModeBtn").classList.toggle("active", open);
     document.getElementById("flowControls").classList.toggle("visible", open);
@@ -18003,6 +18012,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const prevPage = current;
       // Close any open thread/node panel when changing pages
       window.__clusterCloseNodePanel?.();
+      // Feed → Globe: also close the article detail overlay so the user
+      // lands on a clean globe (no stale article/thread/timeline card).
+      if (prevPage === 2 && idx === 1) {
+        try { window.closeArticleDetail?.(); } catch (_) {}
+      }
       current = idx;
       window.__currentPage = idx;
       // Skip animation when jumping more than 1 page to avoid
@@ -24983,6 +24997,55 @@ body.ticker-active .gTickerLabel {
     );
   }
 
+  // For countries that have city_points but no country_points row (e.g.
+  // France, where every article is pinned to a city), roll the city
+  // points up into a synthetic country aggregate so the wash layer can
+  // draw the country at all. Existing country rows are preserved as-is.
+  function _synthesizeMissingCountryRollups(countryPts, cityPts) {
+    if (!cityPts || !cityPts.length) return countryPts || [];
+    const existing = new Set();
+    for (const p of (countryPts || [])) {
+      if (p && p.country_id != null) existing.add('cid:' + p.country_id);
+      else if (p && p.iso) existing.add('iso:' + String(p.iso).toUpperCase());
+    }
+    const roll = new Map();
+    for (const c of cityPts) {
+      if (!c) continue;
+      const cidKey = c.country_id != null ? 'cid:' + c.country_id : null;
+      const isoKey = c.iso ? 'iso:' + String(c.iso).toUpperCase() : null;
+      if ((cidKey && existing.has(cidKey)) || (isoKey && existing.has(isoKey))) continue;
+      const key = cidKey || isoKey || ('nm:' + (c.country_name || ''));
+      let b = roll.get(key);
+      if (!b) {
+        b = {
+          country_id: c.country_id ?? null,
+          name: c.country_name || c.name || null,
+          iso: c.iso || null,
+          // Use first city's lat/lon as a fallback anchor; the wash layer
+          // draws by polygon ring lookup so these don't really matter.
+          lat: c.lat, lon: c.lon,
+          n: 0,
+          sent_n: 0,
+          _sent_sum: 0,
+          avg_sent: null
+        };
+        roll.set(key, b);
+      }
+      b.n += (c.n || 0);
+      if (c.avg_sent != null && (c.sent_n || 0) > 0) {
+        b.sent_n += c.sent_n;
+        b._sent_sum += c.avg_sent * c.sent_n;
+      }
+    }
+    const synth = [];
+    for (const b of roll.values()) {
+      if (b.sent_n > 0) b.avg_sent = b._sent_sum / b.sent_n;
+      delete b._sent_sum;
+      synth.push(b);
+    }
+    return (countryPts || []).concat(synth);
+  }
+
   function renderCountryWash(ctx, countryPoints, W, H, geoIdx) {
     if (!countryPoints || !countryPoints.length || !geoIdx) return 0;
 
@@ -25198,6 +25261,13 @@ body.ticker-active .gTickerLabel {
       countryPts = payload.country_points || [];
       cityPts    = payload.city_points    || [];
     }
+
+    // Synthesize a country-level aggregate for any country that has city
+    // coverage but no corresponding country_points row. This fixes France
+    // (and other countries where every article has a city_id) showing up
+    // completely empty on the wash layer. We roll up city_points by
+    // country_id, sum n + sent_n, and compute a weighted-avg sentiment.
+    countryPts = _synthesizeMissingCountryRollups(countryPts, cityPts);
 
     const empty = !countryPts.length && !cityPts.length;
     if (empty) {
@@ -26829,6 +26899,17 @@ body.ticker-active .gTickerLabel {
   }
 
   window.__semHeatOpen = function (opts) {
+    // Mutual exclusion: flow arcs must never coexist with the heatmap.
+    try {
+      if (window.__flowIsOpen?.()) {
+        window.__flowClearArcs?.();
+        window.__flowClosePanel?.();
+        window.__flowSetOpen?.(false);
+      }
+      window.hideFlowArcBackBtn?.();
+      window.hideFlowCtxCard?.();
+      if (typeof window.__hideFlowArticleCard === 'function') window.__hideFlowArticleCard();
+    } catch (_) {}
     window.__semHeatActive = true;
     document.body.classList.add('sem-heatmap-active');
     panel.classList.remove('minimized');
@@ -27664,7 +27745,26 @@ body.ticker-active .gTickerLabel {
     const ll = screenToLatLon(e.clientX, e.clientY);
     if (!ll) { hideFan(); return; }
     const result = window.hitTestGlobe(ll.lat, ll.lon, currentZoomFactor());
+    if (window.__hitTestDebug) {
+      console.log('[polygonClick] ll=', ll, 'zoom=', currentZoomFactor(),
+        'inside=', result?.inside, 'nearby=', result?.nearby?.slice(0,5));
+    }
     if (!result || !result.fan.length) { hideFan(); return; }
+
+    // If the click is literally inside one or more polygons, commit the
+    // first inside candidate directly and skip the disambiguation fan.
+    // This fixes the "United States is hard to click" bug: previously
+    // a nearby Canada/Mexico edge entry would push the fan size > 1 and
+    // the user had to pick from a list to open the US panel.
+    if (result.inside && result.inside.length) {
+      const target = result.inside[0];
+      hideFan();
+      e.stopPropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      selectCountry(target.key);
+      if (window.__openCountryByName) window.__openCountryByName(target.name, target.key);
+      return;
+    }
 
     // We hit something — stop propagation so the globe's window-level
     // click handler doesn't also fire its own node raycast and clear

@@ -5138,6 +5138,20 @@ body.ticker-active #flowControls {
       display: none !important;
     }
 
+    /* When Feed view is active (i.e. the feed filters can collapse), move
+       the dropdown chevron BELOW the "News Feed" title instead of to the
+       right of it. This gives the title row a cleaner centered look and
+       makes the toggle easier to reach with a thumb. */
+    #newsFeedPage:not(.nf-threads-mode) .nfTitleRow {
+      padding-bottom: 26px;
+    }
+    #newsFeedPage:not(.nf-threads-mode) .nfTitleRow .nfCollapseBtn {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      transform: translateX(-50%);
+    }
+
     /* ── Threads / Feed view toggle ── */
     .nfViewToggle {
       display: flex;
@@ -16431,6 +16445,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowClearArcs = function() { clearArcs(); };
   window.__flowClosePanel = closeFlowPanel;
   window.__flowSetOpen = function(open) {
+    // Mutual exclusion with the sentiment heatmap — never both at once.
+    if (open) {
+      try {
+        if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
+          window.__semHeatClose();
+        }
+      } catch (_) {}
+    }
     flowModeOpen = open;
     document.getElementById("flowModeBtn").classList.toggle("active", open);
     document.getElementById("flowControls").classList.toggle("visible", open);
@@ -18293,6 +18315,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const prevPage = current;
       // Close any open thread/node panel when changing pages
       window.__clusterCloseNodePanel?.();
+      // When navigating away from the Feed page (index 2) to the Globe
+      // (index 1), also close the full-screen article detail panel so the
+      // user lands on a clean globe view instead of stale article content.
+      if (prevPage === 2 && idx === 1) {
+        try { window.closeArticleDetail?.(); } catch (_) {}
+      }
       current = idx;
       window.__currentPage = idx;
       // Skip animation when jumping more than 1 page to avoid
@@ -18803,6 +18831,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const originPage = window.__currentPage || 2;
       const captured = (typeof captureFeedArticleOrigin === 'function')
         ? captureFeedArticleOrigin(articleId) : { id: articleId };
+      // Fallback: if we couldn't locate the article in the feed cache, parse
+      // it directly off the DOM card that triggered this call (flow button
+      // lives next to a <div class="nfCard" data-article='...'>). This fixes
+      // the "no flow article card shown on globe" bug when the user hasn't
+      // yet populated window.__nfArticles via scroll/search.
+      let _domArticle = null;
+      try {
+        const btnEl = evt?.target?.closest?.("button");
+        const wrapEl = btnEl?.parentElement;
+        const cardEl = wrapEl?.querySelector?.("[data-article]");
+        if (cardEl) _domArticle = JSON.parse(cardEl.getAttribute("data-article").replace(/&#39;/g, "'"));
+      } catch (_) {}
       _flowArcOrigin = {
         type: 'article',
         source: 'feed',
@@ -18811,8 +18851,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         id: articleId,
         scrollEl: captured.scrollEl,
         scrollTop: captured.scrollTop,
-        article: captured.article || null,
+        article: captured.article || _domArticle || null,
       };
+
+      // Early-render the flow article card IMMEDIATELY (before navigation
+      // and before the API call) so the user sees it surface on the globe
+      // even on slow networks. Will get re-populated after fetch with any
+      // richer data the API returns.
+      if (_flowArcOrigin.article && typeof showFlowArticleCard === 'function') {
+        try { showFlowArticleCard(_flowArcOrigin, []); } catch (_) {}
+      }
 
       // 1. Close any open panels EXCEPT the article detail — we want the
       //    article card visible on the globe page alongside its flow arcs.
@@ -25472,6 +25520,49 @@ body.ticker-active .gTickerLabel {
     );
   }
 
+  // For countries that have city_points but no country_points row (e.g.
+  // France), synthesize a country-level rollup so the wash layer can
+  // still draw the country.
+  function _synthesizeMissingCountryRollups(countryPts, cityPts) {
+    if (!cityPts || !cityPts.length) return countryPts || [];
+    const existing = new Set();
+    for (const p of (countryPts || [])) {
+      if (p && p.country_id != null) existing.add('cid:' + p.country_id);
+      else if (p && p.iso) existing.add('iso:' + String(p.iso).toUpperCase());
+    }
+    const roll = new Map();
+    for (const c of cityPts) {
+      if (!c) continue;
+      const cidKey = c.country_id != null ? 'cid:' + c.country_id : null;
+      const isoKey = c.iso ? 'iso:' + String(c.iso).toUpperCase() : null;
+      if ((cidKey && existing.has(cidKey)) || (isoKey && existing.has(isoKey))) continue;
+      const key = cidKey || isoKey || ('nm:' + (c.country_name || ''));
+      let b = roll.get(key);
+      if (!b) {
+        b = {
+          country_id: c.country_id ?? null,
+          name: c.country_name || c.name || null,
+          iso: c.iso || null,
+          lat: c.lat, lon: c.lon,
+          n: 0, sent_n: 0, _sent_sum: 0, avg_sent: null
+        };
+        roll.set(key, b);
+      }
+      b.n += (c.n || 0);
+      if (c.avg_sent != null && (c.sent_n || 0) > 0) {
+        b.sent_n += c.sent_n;
+        b._sent_sum += c.avg_sent * c.sent_n;
+      }
+    }
+    const synth = [];
+    for (const b of roll.values()) {
+      if (b.sent_n > 0) b.avg_sent = b._sent_sum / b.sent_n;
+      delete b._sent_sum;
+      synth.push(b);
+    }
+    return (countryPts || []).concat(synth);
+  }
+
   function renderCountryWash(ctx, countryPoints, W, H, geoIdx) {
     if (!countryPoints || !countryPoints.length || !geoIdx) return 0;
 
@@ -25608,6 +25699,10 @@ body.ticker-active .gTickerLabel {
       countryPts = payload.country_points || [];
       cityPts    = payload.city_points    || [];
     }
+
+    // Synthesize country aggregates for countries with only city rows
+    // (e.g. France) so the country wash isn't empty for them.
+    countryPts = _synthesizeMissingCountryRollups(countryPts, cityPts);
 
     const empty = !countryPts.length && !cityPts.length;
     if (empty) {
@@ -26587,6 +26682,16 @@ body.ticker-active .gTickerLabel {
 
   // ── Open / close API ───────────────────────────────────────────────────
   window.__semHeatOpen = function (opts) {
+    // Mutual exclusion: flow arcs must never coexist with the heatmap.
+    try {
+      if (window.__flowIsOpen?.()) {
+        window.__flowClearArcs?.();
+        window.__flowClosePanel?.();
+        window.__flowSetOpen?.(false);
+      }
+      window.hideFlowArcBackBtn?.();
+      if (typeof window.__hideFlowArticleCard === 'function') window.__hideFlowArticleCard();
+    } catch (_) {}
     window.__semHeatActive = true;
     document.body.classList.add('sem-heatmap-active');
     panel.classList.remove('minimized');
