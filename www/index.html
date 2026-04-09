@@ -3067,7 +3067,7 @@ body.ticker-active #flowControls {
 .cardHeatmapBtn svg { width: 16px; height: 16px; color: rgba(255,255,255,0.55); }
 .cardHeatmapBtn:hover svg { color: rgba(255,190,120,0.95); }
 
-/* ── Semantic Heatmap control panel ── */
+/* ── Heatmap control panel ── */
 #semHeatPanel {
   position: fixed;
   top: 90px;
@@ -7777,8 +7777,8 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div>
     </div>
-    <!-- Semantic Heatmap toggle button -->
-    <div class="iconBtn" id="semHeatToggleBtn" title="Open Semantic Heatmap" onclick="window.__semHeatOpen?.()" style="display:none;">
+    <!-- Heatmap toggle button -->
+    <div class="iconBtn" id="semHeatToggleBtn" title="Open Heatmap" onclick="window.__semHeatOpen?.()" style="display:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="9"/>
         <path d="M3 12h18"/>
@@ -7789,7 +7789,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         <circle cx="10" cy="16" r="1.0" fill="currentColor"/>
       </svg>
       <div class="btnTooltip">
-        <div class="btnTooltipTitle btnTooltipAccent">Semantic Heatmap</div>
+        <div class="btnTooltipTitle btnTooltipAccent">Heatmap</div>
         <div class="btnTooltipSub">Visualize coverage, sentiment &amp; volume by keyword</div>
       </div>
     </div>
@@ -8438,10 +8438,10 @@ window.sourceBiasBadgeHTML = function(bias) {
     <span id="flowArcBackLabel">Back</span>
   </div>
 
-  <!-- Semantic Heatmap control panel -->
+  <!-- Heatmap control panel -->
   <div id="semHeatPanel">
     <div class="semHeatHeader">
-      <div class="semHeatTitle">Semantic Heatmap</div>
+      <div class="semHeatTitle">Heatmap</div>
       <div class="semHeatHeaderActions">
         <button class="semHeatMin" id="semHeatMinBtn" title="Minimize">−</button>
         <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
@@ -25369,7 +25369,7 @@ body.ticker-active .gTickerLabel {
 })();
 </script>
 
-<!-- ═════════════════════ Semantic Heatmap ═════════════════════ -->
+<!-- ═════════════════════ Heatmap ═════════════════════ -->
 <script>
 (function semanticHeatmap() {
   'use strict';
@@ -25917,6 +25917,10 @@ body.ticker-active .gTickerLabel {
   }
 
   function renderPoints(payload) {
+    // Refuse to (re)materialize the heat sphere unless the heatmap panel
+    // is still active — otherwise a late fetch would override the active
+    // view mode (e.g. transportation) after the user closed the panel.
+    if (!window.__semHeatActive) return;
     const sphere = ensureHeatSphere();
     if (!sphere || !heatCtx || !heatCanvas) return;
 
@@ -25958,6 +25962,7 @@ body.ticker-active .gTickerLabel {
   }
 
   function renderPointsCrossfade(payload, ms) {
+    if (!window.__semHeatActive) return;
     const sphere = ensureHeatSphere();
     if (!sphere || !heatCtx || !heatCanvas) return;
 
@@ -26150,6 +26155,10 @@ body.ticker-active .gTickerLabel {
 
     const data = await fetchSnapshot(params);
     if (!data) return;
+    // If the user closed the panel while this fetch was in flight, do NOT
+    // paint the heat sphere — that would recreate it after teardown and
+    // leave it rendering over whatever view mode the user switched to.
+    if (!window.__semHeatActive) return;
 
     if (data.bucket && data.bucket !== 'none' && Array.isArray(data.buckets)) {
       state.series = data;
@@ -26431,10 +26440,17 @@ body.ticker-active .gTickerLabel {
       e.stopPropagation();
       toggleInspectorMin();
     });
-    inspectorEl.querySelector('.semHeatInspBack').addEventListener('click', (e) => {
-      e.stopPropagation();
-      renderInspectorCountryRanking();
-    });
+    {
+      const backBtn = inspectorEl.querySelector('.semHeatInspBack');
+      const onBackTap = (e) => {
+        e.stopPropagation();
+        renderInspectorCountryRanking();
+      };
+      // iOS WKWebView occasionally swallows `click` inside overlays, so
+      // listen on `pointerup` as well — same pattern as row taps below.
+      backBtn.addEventListener('click', onBackTap);
+      backBtn.addEventListener('pointerup', onBackTap);
+    }
     // Delegated row click → drill into that country. iOS WKWebView swallows
     // `click` inside overlays sometimes, so listen on pointerup as well.
     const bodyEl = inspectorEl.querySelector('.semHeatInspBody');
