@@ -1889,6 +1889,190 @@ body.ticker-active #flowControls {
    card or node-panel article row. Lets the user see the origin at a
    glance and return to it with one tap. Intentionally transparent so
    it doesn't fight with the globe behind. */
+/* ─────────────────────────────────────────────────────────────
+   Flow-arc briefing article card
+   Fades in alongside the globe when flow arcs are redirected from
+   a news-feed article or thread card. Mirrors #articleDetailPanel
+   styling at a smaller, floating scale. Source / image / title /
+   scrollable summary / meta footer. When a flow arc is clicked,
+   entity mentions matching the arc's source & destination light up
+   inside the title and summary via .famHl class.
+───────────────────────────────────────────────────────────── */
+#flowArticleCard {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 18px);
+  right: 18px;
+  width: min(400px, calc(100vw - 36px));
+  max-height: min(72vh, 640px);
+  z-index: 652;
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(10, 14, 24, 0.72);
+  backdrop-filter: blur(22px) saturate(1.25);
+  -webkit-backdrop-filter: blur(22px) saturate(1.25);
+  border: 1px solid rgba(255, 190, 80, 0.22);
+  border-radius: 16px;
+  box-shadow:
+    0 18px 60px rgba(0, 0, 0, 0.60),
+    0 0 0 1px rgba(255, 190, 80, 0.08) inset,
+    0 0 40px rgba(255, 170, 40, 0.08);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.985);
+  transition:
+    opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: rgba(235, 240, 250, 0.92);
+}
+#flowArticleCard.visible {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+.fac-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+.fac-sourceDot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #ffbe50;
+  box-shadow: 0 0 8px rgba(255, 190, 80, 0.8),
+              0 0 18px rgba(255, 170, 40, 0.4);
+  flex-shrink: 0;
+}
+.fac-sourceName {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.fac-kicker {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 190, 80, 0.72);
+  flex-shrink: 0;
+}
+.fac-closeBtn {
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  color: rgba(220, 230, 245, 0.78);
+  cursor: pointer;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+  flex-shrink: 0;
+}
+.fac-closeBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.fac-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 16px 18px;
+  -webkit-overflow-scrolling: touch;
+}
+.fac-body::-webkit-scrollbar { width: 5px; }
+.fac-body::-webkit-scrollbar-track { background: transparent; }
+.fac-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 190, 80, 0.20);
+  border-radius: 3px;
+}
+.fac-image {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  display: block;
+}
+.fac-imagePlaceholder {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  background: linear-gradient(135deg,
+    rgba(255, 190, 80, 0.08),
+    rgba(120, 160, 220, 0.05));
+  margin-bottom: 14px;
+  display: flex; align-items: center; justify-content: center;
+}
+.fac-imagePlaceholder svg {
+  width: 36px; height: 36px;
+  opacity: 0.3;
+  stroke: rgba(255, 190, 80, 0.6);
+  fill: none;
+  stroke-width: 1.5;
+}
+.fac-title {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #fff;
+  margin-bottom: 10px;
+}
+.fac-summary {
+  font-size: 13px;
+  line-height: 1.62;
+  color: rgba(235, 240, 250, 0.74);
+  margin-bottom: 14px;
+}
+.fac-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  font-size: 10.5px;
+  color: rgba(180, 200, 225, 0.55);
+  letter-spacing: 0.02em;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.fac-meta span { display: inline-flex; align-items: center; gap: 5px; }
+.fac-meta span::before {
+  content: "";
+  width: 3px; height: 3px; border-radius: 50%;
+  background: rgba(255, 190, 80, 0.55);
+}
+.fac-meta span:first-child::before { display: none; }
+
+/* Entity highlight — fades in brighter when a matching flow arc is
+   active. Applied to <span class="famHl"> inside title + summary. */
+.fac-body .famHl {
+  color: rgba(255, 255, 255, 0.82);
+  background: transparent;
+  border-radius: 3px;
+  padding: 0 2px;
+  transition:
+    color 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    background 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    text-shadow 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.fac-body .famHl.active {
+  color: #fff8e0;
+  background: rgba(255, 190, 80, 0.18);
+  text-shadow:
+    0 0 10px rgba(255, 200, 100, 0.75),
+    0 0 22px rgba(255, 170, 40, 0.35);
+}
+
 #flowOriginPanel {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 16px);
@@ -5592,8 +5776,9 @@ body.ticker-active #flowControls {
       padding: 6px 20px 5px;
       display: flex; align-items: center; gap: 7px;
       background: rgba(8, 14, 24, 0.55);
-      -webkit-
-      border-bottom: 1px solid rgba(255,255,255,0.05);
+      /* Divider removed — the only line under the title is the amber
+         full-width accent line at the bottom of #nfQueryBar, which
+         hosts the canvas spark/pulse/wave animation. */
       min-height: 28px;
     }
     .nfMetaCount {
@@ -5607,7 +5792,7 @@ body.ticker-active #flowControls {
       padding: 6px 14px 5px;
       display: flex; align-items: center; justify-content: space-between; gap: 7px;
       background: rgba(8, 14, 24, 0.55);
-      border-bottom: 1px solid rgba(255,255,255,0.05);
+      /* Divider removed — see #nfMeta note above. */
       min-height: 28px;
       flex-wrap: wrap;
     }
@@ -8008,6 +8193,24 @@ window.sourceBiasBadgeHTML = function(bias) {
     <!-- Collapsible transparent origin panel — shown when flow arcs were
          launched from an article/video card or cluster node panel. Lets
          the user see (and return to) the originating content. -->
+    <!-- Briefing-style article card for flow-arc redirects from news feed.
+         Fades in alongside the globe when showArticleFlows / showThreadFlows
+         is called from an article or thread card. -->
+    <div id="flowArticleCard" aria-hidden="true">
+      <div class="fac-header">
+        <div class="fac-sourceDot"></div>
+        <div class="fac-sourceName" id="facSourceName">—</div>
+        <div class="fac-kicker" id="facKicker">Article</div>
+        <button class="fac-closeBtn" id="facCloseBtn" title="Close">&times;</button>
+      </div>
+      <div class="fac-body" id="facBody">
+        <div id="facImageWrap"></div>
+        <div class="fac-title" id="facTitle"></div>
+        <div class="fac-summary" id="facSummary"></div>
+        <div class="fac-meta" id="facMeta"></div>
+      </div>
+    </div>
+
     <div id="flowOriginPanel" aria-hidden="true">
       <button class="flowOriginPanelCollapse" id="flowOriginPanelCollapse" title="Collapse">
         <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 5 6 8 9 5"/></svg>
@@ -11659,9 +11862,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panelOpen = panel.classList.contains("active");
         hoveredIndex = null;
 
-        // Disable hover labels when flow mode is active
+        // Disable hover labels when flow mode is active, or when a
+        // card-triggered flow arc session is live on screen.
         const flowControlsVisible = document.getElementById("flowControls")?.classList.contains("visible");
         if (flowControlsVisible) { hideHoverCard(); return; }
+        if (window.__flowCardSuppressGlobeInteractions) { hideHoverCard(); return; }
 
         if (window.briefingActive) { hideHoverCard(); return; }
         if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
@@ -11823,9 +12028,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // If a touch drag just ended, suppress the synthetic click at the release point
         if (Date.now() - touchDragEndTime < 500) return;
 
-        // Skip this handler when flow mode is active
+        // Skip this handler when flow mode is active, or when card-
+        // triggered flow arcs are on screen (suppression flag).
         const flowControls = document.getElementById("flowControls");
         if (flowControls && flowControls.classList.contains("visible")) return;
+        if (window.__flowCardSuppressGlobeInteractions) return;
 
         if (event.target.closest(".closePanel")) return;
         if (isArticleDetailTarget(event.target)) return;
@@ -11930,9 +12137,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
 
-        // Skip node selection when flow mode is active
+        // Skip node selection when flow mode is active, or when card-
+        // triggered flow arcs are on screen.
         const flowControls = document.getElementById("flowControls");
         if (flowControls && flowControls.classList.contains("visible")) return;
+        if (window.__flowCardSuppressGlobeInteractions) return;
 
         // If panel is active and touch is outside panel, close it and don't select new node
         const touch = event.touches[0];
@@ -12096,6 +12305,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function resolveTimezone(city) { return city.timezone || "UTC"; }
 
       function openNodePanel(node, type) {
+        // Hard block: the node panel is deactivated whenever a card-
+        // triggered flow arc session is live, so clicks on stray
+        // labels or queued focus callbacks can't sneak it open.
+        if (window.__flowCardSuppressGlobeInteractions) return;
         const isCity = type === "city";
         const panel = document.getElementById("infoPanel");
         const showCountry = isCity && node.country && node.name.toLowerCase() !== node.country.toLowerCase();
@@ -15799,15 +16012,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const flow = hitArc.flow;
     playSFX(SFX.article);
 
-    // Card-triggered flow arcs: open article detail or route article panel
+    // Card-triggered flow arcs: keep the user on the arcs view. Show
+    // the "X → Y" small route card at the click point AND light up
+    // the matching entity mentions inside the briefing article card.
     if (flow._cardTriggered) {
-      // Hide any existing info card
       document.getElementById("flowArcInfoCard")?.classList.remove("visible");
 
       if (flow._sourceType === "article" && flow._article) {
-        // Single article: open article detail directly
-        if (window.openArticleDetail) {
-          window.openArticleDetail(flow._article, { type: 'flow' });
+        // Highlight src/dst place names inside the briefing card.
+        if (typeof window.__highlightFlowArticleCardEntities === "function") {
+          window.__highlightFlowArticleCardEntities(flow);
+        }
+        // Show the small floating "X → Y" info card near the click so
+        // the user sees the selected route without leaving the arcs.
+        const infoCard = document.getElementById("flowArcInfoCard");
+        if (infoCard) {
+          const routeEl = document.getElementById("faiRoute");
+          const titleEl = document.getElementById("faiTitle");
+          const metaEl  = document.getElementById("faiMeta");
+          if (routeEl) routeEl.textContent = `${flow.src?.place || "?"} → ${flow.dst?.place || "?"}`;
+          if (titleEl) titleEl.textContent = flow._article.title || flow._article.translated_title || "";
+          if (metaEl) {
+            const datePart = flow._article.published_at
+              ? new Date(flow._article.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+              : "";
+            metaEl.textContent = datePart;
+          }
+          infoCard.style.left = (e.clientX + 14) + "px";
+          infoCard.style.top = (e.clientY - 10) + "px";
+          requestAnimationFrame(() => {
+            const r = infoCard.getBoundingClientRect();
+            if (r.right > window.innerWidth - 8) infoCard.style.left = (window.innerWidth - r.width - 8) + "px";
+            if (r.bottom > window.innerHeight - 8) infoCard.style.top = (window.innerHeight - r.height - 8) + "px";
+          });
+          infoCard.classList.add("visible");
         }
       } else if (flow._sourceType === "thread" && flow._threadId) {
         // Thread: show info card with route + article count, clicking opens route panel
@@ -18085,6 +18323,198 @@ const settingsToggle     = document.getElementById("settingsToggle");
     panel.setAttribute('aria-hidden', 'true');
   }
 
+  // ── Briefing-style flow article card ─────────────────────────────
+  // Builds a tokenized title and summary so each word group can later
+  // be highlighted without destroying the layout. Any token whose
+  // lowercase form matches an entry in `keywords` is wrapped in a
+  // <span class="famHl" data-key="…">. The highlight ONLY becomes
+  // visible once `.active` is toggled via highlightFlowArticleCardEntities.
+  function _facEscape(str) {
+    return String(str == null ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  // Wrap occurrences of each keyword in text with <span class="famHl">.
+  // Longest keywords first so multi-word matches beat single-word ones.
+  function _facWrapKeywords(text, keywords) {
+    const safe = _facEscape(text);
+    if (!keywords || !keywords.length) return safe;
+    const uniq = Array.from(new Set(
+      keywords
+        .filter(k => k && k.length >= 3)
+        .map(k => String(k).trim())
+    )).sort((a, b) => b.length - a.length);
+    if (!uniq.length) return safe;
+    const pattern = uniq
+      .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    const re = new RegExp('\\b(' + pattern + ')\\b', 'gi');
+    return safe.replace(re, (match) => {
+      const key = match.toLowerCase();
+      return `<span class="famHl" data-key="${_facEscape(key)}">${match}</span>`;
+    });
+  }
+
+  // Collect every candidate keyword string off a flow collection
+  // (src.place, dst.place, plus any cached entity names on origin).
+  function _facCollectKeywords(flows, origin) {
+    const set = new Set();
+    const add = (s) => {
+      if (!s) return;
+      const v = String(s).trim();
+      if (v) set.add(v);
+    };
+    (flows || []).forEach(f => {
+      add(f?.src?.place);
+      add(f?.dst?.place);
+      add(f?.src?.name);
+      add(f?.dst?.name);
+    });
+    if (origin && origin.article) {
+      add(origin.article.country_name);
+    }
+    return Array.from(set);
+  }
+
+  // Public entry. Call once after flows have been fetched + rendered.
+  function showFlowArticleCard(origin, flows) {
+    const card = document.getElementById('flowArticleCard');
+    if (!card || !origin) return;
+    const srcEl   = document.getElementById('facSourceName');
+    const kickEl  = document.getElementById('facKicker');
+    const imgWrap = document.getElementById('facImageWrap');
+    const titleEl = document.getElementById('facTitle');
+    const sumEl   = document.getElementById('facSummary');
+    const metaEl  = document.getElementById('facMeta');
+    if (!titleEl || !sumEl) return;
+
+    let sourceName = '—', kicker = 'Article', title = '', summary = '';
+    const metaParts = [];
+    let imgSrc = '', isVideo = false;
+
+    if (origin.type === 'article') {
+      const a = origin.article || {};
+      isVideo = a.media_type === 'video' || !!a.video_id;
+      kicker = isVideo ? 'Video' : 'Article';
+      sourceName = a.source_name || a.sourceName || '—';
+      title = a.translated_title || a.title || 'Untitled article';
+      summary = a.translated_summary || a.summary || '';
+      if (a.country_name) metaParts.push(a.country_name);
+      else if (a.iso_code) metaParts.push(String(a.iso_code).toUpperCase());
+      if (a.published_at) {
+        try {
+          metaParts.push(new Date(a.published_at).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric'
+          }));
+        } catch (_) {}
+      }
+      imgSrc = (a.image_url && String(a.image_url).trim())
+             || a.catalog_image_url || '';
+    } else if (origin.type === 'thread') {
+      const t = origin.thread || {};
+      kicker = 'Thread';
+      sourceName = t.primary_category
+        ? String(t.primary_category).toUpperCase()
+        : 'Thread';
+      title = t.title || 'Untitled thread';
+      summary = t.summary || t.preview || '';
+      if (typeof t.article_count === 'number') {
+        metaParts.push(`${t.article_count} article${t.article_count !== 1 ? 's' : ''}`);
+      }
+      if (t.latest_published_at) {
+        try {
+          metaParts.push(new Date(t.latest_published_at).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric'
+          }));
+        } catch (_) {}
+      }
+      imgSrc = (t.hero_image_url || t.hero_catalog_image_url || '').trim();
+    } else {
+      return;
+    }
+
+    if (srcEl)  srcEl.textContent = sourceName;
+    if (kickEl) kickEl.textContent = kicker;
+
+    // Image with graceful placeholder fallback.
+    if (imgWrap) {
+      if (imgSrc) {
+        imgWrap.innerHTML =
+          `<img class="fac-image" src="${_facEscape(imgSrc)}" alt="" ` +
+          `onerror="this.parentElement.innerHTML='` +
+          `<div class=&quot;fac-imagePlaceholder&quot;>` +
+          `<svg viewBox=&quot;0 0 24 24&quot;><path d=&quot;M3 5h18v14H3z&quot;/>` +
+          `<path d=&quot;M3 15l5-5 4 4 3-3 6 6&quot;/></svg></div>'">`;
+      } else {
+        imgWrap.innerHTML =
+          `<div class="fac-imagePlaceholder">` +
+          `<svg viewBox="0 0 24 24"><path d="M3 5h18v14H3z"/>` +
+          `<path d="M3 15l5-5 4 4 3-3 6 6"/></svg></div>`;
+      }
+    }
+
+    // Keyword-wrap title + summary so flow arc clicks can highlight
+    // place and entity mentions without a re-render.
+    const keywords = _facCollectKeywords(flows, origin);
+    titleEl.innerHTML = _facWrapKeywords(title, keywords);
+    sumEl.innerHTML   = _facWrapKeywords(summary, keywords);
+
+    if (metaEl) {
+      metaEl.innerHTML = metaParts.length
+        ? metaParts.map(p => `<span>${_facEscape(p)}</span>`).join('')
+        : '';
+    }
+
+    // Remember which highlight was last activated so we can restore
+    // it if showFlowArticleCard is called while a different arc is
+    // currently selected (currently unused but future-proofs the UI).
+    card.setAttribute('aria-hidden', 'false');
+    // Use rAF so the fade transition runs on first paint.
+    card.classList.remove('visible');
+    // Also clear any lingering highlights from a previous article.
+    card.querySelectorAll('.famHl.active').forEach(el => el.classList.remove('active'));
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => card.classList.add('visible'));
+    });
+  }
+  window.__showFlowArticleCard = showFlowArticleCard;
+
+  function hideFlowArticleCard() {
+    const card = document.getElementById('flowArticleCard');
+    if (!card) return;
+    card.classList.remove('visible');
+    card.setAttribute('aria-hidden', 'true');
+    card.querySelectorAll('.famHl.active').forEach(el => el.classList.remove('active'));
+  }
+  window.__hideFlowArticleCard = hideFlowArticleCard;
+
+  // Activate entity highlights inside the briefing card for a given
+  // flow. Matches by src.place / dst.place (case-insensitive). Any
+  // previous highlights are cleared first.
+  function highlightFlowArticleCardEntities(flow) {
+    const card = document.getElementById('flowArticleCard');
+    if (!card || !flow) return;
+    card.querySelectorAll('.famHl.active').forEach(el => el.classList.remove('active'));
+    const keys = new Set();
+    [flow?.src?.place, flow?.dst?.place, flow?.src?.name, flow?.dst?.name]
+      .filter(Boolean)
+      .forEach(s => keys.add(String(s).toLowerCase()));
+    if (!keys.size) return;
+    card.querySelectorAll('.famHl').forEach(el => {
+      const k = el.getAttribute('data-key') || '';
+      if (keys.has(k)) el.classList.add('active');
+    });
+  }
+  window.__highlightFlowArticleCardEntities = highlightFlowArticleCardEntities;
+
+  // Close button
+  document.getElementById('facCloseBtn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hideFlowArticleCard();
+  });
+
   // Wire the collapse toggle + return button on the origin panel.
   document.getElementById('flowOriginPanelCollapse')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -18113,9 +18543,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Return arrow next to the close button on the flow controls panel.
     const returnBtn = document.getElementById("flowReturnBtn");
     if (returnBtn) { returnBtn.classList.add("visible"); returnBtn.title = label; }
-    // Collapsible transparent origin panel (article/thread preview).
+    // Full briefing-style article/thread card fades in alongside the
+    // flow arcs. This replaces the legacy small preview panel for the
+    // feed / node entry points.
     if (_flowArcOrigin && (_flowArcOrigin.source === 'feed' || _flowArcOrigin.source === 'node')) {
-      populateFlowOriginPanel();
+      hideFlowOriginPanel(); // ensure the legacy small panel is gone
+      showFlowArticleCard(_flowArcOrigin, _flowArcOrigin.flows || []);
     }
   }
 
@@ -18130,6 +18563,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const returnBtn = document.getElementById("flowReturnBtn");
     if (returnBtn) returnBtn.classList.remove("visible");
     hideFlowOriginPanel();
+    hideFlowArticleCard();
+    // Re-enable hover labels, node click selection and the node panel
+    // now that the card-triggered flow arcs are done.
+    window.__flowCardSuppressGlobeInteractions = false;
     _flowArcOrigin = null;
   }
 
@@ -18270,6 +18707,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (articleObj && _flowArcOrigin) {
         _flowArcOrigin.article = { ...(_flowArcOrigin.article || {}), ...articleObj };
       }
+      // Suppress node hover labels + node click selection while these
+      // card-triggered arcs are live on screen so the user can freely
+      // click arcs without accidentally selecting nodes underneath.
+      window.__flowCardSuppressGlobeInteractions = true;
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
@@ -18283,6 +18724,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const arc = window.__flowCreateArc?.(flow, maxCount);
         if (arc) window.__flowPushArc?.(arc);
       });
+
+      // Stash the rendered flows on the origin so the briefing card
+      // can collect keyword candidates (src/dst places) for entity
+      // highlighting when arcs are clicked.
+      if (_flowArcOrigin) _flowArcOrigin.flows = flows;
 
       // 7. Update minimized stats
       const statsEl = document.getElementById("flowMinStats");
@@ -18351,6 +18797,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (data.thread && _flowArcOrigin) {
         _flowArcOrigin.thread = { ...(_flowArcOrigin.thread || {}), ...data.thread };
       }
+      window.__flowCardSuppressGlobeInteractions = true;
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
@@ -18364,6 +18811,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const arc = window.__flowCreateArc?.(flow, maxCount);
         if (arc) window.__flowPushArc?.(arc);
       });
+
+      if (_flowArcOrigin) _flowArcOrigin.flows = flows;
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
@@ -24364,6 +24813,9 @@ body.ticker-active .gTickerLabel {
   }
 
   async function openNodePanel(node) {
+    // Hard block: node panel is deactivated when card-triggered flow
+    // arcs are on screen.
+    if (window.__flowCardSuppressGlobeInteractions) return;
     _selected = node;
     const keywords = keywordList(node.feature_keywords, 12);
     const catColor = CATEGORY_COLORS[node.primary_category] || CATEGORY_COLORS.default;
