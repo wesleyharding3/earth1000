@@ -12441,11 +12441,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 <div id="timePill" class="cityMetaPill"></div>
               </div>` : ""}
               <div class="panelHeaderBtnGroup">
-                <button class="locBriefBtn" id="locBriefBtn" title="Generate location briefing">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M20.07 4.93a10 10 0 0 1 0 14.14M3.93 19.07a10 10 0 0 1 0-14.14"/>
-                  </svg>
-                </button>
                 <button class="closePanel" style="z-index:110;pointer-events:all;">✕</button>
               </div>
             </div>
@@ -13178,15 +13173,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
         closeBtn.addEventListener("click", (e) => { e.stopPropagation(); });
 
-        // ── Location briefing ──
-        const locBriefBtn = panel.querySelector("#locBriefBtn");
-        if (locBriefBtn) {
-          locBriefBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            showLocBriefingOptions(node, type);
-          });
-          locBriefBtn.addEventListener("mousedown", (e) => e.stopPropagation());
-        }
+        // (Custom-briefing button removed from node panels.)
       }
 
       window.addEventListener("wheel", e => {
@@ -18905,8 +18892,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 10. Surface the article card alongside the arcs so the user can
       //     see which article these flows belong to. Uses context 'flow'
       //     so the article detail's close doesn't tear down the arcs.
-      if (articleObj && typeof window.openArticleDetail === "function") {
-        window.openArticleDetail(articleObj, { type: 'flow' });
+      //     Falls back to the origin-captured article if the API didn't
+      //     return one, guaranteeing the card is shown.
+      const _artForPanel = articleObj || _flowArcOrigin?.article || null;
+      if (_artForPanel && typeof window.openArticleDetail === "function") {
+        window.openArticleDetail(_artForPanel, { type: 'flow' });
       }
 
     } catch (e) {
