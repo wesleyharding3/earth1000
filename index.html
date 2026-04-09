@@ -5708,6 +5708,37 @@ body.ticker-active #flowControls {
     .layerOpt.active .layerLabel { color: rgba(255,210,120,0.95); }
     .layerOpt.soon .layerLabel { opacity: 0.28; }
 
+    /* Theme pill (Light / Dark toggle in settings) */
+    .themePill {
+      display: inline-flex;
+      padding: 3px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      gap: 2px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .themePillBtn {
+      flex: 1;
+      appearance: none;
+      background: transparent;
+      color: rgba(255, 255, 255, 0.55);
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.22s ease, color 0.22s ease, box-shadow 0.22s ease;
+    }
+    .themePillBtn.active {
+      background: rgba(255, 190, 80, 0.18);
+      color: #ffd884;
+      box-shadow: 0 0 0 1px rgba(255, 190, 80, 0.35) inset,
+                  0 0 10px rgba(255, 170, 40, 0.22);
+    }
+
     .layerSoon {
       font-size: 7.5px; font-weight: 700;
       letter-spacing: 0.10em; text-transform: uppercase;
@@ -7163,7 +7194,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Appearance</div>
           <div class="layerList">
-            <div class="layerOpt" id="biomeOverlayToggleCountry">
+            <div class="layerOpt active" id="biomeOverlayToggleCountry">
               <div class="layerDot"></div>
               <span class="layerLabel">Satellite View</span>
             </div>
@@ -7171,10 +7202,19 @@ window.sourceBiasBadgeHTML = function(bias) {
           <div class="sliderRow" style="margin-top:10px;">
             <div class="sliderLabelRow">
               <span class="sliderLabel">Opacity</span>
-              <span class="sliderValue" id="biomeOverlayOpacityValCountry">90%</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValCountry">35%</span>
             </div>
             <input class="settingsSlider" type="range" id="biomeOverlayOpacityCountry"
-                   min="0" max="1" step="0.01" value="0.90" />
+                   min="0" max="1" step="0.01" value="0.35" />
+          </div>
+          <div class="themeToggleRow" style="margin-top:12px;">
+            <div class="sliderLabelRow" style="margin-bottom:6px;">
+              <span class="sliderLabel">Theme</span>
+            </div>
+            <div class="themePill" data-theme-pill>
+              <button class="themePillBtn active" data-theme="light">Light</button>
+              <button class="themePillBtn" data-theme="dark">Dark</button>
+            </div>
           </div>
         </div>
         <div class="sidebarDivider"></div>
@@ -7254,7 +7294,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Appearance</div>
           <div class="layerList">
-            <div class="layerOpt" id="biomeOverlayToggleCity">
+            <div class="layerOpt active" id="biomeOverlayToggleCity">
               <div class="layerDot"></div>
               <span class="layerLabel">Satellite View</span>
             </div>
@@ -7262,10 +7302,19 @@ window.sourceBiasBadgeHTML = function(bias) {
           <div class="sliderRow" style="margin-top:10px;">
             <div class="sliderLabelRow">
               <span class="sliderLabel">Opacity</span>
-              <span class="sliderValue" id="biomeOverlayOpacityValCity">90%</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValCity">35%</span>
             </div>
             <input class="settingsSlider" type="range" id="biomeOverlayOpacityCity"
-                   min="0" max="1" step="0.01" value="0.90" />
+                   min="0" max="1" step="0.01" value="0.35" />
+          </div>
+          <div class="themeToggleRow" style="margin-top:12px;">
+            <div class="sliderLabelRow" style="margin-bottom:6px;">
+              <span class="sliderLabel">Theme</span>
+            </div>
+            <div class="themePill" data-theme-pill>
+              <button class="themePillBtn active" data-theme="light">Light</button>
+              <button class="themePillBtn" data-theme="dark">Dark</button>
+            </div>
           </div>
         </div>
         <div class="sidebarDivider"></div>
@@ -7508,7 +7557,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Appearance</div>
           <div class="layerList">
-            <div class="layerOpt" id="biomeOverlayToggleDefault">
+            <div class="layerOpt active" id="biomeOverlayToggleDefault">
               <div class="layerDot"></div>
               <span class="layerLabel">Satellite View</span>
             </div>
@@ -7516,10 +7565,19 @@ window.sourceBiasBadgeHTML = function(bias) {
           <div class="sliderRow" style="margin-top:10px;">
             <div class="sliderLabelRow">
               <span class="sliderLabel">Opacity</span>
-              <span class="sliderValue" id="biomeOverlayOpacityValDefault">90%</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValDefault">35%</span>
             </div>
             <input class="settingsSlider" type="range" id="biomeOverlayOpacityDefault"
-                   min="0" max="1" step="0.01" value="0.90" />
+                   min="0" max="1" step="0.01" value="0.35" />
+          </div>
+          <div class="themeToggleRow" style="margin-top:12px;">
+            <div class="sliderLabelRow" style="margin-bottom:6px;">
+              <span class="sliderLabel">Theme</span>
+            </div>
+            <div class="themePill" data-theme-pill>
+              <button class="themePillBtn active" data-theme="light">Light</button>
+              <button class="themePillBtn" data-theme="dark">Dark</button>
+            </div>
           </div>
         </div>
         <div class="sidebarDivider"></div>
@@ -8252,39 +8310,98 @@ function computeCityTiers(cities) {
       const surfaceMat = new THREE.MeshBasicMaterial({
         map: earthTexture,
         transparent: true,
-        opacity: 0.90,
+        opacity: 0.35,
         depthWrite: false,
         side: THREE.FrontSide
       });
       const surfaceOverlayMesh = new THREE.Mesh(surfaceGeo, surfaceMat);
-      surfaceOverlayMesh.visible = false;
+      surfaceOverlayMesh.visible = true;
       scene.add(surfaceOverlayMesh);
 
-      // Attempt to upgrade to a higher-resolution Blue Marble texture.
-      // crossOrigin is intentionally left unset so the request works even
-      // when the server does not send CORS headers (display-only use, no
-      // pixel readback needed). Falls back silently to earthTexture.
+      let __dayTexture   = earthTexture;
+      let __nightTexture = null;
+
+      // Upgrade day texture to higher-res Blue Marble in background
       (function() {
-        const satImg = new Image();
-        satImg.onload = function() {
-          const satTex = new THREE.Texture(satImg);
-          satTex.colorSpace = THREE.SRGBColorSpace;
-          satTex.needsUpdate = true;
-          surfaceMat.map = satTex;
-          surfaceMat.needsUpdate = true;
-        };
-        // NASA Blue Marble 2004 Next Generation — 5400 × 2700 composite
-        satImg.src = "https://eoimages.gsfc.nasa.gov/images/imagerecords/74000/74117/world.200412.3x5400x2700.jpg";
+        const satLoader = new THREE.TextureLoader();
+        satLoader.setCrossOrigin("anonymous");
+        satLoader.load(
+          "https://eoimages.gsfc.nasa.gov/images/imagerecords/74000/74117/world.200412.3x5400x2700.jpg",
+          function(satTex) {
+            satTex.colorSpace = THREE.SRGBColorSpace;
+            satTex.needsUpdate = true;
+            __dayTexture = satTex;
+            if ((window.__globeTheme || "light") === "light") {
+              surfaceMat.map = satTex;
+              surfaceMat.needsUpdate = true;
+            }
+          }
+        );
       })();
 
-      window.__surfaceOverlayEnabled = false;
-      window.__surfaceOverlayOpacity = 0.90;
+      // Load night (Black Marble) texture via CORS-clean loader
+      (function() {
+        const nightLoader = new THREE.TextureLoader();
+        nightLoader.setCrossOrigin("anonymous");
+        nightLoader.load(
+          "https://unpkg.com/three-globe/example/img/earth-night.jpg",
+          function(nightTex) {
+            nightTex.colorSpace = THREE.SRGBColorSpace;
+            nightTex.needsUpdate = true;
+            __nightTexture = nightTex;
+            if (window.__globeTheme === "dark") {
+              surfaceMat.map = nightTex;
+              surfaceMat.needsUpdate = true;
+            }
+          },
+          undefined,
+          function(err) {
+            const fallback = new THREE.TextureLoader();
+            fallback.setCrossOrigin("anonymous");
+            fallback.load(
+              "https://eoimages.gsfc.nasa.gov/images/imagerecords/55000/55167/earth_lights_lrg.jpg",
+              function(nightTex) {
+                nightTex.colorSpace = THREE.SRGBColorSpace;
+                nightTex.needsUpdate = true;
+                __nightTexture = nightTex;
+                if (window.__globeTheme === "dark") {
+                  surfaceMat.map = nightTex;
+                  surfaceMat.needsUpdate = true;
+                }
+              }
+            );
+          }
+        );
+      })();
+
+      window.__surfaceOverlayEnabled = true;
+      window.__surfaceOverlayOpacity = 0.35;
+      window.__globeTheme            = "light";
+
+      function setGlobeTheme(theme) {
+        window.__globeTheme = (theme === "dark") ? "dark" : "light";
+        const tex = (window.__globeTheme === "dark")
+          ? (__nightTexture || __dayTexture)
+          : (__dayTexture   || __nightTexture);
+        if (tex) {
+          surfaceMat.map = tex;
+          surfaceMat.needsUpdate = true;
+        }
+        if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
+        if (typeof window.__syncGlobeThemeControls === "function") window.__syncGlobeThemeControls();
+      }
+      window.__setGlobeTheme = setGlobeTheme;
 
       function syncSurfaceOverlayVisibility() {
         const mode = window.__currentViewMode || currentViewMode;
         const allowed = mode === "country" || mode === "city" || mode === "regions";
         surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
-        surfaceMat.opacity = window.__surfaceOverlayOpacity ?? 0.90;
+        const userOpacity = window.__surfaceOverlayOpacity ?? 0.35;
+        if (window.__globeTheme === "dark") {
+          surfaceMat.opacity = Math.max(userOpacity, 0.45);
+        } else {
+          surfaceMat.opacity = userOpacity;
+        }
       }
 
       window.__syncSurfaceOverlayVisibility = syncSurfaceOverlayVisibility;
@@ -9751,6 +9868,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (sidebarOpen && !viewSidebar.contains(e.target) && !settingsToggle.contains(e.target)) closeSidebar();
       });
       viewSidebar.addEventListener("click", (e) => e.stopPropagation());
+      // Block pointer/touch events from reaching the globe canvas beneath the
+      // settings panel so taps on sidebar controls never register as node clicks.
+      ["pointerdown","pointerup","mousedown","mouseup","touchstart","touchend","wheel"].forEach(ev => {
+        viewSidebar.addEventListener(ev, (e) => e.stopPropagation(), { passive: false });
+      });
 
       function setSidebarPanel(mode) {
         document.querySelectorAll(".sidebarPanel").forEach(p => p.classList.remove("active"));
@@ -9816,9 +9938,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncBiomeOverlayControls() {
         biomeOverlayToggles.forEach(el => el.classList.toggle("active", !!window.__surfaceOverlayEnabled));
-        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.90; });
+        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.35; });
         biomeOverlayVals.forEach(el => {
-          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.90) * 100) + "%";
+          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.35) * 100) + "%";
         });
       }
 
@@ -9841,6 +9963,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       syncBiomeOverlayControls();
+
+      // ── Theme pill (Light / Dark) ──────────────────────────────────
+      const themePillBtns = Array.from(document.querySelectorAll(".themePillBtn"));
+      function syncGlobeThemeControls() {
+        const theme = window.__globeTheme || "light";
+        themePillBtns.forEach(btn => {
+          btn.classList.toggle("active", btn.dataset.theme === theme);
+        });
+      }
+      window.__syncGlobeThemeControls = syncGlobeThemeControls;
+      themePillBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const theme = btn.dataset.theme === "dark" ? "dark" : "light";
+          if (typeof window.__setGlobeTheme === "function") {
+            window.__setGlobeTheme(theme);
+          }
+          syncGlobeThemeControls();
+        });
+        btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      });
+      syncGlobeThemeControls();
 
       // Ocean-specific controls
       const oceanOpacitySlider = document.getElementById("oceanOpacitySlider");
@@ -11283,8 +11427,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Threshold is 1500ms to account for Capacitor WKWebView bridge latency,
         // which can delay the JS click handler well past the usual ~300ms iOS synthetic-click delay.
         if (Date.now() - touchNodeSelectTime < 1500) return;
-        // If a touch drag just ended, suppress the synthetic click at the release point
-        if (Date.now() - touchDragEndTime < 500) return;
+        // If a touch drag just ended, suppress the synthetic click at the release
+        // point. Long cooloff (1200ms) so a fast drag+release can't accidentally
+        // select a node beneath the release point.
+        if (Date.now() - touchDragEndTime < 1200) return;
 
         // Skip this handler when flow mode is active
         const flowControls = document.getElementById("flowControls");
@@ -11392,6 +11538,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.briefingActive) return;   // globe locked during briefing
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
+        // If a drag just ended, suppress node selection for the cooloff window
+        if (Date.now() - touchDragEndTime < 1200) return;
+        // Don't start a new node selection if the touch lands inside the
+        // settings sidebar — controls there must never trigger globe picks.
+        {
+          const _tt = event.touches[0];
+          const _target = document.elementFromPoint(_tt.clientX, _tt.clientY);
+          if (_target && _target.closest && _target.closest("#viewSidebar")) return;
+        }
 
         // Skip node selection when flow mode is active
         const flowControls = document.getElementById("flowControls");

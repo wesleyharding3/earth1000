@@ -1738,8 +1738,10 @@ app.get("/api/heatmap", async (req, res) => {
         params.push(fromIso); where.push(`a.published_at >= $${params.length}::timestamptz`);
         params.push(toIso);   where.push(`a.published_at <  $${params.length}::timestamptz`);
       } else {
-        where.push(`a.published_at > NOW() - ($${params.length + 1}::int || ' days')::interval`);
+        // Use make_interval — unambiguous across Postgres versions and avoids
+        // the `int || text` coercion path that has tripped 500s on some hosts.
         params.push(days);
+        where.push(`a.published_at > NOW() - make_interval(days => $${params.length}::int)`);
       }
 
       if (threadId) {
@@ -1813,11 +1815,24 @@ app.get("/api/heatmap", async (req, res) => {
       const client = await pool.connect();
       try {
         await client.query(`SET LOCAL statement_timeout = 60000`);
-        const [cRes, ciRes] = await Promise.all([
-          client.query(sqlCountry, params),
-          client.query(sqlCity,    params)
-        ]);
-        return { countryRows: cRes.rows, cityRows: ciRes.rows };
+        // Run sequentially so a slow half doesn't block the other, and so
+        // a single failing query degrades gracefully to an empty list
+        // instead of 500'ing the whole heatmap response.
+        let countryRows = [];
+        let cityRows    = [];
+        try {
+          const cRes = await client.query(sqlCountry, params);
+          countryRows = cRes.rows;
+        } catch (e) {
+          console.error("[heatmap] country query failed:", e.message);
+        }
+        try {
+          const ciRes = await client.query(sqlCity, params);
+          cityRows = ciRes.rows;
+        } catch (e) {
+          console.error("[heatmap] city query failed:", e.message);
+        }
+        return { countryRows, cityRows };
       } finally {
         client.release();
       }
