@@ -8787,6 +8787,7 @@ function computeCityTiers(cities) {
       window.__globeTheme            = "light";
 
       function setGlobeTheme(theme) {
+        const prev = window.__globeTheme;
         window.__globeTheme = (theme === "dark") ? "dark" : "light";
         const tex = (window.__globeTheme === "dark")
           ? (__nightTexture || __dayTexture)
@@ -8794,6 +8795,10 @@ function computeCityTiers(cities) {
         if (tex) {
           surfaceMat.map = tex;
           surfaceMat.needsUpdate = true;
+        }
+        // Apply per-theme default opacity on theme switch: dark → 0.80, light → 0.35.
+        if (prev !== window.__globeTheme) {
+          window.__surfaceOverlayOpacity = (window.__globeTheme === "dark") ? 0.80 : 0.35;
         }
         if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
         if (typeof window.__syncGlobeThemeControls === "function") window.__syncGlobeThemeControls();
