@@ -4568,7 +4568,29 @@ body.ticker-active #flowControls {
       height: var(--app-height, 100vh);
       overflow: hidden;
       min-height: 0;
+      position: relative;
     }
+
+    /* Subtle yellow halo behind the nav ticker bar — lights up on
+       pull-past-bottom in feed/threads. Opacity driven by JS. */
+    #nfOverscrollHalo {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      height: 180px;
+      pointer-events: none;
+      opacity: 0;
+      z-index: 4;
+      background: radial-gradient(
+        ellipse 70% 100% at 50% 100%,
+        rgba(255,200,90,0.55) 0%,
+        rgba(255,180,60,0.30) 28%,
+        rgba(255,170,40,0.12) 56%,
+        rgba(255,160,30,0.00) 100%
+      );
+      transition: opacity 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+      mix-blend-mode: screen;
+    }
+    #nfOverscrollHalo.pulling { transition: none; }
 
     /* ───────────────────────────────────────
        QUERY BAR
@@ -4591,15 +4613,19 @@ body.ticker-active #flowControls {
     }
     /* Old static gradient suppressed — replaced by dynamic canvas below */
     .nfTitleRow::after { display: none; }
-    /* Dynamic accent line — canvas version, see initNfAccentLine */
+    /* Dynamic accent line — canvas version, see initNfAccentLine.
+       Moved OUT of .nfTitleRow and positioned inside #newsFeedPage so
+       it sits on the divider between the meta bar (source count row)
+       and the feed/threads viewport. Its top is updated each frame in
+       JS to track whichever meta bar is currently visible. */
     #nfAccentCanvas {
       position: absolute;
       left: 0; right: 0;
-      bottom: -9px;
+      top: 0;
       width: 100%;
       height: 6px;
       pointer-events: none;
-      z-index: 2;
+      z-index: 6;
       display: block;
     }
 
@@ -5674,7 +5700,8 @@ body.ticker-active #flowControls {
     .nfEmpty svg { width: 30px; height: 30px; }
     .nfEmpty span { font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
 
-    /* Spinner */
+    /* Spinner (legacy circle — still used inside the Search button).
+       The bottom-of-feed loader uses .nfDotLine instead, see below. */
     .nfSpinRow { display: none; justify-content: center; padding: 20px; grid-column: 1/-1; }
     .nfSpinRow.on { display: flex; }
     .nfSpinner {
@@ -5684,6 +5711,63 @@ body.ticker-active #flowControls {
       border-radius: 50%; animation: nfSpin 0.7s linear infinite;
     }
     @keyframes nfSpin { to { transform: rotate(360deg); } }
+
+    /* Row of pulsing glowing yellow dots — replaces the circular spinner
+       at the bottom of the feed/threads list. */
+    .nfDotLine {
+      display: flex; align-items: center; gap: 9px;
+    }
+    .nfDotLine span {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #ffbe50;
+      box-shadow:
+        0 0 6px rgba(255,190,80,0.90),
+        0 0 14px rgba(255,170,40,0.55),
+        0 0 26px rgba(255,160,30,0.28);
+      animation: nfDotPulse 1.25s ease-in-out infinite;
+    }
+    .nfDotLine span:nth-child(1) { animation-delay: 0.00s; }
+    .nfDotLine span:nth-child(2) { animation-delay: 0.12s; }
+    .nfDotLine span:nth-child(3) { animation-delay: 0.24s; }
+    .nfDotLine span:nth-child(4) { animation-delay: 0.36s; }
+    .nfDotLine span:nth-child(5) { animation-delay: 0.48s; }
+    @keyframes nfDotPulse {
+      0%, 80%, 100% { transform: scale(0.55); opacity: 0.30; }
+      40%           { transform: scale(1.00); opacity: 1.00; }
+    }
+
+    /* Skeleton placeholder cards for articles/threads still being
+       fetched. Centered triple-dot ripple, yellow to match the News
+       Feed title glow. Sized to roughly match real card footprint. */
+    .nfCardSkeleton, .nfThreadCardSkeleton {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 10px;
+      border: 1px solid rgba(255,180,80,0.08);
+      background:
+        radial-gradient(ellipse 80% 60% at 50% 50%, rgba(255,180,80,0.05), rgba(255,180,80,0) 75%),
+        rgba(255,180,80,0.015);
+      min-height: 190px;
+      overflow: hidden;
+    }
+    .nfCardSkeleton .nfSkelDots,
+    .nfThreadCardSkeleton .nfSkelDots {
+      display: flex; gap: 6px;
+    }
+    .nfCardSkeleton .nfSkelDots span,
+    .nfThreadCardSkeleton .nfSkelDots span {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: #ffbe50;
+      box-shadow:
+        0 0 5px rgba(255,190,80,0.85),
+        0 0 12px rgba(255,170,40,0.45),
+        0 0 22px rgba(255,160,30,0.22);
+      animation: nfDotPulse 1.25s ease-in-out infinite;
+    }
+    .nfCardSkeleton .nfSkelDots span:nth-child(2),
+    .nfThreadCardSkeleton .nfSkelDots span:nth-child(2) { animation-delay: 0.14s; }
+    .nfCardSkeleton .nfSkelDots span:nth-child(3),
+    .nfThreadCardSkeleton .nfSkelDots span:nth-child(3) { animation-delay: 0.28s; }
 
     #hoverCard, #hoverLineEl {
       z-index: 99999;
@@ -15845,11 +15929,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 <div class="page" id="pageNews">
   <div id="newsFeedPage">
+    <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
+    <div id="nfOverscrollHalo" aria-hidden="true"></div>
     <!-- ── QUERY BAR ── -->
     <div id="nfQueryBar">
       <!-- Row 1: title + view toggle -->
       <div class="nfTitleRow">
-        <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
         <span class="nfPageTitle">News Feed</span>
         <div class="nfTitleActions">
           <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
@@ -16003,7 +16088,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <div id="nfViewport">
       <div id="nfGrid"></div>
       <div class="nfSpinRow" id="nfSpinRow">
-        <div class="nfSpinner"></div>
+        <div class="nfDotLine"><span></span><span></span><span></span><span></span><span></span></div>
       </div>
     </div>
     <!-- Threads meta + date filter -->
@@ -16425,12 +16510,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
+    // Small glowing-yellow triple-dot placeholder card. Shown in place of
+    // real cards for the articles we know exist (per totalCount) but
+    // haven't yet fetched, so the grid fills in immediately while the
+    // remaining pages stream in.
+    function skeletonCardHTML() {
+      return `<div class="nfCardSkeleton"><div class="nfSkelDots"><span></span><span></span><span></span></div></div>`;
+    }
+
+    // Cap how many skeletons we actually paint — no point in rendering
+    // thousands of placeholders for huge result sets; a couple screens'
+    // worth is plenty to convey "more coming".
+    const MAX_SKELETONS = 24;
+    function computeSkeletonCount(renderedRealCount) {
+      if (!hasMore && totalCount <= renderedRealCount) return 0;
+      const remaining = Math.max(0, (totalCount || 0) - renderedRealCount);
+      // If we don't know the total yet, show a small batch during the
+      // very first fetch so the grid doesn't look empty.
+      if (!remaining && loading) return Math.min(MAX_SKELETONS, LIMIT);
+      return Math.min(MAX_SKELETONS, remaining);
+    }
+
     function renderCards(list, forceFullRebuild) {
       if (!list.length && !loading) {
         grid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No articles found</span></div>`;
         _lastRenderedCount = 0;
         return;
       }
+      // Remove any existing skeleton placeholders before we diff.
+      grid.querySelectorAll('.nfCardSkeleton').forEach(el => el.remove());
+
       // Append only new cards when loading more (avoids full DOM rebuild)
       if (!forceFullRebuild && _lastRenderedCount > 0 && list.length > _lastRenderedCount) {
         const startIdx = grid.children.length;
@@ -16443,6 +16552,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         pulseBiasBadgesIn(Array.from(grid.children));
       }
       _lastRenderedCount = list.length;
+
+      // Append skeleton placeholders for articles we still expect.
+      const skelN = computeSkeletonCount(list.length);
+      if (skelN > 0) {
+        const frag = Array(skelN).fill(skeletonCardHTML()).join('');
+        grid.insertAdjacentHTML('beforeend', frag);
+      }
     }
 
     function updateMetaCount() {
@@ -16530,6 +16646,97 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 300) fetchPage();
     });
 
+    // ── Bottom-overscroll halo ─────────────────────────────────────────
+    // When the user is scrolled to the bottom of the feed / threads list
+    // and continues to pull upward (i.e. has run out of loaded content),
+    // a subtle yellow halo emanates from just behind the bottom nav,
+    // growing in intensity with pull length. Light, breathy — never
+    // bright enough to be distracting.
+    (function initBottomOverscrollHalo() {
+      const halo = document.getElementById('nfOverscrollHalo');
+      if (!halo) return;
+      const MAX_PULL = 220; // px — pull distance that maps to max intensity
+      const MAX_OPACITY = 0.55; // cap opacity so glow stays subtle
+      const targets = [
+        document.getElementById('nfViewport'),
+        document.getElementById('nfThreadsViewport'),
+      ].filter(Boolean);
+
+      function atBottom(el) {
+        return el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+      }
+
+      function setHaloIntensity(pullPx) {
+        const t = Math.max(0, Math.min(1, pullPx / MAX_PULL));
+        // Ease-in so the glow starts gentle and builds.
+        const eased = t * t;
+        halo.style.opacity = (eased * MAX_OPACITY).toFixed(3);
+      }
+
+      function releaseHalo() {
+        halo.classList.remove('pulling');
+        halo.style.opacity = '0';
+      }
+
+      targets.forEach(el => {
+        let startY = null;
+        let armed = false;
+
+        el.addEventListener('touchstart', (e) => {
+          if (!e.touches || !e.touches.length) return;
+          // Only arm if we're already parked at the bottom edge.
+          if (atBottom(el)) {
+            startY = e.touches[0].clientY;
+            armed = true;
+          } else {
+            startY = null;
+            armed = false;
+          }
+        }, { passive: true });
+
+        el.addEventListener('touchmove', (e) => {
+          if (!armed || startY == null || !e.touches || !e.touches.length) return;
+          // Re-verify bottom lock in case the scroll moved.
+          if (!atBottom(el)) {
+            releaseHalo();
+            armed = false;
+            return;
+          }
+          const dy = startY - e.touches[0].clientY; // pulling UP ⇒ positive
+          if (dy <= 0) {
+            // User is pulling the other direction — no halo.
+            releaseHalo();
+            return;
+          }
+          halo.classList.add('pulling');
+          setHaloIntensity(dy);
+        }, { passive: true });
+
+        const end = () => {
+          startY = null;
+          armed = false;
+          releaseHalo();
+        };
+        el.addEventListener('touchend', end, { passive: true });
+        el.addEventListener('touchcancel', end, { passive: true });
+
+        // Desktop wheel equivalent — decay the halo automatically.
+        let wheelPull = 0, wheelTimer = null;
+        el.addEventListener('wheel', (e) => {
+          if (!atBottom(el)) { wheelPull = 0; releaseHalo(); return; }
+          if (e.deltaY <= 0) return;
+          wheelPull = Math.min(MAX_PULL, wheelPull + e.deltaY * 0.6);
+          halo.classList.add('pulling');
+          setHaloIntensity(wheelPull);
+          clearTimeout(wheelTimer);
+          wheelTimer = setTimeout(() => {
+            wheelPull = 0;
+            releaseHalo();
+          }, 220);
+        }, { passive: true });
+      });
+    })();
+
     function closeAll() {
       document.querySelectorAll(".nfMultiDrop, .nfTagDropdown").forEach(d => d.classList.remove("open"));
     }
@@ -16588,6 +16795,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         threadsVp.style.display    = view === 'threads' ? '' : 'none';
         feedMeta.style.display     = view === 'feed' ? '' : 'none';
         threadsMeta.style.display  = view === 'threads' ? '' : 'none';
+        // Re-seat the dynamic accent canvas on the newly-visible meta bar.
+        if (typeof window.__nfAccentResize === 'function') {
+          requestAnimationFrame(window.__nfAccentResize);
+        }
         if (view === 'threads' && !threadsLoaded) loadThreads();
         if (view === 'feed' && !feedBootstrapped) { feedBootstrapped = true; runSearch(); }
       }
@@ -16745,6 +16956,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         threadsCount.innerHTML = `<strong>${threadCount.toLocaleString()}</strong> thread${threadCount !== 1 ? 's' : ''} · <strong>${totalArticles.toLocaleString()}</strong> article${totalArticles !== 1 ? 's' : ''}`;
       }
 
+      const THREAD_MAX_SKELETONS = 24;
+      function threadSkeletonHTML() {
+        return `<div class="nfThreadCardSkeleton"><div class="nfSkelDots"><span></span><span></span><span></span></div></div>`;
+      }
+      function refreshThreadSkeletons() {
+        // Strip any existing skeletons first so we don't stack them.
+        threadsGrid.querySelectorAll('.nfThreadCardSkeleton').forEach(el => el.remove());
+        const remaining = Math.max(0, threadsData.length - threadsRendered);
+        const n = Math.min(THREAD_MAX_SKELETONS, remaining);
+        if (n > 0) {
+          threadsGrid.insertAdjacentHTML('beforeend', Array(n).fill(threadSkeletonHTML()).join(''));
+        }
+      }
+
       function renderThreads() {
         if (!threadsData.length) {
           threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No threads found</span></div>`;
@@ -16761,6 +16986,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // handlers. Idempotent — bails if everything's already rendered.
       function appendNextThreadPage() {
         if (threadsRendered >= threadsData.length) return;
+        // Drop skeletons before appending so real cards take their slots.
+        threadsGrid.querySelectorAll('.nfThreadCardSkeleton').forEach(el => el.remove());
         const slice = threadsData.slice(threadsRendered, threadsRendered + THREADS_PAGE_SIZE);
         const tmp = document.createElement('div');
         tmp.innerHTML = slice.map(threadCardHTML).join('');
@@ -16778,6 +17005,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           threadsGrid.appendChild(node);
         });
         threadsRendered += slice.length;
+        refreshThreadSkeletons();
       }
 
       // Wire infinite scroll on the threads viewport — paginate when the
@@ -16866,60 +17094,81 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const DPR = Math.min(2, window.devicePixelRatio || 1);
       let cssW = 0, cssH = 0;
 
+      // Canvas now lives inside #newsFeedPage and must sit on the line
+      // between whichever meta bar is currently visible (feed mode:
+      // #nfMeta, threads mode: #nfThreadsMeta) and the viewport below.
       function resize() {
-        const parent = canvas.parentElement;
+        const parent = canvas.parentElement; // #newsFeedPage
         if (!parent) return;
-        const r = parent.getBoundingClientRect();
-        cssW = r.width;
+        const pr = parent.getBoundingClientRect();
+        cssW = pr.width;
         cssH = 6;
         canvas.width  = Math.max(1, Math.round(cssW * DPR));
         canvas.height = Math.max(1, Math.round(cssH * DPR));
         canvas.style.height = cssH + 'px';
+
+        const feedMeta = document.getElementById('nfMeta');
+        const threadsMeta = document.getElementById('nfThreadsMeta');
+        const active = (feedMeta && feedMeta.offsetParent !== null)
+          ? feedMeta
+          : (threadsMeta && threadsMeta.offsetParent !== null ? threadsMeta : null);
+        if (active) {
+          const ar = active.getBoundingClientRect();
+          canvas.style.top = (ar.bottom - pr.top - cssH / 2) + 'px';
+        } else {
+          canvas.style.top = '0px';
+        }
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       }
       resize();
       if (window.ResizeObserver) {
         const ro = new ResizeObserver(resize);
         ro.observe(canvas.parentElement);
+        const fm = document.getElementById('nfMeta');
+        const tm = document.getElementById('nfThreadsMeta');
+        if (fm) ro.observe(fm);
+        if (tm) ro.observe(tm);
       } else {
         window.addEventListener('resize', resize);
       }
+      // Expose so the view-toggle code can re-seat the canvas when the
+      // user flips between feed ↔ threads mode (meta bar swaps).
+      window.__nfAccentResize = resize;
 
-      // Ripple model: traveling wave packet with exponential decay.
-      const ripples = []; // {x0, amp, born, life, speed, spread}
-
-      function seedRipple(xFrac, intensity = 0.5, life = 1200) {
-        const x0 = Math.max(0, Math.min(1, xFrac)) * cssW;
-        ripples.push({
-          type: 'sym',
-          x0,
-          amp: intensity,
-          born: performance.now(),
-          life,
-          speed: 220 + intensity * 340,
-          spread: 40 + intensity * 60,
-        });
-        if (ripples.length > 24) ripples.shift();
-      }
+      // Ripple model: all ripples are now straight-line sweeps that
+      // travel right-to-left across the full canvas width. The old
+      // bidirectional "sym" ripple type is retired — kept only as a
+      // no-op alias so existing call sites keep working.
+      const ripples = [];
 
       // Directional "recording head" sweep — a spark travels xStart→xEnd
-      // leaving a trailing illuminated ripple behind. Used for card clicks.
+      // leaving a trailing illuminated ripple behind.
       function seedSweep(xStartFrac, xEndFrac, intensity = 0.32, life = 1600) {
+        // Force straight right-to-left: ignore caller's x params and
+        // sweep from the right edge of the screen all the way to the
+        // left edge. This guarantees the single, clean directional
+        // motion the design now calls for.
         ripples.push({
           type: 'sweep',
           amp: intensity,
           born: performance.now(),
           life,
-          xStart: Math.max(0, Math.min(1, xStartFrac)) * cssW,
-          xEnd:   Math.max(0, Math.min(1, xEndFrac))   * cssW,
+          xStart: cssW + 20,
+          xEnd:   -20,
           spread: 32 + intensity * 48,
         });
         if (ripples.length > 24) ripples.shift();
       }
       window.__nfAccentSweep = seedSweep;
 
+      // Legacy entry point — any caller that asks for a symmetric ripple
+      // now gets a right-to-left sweep at the requested intensity.
+      function seedRipple(xFrac, intensity = 0.5, life = 1200) {
+        seedSweep(1.0, 0.0, intensity, life + 200);
+      }
+
       function strum(intensity = 0.5, xFrac = 0.5) {
-        seedRipple(xFrac, intensity, 900 + intensity * 900);
+        seedSweep(1.0, 0.0, intensity, 1100 + intensity * 900);
       }
       window.__nfAccentStrum = strum;
       window.__nfAccentPulse = function(kind) {
