@@ -16629,7 +16629,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </svg>
           </button>
           <div class="nfViewToggle" id="nfViewToggle">
-            <div class="nfViewPill active" data-view="threads" id="nfViewThreads">Threads</div>
+            <div class="nfViewPill active" data-view="timelines" id="nfViewTimelines">Timelines</div>
+            <div class="nfViewPill" data-view="threads" id="nfViewThreads">Threads</div>
             <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
           </div>
         </div>
@@ -17460,6 +17461,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       };
       const feedPage      = document.getElementById('newsFeedPage');
       const toggleWrap    = document.getElementById('nfViewToggle');
+      const pillTimelines = document.getElementById('nfViewTimelines');
       const pillThreads   = document.getElementById('nfViewThreads');
       const pillFeed      = document.getElementById('nfViewFeed');
       const feedViewport  = document.getElementById('nfViewport');
@@ -17469,36 +17471,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const threadsMeta   = document.getElementById('nfThreadsMeta');
       const threadsCount  = document.getElementById('nfThreadsMetaCount');
 
-      let currentView = 'threads';
-      let threadsLoaded = false;
+      let currentView = 'timelines';
+      let threadsLoaded   = false;
+      let timelinesLoaded = false;
       let feedBootstrapped = false;
-      let threadsData = [];
+      let threadsData   = [];
+      let timelinesData = [];
+      // Active dataset rendered into threadsGrid — either threadsData or
+      // timelinesData. Kept as a single reference so renderThreads() /
+      // lazy-pagination don't need to know which is which (threads and
+      // timelines share a card shape).
+      let activeGridData = [];
       // Lazy-render in chunks of 15 so big result sets don't stall the page.
       const THREADS_PAGE_SIZE = 15;
       let threadsRendered = 0;
 
       function setView(view) {
         currentView = view;
-        pillThreads.classList.toggle('active', view === 'threads');
-        pillFeed.classList.toggle('active', view === 'feed');
-        feedPage.classList.toggle('nf-threads-mode', view === 'threads');
+        pillTimelines.classList.toggle('active', view === 'timelines');
+        pillThreads.classList.toggle('active',   view === 'threads');
+        pillFeed.classList.toggle('active',      view === 'feed');
+        // Timelines and Threads both live in the grid viewport — only Feed
+        // uses the feed viewport.
+        const inGrid = view === 'timelines' || view === 'threads';
+        feedPage.classList.toggle('nf-threads-mode', inGrid);
         feedViewport.style.display = view === 'feed' ? '' : 'none';
-        threadsVp.style.display    = view === 'threads' ? '' : 'none';
+        threadsVp.style.display    = inGrid ? '' : 'none';
         feedMeta.style.display     = view === 'feed' ? '' : 'none';
-        threadsMeta.style.display  = view === 'threads' ? '' : 'none';
+        threadsMeta.style.display  = inGrid ? '' : 'none';
         // Re-seat the dynamic accent canvas on the newly-visible meta bar.
         if (typeof window.__nfAccentResize === 'function') {
           requestAnimationFrame(window.__nfAccentResize);
         }
-        if (view === 'threads' && !threadsLoaded) loadThreads();
+        if (view === 'timelines') {
+          if (!timelinesLoaded) loadTimelines();
+          else { activeGridData = timelinesData; renderThreads(); }
+        }
+        if (view === 'threads') {
+          if (!threadsLoaded) loadThreads();
+          else { activeGridData = threadsData; renderThreads(); }
+        }
         if (view === 'feed' && !feedBootstrapped) { feedBootstrapped = true; runSearch(); }
       }
 
-      pillThreads.addEventListener('click', () => setView('threads'));
-      pillFeed.addEventListener('click', () => setView('feed'));
+      pillTimelines.addEventListener('click', () => setView('timelines'));
+      pillThreads.addEventListener('click',   () => setView('threads'));
+      pillFeed.addEventListener('click',      () => setView('feed'));
 
-      // Default to threads view on load
-      setView('threads');
+      // Default to Timelines view on load (broad umbrella arcs).
+      setView('timelines');
 
       function threadCardHTML(t) {
         const catColor = THREAD_CAT_COLORS[(t.primary_category || '').toLowerCase()] || THREAD_CAT_COLORS.default;
@@ -17531,7 +17552,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ? `<span class="nfThreadStatusBadge status-${status}">${status}</span>`
           : '';
         const dataAttr = JSON.stringify(t).replace(/'/g, "&#39;");
-        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="showThreadFlows(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+        const isTimeline = t.__kind === 'timeline';
+        const flowFn = isTimeline ? 'showTimelineFlows' : 'showThreadFlows';
+        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
         const threadTitleAttr = (t.title || 'Untitled thread').replace(/"/g, '&quot;').replace(/'/g, "&#39;");
         const threadHeatBtn = `<button class="cardHeatmapBtn" onclick="window.__semHeatOpenForThread(${t.thread_id},'${threadTitleAttr}',event)" title="Open sentiment heatmap on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c3 3.5 3 14.5 0 18"/><path d="M12 3c-3 3.5-3 14.5 0 18"/><circle cx="8" cy="9" r="1.3" fill="currentColor" stroke="none"/><circle cx="16" cy="14" r="1.3" fill="currentColor" stroke="none"/><circle cx="10" cy="16" r="1.0" fill="currentColor" stroke="none"/></svg></button>`;
         return `<div style="position:relative">${threadHeatBtn}${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
@@ -17584,8 +17607,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (Array.isArray(window.__preloadedThreads) && window.__preloadedThreads.length && !threadsLoaded) {
           threadsData = window.__preloadedThreads;
           threadsLoaded = true;
-          renderThreads();
-        } else {
+          if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
+        } else if (currentView === 'threads') {
           threadsGrid.innerHTML = skels(1);
         }
 
@@ -17603,15 +17626,50 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (!res.ok) throw new Error('Failed');
             threadsData = await res.json();
             threadsLoaded = true;
-            renderThreads();
+            if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
           } catch (e) {
-            threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
+            if (currentView === 'threads') {
+              threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
+            }
           } finally {
             threadsInFlight = null;
           }
         })();
 
         return threadsInFlight;
+      }
+
+      // Timelines: broad umbrella-arc dataset. Same card shape as threads,
+      // so we tag each row with __kind='timeline' and reuse the existing
+      // renderer / lazy-pagination path through activeGridData.
+      let timelinesInFlight = null;
+      async function loadTimelines() {
+        if (timelinesInFlight) return timelinesInFlight;
+        if (currentView === 'timelines') threadsGrid.innerHTML = skels(1);
+
+        timelinesInFlight = (async () => {
+          try {
+            const params = new URLSearchParams({ limit: 80 });
+            if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
+            if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
+            const res = await fetch(`${API}/api/timelines/latest?${params}`);
+            if (!res.ok) throw new Error('Failed');
+            const raw = await res.json();
+            // Tag each item so the card renderer routes to the timeline
+            // flow endpoint instead of the thread one.
+            timelinesData = (raw || []).map(t => ({ ...t, __kind: 'timeline' }));
+            timelinesLoaded = true;
+            if (currentView === 'timelines') { activeGridData = timelinesData; renderThreads(); }
+          } catch (e) {
+            if (currentView === 'timelines') {
+              threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load timelines</span></div>`;
+            }
+          } finally {
+            timelinesInFlight = null;
+          }
+        })();
+
+        return timelinesInFlight;
       }
 
       function updateThreadsDateClearBtns() {
@@ -17642,9 +17700,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       function updateThreadsMeta() {
-        const totalArticles = threadsData.reduce((sum, t) => sum + (t.article_count || 0), 0);
-        const threadCount = threadsData.length;
-        threadsCount.innerHTML = `<strong>${threadCount.toLocaleString()}</strong> thread${threadCount !== 1 ? 's' : ''} · <strong>${totalArticles.toLocaleString()}</strong> article${totalArticles !== 1 ? 's' : ''}`;
+        const totalArticles = activeGridData.reduce((sum, t) => sum + (t.article_count || 0), 0);
+        const count = activeGridData.length;
+        const label = currentView === 'timelines' ? 'timeline' : 'thread';
+        threadsCount.innerHTML = `<strong>${count.toLocaleString()}</strong> ${label}${count !== 1 ? 's' : ''} · <strong>${totalArticles.toLocaleString()}</strong> article${totalArticles !== 1 ? 's' : ''}`;
       }
 
       const THREAD_MAX_SKELETONS = 24;
@@ -17654,7 +17713,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function refreshThreadSkeletons() {
         // Strip any existing skeletons first so we don't stack them.
         threadsGrid.querySelectorAll('.nfThreadCardSkeleton').forEach(el => el.remove());
-        const remaining = Math.max(0, threadsData.length - threadsRendered);
+        const remaining = Math.max(0, activeGridData.length - threadsRendered);
         const n = Math.min(THREAD_MAX_SKELETONS, remaining);
         if (n > 0) {
           threadsGrid.insertAdjacentHTML('beforeend', Array(n).fill(threadSkeletonHTML()).join(''));
@@ -17662,8 +17721,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       function renderThreads() {
-        if (!threadsData.length) {
-          threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No threads found</span></div>`;
+        if (!activeGridData.length) {
+          const label = currentView === 'timelines' ? 'timelines' : 'threads';
+          threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No ${label} found</span></div>`;
           threadsCount.innerHTML = '';
           return;
         }
@@ -17676,10 +17736,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Append the next THREADS_PAGE_SIZE cards to the grid and wire click
       // handlers. Idempotent — bails if everything's already rendered.
       function appendNextThreadPage() {
-        if (threadsRendered >= threadsData.length) return;
+        if (threadsRendered >= activeGridData.length) return;
         // Drop skeletons before appending so real cards take their slots.
         threadsGrid.querySelectorAll('.nfThreadCardSkeleton').forEach(el => el.remove());
-        const slice = threadsData.slice(threadsRendered, threadsRendered + THREADS_PAGE_SIZE);
+        const slice = activeGridData.slice(threadsRendered, threadsRendered + THREADS_PAGE_SIZE);
         const tmp = document.createElement('div');
         tmp.innerHTML = slice.map(threadCardHTML).join('');
         const newCards = Array.from(tmp.children);
@@ -17705,7 +17765,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let _threadsScrollPending = false;
       threadsVp?.addEventListener('scroll', () => {
         if (_threadsScrollPending) return;
-        if (threadsRendered >= threadsData.length) return;
+        if (threadsRendered >= activeGridData.length) return;
         if (threadsVp.scrollTop + threadsVp.clientHeight < threadsVp.scrollHeight - 400) return;
         _threadsScrollPending = true;
         requestAnimationFrame(() => {

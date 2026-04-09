@@ -1846,9 +1846,16 @@ body.ticker-active #flowControls {
   display: flex;
 }
 #flowControls.minimized .flowMinBtn,
-#flowControls.minimized .flowCloseBtn {
-  display: none;  /* hide the expanded-state minimize/close buttons —
-                     the flowMinBar has its own ↑ and ✕ */
+#flowControls.minimized .flowCloseBtn,
+#flowControls.minimized > .flowCloseBtn,
+#flowControls.minimized > .flowMinBtn {
+  /* Hide the expanded-state minimize/close buttons when the panel is
+     collapsed to the slim flowMinBar. The flowMinBar has its own ↑ and
+     ✕ controls — without !important the absolute-positioned outer
+     buttons can bleed through from their base rule. */
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 /* Back-to-origin buttons inside flow controls */
 .flowOriginBtn {
@@ -4776,6 +4783,28 @@ body.ticker-active #flowControls {
       .nfTitleRow {
         justify-content: flex-start;
         gap: 20px;
+      }
+      /* Desktop: collapse the title row and filter strip into a single
+         horizontal line. The builder row (stories-from / mentioning /
+         about / date range) still wraps below on its own line. */
+      #nfQueryBar {
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px 20px;
+      }
+      #nfQueryBar > .nfTitleRow {
+        flex: 0 0 auto;
+        margin-top: 0;
+        padding-bottom: 0;
+      }
+      #nfQueryBar > .nfFiltersRow {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+      #nfQueryBar > #nfBuilderRow,
+      #nfQueryBar > #nfMeta {
+        flex: 1 1 100%;
       }
     }
 
