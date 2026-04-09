@@ -2741,13 +2741,35 @@ body.ticker-active #flowControls {
   background: rgba(255,80,80,0.24);
   color: #fff;
 }
+#flowCtxCard .flowCtxReturn {
+  position: absolute;
+  top: 6px;
+  right: 32px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,200,120,0.32);
+  color: rgba(255,200,140,0.92);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 3;
+}
+#flowCtxCard .flowCtxReturn svg { width: 12px; height: 12px; }
+#flowCtxCard .flowCtxReturn:hover {
+  background: rgba(255,180,80,0.24);
+  color: #fff;
+}
 #flowCtxCard .flowCtxKind {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255,200,140,0.9);
-  padding-right: 24px;
+  padding-right: 58px;
 }
 #flowCtxCard .flowCtxImg {
   width: 100%;
@@ -18012,6 +18034,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (prevPage === 2 && idx === 1) {
         try { window.closeArticleDetail?.(); } catch (_) {}
       }
+      // Any transition AWAY from globe (to feed or stats) should tear down
+      // the floating flow-context card and any active flow arcs / heatmap
+      // so the origin page is clean.
+      if (prevPage === 1 && (idx === 0 || idx === 2)) {
+        try {
+          if (window.__flowIsOpen?.()) {
+            window.__flowClearArcs?.();
+            window.__flowClosePanel?.();
+            window.__flowSetOpen?.(false);
+          }
+        } catch (_) {}
+        try {
+          if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
+            window.__semHeatClose();
+          }
+        } catch (_) {}
+        try { window.hideFlowArcBackBtn?.(); } catch (_) {}
+        try { window.hideFlowCtxCard?.(); } catch (_) {}
+        window.__flowArcOriginForHeat = null;
+      }
       current = idx;
       window.__currentPage = idx;
       // Skip animation when jumping more than 1 page to avoid
@@ -18097,6 +18139,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     el = document.createElement("div");
     el.id = "flowCtxCard";
     el.innerHTML = `
+      <button class="flowCtxReturn" title="Back to source card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
       <button class="flowCtxClose" title="Close">×</button>
       <div class="flowCtxKind"></div>
       <div class="flowCtxImgWrap"></div>
@@ -18106,14 +18149,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.body.appendChild(el);
     el.querySelector(".flowCtxClose").addEventListener("click", (e) => {
       e.stopPropagation();
-      // If we're in a flow-arc origin flow, perform the full back
-      // navigation. Otherwise (sentiment heatmap entry path), just
-      // dismiss the compact card in place.
+      e.preventDefault();
+      // Fully dismiss: close any active flow arcs / heatmap + hide the card.
+      try {
+        if (window.__flowIsOpen?.()) {
+          window.__flowClearArcs?.();
+          window.__flowClosePanel?.();
+          window.__flowSetOpen?.(false);
+        }
+      } catch (_) {}
+      try {
+        if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
+          window.__semHeatClose();
+        }
+      } catch (_) {}
+      try { window.hideFlowArcBackBtn?.(); } catch (_) {}
+      _flowArcOrigin = null;
+      window.__flowArcOriginForHeat = null;
+      hideFlowCtxCard();
+    });
+    el.querySelector(".flowCtxReturn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      // Navigate back to the origin page where the source card lives.
       if (_flowArcOrigin) {
         window.__flowArcGoBack?.();
-      } else {
-        hideFlowCtxCard();
+        return;
       }
+      const heatOrigin = window.__flowArcOriginForHeat;
+      if (heatOrigin && typeof heatOrigin.page === 'number') {
+        try {
+          if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
+            window.__semHeatClose();
+          }
+        } catch (_) {}
+        hideFlowCtxCard();
+        window.__flowArcOriginForHeat = null;
+        window.__goToPage?.(heatOrigin.page);
+        return;
+      }
+      // No origin — just dismiss.
+      hideFlowCtxCard();
     });
     return el;
   }
@@ -24691,13 +24767,20 @@ body.ticker-active .gTickerLabel {
         const byIso  = new Map();
         const byName = new Map();
         const features = gj.features || [];
+        const pickIso = (v) => {
+          const s = (v == null ? '' : String(v)).trim().toUpperCase();
+          // Natural Earth encodes "disputed / no-ISO" as "-99". Treat that
+          // as "missing" so the next candidate field wins. This was the
+          // France bug: France's iso_a2 is "-99" but iso_a2_eh is "FR".
+          return (s && s !== '-99') ? s : '';
+        };
         for (const f of features) {
           const props = f.properties || {};
           const iso =
-            (props.iso_a2    || props.ISO_A2 ||
-             props.iso_a2_eh || props.ISO_A2_EH ||
-             props.wb_a2     || props.WB_A2 ||
-             props.postal    || '').toString().trim().toUpperCase();
+            pickIso(props.iso_a2)    || pickIso(props.ISO_A2) ||
+            pickIso(props.iso_a2_eh) || pickIso(props.ISO_A2_EH) ||
+            pickIso(props.wb_a2)     || pickIso(props.WB_A2) ||
+            pickIso(props.postal)    || '';
           const name =
             (props.admin || props.ADMIN ||
              props.name  || props.NAME  ||
@@ -24942,13 +25025,20 @@ body.ticker-active .gTickerLabel {
         }
       }
     };
-    // geoIdx.byIso is a Map<iso, entry>; iterate unique entries.
+    // Iterate BOTH byIso and byName so countries without a valid ISO
+    // (e.g. France, whose iso_a2 is "-99" in Natural Earth) still make
+    // it into the land mask. Otherwise the final clip-to-land pass wipes
+    // them off the globe.
     const seen = new Set();
-    for (const entry of geoIdx.byIso.values()) {
-      if (!entry || seen.has(entry)) continue;
-      seen.add(entry);
-      iterEntry(entry);
-    }
+    const pushAll = (map) => {
+      for (const entry of map.values()) {
+        if (!entry || seen.has(entry)) continue;
+        seen.add(entry);
+        iterEntry(entry);
+      }
+    };
+    pushAll(geoIdx.byIso);
+    pushAll(geoIdx.byName);
     _landMaskCanvas = mc;
     _landMaskW = W;
     _landMaskH = H;
@@ -25041,7 +25131,7 @@ body.ticker-active .gTickerLabel {
     return (countryPts || []).concat(synth);
   }
 
-  function renderCountryWash(ctx, countryPoints, W, H, geoIdx) {
+  function renderCountryWash(octx, countryPoints, W, H, geoIdx) {
     if (!countryPoints || !countryPoints.length || !geoIdx) return 0;
 
     const isSent = state.mode === 'sentiment';
@@ -25053,11 +25143,6 @@ body.ticker-active .gTickerLabel {
       (m, p) => Math.max(m, (p.n || 0) / totalN), 0
     ) || 1;
 
-    // Offscreen canvas: draw the polygons sharp, blur once at the end.
-    const off = document.createElement('canvas');
-    off.width = W; off.height = H;
-    const octx = off.getContext('2d');
-    octx.clearRect(0, 0, W, H);
     octx.globalCompositeOperation = 'lighter';
 
     let drawn = 0;
@@ -25131,25 +25216,15 @@ body.ticker-active .gTickerLabel {
       drawn++;
     }
 
-    // Blur + composite onto main heat canvas
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    if (typeof ctx.filter === 'string') {
-      ctx.filter = `blur(${COUNTRY_WASH_BLUR_PX}px)`;
-    }
-    ctx.drawImage(off, 0, 0);
-    ctx.filter = 'none';
-    ctx.restore();
-
     return drawn;
   }
 
-  function renderCityClusters(ctx, cityPoints, W, H) {
+  function renderCityClusters(octx, cityPoints, W, H) {
     if (!cityPoints || !cityPoints.length) return 0;
     const isSent = state.mode === 'sentiment';
     const maxN = cityPoints.reduce((a, p) => Math.max(a, p.n || 0), 0) || 1;
 
-    ctx.globalCompositeOperation = 'lighter';
+    octx.globalCompositeOperation = 'lighter';
 
     let drawn = 0;
     for (const p of cityPoints) {
@@ -25196,35 +25271,27 @@ body.ticker-active .gTickerLabel {
       const a1 = a0 * 0.32;
 
       const drawAt = (x, y) => {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.scale(xStretch, 1);
-        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+        octx.save();
+        octx.translate(x, y);
+        octx.scale(xStretch, 1);
+        // Softer, wider falloff — a true gaussian-ish bell so after the
+        // final blur pass cities blend smoothly into the country wash
+        // instead of reading as uniform filled circles.
+        const g = octx.createRadialGradient(0, 0, 0, 0, 0, radius);
         g.addColorStop(0.00, `rgba(${c.r},${c.g},${c.b},${a0})`);
-        g.addColorStop(0.30, `rgba(${c.r},${c.g},${c.b},${a1})`);
+        g.addColorStop(0.18, `rgba(${c.r},${c.g},${c.b},${a0 * 0.72})`);
+        g.addColorStop(0.45, `rgba(${c.r},${c.g},${c.b},${a0 * 0.28})`);
         g.addColorStop(1.00, `rgba(${c.r},${c.g},${c.b},0)`);
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+        octx.fillStyle = g;
+        octx.beginPath();
+        octx.arc(0, 0, radius, 0, Math.PI * 2);
+        octx.fill();
+        octx.restore();
       };
 
       drawAt(cx, cy);
       if (cx - rx < 0) drawAt(cx + W, cy);
       if (cx + rx > W) drawAt(cx - W, cy);
-
-      // Crisp center-dot so each city reads as a distinct anchor point
-      // instead of just a blurred blob — restores the visual "city
-      // connection" that was washed out by the country bloom overlay.
-      const dotR = Math.max(1.5, 0.0016 * W);
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${Math.min(1, a0 + 0.25)})`;
-      ctx.beginPath();
-      ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
 
       drawn++;
     }
@@ -25277,10 +25344,26 @@ body.ticker-active .gTickerLabel {
       _applySentimentNormalization(countryPts, cityPts);
     }
 
+    // Draw country wash + city clusters into a SHARED offscreen canvas,
+    // then do ONE blur pass when compositing. This unifies both layers
+    // under the same gaussian so cities no longer read as hard uniform
+    // circles and blend continuously into the surrounding country wash.
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const octx = off.getContext('2d');
+    octx.clearRect(0, 0, W, H);
     if (_countryGeoIdx) {
-      renderCountryWash(ctx, countryPts, W, H, _countryGeoIdx);
+      renderCountryWash(octx, countryPts, W, H, _countryGeoIdx);
     }
-    renderCityClusters(ctx, cityPts, W, H);
+    renderCityClusters(octx, cityPts, W, H);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    if (typeof ctx.filter === 'string') {
+      ctx.filter = `blur(${COUNTRY_WASH_BLUR_PX}px)`;
+    }
+    ctx.drawImage(off, 0, 0);
+    ctx.filter = 'none';
+    ctx.restore();
 
     // ── Land-mask clip ────────────────────────────────────────────────
     // Clip everything rendered so far (country wash blur + city cluster
@@ -26980,9 +27063,11 @@ body.ticker-active .gTickerLabel {
       const cardEl = wrapEl?.querySelector?.("[data-article]");
       if (cardEl) _ctxArticle = JSON.parse(cardEl.getAttribute("data-article").replace(/&#39;/g, "'"));
     } catch (_) {}
+    const _artOriginPage = window.__currentPage || 2;
     window.__semHeatOpen();
     if (_ctxArticle && typeof window.showFlowCtxCard === "function") {
       try {
+        window.__flowArcOriginForHeat = { type: 'article', page: _artOriginPage, label: 'Back to News', id: articleId };
         const _parts = [];
         if (_ctxArticle.city_name) _parts.push(_ctxArticle.city_name);
         if (_ctxArticle.country_name) _parts.push(_ctxArticle.country_name);
