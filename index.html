@@ -10075,6 +10075,7 @@ function computeCityTiers(cities) {
       let focusInitialAngle = 0;
       let focusPendingPanel = null;   // callback fired when focus animation completes
       let focusPanelTimer = null;     // touch fallback if focus callback never fires
+      let focusPanelLastRequested = null; // safety-net reference — survives focusPendingPanel=null side-effects
       let preFocusZoom = _isMobileView ? 3.6 : 3; // zoom level before focus, restored on panel close
       let focusLocked = false;        // true after focus lands — skip rebuildGlobeQuat until next drag
       let timeInterval = null;
@@ -10098,15 +10099,29 @@ function computeCityTiers(cities) {
         clearFocusPanelTimer();
         focusPendingPanel = callback;
         if (!immediate) return;
-        focusPanelTimer = setTimeout(() => {
-          const cb = focusPendingPanel;
+        // Track last requested callback on a parallel var so a stray
+        // focusPendingPanel=null (synthetic click, wheel, etc.) can't orphan
+        // the panel open. The safety setTimeout at 600ms force-fires cb if
+        // the panel still isn't active and nothing newer has been queued.
+        const lastRequested = callback;
+        focusPanelLastRequested = lastRequested;
+        const fire = (cb) => {
+          if (cb !== focusPanelLastRequested) return; // superseded by newer request
+          focusPanelLastRequested = null;
           focusPendingPanel = null;
-          focusPanelTimer = null;
-          if (cb && !document.getElementById("infoPanel")?.classList.contains("active")) {
+          if (focusPanelTimer) { clearTimeout(focusPanelTimer); focusPanelTimer = null; }
+          if (!document.getElementById("infoPanel")?.classList.contains("active")) {
             cb();
             targetZoom = 2.3;
           }
-        }, 220);
+        };
+        focusPanelTimer = setTimeout(() => fire(lastRequested), 220);
+        // Safety net: a synthetic click or wheel event can clear
+        // focusPendingPanel before the 220ms timer fires, leaving the user
+        // with sound+rotation but no panel. Force-fire via lastRequested
+        // (which isn't cleared by those side-effects) unless the user has
+        // in the meantime queued a different panel.
+        setTimeout(() => fire(lastRequested), 600);
       }
 
       window.addEventListener("mousedown", e => {
@@ -12990,6 +13005,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           isFocused = false;
           selectedNodeIndex = null;
           focusPendingPanel = null;
+          focusPanelLastRequested = null;
           clearFocusPanelTimer();
 
           // Smooth zoom-out: start immediately, no delay
@@ -13806,6 +13822,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           isFocused = false;
           focusPendingPanel = null;
+          focusPanelLastRequested = null;
           clearFocusPanelTimer();
 
           // Smooth zoom-out: start immediately, no delay
@@ -13899,6 +13916,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (focusPendingPanel && progress > 0.50) {
             const cb = focusPendingPanel;
             focusPendingPanel = null;
+            focusPanelLastRequested = null;  // cancel safety-net re-fire
+            if (focusPanelTimer) { clearTimeout(focusPanelTimer); focusPanelTimer = null; }
             cb();
             // Fixed close-up depth — consistent regardless of starting zoom
             targetZoom = 2.3;
