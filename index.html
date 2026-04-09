@@ -4897,10 +4897,7 @@ body.ticker-active #flowControls {
       background: rgba(4, 7, 13, 0.82);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
-      border-bottom: 1px solid rgba(255,180,80,0.12);
-      box-shadow:
-        0 1px 0 rgba(255,180,80,0.07),
-        inset 0 1px 0 rgba(255,180,80,0.09);
+      box-shadow: inset 0 1px 0 rgba(255,180,80,0.09);
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -4908,29 +4905,22 @@ body.ticker-active #flowControls {
       z-index: 50;
     }
     /* ── Dynamic accent line — canvas-backed interactive element ──
-       Lives as a direct child of #nfQueryBar so it can always span the
-       full bar width. Placement between flex items is handled via the
-       `order` property below; on both mobile and desktop the line sits
-       in the gap between the title/filters section and whatever comes
-       next. The negative vertical margin collapses it into the existing
-       column gap so it adds no extra height. */
+       Lives as a direct child of #newsFeedPage, sandwiched between
+       #nfQueryBar (title + nav pill, filters, builder rows) and #nfMeta
+       (source count + date range). It always spans the entire viewport
+       width at all times and is the ONLY divider between those two
+       sections — no borders on the bars themselves duplicate it. */
     #nfAccentCanvas {
-      position: relative;
-      flex: 0 0 100%;
+      flex: 0 0 auto;
+      display: block;
       width: 100%;
       height: 6px;
-      margin: -6px 0;
+      margin: 0;
+      padding: 0;
       pointer-events: none;
-      z-index: 2;
-      display: block;
+      position: relative;
+      z-index: 51;
     }
-    /* Mobile (default flex-column): canvas sits between the title row
-       and the filters row — same visual position it had before. */
-    #nfQueryBar > .nfTitleRow  { order: 0; }
-    #nfQueryBar > #nfAccentCanvas { order: 1; }
-    #nfQueryBar > .nfFiltersRow { order: 2; }
-    #nfQueryBar > #nfBuilderRow { order: 3; }
-    #nfQueryBar > #nfMeta       { order: 4; }
 
     /* ── Title row: page title + view toggle ── */
     .nfTitleRow {
@@ -4972,21 +4962,6 @@ body.ticker-active #flowControls {
       #nfQueryBar > #nfBuilderRow {
         flex: 1 1 100%;
         order: 2;
-      }
-      /* Accent line lives between the builder row and the meta row
-         (sources count + date range) — a single full-width separator
-         that spans the screen with the interactive animation inside. */
-      #nfQueryBar > #nfAccentCanvas {
-        position: relative;
-        flex: 1 1 100%;
-        width: 100%;
-        height: 6px;
-        margin: 0;
-        order: 3;
-      }
-      #nfQueryBar > #nfMeta {
-        flex: 1 1 100%;
-        order: 4;
       }
     }
 
@@ -5701,8 +5676,6 @@ body.ticker-active #flowControls {
       padding: 6px 20px 5px;
       display: flex; align-items: center; gap: 7px;
       background: rgba(8, 14, 24, 0.55);
-      -webkit-
-      border-bottom: 1px solid rgba(255,255,255,0.05);
       min-height: 28px;
     }
     .nfMetaCount {
@@ -5716,7 +5689,6 @@ body.ticker-active #flowControls {
       padding: 6px 20px 5px;
       display: flex; align-items: center; gap: 7px;
       background: rgba(8, 14, 24, 0.55);
-      border-bottom: 1px solid rgba(255,255,255,0.05);
       min-height: 28px;
     }
     .nfMetaPill {
@@ -16638,10 +16610,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>
         </div>
       </div>
-      <!-- Standalone accent pulse line (moved out of .nfTitleRow so it can
-           span the full width of #nfQueryBar on both mobile and desktop.
-           Ordering is controlled purely via CSS `order` per breakpoint.) -->
-      <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
       <!-- Row 2: filter strip (feed mode only, collapsible) -->
       <div class="nfFiltersRow">
         <div class="nfTagWrap" id="nfTagWrap">
@@ -16762,6 +16730,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>
         </div>
     </div>
+    <!-- Standalone accent pulse line — the single divider between the
+         query header and the source-count/date-range meta bar. Lives as
+         a direct child of #newsFeedPage so it can span the full viewport
+         width at all times, independent of any padding on the bars above
+         or below it. -->
+    <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
     <!-- ── META BAR ── -->
     <div id="nfMeta">
       <span class="nfMetaCount" id="nfMetaCount"></span>
@@ -17618,17 +17592,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const ripples = []; // {x0, amp, born, life, speed, spread}
 
       function seedRipple(xFrac, intensity = 0.5, life = 1200) {
+        // All pulses travel right→left. A ripple seeded at xFrac becomes
+        // a single leftward-traveling packet originating from x0 and
+        // decaying as it sweeps across the bar toward x=0.
         const x0 = Math.max(0, Math.min(1, xFrac)) * cssW;
         ripples.push({
-          type: 'sym',
+          type: 'left',
           x0,
           amp: intensity,
           born: performance.now(),
           life,
-          speed: 220 + intensity * 340, // px/s
-          spread: 40 + intensity * 60,  // initial spatial sigma
+          speed: 240 + intensity * 360, // px/s leftward
+          spread: 44 + intensity * 60,  // initial spatial sigma
         });
-        // keep list bounded
         if (ripples.length > 24) ripples.shift();
       }
 
@@ -17737,12 +17713,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.addEventListener('pointerup',   onUp,   { passive: true });
       window.addEventListener('pointercancel', onUp, { passive: true });
 
-      // Initial strum after first paint — simulates the "recording being
-      // turned on" moment.
-      setTimeout(() => strum(0.95, 0.5), 420);
-      // Gentle echo strums in the opening second
-      setTimeout(() => strum(0.45, 0.32), 780);
-      setTimeout(() => strum(0.32, 0.70), 1060);
+      // Initial strum after first paint — pulses launch from the right
+      // edge and travel leftward across the full bar.
+      setTimeout(() => strum(0.95, 1.0), 420);
+      setTimeout(() => strum(0.55, 1.0), 900);
+      setTimeout(() => strum(0.38, 1.0), 1380);
+
+      // Continuous right→left ambient pulses so the line never feels
+      // static. Spacing jitters slightly for a living-signal feel.
+      function scheduleAmbient() {
+        const delay = 1600 + Math.random() * 1400;
+        setTimeout(() => {
+          const intensity = 0.22 + Math.random() * 0.28;
+          strum(intensity, 1.0);
+          scheduleAmbient();
+        }, delay);
+      }
+      setTimeout(scheduleAmbient, 2200);
 
       // ── Render loop ─────────────────────────────────────────────────
       const BASE_R = 0xff, BASE_G = 0xbe, BASE_B = 0x50;
@@ -17763,8 +17750,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Ambient breath — slow sine modulating the base alpha
         const breath = 0.55 + 0.30 * Math.sin(now * 0.00068 * 2 * Math.PI);
 
-        // Draw base gradient line (always visible at low amp)
-        const baseGrad = ctx.createLinearGradient(0, 0, cssW, 0);
+        // Base line spans the entire width — faint at the edges, warmer
+        // through the middle. Drawn as a right→left gradient so the
+        // implied direction of the whole animation is consistent.
+        const baseGrad = ctx.createLinearGradient(cssW, 0, 0, 0);
         baseGrad.addColorStop(0.00, 'rgba(255,190,80,0.00)');
         baseGrad.addColorStop(0.30, `rgba(255,190,80,${(0.28 * breath).toFixed(3)})`);
         baseGrad.addColorStop(0.50, `rgba(255,160,50,${(0.42 * breath).toFixed(3)})`);
@@ -17772,6 +17761,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
         baseGrad.addColorStop(1.00, 'rgba(255,190,80,0.00)');
         ctx.fillStyle = baseGrad;
         ctx.fillRect(0, cy - 0.5, cssW, 1.0);
+
+        // Standing ambient glint that slides right→left along the whole
+        // bar at a slow, steady pace — keeps the line feeling alive even
+        // during long idle stretches. Period ~7s, subtle amplitude.
+        {
+          const period = 7200;
+          const glintPhase = (now % period) / period; // 0..1
+          const glintX = cssW - glintPhase * (cssW + 140) + 70;
+          const sigma  = 90 + 18 * Math.sin(now * 0.0007);
+          const glintA = 0.18 + 0.08 * Math.sin(now * 0.0012);
+          ctx.save();
+          ctx.globalCompositeOperation = 'lighter';
+          const gg = ctx.createRadialGradient(glintX, cy, 0, glintX, cy, sigma);
+          gg.addColorStop(0.00, `rgba(255,220,150,${glintA.toFixed(3)})`);
+          gg.addColorStop(0.50, `rgba(255,180,70,${(glintA * 0.5).toFixed(3)})`);
+          gg.addColorStop(1.00, 'rgba(255,180,70,0)');
+          ctx.fillStyle = gg;
+          ctx.fillRect(glintX - sigma, 0, sigma * 2, cssH);
+          ctx.restore();
+        }
 
         // Live ripples — each one adds a bright localized bloom that
         // spreads outward and decays exponentially.
@@ -17824,32 +17833,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
               continue;
             }
 
-            // Exponential decay of amplitude
-            const envelope = r.amp * Math.exp(-2.2 * tNorm);
+            // Leftward-traveling packet — single lobe, amplitude decays
+            // exponentially, spatial sigma expands slightly as it moves.
+            const envelope = r.amp * Math.exp(-1.9 * tNorm);
             if (envelope < 0.01) { ripples.splice(i, 1); continue; }
 
-            // Wave radius expands over time (two lobes, +/- from x0)
-            const radius = r.speed * age;
-            const sigma  = r.spread + age * 90;
+            const travel = r.speed * age;
+            const cx     = r.x0 - travel;  // always moving left
+            const sigma  = r.spread + age * 75;
 
-            // Draw as additive bright gradient — two arms of the ripple
+            // Once the lobe has fully left the left edge, drop it.
+            if (cx < -sigma * 2) { ripples.splice(i, 1); continue; }
+
             ctx.save();
             ctx.globalCompositeOperation = 'lighter';
-            for (const sign of [-1, +1]) {
-              const cx = r.x0 + sign * radius;
-              if (cx < -sigma * 2 || cx > cssW + sigma * 2) continue;
-              const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sigma);
-              const aHot  = Math.min(1, envelope * 1.25);
-              const aMid  = envelope * 0.75;
-              const aEdge = envelope * 0.22;
-              grad.addColorStop(0.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${aHot.toFixed(3)})`);
-              grad.addColorStop(0.35, `rgba(${BASE_R},${BASE_G},${BASE_B},${aMid.toFixed(3)})`);
-              grad.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
-              ctx.fillStyle = grad;
-              ctx.fillRect(cx - sigma, 0, sigma * 2, cssH);
-              ctx.globalAlpha = aEdge;
-            }
-            // Central bright flash (only very early)
+
+            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sigma);
+            const aHot  = Math.min(1, envelope * 1.30);
+            const aMid  = envelope * 0.78;
+            grad.addColorStop(0.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${aHot.toFixed(3)})`);
+            grad.addColorStop(0.35, `rgba(${BASE_R},${BASE_G},${BASE_B},${aMid.toFixed(3)})`);
+            grad.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
+            ctx.fillStyle = grad;
+            ctx.fillRect(cx - sigma, 0, sigma * 2, cssH);
+
+            // Soft tail to the right of the leading edge — reads as a
+            // comet-style motion trail. Offset slightly to the +x side.
+            const tailX = cx + sigma * 0.45;
+            const tailSigma = sigma * 1.25;
+            const tg = ctx.createLinearGradient(tailX - tailSigma, 0, tailX + tailSigma, 0);
+            tg.addColorStop(0.00, 'rgba(255,180,70,0)');
+            tg.addColorStop(0.50, `rgba(255,180,70,${(envelope * 0.28).toFixed(3)})`);
+            tg.addColorStop(1.00, 'rgba(255,180,70,0)');
+            ctx.fillStyle = tg;
+            ctx.fillRect(tailX - tailSigma, cy - 1.2, tailSigma * 2, 2.4);
+
+            // Bright core flash in the very first frames after seeding.
             if (tNorm < 0.12) {
               const flashA = envelope * (1 - tNorm / 0.12);
               const flashG = ctx.createRadialGradient(r.x0, cy, 0, r.x0, cy, sigma * 0.7);
