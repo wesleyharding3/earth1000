@@ -1811,6 +1811,205 @@ body.ticker-active #flowControls {
   color: rgba(255,150,150,0.9);
 }
 
+/* Return-to-origin arrow — sits immediately left of the close button,
+   only visible when flow arcs were triggered from an article/thread/
+   node card. Styled to echo flowCloseBtn. */
+.flowReturnBtn {
+  position: absolute;
+  top: 8px;
+  right: calc(40px * var(--mobile-control-scale));
+  width: calc(24px * var(--mobile-control-scale));
+  height: calc(24px * var(--mobile-control-scale));
+  border-radius: calc(12px * var(--mobile-control-scale));
+  background: rgba(100,200,255,0.10);
+  border: 1px solid rgba(100,200,255,0.28);
+  color: rgba(180,220,255,0.85);
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  z-index: 11;
+  padding: 0;
+}
+.flowReturnBtn.visible { display: flex; }
+.flowReturnBtn svg {
+  width: calc(12px * var(--mobile-control-scale));
+  height: calc(12px * var(--mobile-control-scale));
+}
+.flowReturnBtn:hover {
+  background: rgba(100,200,255,0.22);
+  border-color: rgba(150,220,255,0.55);
+  color: rgba(220,240,255,0.98);
+}
+.flowReturnBtn:active { transform: scale(0.94); }
+/* When the return button is visible, push the minimize button further
+   left so the three controls stack in order: return, minimize, close. */
+.flowReturnBtn.visible ~ .flowMinBtn,
+#flowControls:has(.flowReturnBtn.visible) .flowMinBtn {
+  right: calc(72px * var(--mobile-control-scale));
+}
+
+/* ── Collapsible transparent origin panel ────────────────────────────
+   Surfaces when the flow arc view is launched from an article/video
+   card or node-panel article row. Lets the user see the origin at a
+   glance and return to it with one tap. Intentionally transparent so
+   it doesn't fight with the globe behind. */
+#flowOriginPanel {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 651;
+  display: none;
+  width: min(440px, calc(100vw - 24px));
+  padding: 10px 14px 12px;
+  background: rgba(8, 12, 24, 0.38);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  border: 1px solid rgba(120, 200, 255, 0.22);
+  border-radius: 14px;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: rgba(235, 245, 255, 0.92);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  pointer-events: all;
+}
+#flowOriginPanel.visible { display: block; }
+.flowOriginPanelCollapse {
+  position: absolute;
+  top: 6px; right: 8px;
+  width: 22px; height: 22px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 50%;
+  color: rgba(200,220,255,0.75);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  transition: all 0.18s;
+}
+.flowOriginPanelCollapse svg {
+  width: 10px; height: 10px;
+  transition: transform 0.22s cubic-bezier(0.32,0.72,0,1);
+}
+.flowOriginPanelCollapse:hover {
+  background: rgba(100,200,255,0.18);
+  border-color: rgba(120,220,255,0.45);
+  color: #fff;
+}
+.flowOriginPanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-right: 30px;
+  margin-bottom: 9px;
+}
+.flowOriginPanelKicker {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(120, 200, 255, 0.78);
+}
+.flowOriginPanelReturn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  background: rgba(100, 200, 255, 0.14);
+  border: 1px solid rgba(120, 200, 255, 0.36);
+  border-radius: 12px;
+  color: rgba(220, 240, 255, 0.95);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.flowOriginPanelReturn svg { width: 10px; height: 10px; }
+.flowOriginPanelReturn:hover {
+  background: rgba(100, 200, 255, 0.26);
+  border-color: rgba(150, 220, 255, 0.60);
+}
+.flowOriginPanelBody {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  max-height: 140px;
+  overflow: hidden;
+  transition: max-height 0.28s cubic-bezier(0.32,0.72,0,1), opacity 0.2s;
+  opacity: 1;
+}
+.flowOriginPanelThumbWrap {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
+  position: relative;
+}
+.flowOriginPanelThumbWrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.flowOriginPanelThumbWrap .flowOriginPanelVideoBadge {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.flowOriginPanelThumbWrap .flowOriginPanelVideoBadge svg {
+  width: 11px; height: 11px;
+  fill: #fff;
+}
+.flowOriginPanelText {
+  flex: 1;
+  min-width: 0;
+}
+.flowOriginPanelTitle {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.38;
+  color: rgba(255, 255, 255, 0.96);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+.flowOriginPanelMeta {
+  font-size: 10px;
+  color: rgba(180, 210, 235, 0.62);
+  letter-spacing: 0.02em;
+}
+/* Collapsed state — hides body, rotates chevron */
+#flowOriginPanel.collapsed .flowOriginPanelBody {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+#flowOriginPanel.collapsed .flowOriginPanelCollapse svg {
+  transform: rotate(-180deg);
+}
+#flowOriginPanel.collapsed .flowOriginPanelHead {
+  margin-bottom: 0;
+}
+
 /* Minimize button */
 .flowMinBtn {
   position: absolute;
@@ -7738,6 +7937,35 @@ window.sourceBiasBadgeHTML = function(bias) {
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
     <button class="flowCloseBtn" id="flowCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
+    <!-- Return-to-origin arrow (only visible when flow was triggered from
+         an article/thread card). Takes the user back to the exact card
+         and its scroll position on the originating page. -->
+    <button class="flowReturnBtn" id="flowReturnBtn" title="Return to card" onclick="window.__flowArcGoBack?.()" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+
+    <!-- Collapsible transparent origin panel — shown when flow arcs were
+         launched from an article/video card or cluster node panel. Lets
+         the user see (and return to) the originating content. -->
+    <div id="flowOriginPanel" aria-hidden="true">
+      <button class="flowOriginPanelCollapse" id="flowOriginPanelCollapse" title="Collapse">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 5 6 8 9 5"/></svg>
+      </button>
+      <div class="flowOriginPanelHead">
+        <div class="flowOriginPanelKicker" id="flowOriginPanelKicker">From article</div>
+        <button class="flowOriginPanelReturn" id="flowOriginPanelReturn" title="Return to card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <span>Return</span>
+        </button>
+      </div>
+      <div class="flowOriginPanelBody" id="flowOriginPanelBody">
+        <div class="flowOriginPanelThumbWrap" id="flowOriginPanelThumbWrap"></div>
+        <div class="flowOriginPanelText">
+          <div class="flowOriginPanelTitle" id="flowOriginPanelTitle"></div>
+          <div class="flowOriginPanelMeta" id="flowOriginPanelMeta"></div>
+        </div>
+      </div>
+    </div>
 
     <!-- Minimized bar (shown when minimized) -->
     <div class="flowMinBar">
@@ -16757,6 +16985,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       collapseBtn.addEventListener('click', function(e) {
         e.stopPropagation();
         queryBar.classList.toggle('nf-collapsed');
+        // Re-seat the accent canvas — query bar's height just changed.
+        if (typeof window.__nfAccentResize === 'function') {
+          setTimeout(window.__nfAccentResize, 0);
+          setTimeout(window.__nfAccentResize, 260);
+        }
       });
     })();
 
@@ -17094,9 +17327,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const DPR = Math.min(2, window.devicePixelRatio || 1);
       let cssW = 0, cssH = 0;
 
-      // Canvas now lives inside #newsFeedPage and must sit on the line
-      // between whichever meta bar is currently visible (feed mode:
-      // #nfMeta, threads mode: #nfThreadsMeta) and the viewport below.
+      // Canvas lives inside #newsFeedPage and sits on the line between
+      // the title row ("News Feed") and the source-count meta bar.
+      // Anchor point = bottom of #nfQueryBar, which is also the divider
+      // immediately below the title when filters are collapsed.
       function resize() {
         const parent = canvas.parentElement; // #newsFeedPage
         if (!parent) return;
@@ -17107,14 +17341,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         canvas.height = Math.max(1, Math.round(cssH * DPR));
         canvas.style.height = cssH + 'px';
 
-        const feedMeta = document.getElementById('nfMeta');
-        const threadsMeta = document.getElementById('nfThreadsMeta');
-        const active = (feedMeta && feedMeta.offsetParent !== null)
-          ? feedMeta
-          : (threadsMeta && threadsMeta.offsetParent !== null ? threadsMeta : null);
-        if (active) {
-          const ar = active.getBoundingClientRect();
-          canvas.style.top = (ar.bottom - pr.top - cssH / 2) + 'px';
+        const queryBar = document.getElementById('nfQueryBar');
+        if (queryBar) {
+          const qr = queryBar.getBoundingClientRect();
+          canvas.style.top = (qr.bottom - pr.top - cssH / 2) + 'px';
         } else {
           canvas.style.top = '0px';
         }
@@ -17124,15 +17354,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.ResizeObserver) {
         const ro = new ResizeObserver(resize);
         ro.observe(canvas.parentElement);
-        const fm = document.getElementById('nfMeta');
-        const tm = document.getElementById('nfThreadsMeta');
-        if (fm) ro.observe(fm);
-        if (tm) ro.observe(tm);
+        const qb = document.getElementById('nfQueryBar');
+        if (qb) ro.observe(qb);
       } else {
         window.addEventListener('resize', resize);
       }
-      // Expose so the view-toggle code can re-seat the canvas when the
-      // user flips between feed ↔ threads mode (meta bar swaps).
+      // Expose so the view-toggle / collapse toggle can re-seat the
+      // canvas when the query bar's height changes.
       window.__nfAccentResize = resize;
 
       // Ripple model: all ripples are now straight-line sweeps that
@@ -17247,6 +17475,77 @@ const settingsToggle     = document.getElementById("settingsToggle");
       setTimeout(() => strum(0.45, 0.32), 780);
       setTimeout(() => strum(0.32, 0.70), 1060);
 
+      // ── Ambient packet generator ──────────────────────────────────
+      // A small jittery scheduler that drops low-amplitude ripples on
+      // the line at randomized intervals. Gives the bar organic motion
+      // beyond the breath envelope without ever dominating intentional
+      // interactions (which always come in hotter and later). Runs on
+      // its own loop so the main render path stays simple.
+      let ambientEnabled = true;
+      function scheduleAmbientPacket() {
+        if (!ambientEnabled) return;
+        // Interval is jittered between ~520ms and ~1900ms, heavily
+        // biased toward longer gaps so the line doesn't feel busy.
+        const gap = 520 + Math.pow(Math.random(), 1.8) * 1400;
+        setTimeout(() => {
+          // Don't seed packets if the news page isn't visible — cheap
+          // guard; the frame loop already bails in that state.
+          const pageNews = document.getElementById('pageNews');
+          if (!pageNews || pageNews.offsetParent === null) {
+            scheduleAmbientPacket();
+            return;
+          }
+          // Three flavors of ambient motion, chosen at random:
+          //   1) A tiny local shimmer (soft sym spot at a random x)
+          //   2) A short directional drift (half-width sweep)
+          //   3) A full right→left whisper (very low amp)
+          const roll = Math.random();
+          const amp = 0.06 + Math.random() * 0.16; // 0.06 – 0.22
+          const life = 900 + Math.random() * 1300;
+          if (roll < 0.55) {
+            // Local shimmer — spawn a mini sym ripple directly instead
+            // of routing through the forced-sweep alias so it stays put.
+            const x0 = Math.random() * cssW;
+            ripples.push({
+              type: 'shimmer',
+              x0,
+              amp,
+              born: performance.now(),
+              life,
+              speed: 40 + Math.random() * 90,
+              spread: 22 + Math.random() * 38,
+            });
+            if (ripples.length > 24) ripples.shift();
+          } else if (roll < 0.85) {
+            // Short drifting sweep — a partial right→left packet
+            ripples.push({
+              type: 'sweep',
+              amp: amp * 0.9,
+              born: performance.now(),
+              life: life * 0.85,
+              xStart: cssW * (0.55 + Math.random() * 0.45) + 20,
+              xEnd:   cssW * (Math.random() * 0.40) - 10,
+              spread: 26 + Math.random() * 34,
+            });
+            if (ripples.length > 24) ripples.shift();
+          } else {
+            // Rare full-width whisper — softest of the three
+            ripples.push({
+              type: 'sweep',
+              amp: amp * 0.7,
+              born: performance.now(),
+              life: life * 1.25,
+              xStart: cssW + 20,
+              xEnd:   -20,
+              spread: 30 + Math.random() * 26,
+            });
+            if (ripples.length > 24) ripples.shift();
+          }
+          scheduleAmbientPacket();
+        }, gap);
+      }
+      scheduleAmbientPacket();
+
       // ── Render loop ─────────────────────────────────────────────────
       const BASE_R = 0xff, BASE_G = 0xbe, BASE_B = 0x50;
       const ACCENT_R = 0xff, ACCENT_G = 0xe0, ACCENT_B = 0x98;
@@ -17323,37 +17622,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
               continue;
             }
 
-            const envelope = r.amp * Math.exp(-2.2 * tNorm);
-            if (envelope < 0.01) { ripples.splice(i, 1); continue; }
-
-            const radius = r.speed * age;
-            const sigma  = r.spread + age * 90;
-
-            ctx.save();
-            ctx.globalCompositeOperation = 'lighter';
-            for (const sign of [-1, +1]) {
-              const cx = r.x0 + sign * radius;
-              if (cx < -sigma * 2 || cx > cssW + sigma * 2) continue;
-              const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sigma);
-              const aHot  = Math.min(1, envelope * 1.25);
-              const aMid  = envelope * 0.75;
-              const aEdge = envelope * 0.22;
+            // Ambient shimmer — stationary soft local glow that swells
+            // in, holds, then fades out. No lateral travel, no symmetric
+            // wavefront. Uses a sin-shaped envelope so it rises and falls
+            // smoothly over its lifetime.
+            if (r.type === 'shimmer') {
+              const envShape = Math.sin(Math.PI * tNorm); // 0 → 1 → 0
+              const envelope = r.amp * envShape;
+              if (envelope < 0.008) continue;
+              const sigma = r.spread + r.speed * age * 0.35;
+              const x0 = r.x0;
+              if (x0 < -sigma * 2 || x0 > cssW + sigma * 2) continue;
+              ctx.save();
+              ctx.globalCompositeOperation = 'lighter';
+              const grad = ctx.createRadialGradient(x0, cy, 0, x0, cy, sigma);
+              const aHot = Math.min(1, envelope * 1.15);
               grad.addColorStop(0.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${aHot.toFixed(3)})`);
-              grad.addColorStop(0.35, `rgba(${BASE_R},${BASE_G},${BASE_B},${aMid.toFixed(3)})`);
+              grad.addColorStop(0.45, `rgba(${BASE_R},${BASE_G},${BASE_B},${(envelope * 0.55).toFixed(3)})`);
               grad.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
               ctx.fillStyle = grad;
-              ctx.fillRect(cx - sigma, 0, sigma * 2, cssH);
-              ctx.globalAlpha = aEdge;
+              ctx.fillRect(x0 - sigma, 0, sigma * 2, cssH);
+              ctx.restore();
+              continue;
             }
-            if (tNorm < 0.12) {
-              const flashA = envelope * (1 - tNorm / 0.12);
-              const flashG = ctx.createRadialGradient(r.x0, cy, 0, r.x0, cy, sigma * 0.7);
-              flashG.addColorStop(0, `rgba(255,240,200,${(flashA).toFixed(3)})`);
-              flashG.addColorStop(1, 'rgba(255,240,200,0)');
-              ctx.fillStyle = flashG;
-              ctx.fillRect(r.x0 - sigma, 0, sigma * 2, cssH);
-            }
-            ctx.restore();
           }
         }
       }
@@ -17509,8 +17800,119 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Show Flow Arcs from article/thread card button ── */
 
-  // Track where we came from so we can navigate back
-  let _flowArcOrigin = null; // { type: 'article'|'thread', page: number, label: string }
+  // Track where we came from so we can navigate back. Now also records
+  // the originating id and scroll position so __flowArcGoBack can return
+  // to the exact card the user clicked on.
+  let _flowArcOrigin = null;
+  // Shape: {
+  //   type: 'article' | 'thread',
+  //   source: 'feed' | 'node',   // where the card lived
+  //   page: number,              // top-level page index to return to
+  //   label: string,
+  //   id: number|string,
+  //   scrollTop: number,
+  //   scrollEl: 'nfViewport'|'nfThreadsViewport'|null,
+  //   article: object|null,      // for origin-panel display
+  //   thread: object|null,
+  // }
+
+  // Capture origin metadata for a news-feed article card click. Called
+  // synchronously from the feed card button BEFORE page navigation so
+  // scrollTop / card rect are still valid.
+  function captureFeedArticleOrigin(articleId) {
+    const feedVp = document.getElementById('nfViewport');
+    const threadsVp = document.getElementById('nfThreadsViewport');
+    const scrollEl = (feedVp && feedVp.offsetParent !== null) ? 'nfViewport'
+                   : (threadsVp && threadsVp.offsetParent !== null) ? 'nfThreadsViewport'
+                   : null;
+    const scrollNode = scrollEl ? document.getElementById(scrollEl) : null;
+    const scrollTop = scrollNode ? scrollNode.scrollTop : 0;
+    const article = (window.__nfArticles || []).find(a => a && a.id === articleId) || null;
+    return { id: articleId, scrollEl, scrollTop, article };
+  }
+  function captureFeedThreadOrigin(threadId) {
+    const threadsVp = document.getElementById('nfThreadsViewport');
+    const scrollTop = threadsVp ? threadsVp.scrollTop : 0;
+    // Try to find the thread object from either rendered cards' data or
+    // the cached threadsData (not directly exposed, so parse from DOM).
+    let thread = null;
+    document.querySelectorAll('.nfThreadCard').forEach(el => {
+      if (thread) return;
+      try {
+        const t = JSON.parse(el.dataset.thread || 'null');
+        if (t && t.thread_id === threadId) thread = t;
+      } catch (_) {}
+    });
+    return { id: threadId, scrollEl: 'nfThreadsViewport', scrollTop, thread };
+  }
+
+  function populateFlowOriginPanel() {
+    const panel = document.getElementById('flowOriginPanel');
+    if (!panel || !_flowArcOrigin) return;
+    const kicker = document.getElementById('flowOriginPanelKicker');
+    const titleEl = document.getElementById('flowOriginPanelTitle');
+    const metaEl  = document.getElementById('flowOriginPanelMeta');
+    const thumbWrap = document.getElementById('flowOriginPanelThumbWrap');
+    const o = _flowArcOrigin;
+
+    let kickerText = 'From article', title = '', metaParts = [], imgSrc = '', isVideo = false;
+    if (o.type === 'article') {
+      const a = o.article || {};
+      isVideo = a.media_type === 'video' || !!a.video_id;
+      kickerText = (o.source === 'node' ? 'From node · ' : 'From ') + (isVideo ? 'video' : 'article');
+      title = a.translated_title || a.title || 'Untitled article';
+      if (a.source_name) metaParts.push(a.source_name);
+      if (a.country_name) metaParts.push(a.country_name);
+      else if (a.iso_code) metaParts.push(a.iso_code.trim().toUpperCase());
+      if (a.published_at) {
+        try { metaParts.push(new Date(a.published_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })); } catch(_) {}
+      }
+      imgSrc = (a.image_url && a.image_url.trim()) || (a.catalog_image_url || '') || '';
+      if (!imgSrc && a.iso_code) imgSrc = `https://flagcdn.com/w80/${a.iso_code.trim().toLowerCase()}.png`;
+    } else if (o.type === 'thread') {
+      const t = o.thread || {};
+      kickerText = 'From thread';
+      title = t.title || 'Untitled thread';
+      const cat = (t.primary_category || '').toString();
+      if (cat) metaParts.push(cat.toUpperCase());
+      if (typeof t.article_count === 'number') {
+        metaParts.push(`${t.article_count} article${t.article_count !== 1 ? 's' : ''}`);
+      }
+      imgSrc = (t.hero_image_url || t.hero_catalog_image_url || '').trim();
+      if (!imgSrc && t.hero_iso_code) imgSrc = `https://flagcdn.com/w80/${t.hero_iso_code.toLowerCase()}.png`;
+    }
+
+    if (kicker) kicker.textContent = kickerText;
+    if (titleEl) titleEl.textContent = title;
+    if (metaEl) metaEl.textContent = metaParts.join(' · ');
+    if (thumbWrap) {
+      thumbWrap.innerHTML = imgSrc
+        ? `<img src="${imgSrc}" alt="" onerror="this.style.display='none'">${isVideo ? '<div class="flowOriginPanelVideoBadge"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>' : ''}`
+        : '';
+    }
+
+    panel.classList.remove('collapsed');
+    panel.classList.add('visible');
+    panel.setAttribute('aria-hidden', 'false');
+  }
+
+  function hideFlowOriginPanel() {
+    const panel = document.getElementById('flowOriginPanel');
+    if (!panel) return;
+    panel.classList.remove('visible', 'collapsed');
+    panel.setAttribute('aria-hidden', 'true');
+  }
+
+  // Wire the collapse toggle + return button on the origin panel.
+  document.getElementById('flowOriginPanelCollapse')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const panel = document.getElementById('flowOriginPanel');
+    if (panel) panel.classList.toggle('collapsed');
+  });
+  document.getElementById('flowOriginPanelReturn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.__flowArcGoBack?.();
+  });
 
   function showFlowArcBackBtn(label) {
     const btn = document.getElementById("flowArcBackBtn");
@@ -17526,6 +17928,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const panelLbl = document.getElementById("flowPanelOriginLabel");
     if (panelRow) panelRow.style.display = "";
     if (panelLbl) panelLbl.textContent = label;
+    // Return arrow next to the close button on the flow controls panel.
+    const returnBtn = document.getElementById("flowReturnBtn");
+    if (returnBtn) { returnBtn.classList.add("visible"); returnBtn.title = label; }
+    // Collapsible transparent origin panel (article/thread preview).
+    if (_flowArcOrigin && (_flowArcOrigin.source === 'feed' || _flowArcOrigin.source === 'node')) {
+      populateFlowOriginPanel();
+    }
   }
 
   function hideFlowArcBackBtn() {
@@ -17536,7 +17945,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (minBtn) minBtn.style.display = "none";
     const panelRow = document.getElementById("flowPanelOriginRow");
     if (panelRow) panelRow.style.display = "none";
+    const returnBtn = document.getElementById("flowReturnBtn");
+    if (returnBtn) returnBtn.classList.remove("visible");
+    hideFlowOriginPanel();
     _flowArcOrigin = null;
+  }
+
+  // Flash the restored card so the user immediately spots it.
+  function flashOriginCard(el) {
+    if (!el) return;
+    el.classList.remove('nfCardReturnFlash');
+    void el.offsetWidth;
+    el.classList.add('nfCardReturnFlash');
+    setTimeout(() => el.classList.remove('nfCardReturnFlash'), 1600);
+  }
+
+  function restoreOriginCardLocation() {
+    if (!_flowArcOrigin) return;
+    const o = _flowArcOrigin;
+    const scrollNode = o.scrollEl ? document.getElementById(o.scrollEl) : null;
+    if (!scrollNode) return;
+
+    // Preferred: locate the exact card DOM by id and scroll it into view.
+    let cardEl = null;
+    if (o.type === 'article') {
+      const title = scrollNode.querySelector(`.nfCardTitle[data-aid="${o.id}"]`);
+      if (title) cardEl = title.closest('.nfCard');
+    } else if (o.type === 'thread') {
+      const cards = scrollNode.querySelectorAll('.nfThreadCard');
+      cards.forEach(c => {
+        if (cardEl) return;
+        try {
+          const t = JSON.parse(c.dataset.thread || 'null');
+          if (t && t.thread_id === o.id) cardEl = c;
+        } catch (_) {}
+      });
+    }
+
+    if (cardEl && typeof cardEl.scrollIntoView === 'function') {
+      try {
+        cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (_) {
+        scrollNode.scrollTop = o.scrollTop || 0;
+      }
+      flashOriginCard(cardEl);
+    } else {
+      // Fallback: restore the captured scrollTop.
+      scrollNode.scrollTop = o.scrollTop || 0;
+    }
   }
 
   window.__flowArcGoBack = function() {
@@ -17545,12 +18001,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Close flow arcs, labels, timeline, and info card
     window.__flowClosePanel?.();
-    hideFlowArcBackBtn();
     document.getElementById("flowTimeline")?.classList.remove("visible");
     document.getElementById("flowArcInfoCard")?.classList.remove("visible");
 
-    // Navigate back to the origin page
+    // Navigate back to the origin page, then (after the page transition)
+    // restore the exact card location and flash it.
     window.__goToPage?.(origin.page);
+    // Hold on to the origin through the scroll restore, then clear it.
+    setTimeout(() => {
+      try { restoreOriginCardLocation(); } catch(e) { console.warn(e); }
+      hideFlowArcBackBtn();
+    }, 560);
   };
 
   // Wire up embedded back-to-origin buttons in flow controls
