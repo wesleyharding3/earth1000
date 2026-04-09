@@ -4752,20 +4752,29 @@ body.ticker-active #flowControls {
       z-index: 50;
     }
     /* ── Dynamic accent line — canvas-backed interactive element ──
-       Positioned just below the title row, stretches full width. The JS
-       engine in initNfAccentLine() draws a breathing ambient line with
-       event-triggered "strum" ripples (load burst, click ripples, hold
-       crescendo). Replaces the old static CSS gradient. */
+       Lives as a direct child of #nfQueryBar so it can always span the
+       full bar width. Placement between flex items is handled via the
+       `order` property below; on both mobile and desktop the line sits
+       in the gap between the title/filters section and whatever comes
+       next. The negative vertical margin collapses it into the existing
+       column gap so it adds no extra height. */
     #nfAccentCanvas {
-      position: absolute;
-      left: 0; right: 0;
-      bottom: -9px;
+      position: relative;
+      flex: 0 0 100%;
       width: 100%;
       height: 6px;
+      margin: -6px 0;
       pointer-events: none;
       z-index: 2;
       display: block;
     }
+    /* Mobile (default flex-column): canvas sits between the title row
+       and the filters row — same visual position it had before. */
+    #nfQueryBar > .nfTitleRow  { order: 0; }
+    #nfQueryBar > #nfAccentCanvas { order: 1; }
+    #nfQueryBar > .nfFiltersRow { order: 2; }
+    #nfQueryBar > #nfBuilderRow { order: 3; }
+    #nfQueryBar > #nfMeta       { order: 4; }
 
     /* ── Title row: page title + view toggle ── */
     .nfTitleRow {
@@ -4797,14 +4806,25 @@ body.ticker-active #flowControls {
         flex: 0 0 auto;
         margin-top: 0;
         padding-bottom: 0;
+        order: 0;
       }
       #nfQueryBar > .nfFiltersRow {
         flex: 1 1 0;
         min-width: 0;
+        order: 1;   /* shares row 1 with the title */
       }
-      #nfQueryBar > #nfBuilderRow,
+      /* Accent line forces a wrap onto its own full-width row just
+         below the merged title+filters line. */
+      #nfQueryBar > #nfAccentCanvas {
+        order: 2;
+      }
+      #nfQueryBar > #nfBuilderRow {
+        flex: 1 1 100%;
+        order: 3;
+      }
       #nfQueryBar > #nfMeta {
         flex: 1 1 100%;
+        order: 4;
       }
     }
 
@@ -16343,7 +16363,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <div id="nfQueryBar">
       <!-- Row 1: title + view toggle -->
       <div class="nfTitleRow">
-        <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
         <span class="nfPageTitle">News Feed</span>
         <div class="nfTitleActions">
           <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
@@ -16358,6 +16377,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>
         </div>
       </div>
+      <!-- Standalone accent pulse line (moved out of .nfTitleRow so it can
+           span the full width of #nfQueryBar on both mobile and desktop.
+           Ordering is controlled purely via CSS `order` per breakpoint.) -->
+      <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
       <!-- Row 2: filter strip (feed mode only, collapsible) -->
       <div class="nfFiltersRow">
         <div class="nfTagWrap" id="nfTagWrap">
@@ -17303,10 +17326,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let cssW = 0, cssH = 0;
 
       function resize() {
-        const parent = canvas.parentElement;
-        if (!parent) return;
-        const r = parent.getBoundingClientRect();
-        cssW = r.width;
+        // Measure the canvas itself — it's now a full-width flex child of
+        // #nfQueryBar, so its own rect is the right source of truth on
+        // both mobile and desktop (the previous code measured the parent,
+        // which only worked when the canvas was pinned absolute inside
+        // .nfTitleRow).
+        const r = canvas.getBoundingClientRect();
+        cssW = r.width || (canvas.parentElement?.getBoundingClientRect().width || 0);
         cssH = 6;
         canvas.width  = Math.max(1, Math.round(cssW * DPR));
         canvas.height = Math.max(1, Math.round(cssH * DPR));
@@ -17316,7 +17342,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       resize();
       if (window.ResizeObserver) {
         const ro = new ResizeObserver(resize);
-        ro.observe(canvas.parentElement);
+        ro.observe(canvas);
+        if (canvas.parentElement) ro.observe(canvas.parentElement);
       } else {
         window.addEventListener('resize', resize);
       }
