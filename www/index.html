@@ -18210,9 +18210,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
     try {
-      // Remember where we came from
+      // Remember where we came from — capture scroll position + full
+      // article data BEFORE we navigate away so the return-to-card
+      // flash and the origin article preview panel both have the info
+      // they need. Marked source:'feed' so showFlowArcBackBtn() will
+      // populate the transparent preview panel.
       const originPage = window.__currentPage || 2;
-      _flowArcOrigin = { type: 'article', page: originPage, label: 'Back to News' };
+      const captured = (typeof captureFeedArticleOrigin === 'function')
+        ? captureFeedArticleOrigin(articleId) : { id: articleId };
+      _flowArcOrigin = {
+        type: 'article',
+        source: 'feed',
+        page: originPage,
+        label: 'Back to News',
+        id: articleId,
+        scrollEl: captured.scrollEl,
+        scrollTop: captured.scrollTop,
+        article: captured.article || null,
+      };
 
       // 1. Close any open panels
       window.__clusterCloseNodePanel?.();
@@ -18250,6 +18265,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // 6. Remap, tag as card-triggered, and render arcs
       const articleObj = data.article || null;
+      // Merge any richer article data from the API into the origin
+      // object so the preview panel gets source_name, image_url, etc.
+      if (articleObj && _flowArcOrigin) {
+        _flowArcOrigin.article = { ...(_flowArcOrigin.article || {}), ...articleObj };
+      }
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
@@ -18285,7 +18305,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const API = window.__API || "https://earth-wjr6.onrender.com";
     try {
       const originPage = window.__currentPage || 2;
-      _flowArcOrigin = { type: 'thread', page: originPage, label: 'Back to Threads' };
+      const capturedThread = (typeof captureFeedThreadOrigin === 'function')
+        ? captureFeedThreadOrigin(threadId) : { id: threadId };
+      _flowArcOrigin = {
+        type: 'thread',
+        source: 'feed',
+        page: originPage,
+        label: 'Back to Threads',
+        id: threadId,
+        scrollEl: capturedThread.scrollEl,
+        scrollTop: capturedThread.scrollTop,
+        thread: capturedThread.thread || null,
+      };
 
       window.__clusterCloseNodePanel?.();
       window.closeArticleDetail?.();
@@ -18314,6 +18345,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__flowSetOpen?.(true);
 
+      // Merge any thread metadata from the API into the origin object
+      // so the preview panel can render hero image + meta even when the
+      // DOM dataset.thread lookup didn't find a cached object.
+      if (data.thread && _flowArcOrigin) {
+        _flowArcOrigin.thread = { ...(_flowArcOrigin.thread || {}), ...data.thread };
+      }
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
