@@ -2074,10 +2074,11 @@ body.ticker-active #flowControls {
 /* Entity highlight — fades in brighter when a matching flow arc is
    active. Applied to <span class="famHl"> inside title + summary. */
 .fac-body .famHl {
-  color: rgba(255, 255, 255, 0.82);
-  background: transparent;
+  color: rgba(255, 215, 150, 0.96);
+  background: rgba(255, 190, 80, 0.08);
   border-radius: 3px;
   padding: 0 2px;
+  font-weight: 600;
   transition:
     color 0.45s cubic-bezier(0.22, 1, 0.36, 1),
     background 0.45s cubic-bezier(0.22, 1, 0.36, 1),
@@ -19000,14 +19001,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // 10. Surface the article card alongside the arcs so the user can
-      //     see which article these flows belong to. Uses context 'flow'
-      //     so the article detail's close doesn't tear down the arcs.
-      //     Falls back to the origin-captured article if the API didn't
-      //     return one, guaranteeing the card is shown.
-      const _artForPanel = articleObj || _flowArcOrigin?.article || null;
-      if (_artForPanel && typeof window.openArticleDetail === "function") {
-        window.openArticleDetail(_artForPanel, { type: 'flow' });
+      // 10. Re-render the briefing card with the richer article data the
+      //     API may have returned. We intentionally do NOT call
+      //     openArticleDetail here — the full-screen article panel would
+      //     cover the briefing card and introduce a second X button
+      //     outside the flow panel. The compact flowArticleCard is the
+      //     only surface we want on screen alongside the arcs.
+      const _artForCard = articleObj || _flowArcOrigin?.article || null;
+      if (_artForCard && typeof showFlowArticleCard === 'function') {
+        try { showFlowArticleCard(_flowArcOrigin, flows); } catch (_) {}
       }
 
     } catch (e) {
