@@ -208,6 +208,44 @@
       border-radius: 22px 22px 0 0;
     }
 
+    /* ── Node panel open whoosh ─────────────────────────────────────────
+       A thin horizontal light line sweeps across the top edge of the
+       panel as it settles into place — one-shot accent, same visual
+       family as the news-feed accent line. Triggered by adding the
+       .npWhoosh class after the panel becomes active. */
+    #infoPanel::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      pointer-events: none;
+      background: linear-gradient(90deg,
+        rgba(255,220,140,0) 0%,
+        rgba(255,220,140,0) 34%,
+        rgba(255,200,110,0.55) 46%,
+        rgba(255,244,210,0.98) 50%,
+        rgba(255,200,110,0.55) 54%,
+        rgba(255,220,140,0) 66%,
+        rgba(255,220,140,0) 100%);
+      background-size: 300% 100%;
+      background-position: -120% 0;
+      opacity: 0;
+      border-radius: 22px 22px 0 0;
+      z-index: 6;
+      box-shadow: 0 0 0 rgba(255,220,140,0);
+    }
+    #infoPanel.npWhoosh::before {
+      animation: npWhoosh 980ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    @keyframes npWhoosh {
+      0%   { background-position: -120% 0; opacity: 0; filter: blur(0.6px); }
+      12%  { opacity: 1; }
+      88%  { opacity: 1; }
+      100% { background-position: 220% 0;  opacity: 0; filter: blur(0.6px); }
+    }
+
     #infoPanel.maximized {
       height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
       border-radius: 20px 20px 0 0;
@@ -1251,7 +1289,19 @@ body.ticker-active #flowControls {
   bottom: calc(var(--global-ticker-height) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
 }
 
-/* News Flows title (top-left of flow panel) */
+/* News Flows title (top-left of flow panel) — idle breath pulse so the
+   panel feels alive and tied into the app-wide ambient animation system.
+   Same "recording of low background audio" principle as the nfAccentLine. */
+@keyframes flowTitleBreath {
+  0%, 100% {
+    color: rgba(80,255,160,0.88);
+    text-shadow: 0 0 6px rgba(0,220,130,0.28), 0 0 14px rgba(0,220,130,0.12);
+  }
+  50% {
+    color: rgba(130,255,185,1.0);
+    text-shadow: 0 0 11px rgba(0,240,150,0.58), 0 0 24px rgba(0,240,150,0.26);
+  }
+}
 .flowPanelTitle {
   position: absolute;
   top: 10px;
@@ -1264,6 +1314,27 @@ body.ticker-active #flowControls {
   text-shadow: 0 0 10px rgba(0,220,130,0.45);
   pointer-events: none;
   z-index: 10;
+  animation: flowTitleBreath 2.9s ease-in-out infinite;
+}
+
+/* Stronger border pulse carrying the green "directional flow" accent —
+   breathes in sync with the title. Indicates the sharp directional
+   purpose of the flow layer. */
+@keyframes flowBorderPulse {
+  0%, 100% {
+    box-shadow:
+      0 8px 40px rgba(0,0,0,0.4),
+      inset 0 1px 0 rgba(255,255,255,0.07),
+      0 0 0 1px rgba(0,220,130,0.10),
+      0 0 14px rgba(0,220,130,0.07);
+  }
+  50% {
+    box-shadow:
+      0 8px 40px rgba(0,0,0,0.4),
+      inset 0 1px 0 rgba(255,255,255,0.11),
+      0 0 0 1px rgba(0,220,130,0.38),
+      0 0 30px rgba(0,220,130,0.22);
+  }
 }
 
 .flowPanel {
@@ -1281,6 +1352,7 @@ body.ticker-active #flowControls {
   box-shadow: 0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07);
   -webkit-  position: relative;
   overflow: hidden;
+  animation: flowBorderPulse 2.9s ease-in-out infinite;
 }
 
 .flowPanelRow {
@@ -1799,6 +1871,22 @@ body.ticker-active #flowControls {
 .flowOriginRow {
   padding: 4px 0 2px;
 }
+@keyframes flowMinBarPulse {
+  0%, 100% {
+    box-shadow:
+      0 4px 24px rgba(0,0,0,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.08),
+      0 0 0 1px rgba(0,220,130,0.10),
+      0 0 10px rgba(0,220,130,0.07);
+  }
+  50% {
+    box-shadow:
+      0 4px 24px rgba(0,0,0,0.35),
+      inset 0 1px 0 rgba(255,255,255,0.12),
+      0 0 0 1px rgba(0,220,130,0.38),
+      0 0 22px rgba(0,220,130,0.22);
+  }
+}
 .flowMinBar {
   display: none;
   background: rgba(8, 12, 20, 0.52);
@@ -1808,7 +1896,21 @@ body.ticker-active #flowControls {
   align-items: center;
   gap: 12px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  animation: flowMinBarPulse 2.9s ease-in-out infinite;
   -webkit-}
+@keyframes flowMinStatsBreath {
+  0%, 100% {
+    color: rgba(0,220,130,0.78);
+    text-shadow: 0 0 5px rgba(0,220,130,0.22);
+  }
+  50% {
+    color: rgba(120,255,180,1.0);
+    text-shadow: 0 0 10px rgba(0,240,150,0.55);
+  }
+}
+.flowMinBar .flowMinStats {
+  animation: flowMinStatsBreath 2.9s ease-in-out infinite;
+}
 .flowMinBar .flowMinLabel {
   font-size: 11px;
   font-weight: 600;
@@ -4452,18 +4554,20 @@ body.ticker-active #flowControls {
       position: relative;
       z-index: 50;
     }
-    /* Yellow accent line — below title row, above filters/date */
-    .nfTitleRow::after {
-      content: '';
+    /* ── Dynamic accent line — canvas-backed interactive element ──
+       Positioned just below the title row, stretches full width. The JS
+       engine in initNfAccentLine() draws a breathing ambient line with
+       event-triggered "strum" ripples (load burst, click ripples, hold
+       crescendo). Replaces the old static CSS gradient. */
+    #nfAccentCanvas {
       position: absolute;
-      bottom: -7px; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(255,180,80,0.55) 30%,
-        rgba(255,140,40,0.80) 50%,
-        rgba(255,180,80,0.55) 70%,
-        transparent 100%);
+      left: 0; right: 0;
+      bottom: -9px;
+      width: 100%;
+      height: 6px;
       pointer-events: none;
+      z-index: 2;
+      display: block;
     }
 
     /* ── Title row: page title + view toggle ── */
@@ -5306,6 +5410,17 @@ body.ticker-active #flowControls {
       text-transform: uppercase; color: rgba(255,180,80,0.78);
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     }
+    /* Bias badge one-shot reveal pulse — fires when a card first enters
+       the news grid. Short fade-in, double-time fade-out overshoot. */
+    @keyframes nfBiasBadgeReveal {
+      0%   { box-shadow: 0 0 0 0 rgba(255,255,255,0.00), 0 0 0 0 currentColor; filter: brightness(1.0); transform: scale(1.0); }
+      45%  { box-shadow: 0 0 0 3px rgba(255,255,255,0.18), 0 0 14px 2px currentColor; filter: brightness(1.9); transform: scale(1.35); }
+      70%  { box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 0 6px 1px currentColor; filter: brightness(1.25); transform: scale(1.08); }
+      100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.00), 0 0 0 0 currentColor; filter: brightness(1.0); transform: scale(1.0); }
+    }
+    .sourceBiasBadge.nfBiasBadgeReveal {
+      animation: nfBiasBadgeReveal 330ms cubic-bezier(0.2, 0.9, 0.3, 1.0) both;
+    }
     .sourceBiasBadge {
       display: inline-block;
       width: 10px;
@@ -5417,10 +5532,39 @@ body.ticker-active #flowControls {
       border-radius: 2px; padding: 0 1px;
     }
 
-    /* Skeletons */
-    .nfSkel { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; overflow: hidden; height: 440px; }
-    .nfSkel .si { width: 100%; height: 200px; background: rgba(255,255,255,0.05); }
-    .nfSkel .sl { height: 9px; border-radius: 5px; background: rgba(255,255,255,0.055); margin: 11px 13px 5px; }
+    /* Skeletons — animated shimmer pulse so the user knows data is loading */
+    @keyframes nfSkelShimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes nfSkelBreath {
+      0%, 100% { opacity: 0.55; }
+      50%      { opacity: 1.00; }
+    }
+    .nfSkel {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 16px;
+      overflow: hidden;
+      height: 440px;
+      position: relative;
+      animation: nfSkelBreath 1.8s ease-in-out infinite;
+    }
+    .nfSkel .si,
+    .nfSkel .sl {
+      background: linear-gradient(
+        90deg,
+        rgba(255,255,255,0.04) 0%,
+        rgba(255,190,80,0.13) 38%,
+        rgba(255,210,120,0.22) 50%,
+        rgba(255,190,80,0.13) 62%,
+        rgba(255,255,255,0.04) 100%
+      );
+      background-size: 200% 100%;
+      animation: nfSkelShimmer 1.6s linear infinite;
+    }
+    .nfSkel .si { width: 100%; height: 200px; }
+    .nfSkel .sl { height: 9px; border-radius: 5px; margin: 11px 13px 5px; }
     .nfSkel .sl.s { width: 48%; margin-bottom: 13px; }
 
     /* Empty */
@@ -7763,6 +7907,11 @@ window.sourceBiasBadgeHTML = function(bias) {
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
+    // Ambient microdrift: sub-threshold sway on both yaw and pitch so
+    // the horizon gently shifts like a satellite in a slow orbit.
+    // Tracked as previous-frame absolute values so deltas can be applied.
+    let _ambientDriftYawPrev = 0;
+    let _ambientDriftPitchPrev = 0;
 
     function applyYaw(rad)  { globeYaw += rad; }
     function applyTilt(rad) { globePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, globePitch + rad)); }
@@ -7865,6 +8014,18 @@ const loader = new THREE.TextureLoader();
     let resizeDragging = false;
     let resizeStartY = 0;
     let resizeStartH = 0;
+
+    // One-shot horizontal light sweep across a node panel's top edge.
+    // Called whenever a country/region/city panel becomes active, so the
+    // panel feels like it's settling into place rather than just popping.
+    // Matches the visual family of the News Feed accent line.
+    function triggerNodePanelWhoosh(panel) {
+      if (!panel) return;
+      panel.classList.remove("npWhoosh");
+      // force reflow so the animation restarts cleanly
+      void panel.offsetWidth;
+      panel.classList.add("npWhoosh");
+    }
 
     function applySnapHeight(state, animate = true) {
       snapState = state;
@@ -8957,23 +9118,17 @@ function computeCityTiers(cities) {
         ringStates.push({ progress: 0, delay: i * ringBurstDelay, active: false });
       }
 
-      // ── Biome-palette sampler for boundary lines ───────────────────────
-      // Instead of reading Blue Marble pixels raw (which produce muddy,
-      // unpredictable hues), this function classifies each lat/lon into one
-      // of a handful of biomes and returns a curated palette color:
-      //
-      //   • Polar ice (|lat| > 66°)           → near-white
-      //   • Ocean (dominant blue, low lum)    → deep teal
-      //   • Snow/rock (bright, neutral)       → white-grey
-      //   • Forest / vegetation (high NDVI)   → dark → light green
-      //   • Desert / arid (warm, low NDVI)    → brownish yellow → tan
-      //   • Fallback earthy                   → muted brown
-      //
-      // Classification uses a very simple greenness metric (g − r)/(g + r)
-      // inspired by NDVI, plus warmth (r − b)/(r + b), both computed from
-      // the loaded Blue Marble imageData. No per-pixel texture fetching is
-      // required at runtime beyond the lookup we were already doing.
+      // ── Earth-color sampler for boundary lines ─────────────────────────
+      // Reverted to plain white. Biome classification and raw Blue Marble
+      // sampling both produced muddy / unpredictable results — clean white
+      // edges against the dark globe read much more clearly and match the
+      // rest of the UI palette.
       function sampleEarthRGB(lat, lon) {
+        return [1.0, 1.0, 1.0];
+      }
+      // (original biome classifier retained below for reference but never
+      // reached because of the early return above)
+      function _sampleEarthRGB_biome(lat, lon) {
         // 1. Polar override — Antarctica + Arctic always snow-white.
         const absLat = Math.abs(lat);
         if (absLat > 66) {
@@ -11510,6 +11665,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.body.classList.add("panel-open");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
+        triggerNodePanelWhoosh(panel);
 
         // ── Slides ──
         const slidesTrack = panel.querySelector("#panelSlidesTrack");
@@ -12747,6 +12903,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.body.classList.add("panel-open");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
+        triggerNodePanelWhoosh(panel);
         fetchLocationStats("region", region.id);
 
         // ── Controls minimize toggle — match country/city panel ──
@@ -12966,7 +13123,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             applyYaw(-yawVelocity); applyTilt(tiltVelocity);
             yawVelocity *= 0.90; tiltVelocity *= 0.90;
           }
-          if (!dragging && !ambientPaused && ambientEnabled) applyYaw(ambientSpeed);
+          if (!dragging && !ambientPaused && ambientEnabled) {
+            applyYaw(ambientSpeed);
+            // Sub-threshold microdrift on both axes (~±0.5°) — out of phase
+            // so yaw and pitch never repeat together. Applied as a delta
+            // from the previous frame's absolute sinusoidal value.
+            const _nowSec = performance.now() * 0.001;
+            const DRIFT_AMP = 0.00873; // 0.5 degrees in radians
+            const yawDrift   = Math.sin(_nowSec * 0.11)        * DRIFT_AMP;
+            const pitchDrift = Math.sin(_nowSec * 0.073 + 1.3) * DRIFT_AMP;
+            applyYaw(yawDrift - _ambientDriftYawPrev);
+            applyTilt(pitchDrift - _ambientDriftPitchPrev);
+            _ambientDriftYawPrev = yawDrift;
+            _ambientDriftPitchPrev = pitchDrift;
+          }
           rebuildGlobeQuat();
         }
 
@@ -15235,6 +15405,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>`;
     panel.classList.add("active");
     document.body.classList.add("panel-open");
+    if (typeof triggerNodePanelWhoosh === "function") triggerNodePanelWhoosh(panel);
 
     // Close handler
     panel.querySelector(".closePanel").addEventListener("click", () => {
@@ -15544,6 +15715,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <div id="nfQueryBar">
       <!-- Row 1: title + view toggle -->
       <div class="nfTitleRow">
+        <canvas id="nfAccentCanvas" aria-hidden="true"></canvas>
         <span class="nfPageTitle">News Feed</span>
         <div class="nfTitleActions">
           <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
@@ -16037,7 +16209,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function fetchPage() {
       if (loading || !hasMore) return;
-      loading = true; if (offset > 0) spinRow.classList.add("on");
+      loading = true; spinRow.classList.add("on");
+      if (window.__nfAccentPulse) window.__nfAccentPulse('load');
       fetch(buildUrl(offset))
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
@@ -16084,6 +16257,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     let _lastRenderedCount = 0;
+    // Trigger the one-shot bias-badge pulse on every .sourceBiasBadge that
+    // lives inside the passed-in cards. Runs via requestAnimationFrame with
+    // a tiny per-card stagger so a full page of results doesn't flash all
+    // at once — the effect reads like a sequence, not a strobe.
+    function pulseBiasBadgesIn(cards) {
+      if (!cards || !cards.length) return;
+      for (let i = 0; i < cards.length; i++) {
+        const card = cards[i];
+        const badge = card.querySelector?.('.sourceBiasBadge');
+        if (!badge) continue;
+        const delay = i * 38; // ms between each card's strum
+        setTimeout(() => {
+          badge.classList.remove('nfBiasBadgeReveal');
+          // force reflow so re-adding the class restarts the animation
+          void badge.offsetWidth;
+          badge.classList.add('nfBiasBadgeReveal');
+          // Also kick the accent line — each new card pings the line
+          if (window.__nfAccentStrum) window.__nfAccentStrum(0.35);
+        }, delay);
+      }
+    }
+
     function renderCards(list, forceFullRebuild) {
       if (!list.length && !loading) {
         grid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No articles found</span></div>`;
@@ -16091,10 +16286,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       if (!forceFullRebuild && _lastRenderedCount > 0 && list.length > _lastRenderedCount) {
+        const startIdx = grid.children.length;
         const newCards = list.slice(_lastRenderedCount).map(cardHTML).join("");
         grid.insertAdjacentHTML("beforeend", newCards);
+        const newEls = Array.from(grid.children).slice(startIdx);
+        pulseBiasBadgesIn(newEls);
       } else {
         grid.innerHTML = list.map(cardHTML).join("");
+        pulseBiasBadgesIn(Array.from(grid.children));
       }
       _lastRenderedCount = list.length;
     }
@@ -16405,6 +16604,307 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div></div>`;
     }
     function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
+
+    // ══════════════════════════════════════════════════════════════════
+    // News Feed Accent Line — dynamic interactive canvas element
+    //
+    //   Ambient:  slow sine "breath" at ~0.4Hz, very low amplitude.
+    //   Load:     on page first-show, fires a strum (large central burst
+    //             that ripples outward and decays into the breath).
+    //   Click:    any pointerdown over the news page seeds a small ripple
+    //             at the x-coordinate of the click (projected onto the
+    //             line). Short taps → small instant burst.
+    //   Hold:     pointerdown held ≥180ms → a growing charge ripple that
+    //             releases into a larger burst on pointerup.
+    //   Strum():  exposed as window.__nfAccentStrum(intensity, xFrac) so
+    //             other modules can ping the line (search, card reveal).
+    //
+    //   Aesthetic: sub-threshold by default — breath amplitude is ~0.15
+    //   of canvas height, ripples cap at ~0.85. Base color matches the
+    //   title glow (#ffbe50 / #ffaa3c) so it reads as the same visual
+    //   family as the rest of the news panel.
+    // ══════════════════════════════════════════════════════════════════
+    (function initNfAccentLine() {
+      const canvas = document.getElementById('nfAccentCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d', { alpha: true });
+
+      const DPR = Math.min(2, window.devicePixelRatio || 1);
+      let cssW = 0, cssH = 0;
+
+      function resize() {
+        const parent = canvas.parentElement;
+        if (!parent) return;
+        const r = parent.getBoundingClientRect();
+        cssW = r.width;
+        cssH = 6;
+        canvas.width  = Math.max(1, Math.round(cssW * DPR));
+        canvas.height = Math.max(1, Math.round(cssH * DPR));
+        canvas.style.height = cssH + 'px';
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      }
+      resize();
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(resize);
+        ro.observe(canvas.parentElement);
+      } else {
+        window.addEventListener('resize', resize);
+      }
+
+      // Ripple model: each ripple is a decaying traveling wave packet
+      // originating at x0, with amplitude that decays exponentially.
+      // Rendering: for each x across the canvas, sum contributions from
+      // all live ripples plus the ambient breath.
+      const ripples = []; // {x0, amp, born, life, speed, spread}
+
+      function seedRipple(xFrac, intensity = 0.5, life = 1200) {
+        const x0 = Math.max(0, Math.min(1, xFrac)) * cssW;
+        ripples.push({
+          type: 'sym',
+          x0,
+          amp: intensity,
+          born: performance.now(),
+          life,
+          speed: 220 + intensity * 340, // px/s
+          spread: 40 + intensity * 60,  // initial spatial sigma
+        });
+        // keep list bounded
+        if (ripples.length > 24) ripples.shift();
+      }
+
+      // Directional sweep: a bright spark travels from xStart -> xEnd
+      // leaving a trailing illuminated ripple behind. Used for article-card
+      // clicks — a "recording head" sweeping right→left.
+      function seedSweep(xStartFrac, xEndFrac, intensity = 0.32, life = 1600) {
+        ripples.push({
+          type: 'sweep',
+          amp: intensity,
+          born: performance.now(),
+          life,
+          xStart: Math.max(0, Math.min(1, xStartFrac)) * cssW,
+          xEnd:   Math.max(0, Math.min(1, xEndFrac))   * cssW,
+          spread: 32 + intensity * 48,
+        });
+        if (ripples.length > 24) ripples.shift();
+      }
+      window.__nfAccentSweep = seedSweep;
+
+      // Public strum API — intensity 0..1, optional xFrac 0..1 (default
+      // centered). Used by card reveal, search, external modules.
+      function strum(intensity = 0.5, xFrac = 0.5) {
+        seedRipple(xFrac, intensity, 900 + intensity * 900);
+      }
+      window.__nfAccentStrum = strum;
+      window.__nfAccentPulse = function(kind) {
+        if (kind === 'load')   return strum(0.95, 0.5);
+        if (kind === 'search') return strum(0.70, 0.5);
+        if (kind === 'card')   return strum(0.28);
+        strum(0.4, 0.5);
+      };
+
+      // Pointer handling on the entire news feed page — ripple x follows
+      // the click's horizontal screen position.
+      const nfPage = document.getElementById('pageNews') || document;
+      let holdTimer = null, holdStart = 0, holdX = 0.5, holding = false;
+      let cardHolding = false, cardHoldStart = 0;
+
+      function xFracFromEvent(e) {
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.clientX != null) ? e.clientX : (e.touches?.[0]?.clientX ?? rect.left + rect.width / 2);
+        return (cx - rect.left) / Math.max(1, rect.width);
+      }
+
+      function onDown(e) {
+        // Ignore clicks inside the title-row controls so they still
+        // register normally — ripples only fire for meaningful surface
+        // clicks (cards, search area, viewport background).
+        if (e.target && e.target.closest?.('.nfTitleActions')) return;
+
+        // Special case: article/video card → directional sweep on release.
+        // A tiny pickup spark at the click x fires immediately as feedback.
+        if (e.target && e.target.closest?.('.nfCard')) {
+          cardHolding = true;
+          cardHoldStart = performance.now();
+          seedRipple(xFracFromEvent(e), 0.12, 520);
+          return;
+        }
+
+        holdX = xFracFromEvent(e);
+        holdStart = performance.now();
+        holding = true;
+        // immediate small tap ripple
+        seedRipple(holdX, 0.28, 700);
+        // build-up ripple if the user holds
+        holdTimer = setTimeout(() => {
+          if (!holding) return;
+          // grow a gentle crescendo — multiple small ripples at the same x
+          const interval = setInterval(() => {
+            if (!holding) { clearInterval(interval); return; }
+            const held = (performance.now() - holdStart) / 1000;
+            const amp = Math.min(0.55, 0.18 + held * 0.12);
+            seedRipple(holdX, amp, 900);
+          }, 160);
+          // store so pointerup can clear it
+          holdTimer = interval;
+        }, 180);
+      }
+
+      function onUp(e) {
+        if (cardHolding) {
+          const held = performance.now() - cardHoldStart;
+          cardHolding = false;
+          // Tight intensity range, barely-perceptible weight from duration
+          const w = Math.max(0, Math.min(1, (held - 40) / 320));
+          const intensity = 0.22 + 0.18 * w;
+          const life = 1500 + w * 500;
+          // Pulse sweeps right → left like a recording head
+          seedSweep(1.0, 0.0, intensity, life);
+          return;
+        }
+        if (!holding) return;
+        const held = performance.now() - holdStart;
+        holding = false;
+        if (holdTimer) { clearTimeout(holdTimer); clearInterval(holdTimer); holdTimer = null; }
+        if (held >= 180) {
+          // release burst — bigger than the buildup
+          const x = (e && e.clientX != null) ? xFracFromEvent(e) : holdX;
+          const releaseAmp = Math.min(0.85, 0.45 + (held / 1400));
+          seedRipple(x, releaseAmp, 1500);
+        }
+      }
+
+      nfPage.addEventListener('pointerdown', onDown, { passive: true });
+      window.addEventListener('pointerup',   onUp,   { passive: true });
+      window.addEventListener('pointercancel', onUp, { passive: true });
+
+      // Initial strum after first paint — simulates the "recording being
+      // turned on" moment.
+      setTimeout(() => strum(0.95, 0.5), 420);
+      // Gentle echo strums in the opening second
+      setTimeout(() => strum(0.45, 0.32), 780);
+      setTimeout(() => strum(0.32, 0.70), 1060);
+
+      // ── Render loop ─────────────────────────────────────────────────
+      const BASE_R = 0xff, BASE_G = 0xbe, BASE_B = 0x50;
+      const ACCENT_R = 0xff, ACCENT_G = 0xe0, ACCENT_B = 0x98;
+
+      function frame(t) {
+        requestAnimationFrame(frame);
+        if (cssW <= 0) return;
+        // Skip rendering when news page hidden, for CPU sanity
+        const pageNews = document.getElementById('pageNews');
+        if (pageNews && pageNews.offsetParent === null) return;
+
+        ctx.clearRect(0, 0, cssW, cssH);
+
+        const cy = cssH / 2;
+        const now = t || performance.now();
+
+        // Ambient breath — slow sine modulating the base alpha
+        const breath = 0.55 + 0.30 * Math.sin(now * 0.00068 * 2 * Math.PI);
+
+        // Draw base gradient line (always visible at low amp)
+        const baseGrad = ctx.createLinearGradient(0, 0, cssW, 0);
+        baseGrad.addColorStop(0.00, 'rgba(255,190,80,0.00)');
+        baseGrad.addColorStop(0.30, `rgba(255,190,80,${(0.28 * breath).toFixed(3)})`);
+        baseGrad.addColorStop(0.50, `rgba(255,160,50,${(0.42 * breath).toFixed(3)})`);
+        baseGrad.addColorStop(0.70, `rgba(255,190,80,${(0.28 * breath).toFixed(3)})`);
+        baseGrad.addColorStop(1.00, 'rgba(255,190,80,0.00)');
+        ctx.fillStyle = baseGrad;
+        ctx.fillRect(0, cy - 0.5, cssW, 1.0);
+
+        // Live ripples — each one adds a bright localized bloom that
+        // spreads outward and decays exponentially.
+        if (ripples.length) {
+          for (let i = ripples.length - 1; i >= 0; i--) {
+            const r = ripples[i];
+            const age = (now - r.born) / 1000; // seconds
+            const lifeS = r.life / 1000;
+            const tNorm = age / lifeS;
+            if (tNorm >= 1) { ripples.splice(i, 1); continue; }
+
+            // Directional "recording head" sweep — spark travels xStart→xEnd
+            // with a softer illuminated ripple trailing behind it.
+            if (r.type === 'sweep') {
+              const eased = 1 - Math.pow(1 - tNorm, 2.2);
+              const headX = r.xStart + (r.xEnd - r.xStart) * eased;
+              // Envelope: quick ramp then gentle decay
+              const rampIn = Math.min(1, tNorm * 5);
+              const decay  = Math.exp(-1.5 * tNorm);
+              const envelope = r.amp * rampIn * decay;
+              if (envelope < 0.01) { ripples.splice(i, 1); continue; }
+
+              const travelDir = Math.sign(r.xEnd - r.xStart) || -1;
+
+              ctx.save();
+              ctx.globalCompositeOperation = 'lighter';
+
+              // Trailing illuminated ripple — broader, softer, sits behind
+              // the travelling head (opposite to travel direction).
+              const trailSigma = r.spread * (1.0 + tNorm * 1.9);
+              const trailX = headX - travelDir * trailSigma * 0.55;
+              const tg = ctx.createRadialGradient(trailX, cy, 0, trailX, cy, trailSigma);
+              tg.addColorStop(0.00, `rgba(${BASE_R},${BASE_G},${BASE_B},${(envelope * 0.55).toFixed(3)})`);
+              tg.addColorStop(0.55, `rgba(${BASE_R},${BASE_G},${BASE_B},${(envelope * 0.20).toFixed(3)})`);
+              tg.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
+              ctx.fillStyle = tg;
+              ctx.fillRect(trailX - trailSigma, 0, trailSigma * 2, cssH);
+
+              // Leading spark — bright and tight
+              const sparkSigma = 11 + envelope * 16;
+              const sg = ctx.createRadialGradient(headX, cy, 0, headX, cy, sparkSigma);
+              const aHead = Math.min(1, envelope * 1.45);
+              sg.addColorStop(0.00, `rgba(255,244,208,${aHead.toFixed(3)})`);
+              sg.addColorStop(0.45, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${(aHead * 0.55).toFixed(3)})`);
+              sg.addColorStop(1.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},0)`);
+              ctx.fillStyle = sg;
+              ctx.fillRect(headX - sparkSigma, 0, sparkSigma * 2, cssH);
+
+              ctx.restore();
+              continue;
+            }
+
+            // Exponential decay of amplitude
+            const envelope = r.amp * Math.exp(-2.2 * tNorm);
+            if (envelope < 0.01) { ripples.splice(i, 1); continue; }
+
+            // Wave radius expands over time (two lobes, +/- from x0)
+            const radius = r.speed * age;
+            const sigma  = r.spread + age * 90;
+
+            // Draw as additive bright gradient — two arms of the ripple
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            for (const sign of [-1, +1]) {
+              const cx = r.x0 + sign * radius;
+              if (cx < -sigma * 2 || cx > cssW + sigma * 2) continue;
+              const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sigma);
+              const aHot  = Math.min(1, envelope * 1.25);
+              const aMid  = envelope * 0.75;
+              const aEdge = envelope * 0.22;
+              grad.addColorStop(0.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${aHot.toFixed(3)})`);
+              grad.addColorStop(0.35, `rgba(${BASE_R},${BASE_G},${BASE_B},${aMid.toFixed(3)})`);
+              grad.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
+              ctx.fillStyle = grad;
+              ctx.fillRect(cx - sigma, 0, sigma * 2, cssH);
+              ctx.globalAlpha = aEdge;
+            }
+            // Central bright flash (only very early)
+            if (tNorm < 0.12) {
+              const flashA = envelope * (1 - tNorm / 0.12);
+              const flashG = ctx.createRadialGradient(r.x0, cy, 0, r.x0, cy, sigma * 0.7);
+              flashG.addColorStop(0, `rgba(255,240,200,${(flashA).toFixed(3)})`);
+              flashG.addColorStop(1, 'rgba(255,240,200,0)');
+              ctx.fillStyle = flashG;
+              ctx.fillRect(r.x0 - sigma, 0, sigma * 2, cssH);
+            }
+            ctx.restore();
+          }
+        }
+      }
+      requestAnimationFrame(frame);
+    })();
+
   })();
   </script>
 </div><!-- /pageNews -->
