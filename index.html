@@ -8082,7 +8082,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="flowModeRow" style="flex:1;">
           <div class="flowModePill active" data-cmode="routing">By routing</div>
           <div class="flowModePill" data-cmode="sentiment">Sentiment</div>
-          <div class="flowModePill" data-cmode="uniform">Uniform</div>
         </div>
       </div>
 
@@ -10141,7 +10140,13 @@ function computeCityTiers(cities) {
         // that still nudges the globe, should still suppress the
         // subsequent `click` so node selection can't land on whatever's
         // under the cursor at the moment of release.
-        if (mouseMoved || dragThresholdMet) mouseDragEndTime = Date.now();
+        if (mouseMoved || dragThresholdMet) {
+          mouseDragEndTime = Date.now();
+          // Exposed so the polygon country click handler (which runs in
+          // capture phase on the canvas, before the window click handler)
+          // can also reject the synthetic click at a drag-release point.
+          window.__mouseDragEndTime = mouseDragEndTime;
+        }
         dragging = false;
       });
       
@@ -11930,12 +11935,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Threshold is 1500ms to account for Capacitor WKWebView bridge latency,
         // which can delay the JS click handler well past the usual ~300ms iOS synthetic-click delay.
         if (Date.now() - touchNodeSelectTime < 1500) return;
-        // If a touch or mouse drag just ended, suppress the click at the release
-        // point. Long cooloff (DRAG_SELECT_COOLOFF_MS) so a fast drag+release
-        // can't accidentally select a node beneath the release point — applies
-        // to both touch and desktop mouse drags.
-        if (Date.now() - touchDragEndTime < DRAG_SELECT_COOLOFF_MS) return;
-        if (Date.now() - mouseDragEndTime < DRAG_SELECT_COOLOFF_MS) return;
+        // If a touch or mouse drag just ended, suppress ONLY the single
+        // synthetic click that immediately follows mouseup/touchend —
+        // click fires synchronously after the release, so a very short
+        // window is enough. A long window here is a bug: any later
+        // click within the cooloff would also be silently discarded,
+        // making subsequent node selection appear broken after the
+        // user rotates the globe even once.
+        if (mouseDragEndTime && Date.now() - mouseDragEndTime < 250) {
+          mouseDragEndTime = 0;
+          window.__mouseDragEndTime = 0;
+          return;
+        }
+        if (touchDragEndTime && Date.now() - touchDragEndTime < 250) {
+          touchDragEndTime = 0;
+          return;
+        }
 
         // Skip this handler when flow mode is active
         const flowControls = document.getElementById("flowControls");
@@ -11944,15 +11959,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (event.target.closest(".closePanel")) return;
         if (isArticleDetailTarget(event.target)) return;
         
-        // If panel is active and click is outside panel, close it and don't select new node
+        // If a panel is already active:
+        //  - clicks INSIDE the panel never trigger node selection
+        //  - clicks OUTSIDE the panel close it AND fall through to the
+        //    node-selection logic below so a click on another city
+        //    immediately selects that new city (previously it only
+        //    closed the panel and required a second click to pick).
         if (isPanelActive()) {
-          if (!event.target.closest("#infoPanel")) {
-            // Close the panel
-            const panel = document.getElementById("infoPanel");
-            const closeBtn = panel.querySelector(".closePanel");
-            if (closeBtn) closeBtn.click();
-          }
-          return; // Either way, don't process node selection while panel is active
+          if (event.target.closest("#infoPanel")) return;
+          const panel = document.getElementById("infoPanel");
+          const closeBtn = panel && panel.querySelector(".closePanel");
+          if (closeBtn) closeBtn.click();
+          // fall through to node-selection sweep
         }
         
         // Stop any in-progress camera animation - freeze at current position
@@ -18578,7 +18596,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Persistent node labels for flow arc visualization ── */
   function showFlowNodeLabels(flows) {
     // Remove any previous labels
-    clearFlowNodeLabels();
+    _clearFlowNodeLabelsImpl();
 
     // Collect unique nodes by id+type
     const nodeMap = new Map();
@@ -18655,11 +18673,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
   }
 
-  window.clearFlowNodeLabels = function() {
-    clearFlowNodeLabels();
-  };
-
-  function clearFlowNodeLabels() {
+  // NOTE: Previously this was `window.clearFlowNodeLabels = function() {
+  // clearFlowNodeLabels(); }` paired with a same-name function
+  // declaration. At script top level both bind the same global name —
+  // the window assignment runs after hoisting and overwrites the
+  // declaration, so the wrapper ended up calling itself → infinite
+  // recursion → "Maximum call stack size exceeded". The internal helper
+  // is now uniquely named so it can never be shadowed.
+  function _clearFlowNodeLabelsImpl() {
     const container = document.getElementById("flowNodeLabels");
     if (container) container.remove();
     if (window.__flowNodeLabelRAF) {
@@ -18667,6 +18688,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__flowNodeLabelRAF = null;
     }
   }
+  window.clearFlowNodeLabels = _clearFlowNodeLabelsImpl;
 
   /* ── Thread Flow Timeline ── */
   async function loadAndShowFlowTimeline(threadId) {
@@ -27813,6 +27835,15 @@ body.ticker-active .gTickerLabel {
     if (!isCountryView()) return;
     if (window.__semHeatActive) return;
     if (window.briefingActive) return;
+    // Suppress the synthetic click that fires at the release point of a
+    // mouse drag — otherwise rotating the globe with the cursor over a
+    // country selects it on release. Only the immediately-following
+    // synthetic click needs to be rejected; consume the flag so later
+    // deliberate clicks aren't blocked.
+    if (window.__mouseDragEndTime && Date.now() - window.__mouseDragEndTime < 250) {
+      window.__mouseDragEndTime = 0;
+      return;
+    }
     // Ignore clicks that originated inside UI panels
     if (e.target && e.target.closest && (
       e.target.closest('#infoPanel') ||

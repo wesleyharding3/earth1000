@@ -653,6 +653,21 @@
     /* Briefing tooltip — taller to show headline */
     #briefingBtn .btnTooltip { min-width: 180px; }
 
+    /* Settings button sits near the left edge of the screen — anchor
+       its tooltip to the button's left edge (no centering transform)
+       so the tooltip extends rightward across the screen instead of
+       overflowing off the left side on narrow mobile. */
+    #settingsToggle .btnTooltip {
+      left: 0;
+      right: auto;
+      transform: none;
+      text-align: left;
+    }
+    #settingsToggle .btnTooltipSub {
+      margin-left: 0;
+      margin-right: 0;
+    }
+
     #settingsToggle.active svg {
       transform: rotate(60deg);
       transition: transform 0.35s ease;
@@ -8145,11 +8160,25 @@ window.sourceBiasBadgeHTML = function(bias) {
           <div class="sidebarSectionLabel">Appearance</div>
           <div class="sliderRow">
             <div class="sliderLabelRow">
-              <span class="sliderLabel">Opacity</span>
+              <span class="sliderLabel">Route Opacity</span>
               <span class="sliderValue" id="transOpacityVal">80%</span>
             </div>
             <input class="settingsSlider" type="range" id="transOpacitySlider"
                    min="0" max="1" step="0.01" value="0.8" />
+          </div>
+          <div class="layerList" style="margin-top:10px;">
+            <div class="layerOpt active" id="biomeOverlayToggleTransportation">
+              <div class="layerDot"></div>
+              <span class="layerLabel">Satellite View</span>
+            </div>
+          </div>
+          <div class="sliderRow" style="margin-top:10px;">
+            <div class="sliderLabelRow">
+              <span class="sliderLabel">Satellite Opacity</span>
+              <span class="sliderValue" id="biomeOverlayOpacityValTransportation">35%</span>
+            </div>
+            <input class="settingsSlider" type="range" id="biomeOverlayOpacityTransportation"
+                   min="0" max="1" step="0.01" value="0.35" />
           </div>
         </div>
 
@@ -8353,7 +8382,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="flowModeRow" style="flex:1;">
           <div class="flowModePill active" data-cmode="routing">By routing</div>
           <div class="flowModePill" data-cmode="sentiment">Sentiment</div>
-          <div class="flowModePill" data-cmode="uniform">Uniform</div>
         </div>
       </div>
 
@@ -9077,7 +9105,8 @@ function computeCityTiers(cities) {
 
       function syncSurfaceOverlayVisibility() {
         const mode = window.__currentViewMode || currentViewMode;
-        const allowed = mode === "country" || mode === "city" || mode === "regions";
+        const allowed = mode === "country" || mode === "city" ||
+                        mode === "regions" || mode === "transportation";
         surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
         const userOpacity = window.__surfaceOverlayOpacity ?? 0.35;
         // In dark mode, give the night-lights image a small visibility
@@ -10518,7 +10547,12 @@ function computeCityTiers(cities) {
         if (!pick) return;
         if (touchMoved || touchThresholdMet) return;
         if (Date.now() - pickTime > TOUCH_TAP_MAX_MS) return;
-        if (Date.now() - touchDragEndTime < 5000) return;
+        // NOTE: do NOT gate on touchDragEndTime here. That variable is set
+        // by the PREVIOUS touch; gating on it would block every new tap
+        // within 5s of the last drag, breaking city / regions / country
+        // selection any time the user rotates the globe and then taps.
+        // touchMoved / touchThresholdMet already cover the case where
+        // THIS touch moved.
         try { pick(); } catch (_) {}
       });
 
@@ -10623,16 +10657,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById("biomeOverlayToggleCountry"),
         document.getElementById("biomeOverlayToggleCity"),
         document.getElementById("biomeOverlayToggleDefault"),
+        document.getElementById("biomeOverlayToggleTransportation"),
       ].filter(Boolean);
       const biomeOverlaySliders = [
         document.getElementById("biomeOverlayOpacityCountry"),
         document.getElementById("biomeOverlayOpacityCity"),
         document.getElementById("biomeOverlayOpacityDefault"),
+        document.getElementById("biomeOverlayOpacityTransportation"),
       ].filter(Boolean);
       const biomeOverlayVals = [
         document.getElementById("biomeOverlayOpacityValCountry"),
         document.getElementById("biomeOverlayOpacityValCity"),
         document.getElementById("biomeOverlayOpacityValDefault"),
+        document.getElementById("biomeOverlayOpacityValTransportation"),
       ].filter(Boolean);
 
       function syncBiomeOverlayControls() {
@@ -12120,6 +12157,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // resetting the camera animation that touchstart just started.
       let touchNodeSelectTime = 0;
       let touchDragEndTime    = 0;  // set when a real drag ends — suppresses synthetic click
+      // Expose touchNodeSelectTime on the window so sibling modules
+      // (e.g. the polygon layer's click handler) can dedupe the
+      // synthetic iOS click that fires ~300ms after touchend.
+      Object.defineProperty(window, '__touchNodeSelectTime', {
+        get: () => touchNodeSelectTime,
+        configurable: true,
+      });
 
       window.addEventListener("click", event => {
         if (window.briefingActive) return;   // globe locked during briefing
@@ -12244,8 +12288,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.briefingActive) return;   // globe locked during briefing
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
-        // If a drag just ended, suppress node selection for the cooloff window
-        if (Date.now() - touchDragEndTime < 5000) return;
+        // Short cooloff only — 300ms is enough to reject the accidental
+        // tap immediately after a fling release. The previous 5000ms was
+        // blocking every stationary tap for 5 full seconds after any
+        // prior drag, which broke city / regions / country selection.
+        if (Date.now() - touchDragEndTime < 300) return;
         // Don't start a new node selection if the touch lands inside the
         // settings sidebar — controls there must never trigger globe picks.
         const _tt = event.touches[0];
@@ -12317,6 +12364,53 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           }
           return;
+        }
+
+        // Country view on mobile: prefer polygon hit-test over node-dot
+        // proximity so taps anywhere inside a country select the country
+        // (not just its labeled node). We stash the polygon pick as a
+        // deferred `_pendingTouchPick` and let touchend fire it via the
+        // same stationary-tap gate used by city / regions — this avoids
+        // any reliance on the synthetic `click` event, which is flaky
+        // inside Capacitor's WKWebView bridge.
+        if (currentViewMode === "country" &&
+            window.__polygonCountriesActive &&
+            typeof window.hitTestGlobe === "function") {
+          try {
+            const _ray = new THREE.Raycaster();
+            _ray.setFromCamera(mouse, camera);
+            const _sph = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1);
+            const _hit = new THREE.Vector3();
+            if (_ray.ray.intersectSphere(_sph, _hit)) {
+              const _p = _hit.clone().applyQuaternion(scene.quaternion.clone().invert());
+              const _phi = Math.acos(Math.max(-1, Math.min(1, _p.y)));
+              const _lat = 90 - _phi * (180 / Math.PI);
+              const _theta = Math.atan2(_p.z, -_p.x);
+              let _lon = _theta * (180 / Math.PI) - 180;
+              while (_lon < -180) _lon += 360;
+              while (_lon >  180) _lon -= 360;
+              const _zf = Math.max(0.2, 4 / Math.max(0.1, camera.position.length()));
+              const _res = window.hitTestGlobe(_lat, _lon, _zf);
+              const _pri = _res && _res.primary ? _res.primary : null;
+              if (_pri && _pri.name) {
+                const _name = _pri.name;
+                _pendingTouchPick = () => {
+                  touchNodeSelectTime = Date.now();
+                  if (typeof window.__openCountryByName === "function") {
+                    window.__openCountryByName(_name);
+                  }
+                  if (window.__polygonLayer &&
+                      typeof window.__polygonLayer.selectCountry === "function") {
+                    try { window.__polygonLayer.selectCountry(_pri.key); } catch (_) {}
+                  }
+                };
+                _pendingTouchPickTime = Date.now();
+                return;
+              }
+            }
+          } catch (_) { /* fall through to node-dot pick */ }
+          // Fall through to node-dot sweep below if polygon hit missed
+          // (ocean / no country under finger).
         }
 
         // Screen-space sweep — same logic as click handler
@@ -27513,6 +27607,15 @@ body.ticker-active .gTickerLabel {
     if (!isCountryView()) return;
     if (window.__semHeatActive) return;
     if (window.briefingActive) return;
+    // Don't hijack taps when card-triggered flow arcs are on screen —
+    // the briefing flowArticleCard expects the globe to be "quiet".
+    if (window.__flowCardSuppressGlobeInteractions) return;
+    // On mobile, touchstart/touchend already handled the polygon pick
+    // via `_pendingTouchPick` → `__openCountryByName`. Skip the
+    // synthetic click so we don't double-fire on the same tap.
+    if (typeof window !== 'undefined' &&
+        typeof window.__touchNodeSelectTime === 'number' &&
+        Date.now() - window.__touchNodeSelectTime < 1500) return;
     if (e.target && e.target.closest && (
       e.target.closest('#infoPanel') ||
       e.target.closest('#countryFan') ||
