@@ -9913,7 +9913,14 @@ function computeCityTiers(cities) {
         prevX = e.clientX; prevY = e.clientY;
       });
 
-      window.addEventListener("mouseup", () => { dragging = false; });
+      window.addEventListener("mouseup", () => {
+        // If this release came after a real drag (threshold met), stamp the
+        // end-time so the subsequent `click` event can be suppressed — stops
+        // the globe from selecting whatever node happens to be under the
+        // cursor at the exact moment the user lets go of a drag.
+        if (dragThresholdMet) mouseDragEndTime = Date.now();
+        dragging = false;
+      });
       
       const DRAG_THRESHOLD       = 3;  // pixels — mouse precision is high, 3px is fine
       const TOUCH_DRAG_THRESHOLD = 8;  // pixels — thumbs land with natural drift; 8px avoids false drags
@@ -11648,7 +11655,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Prevents the synthetic click that fires after touchstart from
       // resetting the camera animation that touchstart just started.
       let touchNodeSelectTime = 0;
-      let touchDragEndTime    = 0;  // set when a real drag ends — suppresses synthetic click
+      let touchDragEndTime    = 0;  // set when a real touch drag ends — suppresses synthetic click
+      let mouseDragEndTime    = 0;  // set when a real mouse drag ends — suppresses click-at-release
+      // Cooloff window (ms) between the end of a drag and when node
+      // selection is re-enabled. Generous by design: prevents the release
+      // point of a reorientation gesture from landing on whatever node
+      // happens to be underneath.
+      const DRAG_SELECT_COOLOFF_MS = 2500;
+      window.__dragSelectCooloffMs = DRAG_SELECT_COOLOFF_MS;
 
       window.addEventListener("click", event => {
         if (window.briefingActive) return;   // globe locked during briefing
@@ -11657,10 +11671,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Threshold is 1500ms to account for Capacitor WKWebView bridge latency,
         // which can delay the JS click handler well past the usual ~300ms iOS synthetic-click delay.
         if (Date.now() - touchNodeSelectTime < 1500) return;
-        // If a touch drag just ended, suppress the synthetic click at the release
-        // point. Long cooloff (1200ms) so a fast drag+release can't accidentally
-        // select a node beneath the release point.
-        if (Date.now() - touchDragEndTime < 1200) return;
+        // If a touch or mouse drag just ended, suppress the click at the release
+        // point. Long cooloff (DRAG_SELECT_COOLOFF_MS) so a fast drag+release
+        // can't accidentally select a node beneath the release point — applies
+        // to both touch and desktop mouse drags.
+        if (Date.now() - touchDragEndTime < DRAG_SELECT_COOLOFF_MS) return;
+        if (Date.now() - mouseDragEndTime < DRAG_SELECT_COOLOFF_MS) return;
 
         // Skip this handler when flow mode is active
         const flowControls = document.getElementById("flowControls");
@@ -11769,7 +11785,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
         // If a drag just ended, suppress node selection for the cooloff window
-        if (Date.now() - touchDragEndTime < 1200) return;
+        if (Date.now() - touchDragEndTime < DRAG_SELECT_COOLOFF_MS) return;
         // Don't start a new node selection if the touch lands inside the
         // settings sidebar — controls there must never trigger globe picks.
         {
@@ -12685,6 +12701,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           zoomVelocity = 0;
           targetZoom = preFocusZoom;
           zoomingOut = true;
+
+          // Clear any lingering country polygon fill/outline so the map
+          // returns to a neutral state when the panel closes.
+          try { window.__polygonLayer?.clearSelection?.(); } catch (_) {}
 
           scheduleAmbientResume();
         });
@@ -27037,6 +27057,12 @@ body.ticker-active .gTickerLabel {
     hideFan,
     repaint,
     setHoveredKey: (k) => { hoveredKey = k; repaint(); },
+    clearSelection: () => {
+      hoveredKey = null;
+      selectedKey = null;
+      hideFan();
+      repaint();
+    },
     isReady: () => _ready,
   };
 
