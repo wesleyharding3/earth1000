@@ -8957,37 +8957,97 @@ function computeCityTiers(cities) {
         ringStates.push({ progress: 0, delay: i * ringBurstDelay, active: false });
       }
 
-      // ── Earth-colour sampler for boundary lines ─────────────────────────
-      // Reads the already-loaded Blue Marble pixels (imageData) at the line's
-      // lat/lon so each boundary segment glows with the actual surface color
-      // beneath it (ocean → blue, forest → green, desert → tan, ice → white).
-      // Saturation + brightness are lifted so the glow stays legible against
-      // the dark globe.
+      // ── Biome-palette sampler for boundary lines ───────────────────────
+      // Instead of reading Blue Marble pixels raw (which produce muddy,
+      // unpredictable hues), this function classifies each lat/lon into one
+      // of a handful of biomes and returns a curated palette color:
+      //
+      //   • Polar ice (|lat| > 66°)           → near-white
+      //   • Ocean (dominant blue, low lum)    → deep teal
+      //   • Snow/rock (bright, neutral)       → white-grey
+      //   • Forest / vegetation (high NDVI)   → dark → light green
+      //   • Desert / arid (warm, low NDVI)    → brownish yellow → tan
+      //   • Fallback earthy                   → muted brown
+      //
+      // Classification uses a very simple greenness metric (g − r)/(g + r)
+      // inspired by NDVI, plus warmth (r − b)/(r + b), both computed from
+      // the loaded Blue Marble imageData. No per-pixel texture fetching is
+      // required at runtime beyond the lookup we were already doing.
       function sampleEarthRGB(lat, lon) {
+        // 1. Polar override — Antarctica + Arctic always snow-white.
+        const absLat = Math.abs(lat);
+        if (absLat > 66) {
+          // Slight warming as you move away from the pole so it's not
+          // a flat flag of color — still reads as ice.
+          const t = Math.min(1, (absLat - 66) / 18); // 0 at 66°, 1 at 84°
+          return [
+            0.92 + 0.05 * t,
+            0.94 + 0.04 * t,
+            0.97 + 0.02 * t,
+          ];
+        }
+
+        // 2. Pull the raw Blue Marble sample for biome classification.
         const u = (((lon + 180) % 360) + 360) % 360 / 360;
         const v = Math.max(0, Math.min(1, (90 - lat) / 180));
         const px = Math.min(canvas.width  - 1, Math.max(0, Math.floor(u * canvas.width)));
         const py = Math.min(canvas.height - 1, Math.max(0, Math.floor(v * canvas.height)));
         const i  = (py * canvas.width + px) * 4;
-        let r = imageData[i]     / 255;
-        let g = imageData[i + 1] / 255;
-        let b = imageData[i + 2] / 255;
-        // Gamma lift — sqrt raises dark ocean / forest pixels out of near-black
-        // (Blue Marble's oceans are ~(5,10,30)/255 which would otherwise render
-        // as almost-invisible near-black lines).
-        r = Math.sqrt(r); g = Math.sqrt(g); b = Math.sqrt(b);
-        // Saturation boost around the local mean so muddy colors stay vivid.
-        const mn = Math.min(r, g, b);
-        const SAT = 1.9;
-        r = mn + (r - mn) * SAT;
-        g = mn + (g - mn) * SAT;
-        b = mn + (b - mn) * SAT;
-        // Final brightness lift to guarantee legibility on the dark globe.
-        const LIFT = 0.22;
-        r = Math.min(1, r + LIFT);
-        g = Math.min(1, g + LIFT);
-        b = Math.min(1, b + LIFT);
-        return [r, g, b];
+        const r = imageData[i]     / 255;
+        const g = imageData[i + 1] / 255;
+        const b = imageData[i + 2] / 255;
+        const lum = (r + g + b) / 3;
+
+        // 3. Ocean: blue-dominant + dark
+        if (b > r * 1.05 && b > g * 1.02 && lum < 0.30) {
+          // Deep teal-blue, slightly brighter toward tropics
+          const tropical = 1 - Math.min(1, absLat / 50);
+          return [
+            0.10 + 0.06 * tropical,
+            0.28 + 0.10 * tropical,
+            0.44 + 0.08 * tropical,
+          ];
+        }
+
+        // 4. Snow / rock: very bright + near-neutral hue (high mountains,
+        // glaciers, bright sand can also land here — acceptable).
+        const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
+        const neutral = (maxC - minC) < 0.08;
+        if (lum > 0.70 && neutral) {
+          return [0.93, 0.95, 0.98];
+        }
+
+        // 5. NDVI-like greenness + warmth
+        const greenness = (g - r) / Math.max(0.001, g + r);
+        const warmth    = (r - b) / Math.max(0.001, r + b);
+
+        // 6. Forest / vegetation / agricultural zones
+        //    Strong greenness → dark temperate/tropical forest
+        //    Moderate greenness → lighter, more agricultural green
+        if (greenness > 0.015) {
+          // Map lum → darkness: dim pixels become deep forest,
+          // brighter pixels become light agricultural green.
+          const t = Math.min(1, Math.max(0, (lum - 0.12) * 2.4));
+          return [
+            0.16 + 0.34 * t,  // R: 0.16 → 0.50
+            0.42 + 0.36 * t,  // G: 0.42 → 0.78
+            0.14 + 0.22 * t,  // B: 0.14 → 0.36
+          ];
+        }
+
+        // 7. Desert / arid: warm tone, not green
+        if (warmth > 0.08 || (r > g && r > b)) {
+          // Lerp between dark-tan and bright sand based on brightness.
+          const t = Math.min(1, Math.max(0, lum * 1.6));
+          return [
+            0.70 + 0.22 * t,  // R: 0.70 → 0.92
+            0.54 + 0.22 * t,  // G: 0.54 → 0.76
+            0.24 + 0.14 * t,  // B: 0.24 → 0.38
+          ];
+        }
+
+        // 8. Fallback: muted earthy brown (steppes, tundra, etc.)
+        return [0.48, 0.44, 0.30];
       }
       window.__sampleEarthRGB = sampleEarthRGB;
 
