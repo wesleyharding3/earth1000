@@ -670,15 +670,107 @@
       position: absolute;
       top: 48px;
       left: 0;
-      width: 240px;
+      width: 260px;
       margin-top: 0;
-      background: rgba(0, 0, 0, 0.96);
-      border-radius: 14px;
-      max-height: 210px;
+      background: rgba(4, 4, 6, 0.96);
+      border: 1px solid rgba(255,190,80,0.28);
+      border-radius: 16px;
+      max-height: min(320px, calc(100vh - 120px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
       overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       display: none;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      padding: 6px 4px;
+      box-shadow: 0 10px 32px rgba(0,0,0,0.6),
+                  0 0 0 1px rgba(255,180,80,0.06),
+                  0 0 24px rgba(255,180,60,0.10);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       z-index: 50;
+      font-family: 'Chakra Petch', -apple-system, BlinkMacSystemFont, sans-serif;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,190,80,0.35) transparent;
+    }
+    #searchResults::-webkit-scrollbar { width: 6px; }
+    #searchResults::-webkit-scrollbar-track { background: transparent; }
+    #searchResults::-webkit-scrollbar-thumb {
+      background: rgba(255,190,80,0.30);
+      border-radius: 3px;
+    }
+    #searchResults::-webkit-scrollbar-thumb:hover { background: rgba(255,190,80,0.55); }
+
+    .searchGroupLabel {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255,190,80,0.55);
+      padding: 8px 14px 4px;
+      user-select: none;
+    }
+    .searchGroupLabel:first-child { padding-top: 4px; }
+
+    .searchItem {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      margin: 1px 4px;
+      cursor: pointer;
+      transition: background 0.13s ease, box-shadow 0.13s ease;
+      color: #ffbe50;
+    }
+    .searchItem:hover,
+    .searchItem:active {
+      background: rgba(255,190,80,0.14);
+      box-shadow: inset 0 0 0 1px rgba(255,190,80,0.26),
+                  0 0 14px rgba(255,180,60,0.14);
+    }
+
+    .searchItemMain {
+      font-size: 13px;
+      font-weight: 600;
+      color: #ffbe50;
+      text-shadow: 0 0 8px rgba(255,180,60,0.45);
+      letter-spacing: 0.02em;
+      line-height: 1.15;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .searchItemSub {
+      font-size: 10px;
+      font-weight: 500;
+      color: rgba(255,190,80,0.55);
+      letter-spacing: 0.03em;
+      line-height: 1.15;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .searchItemKind {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(255,190,80,0.10);
+      border: 1px solid rgba(255,190,80,0.30);
+      font-size: 9px;
+      font-weight: 700;
+      color: rgba(255,210,120,0.95);
+      text-transform: uppercase;
+    }
+    .searchItemBody { flex: 1; min-width: 0; }
+    .searchEmpty {
+      padding: 14px 16px;
+      text-align: center;
+      font-size: 11px;
+      color: rgba(255,190,80,0.35);
+      letter-spacing: 0.04em;
     }
 
     /* ===============================
@@ -12147,19 +12239,102 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const searchInput = document.getElementById("citySearch");
       const resultsContainer = document.getElementById("searchResults");
 
+      function _escHtml(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
       searchInput.addEventListener("input", () => {
         const query = searchInput.value.trim().toLowerCase();
-        if (query.length < 2) { resultsContainer.style.display = "none"; return; }
-        const matches = cities.filter(city => city.name.toLowerCase().startsWith(query)).slice(0, 5);
+        if (query.length < 1) { resultsContainer.style.display = "none"; return; }
+
+        const score = (name, q) => {
+          const n = name.toLowerCase();
+          if (n === q) return 0;
+          if (n.startsWith(q)) return 1;
+          if (n.includes(' ' + q)) return 2;
+          if (n.includes(q)) return 3;
+          return 99;
+        };
+
+        const countryMatches = countries
+          .map(c => ({ c, s: score(c.name, query) }))
+          .filter(x => x.s < 99)
+          .sort((a, b) => a.s - b.s || a.c.name.localeCompare(b.c.name))
+          .slice(0, 8)
+          .map(x => x.c);
+
+        const cityMatches = cities
+          .map(c => ({ c, s: score(c.name, query) }))
+          .filter(x => x.s < 99)
+          .sort((a, b) => a.s - b.s || a.c.name.localeCompare(b.c.name))
+          .slice(0, 14)
+          .map(x => x.c);
+
         resultsContainer.innerHTML = "";
-        matches.forEach(city => {
-          const div = document.createElement("div");
-          div.className = "searchItem";
-          div.textContent = (city.country && city.name !== city.country) ? `${city.name}, ${city.country}` : city.name;
-          div.addEventListener("click", () => { focusCity(city); resultsContainer.style.display = "none"; searchInput.value = city.name; });
-          resultsContainer.appendChild(div);
-        });
-        resultsContainer.style.display = matches.length ? "block" : "none";
+
+        if (!countryMatches.length && !cityMatches.length) {
+          const empty = document.createElement("div");
+          empty.className = "searchEmpty";
+          empty.textContent = "No matches";
+          resultsContainer.appendChild(empty);
+          resultsContainer.style.display = "block";
+          return;
+        }
+
+        if (countryMatches.length) {
+          const lbl = document.createElement("div");
+          lbl.className = "searchGroupLabel";
+          lbl.textContent = "Countries";
+          resultsContainer.appendChild(lbl);
+          countryMatches.forEach(country => {
+            const row = document.createElement("div");
+            row.className = "searchItem";
+            row.innerHTML =
+              '<div class="searchItemKind">CO</div>' +
+              '<div class="searchItemBody">' +
+                '<div class="searchItemMain">' + _escHtml(country.name) + '</div>' +
+              '</div>';
+            const go = () => {
+              focusCountry(country);
+              resultsContainer.style.display = "none";
+              searchInput.value = country.name;
+            };
+            row.addEventListener("click", go);
+            row.addEventListener("pointerup", go);
+            resultsContainer.appendChild(row);
+          });
+        }
+
+        if (cityMatches.length) {
+          const lbl = document.createElement("div");
+          lbl.className = "searchGroupLabel";
+          lbl.textContent = "Cities";
+          resultsContainer.appendChild(lbl);
+          cityMatches.forEach(city => {
+            const row = document.createElement("div");
+            row.className = "searchItem";
+            const subTxt = (city.country && city.name !== city.country)
+              ? city.country : "";
+            row.innerHTML =
+              '<div class="searchItemKind">CI</div>' +
+              '<div class="searchItemBody">' +
+                '<div class="searchItemMain">' + _escHtml(city.name) + '</div>' +
+                (subTxt ? '<div class="searchItemSub">' + _escHtml(subTxt) + '</div>' : '') +
+              '</div>';
+            const go = () => {
+              focusCity(city);
+              resultsContainer.style.display = "none";
+              searchInput.value = city.name;
+            };
+            row.addEventListener("click", go);
+            row.addEventListener("pointerup", go);
+            resultsContainer.appendChild(row);
+          });
+        }
+
+        resultsContainer.style.display = "block";
       });
 
       window.addEventListener("click", (e) => { if (!e.target.closest("#searchWrapper")) resultsContainer.style.display = "none"; });
@@ -24303,6 +24478,394 @@ body.ticker-active .gTickerLabel {
     if (evt && evt.stopPropagation) evt.stopPropagation();
     window.__semHeatOpen({ threadId: threadId, threadTitle: threadTitle });
   };
+
+})();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COUNTRY POLYGON HIT-TEST  (step 1 — pure logic + console debug)
+// ═══════════════════════════════════════════════════════════════════════════
+// See desktop index.html for full design notes. This is the mobile mirror.
+(function initCountryHitTest() {
+  const EARTH_R_MI = 3959;
+  const DEG2RAD = Math.PI / 180;
+  const RAD2DEG = 180 / Math.PI;
+  const DEFAULT_CAM_DIST = 3.6; // mobile default
+
+  const THRESHOLD_DEFAULT_MI = 40;
+  const THRESHOLD_MIN_MI     = 4;
+  const THRESHOLD_MAX_MI     = 55;
+  const MICROSTATE_AREA_SQ_DEG = 0.20;
+
+  function getZoomThresholdMi(zoomFactor) {
+    const zf = (zoomFactor && isFinite(zoomFactor)) ? zoomFactor : 1.0;
+    const base = THRESHOLD_DEFAULT_MI / Math.max(0.35, zf);
+    return Math.max(THRESHOLD_MIN_MI, Math.min(THRESHOLD_MAX_MI, base));
+  }
+
+  function haversineMi(lat1, lon1, lat2, lon2) {
+    const dLat = (lat2 - lat1) * DEG2RAD;
+    const dLon = (lon2 - lon1) * DEG2RAD;
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * DEG2RAD) * Math.cos(lat2 * DEG2RAD) *
+      Math.sin(dLon / 2) ** 2;
+    return 2 * EARTH_R_MI * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  function pointToSegmentMi(pLat, pLon, aLat, aLon, bLat, bLon) {
+    const mPerDegLat = 69.0;
+    const mPerDegLon = 69.0 * Math.cos(pLat * DEG2RAD);
+    const wrap = (lon) => {
+      let d = lon - pLon;
+      if (d >  180) d -= 360;
+      if (d < -180) d += 360;
+      return d;
+    };
+    const Ax = wrap(aLon) * mPerDegLon;
+    const Ay = (aLat - pLat) * mPerDegLat;
+    const Bx = wrap(bLon) * mPerDegLon;
+    const By = (bLat - pLat) * mPerDegLat;
+    const dx = Bx - Ax, dy = By - Ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((-Ax) * dx + (-Ay) * dy) / len2 : 0;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const cx = Ax + t * dx, cy = Ay + t * dy;
+    return Math.sqrt(cx * cx + cy * cy);
+  }
+
+  function pointInRing(lat, lon, ring) {
+    const normLon = (L) => {
+      let d = L - lon;
+      if (d >  180) d -= 360;
+      if (d < -180) d += 360;
+      return lon + d;
+    };
+    let inside = false;
+    let j = ring.length - 1;
+    for (let i = 0; i < ring.length; i++) {
+      const xi = normLon(ring[i][0]), yi = ring[i][1];
+      const xj = normLon(ring[j][0]), yj = ring[j][1];
+      const intersect = ((yi > lat) !== (yj > lat)) &&
+        (lon < (xj - xi) * (lat - yi) / (yj - yi + 1e-12) + xi);
+      if (intersect) inside = !inside;
+      j = i;
+    }
+    return inside;
+  }
+
+  function distanceToRingMi(lat, lon, ring) {
+    let best = Infinity;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      const d = pointToSegmentMi(lat, lon, a[1], a[0], b[1], b[0]);
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  function pointInCountry(lat, lon, country) {
+    for (const poly of country.polys) {
+      const outer = poly[0];
+      if (!outer) continue;
+      if (pointInRing(lat, lon, outer)) {
+        let inHole = false;
+        for (let h = 1; h < poly.length; h++) {
+          if (pointInRing(lat, lon, poly[h])) { inHole = true; break; }
+        }
+        if (!inHole) return true;
+      }
+    }
+    return false;
+  }
+
+  function distanceToCountryMi(lat, lon, country) {
+    let best = Infinity;
+    for (const poly of country.polys) {
+      for (let i = 0; i < poly.length; i++) {
+        const d = distanceToRingMi(lat, lon, poly[i]);
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  }
+
+  function ringAreaSqDeg(ring) {
+    let s = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      s += a[0] * b[1] - b[0] * a[1];
+    }
+    return Math.abs(s) * 0.5;
+  }
+
+  let _countries = null;
+  let _ready     = false;
+  let _readyPromise = null;
+  let _nodesAttached = false;
+
+  function loadGeoJson() {
+    if (_readyPromise) return _readyPromise;
+    _readyPromise = fetch('custom.geo.json')
+      .then(r => r.json())
+      .then(gj => {
+        const out = [];
+        for (const f of (gj.features || [])) {
+          const props = f.properties || {};
+          const iso =
+            (props.iso_a2    || props.ISO_A2 ||
+             props.iso_a2_eh || props.ISO_A2_EH ||
+             props.wb_a2     || props.WB_A2 ||
+             props.postal    || '').toString().trim().toUpperCase();
+          const name =
+            (props.admin || props.ADMIN ||
+             props.name  || props.NAME  ||
+             props.name_long || props.sovereignt || '').toString().trim();
+          if (!name) continue;
+          const polys = [];
+          const geom = f.geometry;
+          if (!geom) continue;
+          if (geom.type === 'Polygon') polys.push(geom.coordinates);
+          else if (geom.type === 'MultiPolygon') {
+            for (const p of geom.coordinates) polys.push(p);
+          }
+          if (!polys.length) continue;
+
+          let latMin =  90, latMax = -90;
+          let lonMin = 180, lonMax = -180;
+          let area   = 0;
+          for (const poly of polys) {
+            for (const ring of poly) {
+              for (const [lon, lat] of ring) {
+                if (lat < latMin) latMin = lat;
+                if (lat > latMax) latMax = lat;
+                if (lon < lonMin) lonMin = lon;
+                if (lon > lonMax) lonMax = lon;
+              }
+            }
+            if (poly[0]) area += ringAreaSqDeg(poly[0]);
+          }
+          const crossesAM = (lonMax - lonMin) > 180;
+          if (crossesAM) {
+            let eastMin = 180, westMax = -180;
+            for (const poly of polys) {
+              for (const ring of poly) {
+                for (const [lon] of ring) {
+                  if (lon >= 0 && lon < eastMin) eastMin = lon;
+                  if (lon <  0 && lon > westMax) westMax = lon;
+                }
+              }
+            }
+            lonMin = eastMin;
+            lonMax = westMax;
+          }
+
+          out.push({
+            iso,
+            name,
+            lowerName: name.toLowerCase(),
+            key: (iso && iso !== '-99') ? iso : name.toLowerCase(),
+            polys,
+            bbox: { latMin, latMax, lonMin, lonMax },
+            crossesAM,
+            areaSqDeg: area,
+            isMicrostate: area < MICROSTATE_AREA_SQ_DEG,
+            polygonless: false,
+            node: null,
+          });
+        }
+        _countries = out;
+        _ready = true;
+        if (window.__hitTestDebug) {
+          const micros = out.filter(c => c.isMicrostate).map(c => c.name).sort();
+          console.log('[hitTest] loaded', out.length, 'countries;', micros.length, 'polygon-microstates:', micros);
+        }
+        return out;
+      })
+      .catch(err => {
+        console.warn('[hitTest] custom.geo.json load failed:', err);
+        _countries = [];
+        _ready = true;
+        return [];
+      });
+    return _readyPromise;
+  }
+  loadGeoJson();
+
+  function attachMicrostateNodes() {
+    if (!_countries || _nodesAttached) return;
+    const nodes = window.__globeCountries || [];
+    if (!nodes.length) return;
+    const byLowerName = new Map();
+    for (const n of nodes) {
+      if (n && n.name) byLowerName.set(n.name.toLowerCase(), n);
+    }
+    for (const c of _countries) {
+      const node = byLowerName.get(c.lowerName);
+      if (node && Number.isFinite(node.lat) && Number.isFinite(node.lon)) {
+        c.node = { lat: node.lat, lon: node.lon };
+      }
+    }
+    const polygonNames = new Set(_countries.map(c => c.lowerName));
+    for (const n of nodes) {
+      if (!n || !n.name) continue;
+      if (polygonNames.has(n.name.toLowerCase())) continue;
+      if (!Number.isFinite(n.lat) || !Number.isFinite(n.lon)) continue;
+      _countries.push({
+        iso: '',
+        name: n.name,
+        lowerName: n.name.toLowerCase(),
+        key: n.name.toLowerCase(),
+        polys: [],
+        bbox: null,
+        crossesAM: false,
+        areaSqDeg: 0,
+        isMicrostate: true,
+        polygonless: true,
+        node: { lat: n.lat, lon: n.lon },
+      });
+    }
+    _nodesAttached = true;
+    if (window.__hitTestDebug) {
+      const polyless = _countries.filter(c => c.polygonless).map(c => c.name).sort();
+      console.log('[hitTest] attached nodes;', polyless.length, 'polygonless microstates:', polyless);
+    }
+  }
+
+  loadGeoJson().then(() => {
+    if (window.__globeCountries) { attachMicrostateNodes(); return; }
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (window.__globeCountries) {
+        clearInterval(iv);
+        attachMicrostateNodes();
+      } else if (tries > 60) {
+        clearInterval(iv);
+      }
+    }, 250);
+  });
+
+  function hitTestGlobe(lat, lon, zoomFactor) {
+    if (!_ready || !_countries) return null;
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const thr = getZoomThresholdMi(zoomFactor);
+
+    const inside = [];
+    const nearby = [];
+    const latPad = thr / 69 + 0.4;
+
+    for (const c of _countries) {
+      if (c.polygonless) {
+        const d = haversineMi(lat, lon, c.node.lat, c.node.lon);
+        if (d <= thr) {
+          nearby.push({ key: c.key, name: c.name, kind: 'node', dist_mi: d });
+        }
+        continue;
+      }
+      const bb = c.bbox;
+      if (lat < bb.latMin - latPad || lat > bb.latMax + latPad) continue;
+      const lonPad = thr / Math.max(10, 69 * Math.cos(lat * DEG2RAD)) + 0.4;
+      let lonOk;
+      if (!c.crossesAM) {
+        lonOk = lon >= bb.lonMin - lonPad && lon <= bb.lonMax + lonPad;
+      } else {
+        lonOk = lon >= bb.lonMin - lonPad || lon <= bb.lonMax + lonPad;
+      }
+      if (!lonOk) continue;
+
+      if (pointInCountry(lat, lon, c)) {
+        inside.push({ key: c.key, name: c.name, kind: 'polygon', dist_mi: 0 });
+      } else {
+        const d = distanceToCountryMi(lat, lon, c);
+        if (d <= thr) {
+          nearby.push({ key: c.key, name: c.name, kind: 'polygon', dist_mi: d });
+        }
+      }
+    }
+
+    inside.sort((a, b) => {
+      const ca = _countries.find(x => x.key === a.key);
+      const cb = _countries.find(x => x.key === b.key);
+      return (ca?.areaSqDeg || 0) - (cb?.areaSqDeg || 0);
+    });
+    nearby.sort((a, b) => a.dist_mi - b.dist_mi);
+
+    return {
+      threshold_mi: thr,
+      inside,
+      nearby,
+      fan: [...inside, ...nearby],
+      primary: inside[0] || null,
+    };
+  }
+
+  window.hitTestGlobe       = hitTestGlobe;
+  window.__hitTestReady     = () => loadGeoJson();
+  window.__hitTestCountries = () => _countries;
+  window.__hitTestThreshold = getZoomThresholdMi;
+
+  if (typeof window.__hitTestDebug === 'undefined') {
+    window.__hitTestDebug = false;
+  }
+
+  function attachDebugClick() {
+    const renderer = window.__renderer;
+    const camera   = window.__camera;
+    const scene    = window.scene;
+    const THREE    = window.THREE;
+    if (!renderer || !camera || !scene || !THREE) return false;
+    const dom = renderer.domElement;
+    if (dom.__hitTestDebugAttached) return true;
+    dom.__hitTestDebugAttached = true;
+
+    const mouse  = new THREE.Vector2();
+    const ray    = new THREE.Raycaster();
+    const sphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1.0);
+    const tmpHit = new THREE.Vector3();
+
+    dom.addEventListener('click', (e) => {
+      if (!window.__hitTestDebug) return;
+      const rect = dom.getBoundingClientRect();
+      mouse.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+      mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+      ray.setFromCamera(mouse, camera);
+      if (!ray.ray.intersectSphere(sphere, tmpHit)) {
+        console.log('[hitTest] click missed globe (ocean/background)');
+        return;
+      }
+      const p = tmpHit.clone().applyQuaternion(scene.quaternion.clone().invert());
+      const phi = Math.acos(Math.max(-1, Math.min(1, p.y)));
+      const lat = 90 - phi * RAD2DEG;
+      const theta = Math.atan2(p.z, -p.x);
+      let lon = theta * RAD2DEG - 180;
+      while (lon < -180) lon += 360;
+      while (lon >  180) lon -= 360;
+
+      const zoomFactor = DEFAULT_CAM_DIST / camera.position.length();
+      const result = hitTestGlobe(lat, lon, zoomFactor);
+      if (!result) {
+        console.log('[hitTest] not ready yet');
+        return;
+      }
+      console.log('[hitTest]', {
+        lat: +lat.toFixed(3),
+        lon: +lon.toFixed(3),
+        zoomFactor: +zoomFactor.toFixed(2),
+        threshold_mi: +result.threshold_mi.toFixed(1),
+        primary: result.primary?.name || null,
+        inside: result.inside.map(x => x.name),
+        nearby: result.nearby.map(x => `${x.name} (${x.dist_mi.toFixed(1)}mi ${x.kind})`),
+      });
+    }, true);
+
+    return true;
+  }
+
+  (function waitForGlobe() {
+    if (attachDebugClick()) return;
+    setTimeout(waitForGlobe, 300);
+  })();
 
 })();
 </script>
