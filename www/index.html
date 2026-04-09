@@ -9,6 +9,9 @@
   <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png">
   <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
   <link rel="shortcut icon" href="favicon.png">
+  <!-- Pre-warm GeoJSON used by the globe so view-mode swaps are instant -->
+  <link rel="preload" as="fetch" href="ne_50m_land.geojson" crossorigin="anonymous">
+  <link rel="preload" as="fetch" href="custom.geo.json" crossorigin="anonymous">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- Pre-warm TLS + DNS for the API origin so the first /api/* fetch at
@@ -15478,25 +15481,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // earth sample — fall back to the static "color" uniform.
               vec3 baseCol = (vCol.r + vCol.g + vCol.b > 0.0001) ? vCol : color;
 
+              // Halo / rim / glow removed — edges are drawn with the raw
+              // satellite-accurate earth color at that lat/lon, no extra
+              // horizon band, no rim tint, no shimmer.
               float facing = clamp(vDot, 0.0, 1.0);
-              float visibility = smoothstep(0.0, 0.05, facing);
-              float horizon = 1.0 - smoothstep(0.12, 0.38, facing);
-              float haloBand = smoothstep(0.03, 0.19, facing) * (1.0 - smoothstep(0.22, 0.72, facing));
-              float centerMask = smoothstep(0.28, 0.82, facing);
-              float edgeMix = clamp(horizon * 1.35 + haloBand * 1.10, 0.0, 1.0);
-              float shimmer = (sin(facing * 48.0) + sin(facing * 91.0 + 0.7)) * 0.018 * intensity;
+              float visibility = smoothstep(0.0, 0.04, facing);
+              vec3 finalColor = baseCol * intensity;
 
-              // Line colour IS the earth colour at that lat/lon (ocean → blue,
-              // forest → green, desert → tan, ice → near-white). Centre is
-              // slightly brighter for legibility; horizons get a stronger glow.
-              vec3 whiteCore = baseCol * (0.95 + 0.22 * centerMask);
-              vec3 edgeHalo  = baseCol   * (2.55 * horizon + 1.05 * haloBand)
-                             + rimColor  * (0.28 * horizon + 0.10 * haloBand)
-                             + glowColor * (0.22 * haloBand + 0.08 * horizon);
-              vec3 finalColor = mix(whiteCore, whiteCore * 0.25 + edgeHalo, edgeMix) * intensity;
-              finalColor += shimmer * mix(vec3(1.0), baseCol + rimColor * 0.3 + glowColor * 0.3, edgeMix * 0.9) * 0.32;
-
-              float alpha = opacity * visibility * clamp(0.74 + haloBand * 0.32 + horizon * 0.30, 0.0, 1.0);
+              float alpha = opacity * visibility;
               if (alpha < 0.01) discard;
               gl_FragColor = vec4(finalColor, alpha);
             }`
@@ -25161,12 +25153,19 @@ body.ticker-active .gTickerLabel {
     return base / Math.max(0.1, dist);
   }
 
+  // Polygon overlay only reacts/renders in the default "country" view mode.
+  function isCountryView() {
+    const vm = window.__currentViewMode || 'country';
+    return vm === 'country';
+  }
+
   let _lastMoveT = 0;
   const MOVE_INTERVAL = 33;
 
   function onMouseMove(e) {
     if (IS_MOBILE) return;
     if (!_ready) return;
+    if (!isCountryView()) return;
     if (window.__semHeatActive) return;
     if (window.briefingActive) return;
     if (document.getElementById('infoPanel')?.classList.contains('active')) return;
@@ -25195,6 +25194,7 @@ body.ticker-active .gTickerLabel {
 
   function onClick(e) {
     if (!_ready) return;
+    if (!isCountryView()) return;
     if (window.__semHeatActive) return;
     if (window.briefingActive) return;
     if (e.target && e.target.closest && (
@@ -25209,6 +25209,12 @@ body.ticker-active .gTickerLabel {
     if (!ll) { hideFan(); return; }
     const result = window.hitTestGlobe(ll.lat, ll.lon, currentZoomFactor());
     if (!result || !result.fan.length) { hideFan(); return; }
+
+    // Stop propagation so the globe's window-level click handler doesn't
+    // also fire its own node raycast and clear focusPendingPanel out from
+    // under us (fix for large-country selection: China / Russia).
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
 
     if (result.fan.length === 1) {
       const target = result.fan[0];
@@ -25284,6 +25290,32 @@ body.ticker-active .gTickerLabel {
 
     window.__polygonCountriesActive = true;
     _ready = true;
+
+    // Continuous view-mode watcher: toggles overlay visibility so city /
+    // regions / ocean / etc. views don't see country polygon highlights.
+    let _lastVM = null;
+    (function tickViewMode() {
+      requestAnimationFrame(tickViewMode);
+      if (!overlaySphere) return;
+      const vm = window.__currentViewMode || 'country';
+      if (vm === _lastVM) return;
+      _lastVM = vm;
+      const active = (vm === 'country');
+      overlaySphere.visible = active;
+      if (!active) {
+        hoveredKey = null;
+        selectedKey = null;
+        hideFan();
+        if (overlayCtx) {
+          overlayCtx.clearRect(0, 0, W, H);
+          if (overlayTex) overlayTex.needsUpdate = true;
+        }
+        if (renderer && renderer.domElement) {
+          renderer.domElement.style.cursor = '';
+        }
+      }
+    })();
+
     return true;
   }
 
