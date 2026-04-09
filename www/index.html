@@ -2752,6 +2752,84 @@ body.ticker-active #flowControls {
 }
 .faiClose:hover { color: rgba(255,255,255,0.6); }
 
+/* ── Country disambiguation fan (shown on ambiguous polygon taps) ── */
+#countryFan {
+  position: fixed;
+  z-index: 720;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 14px));
+  animation: countryFanIn 0.18s cubic-bezier(0.18,0.9,0.32,1.2);
+  font-family: 'Chakra Petch', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+#countryFan.visible { display: flex; }
+@keyframes countryFanIn {
+  from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)) scale(0.92); }
+  to   { opacity: 1; transform: translate(-50%, calc(-100% - 14px)) scale(1); }
+}
+#countryFan::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  width: 10px; height: 10px;
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(6, 8, 14, 0.94);
+  border-right: 1px solid rgba(255,190,80,0.35);
+  border-bottom: 1px solid rgba(255,190,80,0.35);
+  box-shadow: 2px 2px 10px rgba(0,0,0,0.4);
+}
+.countryFanCard {
+  pointer-events: all;
+  min-width: 140px;
+  max-width: 240px;
+  background: rgba(6, 8, 14, 0.94);
+  border: 1px solid rgba(255,190,80,0.35);
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: #ffbe50;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 8px rgba(255,180,60,0.4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  transition: background 0.13s, border-color 0.13s, box-shadow 0.13s, transform 0.1s;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45),
+              inset 0 1px 0 rgba(255,200,100,0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.countryFanCard:hover {
+  background: rgba(255,190,80,0.14);
+  border-color: rgba(255,210,120,0.70);
+  box-shadow: 0 8px 22px rgba(0,0,0,0.55),
+              0 0 18px rgba(255,180,60,0.22),
+              inset 0 1px 0 rgba(255,220,140,0.16);
+}
+.countryFanCard:active { transform: scale(0.97); }
+.countryFanCard.primary {
+  border-color: rgba(255,210,120,0.70);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45),
+              0 0 14px rgba(255,180,60,0.25),
+              inset 0 1px 0 rgba(255,220,140,0.14);
+}
+.countryFanCardDist {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255,190,80,0.50);
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
 /* ── Flow arc back button (return to article/thread after viewing arcs) ─��� */
 #flowArcBackBtn {
   position: fixed;
@@ -7543,6 +7621,7 @@ window.sourceBiasBadgeHTML = function(bias) {
   </div>
 
   <!-- Flow arc click info card -->
+  <div id="countryFan"></div>
   <div id="flowArcInfoCard">
     <button class="faiClose" onclick="document.getElementById('flowArcInfoCard').classList.remove('visible')">&times;</button>
     <div class="faiRoute" id="faiRoute"></div>
@@ -12443,6 +12522,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.focusCountry         = focusCountry;
       window._globeResetZoom      = () => { targetZoom = _isMobileView ? 3.6 : 3.0; zoomingOut = true; };
 
+      // Unified opener used by the polygon hit-test layer. Matches a
+      // country by lowercase name against the init-time countries[]
+      // dataset, runs the same focus + panel-open pipeline a node click
+      // would have run. Returns true on success.
+      window.__openCountryByName = function (name) {
+        if (!name) return false;
+        const lower = String(name).toLowerCase();
+        const idx = countries.findIndex(c => c && c.name && c.name.toLowerCase() === lower);
+        if (idx < 0) return false;
+        const c = countries[idx];
+        try {
+          lockAmbientRotation();
+          selectedNodeIndex = idx;
+          isFocused = true;
+          preFocusZoom = camera.position.z;
+          focusCountry(c);
+          queueFocusPanelOpen(() => openNodePanel(c, "country"), { immediate: true });
+        } catch (e) {
+          console.warn('[polygonClick] open failed:', e);
+          return false;
+        }
+        return true;
+      };
+      window.__openNodePanel = openNodePanel;
+      window.__queueFocusPanelOpen = queueFocusPanelOpen;
+
       // ── Mobile globe navigation controls ─────────────────────────────────────
       window.__globeNav = {
         zoomIn:   () => { targetZoom = Math.max(1.3, targetZoom * 0.72); },
@@ -13100,7 +13205,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           layer.pts.visible = layer.mat.opacity > 0.001;
         });
 
-        const _tCountry = targetCountryOpacity * _semFade;
+        const _polyFade = window.__polygonCountriesActive ? 0 : 1;
+        const _tCountry = targetCountryOpacity * _semFade * _polyFade;
         countryMat.opacity += (_tCountry - countryMat.opacity) * 0.08;
         if (_tCountry === 0 && countryMat.opacity < 0.01) countryMat.opacity = 0;
         countryPoints.visible = countryMat.opacity > 0.001;
@@ -24867,6 +24973,332 @@ body.ticker-active .gTickerLabel {
     setTimeout(waitForGlobe, 300);
   })();
 
+})();
+
+// ═══════════════════════════════════════════════════════════════════
+// Country polygon visual layer — hover glow, selection, disambiguation fan
+// Depends on:
+//   window.hitTestGlobe          (step 1)
+//   window.__hitTestCountries()  (step 1 — returns processed country array)
+//   window.__openCountryByName   (init IIFE — focus + open panel)
+//   window.__camera / scene / __renderer / THREE
+// ═══════════════════════════════════════════════════════════════════
+(function initCountryPolygonLayer() {
+  const DEG2RAD = Math.PI / 180;
+  const RAD2DEG = 180 / Math.PI;
+  const DEFAULT_CAM_DIST_DESKTOP = 3.0;
+  const DEFAULT_CAM_DIST_MOBILE  = 3.6;
+  const W = 2048, H = 1024;
+  const IS_MOBILE = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600;
+
+  let scene = null, camera = null, renderer = null, THREE = null;
+  let overlaySphere = null, overlayCtx = null, overlayCanvas = null, overlayTex = null;
+  let hoveredKey = null;
+  let selectedKey = null;
+  let _ready = false;
+
+  const fanEl = document.getElementById('countryFan');
+
+  function lonLatToXY(lon, lat) {
+    return { x: ((lon + 180) / 360) * W, y: ((90 - lat) / 180) * H };
+  }
+
+  function drawSinglePolyPath(ctx, poly, lonShift) {
+    ctx.beginPath();
+    for (let r = 0; r < poly.length; r++) {
+      const ring = poly[r];
+      for (let i = 0; i < ring.length; i++) {
+        let lon = ring[i][0];
+        const lat = ring[i][1];
+        if (lonShift && lon < 0) lon += lonShift;
+        const { x, y } = lonLatToXY(lon, lat);
+        if (i === 0) ctx.moveTo(x, y);
+        else         ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+    }
+  }
+
+  function drawCountryShape(ctx, country, strokeStyle, fillStyle, lineWidth) {
+    if (!country || !country.polys || !country.polys.length) {
+      if (country && country.node) {
+        const { x, y } = lonLatToXY(country.node.lon, country.node.lat);
+        const r = 16;
+        ctx.save();
+        if (fillStyle) {
+          ctx.fillStyle = fillStyle;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        if (strokeStyle) {
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = lineWidth || 2;
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+      return;
+    }
+    for (const poly of country.polys) {
+      const outer = poly[0];
+      if (!outer || outer.length < 3) continue;
+      let minLon = 180, maxLon = -180;
+      for (const [lon] of outer) {
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+      }
+      const crossesAM = (maxLon - minLon) > 180;
+      ctx.save();
+      if (!crossesAM) {
+        drawSinglePolyPath(ctx, poly, 0);
+        if (fillStyle)   { ctx.fillStyle = fillStyle; ctx.fill('evenodd'); }
+        if (strokeStyle) { ctx.strokeStyle = strokeStyle; ctx.lineWidth = lineWidth; ctx.stroke(); }
+      } else {
+        drawSinglePolyPath(ctx, poly, 360);
+        if (fillStyle)   { ctx.fillStyle = fillStyle; ctx.fill('evenodd'); }
+        if (strokeStyle) { ctx.strokeStyle = strokeStyle; ctx.lineWidth = lineWidth; ctx.stroke(); }
+        drawSinglePolyPath(ctx, poly, 0);
+        if (fillStyle)   { ctx.fillStyle = fillStyle; ctx.fill('evenodd'); }
+        if (strokeStyle) { ctx.strokeStyle = strokeStyle; ctx.lineWidth = lineWidth; ctx.stroke(); }
+      }
+      ctx.restore();
+    }
+  }
+
+  function initOverlay() {
+    if (overlaySphere) return true;
+    scene    = window.scene;
+    camera   = window.__camera;
+    renderer = window.__renderer;
+    THREE    = window.THREE;
+    if (!scene || !camera || !renderer || !THREE) return false;
+
+    overlayCanvas = document.createElement('canvas');
+    overlayCanvas.width  = W;
+    overlayCanvas.height = H;
+    overlayCtx = overlayCanvas.getContext('2d');
+
+    overlayTex = new THREE.CanvasTexture(overlayCanvas);
+    overlayTex.wrapS = THREE.RepeatWrapping;
+    overlayTex.wrapT = THREE.ClampToEdgeWrapping;
+    overlayTex.anisotropy = 4;
+    overlayTex.needsUpdate = true;
+
+    const geom = new THREE.SphereGeometry(1.013, 128, 96);
+    const mat  = new THREE.MeshBasicMaterial({
+      map: overlayTex,
+      transparent: true,
+      opacity: 1.0,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.FrontSide,
+    });
+    overlaySphere = new THREE.Mesh(geom, mat);
+    overlaySphere.renderOrder = 4;
+    scene.add(overlaySphere);
+    return true;
+  }
+
+  function findCountryByKey(key) {
+    if (!key || !window.__hitTestCountries) return null;
+    const arr = window.__hitTestCountries();
+    if (!arr) return null;
+    return arr.find(c => c.key === key) || null;
+  }
+
+  function repaint() {
+    if (!overlayCtx) return;
+    overlayCtx.clearRect(0, 0, W, H);
+    const selCountry = findCountryByKey(selectedKey);
+    const hovCountry = findCountryByKey(hoveredKey);
+    if (selCountry) {
+      drawCountryShape(overlayCtx, selCountry,
+        'rgba(255,210,110,0.95)', 'rgba(255,180,60,0.18)', 3.0);
+    }
+    if (hovCountry && hovCountry.key !== selectedKey) {
+      drawCountryShape(overlayCtx, hovCountry,
+        'rgba(255,225,140,0.80)', 'rgba(255,200,80,0.10)', 2.2);
+    }
+    if (overlayTex) overlayTex.needsUpdate = true;
+  }
+
+  let _ray = null, _sphere = null, _tmpHit = null, _mouseNDC = null;
+
+  function ensureRay() {
+    if (_ray) return true;
+    if (!THREE) return false;
+    _ray      = new THREE.Raycaster();
+    _sphere   = new THREE.Sphere(new THREE.Vector3(0,0,0), 1.0);
+    _tmpHit   = new THREE.Vector3();
+    _mouseNDC = new THREE.Vector2();
+    return true;
+  }
+
+  function screenToLatLon(clientX, clientY) {
+    if (!ensureRay()) return null;
+    const dom = renderer.domElement;
+    const rect = dom.getBoundingClientRect();
+    _mouseNDC.x =  ((clientX - rect.left) / rect.width)  * 2 - 1;
+    _mouseNDC.y = -((clientY - rect.top)  / rect.height) * 2 + 1;
+    _ray.setFromCamera(_mouseNDC, camera);
+    if (!_ray.ray.intersectSphere(_sphere, _tmpHit)) return null;
+    const p = _tmpHit.clone().applyQuaternion(scene.quaternion.clone().invert());
+    const phi = Math.acos(Math.max(-1, Math.min(1, p.y)));
+    const lat = 90 - phi * RAD2DEG;
+    const theta = Math.atan2(p.z, -p.x);
+    let lon = theta * RAD2DEG - 180;
+    while (lon < -180) lon += 360;
+    while (lon >  180) lon -= 360;
+    return { lat, lon };
+  }
+
+  function currentZoomFactor() {
+    const dist = camera.position.length();
+    const base = IS_MOBILE ? DEFAULT_CAM_DIST_MOBILE : DEFAULT_CAM_DIST_DESKTOP;
+    return base / Math.max(0.1, dist);
+  }
+
+  let _lastMoveT = 0;
+  const MOVE_INTERVAL = 33;
+
+  function onMouseMove(e) {
+    if (IS_MOBILE) return;
+    if (!_ready) return;
+    if (window.__semHeatActive) return;
+    if (window.briefingActive) return;
+    if (document.getElementById('infoPanel')?.classList.contains('active')) return;
+    const now = performance.now();
+    if (now - _lastMoveT < MOVE_INTERVAL) return;
+    _lastMoveT = now;
+
+    const ll = screenToLatLon(e.clientX, e.clientY);
+    if (!ll) {
+      if (hoveredKey) { hoveredKey = null; repaint(); }
+      return;
+    }
+    const result = window.hitTestGlobe(ll.lat, ll.lon, currentZoomFactor());
+    if (!result) return;
+    const newKey = result.primary ? result.primary.key : null;
+    if (newKey !== hoveredKey) {
+      hoveredKey = newKey;
+      repaint();
+      renderer.domElement.style.cursor = newKey ? 'pointer' : '';
+    }
+  }
+
+  function onMouseLeave() {
+    if (hoveredKey) { hoveredKey = null; repaint(); }
+  }
+
+  function onClick(e) {
+    if (!_ready) return;
+    if (window.__semHeatActive) return;
+    if (window.briefingActive) return;
+    if (e.target && e.target.closest && (
+      e.target.closest('#infoPanel') ||
+      e.target.closest('#countryFan') ||
+      e.target.closest('#flowControls') ||
+      e.target.closest('#semHeatPanel') ||
+      e.target.closest('#settingsSidebar')
+    )) return;
+
+    const ll = screenToLatLon(e.clientX, e.clientY);
+    if (!ll) { hideFan(); return; }
+    const result = window.hitTestGlobe(ll.lat, ll.lon, currentZoomFactor());
+    if (!result || !result.fan.length) { hideFan(); return; }
+
+    if (result.fan.length === 1) {
+      const target = result.fan[0];
+      hideFan();
+      selectCountry(target.key);
+      if (window.__openCountryByName) window.__openCountryByName(target.name);
+      return;
+    }
+
+    showFan(result.fan, e.clientX, e.clientY);
+  }
+
+  function selectCountry(key) {
+    selectedKey = key;
+    repaint();
+  }
+
+  function showFan(fanList, clientX, clientY) {
+    if (!fanEl) return;
+    fanEl.innerHTML = '';
+    const maxShow = 6;
+    const items = fanList.slice(0, maxShow);
+    items.forEach((item, idx) => {
+      const card = document.createElement('div');
+      card.className = 'countryFanCard' + (idx === 0 ? ' primary' : '');
+      const mainText = document.createElement('span');
+      mainText.textContent = item.name;
+      card.appendChild(mainText);
+      if (item.dist_mi && item.dist_mi > 0.5) {
+        const dist = document.createElement('span');
+        dist.className = 'countryFanCardDist';
+        dist.textContent = item.dist_mi.toFixed(0) + ' mi';
+        card.appendChild(dist);
+      }
+      const commit = (ev) => {
+        ev.stopPropagation();
+        hideFan();
+        selectCountry(item.key);
+        if (window.__openCountryByName) window.__openCountryByName(item.name);
+      };
+      card.addEventListener('click', commit);
+      card.addEventListener('pointerup', commit);
+      fanEl.appendChild(card);
+    });
+    fanEl.style.left = clientX + 'px';
+    fanEl.style.top  = clientY + 'px';
+    fanEl.classList.add('visible');
+  }
+
+  function hideFan() {
+    if (!fanEl) return;
+    fanEl.classList.remove('visible');
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!fanEl || !fanEl.classList.contains('visible')) return;
+    if (e.target && e.target.closest && e.target.closest('#countryFan')) return;
+    if (e.target && e.target.closest && e.target.closest('.countryFanCard')) return;
+    setTimeout(() => {
+      if (!fanEl.classList.contains('visible')) return;
+    }, 0);
+  }, true);
+
+  function bootstrap() {
+    if (_ready) return true;
+    if (!initOverlay()) return false;
+    if (!window.hitTestGlobe) return false;
+
+    const dom = renderer.domElement;
+    dom.addEventListener('mousemove', onMouseMove, { passive: true });
+    dom.addEventListener('mouseleave', onMouseLeave);
+    dom.addEventListener('click', onClick, true);
+
+    window.__polygonCountriesActive = true;
+    _ready = true;
+    return true;
+  }
+
+  (function waitForReady() {
+    if (bootstrap()) return;
+    setTimeout(waitForReady, 300);
+  })();
+
+  window.__polygonLayer = {
+    selectCountry,
+    hideFan,
+    repaint,
+    setHoveredKey: (k) => { hoveredKey = k; repaint(); },
+    isReady: () => _ready,
+  };
 })();
 </script>
 
