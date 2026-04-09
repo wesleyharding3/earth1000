@@ -13258,10 +13258,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // country by lowercase name against the init-time countries[]
       // dataset, runs the same focus + panel-open pipeline a node click
       // would have run. Returns true on success.
-      window.__openCountryByName = function (name) {
-        if (!name) return false;
-        const lower = String(name).toLowerCase();
-        const idx = countries.findIndex(c => c && c.name && c.name.toLowerCase() === lower);
+      //
+      // The geojson and API datasets use slightly different names for
+      // some countries (e.g. "United States of America" vs "United
+      // States", "Czech Republic" vs "Czechia"). We therefore try a
+      // series of progressively fuzzier matches so the polygon hit-test
+      // layer can reliably open the panel for every country it can draw.
+      window.__openCountryByName = function (name, iso) {
+        if (!name && !iso) return false;
+        const norm = (s) => String(s || "")
+          .toLowerCase()
+          // strip common prefixes / suffixes / punctuation so the many
+          // "Republic of X" / "X Republic" / "The X" variants collapse.
+          .replace(/[\.,'’]/g, "")
+          .replace(/\s+of\s+america\b/g, "")
+          .replace(/\brepublic\s+of\b/g, "")
+          .replace(/\bthe\s+/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        const target = norm(name);
+        const targetIso = (iso || "").toString().toUpperCase().trim();
+
+        let idx = -1;
+
+        // 1. ISO code exact match (most reliable)
+        if (targetIso && targetIso !== "-99") {
+          idx = countries.findIndex(c => c && (c.iso_code || "").toUpperCase() === targetIso);
+        }
+
+        // 2. Exact lowercase name match
+        if (idx < 0 && name) {
+          const lower = String(name).toLowerCase();
+          idx = countries.findIndex(c => c && c.name && c.name.toLowerCase() === lower);
+        }
+
+        // 3. Normalized name match (drops "of america", "republic of", etc.)
+        if (idx < 0 && target) {
+          idx = countries.findIndex(c => c && c.name && norm(c.name) === target);
+        }
+
+        // 4. Substring either-direction (last-resort fuzzy)
+        if (idx < 0 && target) {
+          idx = countries.findIndex(c => {
+            if (!c || !c.name) return false;
+            const cn = norm(c.name);
+            return cn.includes(target) || target.includes(cn);
+          });
+        }
+
         if (idx < 0) return false;
         const c = countries[idx];
         try {
@@ -24703,7 +24747,7 @@ body.ticker-active .gTickerLabel {
     const mat  = new THREE.MeshBasicMaterial({
       map: heatTexture,
       transparent: true,
-      opacity: 0.94,
+      opacity: 0.62,
       depthWrite: false,
       side: THREE.FrontSide
     });
@@ -25111,6 +25155,19 @@ body.ticker-active .gTickerLabel {
       drawAt(cx, cy);
       if (cx - rx < 0) drawAt(cx + W, cy);
       if (cx + rx > W) drawAt(cx - W, cy);
+
+      // Crisp center-dot so each city reads as a distinct anchor point
+      // instead of just a blurred blob — restores the visual "city
+      // connection" that was washed out by the country bloom overlay.
+      const dotR = Math.max(1.5, 0.0016 * W);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = `rgba(${c.r},${c.g},${c.b},${Math.min(1, a0 + 0.25)})`;
+      ctx.beginPath();
+      ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
       drawn++;
     }
     return drawn;
@@ -25871,7 +25928,12 @@ body.ticker-active .gTickerLabel {
         </div>`;
       }
 
+      const thumb = a.image_url
+        ? `<img class="sigBarThumb" src="${esc(a.image_url)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">`
+        : `<span class="sigBarThumb" aria-hidden="true"></span>`;
+
       return `<div class="sigBarRow ${a.type}" data-idx="${i}" data-kind="${a.type}" style="--sb-color:${color};">
+        ${thumb}
         ${typeBadge(a.type)}
         <span class="sigBarScore">${scoreText}</span>
         <span class="sigBarTitle">${titleHtml}</span>
@@ -26053,8 +26115,16 @@ body.ticker-active .gTickerLabel {
           background: rgba(255,255,255,0.025);
           border-left: 3px solid var(--sb-color, rgba(255,255,255,0.25));
           cursor: pointer; transition: background 0.12s;
-          max-height: 26px; overflow: hidden;
+          max-height: 44px; overflow: hidden;
         }
+        .sigBarThumb {
+          flex: 0 0 auto;
+          width: 34px; height: 34px;
+          border-radius: 5px; object-fit: cover;
+          background: rgba(255,255,255,0.06);
+          border: 1px solid rgba(255,255,255,0.10);
+        }
+        .sigBarRow.expanded .sigBarThumb { display: none; }
         .sigBarRow:hover { background: rgba(255,200,140,0.08); }
         .sigBarRow.expanded {
           max-height: none; overflow: visible;
@@ -26166,6 +26236,10 @@ body.ticker-active .gTickerLabel {
       if (!row || row.classList.contains('static')) return;
       if (row.dataset.sentIso) {
         renderInspectorSentimentDetail(row.dataset.sentIso, row.dataset.sentName || '');
+        return;
+      }
+      if (row.dataset.cityName) {
+        renderInspectorCityDetail(row.dataset.cityIso || '', row.dataset.cityName);
         return;
       }
       const key = row.dataset.countryKey;
@@ -26425,8 +26499,18 @@ body.ticker-active .gTickerLabel {
     _setInspectorTitle(
       bucket.name || 'Country',
       true,
-      `national breakdown · ${rangeMi} mi`
+      `national breakdown · click city for articles`
     );
+
+    // Back button from a further city drill-down returns here.
+    _inspectorBackFn = () => {
+      _setInspectorTitle(
+        bucket.name || 'Country',
+        true,
+        `national breakdown · click city for articles`
+      );
+      renderInspectorCountryDetail(key);
+    };
 
     const nationalPct = (bucket.n / globalTotal) * 100;
 
@@ -26468,7 +26552,7 @@ body.ticker-active .gTickerLabel {
       `;
       if (cityRows.length) {
         html += cityRows.map(c => `
-          <div class="semHeatInspRow static">
+          <div class="semHeatInspRow" data-city-name="${escapeHtml(c.name)}" data-city-iso="${escapeHtml(bucket.iso || '')}">
             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(c.name)}</span>
             <span style="font-variant-numeric:tabular-nums;color:rgba(160,215,255,0.95);font-weight:600;">${c.pct.toFixed(2)}%</span>
             <span style="font-variant-numeric:tabular-nums;opacity:0.55;font-size:10px;">${c.n.toLocaleString()}</span>
@@ -26553,6 +26637,50 @@ body.ticker-active .gTickerLabel {
       body.scrollTop = 0;
     } catch (err) {
       console.error('[sentiment detail]', err);
+      body.innerHTML = `<div class="sigBarEmpty">Failed to load stories.</div>`;
+    }
+  }
+
+  // ── City drill-down ────────────────────────────────────────────
+  // Fetches /api/sentiment/country/:iso, filters client-side to the
+  // selected city, and renders as bar rows. Back button returns to the
+  // country-level view.
+  async function renderInspectorCityDetail(iso, cityName) {
+    if (!inspectorEl) return;
+    const body = inspectorEl.querySelector('.semHeatInspBody');
+    const prevBack = _inspectorBackFn; // country-detail's back fn
+    _setInspectorTitle(
+      cityName,
+      true,
+      `${iso ? iso + ' · ' : ''}articles in this city`
+    );
+    _inspectorBackFn = prevBack; // one click back returns to country view
+    body.innerHTML = `<div class="sigBarLoading">Loading stories for ${escapeHtml(cityName)}…</div>`;
+    try {
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const res = await fetch(`${API}/api/sentiment/country/${encodeURIComponent(iso)}?limit=300&days=14`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const all = Array.isArray(data.articles) ? data.articles : [];
+      const target = String(cityName || '').trim().toLowerCase();
+      const filtered = all
+        .filter(a => String(a.city_name || '').trim().toLowerCase() === target)
+        .map(a => ({
+          ...a,
+          type: (a.media_type === 'video' || a.video_id) ? 'video' : 'article'
+        }));
+      if (!filtered.length) {
+        body.innerHTML = `<div class="sigBarEmpty">No scored stories for ${escapeHtml(cityName)} in the last 14 days.</div>`;
+        return;
+      }
+      const listEl = document.createElement('div');
+      listEl.className = 'sigBarList';
+      window.__renderSignalBarList(listEl, filtered, { highlight: true, scoreField: 'sentiment_score' });
+      body.innerHTML = '';
+      body.appendChild(listEl);
+      body.scrollTop = 0;
+    } catch (err) {
+      console.error('[city detail]', err);
       body.innerHTML = `<div class="sigBarEmpty">Failed to load stories.</div>`;
     }
   }
@@ -27555,7 +27683,7 @@ body.ticker-active .gTickerLabel {
       const target = result.fan[0];
       hideFan();
       selectCountry(target.key);
-      if (window.__openCountryByName) window.__openCountryByName(target.name);
+      if (window.__openCountryByName) window.__openCountryByName(target.name, target.key);
       return;
     }
 
@@ -27590,7 +27718,7 @@ body.ticker-active .gTickerLabel {
         ev.stopPropagation();
         hideFan();
         selectCountry(item.key);
-        if (window.__openCountryByName) window.__openCountryByName(item.name);
+        if (window.__openCountryByName) window.__openCountryByName(item.name, item.key);
       });
       fanEl.appendChild(card);
     });
