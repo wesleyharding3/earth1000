@@ -2297,6 +2297,12 @@ body.ticker-active #flowControls {
 #flowControls.minimized .flowMinBtn {
   display: none;
 }
+/* Outer close + return buttons belong to the expanded panel — when
+   minimized, the close button lives inside .flowMinBar instead. */
+#flowControls.minimized .flowCloseBtn,
+#flowControls.minimized .flowReturnBtn {
+  display: none;
+}
 /* Back-to-origin buttons inside flow controls */
 .flowOriginBtn {
   display: flex;
@@ -8324,6 +8330,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       <span class="flowMinLabel">Flow</span>
       <span class="flowMinStats" id="flowMinStats">0 flows</span>
       <button class="flowExpandBtn" id="flowExpandBtn" title="Expand">↑</button>
+      <button class="flowMinCloseBtn" id="flowMinCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
     </div>
     
     <div class="flowPanel">
