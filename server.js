@@ -1378,6 +1378,7 @@ app.get("/api/flows/article/:id", async (req, res) => {
     const articleId = parseInt(req.params.id, 10);
     if (!articleId) return res.status(400).json({ error: "Invalid article ID" });
 
+    const _cached = await ttlCached(`flows/article:${articleId}`, 60_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         a.id AS article_id,
@@ -1458,7 +1459,9 @@ app.get("/api/flows/article/:id", async (req, res) => {
       routingType: r.routing_type
     }));
 
-    res.json({ flows, article });
+    return { flows, article };
+    });
+    res.json(_cached);
   } catch (err) {
     console.error("[flows/article]", err.message);
     res.status(500).json({ error: "Failed to fetch article flows", detail: err.message });
@@ -1474,6 +1477,7 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
+    const _cached = await ttlCached(`flows/thread:${threadId}`, 60_000, async () => {
     const { rows } = await pool.query(`
       WITH thread_flows AS (
         SELECT
@@ -1525,7 +1529,9 @@ app.get("/api/flows/thread/:id", async (req, res) => {
       count: parseInt(r.flow_count)
     }));
 
-    res.json({ flows, maxCount });
+    return { flows, maxCount };
+    });
+    res.json(_cached);
   } catch (err) {
     console.error("[flows/thread]", err.message);
     res.status(500).json({ error: "Failed to fetch thread flows", detail: err.message });
@@ -1715,6 +1721,124 @@ app.get("/api/ocean/temperature", async (req, res) => {
      bucket      none|day|hour (default none)
      level       country (city reserved for future)
 ========================================= */
+
+// ── Heatmap snapshot refresh ──────────────────────────────────────────────
+// Pre-computes country/city aggregations for standard time windows so the
+// /api/heatmap endpoint can read from a tiny snapshot table (~2k rows per
+// preset) instead of scanning 300k+ news_articles rows.
+async function refreshHeatmapSnapshots() {
+  const presets = [
+    { key: '1d',  days: 1   },
+    { key: '7d',  days: 7   },
+    { key: '30d', days: 30  },
+    { key: '90d', days: 90  },
+  ];
+
+  const client = await pool.connect();
+  try {
+    await client.query('SET LOCAL statement_timeout = 120000');
+
+    for (const { key, days } of presets) {
+      const { rows: countryRows } = await client.query(`
+        SELECT
+          c.id AS ref_id, c.id AS country_id,
+          c.iso_code AS iso, NULL::text AS country_name,
+          c.name, c.latitude AS lat, c.longitude AS lon,
+          COUNT(*)::int AS n,
+          COUNT(a.sentiment_score)::int AS sent_n,
+          AVG(a.sentiment_score)::float AS avg_sent
+        FROM news_articles a
+        JOIN countries c ON c.id = a.country_id
+        WHERE a.published_at > NOW() - make_interval(days => $1)
+          AND a.country_id IS NOT NULL
+          AND a.city_id IS NULL
+          AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+        GROUP BY c.id, c.name, c.iso_code, c.latitude, c.longitude
+        ORDER BY n DESC
+        LIMIT 500
+      `, [days]);
+
+      const { rows: cityRows } = await client.query(`
+        SELECT
+          ci.id AS ref_id, ci.country_id,
+          co.iso_code AS iso, co.name AS country_name,
+          ci.name, ci.latitude AS lat, ci.longitude AS lon,
+          COUNT(*)::int AS n,
+          COUNT(a.sentiment_score)::int AS sent_n,
+          AVG(a.sentiment_score)::float AS avg_sent
+        FROM news_articles a
+        JOIN cities ci ON ci.id = a.city_id
+        LEFT JOIN countries co ON co.id = ci.country_id
+        WHERE a.published_at > NOW() - make_interval(days => $1)
+          AND a.city_id IS NOT NULL
+          AND ci.latitude IS NOT NULL AND ci.longitude IS NOT NULL
+        GROUP BY ci.id, ci.country_id, co.iso_code, co.name, ci.name, ci.latitude, ci.longitude
+        ORDER BY n DESC
+        LIMIT 1500
+      `, [days]);
+
+      await client.query('BEGIN');
+      try {
+        await client.query('DELETE FROM heatmap_snapshots WHERE preset = $1', [key]);
+
+        if (countryRows.length) {
+          const vals = countryRows.map((r, i) => {
+            const off = i * 11;
+            return `($${off+1},'country',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},NOW())`;
+          }).join(',');
+          const params = countryRows.flatMap(r => [key, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
+          await client.query(`INSERT INTO heatmap_snapshots (preset,level,ref_id,country_id,iso,country_name,name,lat,lon,n,sent_n,avg_sent,refreshed_at) VALUES ${vals}`, params);
+        }
+
+        if (cityRows.length) {
+          // Batch in chunks of 200 to stay within Postgres param limits
+          const CHUNK = 200;
+          for (let c = 0; c < cityRows.length; c += CHUNK) {
+            const chunk = cityRows.slice(c, c + CHUNK);
+            const vals = chunk.map((r, i) => {
+              const off = i * 11;
+              return `($${off+1},'city',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},NOW())`;
+            }).join(',');
+            const params = chunk.flatMap(r => [key, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
+            await client.query(`INSERT INTO heatmap_snapshots (preset,level,ref_id,country_id,iso,country_name,name,lat,lon,n,sent_n,avg_sent,refreshed_at) VALUES ${vals}`, params);
+          }
+        }
+
+        await client.query('COMMIT');
+        console.log(`[heatmap-refresh] preset=${key} countries=${countryRows.length} cities=${cityRows.length}`);
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    }
+  } finally {
+    client.release();
+  }
+}
+
+// POST /api/admin/refresh-heatmap — triggered by Render cron every 10-15 min
+app.post("/api/admin/refresh-heatmap", async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  const auth = req.headers.authorization;
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const t0 = Date.now();
+    await refreshHeatmapSnapshots();
+    const elapsed = Date.now() - t0;
+    console.log(`[heatmap-refresh] completed in ${elapsed}ms`);
+    // Bust in-memory TTL cache so next request picks up fresh snapshot
+    for (const k of _ttlCache.keys()) {
+      if (k.startsWith('heatmap:')) _ttlCache.delete(k);
+    }
+    res.json({ ok: true, elapsed_ms: elapsed });
+  } catch (err) {
+    console.error("[heatmap-refresh] failed:", err.message, err.stack);
+    res.status(500).json({ error: "Refresh failed", detail: err.message });
+  }
+});
+
 app.get("/api/heatmap", async (req, res) => {
   try {
     const mode     = (req.query.mode || "coverage").toLowerCase();
@@ -1731,9 +1855,40 @@ app.get("/api/heatmap", async (req, res) => {
       bucket === "day"  ? `date_trunc('day',  a.published_at)` :
       null;
 
+    // ── Snapshot fast-path ──────────────────────────────────────────────
+    // Standard requests (no keyword, no thread_id, no custom dates, no
+    // time buckets) read from the pre-aggregated heatmap_snapshots table
+    // instead of scanning 300k+ rows in news_articles.
+    const SNAPSHOT_PRESETS = { 1: '1d', 7: '7d', 30: '30d', 90: '90d' };
+    const presetKey = SNAPSHOT_PRESETS[days];
+    const useSnapshot = presetKey && !keyword && !threadId && bucket === 'none' && !fromIso && !toIso;
+
     // cache key — v2 adds the country-wash + city-cluster split
     const _cacheKey = `heatmap:v2:${mode}:${bucket}:${keyword}:${threadId||''}:${days}:${fromIso||''}:${toIso||''}`;
     const _cached = await ttlCached(_cacheKey, 60_000, async () => {
+
+      if (useSnapshot) {
+        try {
+          const [countryRes, cityRes] = await Promise.all([
+            pool.query(
+              `SELECT ref_id AS country_id, iso, country_name, name, lat, lon, n, sent_n, avg_sent
+               FROM heatmap_snapshots WHERE preset = $1 AND level = 'country'
+               ORDER BY n DESC`, [presetKey]),
+            pool.query(
+              `SELECT ref_id AS city_id, country_id, iso, country_name, name, lat, lon, n, sent_n, avg_sent
+               FROM heatmap_snapshots WHERE preset = $1 AND level = 'city'
+               ORDER BY n DESC`, [presetKey]),
+          ]);
+          // Only use snapshot if it's been populated (guard against empty table)
+          if (countryRes.rows.length > 0) {
+            return { countryRows: countryRes.rows, cityRows: cityRes.rows };
+          }
+        } catch (e) {
+          console.error('[heatmap] snapshot read failed, falling back to live query:', e.message);
+        }
+      }
+
+      // ── Live query fallback (filtered requests or empty snapshot) ────
       const params = [];
       const where  = [];
 
@@ -2178,6 +2333,7 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
+    const _cached = await ttlCached(`flows/timeline:${timelineId}`, 60_000, async () => {
     const { rows } = await pool.query(`
       WITH tl_flows AS (
         SELECT
@@ -2225,7 +2381,9 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
       count: parseInt(r.flow_count)
     }));
 
-    res.json({ flows, maxCount });
+    return { flows, maxCount };
+    });
+    res.json(_cached);
   } catch (err) {
     console.error("[flows/timeline]", err.message);
     res.status(500).json({ error: "Failed to fetch timeline flows", detail: err.message });
