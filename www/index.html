@@ -618,6 +618,17 @@
       clip-path: inset(0 0 100% 0);
     }
 
+    /* --- Scale shimmer on completion --- */
+    .si-shimmer {
+      animation: siShimmer 600ms ease-in-out;
+    }
+    @keyframes siShimmer {
+      0%   { filter: brightness(1) drop-shadow(0 0 0px rgba(255,255,255,0)); }
+      35%  { filter: brightness(1.9) drop-shadow(0 0 10px rgba(255,255,255,0.7)); }
+      65%  { filter: brightness(1.3) drop-shadow(0 0 4px rgba(255,255,255,0.3)); }
+      100% { filter: brightness(1) drop-shadow(0 0 0px rgba(255,255,255,0)); }
+    }
+
     /* --- Sync blink (phase S4/phase 6) --- */
     .si-blink {
       animation: siBlink 300ms ease-in-out;
@@ -12869,11 +12880,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         leaderLine.style.cssText = "stroke:white;stroke-width:2.2;opacity:0;filter:drop-shadow(0 0 6px rgba(255,255,255,0.9)) drop-shadow(0 0 12px rgba(255,220,140,0.5));";
         overlaySvg.appendChild(leaderLine);
 
-        // Prep scale bar
+        // Prep scale bar — clip-path handled inline in the animation loop
         if (barLine) {
-          barLine.classList.add("si-draw");
+          barLine.style.clipPath = "inset(0 0 100% 0)";
           barLine.style.opacity = "1";
-          barLine.style.setProperty("--cap-opacity", "0");
         }
 
         const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -12959,14 +12969,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ─── 3b. Line grows up from point to radius ───
           stemLine.classList.add("phase3");
 
-          // ─── 3c. Scale caps appear + line begins drawing down ───
+          // ─── 3c. Scale: top cap appears, then vertical line draws down ───
+          const labels = labelsEl ? Array.from(labelsEl.querySelectorAll(".scaleBarLabel")) : [];
+          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(4px)"; lbl.style.transition = "opacity 250ms ease-out, transform 250ms ease-out"; });
+
+          // Get bar height so we can use pixel-based clip (avoids % rounding issues with ::before/::after)
+          const barH = barLine ? barLine.offsetHeight : 120;
+          const capH = 2; // height of ::before / ::after caps
+
+          // Show just the top cap first
           if (barLine) {
             barLine.style.opacity = "1";
-            barLine.querySelectorAll(".scaleBarTick").forEach(t => t.style.opacity = "0");
-            barLine.style.clipPath = "inset(0 0 100% 0)";
+            barLine.classList.remove("si-draw");
+            barLine.style.clipPath = `inset(0 0 ${barH - capH}px 0)`;
           }
           scaleEl.style.opacity = "1";
-          await wait(400);
+          await wait(300);
 
           // ─── 3d. Centroid + line pulse ───
           dot.classList.remove("phase1");
@@ -12976,13 +12994,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           await wait(250);
           stemLine.style.filter = "";
 
-          // ─── 3e. Scale bar draws down + labels fade in at bar edge ───
-          const labels = labelsEl ? labelsEl.querySelectorAll(".scaleBarLabel") : [];
-          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(4px)"; lbl.style.transition = "opacity 250ms ease-out, transform 250ms ease-out"; });
+          // ─── 3e. Vertical line draws down, ticks + labels appear at edge ───
           const scaleTicks = barLine ? Array.from(barLine.querySelectorAll(".scaleBarTick")) : [];
-          scaleTicks.forEach(t => { t.style.opacity = "0"; t.style.transition = "opacity 250ms ease-out"; });
-
-          // Single rAF loop: clip-path drives bar, labels + ticks reveal as edge passes
+          scaleTicks.forEach(tk => { tk.style.opacity = "0"; tk.style.transition = "opacity 200ms ease-out"; });
           const scaleDuration = 900;
           const scaleStart = performance.now();
           const labelCount = labels.length;
@@ -12994,17 +13008,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             function scaleTick(now) {
               const elapsed = now - scaleStart;
               const t = Math.min(elapsed / scaleDuration, 1);
-              // Smooth ease-out
               const eased = 1 - Math.pow(1 - t, 2.5);
-              const clipBottom = 100 - eased * 100;
 
-              // Drive bar clip-path
-              if (barLine) barLine.style.clipPath = `inset(0 0 ${clipBottom}% 0)`;
+              // Reveal from top down in pixels: start after top cap, end at full height
+              const revealPx = capH + eased * (barH - capH);
+              if (barLine) barLine.style.clipPath = `inset(0 0 ${barH - revealPx}px 0)`;
 
-              // Reveal labels as bar edge reaches their position
-              // Labels are evenly distributed top→bottom (index 0 = top, last = bottom)
+              // Labels fade in as bar edge reaches their vertical position
               for (let i = 0; i < labelCount; i++) {
-                const labelPos = labelCount > 1 ? i / (labelCount - 1) : 0; // 0→1
+                const labelPos = labelCount > 1 ? i / (labelCount - 1) : 0;
                 if (!labelRevealed[i] && eased >= labelPos) {
                   labelRevealed[i] = true;
                   labels[i].style.opacity = "1";
@@ -13012,7 +13024,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 }
               }
 
-              // Reveal ticks as edge passes
+              // Ticks (nicks) fade in right as the bar edge crosses them
               for (let i = 0; i < tickCount; i++) {
                 const tickPos = tickCount > 1 ? (i + 1) / (tickCount + 1) : 0.5;
                 if (!tickRevealed[i] && eased >= tickPos) {
@@ -13026,6 +13038,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
             requestAnimationFrame(scaleTick);
           });
+
+          // ─── 3e-ii. Bar + bottom cap fully visible — shimmer entire scale ───
+          if (barLine) barLine.style.clipPath = "";
+          scaleEl.classList.add("si-shimmer");
 
           // ─── 3f. Line splits: anchor stays at north, leader starts sweep ───
           anchorLine.style.opacity = "1";
@@ -13066,10 +13082,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           await wait(80);
           overlay.remove();
 
-          // ─── 3h. Sync blink + pulse ───
+          // ─── 3h. Compass pulse ───
           await wait(100);
           compassEl.classList.add("ci-pulse");
-          scaleEl.classList.add("si-blink");
           compassEl.classList.add("ci-outline-build");
 
           // ═══════════════════════════════════════════════════════════════
@@ -13077,10 +13092,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ═══════════════════════════════════════════════════════════════
           await wait(600);
           compassEl.classList.remove("ci-pulse", "ci-outline-build");
-          scaleEl.classList.remove("hud-intro", "si-blink");
+          scaleEl.classList.remove("hud-intro", "si-shimmer");
           compassEl.style.webkitMaskImage = "";
           compassEl.style.maskImage = "";
-          if (barLine) { barLine.classList.remove("si-draw"); barLine.style.clipPath = ""; }
+          if (barLine) { barLine.style.clipPath = ""; }
           document.querySelectorAll(".compass-tick, .compass-letter, .compass-arrow-line, .compass-arrow-head").forEach(el => { el.style.opacity = ""; });
           if (labels.length) labels.forEach(l => { l.style.opacity = ""; l.style.transform = ""; l.style.transition = ""; });
           scaleTicks.forEach(t => { t.style.opacity = ""; t.style.transition = ""; });
@@ -18237,14 +18252,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
     return el;
   }
-  function showFlowCtxCard({ kind, title, imageUrl, meta }) {
+  function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta }) {
     const el = _ensureFlowCtxCard();
     el.querySelector(".flowCtxKind").textContent = kind || "";
     el.querySelector(".flowCtxTitle").textContent = title || "";
     el.querySelector(".flowCtxMeta").textContent = meta || "";
     const wrap = el.querySelector(".flowCtxImgWrap");
+    const flagUrl = isoCode ? `https://flagcdn.com/w80/${isoCode.toLowerCase()}.png` : '';
     if (imageUrl) {
-      wrap.innerHTML = `<img class="flowCtxImg" src="${imageUrl}" alt="" loading="lazy" onerror="this.style.display='none'">`;
+      const onErr = flagUrl
+        ? `this.onerror=null;this.src='${flagUrl}'`
+        : `this.style.display='none'`;
+      wrap.innerHTML = `<img class="flowCtxImg" src="${imageUrl}" alt="" loading="lazy" onerror="${onErr}">`;
+    } else if (flagUrl) {
+      wrap.innerHTML = `<img class="flowCtxImg" src="${flagUrl}" alt="" loading="lazy" onerror="this.style.display='none'">`;
     } else {
       wrap.innerHTML = `<div class="flowCtxImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
     }
@@ -18343,6 +18364,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           kind: "Article · Flow arcs",
           title: _ctxArticle.translated_title || _ctxArticle.title || "Untitled",
           imageUrl: _ctxArticle.image_url || null,
+          isoCode: _ctxArticle.iso_code || null,
           meta: _parts.join(", ") || (_ctxArticle.source_name || ""),
         });
       }
@@ -18435,6 +18457,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           kind: "Article · Flow arcs",
           title: _finalArt.translated_title || _finalArt.title || "Untitled",
           imageUrl: _finalArt.image_url || null,
+          isoCode: _finalArt.iso_code || null,
           meta: _parts.join(", ") || (_finalArt.source_name || ""),
         });
       }
@@ -18487,6 +18510,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           kind: "Thread · Flow arcs",
           title: _ctxThread.title || _ctxThread.translated_title || "Untitled thread",
           imageUrl: _ctxThread.hero_image_url || _ctxThread.image_url || _ctxThread.thumbnail_url || null,
+          isoCode: _ctxThread.hero_iso_code || null,
           meta: _ctxThread.category || _ctxThread.status || "",
         });
       }
@@ -18541,6 +18565,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           kind: "Thread · Flow arcs",
           title: _t.title || _t.translated_title || "Untitled thread",
           imageUrl: _t.hero_image_url || _t.image_url || _t.thumbnail_url || null,
+          isoCode: _t.hero_iso_code || null,
           meta: _t.category || _t.status || `${flows.length} route${flows.length !== 1 ? "s" : ""}`,
         });
       }
@@ -18589,6 +18614,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           kind: "Timeline · Flow arcs",
           title: _ctxTimeline.title || _ctxTimeline.translated_title || "Untitled timeline",
           imageUrl: _ctxTimeline.hero_image_url || _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || null,
+          isoCode: _ctxTimeline.hero_iso_code || null,
           meta: _ctxTimeline.category || _ctxTimeline.status || "",
         });
       }
@@ -18643,6 +18669,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           kind: "Timeline · Flow arcs",
           title: _tl.title || _tl.translated_title || "Untitled timeline",
           imageUrl: _tl.hero_image_url || _tl.image_url || _tl.thumbnail_url || null,
+          isoCode: _tl.hero_iso_code || null,
           meta: _tl.category || _tl.status || `${flows.length} route${flows.length !== 1 ? "s" : ""}`,
         });
       }

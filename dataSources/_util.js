@@ -1,17 +1,27 @@
 'use strict';
 
 async function fetchJson(url, opts = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 12000);
-  try {
-    const res = await fetch(url, {
-      headers: { 'Accept': 'application/json', ...(opts.headers || {}) },
-      signal:  ctrl.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
+  const maxRetries = opts.retries ?? 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 12000);
+    try {
+      const res = await fetch(url, {
+        headers: { 'Accept': 'application/json', ...(opts.headers || {}) },
+        signal:  ctrl.signal,
+      });
+      if (res.status === 429 && attempt < maxRetries) {
+        clearTimeout(timer);
+        const retryAfter = parseInt(res.headers.get('Retry-After'), 10);
+        const delay = (retryAfter && retryAfter > 0 ? retryAfter : 2 + attempt * 3) * 1000;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} for ${url}`);
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

@@ -2588,10 +2588,10 @@ app.get("/api/timelines/latest", async (req, res) => {
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.timeline_id = ANY($1)
-          AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
         ORDER BY
           sta.timeline_id,
           (a.image_url IS NOT NULL AND a.image_url <> '') DESC,
+          (img_a.public_url IS NOT NULL) DESC,
           sta.parabolic_weight DESC,
           a.published_at DESC
       `, [timelineIds]);
@@ -3207,9 +3207,10 @@ app.get("/api/threads/latest", async (req, res) => {
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = ANY($1)
-        AND a.image_url IS NOT NULL
-        AND a.image_url <> ''
-      ORDER BY sta.thread_id, sta.relevance_score DESC, a.published_at DESC
+      ORDER BY sta.thread_id,
+        (a.image_url IS NOT NULL AND a.image_url <> '') DESC,
+        sta.relevance_score DESC,
+        a.published_at DESC
     `, [threadIds]);
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));

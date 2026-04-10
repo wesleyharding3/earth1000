@@ -418,6 +418,7 @@ async function run() {
       console.log(`   [${elapsed(t0)}] Generating data panels (target ${minTotal}-${maxTotal} total, up to ${perStoryMax}/story)...`);
 
       let totalPanels = 0;
+      const usedPanels = [];  // track across segments to prevent duplicates
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         if (seg.type !== 'story') continue;
@@ -426,9 +427,10 @@ async function run() {
         const cap = Math.min(perStoryMax, remaining);
         const threadCtx = threadData.find(t => String(t.id) === String(seg.thread_id));
         try {
-          const panels = await dataPanels.generatePanelsForSegment(seg, threadCtx, { min: perStoryMin, max: cap });
+          const panels = await dataPanels.generatePanelsForSegment(seg, threadCtx, { min: perStoryMin, max: cap, usedPanels });
           seg.data_panels = panels;
           totalPanels += panels.length;
+          panels.forEach(p => usedPanels.push({ adapter: p.adapter, title: p.title, indicator: p.query?.indicator }));
           console.log(`   [${elapsed(t0)}] seg ${i} "${(seg.thread_title||'').slice(0,40)}" → ${panels.length} panel(s)${panels.length ? ' ('+panels.map(p=>p.adapter||p.generated_by).join(',')+')' : ''}`);
         } catch (e) {
           console.warn(`   ⚠ panel gen failed for seg ${i}: ${e.message}`);
@@ -1814,8 +1816,12 @@ async function reviewAndEditPanels(segments, threadData) {
       }
       const seg = segments[idx];
       const threadCtx = threadData.find(t => String(t.id) === String(seg.thread_id));
+      // Collect already-used panels from other segments for dedup
+      const usedPanels = segments
+        .filter((s, si) => s.type === 'story' && si !== idx && s.data_panels?.length)
+        .flatMap(s => s.data_panels.map(p => ({ adapter: p.adapter, title: p.title, indicator: p.query?.indicator })));
       const replaced = await dataPanels.pickPanelsInteractive(seg, threadCtx, {
-        rl, max: PANELS_MAX_PICK,
+        rl, max: PANELS_MAX_PICK, usedPanels,
       });
       seg.data_panels = replaced;
       continue;

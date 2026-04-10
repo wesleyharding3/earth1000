@@ -32,8 +32,12 @@ function makeClient() {
 // ───────────────────────────────────────────────────────────────────────────
 // Claude prompt: pick a source + query for one story
 // ───────────────────────────────────────────────────────────────────────────
-async function proposePanelsWithClaude(client, story, { count = 2 } = {}) {
+async function proposePanelsWithClaude(client, story, { count = 2, usedPanels = [] } = {}) {
   const catalog = sources.buildCatalogForPrompt();
+
+  const usedBlock = usedPanels.length
+    ? `\nALREADY USED IN THIS BRIEFING (DO NOT repeat these — pick a different adapter+indicator combination):\n${usedPanels.map(p => `- ${p.adapter}: ${p.title}`).join('\n')}\n`
+    : '';
 
   const prompt = `You are a data journalist choosing analytics panels for a news briefing segment.
 
@@ -47,7 +51,7 @@ ${JSON.stringify({
 }, null, 2)}
 
 You may propose up to ${count} panels. Each panel must DEEPEN the story with real, sourced data — only propose a panel if the chart materially adds to the reader's understanding. It is acceptable to return fewer panels (or zero) if no chart genuinely helps.
-
+${usedBlock}
 DATA SOURCES AVAILABLE (each with a curated indicator catalog you must pick from):
 ${JSON.stringify(catalog, null, 2)}
 
@@ -83,6 +87,7 @@ RULES:
 - Only propose adapters in the available list above. NEVER invent indicators.
 - Country names must be standard English atlas names (Iran, Saudi Arabia, United States, etc).
 - Be concise: titles <60 chars, captions <240 chars.
+- Do NOT propose the same adapter+indicator combination that has already been used in this briefing.
 - If the story is genuinely not chart-friendly (pure human-interest, single-event spot news), return { "panels": [] }.`;
 
   const resp = await client.messages.create({
@@ -95,7 +100,13 @@ RULES:
   if (!match) return [];
   try {
     const parsed = JSON.parse(match[0]);
-    return Array.isArray(parsed.panels) ? parsed.panels : [];
+    let panels = Array.isArray(parsed.panels) ? parsed.panels : [];
+    // Hard dedup: reject proposals that match already-used adapter+indicator
+    if (usedPanels.length) {
+      const usedKeys = new Set(usedPanels.map(p => `${p.adapter}:${p.indicator || ''}`));
+      panels = panels.filter(p => !usedKeys.has(`${p.adapter}:${p.query?.indicator || ''}`));
+    }
+    return panels;
   } catch (_) { return []; }
 }
 
@@ -188,7 +199,7 @@ async function materializePanel(client, proposal, story, { allowFallback = true 
 // Public: generate N panels for a briefing segment
 // ───────────────────────────────────────────────────────────────────────────
 async function generatePanelsForSegment(segment, threadCtx, opts = {}) {
-  const { min = 0, max = 2, anthropic } = opts;
+  const { min = 0, max = 2, anthropic, usedPanels = [] } = opts;
   const client  = anthropic || makeClient();
   const story   = {
     title:           threadCtx?.title || segment.thread_title,
@@ -198,7 +209,7 @@ async function generatePanelsForSegment(segment, threadCtx, opts = {}) {
     deep_context:    threadCtx?.deepContext,
   };
 
-  const proposals = await proposePanelsWithClaude(client, story, { count: max }).catch(e => {
+  const proposals = await proposePanelsWithClaude(client, story, { count: max, usedPanels }).catch(e => {
     console.warn(`   ⚠ panel proposal failed: ${e.message}`);
     return [];
   });
@@ -302,7 +313,7 @@ async function loadPanels(pool, scope) {
 // `rl` is a shared readline interface owned by the caller (briefingGenerator).
 // ───────────────────────────────────────────────────────────────────────────
 async function pickPanelsInteractive(segment, threadCtx, opts) {
-  const { rl, anthropic, max = 5 } = opts;
+  const { rl, anthropic, max = 5, usedPanels = [] } = opts;
   const client = anthropic || makeClient();
   const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
@@ -347,7 +358,7 @@ async function pickPanelsInteractive(segment, threadCtx, opts) {
         deep_context:    threadCtx?.deepContext,
       };
       console.log('  …asking Claude to propose options…');
-      const proposals = await proposePanelsWithClaude(client, story, { count: 4 }).catch(() => []);
+      const proposals = await proposePanelsWithClaude(client, story, { count: 4, usedPanels }).catch(() => []);
       if (!proposals.length) { console.log('  ✗ Claude returned no proposals'); continue; }
 
       // Materialise all proposals first so the menu shows real data
