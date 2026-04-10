@@ -9088,6 +9088,9 @@ function computeCityTiers(cities) {
       window.__surfaceOverlayEnabled = true;
       window.__surfaceOverlayOpacity = 0.35;
       window.__globeTheme            = "light"; // "light" | "dark"
+      // Per-theme sticky opacity: null = use default, number = user override.
+      const _themeOpacityDefaults = { light: 0.35, dark: 0.80 };
+      const _themeOpacityCustom  = { light: null, dark: null };
 
       function setGlobeTheme(theme) {
         const prev = window.__globeTheme;
@@ -9099,13 +9102,13 @@ function computeCityTiers(cities) {
           surfaceMat.map = tex;
           surfaceMat.needsUpdate = true;
         }
-        // Apply per-theme default opacity on theme switch: dark → 0.80, light → 0.35.
+        // Restore per-theme opacity: use custom if user touched slider, else default.
         if (prev !== window.__globeTheme) {
-          window.__surfaceOverlayOpacity = (window.__globeTheme === "dark") ? 0.80 : 0.35;
+          const t = window.__globeTheme;
+          window.__surfaceOverlayOpacity = (_themeOpacityCustom[t] != null)
+            ? _themeOpacityCustom[t]
+            : _themeOpacityDefaults[t];
         }
-        // Night view deserves slightly higher visibility so urban lights
-        // actually read against the base globe — bump opacity floor in
-        // dark mode while keeping the user's slider setting respected.
         if (window.__syncSurfaceOverlayVisibility) {
           window.__syncSurfaceOverlayVisibility();
         }
@@ -10387,15 +10390,14 @@ function computeCityTiers(cities) {
         focusPanelTimer = null;
       }
 
-      function queueFocusPanelOpen(callback, options = {}) {
-        const { immediate = false } = options;
+      function queueFocusPanelOpen(callback) {
         clearFocusPanelTimer();
         focusPendingPanel = callback;
-        if (!immediate) return;
-        // Track last requested callback on a parallel var so a stray
-        // focusPendingPanel=null (synthetic click, wheel, etc.) can't orphan
-        // the panel open. The safety setTimeout at 600ms force-fires cb if
-        // the panel still isn't active and nothing newer has been queued.
+        // Primary path: the animation loop fires at 50% rotation progress
+        // (see animate()), giving a visible centre-then-open sequence like
+        // desktop.  Safety net below guarantees the panel still opens even
+        // if focusPendingPanel is cleared by a stray synthetic event before
+        // the animation loop reaches 50%.
         const lastRequested = callback;
         focusPanelLastRequested = lastRequested;
         const fire = (cb) => {
@@ -10408,18 +10410,20 @@ function computeCityTiers(cities) {
             targetZoom = 2.3;
           }
         };
-        focusPanelTimer = setTimeout(() => fire(lastRequested), 220);
-        // Safety net: on Capacitor WKWebView first-load, a synthetic click or
-        // wheel event can clear focusPendingPanel before the 220ms timer fires,
-        // leaving the user with sound+rotation but no panel. Force-fire via
-        // lastRequested (which isn't cleared by those side-effects) unless
-        // the user has in the meantime queued a different panel.
-        setTimeout(() => fire(lastRequested), 600);
+        // Safety net at 800ms — long enough for the 50% rotation trigger to
+        // fire first on normal taps, but still catches WKWebView edge cases
+        // where focusPendingPanel gets cleared before the animation loop can
+        // pick it up.
+        focusPanelTimer = setTimeout(() => fire(lastRequested), 800);
       }
 
       window.addEventListener("mousedown", e => {
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
-        
+        // Suppress synthetic mousedown from a recent touch-initiated node
+        // selection — iOS fires mousedown ~300ms after touchend, which would
+        // kill the in-flight focusPendingPanel / safety timer.
+        if (Date.now() - touchNodeSelectTime < 1500) return;
+
         // Don't start dragging or clear focus if panel is active - let click handler close it first
         if (isPanelActive()) return;
         
@@ -10724,6 +10728,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window.__setGlobeTheme(theme);
           }
           syncGlobeThemeControls();
+          syncBiomeOverlayControls();
         });
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
@@ -10740,7 +10745,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       biomeOverlaySliders.forEach(el => {
         el.addEventListener("input", () => {
-          window.__surfaceOverlayOpacity = parseFloat(el.value);
+          const val = parseFloat(el.value);
+          window.__surfaceOverlayOpacity = val;
+          // Mark this theme's opacity as user-customised so it sticks
+          // across theme switches.
+          const t = window.__globeTheme || "light";
+          _themeOpacityCustom[t] = val;
           syncBiomeOverlayControls();
           if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
         });
@@ -12384,7 +12394,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 lockAmbientRotation();
                 isFocused = true; preFocusZoom = camera.position.z;
                 focusRegion(r);
-                queueFocusPanelOpen(() => openRegionPanel(r), { immediate: true });
+                queueFocusPanelOpen(() => openRegionPanel(r));
               };
               _pendingTouchPickTime = Date.now();
             }
@@ -12474,10 +12484,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             preFocusZoom = camera.position.z;
             if (pickedMode === "country") {
               focusCountry(pickedData);
-              queueFocusPanelOpen(() => openNodePanel(pickedData, "country"), { immediate: true });
+              queueFocusPanelOpen(() => openNodePanel(pickedData, "country"));
             } else {
               focusCity(pickedData);
-              queueFocusPanelOpen(() => openNodePanel(pickedData, "city"), { immediate: true });
+              queueFocusPanelOpen(() => openNodePanel(pickedData, "city"));
             }
           };
           _pendingTouchPickTime = Date.now();
@@ -13314,6 +13324,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           targetZoom = preFocusZoom;
           zoomingOut = true;
 
+          // Clear polygon selection highlight
+          try { window.__polygonLayer?.clearSelection?.(); } catch (_) {}
+
           scheduleAmbientResume();
         });
         closeBtn.addEventListener("mousedown", (e) => { e.stopPropagation(); });
@@ -13630,7 +13643,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           isFocused = true;
           preFocusZoom = camera.position.z;
           focusCountry(c);
-          queueFocusPanelOpen(() => openNodePanel(c, "country"), { immediate: true });
+          queueFocusPanelOpen(() => openNodePanel(c, "country"));
         } catch (e) {
           console.warn('[polygonClick] open failed:', e);
           return false;
@@ -14083,6 +14096,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           zoomVelocity = 0;
           targetZoom = preFocusZoom;
           zoomingOut = true;
+
+          // Clear polygon selection highlight
+          try { window.__polygonLayer?.clearSelection?.(); } catch (_) {}
 
           scheduleAmbientResume();
         });
@@ -27791,6 +27807,12 @@ body.ticker-active .gTickerLabel {
     hideFan,
     repaint,
     setHoveredKey: (k) => { hoveredKey = k; repaint(); },
+    clearSelection: () => {
+      hoveredKey = null;
+      selectedKey = null;
+      hideFan();
+      repaint();
+    },
     isReady: () => _ready,
   };
 })();

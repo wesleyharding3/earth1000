@@ -3902,7 +3902,9 @@ body.ticker-active #flowControls {
   z-index: 210;
   max-width: 200px;
   min-width: 130px;
-  background: rgba(4,5,9,0.97);
+  background: rgba(8, 14, 24, 0.48);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255,200,100,0.18);
   border-radius: 12px;
   padding: 9px 12px 8px;
@@ -8786,6 +8788,9 @@ function computeCityTiers(cities) {
       window.__surfaceOverlayEnabled = true;
       window.__surfaceOverlayOpacity = 0.35;
       window.__globeTheme            = "light";
+      // Per-theme sticky opacity: null = use default, number = user override.
+      const _themeOpacityDefaults = { light: 0.35, dark: 0.80 };
+      const _themeOpacityCustom  = { light: null, dark: null };
 
       function setGlobeTheme(theme) {
         const prev = window.__globeTheme;
@@ -8797,9 +8802,12 @@ function computeCityTiers(cities) {
           surfaceMat.map = tex;
           surfaceMat.needsUpdate = true;
         }
-        // Apply per-theme default opacity on theme switch: dark → 0.80, light → 0.35.
+        // Restore per-theme opacity: use custom if user touched slider, else default.
         if (prev !== window.__globeTheme) {
-          window.__surfaceOverlayOpacity = (window.__globeTheme === "dark") ? 0.80 : 0.35;
+          const t = window.__globeTheme;
+          window.__surfaceOverlayOpacity = (_themeOpacityCustom[t] != null)
+            ? _themeOpacityCustom[t]
+            : _themeOpacityDefaults[t];
         }
         if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
         if (typeof window.__syncGlobeThemeControls === "function") window.__syncGlobeThemeControls();
@@ -10443,7 +10451,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       biomeOverlaySliders.forEach(el => {
         el.addEventListener("input", () => {
-          window.__surfaceOverlayOpacity = parseFloat(el.value);
+          const val = parseFloat(el.value);
+          window.__surfaceOverlayOpacity = val;
+          // Mark this theme's opacity as user-customised so it sticks
+          // across theme switches.
+          const t = window.__globeTheme || "light";
+          _themeOpacityCustom[t] = val;
           syncBiomeOverlayControls();
           if (window.__syncSurfaceOverlayVisibility) window.__syncSurfaceOverlayVisibility();
         });
@@ -10469,6 +10482,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window.__setGlobeTheme(theme);
           }
           syncGlobeThemeControls();
+          syncBiomeOverlayControls();
         });
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
