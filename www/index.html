@@ -17144,14 +17144,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const tmp = document.createElement('div');
         tmp.innerHTML = batch.map(threadCardHTML).join('');
         while (tmp.firstChild) {
-          const card = tmp.firstChild;
-          card.addEventListener('click', () => {
-            try {
-              const t = JSON.parse(card.dataset.thread);
-              openThreadInPanel(t);
-            } catch(e) { console.warn('Failed to open item:', e); }
-          });
-          fragment.appendChild(card);
+          const wrapper = tmp.firstChild;
+          const inner = wrapper.querySelector?.('.nfThreadCard');
+          if (inner) {
+            inner.addEventListener('click', () => {
+              try {
+                const t = JSON.parse(inner.dataset.thread);
+                openThreadInPanel(t);
+              } catch(e) { console.warn('Failed to open item:', e); }
+            });
+          }
+          fragment.appendChild(wrapper);
         }
         threadsGrid.appendChild(fragment);
         gridRenderedCount += batch.length;
@@ -17425,154 +17428,119 @@ const settingsToggle     = document.getElementById("settingsToggle");
       setTimeout(scheduleAmbient, 2200);
 
       // ── Render loop ─────────────────────────────────────────────────
+      // Guitar-string / pond-ripple model: the line itself oscillates
+      // vertically with clean sinusoidal wave packets traveling R→L.
       const BASE_R = 0xff, BASE_G = 0xbe, BASE_B = 0x50;
       const ACCENT_R = 0xff, ACCENT_G = 0xe0, ACCENT_B = 0x98;
+      const WAVE_LAMBDA = 28;   // wavelength — distance between crests (px)
+      const AMP_SCALE   = 0.82; // max vertical displacement as fraction of half-height
 
       function frame(t) {
         requestAnimationFrame(frame);
         if (cssW <= 0) return;
-        // Skip rendering when news page hidden, for CPU sanity
         const pageNews = document.getElementById('pageNews');
         if (pageNews && pageNews.offsetParent === null) return;
 
         ctx.clearRect(0, 0, cssW, cssH);
-
         const cy = cssH / 2;
         const now = t || performance.now();
 
-        // Ambient breath — slow sine modulating the base alpha
-        const breath = 0.55 + 0.30 * Math.sin(now * 0.00068 * 2 * Math.PI);
+        // Reduced ambient breath — subtler baseline glow
+        const breath = 0.32 + 0.15 * Math.sin(now * 0.00068 * 2 * Math.PI);
 
-        // Base line spans the entire width — faint at the edges, warmer
-        // through the middle. Drawn as a right→left gradient so the
-        // implied direction of the whole animation is consistent.
-        const baseGrad = ctx.createLinearGradient(cssW, 0, 0, 0);
-        baseGrad.addColorStop(0.00, 'rgba(255,190,80,0.00)');
-        baseGrad.addColorStop(0.30, `rgba(255,190,80,${(0.28 * breath).toFixed(3)})`);
-        baseGrad.addColorStop(0.50, `rgba(255,160,50,${(0.42 * breath).toFixed(3)})`);
-        baseGrad.addColorStop(0.70, `rgba(255,190,80,${(0.28 * breath).toFixed(3)})`);
-        baseGrad.addColorStop(1.00, 'rgba(255,190,80,0.00)');
-        ctx.fillStyle = baseGrad;
-        ctx.fillRect(0, cy - 0.5, cssW, 1.0);
+        // Sample every 2 CSS pixels for performance
+        const step = 2;
+        const samples = Math.ceil(cssW / step) + 1;
+        const yOff  = new Float32Array(samples);
+        const brite = new Float32Array(samples);
+        let maxBrite = 0;
 
-        // Standing ambient glint that slides right→left along the whole
-        // bar at a slow, steady pace — keeps the line feeling alive even
-        // during long idle stretches. Period ~7s, subtle amplitude.
+        // Standing ambient ripple: a very faint sine wave that drifts
+        // right→left so the string never looks dead. Period ~7s.
         {
           const period = 7200;
-          const glintPhase = (now % period) / period; // 0..1
-          const glintX = cssW - glintPhase * (cssW + 140) + 70;
-          const sigma  = 90 + 18 * Math.sin(now * 0.0007);
-          const glintA = 0.18 + 0.08 * Math.sin(now * 0.0012);
-          ctx.save();
-          ctx.globalCompositeOperation = 'lighter';
-          const gg = ctx.createRadialGradient(glintX, cy, 0, glintX, cy, sigma);
-          gg.addColorStop(0.00, `rgba(255,220,150,${glintA.toFixed(3)})`);
-          gg.addColorStop(0.50, `rgba(255,180,70,${(glintA * 0.5).toFixed(3)})`);
-          gg.addColorStop(1.00, 'rgba(255,180,70,0)');
-          ctx.fillStyle = gg;
-          ctx.fillRect(glintX - sigma, 0, sigma * 2, cssH);
-          ctx.restore();
-        }
-
-        // Live ripples — each one adds a bright localized bloom that
-        // spreads outward and decays exponentially.
-        if (ripples.length) {
-          for (let i = ripples.length - 1; i >= 0; i--) {
-            const r = ripples[i];
-            const age = (now - r.born) / 1000; // seconds
-            const lifeS = r.life / 1000;
-            const tNorm = age / lifeS;
-            if (tNorm >= 1) { ripples.splice(i, 1); continue; }
-
-            // Directional "recording head" sweep — spark travels xStart→xEnd
-            // with a softer illuminated ripple trailing behind it.
-            if (r.type === 'sweep') {
-              const eased = 1 - Math.pow(1 - tNorm, 2.2);
-              const headX = r.xStart + (r.xEnd - r.xStart) * eased;
-              // Envelope: quick ramp then gentle decay
-              const rampIn = Math.min(1, tNorm * 5);
-              const decay  = Math.exp(-1.5 * tNorm);
-              const envelope = r.amp * rampIn * decay;
-              if (envelope < 0.01) { ripples.splice(i, 1); continue; }
-
-              const travelDir = Math.sign(r.xEnd - r.xStart) || -1;
-
-              ctx.save();
-              ctx.globalCompositeOperation = 'lighter';
-
-              // Trailing illuminated ripple — broader, softer, sits behind
-              // the travelling head (opposite to travel direction).
-              const trailSigma = r.spread * (1.0 + tNorm * 1.9);
-              const trailX = headX - travelDir * trailSigma * 0.55;
-              const tg = ctx.createRadialGradient(trailX, cy, 0, trailX, cy, trailSigma);
-              tg.addColorStop(0.00, `rgba(${BASE_R},${BASE_G},${BASE_B},${(envelope * 0.55).toFixed(3)})`);
-              tg.addColorStop(0.55, `rgba(${BASE_R},${BASE_G},${BASE_B},${(envelope * 0.20).toFixed(3)})`);
-              tg.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
-              ctx.fillStyle = tg;
-              ctx.fillRect(trailX - trailSigma, 0, trailSigma * 2, cssH);
-
-              // Leading spark — bright and tight
-              const sparkSigma = 11 + envelope * 16;
-              const sg = ctx.createRadialGradient(headX, cy, 0, headX, cy, sparkSigma);
-              const aHead = Math.min(1, envelope * 1.45);
-              sg.addColorStop(0.00, `rgba(255,244,208,${aHead.toFixed(3)})`);
-              sg.addColorStop(0.45, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${(aHead * 0.55).toFixed(3)})`);
-              sg.addColorStop(1.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},0)`);
-              ctx.fillStyle = sg;
-              ctx.fillRect(headX - sparkSigma, 0, sparkSigma * 2, cssH);
-
-              ctx.restore();
-              continue;
-            }
-
-            // Leftward-traveling packet — single lobe, amplitude decays
-            // exponentially, spatial sigma expands slightly as it moves.
-            const envelope = r.amp * Math.exp(-1.9 * tNorm);
-            if (envelope < 0.01) { ripples.splice(i, 1); continue; }
-
-            const travel = r.speed * age;
-            const cx     = r.x0 - travel;  // always moving left
-            const sigma  = r.spread + age * 75;
-
-            // Once the lobe has fully left the left edge, drop it.
-            if (cx < -sigma * 2) { ripples.splice(i, 1); continue; }
-
-            ctx.save();
-            ctx.globalCompositeOperation = 'lighter';
-
-            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sigma);
-            const aHot  = Math.min(1, envelope * 1.30);
-            const aMid  = envelope * 0.78;
-            grad.addColorStop(0.00, `rgba(${ACCENT_R},${ACCENT_G},${ACCENT_B},${aHot.toFixed(3)})`);
-            grad.addColorStop(0.35, `rgba(${BASE_R},${BASE_G},${BASE_B},${aMid.toFixed(3)})`);
-            grad.addColorStop(1.00, `rgba(${BASE_R},${BASE_G},${BASE_B},0)`);
-            ctx.fillStyle = grad;
-            ctx.fillRect(cx - sigma, 0, sigma * 2, cssH);
-
-            // Soft tail to the right of the leading edge — reads as a
-            // comet-style motion trail. Offset slightly to the +x side.
-            const tailX = cx + sigma * 0.45;
-            const tailSigma = sigma * 1.25;
-            const tg = ctx.createLinearGradient(tailX - tailSigma, 0, tailX + tailSigma, 0);
-            tg.addColorStop(0.00, 'rgba(255,180,70,0)');
-            tg.addColorStop(0.50, `rgba(255,180,70,${(envelope * 0.28).toFixed(3)})`);
-            tg.addColorStop(1.00, 'rgba(255,180,70,0)');
-            ctx.fillStyle = tg;
-            ctx.fillRect(tailX - tailSigma, cy - 1.2, tailSigma * 2, 2.4);
-
-            // Bright core flash in the very first frames after seeding.
-            if (tNorm < 0.12) {
-              const flashA = envelope * (1 - tNorm / 0.12);
-              const flashG = ctx.createRadialGradient(r.x0, cy, 0, r.x0, cy, sigma * 0.7);
-              flashG.addColorStop(0, `rgba(255,240,200,${(flashA).toFixed(3)})`);
-              flashG.addColorStop(1, 'rgba(255,240,200,0)');
-              ctx.fillStyle = flashG;
-              ctx.fillRect(r.x0 - sigma, 0, sigma * 2, cssH);
-            }
-            ctx.restore();
+          const phase = (now % period) / period * 2 * Math.PI;
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            const d = Math.sin(phase + (x / (WAVE_LAMBDA * 1.6)) * 2 * Math.PI);
+            yOff[si] += d * cy * 0.10 * breath;
           }
         }
+
+        // Prune dead ripples and accumulate displacements
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const r = ripples[i];
+          const age = (now - r.born) / 1000;
+          const lifeS = r.life / 1000;
+          const tNorm = age / lifeS;
+          if (tNorm >= 1) { ripples.splice(i, 1); continue; }
+
+          if (r.type === 'sweep') {
+            const eased = 1 - Math.pow(1 - tNorm, 2.2);
+            const headX = r.xStart + (r.xEnd - r.xStart) * eased;
+            const rampIn = Math.min(1, tNorm * 5);
+            const decay = r.amp * rampIn * Math.exp(-1.5 * tNorm);
+            if (decay < 0.005) { ripples.splice(i, 1); continue; }
+            const sigma = r.spread * (1.0 + tNorm * 1.9);
+            for (let si = 0; si < samples; si++) {
+              const x = si * step;
+              const dx = x - headX;
+              const env = decay * Math.exp(-(dx * dx) / (2 * sigma * sigma));
+              yOff[si] += env * Math.sin((dx / WAVE_LAMBDA) * 2 * Math.PI) * cy * AMP_SCALE;
+              if (env > brite[si]) brite[si] = env;
+            }
+          } else {
+            const envelope = r.amp * Math.exp(-1.9 * tNorm);
+            if (envelope < 0.005) { ripples.splice(i, 1); continue; }
+            const travel = r.speed * age;
+            const rcx = r.x0 - travel;
+            const sigma = r.spread + age * 75;
+            if (rcx < -sigma * 2) { ripples.splice(i, 1); continue; }
+            for (let si = 0; si < samples; si++) {
+              const x = si * step;
+              const dx = x - rcx;
+              const env = envelope * Math.exp(-(dx * dx) / (2 * sigma * sigma));
+              yOff[si] += env * Math.sin((dx / WAVE_LAMBDA) * 2 * Math.PI) * cy * AMP_SCALE;
+              if (env > brite[si]) brite[si] = env;
+            }
+          }
+        }
+
+        // Track max brightness for line width modulation
+        for (let si = 0; si < samples; si++) { if (brite[si] > maxBrite) maxBrite = brite[si]; }
+
+        // Build the path once — used for both glow and core strokes
+        ctx.beginPath();
+        ctx.moveTo(0, cy + yOff[0]);
+        for (let si = 1; si < samples; si++) {
+          ctx.lineTo(si * step, cy + yOff[si]);
+        }
+
+        // Glow layer — soft bloom under the vibrating string
+        ctx.save();
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = `rgba(255,175,60,${(breath * 0.25 + maxBrite * 0.35).toFixed(3)})`;
+        ctx.strokeStyle = `rgba(255,190,80,${(breath * 0.18).toFixed(3)})`;
+        ctx.lineWidth = 1.0;
+        ctx.stroke();
+        ctx.restore();
+
+        // Core line — brightness varies along x via gradient
+        const coreGrad = ctx.createLinearGradient(0, 0, cssW, 0);
+        const STOPS = 24;
+        for (let g = 0; g <= STOPS; g++) {
+          const frac = g / STOPS;
+          const si = Math.min(samples - 1, Math.round(frac * (samples - 1)));
+          const b = brite[si];
+          const a = Math.min(1, breath * 0.22 + b * 1.15);
+          const cr = Math.round(BASE_R + (ACCENT_R - BASE_R) * Math.min(1, b * 1.5));
+          const cg = Math.round(BASE_G + (ACCENT_G - BASE_G) * Math.min(1, b * 1.5));
+          const cb = Math.round(BASE_B + (ACCENT_B - BASE_B) * Math.min(1, b * 1.5));
+          coreGrad.addColorStop(frac, `rgba(${cr},${cg},${cb},${a.toFixed(3)})`);
+        }
+        ctx.strokeStyle = coreGrad;
+        ctx.lineWidth = 0.8 + maxBrite * 0.6;
+        ctx.stroke();
       }
       requestAnimationFrame(frame);
     })();
