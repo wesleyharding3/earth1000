@@ -1740,8 +1740,9 @@ async function refreshHeatmapSnapshots() {
   for (const { key, days } of presets) {
     const client = await pool.connect();
     try {
-      // 5 min timeout per preset — generous for large scans
-      await client.query('SET LOCAL statement_timeout = 300000');
+      // 5 min timeout per preset — must be session-level SET (not LOCAL)
+      // because the heavy aggregation queries run outside the transaction.
+      await client.query('SET statement_timeout = 300000');
 
       const { rows: countryRows } = await client.query(`
         SELECT
