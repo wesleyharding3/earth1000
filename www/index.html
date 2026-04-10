@@ -14841,6 +14841,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     flowDateSnapPoints = [];
     // Clear persistent node labels, back button, timeline, and info card from card flow arc button
     window.clearFlowNodeLabels?.();
+    window.__flowClearHighlights?.();
     const backBtn = document.getElementById("flowArcBackBtn");
     if (backBtn) backBtn.classList.remove("visible");
     document.getElementById("flowTimeline")?.classList.remove("visible");
@@ -17735,6 +17736,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       } catch (_) {}
       try { window.hideFlowArcBackBtn?.(); } catch (_) {}
+      window.__flowClearHighlights?.();
       _flowArcOrigin = null;
       window.__flowArcOriginForHeat = null;
       hideFlowCtxCard();
@@ -17796,6 +17798,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Close flow arcs, labels, timeline, and info card
     window.__flowClosePanel?.();
+    window.__flowClearHighlights?.();
     hideFlowArcBackBtn();
     hideFlowCtxCard?.();
     document.getElementById("flowTimeline")?.classList.remove("visible");
@@ -17888,6 +17891,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
         console.warn("No flows found for article", articleId);
+        // Highlight origin country if available
+        const _originIso = _ctxArticle?.iso_code || data.article?.iso_code;
+        if (_originIso) window.__flowHighlightCountries?.(new Set([String(_originIso).toUpperCase()]));
         hideFlowArcBackBtn();
         return;
       }
@@ -17916,6 +17922,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
       // 8. (City labels on flow arcs removed.)
+
+      // 8b. Highlight country polygons for all flow arc countries
+      {
+        const isoSet = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) isoSet.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) isoSet.add(f.dst.iso.toUpperCase());
+        });
+        if (isoSet.size) window.__flowHighlightCountries?.(isoSet);
+      }
 
       // 9. Show back button
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
@@ -17995,6 +18011,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
         console.warn("No flows found for thread", threadId);
+        // Highlight origin country if available
+        const _originIso = _ctxThread?.iso_code || data.thread?.iso_code || _ctxThread?.country_code;
+        if (_originIso) window.__flowHighlightCountries?.(new Set([String(_originIso).toUpperCase()]));
         hideFlowArcBackBtn();
         return;
       }
@@ -18014,6 +18033,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const arc = window.__flowCreateArc?.(flow, maxCount);
         if (arc) window.__flowPushArc?.(arc);
       });
+
+      // Highlight country polygons for all flow arc countries
+      {
+        const isoSet = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) isoSet.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) isoSet.add(f.dst.iso.toUpperCase());
+        });
+        if (isoSet.size) window.__flowHighlightCountries?.(isoSet);
+      }
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
@@ -18084,6 +18113,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
         console.warn("No flows found for timeline", timelineId);
+        // Highlight origin country if available
+        const _originIso = _ctxTimeline?.iso_code || data.timeline?.iso_code || _ctxTimeline?.country_code;
+        if (_originIso) window.__flowHighlightCountries?.(new Set([String(_originIso).toUpperCase()]));
         hideFlowArcBackBtn();
         return;
       }
@@ -18103,6 +18135,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const arc = window.__flowCreateArc?.(flow, maxCount);
         if (arc) window.__flowPushArc?.(arc);
       });
+
+      // Highlight country polygons for all flow arc countries
+      {
+        const isoSet = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) isoSet.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) isoSet.add(f.dst.iso.toUpperCase());
+        });
+        if (isoSet.size) window.__flowHighlightCountries?.(isoSet);
+      }
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
@@ -27099,6 +27141,7 @@ body.ticker-active .gTickerLabel {
   let overlaySphere = null, overlayCtx = null, overlayCanvas = null, overlayTex = null;
   let hoveredKey = null;
   let selectedKey = null;
+  let flowHighlightKeys = new Set(); // ISO codes of countries to highlight during flow arcs
   let _ready = false;
 
   const fanEl = document.getElementById('countryFan');
@@ -27228,6 +27271,21 @@ body.ticker-active .gTickerLabel {
   function repaint() {
     if (!overlayCtx) return;
     overlayCtx.clearRect(0, 0, W, H);
+
+    // Flow arc country highlights — draw all involved countries
+    if (flowHighlightKeys.size > 0) {
+      const countries = window.__hitTestCountries?.() || [];
+      for (const c of countries) {
+        if (!flowHighlightKeys.has(c.key) && !flowHighlightKeys.has(c.iso)) continue;
+        if (c.polygonless) continue;
+        drawCountryShape(
+          overlayCtx, c,
+          'rgba(255,180,80,0.85)',
+          'rgba(255,160,40,0.14)',
+          2.5
+        );
+      }
+    }
 
     const selCountry = findCountryByKey(selectedKey);
     const hovCountry = findCountryByKey(hoveredKey);
@@ -27517,6 +27575,18 @@ body.ticker-active .gTickerLabel {
     if (bootstrap()) return;
     setTimeout(waitForReady, 300);
   })();
+
+  // Flow arc polygon highlights — called by showThreadFlows / showArticleFlows / showTimelineFlows
+  window.__flowHighlightCountries = function(isoSet) {
+    flowHighlightKeys = new Set(isoSet);
+    // Make overlay visible even outside country view when flow highlights active
+    if (overlaySphere && flowHighlightKeys.size > 0) overlaySphere.visible = true;
+    repaint();
+  };
+  window.__flowClearHighlights = function() {
+    flowHighlightKeys.clear();
+    repaint();
+  };
 
   // Expose for console / other modules
   window.__polygonLayer = {
