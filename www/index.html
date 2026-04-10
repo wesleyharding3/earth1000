@@ -12345,7 +12345,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Region mode — stash the pick, fire from touchend if stationary tap
         if (currentViewMode === "regions") {
           if (!regionPoints || !regionPositions) return;
-          raycaster.params.Points.threshold = Math.max(0.026, camera.position.z * 0.020);
+          raycaster.params.Points.threshold = Math.max(0.038, camera.position.z * 0.028);
           const hits = raycaster.intersectObject(regionPoints);
           if (hits.length > 0) {
             const index = hits[0].index;
@@ -12428,7 +12428,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const rect2   = renderer.domElement.getBoundingClientRect();
         const touchX  = touch.clientX - rect2.left;
         const touchY  = touch.clientY - rect2.top;
-        const TOUCH_PX = 28; // slightly wider than click for fat-finger tolerance
+        const TOUCH_PX = 38; // wider radius for small-country selection on mobile
         let bestIdx = null, bestPx = Infinity;
         for (let i = 0; i < activeData.length; i++) {
           if (popMask && !popMask[i]) continue;
@@ -27101,9 +27101,9 @@ body.ticker-active .gTickerLabel {
   const RAD2DEG = 180 / Math.PI;
   const DEFAULT_CAM_DIST = 3.6; // mobile default
 
-  const THRESHOLD_DEFAULT_MI = 40;
-  const THRESHOLD_MIN_MI     = 4;
-  const THRESHOLD_MAX_MI     = 55;
+  const THRESHOLD_DEFAULT_MI = 55;
+  const THRESHOLD_MIN_MI     = 5;
+  const THRESHOLD_MAX_MI     = 80;
   const MICROSTATE_AREA_SQ_DEG = 0.20;
 
   function getZoomThresholdMi(zoomFactor) {
