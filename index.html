@@ -15011,28 +15011,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const color = pickColor(flow);
     arc.tubeMat.uniforms.uColor.value.copy(color);
     arc.tubeMat.uniforms.uVisibleStart.value = 0.0;
-    arc.tubeMat.uniforms.uVisibleEnd.value = arc.isStatic ? 1.0 : 0.001;
+    arc.tubeMat.uniforms.uVisibleEnd.value = arc.isStatic ? 0.001 : 0.001;
 
-    // Set static opacity for aggregate mode
     if (arc.isStatic) {
       arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
-      // Card-triggered arcs get a gentler pulse after the intro animation;
-      // normal aggregate mode keeps its strong pulse.
-      arc.tubeMat.uniforms.uPulseIntensity.value = flow._cardTriggered ? 0.75 : 1.5;
-      arc.pulsePhase = Math.random();  // Random starting phase for staggered pulses
-      // Intro animation: for arcs spawned by an article/thread/timeline
-      // card button, travel from origin to destination once before
-      // settling into a persistent, gently-pulsing state. This avoids the
-      // "flash in" visual and mirrors the individual-arc travel curve.
-      arc.cardTriggered  = !!flow._cardTriggered;
-      arc.introAge       = 0;
-      arc.introDuration  = arc.cardTriggered
-        ? (1.1 + Math.random() * 0.4) // ~1.1–1.5s staggered
-        : 0;
-      arc.introDelay     = arc.cardTriggered ? Math.random() * 0.45 : 0;
+      // Gentle pulse after the draw-in settles — not too flashy.
+      arc.tubeMat.uniforms.uPulseIntensity.value = 0.55;
+      arc.pulsePhase = Math.random();
+      // One-shot draw-in: ALL aggregate arcs animate from origin →
+      // destination before settling into a persistent gentle pulse.
+      arc.drawInDuration = 1.15 + Math.random() * 0.35; // ~1.15–1.5s
+      arc.drawInDelay    = Math.random() * 0.55;         // staggered start
+      arc.drawInElapsed  = 0;
+      arc.drawInPlayed   = false;
     } else {
       arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
-      arc.tubeMat.uniforms.uPulseIntensity.value = 1.0;  // Clear pulse on animated arcs
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.0;
       arc.pulsePhase = 0;
     }
 
@@ -15105,25 +15099,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       if (arc.isStatic) {
-        // Card-triggered arcs play a one-shot travel intro before
-        // settling into the persistent pulsing state.
-        if (arc.cardTriggered && arc.introAge < (arc.introDelay + arc.introDuration)) {
-          arc.introAge += delta;
-          const localT = Math.max(0, arc.introAge - arc.introDelay);
-          const t = clamp01(localT / Math.max(0.0001, arc.introDuration));
-          // easeOutCubic
-          const e = 1 - Math.pow(1 - t, 3);
-          arc.tubeMat.uniforms.uVisibleStart.value = 0;
-          arc.tubeMat.uniforms.uVisibleEnd.value   = Math.max(0.001, e);
-          arc.tubeMat.uniforms.uOpacity.value      = arc.baseOpacity * (0.65 + 0.35 * e);
-          if (localT > 0) {
-            setArcOrb(arc, e, 0xffffff);
-          } else {
+        // Phase 1 — one-shot draw-in from origin → destination.
+        // A leading spark rides the wavefront so the eye tracks direction.
+        if (!arc.drawInPlayed) {
+          arc.drawInElapsed += delta;
+          const t = arc.drawInElapsed - arc.drawInDelay;
+          if (t <= 0) {
+            arc.tubeMat.uniforms.uVisibleStart.value = 0;
+            arc.tubeMat.uniforms.uVisibleEnd.value = 0.001;
+            arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
             arc.orb.material.opacity = 0;
             arc.orb.visible = false;
+            continue;
+          }
+          const rawT = clamp01(t / arc.drawInDuration);
+          // easeOutCubic — fast takeoff, graceful settle at destination.
+          const eased = 1 - Math.pow(1 - rawT, 3);
+          const visEnd = Math.max(0.001, eased);
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = visEnd;
+          // Fade opacity in over the first ~25% so the spawn feels soft.
+          const fadeIn = clamp01(rawT * 4);
+          arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity * fadeIn;
+          // Leading spark rides the wavefront.
+          setArcOrb(arc, visEnd, 0xffffff, fadeIn);
+          if (rawT >= 1) {
+            arc.drawInPlayed = true;
           }
           continue;
         }
+        // Phase 2 — held visible with gentle ambient directional pulse.
         arc.tubeMat.uniforms.uVisibleStart.value = 0;
         arc.tubeMat.uniforms.uVisibleEnd.value = 1;
         arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
