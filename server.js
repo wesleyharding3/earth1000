@@ -3855,13 +3855,30 @@ app.get("/api/clusters/related", async (req, res) => {
 app.get("/api/articles/recent", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 60, 100);
   const hours = Math.min(parseInt(req.query.hours) || 48, 168);
+  const candidatePoolSize = Math.max(limit * 8, 400);
   try {
     // 20s in-memory TTL — global ticker fans out heavily; one query per
     // (limit, hours) per window is plenty. Yes, the random sample becomes
     // shared across users in the window — that's fine and avoids hammering
-    // the DB with ORDER BY RANDOM() on every page open.
+    // the DB with ORDER BY RANDOM() across the full recent corpus on every
+    // page open. We instead bound the candidate set to the newest few
+    // hundred/thousand rows, then shuffle within that smaller pool.
     const rows = await ttlCached(`articles/recent:${limit}:${hours}`, 20_000, async () => {
       const { rows } = await pool.query(`
+        WITH recent_pool AS (
+          SELECT a.id
+          FROM news_articles a
+          WHERE a.published_at >= NOW() - ($2 || ' hours')::interval
+            AND a.title IS NOT NULL
+          ORDER BY a.published_at DESC
+          LIMIT $3
+        ),
+        sampled_ids AS (
+          SELECT id
+          FROM recent_pool
+          ORDER BY RANDOM()
+          LIMIT $1
+        )
         SELECT
           a.id, a.title, a.translated_title, a.summary,
           a.published_at, a.url,
@@ -3870,17 +3887,15 @@ app.get("/api/articles/recent", async (req, res) => {
           ns.source_summary,
           COALESCE(ns.bias, 'unknown') AS source_bias,
           co.name AS country_name, co.iso_code
-        FROM news_articles a
+        FROM sampled_ids s
+        JOIN news_articles a ON a.id = s.id
         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN countries co ON co.id = a.country_id
-        WHERE a.published_at >= NOW() - ($2 || ' hours')::interval
-          AND a.title IS NOT NULL
-        ORDER BY RANDOM()
-        LIMIT $1
-      `, [limit, hours]);
+        ORDER BY a.published_at DESC
+      `, [limit, hours, candidatePoolSize]);
       return rows;
     });
     res.json(rows);
