@@ -1563,7 +1563,9 @@ app.get("/api/flows/article/:id", async (req, res) => {
 
 /* =========================================
    Flows for a thread (all articles in the thread)
-   Returns aggregate flows grouped by src→dst pair
+   Returns arcs between countries directly involved in the story
+   (subject/actor/location roles from entity extraction, not
+   every country that merely has an article mentioning the topic)
 ========================================= */
 app.get("/api/flows/thread/:id", async (req, res) => {
   try {
@@ -1571,57 +1573,100 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
     const _cached = await ttlCached(`flows/thread:${threadId}`, 60_000, async () => {
-    const { rows } = await pool.query(`
-      WITH thread_flows AS (
-        SELECT
-          COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
-          COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
-          COALESCE(src_city.name, src_co.name)           AS src_place,
-          CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
-          CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
-          src_co.iso_code AS src_iso,
-          COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
-          COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
-          COALESCE(dst_city.name, dst_co.name)           AS dst_place,
-          CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
-          CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
-          dst_co.iso_code AS dst_iso
-        FROM story_thread_articles sta
-        JOIN news_articles a        ON a.id = sta.article_id
-        JOIN article_locations al   ON al.article_id = a.id
-        JOIN countries src_co       ON src_co.id = a.country_id
-        JOIN countries dst_co       ON dst_co.id = al.country_id
-        LEFT JOIN cities src_city   ON src_city.id = a.city_id
-        LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
-        WHERE sta.thread_id = $1
-          AND al.routing_type IN ('content', 'source')
-      )
-      SELECT
-        src_lat, src_lon, src_place, src_id, src_type, src_iso,
-        dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
-        COUNT(*) AS flow_count
-      FROM thread_flows
-      GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
-               dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
-      ORDER BY flow_count DESC
-      LIMIT 100
+    // Find distinct countries directly involved in this thread's story
+    // by looking at entity mentions with active roles (subject/actor/location)
+    const { rows: involvedCountries } = await pool.query(`
+      SELECT DISTINCT
+        co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+        co.iso_code AS iso,
+        'country' AS type,
+        -- Weight: subject > actor > location for ordering
+        MIN(CASE aem.role
+          WHEN 'subject'  THEN 1
+          WHEN 'actor'    THEN 2
+          WHEN 'location' THEN 3
+          ELSE 4
+        END) AS role_rank,
+        COUNT(DISTINCT sta.article_id) AS mention_count
+      FROM story_thread_articles sta
+      JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+      JOIN entities e ON e.id = aem.entity_id
+      JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
+      WHERE sta.thread_id = $1
+        AND e.entity_type = 'location'
+        AND aem.role IN ('subject', 'actor', 'location')
+        AND aem.confidence >= 0.6
+      GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+      ORDER BY role_rank, mention_count DESC
+      LIMIT 10
     `, [threadId]);
 
-    if (!rows.length) return res.json({ flows: [] });
+    if (involvedCountries.length < 2) {
+      // Fallback: if entity extraction hasn't run or found < 2 countries,
+      // try content-routed article_locations (legacy behavior)
+      const { rows } = await pool.query(`
+        WITH thread_flows AS (
+          SELECT
+            COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
+            COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
+            COALESCE(src_city.name, src_co.name)           AS src_place,
+            CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
+            CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+            src_co.iso_code AS src_iso,
+            COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
+            COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
+            COALESCE(dst_city.name, dst_co.name)           AS dst_place,
+            CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
+            CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
+            dst_co.iso_code AS dst_iso
+          FROM story_thread_articles sta
+          JOIN news_articles a        ON a.id = sta.article_id
+          JOIN article_locations al   ON al.article_id = a.id
+          JOIN countries src_co       ON src_co.id = a.country_id
+          JOIN countries dst_co       ON dst_co.id = al.country_id
+          LEFT JOIN cities src_city   ON src_city.id = a.city_id
+          LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
+          WHERE sta.thread_id = $1
+            AND al.routing_type = 'content'
+        )
+        SELECT
+          src_lat, src_lon, src_place, src_id, src_type, src_iso,
+          dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
+          COUNT(*) AS flow_count
+        FROM thread_flows
+        GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
+                 dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
+        ORDER BY flow_count DESC
+        LIMIT 100
+      `, [threadId]);
 
-    const maxCount = parseInt(rows[0].flow_count) || 1;
-    const flows = rows.map(r => ({
-      src: {
-        lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
-        place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso
-      },
-      dst: {
-        lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
-        place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso
-      },
-      count: parseInt(r.flow_count)
-    }));
+      if (!rows.length) return { flows: [], maxCount: 0 };
+      const maxCount = parseInt(rows[0].flow_count) || 1;
+      const flows = rows.map(r => ({
+        src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
+               place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso },
+        dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
+               place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso },
+        count: parseInt(r.flow_count)
+      }));
+      return { flows, maxCount };
+    }
 
+    // Build arcs between involved countries (consecutive pairs by role importance)
+    const flows = [];
+    for (let i = 0; i < involvedCountries.length - 1; i++) {
+      const src = involvedCountries[i];
+      const dst = involvedCountries[i + 1];
+      flows.push({
+        src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
+               place: src.place, id: src.id, type: 'country', iso: src.iso },
+        dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
+               place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
+        count: parseInt(src.mention_count) + parseInt(dst.mention_count)
+      });
+    }
+
+    const maxCount = flows.length ? Math.max(...flows.map(f => f.count)) : 1;
     return { flows, maxCount };
     });
     res.json(_cached);
@@ -1647,42 +1692,104 @@ app.get("/api/flows/thread/:id/route", async (req, res) => {
       return res.status(400).json({ error: "thread_id, src_id, dst_id required" });
     }
 
-    const srcJoin = srcType === "city" ? "a.city_id" : "a.country_id";
-    const dstJoin = dstType === "city" ? "al.city_id" : "al.country_id";
+    // Try entity-based lookup first: find articles that mention BOTH countries
+    // as subject/actor/location entities
+    const { rows: srcCountry } = await pool.query(
+      `SELECT iso_code FROM countries WHERE id = $1`, [srcId]
+    );
+    const { rows: dstCountry } = await pool.query(
+      `SELECT iso_code FROM countries WHERE id = $1`, [dstId]
+    );
 
-    const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        COALESCE(a.translated_title, a.title) AS title,
-        a.title AS original_title,
-        COALESCE(a.translated_summary, a.summary) AS summary,
-        a.published_at,
-        a.article_url,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
-        COALESCE(ns.name, ys.name) AS source_name,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        a.media_type,
-        a.video_id,
-        src_co.iso_code AS iso_code,
-        src_co.name AS country_name,
-        src_city.name AS city_name
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      JOIN article_locations al ON al.article_id = a.id
-      JOIN countries src_co ON src_co.id = a.country_id
-      LEFT JOIN cities src_city ON src_city.id = a.city_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      WHERE sta.thread_id = $1
-        AND ${srcJoin} = $2
-        AND ${dstJoin} = $3
-        AND al.routing_type IN ('content', 'source')
-      ORDER BY a.id, a.published_at DESC
-      LIMIT 50
-    `, [threadId, srcId, dstId]);
+    let rows;
+    if (srcCountry.length && dstCountry.length) {
+      const result = await pool.query(`
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.title AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at,
+          a.article_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          a.media_type,
+          a.video_id,
+          src_co.iso_code AS iso_code,
+          src_co.name AS country_name,
+          src_city.name AS city_name
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        JOIN countries src_co ON src_co.id = a.country_id
+        LEFT JOIN cities src_city ON src_city.id = a.city_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE sta.thread_id = $1
+          AND EXISTS (
+            SELECT 1 FROM article_entity_mentions aem
+            JOIN entities e ON e.id = aem.entity_id
+            WHERE aem.article_id = a.id
+              AND e.entity_type = 'location'
+              AND LOWER(e.country_code) = LOWER($2)
+              AND aem.role IN ('subject', 'actor', 'location')
+          )
+          AND EXISTS (
+            SELECT 1 FROM article_entity_mentions aem
+            JOIN entities e ON e.id = aem.entity_id
+            WHERE aem.article_id = a.id
+              AND e.entity_type = 'location'
+              AND LOWER(e.country_code) = LOWER($3)
+              AND aem.role IN ('subject', 'actor', 'location')
+          )
+        ORDER BY a.id, a.published_at DESC
+        LIMIT 50
+      `, [threadId, srcCountry[0].iso_code, dstCountry[0].iso_code]);
+      rows = result.rows;
+    }
+
+    // Fallback to legacy article_locations if entity lookup returned nothing
+    if (!rows || !rows.length) {
+      const srcJoin = srcType === "city" ? "a.city_id" : "a.country_id";
+      const dstJoin = dstType === "city" ? "al.city_id" : "al.country_id";
+      const result = await pool.query(`
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.title AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at,
+          a.article_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          a.media_type,
+          a.video_id,
+          src_co.iso_code AS iso_code,
+          src_co.name AS country_name,
+          src_city.name AS city_name
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        JOIN article_locations al ON al.article_id = a.id
+        JOIN countries src_co ON src_co.id = a.country_id
+        LEFT JOIN cities src_city ON src_city.id = a.city_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE sta.thread_id = $1
+          AND ${srcJoin} = $2
+          AND ${dstJoin} = $3
+          AND al.routing_type = 'content'
+        ORDER BY a.id, a.published_at DESC
+        LIMIT 50
+      `, [threadId, srcId, dstId]);
+      rows = result.rows;
+    }
 
     res.json({ articles: rows });
   } catch (err) {
@@ -2563,61 +2670,106 @@ app.get("/api/timelines/:id/articles", async (req, res) => {
   }
 });
 
-// GET /api/flows/timeline/:id — flow arcs for a timeline (same shape as
-// /api/flows/thread/:id so the existing __flowCreateArc can render it).
+// GET /api/flows/timeline/:id — flow arcs for a timeline
+// Uses entity extraction (subject/actor/location roles) to show only
+// countries directly involved in the story, not every reporting country.
 app.get("/api/flows/timeline/:id", async (req, res) => {
   try {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
     const _cached = await ttlCached(`flows/timeline:${timelineId}`, 60_000, async () => {
-    const { rows } = await pool.query(`
-      WITH tl_flows AS (
-        SELECT
-          COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
-          COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
-          COALESCE(src_city.name, src_co.name)           AS src_place,
-          CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
-          CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
-          src_co.iso_code AS src_iso,
-          COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
-          COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
-          COALESCE(dst_city.name, dst_co.name)           AS dst_place,
-          CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
-          CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
-          dst_co.iso_code AS dst_iso
-        FROM story_timeline_articles sta
-        JOIN news_articles a        ON a.id = sta.article_id
-        JOIN article_locations al   ON al.article_id = a.id
-        JOIN countries src_co       ON src_co.id = a.country_id
-        JOIN countries dst_co       ON dst_co.id = al.country_id
-        LEFT JOIN cities src_city   ON src_city.id = a.city_id
-        LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
-        WHERE sta.timeline_id = $1
-          AND al.routing_type IN ('content', 'source')
-      )
-      SELECT
-        src_lat, src_lon, src_place, src_id, src_type, src_iso,
-        dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
-        COUNT(*) AS flow_count
-      FROM tl_flows
-      GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
-               dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
-      ORDER BY flow_count DESC
-      LIMIT 100
+    // Find distinct countries directly involved in this timeline's story
+    const { rows: involvedCountries } = await pool.query(`
+      SELECT DISTINCT
+        co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+        co.iso_code AS iso,
+        'country' AS type,
+        MIN(CASE aem.role
+          WHEN 'subject'  THEN 1
+          WHEN 'actor'    THEN 2
+          WHEN 'location' THEN 3
+          ELSE 4
+        END) AS role_rank,
+        COUNT(DISTINCT sta.article_id) AS mention_count
+      FROM story_timeline_articles sta
+      JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+      JOIN entities e ON e.id = aem.entity_id
+      JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
+      WHERE sta.timeline_id = $1
+        AND e.entity_type = 'location'
+        AND aem.role IN ('subject', 'actor', 'location')
+        AND aem.confidence >= 0.6
+      GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+      ORDER BY role_rank, mention_count DESC
+      LIMIT 10
     `, [timelineId]);
 
-    if (!rows.length) return res.json({ flows: [] });
+    if (involvedCountries.length < 2) {
+      // Fallback to content-routed article_locations
+      const { rows } = await pool.query(`
+        WITH tl_flows AS (
+          SELECT
+            COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
+            COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
+            COALESCE(src_city.name, src_co.name)           AS src_place,
+            CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
+            CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
+            src_co.iso_code AS src_iso,
+            COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
+            COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
+            COALESCE(dst_city.name, dst_co.name)           AS dst_place,
+            CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
+            CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
+            dst_co.iso_code AS dst_iso
+          FROM story_timeline_articles sta
+          JOIN news_articles a        ON a.id = sta.article_id
+          JOIN article_locations al   ON al.article_id = a.id
+          JOIN countries src_co       ON src_co.id = a.country_id
+          JOIN countries dst_co       ON dst_co.id = al.country_id
+          LEFT JOIN cities src_city   ON src_city.id = a.city_id
+          LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
+          WHERE sta.timeline_id = $1
+            AND al.routing_type = 'content'
+        )
+        SELECT
+          src_lat, src_lon, src_place, src_id, src_type, src_iso,
+          dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
+          COUNT(*) AS flow_count
+        FROM tl_flows
+        GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
+                 dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
+        ORDER BY flow_count DESC
+        LIMIT 100
+      `, [timelineId]);
 
-    const maxCount = parseInt(rows[0].flow_count) || 1;
-    const flows = rows.map(r => ({
-      src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
-             place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso },
-      dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
-             place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso },
-      count: parseInt(r.flow_count)
-    }));
+      if (!rows.length) return { flows: [], maxCount: 0 };
+      const maxCount = parseInt(rows[0].flow_count) || 1;
+      const flows = rows.map(r => ({
+        src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
+               place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso },
+        dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
+               place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso },
+        count: parseInt(r.flow_count)
+      }));
+      return { flows, maxCount };
+    }
 
+    // Build arcs between involved countries (consecutive pairs by role importance)
+    const flows = [];
+    for (let i = 0; i < involvedCountries.length - 1; i++) {
+      const src = involvedCountries[i];
+      const dst = involvedCountries[i + 1];
+      flows.push({
+        src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
+               place: src.place, id: src.id, type: 'country', iso: src.iso },
+        dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
+               place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
+        count: parseInt(src.mention_count) + parseInt(dst.mention_count)
+      });
+    }
+
+    const maxCount = flows.length ? Math.max(...flows.map(f => f.count)) : 1;
     return { flows, maxCount };
     });
     res.json(_cached);
@@ -2638,37 +2790,97 @@ app.get("/api/flows/timeline/:id/route", async (req, res) => {
     if (!timelineId || !srcId || !dstId) {
       return res.status(400).json({ error: "timeline_id, src_id, dst_id required" });
     }
-    const srcJoin = srcType === "city" ? "a.city_id" : "a.country_id";
-    const dstJoin = dstType === "city" ? "al.city_id" : "al.country_id";
-    const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        COALESCE(a.translated_title, a.title) AS title,
-        a.title AS original_title,
-        COALESCE(a.translated_summary, a.summary) AS summary,
-        a.published_at, a.article_url,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        COALESCE(ns.name, ys.name) AS source_name,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        a.media_type, a.video_id,
-        src_co.iso_code AS iso_code,
-        src_co.name AS country_name, src_city.name AS city_name
-      FROM story_timeline_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      JOIN article_locations al ON al.article_id = a.id
-      JOIN countries src_co ON src_co.id = a.country_id
-      LEFT JOIN cities src_city ON src_city.id = a.city_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      WHERE sta.timeline_id = $1
-        AND ${srcJoin} = $2
-        AND ${dstJoin} = $3
-        AND al.routing_type IN ('content', 'source')
-      ORDER BY a.id, a.published_at DESC
-      LIMIT 50
-    `, [timelineId, srcId, dstId]);
+
+    // Try entity-based lookup first
+    const { rows: srcCountry } = await pool.query(
+      `SELECT iso_code FROM countries WHERE id = $1`, [srcId]
+    );
+    const { rows: dstCountry } = await pool.query(
+      `SELECT iso_code FROM countries WHERE id = $1`, [dstId]
+    );
+
+    let rows;
+    if (srcCountry.length && dstCountry.length) {
+      const result = await pool.query(`
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.title AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at, a.article_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          a.media_type, a.video_id,
+          src_co.iso_code AS iso_code,
+          src_co.name AS country_name, src_city.name AS city_name
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        JOIN countries src_co ON src_co.id = a.country_id
+        LEFT JOIN cities src_city ON src_city.id = a.city_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE sta.timeline_id = $1
+          AND EXISTS (
+            SELECT 1 FROM article_entity_mentions aem
+            JOIN entities e ON e.id = aem.entity_id
+            WHERE aem.article_id = a.id
+              AND e.entity_type = 'location'
+              AND LOWER(e.country_code) = LOWER($2)
+              AND aem.role IN ('subject', 'actor', 'location')
+          )
+          AND EXISTS (
+            SELECT 1 FROM article_entity_mentions aem
+            JOIN entities e ON e.id = aem.entity_id
+            WHERE aem.article_id = a.id
+              AND e.entity_type = 'location'
+              AND LOWER(e.country_code) = LOWER($3)
+              AND aem.role IN ('subject', 'actor', 'location')
+          )
+        ORDER BY a.id, a.published_at DESC
+        LIMIT 50
+      `, [timelineId, srcCountry[0].iso_code, dstCountry[0].iso_code]);
+      rows = result.rows;
+    }
+
+    // Fallback to legacy article_locations
+    if (!rows || !rows.length) {
+      const srcJoin = srcType === "city" ? "a.city_id" : "a.country_id";
+      const dstJoin = dstType === "city" ? "al.city_id" : "al.country_id";
+      const result = await pool.query(`
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.title AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at, a.article_url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          a.media_type, a.video_id,
+          src_co.iso_code AS iso_code,
+          src_co.name AS country_name, src_city.name AS city_name
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        JOIN article_locations al ON al.article_id = a.id
+        JOIN countries src_co ON src_co.id = a.country_id
+        LEFT JOIN cities src_city ON src_city.id = a.city_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE sta.timeline_id = $1
+          AND ${srcJoin} = $2
+          AND ${dstJoin} = $3
+          AND al.routing_type = 'content'
+        ORDER BY a.id, a.published_at DESC
+        LIMIT 50
+      `, [timelineId, srcId, dstId]);
+      rows = result.rows;
+    }
+
     res.json({ articles: rows });
   } catch (err) {
     console.error("[flows/timeline/route]", err.message);

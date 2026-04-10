@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Terms &amp; Conditions — earth00</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0d;
+      --surface: #141414;
+      --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.87);
+      --muted: rgba(255,255,255,0.45);
+      --accent: #4ade80;
+      --link: #60a5fa;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.75;
+      padding: 0;
+    }
+
+    /* ─── Top bar ──────────────────────────────────────────────────────────── */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,13,13,0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 24px;
+      height: 52px;
+    }
+
+    .topbar-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .topbar-home:hover { opacity: 1; }
+    .topbar-home svg { flex-shrink: 0; }
+
+    .topbar-sep { color: var(--border); font-size: 18px; }
+    .topbar-title { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+    /* ─── Layout ───────────────────────────────────────────────────────────── */
+    .layout {
+      display: flex;
+      gap: 40px;
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+    }
+
+    /* ─── Sidebar TOC ──────────────────────────────────────────────────────── */
+    .toc {
+      flex-shrink: 0;
+      width: 220px;
+      position: sticky;
+      top: 68px;
+      align-self: flex-start;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+    .toc::-webkit-scrollbar { width: 4px; }
+    .toc::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .toc-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-left: 12px;
+    }
+    .toc a {
+      display: block;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      line-height: 1.4;
+    }
+    .toc a:hover {
+      color: var(--text);
+      border-left-color: var(--accent);
+    }
+
+    /* ─── Main content ─────────────────────────────────────────────────────── */
+    .content { flex: 1; min-width: 0; }
+
+    .page-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .page-title {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .page-date {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 40px;
+    }
+
+    /* Summary box */
+    .summary-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 40px;
+    }
+    .summary-box h2 {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .summary-point {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+    .summary-point:last-child { margin-bottom: 0; }
+    .summary-dot {
+      flex-shrink: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-top: 8px;
+    }
+
+    /* Sections */
+    .policy-section {
+      margin-bottom: 48px;
+      scroll-margin-top: 72px;
+    }
+    .policy-section h2 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .policy-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 20px;
+      margin-bottom: 8px;
+      color: rgba(255,255,255,0.7);
+    }
+    .policy-section p {
+      margin-bottom: 14px;
+      color: rgba(255,255,255,0.78);
+    }
+    .policy-section ul, .policy-section ol {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 14px 0;
+    }
+    .policy-section ul li, .policy-section ol li {
+      position: relative;
+      padding-left: 18px;
+      margin-bottom: 6px;
+      color: rgba(255,255,255,0.78);
+      font-size: 14px;
+    }
+    .policy-section ul li::before, .policy-section ol li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 9px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+    .policy-section a { color: var(--link); text-decoration: none; }
+    .policy-section a:hover { text-decoration: underline; }
+
+    .in-short {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(74,222,128,0.08);
+      border: 1px solid rgba(74,222,128,0.2);
+      border-radius: 6px;
+      padding: 2px 10px;
+      margin-bottom: 12px;
+      letter-spacing: 0.02em;
+    }
+
+    /* Contact box */
+    .contact-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.75);
+      line-height: 1.6;
+    }
+    .contact-box a { color: var(--link); text-decoration: none; }
+    .contact-box a:hover { text-decoration: underline; }
+
+    /* Footer */
+    .page-footer {
+      text-align: center;
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .page-footer a { color: var(--link); text-decoration: none; }
+    .page-footer a:hover { text-decoration: underline; }
+
+    /* Responsive */
+    @media (max-width: 720px) {
+      .toc { display: none; }
+      .layout { padding: 32px 16px 80px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Top bar -->
+<nav class="topbar">
+  <a class="topbar-home" href="/">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 8L8 3L13 8V13H10V10H6V13H3V8Z" fill="currentColor"/>
+    </svg>
+    earth00
+  </a>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-title">Terms &amp; Conditions</span>
+</nav>
+
+<div class="layout">
+
+  <!-- Sidebar TOC -->
+  <aside class="toc">
+    <div class="toc-label">Contents</div>
+    <a href="#s1">1. Agreement to Terms</a>
+    <a href="#s2">2. Intellectual Property</a>
+    <a href="#s3">3. User Representations</a>
+    <a href="#s4">4. User Registration</a>
+    <a href="#s5">5. Purchases &amp; Payment</a>
+    <a href="#s6">6. Subscriptions</a>
+    <a href="#s7">7. Prohibited Activities</a>
+    <a href="#s8">8. User-Generated Content</a>
+    <a href="#s9">9. Contribution License</a>
+    <a href="#s10">10. Mobile Application</a>
+    <a href="#s11">11. Social Media</a>
+    <a href="#s12">12. Third-Party Links</a>
+    <a href="#s13">13. Services Management</a>
+    <a href="#s14">14. Privacy Policy</a>
+    <a href="#s15">15. DMCA / Copyright</a>
+    <a href="#s16">16. Term &amp; Termination</a>
+    <a href="#s17">17. Modifications</a>
+    <a href="#s18">18. Governing Law</a>
+    <a href="#s19">19. Dispute Resolution</a>
+    <a href="#s20">20. Corrections</a>
+    <a href="#s21">21. Disclaimer</a>
+    <a href="#s22">22. Limitation of Liability</a>
+    <a href="#s23">23. Indemnification</a>
+    <a href="#s24">24. Electronic Communications</a>
+    <a href="#s25">25. California Residents</a>
+    <a href="#s26">26. Miscellaneous</a>
+    <a href="#s27">27. Contact Us</a>
+  </aside>
+
+  <!-- Main content -->
+  <main class="content">
+
+    <div class="page-eyebrow">Legal</div>
+    <h1 class="page-title">Terms &amp; Conditions</h1>
+    <p class="page-date">Last updated April 09, 2026</p>
+
+    <p>These Terms and Conditions ("Terms") constitute a legally binding agreement between you ("you" or "your") and <strong>earth00 LLC</strong> ("we," "us," or "our"), governing your access to and use of the website <a href="https://earth00.com">https://earth00.com</a>, the earth00 mobile application, and any related services (collectively, the "Services").</p>
+
+    <p>By accessing or using the Services, you agree that you have read, understood, and agree to be bound by all of these Terms. If you do not agree with all of these Terms, you are expressly prohibited from using the Services and must discontinue use immediately.</p>
+
+    <p>We reserve the right to make changes to these Terms at any time. We will alert you about any changes by updating the "Last updated" date of these Terms, and you waive any right to receive specific notice of each such change. Your continued use of the Services after the date of any updated Terms constitutes your acceptance of the updated Terms.</p>
+
+    <!-- Summary box -->
+    <div class="summary-box" style="margin-top:32px;">
+      <h2>Key Points</h2>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Eligibility:</strong> You must be at least 18 years old and legally capable of entering into binding contracts.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Account:</strong> You are responsible for maintaining the confidentiality of your account and all activities under it.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Payments:</strong> Certain features require payment. All purchases are subject to our refund policy.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Content:</strong> We own the Services and content. You retain ownership of content you submit but grant us a license to use it.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Liability:</strong> Our liability is limited. The Services are provided "as is" without warranties.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Governing law:</strong> These Terms are governed by the laws of the State of California, USA.</div></div>
+    </div>
+
+    <!-- Section 1 -->
+    <section class="policy-section" id="s1">
+      <h2>1. Agreement to Our Legal Terms</h2>
+      <p>We are earth00 LLC ("earth00," "we," "us," or "our"), a limited liability company organized under the laws of the State of California, operating the website <a href="https://earth00.com">https://earth00.com</a> (the "Site"), the earth00 mobile application (the "App"), and related services that link to or reference these Terms (collectively, the "Services").</p>
+      <p>You can contact us by email at <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a> or by phone at <a href="tel:+12139822261">(213) 982-2261</a>.</p>
+      <p>These Terms constitute a legally binding agreement between you and earth00 LLC. By accessing the Services, you agree to abide by these Terms. If you do not agree, do not use the Services.</p>
+      <p>We recommend that you print a copy of these Terms for your records.</p>
+    </section>
+
+    <!-- Section 2 -->
+    <section class="policy-section" id="s2">
+      <h2>2. Intellectual Property Rights</h2>
+
+      <h3>Our Intellectual Property</h3>
+      <p>We are the owner or licensee of all intellectual property rights in our Services, including all source code, databases, functionality, software, website designs, audio, video, text, photographs, and graphics in the Services (collectively, the "Content"), as well as the trademarks, service marks, and logos contained therein (the "Marks").</p>
+      <p>The Content and Marks are protected by copyright, trademark, and other intellectual property laws and treaties around the world.</p>
+      <p>The Content and Marks are provided in or through the Services "AS IS" for your personal, non-commercial use or internal business purpose only.</p>
+
+      <h3>Your Use of Our Services</h3>
+      <p>Subject to your compliance with these Terms, we grant you a non-exclusive, non-transferable, revocable license to:</p>
+      <ul>
+        <li>Access the Services</li>
+        <li>Download or print a copy of any portion of the Content to which you have properly gained access, solely for your personal, non-commercial use or internal business purpose</li>
+      </ul>
+      <p>Except as set out in this section or elsewhere in our Terms, no part of the Services, Content, or Marks may be copied, reproduced, aggregated, republished, uploaded, posted, publicly displayed, encoded, translated, transmitted, distributed, sold, licensed, or otherwise exploited for any commercial purpose whatsoever, without our express prior written permission.</p>
+      <p>If you wish to make any use of the Services, Content, or Marks other than as set out in this section, please direct your request to <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>.</p>
+      <p>Any breach of these intellectual property rights will constitute a material breach of our Terms, and your right to use our Services will terminate immediately.</p>
+    </section>
+
+    <!-- Section 3 -->
+    <section class="policy-section" id="s3">
+      <h2>3. User Representations</h2>
+      <p>By using the Services, you represent and warrant that:</p>
+      <ul>
+        <li>All registration information you submit will be true, accurate, current, and complete</li>
+        <li>You will maintain the accuracy of such information and promptly update it as necessary</li>
+        <li>You have the legal capacity and you agree to comply with these Terms</li>
+        <li>You are not a minor in the jurisdiction in which you reside (or, if a minor, you have received parental permission to use the Services)</li>
+        <li>You will not access the Services through automated or non-human means, whether through a bot, script, or otherwise</li>
+        <li>You will not use the Services for any illegal or unauthorized purpose</li>
+        <li>Your use of the Services will not violate any applicable law or regulation</li>
+      </ul>
+      <p>If you provide any information that is untrue, inaccurate, not current, or incomplete, we have the right to suspend or terminate your account and refuse any and all current or future use of the Services.</p>
+    </section>
+
+    <!-- Section 4 -->
+    <section class="policy-section" id="s4">
+      <h2>4. User Registration</h2>
+      <p>You may be required to register to use the Services. You agree to keep your password confidential and will be responsible for all use of your account and password. We reserve the right to remove, reclaim, or change a username you select if we determine, in our sole discretion, that such username is inappropriate, obscene, or otherwise objectionable.</p>
+    </section>
+
+    <!-- Section 5 -->
+    <section class="policy-section" id="s5">
+      <h2>5. Purchases and Payment</h2>
+      <p>We accept the following forms of payment:</p>
+      <ul>
+        <li>PayPal</li>
+        <li>Visa</li>
+        <li>Mastercard</li>
+        <li>American Express</li>
+      </ul>
+      <p>You agree to provide current, complete, and accurate purchase and account information for all purchases made via the Services. You further agree to promptly update account and payment information, including email address, payment method, and payment card expiration date, so that we can complete your transactions and contact you as needed.</p>
+      <p>Sales tax will be added to the price of purchases as deemed required by us. We may change prices at any time. All payments shall be in US dollars.</p>
+      <p>You agree to pay all charges at the prices then in effect for your purchases and any applicable shipping fees, and you authorize us to charge your chosen payment provider for any such amounts upon placing your order. We reserve the right to correct any errors or mistakes in pricing, even if we have already requested or received payment.</p>
+      <p>We reserve the right to refuse any order placed through the Services. We may, in our sole discretion, limit or cancel quantities purchased per person, per household, or per order. These restrictions may include orders placed by or under the same customer account, the same payment method, and/or orders that use the same billing address.</p>
+    </section>
+
+    <!-- Section 6 -->
+    <section class="policy-section" id="s6">
+      <h2>6. Subscriptions</h2>
+
+      <p>earth00 offers paid subscription tiers that grant access to premium features, including but not limited to AI-generated analytical content, AI-powered translation services, and other enhanced capabilities as described on the Services at the time of purchase.</p>
+
+      <h3>Billing and Renewal</h3>
+      <p>Your subscription will continue and automatically renew unless canceled. You consent to our charging your payment method on a recurring basis without requiring your prior approval for each recurring charge, until such time as you cancel the applicable order. The length of your billing cycle will depend on the type of subscription plan you choose when you subscribe to the Services.</p>
+
+      <h3>AI-Generated Content</h3>
+      <p>Subscribers acknowledge that certain content provided through paid tiers — including analytical summaries, insights, and translations — is generated or assisted by artificial intelligence. While we strive for accuracy, AI-generated content is provided for informational purposes only and should not be relied upon as the sole basis for any decision-making. We do not guarantee the accuracy, completeness, or reliability of AI-generated content. You use such content at your own risk.</p>
+
+      <h3>Cancellation</h3>
+      <p>You can cancel your subscription at any time by logging into your account or contacting us using the contact information provided below. Your cancellation will take effect at the end of the current paid term. If you have any questions or are unsatisfied with our Services, please email us at <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>.</p>
+
+      <h3>Fee Changes</h3>
+      <p>We may, from time to time, make changes to the subscription fee and will communicate any price changes to you in accordance with applicable law.</p>
+    </section>
+
+    <!-- Section 7 -->
+    <section class="policy-section" id="s7">
+      <h2>7. Prohibited Activities</h2>
+      <p>You may not access or use the Services for any purpose other than that for which we make the Services available. The Services may not be used in connection with any commercial endeavors except those that are specifically endorsed or approved by us.</p>
+      <p>As a user of the Services, you agree not to:</p>
+      <ul>
+        <li>Systematically retrieve data or content from the Services to create or compile, directly or indirectly, a collection, compilation, database, or directory without our written permission</li>
+        <li>Trick, defraud, or mislead us and other users, especially in any attempt to learn sensitive account information such as user passwords</li>
+        <li>Circumvent, disable, or otherwise interfere with security-related features of the Services</li>
+        <li>Disparage, tarnish, or otherwise harm, in our opinion, us and/or the Services</li>
+        <li>Use any information obtained from the Services in order to harass, abuse, or harm another person</li>
+        <li>Make improper use of our support services or submit false reports of abuse or misconduct</li>
+        <li>Use the Services in a manner inconsistent with any applicable laws or regulations</li>
+        <li>Engage in unauthorized framing of or linking to the Services</li>
+        <li>Upload or transmit viruses, Trojan horses, or other material that interferes with any party's uninterrupted use and enjoyment of the Services</li>
+        <li>Engage in any automated use of the system, such as using scripts to send comments or messages, or using data mining, robots, or similar data gathering tools</li>
+        <li>Delete the copyright or other proprietary rights notice from any Content</li>
+        <li>Attempt to impersonate another user or person or use the username of another user</li>
+        <li>Upload or transmit any material that acts as a passive or active information collection or transmission mechanism</li>
+        <li>Interfere with, disrupt, or create an undue burden on the Services or the networks or services connected to the Services</li>
+        <li>Harass, annoy, intimidate, or threaten any of our employees or agents engaged in providing any portion of the Services to you</li>
+        <li>Attempt to bypass any measures of the Services designed to prevent or restrict access to the Services, or any portion of the Services</li>
+        <li>Copy or adapt the Services' software, including but not limited to HTML, JavaScript, or other code</li>
+        <li>Except as permitted by applicable law, decipher, decompile, disassemble, or reverse engineer any of the software comprising or in any way making up a part of the Services</li>
+        <li>Make any unauthorized use of the Services, including collecting usernames and/or email addresses of users by electronic or other means for the purpose of sending unsolicited email</li>
+        <li>Use the Services as part of any effort to compete with us or otherwise use the Services and/or the Content for any revenue-generating endeavor or commercial enterprise</li>
+        <li>Sell or otherwise transfer your profile</li>
+        <li>Use the Services to advertise or offer to sell goods and services</li>
+      </ul>
+    </section>
+
+    <!-- Section 8 -->
+    <section class="policy-section" id="s8">
+      <h2>8. User-Generated Contributions</h2>
+      <p>The Services may invite you to chat, contribute to, or participate in blogs, message boards, online forums, and other functionality during which you may create, submit, post, display, transmit, publish, distribute, or broadcast content and materials to us or through the Services, including but not limited to text, writings, video, audio, photographs, music, graphics, comments, reviews, suggestions, personal information, or other material ("Contributions").</p>
+      <p>Any Contribution you transmit may be treated as non-confidential and non-proprietary. When you create or make available any Contributions, you thereby represent and warrant that:</p>
+      <ul>
+        <li>The creation, distribution, transmission, public display, or performance, and the accessing, downloading, or copying of your Contributions do not and will not infringe the proprietary rights of any third party</li>
+        <li>You are the creator and owner of, or have the necessary licenses, rights, consents, releases, and permissions to use and to authorize us, the Services, and other users to use your Contributions in any manner contemplated by the Services and these Terms</li>
+        <li>You have the written consent, release, and/or permission of each identifiable individual person in your Contributions to use their name or likeness</li>
+        <li>Your Contributions are not false, inaccurate, or misleading</li>
+        <li>Your Contributions are not unsolicited or unauthorized advertising, promotional materials, pyramid schemes, chain letters, spam, mass mailings, or other forms of solicitation</li>
+        <li>Your Contributions are not obscene, lewd, violent, harassing, libelous, slanderous, or otherwise objectionable (as determined by us)</li>
+        <li>Your Contributions do not ridicule, mock, disparage, intimidate, or abuse anyone</li>
+        <li>Your Contributions do not violate any applicable law, regulation, or rule</li>
+        <li>Your Contributions do not violate the privacy or publicity rights of any third party</li>
+        <li>Your Contributions do not include any material that solicits personal information from anyone under the age of 18 or exploits people under the age of 18 in a sexual or violent manner</li>
+        <li>Your Contributions do not violate any applicable law concerning child pornography or otherwise intended to protect the health or well-being of minors</li>
+        <li>Your Contributions do not include any offensive comments that are connected to race, national origin, gender, sexual preference, or physical handicap</li>
+        <li>Your Contributions do not otherwise violate, or link to material that violates, any provision of these Terms or any applicable law or regulation</li>
+      </ul>
+      <p>Any use of the Services in violation of the foregoing violates these Terms and may result in, among other things, termination or suspension of your rights to use the Services.</p>
+    </section>
+
+    <!-- Section 9 -->
+    <section class="policy-section" id="s9">
+      <h2>9. Contribution License</h2>
+      <p>By posting your Contributions to any part of the Services, you automatically grant, and you represent and warrant that you have the right to grant, to us an unrestricted, unlimited, irrevocable, perpetual, non-exclusive, transferable, royalty-free, fully paid, worldwide right and license to: host, use, copy, reproduce, disclose, sell, resell, publish, broadcast, retitle, archive, store, cache, publicly perform, publicly display, reformat, translate, transmit, excerpt (in whole or in part), and distribute such Contributions for any purpose, commercial, advertising, or otherwise, and to prepare derivative works of, or incorporate into other works, such Contributions, and to grant and authorize sublicenses of the foregoing.</p>
+      <p>This license includes our use of your name, company name, and franchise name, as applicable, and any of the trademarks, service marks, trade names, logos, and personal and commercial images you provide.</p>
+
+      <h3>Your Feedback</h3>
+      <p>You acknowledge and agree that any questions, comments, suggestions, ideas, feedback, or other information regarding the Services ("Feedback") provided by you to us are non-confidential and shall become our sole property. We shall own exclusive rights, including all intellectual property rights, and shall be entitled to the unrestricted use and dissemination of these Feedback for any lawful purpose, commercial or otherwise, without acknowledgment or compensation to you.</p>
+    </section>
+
+    <!-- Section 10 -->
+    <section class="policy-section" id="s10">
+      <h2>10. Mobile Application License</h2>
+
+      <h3>Use License</h3>
+      <p>If you access the Services via the App, we grant you a revocable, non-exclusive, non-transferable, limited right to install and use the App on wireless electronic devices owned or controlled by you, and to access and use the App on such devices strictly in accordance with these Terms.</p>
+
+      <p>You shall not:</p>
+      <ul>
+        <li>Except as permitted by applicable law, decompile, reverse engineer, disassemble, attempt to derive the source code of, or decrypt the App</li>
+        <li>Make any modification, adaptation, improvement, enhancement, translation, or derivative work from the App</li>
+        <li>Violate any applicable laws, rules, or regulations in connection with your access or use of the App</li>
+        <li>Remove, alter, or obscure any proprietary notice posted by us or the licensors of the App</li>
+        <li>Use the App for any revenue-generating endeavor, commercial enterprise, or other purpose for which it is not designed or intended</li>
+        <li>Make the App available over a network or other environment permitting access or use by multiple devices or users at the same time</li>
+        <li>Use the App for creating a product, service, or software that is, directly or indirectly, competitive with or in any way a substitute for the App</li>
+        <li>Use the App to send automated queries to any website or to send any unsolicited commercial email</li>
+        <li>Use any proprietary information or interfaces of ours or other intellectual property in the design, development, manufacture, licensing, or distribution of any applications, accessories, or devices for use with the App</li>
+      </ul>
+
+      <h3>Apple and Android Devices</h3>
+      <p>The following terms apply when you use the App obtained from either the Apple Store or Google Play:</p>
+      <ul>
+        <li>The license granted to you for our App is limited to a non-transferable license to use the application on a device that utilizes the Apple iOS or Android operating systems, as applicable, in accordance with the usage rules set forth in the applicable app store's terms of service</li>
+        <li>We are responsible for providing any maintenance and support services with respect to the App as specified in these Terms or as otherwise required under applicable law. Apple/Google have no obligation to furnish any maintenance and support services with respect to the App</li>
+        <li>In the event of any failure of the App to conform to any applicable warranty, you may notify Apple/Google, and they will refund the purchase price, if any, for the App. To the maximum extent permitted by applicable law, Apple/Google will have no other warranty obligation with respect to the App</li>
+        <li>Apple/Google are not responsible for addressing any claims by you or any third party relating to the App or your possession and/or use of the App</li>
+        <li>Apple/Google are third-party beneficiaries of these Terms as they relate to your license of the App, and upon your acceptance of these Terms, Apple/Google will have the right (and will be deemed to have accepted the right) to enforce these Terms against you</li>
+      </ul>
+    </section>
+
+    <!-- Section 11 -->
+    <section class="policy-section" id="s11">
+      <h2>11. Social Media</h2>
+      <p>As part of the functionality of the Services, you may link your account with online accounts you have with third-party service providers ("Third-Party Accounts") by either: (1) providing your Third-Party Account login information through the Services; or (2) allowing us to access your Third-Party Account, as is permitted under the applicable terms and conditions that govern your use of each Third-Party Account.</p>
+      <p>You represent and warrant that you are entitled to disclose your Third-Party Account login information to us and/or grant us access to your Third-Party Account, without breach by you of any of the terms and conditions that govern your use of the applicable Third-Party Account.</p>
+      <p>We will not be liable for any losses, costs, or expenses arising from the use of Third-Party Accounts. You may remove the connection between your account and Third-Party Accounts at any time by contacting us or through your account settings.</p>
+    </section>
+
+    <!-- Section 12 -->
+    <section class="policy-section" id="s12">
+      <h2>12. Third-Party Websites and Content</h2>
+      <p>The Services may contain links to other websites ("Third-Party Websites") as well as articles, photographs, text, graphics, pictures, designs, music, sound, video, information, applications, software, and other content or items belonging to or originating from third parties ("Third-Party Content").</p>
+      <p>Such Third-Party Websites and Third-Party Content are not investigated, monitored, or checked for accuracy, appropriateness, or completeness by us, and we are not responsible for any Third-Party Websites accessed through the Services or any Third-Party Content posted on, available through, or installed from the Services.</p>
+      <p>Inclusion of, linking to, or permitting the use or installation of any Third-Party Websites or any Third-Party Content does not imply approval or endorsement thereof by us. If you decide to leave the Services and access the Third-Party Websites or to use or install any Third-Party Content, you do so at your own risk.</p>
+    </section>
+
+    <!-- Section 13 -->
+    <section class="policy-section" id="s13">
+      <h2>13. Services Management</h2>
+      <p>We reserve the right, but not the obligation, to:</p>
+      <ul>
+        <li>Monitor the Services for violations of these Terms</li>
+        <li>Take appropriate legal action against anyone who, in our sole discretion, violates the law or these Terms, including without limitation, reporting such user to law enforcement authorities</li>
+        <li>In our sole discretion and without limitation, refuse, restrict access to, limit the availability of, or disable (to the extent technologically feasible) any of your Contributions or any portion thereof</li>
+        <li>In our sole discretion and without limitation, notice, or liability, remove from the Services or otherwise disable all files and content that are excessive in size or are in any way burdensome to our systems</li>
+        <li>Otherwise manage the Services in a manner designed to protect our rights and property and to facilitate the proper functioning of the Services</li>
+      </ul>
+    </section>
+
+    <!-- Section 14 -->
+    <section class="policy-section" id="s14">
+      <h2>14. Privacy Policy</h2>
+      <p>We care about data privacy and security. Please review our <a href="/privacy.html">Privacy Policy</a>. By using the Services, you agree to be bound by our Privacy Policy, which is incorporated into these Terms. Please be advised the Services are hosted in the United States. If you access the Services from any other region of the world with laws governing personal data collection, use, or disclosure that differ from applicable United States laws, then through your continued use of the Services, you are transferring your data to the United States, and you expressly consent to have your data transferred to and processed in the United States.</p>
+    </section>
+
+    <!-- Section 15 -->
+    <section class="policy-section" id="s15">
+      <h2>15. Copyright Infringements (DMCA)</h2>
+      <p>We respect the intellectual property rights of others. If you believe that any material available on or through the Services infringes upon any copyright you own or control, please immediately notify us using the contact information provided below (a "DMCA Notification"). A copy of your DMCA Notification will be sent to the person who posted the material addressed in the Notification.</p>
+      <p>Please be advised that pursuant to applicable law you may be held liable for damages if you make material misrepresentations in a DMCA Notification. Thus, if you are not sure that material located on or linked to by the Services infringes your copyright, you should consider first contacting an attorney.</p>
+      <p>To submit a DMCA Notification, email <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a> with the subject line "DMCA Notice" and include:</p>
+      <ul>
+        <li>A description of the copyrighted work claimed to have been infringed</li>
+        <li>A description of the infringing material and its location on the Services</li>
+        <li>Your contact information (address, phone number, email)</li>
+        <li>A statement that you have a good faith belief that use of the material is not authorized by the copyright owner</li>
+        <li>A statement, under penalty of perjury, that the information in the notification is accurate and that you are the owner or authorized agent of the copyright owner</li>
+        <li>Your physical or electronic signature</li>
+      </ul>
+    </section>
+
+    <!-- Section 16 -->
+    <section class="policy-section" id="s16">
+      <h2>16. Term and Termination</h2>
+      <p>These Terms shall remain in full force and effect while you use the Services. WITHOUT LIMITING ANY OTHER PROVISION OF THESE TERMS, WE RESERVE THE RIGHT TO, IN OUR SOLE DISCRETION AND WITHOUT NOTICE OR LIABILITY, DENY ACCESS TO AND USE OF THE SERVICES (INCLUDING BLOCKING CERTAIN IP ADDRESSES), TO ANY PERSON FOR ANY REASON OR FOR NO REASON, INCLUDING WITHOUT LIMITATION FOR BREACH OF ANY REPRESENTATION, WARRANTY, OR COVENANT CONTAINED IN THESE TERMS OR OF ANY APPLICABLE LAW OR REGULATION. WE MAY TERMINATE YOUR USE OR PARTICIPATION IN THE SERVICES OR DELETE YOUR ACCOUNT AND ANY CONTENT OR INFORMATION THAT YOU POSTED AT ANY TIME, WITHOUT WARNING, IN OUR SOLE DISCRETION.</p>
+      <p>If we terminate or suspend your account for any reason, you are prohibited from registering and creating a new account under your name, a fake or borrowed name, or the name of any third party, even if you may be acting on behalf of the third party. In addition to terminating or suspending your account, we reserve the right to take appropriate legal action, including without limitation pursuing civil, criminal, and injunctive redress.</p>
+    </section>
+
+    <!-- Section 17 -->
+    <section class="policy-section" id="s17">
+      <h2>17. Modifications and Interruptions</h2>
+      <p>We reserve the right to change, modify, or remove the contents of the Services at any time or for any reason at our sole discretion without notice. However, we have no obligation to update any information on our Services. We will not be liable to you or any third party for any modification, price change, suspension, or discontinuance of the Services.</p>
+      <p>We cannot guarantee the Services will be available at all times. We may experience hardware, software, or other problems or need to perform maintenance related to the Services, resulting in interruptions, delays, or errors. We reserve the right to change, revise, update, suspend, discontinue, or otherwise modify the Services at any time or for any reason without notice to you. You agree that we have no liability whatsoever for any loss, damage, or inconvenience caused by your inability to access or use the Services during any downtime or discontinuance of the Services.</p>
+    </section>
+
+    <!-- Section 18 -->
+    <section class="policy-section" id="s18">
+      <h2>18. Governing Law</h2>
+      <p>These Terms shall be governed by and defined following the laws of the State of California, United States. earth00 LLC and yourself irrevocably consent that the courts of Los Angeles County, California shall have exclusive jurisdiction to resolve any dispute which may arise in connection with these Terms.</p>
+    </section>
+
+    <!-- Section 19 -->
+    <section class="policy-section" id="s19">
+      <h2>19. Dispute Resolution</h2>
+
+      <h3>Informal Negotiations</h3>
+      <p>To expedite resolution and control the cost of any dispute, controversy, or claim related to these Terms (each a "Dispute" and collectively, the "Disputes") brought by either you or us (individually, a "Party" and collectively, the "Parties"), the Parties agree to first attempt to negotiate any Dispute informally for at least thirty (30) days before initiating arbitration. Such informal negotiations commence upon written notice from one Party to the other Party.</p>
+
+      <h3>Binding Arbitration</h3>
+      <p>Any dispute arising out of or in connection with these Terms, including any question regarding its existence, validity, or termination, shall be referred to and finally resolved by the American Arbitration Association ("AAA") under its Consumer Arbitration Rules. The arbitration shall be conducted in Los Angeles County, California, United States. The language of the arbitration shall be English. The arbitrator's decision shall be final and binding on both Parties.</p>
+
+      <h3>Restrictions</h3>
+      <p>The Parties agree that any arbitration shall be limited to the Dispute between the Parties individually. To the full extent permitted by law: (a) no arbitration shall be joined with any other proceeding; (b) there is no right or authority for any Dispute to be arbitrated on a class-action basis or to utilize class action procedures; and (c) there is no right or authority for any Dispute to be brought in a purported representative capacity on behalf of the general public or any other persons.</p>
+
+      <h3>Exceptions to Informal Negotiations and Arbitration</h3>
+      <p>The Parties agree that the following Disputes are not subject to the above provisions concerning informal negotiations and binding arbitration: (a) any Disputes seeking to enforce or protect, or concerning the validity of, any of the intellectual property rights of a Party; (b) any Dispute related to, or arising from, allegations of theft, piracy, invasion of privacy, or unauthorized use; and (c) any claim for injunctive relief.</p>
+    </section>
+
+    <!-- Section 20 -->
+    <section class="policy-section" id="s20">
+      <h2>20. Corrections</h2>
+      <p>There may be information on the Services that contains typographical errors, inaccuracies, or omissions, including descriptions, pricing, availability, and various other information. We reserve the right to correct any errors, inaccuracies, or omissions and to change or update the information on the Services at any time, without prior notice.</p>
+    </section>
+
+    <!-- Section 21 -->
+    <section class="policy-section" id="s21">
+      <h2>21. Disclaimer</h2>
+      <p>THE SERVICES ARE PROVIDED ON AN "AS-IS" AND "AS-AVAILABLE" BASIS. YOU AGREE THAT YOUR USE OF THE SERVICES WILL BE AT YOUR SOLE RISK. TO THE FULLEST EXTENT PERMITTED BY LAW, WE DISCLAIM ALL WARRANTIES, EXPRESS OR IMPLIED, IN CONNECTION WITH THE SERVICES AND YOUR USE THEREOF, INCLUDING, WITHOUT LIMITATION, THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. WE MAKE NO WARRANTIES OR REPRESENTATIONS ABOUT THE ACCURACY OR COMPLETENESS OF THE SERVICES' CONTENT OR THE CONTENT OF ANY WEBSITES OR MOBILE APPLICATIONS LINKED TO THE SERVICES AND WE WILL ASSUME NO LIABILITY OR RESPONSIBILITY FOR ANY:</p>
+      <ul>
+        <li>Errors, mistakes, or inaccuracies of content and materials</li>
+        <li>Personal injury or property damage, of any nature whatsoever, resulting from your access to and use of the Services</li>
+        <li>Any unauthorized access to or use of our secure servers and/or any personal information and/or financial information stored therein</li>
+        <li>Any interruption or cessation of transmission to or from the Services</li>
+        <li>Any bugs, viruses, Trojan horses, or the like which may be transmitted to or through the Services by any third party</li>
+        <li>Any errors or omissions in any content and materials or for any loss or damage of any kind incurred as a result of the use of any content posted, transmitted, or otherwise made available via the Services</li>
+      </ul>
+      <p>WE DO NOT WARRANT, ENDORSE, GUARANTEE, OR ASSUME RESPONSIBILITY FOR ANY PRODUCT OR SERVICE ADVERTISED OR OFFERED BY A THIRD PARTY THROUGH THE SERVICES, ANY HYPERLINKED WEBSITE, OR ANY WEBSITE OR MOBILE APPLICATION FEATURED IN ANY BANNER OR OTHER ADVERTISING, AND WE WILL NOT BE A PARTY TO OR IN ANY WAY BE RESPONSIBLE FOR MONITORING ANY TRANSACTION BETWEEN YOU AND ANY THIRD-PARTY PROVIDERS OF PRODUCTS OR SERVICES.</p>
+      <p>THE CONTENT PROVIDED THROUGH THE SERVICES, INCLUDING NEWS, DATA, ANALYSIS, AND AI-GENERATED INSIGHTS, IS FOR INFORMATIONAL PURPOSES ONLY AND SHOULD NOT BE RELIED UPON AS THE SOLE BASIS FOR ANY DECISION-MAKING.</p>
+    </section>
+
+    <!-- Section 22 -->
+    <section class="policy-section" id="s22">
+      <h2>22. Limitations of Liability</h2>
+      <p>IN NO EVENT WILL WE OR OUR DIRECTORS, EMPLOYEES, OR AGENTS BE LIABLE TO YOU OR ANY THIRD PARTY FOR ANY DIRECT, INDIRECT, CONSEQUENTIAL, EXEMPLARY, INCIDENTAL, SPECIAL, OR PUNITIVE DAMAGES, INCLUDING LOST PROFIT, LOST REVENUE, LOSS OF DATA, OR OTHER DAMAGES ARISING FROM YOUR USE OF THE SERVICES, EVEN IF WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.</p>
+      <p>NOTWITHSTANDING ANYTHING TO THE CONTRARY CONTAINED HEREIN, OUR LIABILITY TO YOU FOR ANY CAUSE WHATSOEVER AND REGARDLESS OF THE FORM OF THE ACTION, WILL AT ALL TIMES BE LIMITED TO THE AMOUNT PAID, IF ANY, BY YOU TO US DURING THE SIX (6) MONTH PERIOD PRIOR TO ANY CAUSE OF ACTION ARISING. CERTAIN US STATE LAWS AND INTERNATIONAL LAWS DO NOT ALLOW LIMITATIONS ON IMPLIED WARRANTIES OR THE EXCLUSION OR LIMITATION OF CERTAIN DAMAGES. IF THESE LAWS APPLY TO YOU, SOME OR ALL OF THE ABOVE DISCLAIMERS OR LIMITATIONS MAY NOT APPLY TO YOU, AND YOU MAY HAVE ADDITIONAL RIGHTS.</p>
+    </section>
+
+    <!-- Section 23 -->
+    <section class="policy-section" id="s23">
+      <h2>23. Indemnification</h2>
+      <p>You agree to defend, indemnify, and hold us harmless, including our subsidiaries, affiliates, and all of our respective officers, agents, partners, and employees, from and against any loss, damage, liability, claim, or demand, including reasonable attorneys' fees and expenses, made by any third party due to or arising out of:</p>
+      <ul>
+        <li>Your Contributions</li>
+        <li>Use of the Services</li>
+        <li>Breach of these Terms</li>
+        <li>Any breach of your representations and warranties set forth in these Terms</li>
+        <li>Your violation of the rights of a third party, including but not limited to intellectual property rights</li>
+        <li>Any overt harmful act toward any other user of the Services with whom you connected via the Services</li>
+      </ul>
+      <p>Notwithstanding the foregoing, we reserve the right, at your expense, to assume the exclusive defense and control of any matter for which you are required to indemnify us, and you agree to cooperate, at your expense, with our defense of such claims. We will use reasonable efforts to notify you of any such claim, action, or proceeding which is subject to this indemnification upon becoming aware of it.</p>
+    </section>
+
+    <!-- Section 24 -->
+    <section class="policy-section" id="s24">
+      <h2>24. Electronic Communications, Transactions, and Signatures</h2>
+      <p>Visiting the Services, sending us emails, and completing online forms constitute electronic communications. You consent to receive electronic communications, and you agree that all agreements, notices, disclosures, and other communications we provide to you electronically, via email and on the Services, satisfy any legal requirement that such communication be in writing.</p>
+      <p>YOU HEREBY AGREE TO THE USE OF ELECTRONIC SIGNATURES, CONTRACTS, ORDERS, AND OTHER RECORDS, AND TO ELECTRONIC DELIVERY OF NOTICES, POLICIES, AND RECORDS OF TRANSACTIONS INITIATED OR COMPLETED BY US OR VIA THE SERVICES.</p>
+    </section>
+
+    <!-- Section 25 -->
+    <section class="policy-section" id="s25">
+      <h2>25. California Users and Residents</h2>
+      <p>If any complaint with us is not satisfactorily resolved, you can contact the Complaint Assistance Unit of the Division of Consumer Services of the California Department of Consumer Affairs in writing at 1625 North Market Blvd., Suite N 112, Sacramento, California 95834 or by telephone at (800) 952-5210 or (916) 445-1254.</p>
+    </section>
+
+    <!-- Section 26 -->
+    <section class="policy-section" id="s26">
+      <h2>26. Miscellaneous</h2>
+      <p>These Terms and any policies or operating rules posted by us on the Services or in respect to the Services constitute the entire agreement and understanding between you and us. Our failure to exercise or enforce any right or provision of these Terms shall not operate as a waiver of such right or provision.</p>
+      <p>These Terms operate to the fullest extent permissible by law. We may assign any or all of our rights and obligations to others at any time. We shall not be responsible or liable for any loss, damage, delay, or failure to act caused by any cause beyond our reasonable control.</p>
+      <p>If any provision or part of a provision of these Terms is determined to be unlawful, void, or unenforceable, that provision or part of the provision is deemed severable from these Terms and does not affect the validity and enforceability of any remaining provisions.</p>
+      <p>There is no joint venture, partnership, employment or agency relationship created between you and us as a result of these Terms or use of the Services. You agree that these Terms will not be construed against us by virtue of having drafted them.</p>
+      <p>You hereby waive any and all defenses you may have based on the electronic form of these Terms and the lack of signing by the parties hereto to execute these Terms.</p>
+    </section>
+
+    <!-- Section 27 -->
+    <section class="policy-section" id="s27">
+      <h2>27. Contact Us</h2>
+      <p>In order to resolve a complaint regarding the Services or to receive further information regarding use of the Services, please contact us at:</p>
+      <div class="contact-box">
+        <strong>earth00</strong><br>
+        Los Angeles County, California, United States<br>
+        Phone: <a href="tel:+12139822261">(213) 982-2261</a><br>
+        Email: <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="page-footer">
+  <a href="/">earth00</a> &nbsp;·&nbsp;
+  <a href="/terms.html">Terms &amp; Conditions</a> &nbsp;·&nbsp;
+  <a href="/privacy.html">Privacy Policy</a> &nbsp;·&nbsp;
+  Questions? <a href="mailto:bboonoonoo@gmail.com">bboonoonoo@gmail.com</a>
+</footer>
+
+</body>
+</html>
