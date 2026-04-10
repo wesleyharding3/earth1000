@@ -7429,7 +7429,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       .catch(() => {})
       .finally(finish);
 
-    fetch(`${API}/api/news/search?limit=10&offset=0`)
+    fetch(`${API}/api/news/search?limit=25&offset=0`)
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         const arts = Array.isArray(data) ? data : (data.articles || []);
@@ -17049,7 +17049,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     ];
     const activeBiases = new Set(BIAS_OPTIONS.map(b => b.key));
     window.__nfArticles = articles;
-    const LIMIT = 15;
+    const LIMIT = 25;
     const viewport  = document.getElementById("nfViewport");
     const grid      = document.getElementById("nfGrid");
     const spinRow   = document.getElementById("nfSpinRow");
@@ -17324,10 +17324,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const isDefaultQuery =
         !lastKeyword && !currentTag && !fromSel.size && !aboutSel.size &&
         !dateFrom.value && !dateTo.value;
-      if (isDefaultQuery && Array.isArray(window.__preloadedFeed) && window.__preloadedFeed.length) {
+      const preloadHit = isDefaultQuery && Array.isArray(window.__preloadedFeed) && window.__preloadedFeed.length;
+      if (preloadHit) {
         articles = window.__preloadedFeed.slice();
         window.__nfArticles = articles;
         if (window.__preloadedFeedTotal != null) totalCount = window.__preloadedFeedTotal;
+        offset = articles.length;
+        hasMore = (window.__preloadedFeedTotal == null) || (totalCount > articles.length);
         renderCards(filtered());
         updateMetaCount();
       } else {
@@ -17336,7 +17339,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       spinRow.classList.remove("on");
       searchBtn.classList.add("busy");
       searchBtn.innerHTML = `<div class="nfSpinner" style="border-top-color:rgba(255,210,120,0.7);width:13px;height:13px;border-width:2px;margin:0;"></div> Searching…`;
-      renderPills(); fetchPage();
+      renderPills();
+      if (!preloadHit) fetchPage(); else resetSearchBtn();
     }
 
     function buildUrl(off) {

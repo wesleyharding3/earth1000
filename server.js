@@ -663,6 +663,78 @@ app.get("/api/tags", async (req, res) => {
 /* =========================================
    Search — relational (from → keyword → about)
 ========================================= */
+
+// Shared helper: executes the default (no-filter) news search query.
+// Used by the endpoint fast-path and by _warmFeedCaches.
+async function _executeNewsSearch({ effectiveLimit, offset }) {
+  const conditions = [`a.city_id IS NULL`, `a.published_at > NOW() - INTERVAL '72 hours'`];
+  const params = [effectiveLimit + 1, offset];
+  const { rows } = await pool.query(`
+    SELECT * FROM (
+      SELECT
+        a.id, a.title, a.translated_title, a.url, a.article_url,
+        a.summary, a.translated_summary,
+        COALESCE(a.image_url, img_a.public_url) AS image_url,
+        img_a.public_url AS catalog_image_url,
+        a.published_at, a.sentiment_score,
+        l.iso_code_2 AS language, a.base_priority,
+        COALESCE(ns.name, ys.name) AS source_name,
+        ns.source_summary,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        COALESCE(ns.site_url, ys.site_url) AS site_url,
+        src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+        COALESCE(cfb.boost_score, 1.0) AS country_boost,
+        GREATEST(
+          POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+          0.02
+        ) AS recency_decay,
+        a.media_type, a.video_id, a.duration_seconds
+      FROM news_articles a
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN languages l ON l.id = ns.language_id
+      JOIN countries src_co ON src_co.id = a.country_id
+      LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+      WHERE ${conditions.join(' AND ')}
+    ) sub
+    ORDER BY (
+      (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
+      * POWER(sub.country_boost, 2.0)
+    ) DESC
+    LIMIT $1 OFFSET $2
+  `, params);
+
+  const hasMore = rows.length > effectiveLimit;
+  if (hasMore) rows.pop();
+
+  let results = rows.map(r => ({
+    ...r,
+    final_priority: (
+      (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
+    ) * Math.pow(r.country_boost || 1, 2.0)
+  }));
+
+  if (results.length >= 8) {
+    results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
+    results = countryVarianceRerank(results);
+  }
+
+  const PRIORITY_BAND = 0.03;
+  results.sort((a, b) => {
+    const pa = a.final_priority || 0;
+    const pb = b.final_priority || 0;
+    const maxP = Math.max(pa, pb) || 1;
+    if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
+      return new Date(b.published_at) - new Date(a.published_at);
+    }
+    return pb - pa;
+  });
+
+  return { total: offset + results.length + (hasMore ? 1 : 0), articles: results };
+}
+
 app.get("/api/news/search", async (req, res) => {
   try {
     const limit  = parseOptionalPositiveInt(req.query.limit);
@@ -679,6 +751,17 @@ app.get("/api/news/search", async (req, res) => {
     const keyword  = req.query.keyword?.trim() || null;
     const fromDate = req.query.from_date?.trim() || null;
     const toDate   = req.query.to_date?.trim()   || null;
+
+    // ── Fast path: default query (no filters, page 0) → serve from TTL cache ──
+    const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag && offset === 0;
+    const effectiveLimit = limit || 24;
+    if (isDefaultQuery) {
+      const cacheKey = `news/search:default:${effectiveLimit}`;
+      const cached = await ttlCached(cacheKey, 20_000, async () => {
+        return await _executeNewsSearch({ effectiveLimit, offset: 0 });
+      });
+      return res.json(cached);
+    }
 
     const conditions = [];
     const params     = [];
@@ -733,7 +816,6 @@ app.get("/api/news/search", async (req, res) => {
       : "";
 
     const needsLocJoin = !!aboutIds?.length;
-    const effectiveLimit = limit || 24;
 
     // Fetch 1 extra row to know if there are more pages (avoids expensive COUNT)
     params.push(effectiveLimit + 1, offset);
@@ -4807,6 +4889,7 @@ async function _warmFeedCaches() {
   const http = require('http');
   const base = `http://localhost:${PORT}`;
   const urls = [
+    `${base}/api/news/search?limit=25&offset=0`,
     `${base}/api/threads/latest?limit=30`,
     `${base}/api/timelines/latest?limit=30`,
   ];
