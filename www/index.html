@@ -5130,6 +5130,8 @@ body.ticker-active #flowControls {
       gap: 8px;
       flex-shrink: 0;
     }
+    /* Push collapse button to far right of title row */
+    .nfTitleRow > .nfCollapseBtn { margin-left: auto; }
 
     /* ── Filter row: scrollable strip of filter controls ── */
     .nfFiltersRow {
@@ -5176,20 +5178,6 @@ body.ticker-active #flowControls {
     #nfQueryBar.nf-collapsed .nfFiltersRow,
     #nfQueryBar.nf-collapsed #nfBuilderRow {
       display: none !important;
-    }
-
-    /* When Feed view is active (i.e. the feed filters can collapse), move
-       the dropdown chevron BELOW the "News Feed" title instead of to the
-       right of it. This gives the title row a cleaner centered look and
-       makes the toggle easier to reach with a thumb. */
-    #newsFeedPage:not(.nf-threads-mode) .nfTitleRow {
-      padding-bottom: 26px;
-    }
-    #newsFeedPage:not(.nf-threads-mode) .nfTitleRow .nfCollapseBtn {
-      position: absolute;
-      left: 50%;
-      bottom: 0;
-      transform: translateX(-50%);
     }
 
     /* ── Threads / Feed view toggle ── */
@@ -12430,14 +12418,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const _pri = _res && _res.primary ? _res.primary : null;
               if (_pri && _pri.name) {
                 const _name = _pri.name;
+                const _key = _pri.key;
                 _pendingTouchPick = () => {
                   touchNodeSelectTime = Date.now();
                   if (typeof window.__openCountryByName === "function") {
-                    window.__openCountryByName(_name);
+                    window.__openCountryByName(_name, _key);
                   }
                   if (window.__polygonLayer &&
                       typeof window.__polygonLayer.selectCountry === "function") {
-                    try { window.__polygonLayer.selectCountry(_pri.key); } catch (_) {}
+                    try { window.__polygonLayer.selectCountry(_key); } catch (_) {}
                   }
                 };
                 _pendingTouchPickTime = Date.now();
@@ -13631,10 +13620,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // country by lowercase name against the init-time countries[]
       // dataset, runs the same focus + panel-open pipeline a node click
       // would have run. Returns true on success.
-      window.__openCountryByName = function (name) {
-        if (!name) return false;
-        const lower = String(name).toLowerCase();
-        const idx = countries.findIndex(c => c && c.name && c.name.toLowerCase() === lower);
+      window.__openCountryByName = function (name, iso) {
+        if (!name && !iso) return false;
+        const norm = (s) => String(s || "")
+          .toLowerCase()
+          .replace(/[\.,'']/g, "")
+          .replace(/\s+of\s+america\b/g, "")
+          .replace(/\brepublic\s+of\b/g, "")
+          .replace(/\bthe\s+/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        const target = norm(name);
+        const targetIso = (iso || "").toString().toUpperCase().trim();
+
+        let idx = -1;
+
+        // 1. ISO code exact match (most reliable)
+        if (targetIso && targetIso !== "-99") {
+          idx = countries.findIndex(c => c && (c.iso_code || "").toUpperCase() === targetIso);
+        }
+
+        // 2. Exact lowercase name match
+        if (idx < 0 && name) {
+          const lower = String(name).toLowerCase();
+          idx = countries.findIndex(c => c && c.name && c.name.toLowerCase() === lower);
+        }
+
+        // 3. Normalized name match (drops "of america", "republic of", etc.)
+        if (idx < 0 && target) {
+          idx = countries.findIndex(c => c && c.name && norm(c.name) === target);
+        }
+
+        // 4. Substring either-direction (last-resort fuzzy)
+        if (idx < 0 && target) {
+          idx = countries.findIndex(c => {
+            if (!c || !c.name) return false;
+            const cn = norm(c.name);
+            return cn.includes(target) || target.includes(cn);
+          });
+        }
+
         if (idx < 0) return false;
         const c = countries[idx];
         try {
@@ -16840,17 +16865,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       <div class="nfTitleRow">
         <span class="nfPageTitle">News Feed</span>
         <div class="nfTitleActions">
-          <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
-            <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="2,3.5 5,6.5 8,3.5"/>
-            </svg>
-          </button>
           <div class="nfViewToggle" id="nfViewToggle">
             <div class="nfViewPill active" data-view="timelines" id="nfViewTimelines">Timelines</div>
             <div class="nfViewPill" data-view="threads" id="nfViewThreads">Threads</div>
             <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
           </div>
         </div>
+        <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
+          <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="2,3.5 5,6.5 8,3.5"/>
+          </svg>
+        </button>
       </div>
       <!-- Row 2: filter strip (feed mode only, collapsible) -->
       <div class="nfFiltersRow">
@@ -27698,7 +27723,7 @@ body.ticker-active .gTickerLabel {
       const target = result.fan[0];
       hideFan();
       selectCountry(target.key);
-      if (window.__openCountryByName) window.__openCountryByName(target.name);
+      if (window.__openCountryByName) window.__openCountryByName(target.name, target.key);
       return;
     }
 
@@ -27731,7 +27756,7 @@ body.ticker-active .gTickerLabel {
         ev.stopPropagation();
         hideFan();
         selectCountry(item.key);
-        if (window.__openCountryByName) window.__openCountryByName(item.name);
+        if (window.__openCountryByName) window.__openCountryByName(item.name, item.key);
       };
       card.addEventListener('click', commit);
       card.addEventListener('pointerup', commit);
