@@ -2235,7 +2235,7 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
   }
 });
 
-// Save manifest and trigger briefing generation
+// Save manifest and trigger briefing generation — streams logs via SSE
 app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) => {
   try {
     const manifest = req.body;
@@ -2247,13 +2247,25 @@ app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) =
     const tmpDir = require('os').tmpdir();
     const manifestPath = path.join(tmpDir, `briefing-manifest-${Date.now()}.json`);
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    console.log(`[briefing-editor] Manifest saved: ${manifestPath}`);
 
-    // Spawn briefingGenerator in background
+    // SSE headers — stream logs to the editor in real-time
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    const send = (type, data) => {
+      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+    };
+    send('log', `Manifest saved: ${manifestPath}`);
+
+    // Spawn briefingGenerator
     const args = ['briefingGenerator.js', '--force', '--manifest', manifestPath];
     if (manifest.options?.no_audio) args.push('--no-audio');
     if (manifest.options?.force_audio) args.push('--force-audio');
     if (manifest.options?.no_panels) args.push('--no-panels');
+
+    send('log', `Spawning: node ${args.join(' ')}`);
 
     const child = spawn('node', args, {
       cwd: __dirname,
@@ -2262,36 +2274,34 @@ app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) =
       env: { ...process.env }
     });
 
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', d => { stdout += d.toString(); });
-    child.stderr.on('data', d => { stderr += d.toString(); });
-
-    // Don't await — respond immediately, generation runs in background
-    child.on('close', (code) => {
-      console.log(`[briefing-editor] Generator exited with code ${code}`);
-      if (code !== 0) {
-        console.error(`[briefing-editor] stderr: ${stderr.slice(-500)}`);
-      }
-      // Clean up manifest file
-      try { fs.unlinkSync(manifestPath); } catch (_) {}
+    child.stdout.on('data', d => {
+      const lines = d.toString().split('\n').filter(Boolean);
+      for (const line of lines) send('log', line);
+    });
+    child.stderr.on('data', d => {
+      const lines = d.toString().split('\n').filter(Boolean);
+      for (const line of lines) send('error', line);
     });
 
-    // Wait a moment to catch immediate failures
-    await new Promise(r => setTimeout(r, 2000));
-    if (child.exitCode !== null && child.exitCode !== 0) {
-      return res.status(500).json({ error: 'Generator failed to start', detail: stderr.slice(-500) });
-    }
+    child.on('close', (code) => {
+      if (code === 0) {
+        send('done', 'Briefing generated successfully');
+      } else {
+        send('fail', `Generator exited with code ${code}`);
+      }
+      try { fs.unlinkSync(manifestPath); } catch (_) {}
+      res.end();
+    });
 
-    res.json({
-      ok: true,
-      message: 'Briefing generation started',
-      manifest_path: manifestPath,
-      pid: child.pid
+    // If client disconnects, kill the generator
+    req.on('close', () => {
+      if (!child.killed) child.kill();
     });
   } catch (err) {
     console.error('[briefing-editor] generate error:', err.message);
-    res.status(500).json({ error: 'Failed to start generation', detail: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to start generation', detail: err.message });
+    }
   }
 });
 

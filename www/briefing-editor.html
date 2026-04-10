@@ -547,6 +547,25 @@
     .progress-msg { font-size: 1rem; font-weight: 600; }
     .progress-sub { color: #94a3b8; font-size: 0.85rem; }
 
+    .log-panel {
+      width: min(700px, 90vw);
+      max-height: 50vh;
+      overflow-y: auto;
+      background: #0d1117;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 8px;
+      text-align: left;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .log-line { color: #8b949e; white-space: pre-wrap; word-break: break-all; }
+    .log-line.error { color: #f85149; }
+    .log-line.done { color: #22c55e; font-weight: 600; }
+    .log-line.fail { color: #f85149; font-weight: 600; }
+
     .result-success { color: #22c55e; }
     .result-error { color: #ef4444; }
 
@@ -693,6 +712,7 @@
     <div class="spinner" id="progress-spinner"></div>
     <p class="progress-msg" id="progress-msg">Generating briefing...</p>
     <p class="progress-sub" id="progress-sub">This usually takes 3-5 minutes</p>
+    <div class="log-panel" id="log-panel"></div>
     <button class="btn-secondary hidden" id="progress-close" onclick="closeProgress()">Close</button>
   </div>
 
@@ -1065,9 +1085,20 @@
       spinner.style.display = 'block';
       msg.textContent = 'Generating briefing...';
       msg.className = 'progress-msg';
-      sub.textContent = 'This usually takes 3-5 minutes';
+      sub.textContent = 'Streaming logs from generator';
       closeBtn.classList.add('hidden');
       document.getElementById('generate-btn').disabled = true;
+
+      const logPanel = document.getElementById('log-panel');
+      logPanel.innerHTML = '';
+
+      function appendLog(text, cls = '') {
+        const el = document.createElement('div');
+        el.className = 'log-line' + (cls ? ' ' + cls : '');
+        el.textContent = text;
+        logPanel.appendChild(el);
+        logPanel.scrollTop = logPanel.scrollHeight;
+      }
 
       try {
         const res = await fetch(`${API_BASE}/api/admin/briefing-editor/generate`, {
@@ -1075,22 +1106,61 @@
           headers: authHeaders(),
           body: JSON.stringify(manifest)
         });
+
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error(err.error || err.message || 'Generation failed');
         }
-        const data = await res.json();
+
+        // Read SSE stream
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalStatus = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep incomplete line
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const evt = JSON.parse(line.slice(6));
+              if (evt.type === 'log') {
+                appendLog(evt.data);
+              } else if (evt.type === 'error') {
+                appendLog(evt.data, 'error');
+              } else if (evt.type === 'done') {
+                appendLog(evt.data, 'done');
+                finalStatus = 'done';
+              } else if (evt.type === 'fail') {
+                appendLog(evt.data, 'fail');
+                finalStatus = 'fail';
+              }
+            } catch (_) {}
+          }
+        }
+
         spinner.style.display = 'none';
-        msg.className = 'progress-msg result-success';
-        msg.textContent = 'Briefing generated!';
-        sub.textContent = data.episode_id
-          ? `Episode ID: ${data.episode_id}`
-          : (data.message || 'Success');
+        if (finalStatus === 'done') {
+          msg.className = 'progress-msg result-success';
+          msg.textContent = 'Briefing generated!';
+          sub.textContent = 'Briefing is now live in the app';
+        } else {
+          msg.className = 'progress-msg result-error';
+          msg.textContent = 'Generation failed';
+          sub.textContent = 'Check the log below for details';
+        }
       } catch (e) {
         spinner.style.display = 'none';
         msg.className = 'progress-msg result-error';
         msg.textContent = 'Generation failed';
         sub.textContent = e.message;
+        appendLog(e.message, 'error');
       }
       closeBtn.classList.remove('hidden');
     }
