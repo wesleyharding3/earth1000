@@ -2139,6 +2139,180 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
   }
 });
 
+// ── Briefing Editor Admin Routes ──────────────────────────────────────────
+function requireAdmin(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+  if (!req.user.is_admin) return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
+// List candidate threads for briefing editor (mirrors listCandidateThreads from briefingGenerator)
+app.get('/api/admin/briefing-editor/threads', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        st.id, st.title, st.primary_category, st.importance, st.keywords,
+        st.geographic_scope,
+        COUNT(sta.article_id)::int AS recent_articles,
+        COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)::int AS video_count
+      FROM story_threads st
+      JOIN story_thread_articles sta ON sta.thread_id = st.id
+      JOIN news_articles a ON a.id = sta.article_id
+      WHERE st.status = 'active'
+        AND st.last_updated_at > NOW() - INTERVAL '3 days'
+        AND a.published_at > NOW() - INTERVAL '3 days'
+      GROUP BY st.id
+      HAVING COUNT(sta.article_id) >= 1
+      ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
+      LIMIT 100
+    `);
+    res.json({ threads: rows.map(r => ({
+      ...r,
+      hasVideo: r.video_count > 0,
+      keywords: Array.isArray(r.keywords) ? r.keywords : (r.keywords ? [r.keywords] : []),
+      geographic_scope: Array.isArray(r.geographic_scope) ? r.geographic_scope : (r.geographic_scope ? [r.geographic_scope] : [])
+    })) });
+  } catch (err) {
+    console.error('[briefing-editor] threads error:', err.message);
+    res.status(500).json({ error: 'Failed to load threads' });
+  }
+});
+
+// Resolve a YouTube URL to get video metadata
+app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL required' });
+
+    // Extract video ID from various YouTube URL formats
+    let videoId = null;
+    const patterns = [
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
+      /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/
+    ];
+    for (const p of patterns) {
+      const m = url.match(p);
+      if (m) { videoId = m[1]; break; }
+    }
+    if (!videoId) return res.status(400).json({ error: 'Could not extract YouTube video ID from URL' });
+
+    // Try to get video info via oEmbed (no API key needed)
+    try {
+      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+      const resp = await fetch(oembedUrl);
+      if (resp.ok) {
+        const data = await resp.json();
+        return res.json({
+          video_id: videoId,
+          title: data.title || 'Unknown',
+          author: data.author_name || '',
+          thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+        });
+      }
+    } catch (_) {}
+
+    // Fallback — return basic info
+    res.json({
+      video_id: videoId,
+      title: 'YouTube Video',
+      author: '',
+      thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
+    });
+  } catch (err) {
+    console.error('[briefing-editor] resolve-video error:', err.message);
+    res.status(500).json({ error: 'Failed to resolve video' });
+  }
+});
+
+// Save manifest and trigger briefing generation
+app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) => {
+  try {
+    const manifest = req.body;
+    if (!manifest?.selected_threads?.length) {
+      return res.status(400).json({ error: 'Manifest must include selected_threads' });
+    }
+
+    // Save manifest to temp file
+    const tmpDir = require('os').tmpdir();
+    const manifestPath = path.join(tmpDir, `briefing-manifest-${Date.now()}.json`);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    console.log(`[briefing-editor] Manifest saved: ${manifestPath}`);
+
+    // Spawn briefingGenerator in background
+    const args = ['briefingGenerator.js', '--force', '--manifest', manifestPath];
+    if (manifest.options?.no_audio) args.push('--no-audio');
+    if (manifest.options?.force_audio) args.push('--force-audio');
+    if (manifest.options?.no_panels) args.push('--no-panels');
+
+    const child = spawn('node', args, {
+      cwd: __dirname,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+      env: { ...process.env }
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', d => { stdout += d.toString(); });
+    child.stderr.on('data', d => { stderr += d.toString(); });
+
+    // Don't await — respond immediately, generation runs in background
+    child.on('close', (code) => {
+      console.log(`[briefing-editor] Generator exited with code ${code}`);
+      if (code !== 0) {
+        console.error(`[briefing-editor] stderr: ${stderr.slice(-500)}`);
+      }
+      // Clean up manifest file
+      try { fs.unlinkSync(manifestPath); } catch (_) {}
+    });
+
+    // Wait a moment to catch immediate failures
+    await new Promise(r => setTimeout(r, 2000));
+    if (child.exitCode !== null && child.exitCode !== 0) {
+      return res.status(500).json({ error: 'Generator failed to start', detail: stderr.slice(-500) });
+    }
+
+    res.json({
+      ok: true,
+      message: 'Briefing generation started',
+      manifest_path: manifestPath,
+      pid: child.pid
+    });
+  } catch (err) {
+    console.error('[briefing-editor] generate error:', err.message);
+    res.status(500).json({ error: 'Failed to start generation', detail: err.message });
+  }
+});
+
+// Check generation status for today
+app.get('/api/admin/briefing-editor/status', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, status, headline, generated_at,
+             CASE WHEN segments IS NOT NULL THEN jsonb_array_length(segments::jsonb) ELSE 0 END AS segment_count
+      FROM briefing_episodes
+      WHERE user_id IS NULL AND target_date = CURRENT_DATE
+      ORDER BY id DESC LIMIT 1
+    `);
+    if (!rows.length) return res.json({ status: 'none' });
+    const ep = rows[0];
+    res.json({
+      episode_id: ep.id,
+      status: ep.status,
+      headline: ep.headline,
+      generated_at: ep.generated_at,
+      segment_count: ep.segment_count
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to check status' });
+  }
+});
+
+// Serve briefing editor page
+app.get('/briefing-editor', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));
+});
+
 app.get("/api/heatmap", async (req, res) => {
   try {
     const mode     = (req.query.mode || "coverage").toLowerCase();

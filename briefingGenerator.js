@@ -40,6 +40,11 @@ const FORCE_AUDIO  = process.argv.includes('--force-audio'); // re-synthesise ev
 const PICK_MODE    = process.argv.includes('--pick');        // interactive thread selection
 const PANELS_ONLY  = process.argv.includes('--panels-only'); // regenerate only data panels for today's episode
 const NO_PANELS    = process.argv.includes('--no-panels');   // skip data panel generation entirely
+const MANIFEST_PATH = (() => {
+  const idx = process.argv.indexOf('--manifest');
+  return idx !== -1 && process.argv[idx + 1] ? process.argv[idx + 1] : null;
+})();
+const MANIFEST_MODE = !!MANIFEST_PATH;
 
 // Data panel limits — 3..10 for general (auto) briefings, 2..5 for --pick / custom briefings
 const PANELS_MIN_GENERAL = 3;
@@ -178,7 +183,7 @@ async function run() {
 
   console.log('📡 Earth Briefing Generator');
   console.log(`   Date:  ${targetDate}`);
-  console.log(`   Mode:  ${PICK_MODE ? 'interactive (--pick)' : 'automatic'}`);
+  console.log(`   Mode:  ${MANIFEST_MODE ? 'manifest' : PICK_MODE ? 'interactive (--pick)' : 'automatic'}`);
   console.log(`   Audio: ${NO_AUDIO ? 'disabled' : 'enabled (ElevenLabs)'}`);
   console.log();
 
@@ -230,7 +235,7 @@ async function run() {
     // Wipe audio when explicitly asked OR in pick-mode (manual story selection always
     // produces different content, so reusing stale audio would desync start_ms offsets
     // and leave the player with no voiceovers).
-    if (FORCE_AUDIO || PICK_MODE) {
+    if (FORCE_AUDIO || PICK_MODE || MANIFEST_MODE) {
       await pool.query(
         `UPDATE briefing_episodes SET status='generating', segments='[]', audio_data=NULL, generated_at=NOW() WHERE id=$1`,
         [episodeId]
@@ -254,7 +259,27 @@ async function run() {
   try {
     // ── 1. Select story threads ───────────────────────────────────────────
     let threads;
-    if (PICK_MODE) {
+    let manifest = null;
+    if (MANIFEST_MODE) {
+      manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
+      console.log(`   [${elapsed(t0)}] Loaded manifest: ${manifest.selected_threads?.length || 0} threads`);
+      // Fetch thread rows from DB matching manifest IDs
+      const threadIds = manifest.selected_threads.map(t => t.thread_id);
+      const { rows: threadRows } = await pool.query(`
+        SELECT st.id, st.title, st.primary_category, st.importance, st.keywords, st.geographic_scope,
+               COUNT(sta.article_id)::int AS recent_articles
+        FROM story_threads st
+        JOIN story_thread_articles sta ON sta.thread_id = st.id
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE st.id = ANY($1::int[])
+          AND a.published_at > NOW() - INTERVAL '${THREAD_ACTIVITY_LOOKBACK_DAYS} days'
+        GROUP BY st.id
+      `, [threadIds]);
+      // Preserve manifest ordering
+      const rowMap = new Map(threadRows.map(r => [r.id, r]));
+      threads = threadIds.map(id => rowMap.get(id)).filter(Boolean);
+      if (!threads.length) throw new Error('No valid threads found from manifest');
+    } else if (PICK_MODE) {
       console.log(`   [${elapsed(t0)}] Loading top 100 candidate threads for manual selection...`);
       const candidates = await listCandidateThreads(100);
       if (!candidates.length) throw new Error('No active story threads found — run storyThreadBuilder first');
@@ -353,7 +378,20 @@ async function run() {
 
     // ── 3b. Generate Claude narrative (includes story entity extraction) ──
     console.log(`   [${elapsed(t0)}] Generating narrative with Claude...`);
-    const prefProfileForNarrative = PICK_MODE ? null : await buildPreferenceProfile().catch(() => null);
+    const prefProfileForNarrative = (PICK_MODE || MANIFEST_MODE) ? null : await buildPreferenceProfile().catch(() => null);
+    // Inject manifest steering hints into thread data for Claude
+    if (MANIFEST_MODE && manifest?.selected_threads) {
+      for (const mt of manifest.selected_threads) {
+        if (mt.steering_hint) {
+          const td = threadData.find(t => String(t.id) === String(mt.thread_id));
+          if (td) td._steeringHint = mt.steering_hint;
+        }
+        if (mt.youtube_video) {
+          const td = threadData.find(t => String(t.id) === String(mt.thread_id));
+          if (td) td._youtubeOverride = mt.youtube_video;
+        }
+      }
+    }
     const narrative = await generateNarrative(threadData, storyContexts, prefProfileForNarrative);
     if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
@@ -443,7 +481,7 @@ async function run() {
     }
 
     // ── 6b. Pick mode: interactive script review (panels visible inline) ──
-    if (PICK_MODE) {
+    if (PICK_MODE && !MANIFEST_MODE) {
       segments = await reviewAndEditSegments(segments, threadData);
       // Then a dedicated panel review pass for edits/replacements
       if (!NO_PANELS) {
@@ -458,7 +496,7 @@ async function run() {
     // on every --force run. Use --force-audio to explicitly re-synthesise.
     // PICK_MODE always regenerates audio — its chosen stories differ from prior runs,
     // so stale audio would desync start_ms offsets and silence the player.
-    if (!NO_AUDIO && ELEVENLABS_KEY && !FORCE_AUDIO && !PICK_MODE) {
+    if (!NO_AUDIO && ELEVENLABS_KEY && !FORCE_AUDIO && !PICK_MODE && !MANIFEST_MODE) {
       const { rows: existingAudio } = await pool.query(
         `SELECT octet_length(audio_data) AS bytes FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
         [episodeId]
@@ -564,7 +602,7 @@ async function run() {
     }
 
     // ── 9. Save curation choice for preference learning ───────────────────
-    if (PICK_MODE) {
+    if (PICK_MODE || MANIFEST_MODE) {
       await saveCurationChoice(threads, episodeId).catch(e =>
         console.warn(`   ⚠ saveCurationChoice failed (non-fatal): ${e.message}`)
       );

@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Earth Briefing Editor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0e17;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .editor-wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 16px 80px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    h1 span { color: #00d4ff; }
+
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.85rem;
+      margin-bottom: 24px;
+    }
+
+    /* Auth gate */
+    .auth-gate {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 60vh;
+      text-align: center;
+      gap: 16px;
+    }
+
+    .auth-gate h2 { font-size: 1.2rem; margin-bottom: 8px; }
+
+    .auth-gate input {
+      width: 100%;
+      max-width: 420px;
+      padding: 10px 14px;
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .auth-gate input:focus { border-color: #00d4ff; }
+
+    .auth-error {
+      color: #ef4444;
+      font-size: 0.85rem;
+      display: none;
+    }
+
+    /* Step indicator */
+    .step-indicator {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 28px;
+    }
+
+    .step-pill {
+      flex: 1;
+      text-align: center;
+      padding: 10px 8px;
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #94a3b8;
+      transition: all 0.2s ease;
+      cursor: default;
+    }
+
+    .step-pill.active {
+      background: rgba(0, 212, 255, 0.1);
+      border-color: #00d4ff;
+      color: #00d4ff;
+    }
+
+    .step-pill.done {
+      background: rgba(34, 197, 94, 0.1);
+      border-color: #22c55e;
+      color: #22c55e;
+    }
+
+    .step-pill .step-num {
+      display: inline-block;
+      width: 22px;
+      height: 22px;
+      line-height: 22px;
+      border-radius: 50%;
+      background: #1e293b;
+      font-size: 0.75rem;
+      margin-right: 6px;
+    }
+
+    .step-pill.active .step-num { background: #00d4ff; color: #0a0e17; }
+    .step-pill.done .step-num { background: #22c55e; color: #0a0e17; }
+
+    /* Buttons */
+    .btn-primary {
+      background: #00d4ff;
+      color: #0a0e17;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary:hover { background: #00b8d9; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: transparent;
+      color: #e2e8f0;
+      border: 1px solid #1e293b;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:hover { border-color: #94a3b8; }
+
+    .btn-small {
+      padding: 6px 14px;
+      font-size: 0.8rem;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+      color: #fff;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-danger:hover { background: #dc2626; }
+
+    .nav-buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 24px;
+      gap: 12px;
+    }
+
+    /* Search */
+    .search-input {
+      width: 100%;
+      padding: 10px 14px;
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s ease;
+      margin-bottom: 16px;
+    }
+
+    .search-input:focus { border-color: #00d4ff; }
+
+    .search-input::placeholder { color: #475569; }
+
+    .selection-counter {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .selection-counter strong { color: #00d4ff; }
+
+    /* Thread grid */
+    .thread-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    @media (min-width: 600px) {
+      .thread-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    .thread-card {
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px 16px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .thread-card:hover { border-color: #334155; }
+
+    .thread-card.selected {
+      border: 2px solid #00d4ff;
+      box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
+    }
+
+    .thread-card .card-title {
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-bottom: 6px;
+      line-height: 1.3;
+    }
+
+    .thread-card .card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+
+    .category-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .importance-bar {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .importance-bar-track {
+      width: 50px;
+      height: 4px;
+      background: #1e293b;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .importance-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: #00d4ff;
+      transition: width 0.3s ease;
+    }
+
+    .check-mark {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #00d4ff;
+      color: #0a0e17;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    .thread-card.selected .check-mark { display: flex; }
+
+    /* Step 2 cards */
+    .enrich-card {
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .enrich-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      cursor: pointer;
+      gap: 12px;
+    }
+
+    .enrich-header:hover { background: rgba(255,255,255,0.02); }
+
+    .enrich-order {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+
+    .enrich-order button {
+      background: #1e293b;
+      border: none;
+      color: #94a3b8;
+      width: 24px;
+      height: 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.7rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+    }
+
+    .enrich-order button:hover { background: #334155; color: #e2e8f0; }
+
+    .enrich-title {
+      flex: 1;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .enrich-toggle {
+      color: #94a3b8;
+      font-size: 0.8rem;
+      flex-shrink: 0;
+    }
+
+    .enrich-body {
+      padding: 0 16px 16px;
+      display: none;
+    }
+
+    .enrich-card.open .enrich-body { display: block; }
+
+    .enrich-body label {
+      display: block;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      margin-bottom: 4px;
+      margin-top: 12px;
+    }
+
+    .enrich-body label:first-child { margin-top: 0; }
+
+    .enrich-body input[type="text"],
+    .enrich-body textarea {
+      width: 100%;
+      padding: 8px 12px;
+      background: #0a0e17;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .enrich-body input[type="text"]:focus,
+    .enrich-body textarea:focus { border-color: #00d4ff; }
+
+    .enrich-body textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    .video-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .video-row input { flex: 1; }
+
+    .video-preview {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      background: rgba(0, 212, 255, 0.05);
+      border: 1px solid rgba(0, 212, 255, 0.15);
+      border-radius: 6px;
+      font-size: 0.8rem;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .video-preview.visible { display: flex; }
+
+    .video-preview img {
+      width: 80px;
+      height: 45px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .video-preview .video-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .video-preview .video-title {
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .video-preview .video-id { color: #94a3b8; font-size: 0.75rem; }
+
+    /* Step 3 */
+    .review-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .review-table th {
+      text-align: left;
+      padding: 10px 12px;
+      background: #111827;
+      border-bottom: 1px solid #1e293b;
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .review-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #1e293b;
+      vertical-align: top;
+    }
+
+    .review-table tr:last-child td { border-bottom: none; }
+
+    .manifest-preview {
+      background: #0d1117;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      margin-top: 20px;
+      overflow-x: auto;
+    }
+
+    .manifest-preview pre {
+      margin: 0;
+      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .manifest-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      color: #94a3b8;
+      font-size: 0.85rem;
+      margin-top: 20px;
+      margin-bottom: 8px;
+      user-select: none;
+    }
+
+    .manifest-toggle:hover { color: #e2e8f0; }
+
+    .generate-section {
+      text-align: center;
+      margin-top: 32px;
+      padding-top: 24px;
+      border-top: 1px solid #1e293b;
+    }
+
+    .generate-btn {
+      background: #00d4ff;
+      color: #0a0e17;
+      border: none;
+      padding: 14px 40px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .generate-btn:hover { background: #00b8d9; transform: translateY(-1px); }
+    .generate-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    /* Progress overlay */
+    .progress-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 14, 23, 0.92);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .progress-overlay.visible { display: flex; }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid #1e293b;
+      border-top-color: #00d4ff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .progress-msg { font-size: 1rem; font-weight: 600; }
+    .progress-sub { color: #94a3b8; font-size: 0.85rem; }
+
+    .result-success { color: #22c55e; }
+    .result-error { color: #ef4444; }
+
+    /* Loading state */
+    .loading-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #94a3b8;
+    }
+
+    .loading-state .spinner { margin: 0 auto 16px; }
+
+    /* Utility */
+    .hidden { display: none !important; }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #94a3b8;
+    }
+
+    .tag-none {
+      color: #475569;
+      font-style: italic;
+    }
+
+    /* Category colors */
+    .cat-conflict { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    .cat-diplomacy { background: rgba(96, 165, 250, 0.15); color: #60a5fa; }
+    .cat-economy { background: rgba(250, 204, 21, 0.15); color: #facc15; }
+    .cat-climate { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+    .cat-politics { background: rgba(168, 85, 247, 0.15); color: #a855f7; }
+    .cat-technology { background: rgba(0, 212, 255, 0.15); color: #00d4ff; }
+    .cat-health { background: rgba(244, 114, 182, 0.15); color: #f472b6; }
+    .cat-science { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; }
+    .cat-default { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .editor-wrap { padding: 16px 12px 60px; }
+      h1 { font-size: 1.25rem; }
+      .step-pill { font-size: 0.7rem; padding: 8px 4px; }
+      .step-pill .step-label { display: none; }
+      .review-table { font-size: 0.78rem; }
+      .review-table th, .review-table td { padding: 8px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Auth Gate -->
+  <div id="auth-gate" class="auth-gate">
+    <h2>Earth Briefing Editor</h2>
+    <p style="color:#94a3b8; font-size:0.9rem;">Paste your admin JWT to continue</p>
+    <input type="password" id="token-input" placeholder="sb-access-token..." />
+    <button class="btn-primary" onclick="submitToken()">Authenticate</button>
+    <p id="auth-error" class="auth-error"></p>
+  </div>
+
+  <!-- Main Editor -->
+  <div id="editor" class="editor-wrap hidden">
+    <h1><span>Earth</span> Briefing Editor</h1>
+    <p class="subtitle">Select stories, enrich with video, generate a briefing</p>
+
+    <!-- Step Indicator -->
+    <div class="step-indicator">
+      <div class="step-pill active" id="pill-1">
+        <span class="step-num">1</span><span class="step-label">Select Stories</span>
+      </div>
+      <div class="step-pill" id="pill-2">
+        <span class="step-num">2</span><span class="step-label">Enrich</span>
+      </div>
+      <div class="step-pill" id="pill-3">
+        <span class="step-num">3</span><span class="step-label">Review</span>
+      </div>
+    </div>
+
+    <!-- Step 1: Thread Selection -->
+    <div id="step-1">
+      <input type="text" class="search-input" id="thread-search" placeholder="Search threads by title, category, or region..." oninput="filterThreads()" />
+      <div class="selection-counter">
+        <span><strong id="sel-count">0</strong> / 10 selected</span>
+        <button class="btn-secondary btn-small" onclick="clearSelection()">Clear all</button>
+      </div>
+      <div id="thread-loading" class="loading-state">
+        <div class="spinner"></div>
+        <p>Loading candidate threads...</p>
+      </div>
+      <div id="thread-grid" class="thread-grid hidden"></div>
+      <div id="thread-empty" class="empty-state hidden">No threads match your search.</div>
+      <div class="nav-buttons">
+        <span></span>
+        <button class="btn-primary" id="btn-next-1" disabled onclick="goToStep(2)">Next &rarr;</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Enrich -->
+    <div id="step-2" class="hidden">
+      <p style="color:#94a3b8; font-size:0.85rem; margin-bottom:16px;">Add optional YouTube videos and steering hints. Drag to reorder.</p>
+      <div id="enrich-list"></div>
+      <div class="nav-buttons">
+        <button class="btn-secondary" onclick="goToStep(1)">&larr; Back</button>
+        <button class="btn-primary" onclick="goToStep(3)">Next &rarr;</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Review -->
+    <div id="step-3" class="hidden">
+      <h3 style="font-size:1rem; margin-bottom:16px;">Review Selections</h3>
+      <div style="overflow-x:auto;">
+        <table class="review-table" id="review-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Thread</th>
+              <th>Video</th>
+              <th>Hint</th>
+            </tr>
+          </thead>
+          <tbody id="review-body"></tbody>
+        </table>
+      </div>
+
+      <div class="manifest-toggle" onclick="toggleManifest()">
+        <span id="manifest-arrow">&#9654;</span> Manifest JSON
+      </div>
+      <div class="manifest-preview hidden" id="manifest-block">
+        <pre id="manifest-json"></pre>
+      </div>
+
+      <div class="generate-section">
+        <button class="generate-btn" id="generate-btn" onclick="generateBriefing()">Generate Briefing</button>
+      </div>
+
+      <div class="nav-buttons">
+        <button class="btn-secondary" onclick="goToStep(2)">&larr; Back</button>
+        <span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress Overlay -->
+  <div class="progress-overlay" id="progress-overlay">
+    <div class="spinner" id="progress-spinner"></div>
+    <p class="progress-msg" id="progress-msg">Generating briefing...</p>
+    <p class="progress-sub" id="progress-sub">This usually takes 3-5 minutes</p>
+    <button class="btn-secondary hidden" id="progress-close" onclick="closeProgress()">Close</button>
+  </div>
+
+  <script>
+    // ---- State ----
+    const API_BASE = window.location.origin;
+    let token = localStorage.getItem('sb-access-token') || '';
+    let allThreads = [];
+    let selectedIds = new Set();
+    let enrichData = {}; // thread_id -> { youtube_url, video_meta, steering_hint }
+    let orderedIds = [];
+
+    // ---- Auth ----
+    async function checkAuth() {
+      if (!token) { showLogin(); return; }
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/profile`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Auth failed');
+        const data = await res.json();
+        if (!data.is_admin) {
+          showAuthError('Admin access required');
+          return;
+        }
+        showEditor();
+      } catch (e) {
+        showLogin();
+      }
+    }
+
+    function showLogin() {
+      document.getElementById('auth-gate').classList.remove('hidden');
+      document.getElementById('editor').classList.add('hidden');
+      const input = document.getElementById('token-input');
+      if (token) input.value = token;
+    }
+
+    function showAuthError(msg) {
+      const el = document.getElementById('auth-error');
+      el.textContent = msg;
+      el.style.display = 'block';
+      showLogin();
+    }
+
+    function submitToken() {
+      token = document.getElementById('token-input').value.trim();
+      if (!token) return;
+      localStorage.setItem('sb-access-token', token);
+      document.getElementById('auth-error').style.display = 'none';
+      checkAuth();
+    }
+
+    function showEditor() {
+      document.getElementById('auth-gate').classList.add('hidden');
+      document.getElementById('editor').classList.remove('hidden');
+      loadThreads();
+    }
+
+    // ---- API helpers ----
+    function authHeaders() {
+      return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+    }
+
+    // ---- Step 1: Load Threads ----
+    async function loadThreads() {
+      document.getElementById('thread-loading').classList.remove('hidden');
+      document.getElementById('thread-grid').classList.add('hidden');
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/briefing-editor/threads`, {
+          headers: authHeaders()
+        });
+        if (!res.ok) throw new Error('Failed to load threads');
+        allThreads = await res.json();
+        if (Array.isArray(allThreads.threads)) allThreads = allThreads.threads;
+        renderThreads();
+      } catch (e) {
+        document.getElementById('thread-loading').innerHTML =
+          '<p style="color:#ef4444;">Failed to load threads. Check your connection and token.</p>';
+      }
+    }
+
+    function getCategoryClass(cat) {
+      if (!cat) return 'cat-default';
+      const key = cat.toLowerCase().replace(/[^a-z]/g, '');
+      const map = { conflict: 'cat-conflict', war: 'cat-conflict', diplomacy: 'cat-diplomacy',
+        economy: 'cat-economy', economic: 'cat-economy', finance: 'cat-economy',
+        climate: 'cat-climate', environment: 'cat-climate', politics: 'cat-politics',
+        political: 'cat-politics', technology: 'cat-technology', tech: 'cat-technology',
+        health: 'cat-health', science: 'cat-science' };
+      for (const [k, v] of Object.entries(map)) {
+        if (key.includes(k)) return v;
+      }
+      return 'cat-default';
+    }
+
+    function renderThreads() {
+      document.getElementById('thread-loading').classList.add('hidden');
+      const grid = document.getElementById('thread-grid');
+      grid.classList.remove('hidden');
+      grid.innerHTML = '';
+
+      const query = document.getElementById('thread-search').value.toLowerCase().trim();
+      const filtered = allThreads.filter(t => {
+        if (!query) return true;
+        const text = [t.title, t.category, t.geographic_scope, t.geo_scope].filter(Boolean).join(' ').toLowerCase();
+        return text.includes(query);
+      });
+
+      if (filtered.length === 0) {
+        grid.classList.add('hidden');
+        document.getElementById('thread-empty').classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('thread-empty').classList.add('hidden');
+
+      filtered.forEach(t => {
+        const id = t.thread_id || t.id;
+        const card = document.createElement('div');
+        card.className = 'thread-card' + (selectedIds.has(id) ? ' selected' : '');
+        card.dataset.id = id;
+        card.onclick = () => toggleSelect(id, card);
+
+        const importance = Math.min(Math.max(t.importance_score || t.importance || 0, 0), 100);
+        const category = t.category || 'General';
+        const articleCount = t.article_count || t.articles || 0;
+        const hasVideo = t.has_video || t.video_count > 0;
+        const geo = t.geographic_scope || t.geo_scope || '';
+
+        card.innerHTML = `
+          <div class="check-mark">&#10003;</div>
+          <div class="card-title">${escHtml(t.title)}</div>
+          <div class="card-meta">
+            <span class="category-badge ${getCategoryClass(category)}">${escHtml(category)}</span>
+            <span>${articleCount} article${articleCount !== 1 ? 's' : ''}${hasVideo ? ' &#127916;' : ''}</span>
+            ${geo ? `<span>${escHtml(geo)}</span>` : ''}
+            <span class="importance-bar">
+              <span class="importance-bar-track"><span class="importance-bar-fill" style="width:${importance}%"></span></span>
+              ${importance}
+            </span>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    function toggleSelect(id, card) {
+      if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+        card.classList.remove('selected');
+      } else {
+        if (selectedIds.size >= 10) return;
+        selectedIds.add(id);
+        card.classList.add('selected');
+      }
+      updateSelectionCount();
+    }
+
+    function clearSelection() {
+      selectedIds.clear();
+      document.querySelectorAll('.thread-card.selected').forEach(c => c.classList.remove('selected'));
+      updateSelectionCount();
+    }
+
+    function updateSelectionCount() {
+      document.getElementById('sel-count').textContent = selectedIds.size;
+      document.getElementById('btn-next-1').disabled = selectedIds.size === 0;
+    }
+
+    function filterThreads() {
+      renderThreads();
+    }
+
+    // ---- Step navigation ----
+    function goToStep(n) {
+      [1, 2, 3].forEach(i => {
+        document.getElementById(`step-${i}`).classList.toggle('hidden', i !== n);
+        const pill = document.getElementById(`pill-${i}`);
+        pill.classList.remove('active', 'done');
+        if (i < n) pill.classList.add('done');
+        if (i === n) pill.classList.add('active');
+      });
+
+      if (n === 2) buildEnrichList();
+      if (n === 3) buildReview();
+    }
+
+    // ---- Step 2: Enrich ----
+    function buildEnrichList() {
+      orderedIds = [...selectedIds].filter(id => {
+        return allThreads.some(t => (t.thread_id || t.id) === id);
+      });
+      // Preserve previous order for ids that are still selected
+      const prevOrder = orderedIds;
+
+      const list = document.getElementById('enrich-list');
+      list.innerHTML = '';
+
+      orderedIds.forEach((id, idx) => {
+        const thread = allThreads.find(t => (t.thread_id || t.id) === id);
+        if (!enrichData[id]) enrichData[id] = { youtube_url: '', video_meta: null, steering_hint: '' };
+        const d = enrichData[id];
+
+        const card = document.createElement('div');
+        card.className = 'enrich-card';
+        card.dataset.id = id;
+        card.id = `enrich-${id}`;
+
+        const videoPreviewHtml = d.video_meta
+          ? `<div class="video-preview visible" id="vp-${id}">
+              ${d.video_meta.thumbnail ? `<img src="${escHtml(d.video_meta.thumbnail)}" alt="" />` : ''}
+              <div class="video-info">
+                <div class="video-title">${escHtml(d.video_meta.title || '')}</div>
+                <div class="video-id">${escHtml(d.video_meta.video_id || '')}</div>
+              </div>
+            </div>`
+          : `<div class="video-preview" id="vp-${id}"></div>`;
+
+        card.innerHTML = `
+          <div class="enrich-header" onclick="toggleEnrich(${id})">
+            <div class="enrich-order">
+              <button onclick="event.stopPropagation(); moveThread(${id}, -1)" title="Move up">&#9650;</button>
+              <button onclick="event.stopPropagation(); moveThread(${id}, 1)" title="Move down">&#9660;</button>
+            </div>
+            <div class="enrich-title">${idx + 1}. ${escHtml(thread.title)}</div>
+            <div class="enrich-toggle" id="etog-${id}">&#9654;</div>
+          </div>
+          <div class="enrich-body">
+            <label>YouTube URL</label>
+            <div class="video-row">
+              <input type="text" id="yt-${id}" value="${escHtml(d.youtube_url)}"
+                placeholder="https://youtube.com/watch?v=..."
+                onchange="enrichData[${id}].youtube_url = this.value" />
+              <button class="btn-primary btn-small" onclick="resolveVideo(${id})">Resolve</button>
+            </div>
+            ${videoPreviewHtml}
+            <label>Steering hint</label>
+            <textarea id="hint-${id}" placeholder="e.g., Focus on economic impact, mention the EU response"
+              onchange="enrichData[${id}].steering_hint = this.value">${escHtml(d.steering_hint)}</textarea>
+          </div>
+        `;
+        list.appendChild(card);
+      });
+    }
+
+    function toggleEnrich(id) {
+      const card = document.getElementById(`enrich-${id}`);
+      card.classList.toggle('open');
+      const tog = document.getElementById(`etog-${id}`);
+      tog.innerHTML = card.classList.contains('open') ? '&#9660;' : '&#9654;';
+    }
+
+    function moveThread(id, dir) {
+      const idx = orderedIds.indexOf(id);
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= orderedIds.length) return;
+      [orderedIds[idx], orderedIds[newIdx]] = [orderedIds[newIdx], orderedIds[idx]];
+      buildEnrichList();
+    }
+
+    async function resolveVideo(id) {
+      const url = document.getElementById(`yt-${id}`).value.trim();
+      if (!url) return;
+      enrichData[id].youtube_url = url;
+
+      const btn = event.target;
+      btn.disabled = true;
+      btn.textContent = '...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/briefing-editor/resolve-video`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ url })
+        });
+        if (!res.ok) throw new Error('Resolve failed');
+        const meta = await res.json();
+        enrichData[id].video_meta = meta;
+
+        const vp = document.getElementById(`vp-${id}`);
+        vp.classList.add('visible');
+        vp.innerHTML = `
+          ${meta.thumbnail ? `<img src="${escHtml(meta.thumbnail)}" alt="" />` : ''}
+          <div class="video-info">
+            <div class="video-title">${escHtml(meta.title || 'Video resolved')}</div>
+            <div class="video-id">${escHtml(meta.video_id || '')}</div>
+          </div>
+        `;
+      } catch (e) {
+        const vp = document.getElementById(`vp-${id}`);
+        vp.classList.add('visible');
+        vp.innerHTML = `<span style="color:#ef4444;">Failed to resolve video</span>`;
+        enrichData[id].video_meta = null;
+      }
+      btn.disabled = false;
+      btn.textContent = 'Resolve';
+    }
+
+    // ---- Step 3: Review ----
+    function buildManifest() {
+      const threads = orderedIds.map(id => {
+        const t = allThreads.find(th => (th.thread_id || th.id) === id);
+        const d = enrichData[id] || {};
+        const entry = {
+          thread_id: id,
+          title: t.title
+        };
+        if (d.steering_hint) entry.steering_hint = d.steering_hint;
+        if (d.video_meta) {
+          entry.youtube_video = {
+            url: d.youtube_url,
+            title: d.video_meta.title || '',
+            video_id: d.video_meta.video_id || ''
+          };
+        }
+        return entry;
+      });
+
+      return {
+        created_at: new Date().toISOString(),
+        selected_threads: threads,
+        options: { force: true, force_audio: true }
+      };
+    }
+
+    function buildReview() {
+      const body = document.getElementById('review-body');
+      body.innerHTML = '';
+
+      orderedIds.forEach((id, idx) => {
+        const t = allThreads.find(th => (th.thread_id || th.id) === id);
+        const d = enrichData[id] || {};
+        const videoText = d.video_meta ? (d.video_meta.title || 'Resolved') : '<span class="tag-none">none</span>';
+        const hintText = d.steering_hint
+          ? escHtml(d.steering_hint.length > 60 ? d.steering_hint.slice(0, 60) + '...' : d.steering_hint)
+          : '<span class="tag-none">none</span>';
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>${escHtml(t.title)}</td>
+          <td>${videoText}</td>
+          <td>${hintText}</td>
+        `;
+        body.appendChild(tr);
+      });
+
+      const manifest = buildManifest();
+      document.getElementById('manifest-json').textContent = JSON.stringify(manifest, null, 2);
+    }
+
+    function toggleManifest() {
+      const block = document.getElementById('manifest-block');
+      const arrow = document.getElementById('manifest-arrow');
+      block.classList.toggle('hidden');
+      arrow.innerHTML = block.classList.contains('hidden') ? '&#9654;' : '&#9660;';
+    }
+
+    // ---- Generate ----
+    async function generateBriefing() {
+      const manifest = buildManifest();
+      const overlay = document.getElementById('progress-overlay');
+      const spinner = document.getElementById('progress-spinner');
+      const msg = document.getElementById('progress-msg');
+      const sub = document.getElementById('progress-sub');
+      const closeBtn = document.getElementById('progress-close');
+
+      overlay.classList.add('visible');
+      spinner.style.display = 'block';
+      msg.textContent = 'Generating briefing...';
+      msg.className = 'progress-msg';
+      sub.textContent = 'This usually takes 3-5 minutes';
+      closeBtn.classList.add('hidden');
+      document.getElementById('generate-btn').disabled = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/briefing-editor/generate`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(manifest)
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || err.message || 'Generation failed');
+        }
+        const data = await res.json();
+        spinner.style.display = 'none';
+        msg.className = 'progress-msg result-success';
+        msg.textContent = 'Briefing generated!';
+        sub.textContent = data.episode_id
+          ? `Episode ID: ${data.episode_id}`
+          : (data.message || 'Success');
+      } catch (e) {
+        spinner.style.display = 'none';
+        msg.className = 'progress-msg result-error';
+        msg.textContent = 'Generation failed';
+        sub.textContent = e.message;
+      }
+      closeBtn.classList.remove('hidden');
+    }
+
+    function closeProgress() {
+      document.getElementById('progress-overlay').classList.remove('visible');
+      document.getElementById('generate-btn').disabled = false;
+    }
+
+    // ---- Utils ----
+    function escHtml(s) {
+      if (!s) return '';
+      const d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
+
+    // ---- Enter key on token input ----
+    document.getElementById('token-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitToken();
+    });
+
+    // ---- Init ----
+    checkAuth();
+  </script>
+</body>
+</html>

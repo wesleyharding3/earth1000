@@ -23014,6 +23014,7 @@ body.ticker-active .gTickerLabel {
     document.getElementById('bCaptions').classList.remove('visible');
     stopSeekLoop();
     updatePlayBtn();
+    document.dispatchEvent(new Event('briefingClose'));
     // Clear polygon highlights
     if (window.__flowClearHighlights) window.__flowClearHighlights();
     const fTimer = document.getElementById('flowBriefingTimer');
@@ -24777,6 +24778,7 @@ body.ticker-active .gTickerLabel {
   const CACHE_KEY = 'gTickerCacheV1';
   let _articles = [];
   let _visible = true;
+  let _pendingArticles = null;
 
   // ── Persist visibility via localStorage ──────────────────────────────────
   function _loadPref() {
@@ -24848,22 +24850,57 @@ body.ticker-active .gTickerLabel {
     }];
   }
 
-  // ── Start / restart animation ─────────────────────────────────────────────
-  function _start(articles) {
-    if (!articles.length) articles = _fallbackArticles();
-    _articles = articles;
+  function _canMeasureTicker() {
+    const ticker = document.getElementById('globalTicker');
+    const track = document.getElementById('gTickerTrack');
+    return !!(ticker && track)
+      && !document.body.classList.contains('briefing-active')
+      && !ticker.classList.contains('hidden')
+      && ticker.offsetParent !== null;
+  }
+
+  function _renderTicker(articles) {
     const el = document.getElementById('gTickerTrack');
-    if (!el) return;
+    if (!el) return null;
     el.classList.add('reset');
     el.innerHTML = '';
     const half = _buildHTML(articles);
     el.innerHTML = half + '<span class="gTickerDiv">◆</span>' + half;
     void el.offsetWidth;
     el.classList.remove('reset');
-    requestAnimationFrame(() => {
-      const halfW = el.scrollWidth / 2;
-      el.style.animationDuration = `${Math.max(24, halfW / SPEED).toFixed(1)}s`;
-    });
+    return el;
+  }
+
+  function _syncTickerDuration(retries = 0) {
+    const el = document.getElementById('gTickerTrack');
+    if (!el) return;
+    if (!_canMeasureTicker()) {
+      if (retries < 12) {
+        requestAnimationFrame(() => _syncTickerDuration(retries + 1));
+      }
+      return;
+    }
+    const halfW = el.scrollWidth / 2;
+    if (halfW <= 1) {
+      if (retries < 12) {
+        requestAnimationFrame(() => _syncTickerDuration(retries + 1));
+      }
+      return;
+    }
+    el.style.animationDuration = `${Math.max(24, halfW / SPEED).toFixed(1)}s`;
+  }
+
+  // ── Start / restart animation ─────────────────────────────────────────────
+  function _start(articles) {
+    if (!articles.length) articles = _fallbackArticles();
+    _articles = articles;
+    _pendingArticles = articles;
+    const el = _renderTicker(articles);
+    if (!el) return;
+    _syncTickerDuration();
+    if (_canMeasureTicker()) {
+      _pendingArticles = null;
+    }
   }
 
   // ── Click handler ─────────────────────────────────────────────────────────
@@ -24911,6 +24948,12 @@ body.ticker-active .gTickerLabel {
   _applyVisibility();
   _fetchAndStart();
   setInterval(_fetchAndStart, REFRESH_MS);
+  document.addEventListener('briefingClose', () => {
+    const queued = _pendingArticles && _pendingArticles.length ? _pendingArticles : _articles;
+    if (queued && queued.length) {
+      _start(queued);
+    }
+  });
   // Wire settings toggle after DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', _initToggle);
