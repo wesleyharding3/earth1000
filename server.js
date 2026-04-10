@@ -2140,8 +2140,19 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
 });
 
 // ── Briefing Editor Admin Routes ──────────────────────────────────────────
-function requireAdmin(req, res, next) {
-  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+async function requireAdmin(req, res, next) {
+  // optionalAuth may fail for ES256 tokens — fall back to Supabase API
+  if (!req.user?.id) {
+    const authUser = await resolveSupabaseUserFromRequest(req);
+    if (!authUser?.id) return res.status(401).json({ error: 'Authentication required' });
+    // Load admin flag
+    const { data: profile } = await sba
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', authUser.id)
+      .maybeSingle();
+    req.user.is_admin = profile?.is_admin || false;
+  }
   if (!req.user.is_admin) return res.status(403).json({ error: 'Admin access required' });
   next();
 }
