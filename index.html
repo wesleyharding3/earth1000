@@ -12059,10 +12059,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         card.innerHTML = `
           <div class="hoverCardName">
             <div class="hoverCardDot"></div>
-            ${showFlag ? `<span style="font-size:13px;line-height:1;">${node.flag}</span>` : ""}
             ${titleText}
           </div>
-          ${subtitleText ? `<div class="hoverCardCountry">${node.flag && viewMode === "regions" ? `<span style="font-size:11px;margin-right:4px;">${node.flag}</span>` : ""}${subtitleText}</div>` : ""}
+          ${subtitleText ? `<div class="hoverCardCountry">${subtitleText}</div>` : ""}
           <div class="hoverCardPop">${formatPopulation(node.population)}</div>`;
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
@@ -21828,17 +21827,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 /* Right-side stack of chart cards. Mobile: bottom sheet with safe-area inset. */
 .bDataPanels {
   position: absolute;
-  top: 50%;
-  right: max(24px, env(safe-area-inset-right, 0px));
+  top: 35%;
+  right: max(16px, env(safe-area-inset-right, 0px));
   transform: translateY(-50%);
-  width: min(270px, 28vw);
+  width: min(200px, 21vw);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   opacity: 0;
-  transition: opacity 0.5s ease 0.4s;
+  transition: opacity 0.4s ease;
   pointer-events: all;
-  max-height: 70vh;
+  max-height: 60vh;
   overflow-y: auto;
   z-index: 4;
 }
@@ -21848,18 +21847,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .bDataPanel {
   background: rgba(6,10,20,0.92);
   border: 1px solid rgba(255,153,64,0.22);
-  border-radius: 8px;
-  padding: 8px 10px 8px;
-  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  border-radius: 6px;
+  padding: 6px 8px 6px;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.45);
   color: #fff;
-  font-size: 11px;
+  font-size: 10px;
 }
 .bDataPanelHeader {
   display: flex; justify-content: space-between; align-items: flex-start;
   gap: 6px; margin-bottom: 4px;
 }
 .bDataPanelTitle {
-  font-size: 11px; font-weight: 700; line-height: 1.3;
+  font-size: 10px; font-weight: 700; line-height: 1.3;
   color: #fff; flex: 1;
 }
 .bDataPanelChartType {
@@ -21875,8 +21874,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   margin-bottom: 8px; line-height: 1.4;
 }
 .bDataPanelChart {
-  width: 100%; height: 90px; position: relative;
-  margin-bottom: 6px;
+  width: 100%; height: 68px; position: relative;
+  margin-bottom: 4px;
 }
 .bDataPanelChart svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .bDataPanelLegend {
@@ -21918,7 +21917,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     left: 50%;
     right: auto;
     transform: translateX(-50%);
-    width: min(270px, 80vw);
+    width: min(220px, 65vw);
     flex-direction: column;
     gap: 0;
     overflow: hidden;
@@ -21929,7 +21928,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     width: 100%;
     max-width: none;
   }
-  .bDataPanelChart { height: 80px; }
+  .bDataPanelChart { height: 60px; }
 }
 
 /* ── Left article panel ── */
@@ -21938,10 +21937,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transform: translateY(-50%);
   width: min(270px, 28vw);
   display: flex; flex-direction: column; gap: 8px;
-  opacity: 0; transition: opacity 0.5s ease 0.3s;
+  opacity: 0; transition: opacity 0.4s ease;
   pointer-events: all;
 }
 .bArticlePanel.visible { opacity: 1; }
+@media (max-width: 720px) {
+  .bArticlePanel {
+    top: auto;
+    bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    left: 50%; right: auto;
+    transform: translateX(-50%);
+    width: min(270px, 80vw);
+    padding: 0 0 10px;
+  }
+}
 .bAPCard {
   background: rgba(6,10,20,0.92); border: 1px solid rgba(255,255,255,0.1);
   border-radius: 10px; overflow: hidden; cursor: pointer;
@@ -22214,7 +22223,7 @@ body.ticker-active .gTickerLabel {
 /* ── Controls — sit just above the bottom nav bar ── */
 .bControlsWrap {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 14px);
+  bottom: calc(var(--page-nav-height) + 42px + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 20px);
   left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   opacity: 0; transition: opacity 0.5s ease 0.5s;
