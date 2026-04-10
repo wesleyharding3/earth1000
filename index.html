@@ -5099,8 +5099,8 @@ body.ticker-active #flowControls {
     #nfThreadsViewport::-webkit-scrollbar-thumb { background: rgba(212,168,67,0.18); border-radius: 4px; }
     #nfThreadsGrid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
     }
 
     /* ── Thread card ── */
@@ -18416,8 +18416,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
-      // 8. Collect unique node positions and create persistent labels
-      showFlowNodeLabels(flows);
+      // 8. (City labels on flow arcs removed.)
 
       // 9. Show back button
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
@@ -18520,8 +18519,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
-      showFlowNodeLabels(flows);
-
       const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
@@ -18610,8 +18607,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
-
-      showFlowNodeLabels(flows);
 
       const backLabel = originPage === 2 ? "Back to Timelines" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
