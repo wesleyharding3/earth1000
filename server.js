@@ -2118,6 +2118,7 @@ app.get("/api/timelines/latest", async (req, res) => {
           // Frontend compatibility: render timeline cards via the same grid
           // code that renders thread cards. Provide `thread_id` alias too.
           thread_id: t.timeline_id,
+          latest_published_at: t.last_updated_at,
           hero_image_url: h?.hero_image_url || null,
           hero_catalog_image_url: h?.hero_catalog_image_url || null,
           hero_source_name: h?.hero_source_name || null,
@@ -2499,12 +2500,12 @@ app.get("/api/threads/latest", async (req, res) => {
     if (toDate)   { params.push(toDate);   dateClauses.push(`st.last_updated_at <  ($${params.length}::date + INTERVAL '1 day')`); }
     const dateWhere = dateClauses.length ? `AND ${dateClauses.join(' AND ')}` : '';
 
-    // Single-pass query: filter the candidate set in one CTE, then join the
-    // article-country aggregate over only that filtered set. The two title
-    // checks are inline column expressions — one cheap regex eval per row
-    // instead of N×M cross joins.
+    // Two-step approach: first grab the best candidates by status/importance
+    // (cheap — no joins), then enrich just those rows with country_count.
+    // This avoids the old CTE that materialized country counts for every
+    // thread before trimming.
     const { rows: threads } = await pool.query(`
-      WITH candidate_threads AS (
+      WITH candidates AS (
         SELECT
           st.id AS thread_id, st.title, st.description, st.primary_category,
           st.geographic_scope, st.importance, st.keywords, st.article_count,
@@ -2519,43 +2520,46 @@ app.get("/api/threads/latest", async (req, res) => {
         WHERE st.article_count >= 2
           AND st.status IN ('active', 'cooling', 'dormant')
           ${dateWhere}
-      ),
-      thread_country_counts AS (
-        SELECT
-          sta.thread_id,
-          COUNT(DISTINCT a.country_id) AS country_count
-        FROM story_thread_articles sta
-        JOIN news_articles a ON a.id = sta.article_id
-        WHERE a.country_id IS NOT NULL
-          AND sta.thread_id IN (SELECT thread_id FROM candidate_threads)
-        GROUP BY sta.thread_id
+        ORDER BY
+          CASE st.status
+            WHEN 'active'  THEN 0
+            WHEN 'cooling' THEN 1
+            WHEN 'dormant' THEN 2
+            ELSE 3
+          END,
+          st.importance DESC,
+          st.article_count DESC,
+          st.last_updated_at DESC NULLS LAST
+        LIMIT ($1 * 5)
       )
-      SELECT
-        ct.thread_id, ct.title, ct.description, ct.primary_category,
-        ct.geographic_scope, ct.importance, ct.keywords, ct.article_count,
-        ct.status, ct.last_updated_at,
-        COALESCE(tcc.country_count, 0)::int AS country_count,
-        ct.title_mentions_country,
-        ct.title_is_generic
-      FROM candidate_threads ct
-      LEFT JOIN thread_country_counts tcc ON tcc.thread_id = ct.thread_id
+      SELECT * FROM (
+        SELECT
+          c.*,
+          COALESCE((
+            SELECT COUNT(DISTINCT a.country_id)
+            FROM story_thread_articles sta
+            JOIN news_articles a ON a.id = sta.article_id
+            WHERE sta.thread_id = c.thread_id AND a.country_id IS NOT NULL
+          ), 0)::int AS country_count
+        FROM candidates c
+      ) enriched
       ORDER BY
-        CASE ct.status
+        CASE enriched.status
           WHEN 'active'  THEN 0
           WHEN 'cooling' THEN 1
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
-        CASE WHEN ct.title_is_generic THEN 1 ELSE 0 END,
-        CASE WHEN ct.title_mentions_country THEN 0 ELSE 1 END,
+        CASE WHEN enriched.title_is_generic THEN 1 ELSE 0 END,
+        CASE WHEN enriched.title_mentions_country THEN 0 ELSE 1 END,
         CASE
-          WHEN COALESCE(tcc.country_count, 0) >= 2 THEN 0
-          WHEN COALESCE(tcc.country_count, 0) = 1 THEN 1
+          WHEN enriched.country_count >= 2 THEN 0
+          WHEN enriched.country_count = 1 THEN 1
           ELSE 2
         END,
-        ct.importance DESC,
-        ct.article_count DESC,
-        ct.last_updated_at DESC NULLS LAST
+        enriched.importance DESC,
+        enriched.article_count DESC,
+        enriched.last_updated_at DESC NULLS LAST
       LIMIT ($1 * 3)
     `, params);
 
@@ -2757,6 +2761,9 @@ app.get("/api/threads/latest", async (req, res) => {
       const h = heroMap.get(t.thread_id);
       return {
         ...t,
+        // Client-side applyRecencyStatus() expects latest_published_at;
+        // the DB column is last_updated_at — alias it here.
+        latest_published_at: t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
         hero_catalog_image_url: h?.hero_catalog_image_url || null,
         hero_source_name: h?.hero_source_name || null,
