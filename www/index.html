@@ -1979,7 +1979,8 @@ body.ticker-active #flowControls {
   flex-shrink: 0;
 }
 .fac-closeBtn {
-  width: 22px; height: 22px;
+  width: 36px; height: 36px;
+  min-width: 44px; min-height: 44px;
   display: flex; align-items: center; justify-content: center;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1987,6 +1988,8 @@ body.ticker-active #flowControls {
   color: rgba(220, 230, 245, 0.78);
   cursor: pointer;
   padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   font-size: 14px;
   line-height: 1;
   transition: background 0.18s, color 0.18s, border-color 0.18s;
@@ -1998,7 +2001,8 @@ body.ticker-active #flowControls {
   border-color: rgba(255, 255, 255, 0.22);
 }
 .fac-returnBtn {
-  width: 22px; height: 22px;
+  width: 36px; height: 36px;
+  min-width: 44px; min-height: 44px;
   display: flex; align-items: center; justify-content: center;
   background: rgba(255, 190, 80, 0.10);
   border: 1px solid rgba(255, 190, 80, 0.32);
@@ -2008,8 +2012,10 @@ body.ticker-active #flowControls {
   padding: 0;
   transition: background 0.18s, color 0.18s, border-color 0.18s;
   flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
-.fac-returnBtn svg { width: 12px; height: 12px; }
+.fac-returnBtn svg { width: 16px; height: 16px; }
 .fac-returnBtn:hover {
   background: rgba(255, 190, 80, 0.22);
   color: #fff;
@@ -18381,48 +18387,69 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__highlightFlowArticleCardEntities = highlightFlowArticleCardEntities;
 
   // Close button — fully tear down flow arcs / heatmap and dismiss the card.
-  document.getElementById('facCloseBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    try {
-      if (window.__flowIsOpen?.()) {
-        window.__flowClearArcs?.();
-        window.__flowClosePanel?.();
-        window.__flowSetOpen?.(false);
-      }
-    } catch (_) {}
-    try {
-      if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
-        window.__semHeatClose();
-      }
-    } catch (_) {}
-    try { hideFlowArcBackBtn(); } catch (_) {}
-    _flowArcOrigin = null;
-    window.__flowArcOriginForHeat = null;
-    hideFlowArticleCard();
-  });
-  // Return button — navigate back to the origin page/card.
-  document.getElementById('facReturnBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (_flowArcOrigin) {
-      window.__flowArcGoBack?.();
-      return;
-    }
-    const heatOrigin = window.__flowArcOriginForHeat;
-    if (heatOrigin && typeof heatOrigin.page === 'number') {
+  {
+    let _facCloseFired = false;
+    const onFacClose = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (_facCloseFired) return;
+      _facCloseFired = true;
+      setTimeout(() => { _facCloseFired = false; }, 400);
+      try {
+        if (window.__flowIsOpen?.()) {
+          window.__flowClearArcs?.();
+          window.__flowClosePanel?.();
+          window.__flowSetOpen?.(false);
+        }
+      } catch (_) {}
       try {
         if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
           window.__semHeatClose();
         }
       } catch (_) {}
-      hideFlowArticleCard();
+      try { hideFlowArcBackBtn(); } catch (_) {}
+      _flowArcOrigin = null;
       window.__flowArcOriginForHeat = null;
-      window.__goToPage?.(heatOrigin.page);
-      return;
-    }
-    hideFlowArticleCard();
-  });
+      hideFlowArticleCard();
+    };
+    const closeBtn = document.getElementById('facCloseBtn');
+    closeBtn?.addEventListener('click', onFacClose);
+    closeBtn?.addEventListener('pointerup', onFacClose);
+  }
+  // Return button — navigate back to the origin page/card.
+  // iOS WKWebView sometimes swallows `click` inside overlays, so listen on
+  // `pointerup` as well (guarded by _facReturnFired to prevent double-fire).
+  {
+    let _facReturnFired = false;
+    const onFacReturn = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      if (_facReturnFired) return;
+      _facReturnFired = true;
+      setTimeout(() => { _facReturnFired = false; }, 400);
+      if (_flowArcOrigin) {
+        hideFlowArticleCard();
+        window.__flowArcGoBack?.();
+        return;
+      }
+      const heatOrigin = window.__flowArcOriginForHeat;
+      if (heatOrigin && typeof heatOrigin.page === 'number') {
+        try {
+          if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
+            window.__semHeatClose();
+          }
+        } catch (_) {}
+        hideFlowArticleCard();
+        window.__flowArcOriginForHeat = null;
+        window.__goToPage?.(heatOrigin.page);
+        return;
+      }
+      hideFlowArticleCard();
+    };
+    const retBtn = document.getElementById('facReturnBtn');
+    retBtn?.addEventListener('click', onFacReturn);
+    retBtn?.addEventListener('pointerup', onFacReturn);
+  }
 
   // Wire the collapse toggle + return button on the origin panel.
   document.getElementById('flowOriginPanelCollapse')?.addEventListener('click', (e) => {
@@ -18704,6 +18731,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         thread: capturedThread.thread || null,
       };
 
+      // Early-render the briefing card immediately (before navigation / API)
+      if (_flowArcOrigin.thread && typeof showFlowArticleCard === 'function') {
+        try { showFlowArticleCard(_flowArcOrigin, []); } catch (_) {}
+      }
+
       window.__clusterCloseNodePanel?.();
       window.closeArticleDetail?.();
       // Close main info panel (#infoPanel) if open
@@ -18761,6 +18793,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
+
+      // Re-render the briefing card with richer API data + flow keywords
+      if (_flowArcOrigin && typeof showFlowArticleCard === 'function') {
+        try { showFlowArticleCard(_flowArcOrigin, flows); } catch (_) {}
+      }
 
       // Load and show the thread timeline
       loadAndShowFlowTimeline(threadId);
