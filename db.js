@@ -15,7 +15,7 @@ const pool = new Pool({
   },
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: parseInt(process.env.DB_POOL_MAX || "25", 10),
+  max: parseInt(process.env.DB_POOL_MAX || "60", 10),
 });
 
 // Kill runaway queries after 45 seconds so they release their connection instead

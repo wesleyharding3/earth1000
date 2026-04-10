@@ -419,27 +419,30 @@ app.get("/api/auth/profile", async (req, res) => {
 ========================================= */
 app.get("/api/cities", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT 
-        c.id, 
-        c.name, 
-        c.timezone, 
-        c.country_id,
-        c.region_id,
-        c.latitude AS lat, 
-        c.longitude AS lon,
-        c.fame_index,
-        c.population,
-        c.gdp,
-        co.name AS country,
-        r.name AS region
-      FROM cities c
-      LEFT JOIN countries co ON c.country_id = co.id
-      LEFT JOIN regions r ON c.region_id = r.id
-      WHERE c.is_active = true
-      ORDER BY c.name ASC
-    `);
-    res.json(result.rows);
+    const rows = await ttlCached('cities:all', 300_000, async () => {
+      const result = await pool.query(`
+        SELECT
+          c.id,
+          c.name,
+          c.timezone,
+          c.country_id,
+          c.region_id,
+          c.latitude AS lat,
+          c.longitude AS lon,
+          c.fame_index,
+          c.population,
+          c.gdp,
+          co.name AS country,
+          r.name AS region
+        FROM cities c
+        LEFT JOIN countries co ON c.country_id = co.id
+        LEFT JOIN regions r ON c.region_id = r.id
+        WHERE c.is_active = true
+        ORDER BY c.name ASC
+      `);
+      return result.rows;
+    });
+    res.json(rows);
   } catch (err) {
     console.error("Cities error:", err);
     res.status(500).json({ error: "Failed to fetch cities" });
@@ -451,12 +454,15 @@ app.get("/api/cities", async (req, res) => {
 ========================================= */
 app.get("/api/countries", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population, gdp
-      FROM countries
-      ORDER BY name ASC
-    `);
-    res.json(result.rows);
+    const rows = await ttlCached('countries:all', 300_000, async () => {
+      const result = await pool.query(`
+        SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population, gdp
+        FROM countries
+        ORDER BY name ASC
+      `);
+      return result.rows;
+    });
+    res.json(rows);
   } catch (err) {
     console.error("Countries error:", err);
     res.status(500).json({ error: "Failed to fetch countries" });
@@ -650,10 +656,13 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
 ========================================= */
 app.get("/api/tags", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT id, name FROM tags ORDER BY id ASC
-    `);
-    res.json(result.rows);
+    const rows = await ttlCached('tags:all', 300_000, async () => {
+      const result = await pool.query(`
+        SELECT id, name FROM tags ORDER BY id ASC
+      `);
+      return result.rows;
+    });
+    res.json(rows);
   } catch (err) {
     console.error("Tags error:", err);
     res.status(500).json({ error: "Failed to fetch tags" });
@@ -3186,46 +3195,45 @@ app.get("/api/sentiment/country/:iso", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 150, 300);
     const days  = Math.min(parseInt(req.query.days, 10)  || 7,   30);
 
-    const { rows } = await pool.query(`
-      SELECT
-        a.id,
-        COALESCE(a.translated_title, a.title)     AS title,
-        a.title                                    AS original_title,
-        COALESCE(a.translated_summary, a.summary) AS summary,
-        a.translated_title, a.translated_summary,
-        a.language,
-        a.published_at, a.article_url, a.url,
-        COALESCE(a.image_url, img_a.public_url)   AS image_url,
-        COALESCE(ns.name, ys.name)                AS source_name,
-        COALESCE(ns.bias, 'unknown')              AS source_bias,
-        a.media_type, a.video_id,
-        co.iso_code, co.name AS country_name,
-        ci.name AS city_name,
-        a.sentiment_score
-      FROM news_articles a
-      JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities ci ON ci.id = a.city_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      WHERE co.iso_code = $1
-        AND a.published_at > NOW() - ($2 || ' days')::interval
-        AND a.sentiment_score IS NOT NULL
-      ORDER BY a.sentiment_score DESC NULLS LAST, a.published_at DESC
-      LIMIT $3
-    `, [iso, String(days), limit]);
+    const cached = await ttlCached(`sentiment/country:${iso}:${days}:${limit}`, 45_000, async () => {
+      const { rows } = await pool.query(`
+        SELECT
+          a.id,
+          COALESCE(a.translated_title, a.title)     AS title,
+          a.title                                    AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.translated_title, a.translated_summary,
+          a.language,
+          a.published_at, a.article_url, a.url,
+          COALESCE(a.image_url, img_a.public_url)   AS image_url,
+          COALESCE(ns.name, ys.name)                AS source_name,
+          COALESCE(ns.bias, 'unknown')              AS source_bias,
+          a.media_type, a.video_id,
+          co.iso_code, co.name AS country_name,
+          ci.name AS city_name,
+          a.sentiment_score
+        FROM news_articles a
+        JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities ci ON ci.id = a.city_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE co.iso_code = $1
+          AND a.published_at > NOW() - ($2 || ' days')::interval
+          AND a.sentiment_score IS NOT NULL
+        ORDER BY a.sentiment_score DESC NULLS LAST, a.published_at DESC
+        LIMIT $3
+      `, [iso, String(days), limit]);
 
-    // Attach signal words to each article on the fly.
-    const articles = rows.map(r => {
-      const { matched_words } = extractArticleSignals(r);
-      // Don't ship raw translated_* fields back — client only needs final
-      // title/summary and the matched_words list for highlighting.
-      const { translated_title, translated_summary, language, ...rest } = r;
-      return { ...rest, matched_words };
+      return rows.map(r => {
+        const { matched_words } = extractArticleSignals(r);
+        const { translated_title, translated_summary, language, ...rest } = r;
+        return { ...rest, matched_words };
+      });
     });
 
-    res.json({ iso_code: iso, count: articles.length, articles });
+    res.json({ iso_code: iso, count: cached.length, articles: cached });
   } catch (err) {
     console.error("[sentiment/country]", err.message);
     res.status(500).json({ error: "Failed to fetch country sentiment", detail: err.message });
@@ -3311,6 +3319,7 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 40, 100);
     const days  = Math.min(parseInt(req.query.days,  10) || 7,  30);
 
+    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 45_000, async () => {
     const { rows } = await pool.query(`
       WITH candidate_articles AS (
         SELECT
@@ -3414,6 +3423,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
                rt.last_in_country_at DESC,
                rt.last_updated_at DESC
     `, [iso, String(days), limit]);
+      return rows;
+    });
 
     res.json({ iso_code: iso, count: rows.length, threads: rows });
   } catch (err) {
