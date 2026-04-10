@@ -9055,10 +9055,10 @@ function computeCityTiers(cities) {
       })();
 
       window.__surfaceOverlayEnabled = true;
-      window.__surfaceOverlayOpacity = 0.35;
+      window.__surfaceOverlayOpacity = 0.30;
       window.__globeTheme            = "light"; // "light" | "dark"
       // Per-theme sticky opacity: null = use default, number = user override.
-      const _themeOpacityDefaults = { light: 0.35, dark: 0.80 };
+      const _themeOpacityDefaults = { light: 0.30, dark: 0.90 };
       const _themeOpacityCustom  = { light: null, dark: null };
 
       function setGlobeTheme(theme) {
@@ -9092,7 +9092,7 @@ function computeCityTiers(cities) {
         const allowed = mode === "country" || mode === "city" ||
                         mode === "regions" || mode === "transportation";
         surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
-        const userOpacity = window.__surfaceOverlayOpacity ?? 0.35;
+        const userOpacity = window.__surfaceOverlayOpacity ?? 0.30;
         // In dark mode, give the night-lights image a small visibility
         // boost so the faint urban glow is still legible even at low
         // slider values. 0.35 day → ~0.55 night as a soft floor.
@@ -10674,9 +10674,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncBiomeOverlayControls() {
         biomeOverlayToggles.forEach(el => el.classList.toggle("active", !!window.__surfaceOverlayEnabled));
-        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.35; });
+        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.30; });
         biomeOverlayVals.forEach(el => {
-          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.35) * 100) + "%";
+          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.30) * 100) + "%";
         });
       }
 

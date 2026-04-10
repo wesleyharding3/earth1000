@@ -952,6 +952,10 @@ app.get("/api/flows", async (req, res) => {
     const aboutCity    = req.query.about_city           ? parseInt(req.query.about_city)   : null;
     const keyword      = req.query.keyword?.trim()      || null;
 
+    // ── TTL cache for flows — keyed by all filter params ──────────────
+    const _flowCacheKey = `flows:${mode}:${viewMode}:${limit}:${fromDate||''}:${toDate||''}:${fromCountry||''}:${fromCity||''}:${aboutCountry||''}:${aboutCity||''}:${keyword||''}:${normalize}`;
+    const _flowResult = await ttlCached(_flowCacheKey, 45_000, async () => {
+
     // Build dynamic WHERE conditions
     const conditions = [];
     const params = [];
@@ -959,7 +963,7 @@ app.get("/api/flows", async (req, res) => {
     // Always: must have routing
     conditions.push(`al.routing_type IN ('content', 'source')`);
 
-    // Date filters
+    // Date filters — default to 7 days if no date range specified
     if (fromDate) {
       params.push(fromDate);
       conditions.push(`a.published_at >= $${params.length}::date`);
@@ -967,6 +971,9 @@ app.get("/api/flows", async (req, res) => {
     if (toDate) {
       params.push(toDate);
       conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`);
+    }
+    if (!fromDate && !toDate) {
+      conditions.push(`a.published_at > NOW() - INTERVAL '7 days'`);
     }
 
     // Source location filters (from news_articles.country_id / city_id)
@@ -1214,13 +1221,13 @@ app.get("/api/flows", async (req, res) => {
         }
       }));
 
-      res.json({
+      return {
         mode: "aggregate",
         totalRoutes: flows.length,
         totalArticles,
         maxCount,
         flows
-      });
+      };
 
     } else {
       // ─────────────────────────────────────────
@@ -1437,13 +1444,17 @@ app.get("/api/flows", async (req, res) => {
         }
       }));
 
-      res.json({
+      return {
         mode: "individual",
         normalized: normalize,
         total: flows.length,
         flows
-      });
+      };
     }
+
+    }); // end ttlCached
+
+    res.json(_flowResult);
 
   } catch (err) {
     console.error("Flows error:", err.message);
@@ -5023,6 +5034,7 @@ async function _warmFeedCaches() {
     `${base}/api/news/search?limit=25&offset=0`,
     `${base}/api/threads/latest?limit=30`,
     `${base}/api/timelines/latest?limit=30`,
+    `${base}/api/flows?mode=aggregate&view_mode=country&limit=500`,
   ];
   for (const url of urls) {
     try {

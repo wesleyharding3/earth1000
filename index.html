@@ -8761,10 +8761,10 @@ function computeCityTiers(cities) {
       })();
 
       window.__surfaceOverlayEnabled = true;
-      window.__surfaceOverlayOpacity = 0.35;
+      window.__surfaceOverlayOpacity = 0.30;
       window.__globeTheme            = "light";
       // Per-theme sticky opacity: null = use default, number = user override.
-      const _themeOpacityDefaults = { light: 0.35, dark: 0.80 };
+      const _themeOpacityDefaults = { light: 0.30, dark: 0.90 };
       const _themeOpacityCustom  = { light: null, dark: null };
 
       function setGlobeTheme(theme) {
@@ -8793,7 +8793,7 @@ function computeCityTiers(cities) {
         const mode = window.__currentViewMode || currentViewMode;
         const allowed = mode === "country" || mode === "city" || mode === "regions";
         surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
-        const userOpacity = window.__surfaceOverlayOpacity ?? 0.35;
+        const userOpacity = window.__surfaceOverlayOpacity ?? 0.30;
         if (window.__globeTheme === "dark") {
           // Dark mode: keep the satellite overlay legible at every slider
           // position. A floor of ~0.42 guarantees continents stay visible
@@ -10409,9 +10409,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       function syncBiomeOverlayControls() {
         biomeOverlayToggles.forEach(el => el.classList.toggle("active", !!window.__surfaceOverlayEnabled));
-        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.35; });
+        biomeOverlaySliders.forEach(el => { el.value = window.__surfaceOverlayOpacity ?? 0.30; });
         biomeOverlayVals.forEach(el => {
-          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.35) * 100) + "%";
+          el.textContent = Math.round((window.__surfaceOverlayOpacity ?? 0.30) * 100) + "%";
         });
       }
 
