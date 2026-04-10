@@ -17688,6 +17688,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Lazy-render in chunks of 15 so big result sets don't stall the page.
       const THREADS_PAGE_SIZE = 15;
       let threadsRendered = 0;
+      // In-flight dedupe — declared here (before setView) so the hoisted
+      // loadThreads function can safely reference it on the first call.
+      let threadsInFlight = null;
+      let timelinesInFlight = null;
 
       function setView(view) {
         currentView = view;
@@ -17794,14 +17798,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         threadsDateToggleBtn.classList.toggle('open', !isOpen);
       });
 
-      // In-flight dedupe: if loadThreads() is called while a previous fetch
-      // is still running (e.g. the user taps Feed then Threads again before
-      // the first request resolves), return the SAME promise instead of
-      // firing a second concurrent request. Avoids the "two overlapping
-      // fetches clobber each other" race that caused the loading spinner
-      // to flicker on/off during rapid view switches.
-      let threadsInFlight = null;
-
       async function loadThreads() {
         if (threadsInFlight) return threadsInFlight;
 
@@ -17845,7 +17841,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Timelines: broad umbrella-arc dataset. Same card shape as threads,
       // so we tag each row with __kind='timeline' and reuse the existing
       // renderer / lazy-pagination path through activeGridData.
-      let timelinesInFlight = null;
       async function loadTimelines() {
         if (timelinesInFlight) return timelinesInFlight;
         if (currentView === 'timelines') threadsGrid.innerHTML = skels(1);
