@@ -289,10 +289,136 @@
       background: transparent;
       border-radius: 20px 20px 0 0;
       z-index: 5;
+      touch-action: manipulation;
     }
 
     .panelHeader h2 { margin: 0; }
     .panelHeader h4 { margin: 2px 0 0 0; opacity: 0.7; }
+
+    .panelLiveDot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: #ffc346;
+      box-shadow:
+        0 0 0 1px rgba(255, 195, 70, 0.34),
+        0 0 10px rgba(255, 195, 70, 0.7),
+        0 0 18px rgba(255, 195, 70, 0.3);
+      animation: panelLiveDotBreathe 2.6s ease-in-out infinite;
+      transform-origin: center;
+      will-change: transform, box-shadow, opacity;
+    }
+
+    .panelHeader:active .panelLiveDot,
+    .panelHeader.touch-active .panelLiveDot {
+      animation: panelLiveDotTouch 520ms cubic-bezier(0.22, 1, 0.36, 1), panelLiveDotBreathe 2.2s ease-in-out infinite;
+    }
+
+    .panelHeader.touch-charge .panelLiveDot {
+      animation: panelLiveDotCharge 760ms cubic-bezier(0.22, 1, 0.36, 1) infinite;
+    }
+
+    .panelHeader.touch-release .panelLiveDot {
+      animation: panelLiveDotRelease 680ms cubic-bezier(0.2, 0.9, 0.22, 1) 1;
+    }
+
+    @keyframes panelLiveDotBreathe {
+      0%, 100% {
+        transform: scale(0.94);
+        opacity: 0.92;
+        box-shadow:
+          0 0 0 1px rgba(255, 195, 70, 0.30),
+          0 0 8px rgba(255, 195, 70, 0.62),
+          0 0 16px rgba(255, 195, 70, 0.24);
+      }
+      50% {
+        transform: scale(1.08);
+        opacity: 1;
+        box-shadow:
+          0 0 0 1px rgba(255, 195, 70, 0.4),
+          0 0 14px rgba(255, 195, 70, 0.86),
+          0 0 26px rgba(255, 195, 70, 0.42);
+      }
+    }
+
+    @keyframes panelLiveDotTouch {
+      0% {
+        transform: scale(1);
+        box-shadow:
+          0 0 0 1px rgba(255, 195, 70, 0.36),
+          0 0 12px rgba(255, 195, 70, 0.8),
+          0 0 22px rgba(255, 195, 70, 0.36);
+      }
+      45% {
+        transform: scale(1.28);
+        box-shadow:
+          0 0 0 7px rgba(255, 195, 70, 0.12),
+          0 0 20px rgba(255, 195, 70, 0.98),
+          0 0 34px rgba(255, 195, 70, 0.5);
+      }
+      100% {
+        transform: scale(1);
+        box-shadow:
+          0 0 0 1px rgba(255, 195, 70, 0.34),
+          0 0 10px rgba(255, 195, 70, 0.7),
+          0 0 18px rgba(255, 195, 70, 0.3);
+      }
+    }
+
+    @keyframes panelLiveDotCharge {
+      0% {
+        transform: scale(1.02);
+        opacity: 0.96;
+        box-shadow:
+          0 0 0 1px rgba(255, 195, 70, 0.34),
+          0 0 12px rgba(255, 195, 70, 0.78),
+          0 0 22px rgba(255, 195, 70, 0.34);
+      }
+      50% {
+        transform: scale(1.34);
+        opacity: 1;
+        box-shadow:
+          0 0 0 10px rgba(255, 195, 70, 0.12),
+          0 0 24px rgba(255, 195, 70, 1),
+          0 0 42px rgba(255, 195, 70, 0.52);
+      }
+      100% {
+        transform: scale(1.1);
+        opacity: 0.98;
+        box-shadow:
+          0 0 0 2px rgba(255, 195, 70, 0.28),
+          0 0 16px rgba(255, 195, 70, 0.84),
+          0 0 28px rgba(255, 195, 70, 0.38);
+      }
+    }
+
+    @keyframes panelLiveDotRelease {
+      0% {
+        transform: scale(1.12);
+        opacity: 1;
+        box-shadow:
+          0 0 0 4px rgba(255, 195, 70, 0.18),
+          0 0 18px rgba(255, 195, 70, 0.92),
+          0 0 32px rgba(255, 195, 70, 0.42);
+      }
+      32% {
+        transform: scale(1.58);
+        opacity: 1;
+        box-shadow:
+          0 0 0 15px rgba(255, 195, 70, 0.16),
+          0 0 32px rgba(255, 195, 70, 1),
+          0 0 54px rgba(255, 195, 70, 0.62);
+      }
+      100% {
+        transform: scale(0.98);
+        opacity: 0.94;
+        box-shadow:
+          0 0 0 1px rgba(255, 195, 70, 0.32),
+          0 0 10px rgba(255, 195, 70, 0.68),
+          0 0 18px rgba(255, 195, 70, 0.28);
+      }
+    }
 
     .paginationBar {
       display: flex;
@@ -6382,12 +6508,12 @@ body.ticker-active #flowControls {
         gap: 6px;
       }
       .iconBtn {
-        width: 40px;
-        height: 40px;
+        width: 38px;
+        height: 38px;
       }
       .iconBtn svg {
-        width: 15px;
-        height: 15px;
+        width: 14px;
+        height: 14px;
       }
 
       /* ── Tooltips on mobile: constrain to viewport, don't rely on hover ── */
@@ -12274,7 +12400,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
             <div class="panelTitleRowDesktop">
-              ${node.flag ? `<span style="font-size:26px;line-height:1;flex-shrink:0;">${node.flag}</span>` : ""}
+              <span class="panelLiveDot" aria-hidden="true"></span>
               <div class="panelTitleTextWrap">
                 <h2>${node.name}</h2>
                 ${showCountry ? `<h4>${node.country}</h4>` : ""}
@@ -17864,6 +17990,81 @@ const settingsToggle     = document.getElementById("settingsToggle");
         strum(0.4, 0.5);
       };
 
+      let panelLightHeader = null;
+      let panelLightHoldTimer = null;
+      let panelLightReleaseTimer = null;
+      let panelLightHoldStart = 0;
+
+      function clearPanelLightTimers() {
+        if (panelLightHoldTimer) {
+          clearTimeout(panelLightHoldTimer);
+          panelLightHoldTimer = null;
+        }
+        if (panelLightReleaseTimer) {
+          clearTimeout(panelLightReleaseTimer);
+          panelLightReleaseTimer = null;
+        }
+      }
+
+      function resetPanelLightState(header) {
+        if (!header) return;
+        header.classList.remove('touch-active', 'touch-charge', 'touch-release');
+      }
+
+      function panelHeaderFromEventTarget(target) {
+        const header = target && target.closest ? target.closest('.panelHeader') : null;
+        if (!header || !header.querySelector('.panelLiveDot')) return null;
+        if (target && target.closest?.('.closePanel, button, a, input, select, textarea')) return null;
+        return header;
+      }
+
+      function onPanelLightDown(e) {
+        const header = panelHeaderFromEventTarget(e.target);
+        if (!header) return;
+
+        if (panelLightHeader && panelLightHeader !== header) {
+          resetPanelLightState(panelLightHeader);
+        }
+        clearPanelLightTimers();
+        resetPanelLightState(header);
+        panelLightHeader = header;
+        panelLightHoldStart = performance.now();
+
+        // Force the tap animation to restart on repeated touches.
+        void header.offsetWidth;
+        header.classList.add('touch-active');
+
+        panelLightHoldTimer = setTimeout(() => {
+          if (panelLightHeader !== header) return;
+          header.classList.add('touch-charge');
+        }, 180);
+      }
+
+      function onPanelLightUp() {
+        if (!panelLightHeader) return;
+
+        const header = panelLightHeader;
+        const held = performance.now() - panelLightHoldStart;
+        clearPanelLightTimers();
+
+        header.classList.remove('touch-active', 'touch-charge');
+        if (held >= 180) {
+          header.classList.add('touch-release');
+          panelLightReleaseTimer = setTimeout(() => {
+            header.classList.remove('touch-release');
+            if (panelLightHeader === header) panelLightHeader = null;
+          }, 700);
+          return;
+        }
+
+        header.classList.remove('touch-release');
+        panelLightHeader = null;
+      }
+
+      document.addEventListener('pointerdown', onPanelLightDown, { passive: true });
+      window.addEventListener('pointerup', onPanelLightUp, { passive: true });
+      window.addEventListener('pointercancel', onPanelLightUp, { passive: true });
+
       // Pointer handling on the entire news feed page — ripple x follows
       // the click's horizontal screen position.
       const nfPage = document.getElementById('pageNews') || document;
@@ -21630,10 +21831,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   top: 50%;
   right: max(24px, env(safe-area-inset-right, 0px));
   transform: translateY(-50%);
-  width: min(320px, 30vw);
+  width: min(270px, 28vw);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   opacity: 0;
   transition: opacity 0.5s ease 0.4s;
   pointer-events: all;
@@ -21647,17 +21848,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .bDataPanel {
   background: rgba(6,10,20,0.92);
   border: 1px solid rgba(255,153,64,0.22);
-  border-radius: 10px;
-  padding: 12px 14px 10px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  border-radius: 8px;
+  padding: 8px 10px 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
   color: #fff;
+  font-size: 11px;
 }
 .bDataPanelHeader {
   display: flex; justify-content: space-between; align-items: flex-start;
-  gap: 8px; margin-bottom: 6px;
+  gap: 6px; margin-bottom: 4px;
 }
 .bDataPanelTitle {
-  font-size: 12px; font-weight: 700; line-height: 1.3;
+  font-size: 11px; font-weight: 700; line-height: 1.3;
   color: #fff; flex: 1;
 }
 .bDataPanelChartType {
@@ -21673,8 +21875,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   margin-bottom: 8px; line-height: 1.4;
 }
 .bDataPanelChart {
-  width: 100%; height: 130px; position: relative;
-  margin-bottom: 8px;
+  width: 100%; height: 90px; position: relative;
+  margin-bottom: 6px;
 }
 .bDataPanelChart svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .bDataPanelLegend {
@@ -21707,32 +21909,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
   text-transform: uppercase;
 }
 
-/* Mobile: data panels become a bottom sheet above the ticker, swipe-able */
+/* Mobile: data panels show one at a time, cycled by JS */
 @media (max-width: 720px) {
   .bDataPanels {
     position: absolute;
     top: auto;
     bottom: calc(48px + env(safe-area-inset-bottom, 0px));
-    left: env(safe-area-inset-left, 0px);
-    right: env(safe-area-inset-right, 0px);
-    transform: none;
-    width: auto;
-    flex-direction: row;
-    gap: 10px;
-    overflow-x: auto;
-    overflow-y: hidden;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(270px, 80vw);
+    flex-direction: column;
+    gap: 0;
+    overflow: hidden;
     max-height: none;
-    padding: 0 12px 10px;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
+    padding: 0 0 10px;
   }
-  .bDataPanels::-webkit-scrollbar { display: none; }
   .bDataPanel {
-    flex: 0 0 78vw;
-    max-width: 320px;
-    scroll-snap-align: start;
+    width: 100%;
+    max-width: none;
   }
-  .bDataPanelChart { height: 110px; }
+  .bDataPanelChart { height: 80px; }
 }
 
 /* ── Left article panel ── */
@@ -23145,8 +23342,8 @@ body.ticker-active .gTickerLabel {
       if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon });
       for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon });
 
-      // t=0: switch to city view if this segment focuses a city node
-      if (needsCityView && window.setBriefingViewMode) {
+      // t=0: always switch to city view — country polygons provide country context
+      if (window.setBriefingViewMode) {
         window.setBriefingViewMode('city');
       }
 
@@ -23257,8 +23454,6 @@ body.ticker-active .gTickerLabel {
           });
         }
         secondary.forEach((loc, i) => {
-          // In city view, skip pulsing bare country centroids — they're empty space
-          if (needsCityView && _isCountryCentroid(loc.lat, loc.lon ?? loc.lng)) return;
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
@@ -23299,7 +23494,7 @@ body.ticker-active .gTickerLabel {
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
         if (window.clearBriefingPulses) window.clearBriefingPulses();
-        if (needsCityView && window.setBriefingViewMode) window.setBriefingViewMode('country');
+        if (window.setBriefingViewMode) window.setBriefingViewMode('country');
         if (window.briefingHideLabel) window.briefingHideLabel();
       }, ms(0.95)));
 
@@ -23497,22 +23692,53 @@ body.ticker-active .gTickerLabel {
     } catch (_) { /* non-fatal */ }
   }
 
+  let _dataPanelCycleTimer = null;
+
   async function renderDataPanelsForSegment(segIdx) {
     const wrap = document.getElementById('bDataPanels');
     if (!wrap) return;
     wrap.innerHTML = '';
     wrap.classList.remove('visible');
+    clearTimeout(_dataPanelCycleTimer);
     await ensurePanelsLoaded();
     const panels = _panelsBySeg[String(segIdx)];
     if (!panels || !panels.length) return;
+
+    const cards = [];
     for (const p of panels) {
       const card = document.createElement('div');
       card.className = 'bDataPanel';
       card.innerHTML = renderDataPanelHTML(p);
       wrap.appendChild(card);
+      cards.push(card);
     }
     void wrap.offsetWidth;
     wrap.classList.add('visible');
+
+    // Mobile: cycle panels one at a time, each visible for equal share of segment
+    const isMobile = window.innerWidth <= 720;
+    if (isMobile && cards.length > 1) {
+      const segDur = (audio && isFinite(audio.duration) && audio.duration > 1)
+        ? audio.duration
+        : getSegmentDuration(segIdx);
+      const perPanel = (segDur * 1000) / (cards.length * playbackRate);
+      let curPanel = 0;
+      // Hide all except first
+      cards.forEach((c, i) => { c.style.display = i === 0 ? '' : 'none'; });
+      const savedIdx = segIdx;
+      function cycleNext() {
+        if (segIdx !== savedIdx) return;
+        curPanel = (curPanel + 1) % cards.length;
+        cards.forEach((c, i) => {
+          c.style.display = i === curPanel ? '' : 'none';
+          if (i === curPanel) { c.style.opacity = '0'; void c.offsetWidth; c.style.transition = 'opacity 0.3s ease'; c.style.opacity = '1'; }
+        });
+        if (curPanel < cards.length - 1) {
+          _dataPanelCycleTimer = addBTimer(setTimeout(cycleNext, perPanel));
+        }
+      }
+      _dataPanelCycleTimer = addBTimer(setTimeout(cycleNext, perPanel));
+    }
   }
 
   function renderDataPanelHTML(p) {
@@ -26511,8 +26737,12 @@ body.ticker-active .gTickerLabel {
       const bThread = b.type === 'thread';
       if (aThread !== bThread) return aThread ? -1 : 1;
 
-      const sa = Number(a[scoreField] != null ? a[scoreField] : (a.importance || 0));
-      const sb = Number(b[scoreField] != null ? b[scoreField] : (b.importance || 0));
+      const sa = Number(a.type === 'thread'
+        ? (a.feed_score != null ? a.feed_score : (a.importance || 0))
+        : (a[scoreField] != null ? a[scoreField] : (a.importance || 0)));
+      const sb = Number(b.type === 'thread'
+        ? (b.feed_score != null ? b.feed_score : (b.importance || 0))
+        : (b[scoreField] != null ? b[scoreField] : (b.importance || 0)));
       if (sb !== sa) return sb - sa;
       return (typeRank[a.type] ?? 9) - (typeRank[b.type] ?? 9);
     });

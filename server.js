@@ -3058,7 +3058,16 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
           COUNT(DISTINCT m.article_id) AS in_country_articles,
           AVG(m.sentiment_score) FILTER (WHERE m.sentiment_score IS NOT NULL)
                                AS avg_sentiment,
-          MAX(m.published_at)   AS last_in_country_at
+          MAX(m.published_at)   AS last_in_country_at,
+          (
+            COALESCE(t.importance, 0) * 1000
+            + COUNT(DISTINCT m.article_id) * 25
+            + COALESCE(t.breaking_signal_score, 0) * 100
+            + GREATEST(
+                0,
+                240 - EXTRACT(EPOCH FROM (NOW() - MAX(m.published_at))) / 3600.0
+              )
+          ) AS feed_score
         FROM story_threads t
         JOIN thread_country_matches m ON m.thread_id = t.id
         WHERE t.status IN ('active', 'cooling')
@@ -3090,6 +3099,7 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
         LIMIT 1
       ) h ON TRUE
       ORDER BY rt.importance DESC NULLS LAST,
+               rt.feed_score DESC,
                rt.in_country_articles DESC,
                rt.last_in_country_at DESC,
                rt.last_updated_at DESC
