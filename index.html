@@ -8192,6 +8192,12 @@ window.sourceBiasBadgeHTML = function(bias) {
     let _ambientDriftYawPrev = 0;
     let _ambientDriftPitchPrev = 0;
 
+    // Drag-inertia: EMA-smoothed velocity captured during drag, transferred
+    // to yawVelocity/tiltVelocity on release for a subtle coast-to-stop.
+    let _dragVelYaw = 0, _dragVelTilt = 0;
+    const DRAG_VEL_SMOOTH = 0.35;   // EMA α — higher = more responsive to last frame
+    const DRAG_INERTIA_SCALE = 0.6; // keep the coast subtle
+
     function applyYaw(rad)  { globeYaw += rad; }
     function applyTilt(rad) { globePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, globePitch + rad)); }
     function rebuildGlobeQuat() {
@@ -9967,6 +9973,8 @@ function computeCityTiers(cities) {
         dragStartX = e.clientX; dragStartY = e.clientY;
         dragThresholdMet = false;
         mouseMoved = false;    // reset — track ANY movement during this drag
+        _dragVelYaw = 0; _dragVelTilt = 0; // reset inertia tracking
+        yawVelocity = 0; tiltVelocity = 0; // kill any existing coast
         // Always reset prevX/prevY on fresh mousedown — prevents snap when
         // resuming drag after panel close (stale coords cause huge first delta)
         prevX = e.clientX; prevY = e.clientY;
@@ -9986,6 +9994,12 @@ function computeCityTiers(cities) {
           // can also reject the synthetic click at a drag-release point.
           window.__mouseDragEndTime = mouseDragEndTime;
         }
+        // Transfer drag velocity → inertia (animation loop decays it)
+        if (dragging && dragThresholdMet) {
+          yawVelocity  = -_dragVelYaw  * DRAG_INERTIA_SCALE;
+          tiltVelocity =  _dragVelTilt * DRAG_INERTIA_SCALE;
+        }
+        _dragVelYaw = 0; _dragVelTilt = 0;
         dragging = false;
       });
       
@@ -10043,6 +10057,8 @@ function computeCityTiers(cities) {
         touchTapMoved = false;
         touchMoved = false;         // reset — track ANY movement during this touch
         touchThresholdMet = false;  // Reset threshold flag
+        _dragVelYaw = 0; _dragVelTilt = 0; // reset inertia tracking
+        yawVelocity = 0; tiltVelocity = 0; // kill any existing coast
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
         touchPrevX = e.touches[0].clientX;
@@ -10091,6 +10107,9 @@ function computeCityTiers(cities) {
         applyYaw(dx);
         applyTilt(dy);
         rebuildGlobeQuat();
+        // EMA-smooth the drag velocity for inertia on release
+        _dragVelYaw  = _dragVelYaw  * (1 - DRAG_VEL_SMOOTH) + dx * DRAG_VEL_SMOOTH;
+        _dragVelTilt = _dragVelTilt * (1 - DRAG_VEL_SMOOTH) + dy * DRAG_VEL_SMOOTH;
         touchPrevX = e.touches[0].clientX;
         touchPrevY = e.touches[0].clientY;
       }, { passive: true });
@@ -10107,6 +10126,12 @@ function computeCityTiers(cities) {
         // — so a short rotation that lands the fingertip over a node can't
         // commit to selecting it.
         if (touchMoved || touchThresholdMet) touchDragEndTime = Date.now();
+        // Transfer drag velocity → inertia (animation loop decays it)
+        if (touchDragging && touchThresholdMet) {
+          yawVelocity  = -_dragVelYaw  * DRAG_INERTIA_SCALE;
+          tiltVelocity =  _dragVelTilt * DRAG_INERTIA_SCALE;
+        }
+        _dragVelYaw = 0; _dragVelTilt = 0;
         touchDragging = false;
 
         // Fire the deferred pick only if the touch was a true stationary tap.
@@ -10153,6 +10178,9 @@ function computeCityTiers(cities) {
         const deltaY = (e.clientY - prevY) * 0.005;
         applyYaw(deltaX); applyTilt(deltaY);
         rebuildGlobeQuat();
+        // EMA-smooth the drag velocity for inertia on release
+        _dragVelYaw  = _dragVelYaw  * (1 - DRAG_VEL_SMOOTH) + deltaX * DRAG_VEL_SMOOTH;
+        _dragVelTilt = _dragVelTilt * (1 - DRAG_VEL_SMOOTH) + deltaY * DRAG_VEL_SMOOTH;
         prevX = e.clientX; prevY = e.clientY;
       });
 
