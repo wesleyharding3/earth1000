@@ -1816,11 +1816,14 @@ async function refreshHeatmapSnapshots() {
   }
 }
 
-// POST /api/admin/refresh-heatmap — triggered by Render cron every 10-15 min
-app.post("/api/admin/refresh-heatmap", async (req, res) => {
+// GET|POST /api/admin/refresh-heatmap — triggered by Render cron every 10-15 min
+// Accepts both GET (Render cron jobs hit URLs via GET) and POST.
+// Auth: pass secret as query param ?key= or Authorization header.
+app.all("/api/admin/refresh-heatmap", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.authorization;
-  if (!secret || auth !== `Bearer ${secret}`) {
+  const queryKey = req.query.key;
+  if (!secret || (auth !== `Bearer ${secret}` && queryKey !== secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   try {
@@ -2637,87 +2640,39 @@ app.get("/api/threads/latest", async (req, res) => {
     // 30s in-memory TTL — coalesces concurrent requests for the same
     // (limit, from, to) tuple into one query. New threads still surface
     // within the next refresh window.
+    // 2-minute TTL — thread data doesn't change fast enough to justify
+    // hammering the DB every 30s. The builder runs once/day and articles
+    // trickle in; 2 min is plenty fresh for a feed.
     const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
-    const _cached = await ttlCached(_cacheKey, 30_000, async () => {
-    const countryRegex = await getCountryRegex();
+    const _cached = await ttlCached(_cacheKey, 120_000, async () => {
 
-    // Step 1: get threads
-    //
-    // Country-aware ranking:
-    //   We count how many DISTINCT countries each thread's articles touch and
-    //   bucket threads into 3 priority tiers:
-    //     Tier 0 — references 2+ countries (cross-border / global stories)
-    //     Tier 1 — references exactly 1 country (single-country stories)
-    //     Tier 2 — references 0 countries (uncontextualized stories)
-    //   Within each tier we still respect status (active > cooling > dormant)
-    //   and the original importance/article_count/recency order.
-    // params: $1=limit, $2=country_regex, then optional from/to
-    const params = [limit, countryRegex];
+    // Step 1: get threads — single fast query on story_threads only,
+    // no JOINs, no regex, no correlated subqueries.
+    const params = [limit];
     const dateClauses = [];
     if (fromDate) { params.push(fromDate); dateClauses.push(`st.last_updated_at >= $${params.length}::date`); }
     if (toDate)   { params.push(toDate);   dateClauses.push(`st.last_updated_at <  ($${params.length}::date + INTERVAL '1 day')`); }
     const dateWhere = dateClauses.length ? `AND ${dateClauses.join(' AND ')}` : '';
 
-    // Two-step approach: first grab the best candidates by status/importance
-    // (cheap — no joins), then enrich just those rows with country_count.
-    // This avoids the old CTE that materialized country counts for every
-    // thread before trimming.
     const { rows: threads } = await pool.query(`
-      WITH candidates AS (
-        SELECT
-          st.id AS thread_id, st.title, st.description, st.primary_category,
-          st.geographic_scope, st.importance, st.keywords, st.article_count,
-          st.status, st.last_updated_at,
-          (st.title IS NOT NULL AND st.title ~* $2) AS title_mentions_country,
-          (st.title IS NOT NULL AND (
-              st.title ~* '\\m(coverage|roundup|round-up|overview|highlights|miscellaneous|recap|digest|wrap[- ]?up|hub|trending|topics)\\M'
-           OR st.title ~* '\\m(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\s+and\\s+(sports|entertainment|lifestyle|culture|arts|society|business|finance|technology|science)\\M'
-           OR st.title ~* '^(general|various|misc|other)\\M'
-          )) AS title_is_generic
-        FROM story_threads st
-        WHERE st.article_count >= 2
-          AND st.status IN ('active', 'cooling', 'dormant')
-          ${dateWhere}
-        ORDER BY
-          CASE st.status
-            WHEN 'active'  THEN 0
-            WHEN 'cooling' THEN 1
-            WHEN 'dormant' THEN 2
-            ELSE 3
-          END,
-          st.importance DESC,
-          st.article_count DESC,
-          st.last_updated_at DESC NULLS LAST
-        LIMIT ($1 * 5)
-      )
-      SELECT * FROM (
-        SELECT
-          c.*,
-          COALESCE((
-            SELECT COUNT(DISTINCT a.country_id)
-            FROM story_thread_articles sta
-            JOIN news_articles a ON a.id = sta.article_id
-            WHERE sta.thread_id = c.thread_id AND a.country_id IS NOT NULL
-          ), 0)::int AS country_count
-        FROM candidates c
-      ) enriched
+      SELECT
+        st.id AS thread_id, st.title, st.description, st.primary_category,
+        st.geographic_scope, st.importance, st.keywords, st.article_count,
+        st.status, st.last_updated_at
+      FROM story_threads st
+      WHERE st.article_count >= 2
+        AND st.status IN ('active', 'cooling', 'dormant')
+        ${dateWhere}
       ORDER BY
-        CASE enriched.status
+        CASE st.status
           WHEN 'active'  THEN 0
           WHEN 'cooling' THEN 1
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
-        CASE WHEN enriched.title_is_generic THEN 1 ELSE 0 END,
-        CASE WHEN enriched.title_mentions_country THEN 0 ELSE 1 END,
-        CASE
-          WHEN enriched.country_count >= 2 THEN 0
-          WHEN enriched.country_count = 1 THEN 1
-          ELSE 2
-        END,
-        enriched.importance DESC,
-        enriched.article_count DESC,
-        enriched.last_updated_at DESC NULLS LAST
+        st.importance DESC,
+        st.article_count DESC,
+        st.last_updated_at DESC NULLS LAST
       LIMIT ($1 * 3)
     `, params);
 
@@ -2819,112 +2774,34 @@ app.get("/api/threads/latest", async (req, res) => {
 
     if (!threads.length) return [];
 
-    // Step 2: batch-fetch hero images for all threads
-    //
-    // Image preference (highest priority first):
-    //   1. An article in this thread that has a SCRAPED image (a.image_url) —
-    //      i.e. the actual photo from the source publisher. This is always
-    //      preferred over our generic catalog fallbacks.
-    //   2. An article whose only image is a catalog/bucket assignment.
-    //   3. Within each tier, sort by relevance_score then recency.
+    // Step 2: batch-fetch hero images — lightweight: just grab the best
+    // image_url per thread from the article with the highest relevance.
+    // Stripped source name / iso / catalog lookups to eliminate 4 LEFT JOINs.
     const threadIds = threads.map(t => t.thread_id);
     const { rows: heroes } = await pool.query(`
       SELECT DISTINCT ON (sta.thread_id)
         sta.thread_id,
-        COALESCE(a.image_url, img_a.public_url) AS hero_image_url,
-        img_a.public_url AS hero_catalog_image_url,
-        COALESCE(ns.name, ys.name) AS hero_source_name,
+        a.image_url AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = ANY($1)
-        AND (a.image_url IS NOT NULL OR img_a.public_url IS NOT NULL)
-      ORDER BY
-        sta.thread_id,
-        (a.image_url IS NOT NULL AND a.image_url <> '') DESC,  -- prefer scraped publisher image
-        sta.relevance_score DESC,
-        a.published_at DESC
+        AND a.image_url IS NOT NULL
+        AND a.image_url <> ''
+      ORDER BY sta.thread_id, sta.relevance_score DESC, a.published_at DESC
     `, [threadIds]);
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
-
-    // Step 3: For any thread whose articles had NO images at all (neither
-    // scraped nor previously assigned), pull a contextual fallback directly
-    // from the bucket catalog by matching the thread's own keywords +
-    // primary_category. This guarantees every card has an image.
-    //
-    // Selection rule (per thread):
-    //   1. Prefer assets whose keywords overlap the thread's keywords
-    //   2. Then assets whose primary_category matches
-    //   3. Then assets whose generic_category matches the thread's category
-    //   4. Within each tier: highest priority, then least-used (variety),
-    //      then random tiebreaker
-    const orphanThreads = threads.filter(t => !heroMap.has(t.thread_id));
-    if (orphanThreads.length) {
-      const orphanPayload = orphanThreads.map(t => ({
-        id: t.thread_id,
-        keywords: Array.isArray(t.keywords) ? t.keywords : [],
-        primary_category: t.primary_category || null
-      }));
-
-      const { rows: bucketHeroes } = await pool.query(`
-        WITH thread_meta AS (
-          SELECT
-            (elem->>'id')::int AS thread_id,
-            ARRAY(SELECT jsonb_array_elements_text(elem->'keywords'))::text[] AS keywords,
-            elem->>'primary_category' AS primary_category
-          FROM jsonb_array_elements($1::jsonb) AS elem
-        )
-        SELECT tm.thread_id, ia.public_url
-        FROM thread_meta tm
-        LEFT JOIN LATERAL (
-          SELECT public_url
-          FROM image_assets
-          WHERE is_active = TRUE
-            AND (
-                 (COALESCE(array_length(tm.keywords, 1), 0) > 0 AND keywords && tm.keywords)
-              OR (tm.primary_category IS NOT NULL AND primary_category = tm.primary_category)
-              OR (tm.primary_category IS NOT NULL AND generic_category = tm.primary_category)
-              OR generic_category = 'general'
-            )
-          ORDER BY
-            (COALESCE(array_length(tm.keywords, 1), 0) > 0 AND keywords && tm.keywords)::int DESC,
-            (tm.primary_category IS NOT NULL AND primary_category = tm.primary_category)::int DESC,
-            (tm.primary_category IS NOT NULL AND generic_category = tm.primary_category)::int DESC,
-            priority DESC,
-            usage_count ASC,
-            RANDOM()
-          LIMIT 1
-        ) ia ON TRUE
-        WHERE ia.public_url IS NOT NULL
-      `, [JSON.stringify(orphanPayload)]);
-
-      for (const row of bucketHeroes) {
-        heroMap.set(row.thread_id, {
-          thread_id: row.thread_id,
-          hero_image_url: row.public_url,
-          hero_catalog_image_url: row.public_url,
-          hero_source_name: null,
-          hero_iso_code: null
-        });
-      }
-    }
 
     const result = threads.map(t => {
       const h = heroMap.get(t.thread_id);
       return {
         ...t,
-        // Client-side applyRecencyStatus() expects latest_published_at;
-        // the DB column is last_updated_at — alias it here.
         latest_published_at: t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
-        hero_catalog_image_url: h?.hero_catalog_image_url || null,
-        hero_source_name: h?.hero_source_name || null,
+        hero_catalog_image_url: null,
+        hero_source_name: null,
         hero_iso_code: h?.hero_iso_code || null
       };
     });
