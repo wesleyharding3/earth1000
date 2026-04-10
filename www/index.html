@@ -6209,6 +6209,15 @@ body.ticker-active #flowControls {
         width: 15px;
         height: 15px;
       }
+
+      /* ── Tooltips on mobile: constrain to viewport, don't rely on hover ── */
+      .btnTooltip {
+        left: 0; transform: none;
+        max-width: calc(100vw - 24px);
+      }
+      /* Show on tap via .tooltip-visible class instead of :hover */
+      .iconBtn:hover .btnTooltip { opacity: 0; transition-delay: 0s; }
+      .btnTooltip.tooltip-visible { opacity: 1 !important; pointer-events: auto; }
       #citySearch.expanded,
       #searchResults { width: 180px; }
 
@@ -11425,11 +11434,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const viewDropdown = document.getElementById("viewDropdown");
       let viewDropOpen = false;
 
+      let _viewDropTimer = null;
       viewToggle.addEventListener("click", (e) => {
         e.stopPropagation();
         viewDropOpen = !viewDropOpen;
         viewDropdown.classList.toggle("open", viewDropOpen);
         viewToggle.classList.toggle("active", viewDropOpen);
+        clearTimeout(_viewDropTimer);
+        if (viewDropOpen) {
+          _viewDropTimer = setTimeout(() => {
+            viewDropOpen = false;
+            viewDropdown.classList.remove("open");
+            viewToggle.classList.remove("active");
+          }, 5000);
+        }
       });
 
       window.addEventListener("click", (e) => {
@@ -20432,15 +20450,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   // ── Event listeners ──────────────────────────────────────────
+  let _acctDropTimer = null;
   accountBtn.addEventListener('click', e => {
     e.stopPropagation();
     if (currentUser) {
+      const opening = !accountDropdown.classList.contains('open');
       accountDropdown.classList.toggle('open');
+      clearTimeout(_acctDropTimer);
+      if (opening) {
+        _acctDropTimer = setTimeout(() => accountDropdown.classList.remove('open'), 5000);
+      }
     } else {
       openModal('signin');
     }
   });
-  document.addEventListener('click', () => accountDropdown.classList.remove('open'));
+  document.addEventListener('click', () => { clearTimeout(_acctDropTimer); accountDropdown.classList.remove('open'); });
 
   authClose.addEventListener('click', closeModal);
   authOverlay.addEventListener('click', e => { if (e.target === authOverlay) closeModal(); });
@@ -20723,6 +20747,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       'pricingCard',
       'authOverlay',      // account creation / management panel
       'authCard',
+      'accountBtn',       // account button itself
       'accountDropdown',  // account dropdown
       'bArticlePanel',    // briefing article panel
       'bTicker',          // briefing ticker bar
@@ -20747,6 +20772,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
         EVENTS.forEach(ev => el.addEventListener(ev, e => e.stopPropagation(), { passive: true }));
       });
     });
+  })();
+
+  // ── Mobile: tap-to-show tooltips with 5-second auto-dismiss ──────────
+  // On mobile there is no hover, so show .btnTooltip on tap and auto-hide
+  // after 5 seconds. Also ensures accountBtn works reliably on touch.
+  (function _mobileTooltips() {
+    const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    if (!isMobile) return;
+
+    let _tooltipTimer = null;
+    function dismissAllTooltips() {
+      clearTimeout(_tooltipTimer);
+      document.querySelectorAll('.btnTooltip.tooltip-visible').forEach(t => t.classList.remove('tooltip-visible'));
+    }
+
+    // Tap on any iconBtn → show its tooltip for 5 seconds
+    document.querySelectorAll('.iconBtn').forEach(btn => {
+      btn.addEventListener('touchstart', () => {
+        const tip = btn.querySelector('.btnTooltip');
+        if (!tip) return;
+        const wasVisible = tip.classList.contains('tooltip-visible');
+        dismissAllTooltips();
+        if (!wasVisible) {
+          tip.classList.add('tooltip-visible');
+          _tooltipTimer = setTimeout(dismissAllTooltips, 5000);
+        }
+      }, { passive: true });
+    });
+
+    // Dismiss tooltips when tapping elsewhere
+    document.addEventListener('touchstart', (e) => {
+      if (!e.target.closest('.iconBtn')) dismissAllTooltips();
+    }, { passive: true });
+
+    // Redundant touchend handler for account button to ensure it fires
+    const _acctBtn = document.getElementById('accountBtn');
+    if (_acctBtn) {
+      _acctBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        _acctBtn.click();
+      });
+    }
   })();
   // ─────────────────────────────────────────────────────────────────────────
 
