@@ -314,8 +314,7 @@
       display: flex;
       flex: 1;
       min-height: 0;
-      transition: transform 0.38s cubic-bezier(0.32, 0.72, 0, 1);
-    }    
+    }
 
     #articlesViewport {
       display:flex;
@@ -2431,38 +2430,6 @@ body.ticker-active #flowControls {
       min-height: 0;
     }
 
-    /* Side nav arrows — sit inside panel, vertically centered in content area */
-    .panelNavArrow {
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.13);
-      color: rgba(255,255,255,0.45);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      z-index: 20;
-      user-select: none;
-      transition: background 0.2s, border-color 0.2s, color 0.2s, opacity 0.25s;
-      pointer-events: all;
-    }
-    .panelNavArrow:hover {
-      background: rgba(255,255,255,0.13);
-      border-color: rgba(255,255,255,0.30);
-      color: rgba(255,255,255,0.92);
-    }
-    .panelNavArrow.hidden {
-      opacity: 0;
-      pointer-events: none;
-    }
-    .panelNavArrow svg { width: 12px; height: 12px; pointer-events: none; }
-    .panelNavArrow.left  { left: 10px; }
-    .panelNavArrow.right { right: 10px; }
 
     /* Centered search pill — replaces the old expand-on-click search bar */
     /* ── Panel controls wrappers (transparent on desktop) ── */
@@ -2548,175 +2515,13 @@ body.ticker-active #flowControls {
       flex-shrink: 0;
     }
     
-    .panelSlide:not(#articlesViewport):not(#panelStatsSlide) {
-      overflow: hidden;
-    }
 
     .panelSlide::-webkit-scrollbar { width: 5px; }
     .panelSlide::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 8px; }
     .panelSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 8px; }
     .panelSlide::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
 
-    /* ── Overview slide: map fills entire slide ── */
-    #panelOverviewSlide {
-      overflow: hidden !important;
-      display: flex; flex-direction: column;
-      height: 100%;
-    }
-    #panelMapHalf {
-      position: relative; flex: 1; min-height: 0;
-      background: #060a10;
-    }
-    #panelMapContainer {
-      position: absolute; inset: 0;
-    }
-    #panelMapContainer .leaflet-container {
-      width: 100%; height: 100%;
-      background: #060a10;
-    }
-    /* Dark map with white lines — invert the CartoDB dark tiles */
-    #panelMapContainer .leaflet-tile {
-      filter: invert(1) hue-rotate(180deg) brightness(0.88) contrast(1.15);
-    }
-    /* Satellite: no filter */
-    #panelMapContainer.sat .leaflet-tile { filter: none; }
-    /* Map style toggle */
-    .mapStyleToggle {
-      position: absolute; top: 8px; right: 8px; z-index: 1000;
-      display: flex; border-radius: 4px; overflow: hidden;
-      border: 1px solid rgba(255,255,255,0.15);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
-    }
-    .mapStyleBtn {
-      padding: 4px 9px;
-      font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-      background: rgba(6,10,16,0.92); color: rgba(255,255,255,0.4);
-      border: none; cursor: pointer; transition: background 0.14s, color 0.14s;
-      backdrop-filter: blur(8px);
-    }
-    .mapStyleBtn.active { background: rgba(255,255,255,0.1); color: #fff; }
-    .mapStyleBtn:not(:last-child) { border-right: 1px solid rgba(255,255,255,0.1); }
-    /* Location info panel — hidden, map fills entire slide now */
-    #panelOverviewInfo { display: none; }
-    .poiSection {
-      font-size: 9px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
-      color: rgba(255,255,255,0.28); margin-bottom: 8px; margin-top: 14px;
-    }
-    .poiSection:first-child { margin-top: 0; }
-    .poiGrid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 4px;
-    }
-    .poiStat {
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 4px; padding: 9px 11px;
-    }
-    .poiStatVal {
-      font-size: 15px; font-weight: 700; color: #fff; line-height: 1;
-      font-variant-numeric: tabular-nums; margin-bottom: 4px;
-    }
-    .poiStatLabel {
-      font-size: 9px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
-      color: rgba(255,255,255,0.3);
-    }
-    .poiDesc {
-      font-size: 12px; line-height: 1.6; color: rgba(255,255,255,0.55);
-      margin-bottom: 10px;
-    }
-    .poiTagRow { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
-    .poiTag {
-      padding: 3px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
-      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-      color: rgba(255,255,255,0.5);
-    }
 
-    /* ── Statistics slide ── */
-    #panelStatsSlide { overflow-y: auto !important; }
-    #panelStatsSlide::-webkit-scrollbar { width: 4px; }
-    #panelStatsSlide::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
-    .psTrade {
-      padding: 16px 16px 8px;
-    }
-    .psSection {
-      font-size: 9px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
-      color: rgba(255,255,255,0.28); margin-bottom: 10px; margin-top: 16px;
-    }
-    .psSection:first-child { margin-top: 0; }
-    .psTradeGrid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
-    }
-    .psTradeCard {
-      border-radius: 4px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.07);
-      padding: 12px 14px;
-      position: relative; overflow: hidden;
-    }
-    .psTradeCard::before {
-      content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
-    }
-    .psTradeCard.exports::before { background: #3de87a; }
-    .psTradeCard.imports::before { background: #4a9eff; }
-    .psTradeCard.balance.surplus::before { background: #3de87a; }
-    .psTradeCard.balance.deficit::before { background: #ff5f5f; }
-    .psTradeCard.balance { grid-column: 1 / -1; }
-    .psTradeVal {
-      font-size: 20px; font-weight: 700; letter-spacing: -0.02em;
-      color: #fff; line-height: 1; margin-bottom: 5px;
-      font-variant-numeric: tabular-nums;
-    }
-    .psTradeVal.surplus { color: #3de87a; }
-    .psTradeVal.deficit { color: #ff7070; }
-    .psTradeLabel {
-      font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
-      color: rgba(255,255,255,0.35);
-    }
-    .psTradeYear {
-      font-size: 9px; color: rgba(255,255,255,0.22); margin-top: 3px;
-    }
-    .psTopList {
-      display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;
-    }
-    .psTopItem {
-      display: flex; align-items: center; gap: 8px;
-      padding: 7px 10px; border-radius: 3px;
-      background: rgba(255,255,255,0.03);
-      border: 1px solid rgba(255,255,255,0.06);
-      font-size: 12px; color: rgba(255,255,255,0.75);
-    }
-    .psTopRank {
-      font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.25);
-      min-width: 14px;
-    }
-    .psTopVal {
-      margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums;
-      color: rgba(255,255,255,0.38);
-    }
-    .psEmpty {
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 10px; padding: 48px 24px; color: rgba(255,255,255,0.2); text-align: center;
-      font-size: 12px;
-    }
-
-    .panelSlidePlaceholder {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      gap: 12px;
-      opacity: 0.18;
-      user-select: none;
-    }
-
-    .panelSlidePlaceholder svg { width: 36px; height: 36px; }
-
-    .panelSlidePlaceholder span {
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
 
     .panelSortRow {
   display: flex;
@@ -3876,73 +3681,6 @@ body.ticker-active #flowControls {
     #weatherPill .wTemp { font-size: 11px; font-weight: 700; letter-spacing: 0.02em; }
     #weatherPill .wUnit { font-size: 9px; color: rgba(255,255,255,0.40); letter-spacing: 0.06em; }
 
-    /* ── Panel header stats bar ─────────────────────────────────
-       Absolute bar between the centered arrow and the close btn.
-       arrow is at left:50% width:28px → right edge ≈ calc(50%+14px)
-       close btn is position:absolute;right:0 width≈22px
-       so: left:calc(50%+20px)  right:26px
-    ─────────────────────────────────────────────────────────── */
-    #panelHeaderStats {
-      display: flex;
-      align-items: stretch;
-      flex-shrink: 0;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 8px;
-      overflow: hidden;
-      pointer-events: none;
-      align-self: center;
-    }
-    .phStat {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 3px 7px;
-      gap: 2px;
-      min-width: 38px;
-    }
-    .phStat + .phStat {
-      border-left: 1px solid rgba(255,255,255,0.07);
-    }
-    .phVal {
-      font-size: 11px;
-      font-weight: 700;
-      color: rgba(255,255,255,0.82);
-      letter-spacing: 0.01em;
-      font-variant-numeric: tabular-nums;
-      white-space: nowrap;
-      line-height: 1;
-      display: flex;
-      align-items: center;
-      gap: 3px;
-    }
-    .phLabel {
-      font-size: 7px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: rgba(255,255,255,0.28);
-      white-space: nowrap;
-      line-height: 1;
-    }
-    .phDelta {
-      font-size: 8px;
-      font-weight: 700;
-      padding: 0 2px;
-      border-radius: 3px;
-      line-height: 1.5;
-    }
-    .phDelta.up   { color: rgba(80,220,130,0.95); background: rgba(80,220,130,0.12); }
-    .phDelta.down { color: rgba(255,100,100,0.95); background: rgba(255,100,100,0.12); }
-    #panelHeaderStats.loading .phVal {
-      color: rgba(255,255,255,0.18);
-      animation: phShimmer 1.4s ease-in-out infinite;
-    }
-    @keyframes phShimmer {
-      0%,100% { opacity: 0.18; }
-      50%      { opacity: 0.50; }
-    }
 
     /* ── Ambient Headline Spotlight ── */
 .ahPulseDot {
@@ -6471,7 +6209,6 @@ body.ticker-active #flowControls {
       .pricingTierBtn,
       .bControlBtn,
       .bDot,
-      .panelNavArrow,
       .snapBtn,
       .kwi-mode-tab,
       .kwi-range-btn,
@@ -6661,9 +6398,6 @@ body.ticker-active #flowControls {
         -webkit-overflow-scrolling: touch;
         scroll-behavior: smooth;
       }
-
-      /* ── Hide source stats on mobile ── */
-      #panelHeaderStats { display: none !important; }
 
       /* ── Panel header: restructure for mobile ── */
       .panelHeader {
@@ -12454,67 +12188,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }, { passive: true });
 
-      // ── Panel header stats helpers ──────────────────────────────
-      function panelStatsHTML() {
-        return `<div id="panelHeaderStats" class="loading">
-          <div class="phStat">
-            <div class="phLabel">Today</div>
-            <div class="phVal" id="phStories">–</div>
-          </div>
-          <div class="phStat">
-            <div class="phLabel">Sources</div>
-            <div class="phVal" id="phSources">–</div>
-          </div>
-          <div class="phStat">
-            <div class="phLabel">Global</div>
-            <div class="phVal" id="phGlobal">–</div>
-          </div>
-          <div class="phStat">
-            <div class="phLabel">Nations</div>
-            <div class="phVal" id="phCountries">–</div>
-          </div>
-        </div>`;
-      }
-
-      async function fetchLocationStats(type, id) {
-        const bar = document.getElementById("panelHeaderStats");
-        if (!bar) return;
-        const BASE = "https://earth-wjr6.onrender.com";
-        try {
-          const d = await fetch(`${BASE}/api/stats/location?type=${type}&id=${id}`).then(r => r.json());
-          bar.classList.remove("loading");
-
-          // Stories today + delta
-          const storiesEl = document.getElementById("phStories");
-          if (storiesEl) {
-            const n = d.stories_today ?? 0;
-            const delta = d.stories_delta ?? 0;
-            let deltaHtml = "";
-            if (delta > 0)      deltaHtml = `<span class="phDelta up">+${delta}</span>`;
-            else if (delta < 0) deltaHtml = `<span class="phDelta down">${delta}</span>`;
-            storiesEl.innerHTML = `${n}${deltaHtml}`;
-          }
-
-          // Source count
-          const srcEl = document.getElementById("phSources");
-          if (srcEl) srcEl.textContent = d.source_count ?? "–";
-
-          // Global attention %
-          const globalEl = document.getElementById("phGlobal");
-          if (globalEl) {
-            const pct = d.attention_pct ?? 0;
-            globalEl.textContent = pct < 0.1 ? "<0.1%" : pct.toFixed(1) + "%";
-          }
-
-          // Source country count
-          const countriesEl = document.getElementById("phCountries");
-          if (countriesEl) countriesEl.textContent = d.source_country_count ?? "–";
-
-        } catch(e) {
-          if (bar) bar.style.opacity = "0.3";
-        }
-      }
-      // ────────────────────────────────────────────────────────────
 
       function resolveTimezone(city) { return city.timezone || "UTC"; }
 
@@ -12545,7 +12218,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   ${showCountry ? `<h4 style="margin:2px 0 0 0;opacity:0.7;">${node.country}</h4>` : ""}
                 </div>
               </div>
-              ${panelStatsHTML()}
               ${isCity ? `
               <div id="cityMetaPills">
                 <div id="weatherPill" class="cityMetaPill" title="Click to toggle °C / °F">
@@ -12611,24 +12283,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
           </div>
           <div class="panelTabsWrapper" style="position:relative;">
-            <div class="panelNavArrow left hidden" id="panelArrowLeft">
-              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6.5,2 3.5,5 6.5,8"/>
-              </svg>
-            </div>
-            <div class="panelNavArrow right" id="panelArrowRight">
-              <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3.5,2 6.5,5 3.5,8"/>
-              </svg>
-            </div>
             <div class="panelSlidesTrack" id="panelSlidesTrack">
               <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
-              <div class="panelSlide" id="panelOverviewSlide">
-                <div id="panelMapHalf"><div id="panelMapContainer"></div></div>
-              </div>
-              <div class="panelSlide" id="panelStatsSlide">
-                <div id="panelStatsContent"><div class="psEmpty"><span style="font-size:22px;opacity:0.3">◈</span><span>Loading statistics…</span></div></div>
-              </div>
             </div>
           </div>`;
 
@@ -12647,43 +12303,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             controlsToggle.classList.toggle("collapsed", isMin);
           });
         }
-
-        // ── Slides ──
-        const slidesTrack = panel.querySelector("#panelSlidesTrack");
-        let currentSlide = 0;
-        const totalSlides = 3;
-
-        function goToSlide(index) {
-          slidesTrack.style.willChange = "transform";
-          currentSlide = Math.max(0, Math.min(totalSlides - 1, index));
-          slidesTrack.style.transform = `translateX(-${currentSlide * 100}%)`;
-          if (typeof syncArrows === "function") syncArrows();
-          setTimeout(() => { slidesTrack.style.willChange = "auto"; }, 400);
-          const isArticles = currentSlide === 0;
-          const hide = isArticles ? "" : "none";
-          const ctrlArea = panel.querySelector("#panelControlsArea");
-          const ctrlToggle = panel.querySelector("#panelControlsToggle");
-          if (ctrlArea) ctrlArea.style.display = hide;
-          if (ctrlToggle) ctrlToggle.style.display = isArticles ? "" : "none";
-        }
-
-        const arrowLeft  = panel.querySelector("#panelArrowLeft");
-        const arrowRight = panel.querySelector("#panelArrowRight");
-
-        function syncArrows() {
-          arrowLeft.classList.toggle("hidden",  currentSlide === 0);
-          arrowRight.classList.toggle("hidden", currentSlide === totalSlides - 1);
-        }
-        syncArrows();
-
-        arrowLeft.addEventListener("click",  (e) => { e.stopPropagation(); goToSlide(currentSlide - 1); syncArrows(); });
-        arrowRight.addEventListener("click", (e) => { e.stopPropagation(); goToSlide(currentSlide + 1); syncArrows(); });
-        panel.addEventListener("wheel", (e) => { if (Math.abs(e.deltaX) > Math.abs(e.deltaY) && Math.abs(e.deltaX) > 20) { e.stopPropagation(); goToSlide(currentSlide + (e.deltaX > 0 ? 1 : -1)); } }, { passive: true });
-
-        let slideSwipeStartX = 0, slideSwipeStartY = 0, slideSwipeLocked = null;
-        panel.addEventListener("touchstart", (e) => { slideSwipeStartX = e.touches[0].clientX; slideSwipeStartY = e.touches[0].clientY; slideSwipeLocked = null; }, { passive: true });
-        panel.addEventListener("touchend",   (e) => { if (slideSwipeLocked !== "h") return; const dx = e.changedTouches[0].clientX - slideSwipeStartX; if (Math.abs(dx) > 40) goToSlide(currentSlide + (dx < 0 ? 1 : -1)); }, { passive: true });
-        panel.addEventListener("touchmove",  (e) => { if (slideSwipeLocked === "v") return; const dx = e.touches[0].clientX - slideSwipeStartX; const dy = e.touches[0].clientY - slideSwipeStartY; if (slideSwipeLocked === null) slideSwipeLocked = Math.abs(dx) > Math.abs(dy) ? "h" : "v"; }, { passive: true });
 
         // ── Search filter ──
         const panelSearchInput = panel.querySelector("#panelSearchInput");
@@ -13056,203 +12675,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (_lastTempC !== null) renderWeather(_lastTempC, _lastCode);
           });
         }
-
-        // ── Location stats ──
-        fetchLocationStats(isCity ? "city" : "country", node.id);
-
-        // ── Overview: Leaflet map ──
-        (function initPanelMap() {
-          const mapContainer = document.getElementById("panelMapContainer");
-          if (!mapContainer) return;
-          const lat = node.lat ?? node.latitude ?? 0;
-          const lon = node.lon ?? node.longitude ?? 0;
-          const zoom = isCity ? 13 : 5;
-
-          function buildMap(L) {
-            if (mapContainer._leafletMap) {
-              mapContainer._leafletMap.remove();
-              mapContainer._leafletMap = null;
-            }
-            const map = L.map(mapContainer, {
-              center: [lat, lon], zoom,
-              zoomControl: false, attributionControl: false,
-              scrollWheelZoom: false, dragging: true
-            });
-            mapContainer._leafletMap = map;
-
-            const osmTiles = L.tileLayer(
-              "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-              { subdomains: "abcd", maxZoom: 19 }
-            );
-            const satTiles = L.tileLayer(
-              "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-              { maxZoom: 19 }
-            );
-            osmTiles.addTo(map);
-
-            // toggle buttons — default is B&W (CSS filter active by default, .sat removes it)
-            const toggle = document.createElement("div");
-            toggle.className = "mapStyleToggle";
-            toggle.innerHTML = `<button class="mapStyleBtn active" data-mode="map">Map</button><button class="mapStyleBtn" data-mode="sat">Satellite</button>`;
-            mapContainer.appendChild(toggle);
-
-            let mode = "map";
-            toggle.querySelectorAll(".mapStyleBtn").forEach(btn => {
-              btn.addEventListener("click", (e) => {
-                e.stopPropagation();
-                if (btn.dataset.mode === mode) return;
-                mode = btn.dataset.mode;
-                toggle.querySelectorAll(".mapStyleBtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-                // "sat" class on container disables the invert filter via CSS
-                mapContainer.classList.toggle("sat", mode === "sat");
-                if (mode === "sat") { osmTiles.remove(); satTiles.addTo(map); }
-                else { satTiles.remove(); osmTiles.addTo(map); }
-              });
-            });
-
-            // stop map events bubbling to globe
-            ["click","mousedown","touchstart","wheel"].forEach(ev => {
-              mapContainer.addEventListener(ev, e => e.stopPropagation(), { passive: ev === "wheel" || ev === "touchstart" });
-            });
-
-            setTimeout(() => map.invalidateSize(), 120);
-
-            // Re-render whenever the panel is resized or maximized — covers both
-            // the drag-resize handle and the maximize/minimize button.
-            if (window.ResizeObserver) {
-              const ro = new ResizeObserver(() => map.invalidateSize());
-              ro.observe(mapContainer.closest("#panelMapHalf") || mapContainer);
-              // Clean up when the panel is closed
-              mapContainer.addEventListener("_leafletRemove", () => ro.disconnect(), { once: true });
-            }
-          }
-
-          if (window.L) {
-            buildMap(window.L);
-          } else {
-            if (!document.getElementById("leaflet-css")) {
-              const link = document.createElement("link");
-              link.id = "leaflet-css"; link.rel = "stylesheet";
-              link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-              document.head.appendChild(link);
-            }
-            const script = document.createElement("script");
-            script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-            script.onload = () => buildMap(window.L);
-            document.head.appendChild(script);
-          }
-        })();
-
-        // ── Statistics: trade/exports/imports ──
-        (async function loadTradeStats() {
-          const BASE_URL = "https://earth-wjr6.onrender.com";
-          const statsEl = document.getElementById("panelStatsContent");
-          if (!statsEl) return;
-
-          function fmtTrade(v) {
-            if (v == null || isNaN(v)) return "–";
-            const n = Number(v);
-            if (Math.abs(n) >= 1e12) return "$" + (n / 1e12).toFixed(2) + " T";
-            if (Math.abs(n) >= 1e9)  return "$" + (n / 1e9).toFixed(2) + " B";
-            if (Math.abs(n) >= 1e6)  return "$" + (n / 1e6).toFixed(1) + " M";
-            return "$" + n.toLocaleString();
-          }
-
-          // Schema: exports/imports table has country_id + city_id
-          // Country rows: country_id = X, city_id IS NULL
-          // City rows:    country_id = X, city_id = Y (both present)
-          // Query: for countries use country_id; for cities use city_id
-          const param = isCity ? `city_id=${node.id}` : `country_id=${node.id}`;
-
-          try {
-            // Fetch exports and imports in parallel — separate endpoints per table
-            const [exRes, imRes] = await Promise.all([
-              fetch(`${BASE_URL}/api/exports?${param}`),
-              fetch(`${BASE_URL}/api/imports?${param}`)
-            ]);
-
-            if (!statsEl.isConnected) return;
-
-            // Parse whichever endpoints exist — fall through gracefully on 404
-            const exData = exRes.ok ? await exRes.json() : null;
-            const imData = imRes.ok ? await imRes.json() : null;
-
-            // Normalise — rows may be a single object or an array; sum if array
-            function extractValue(d, ...keys) {
-              if (!d) return null;
-              const row = Array.isArray(d) ? d[0] : d;
-              if (!row) return null;
-              for (const k of keys) {
-                if (row[k] != null && !isNaN(Number(row[k]))) return Number(row[k]);
-              }
-              return null;
-            }
-            function extractYear(d) {
-              const row = Array.isArray(d) ? d[0] : d;
-              return row?.year ?? row?.data_year ?? null;
-            }
-            function extractList(d, ...keys) {
-              const row = Array.isArray(d) ? d[0] : d;
-              if (!row) return [];
-              for (const k of keys) {
-                if (Array.isArray(row[k]) && row[k].length) return row[k];
-              }
-              return [];
-            }
-
-            const exports_val = extractValue(exData, "value", "total_value", "exports_value", "amount");
-            const imports_val = extractValue(imData, "value", "total_value", "imports_value", "amount");
-            const year        = extractYear(exData) || extractYear(imData);
-            const topExports  = extractList(exData, "top_items", "items", "top_exports", "products");
-            const topImports  = extractList(imData, "top_items", "items", "top_imports", "products");
-
-            const hasAny = exports_val != null || imports_val != null;
-            if (!hasAny) throw new Error("empty");
-
-            const balance  = (exports_val != null && imports_val != null) ? exports_val - imports_val : null;
-            const isSurplus = balance != null && balance >= 0;
-
-            function topList(items, label) {
-              if (!items.length) return "";
-              return `<div class="psSection">${label}</div>
-                <div class="psTopList">${items.slice(0, 6).map((item, i) => {
-                  const name = typeof item === "object" ? (item.name || item.label || item.product || item.commodity || Object.values(item)[0]) : item;
-                  const val  = typeof item === "object" ? (item.value ?? item.total_value ?? item.amount ?? null) : null;
-                  return `<div class="psTopItem">
-                    <span class="psTopRank">${i + 1}</span>
-                    <span>${String(name || "").replace(/</g,"&lt;")}</span>
-                    ${val != null ? `<span class="psTopVal">${fmtTrade(val)}</span>` : ""}
-                  </div>`;
-                }).join("")}</div>`;
-            }
-
-            statsEl.innerHTML = `
-              <div class="psTrade">
-                <div class="psSection">Trade Overview${year ? ` · ${year}` : ""}</div>
-                <div class="psTradeGrid">
-                  <div class="psTradeCard exports">
-                    <div class="psTradeVal">${fmtTrade(exports_val)}</div>
-                    <div class="psTradeLabel">Exports</div>
-                  </div>
-                  <div class="psTradeCard imports">
-                    <div class="psTradeVal">${fmtTrade(imports_val)}</div>
-                    <div class="psTradeLabel">Imports</div>
-                  </div>
-                  ${balance != null ? `
-                  <div class="psTradeCard balance ${isSurplus ? "surplus" : "deficit"}">
-                    <div class="psTradeVal ${isSurplus ? "surplus" : "deficit"}">${isSurplus ? "+" : ""}${fmtTrade(balance)}</div>
-                    <div class="psTradeLabel">Trade ${isSurplus ? "Surplus" : "Deficit"}</div>
-                  </div>` : ""}
-                </div>
-                ${topList(topExports, "Top Exports")}
-                ${topList(topImports, "Top Imports")}
-              </div>`;
-
-          } catch (_) {
-            if (statsEl.isConnected)
-              statsEl.innerHTML = `<div class="psEmpty"><span style="font-size:22px;opacity:0.25">◈</span><span>No trade data available for this ${isCity ? "city" : "country"}.</span></div>`;
-          }
-        })();
 
         // Close
         const closeBtn = panel.querySelector(".closePanel");
@@ -13855,7 +13277,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </svg>
             </div>
           </div>
-          ${panelStatsHTML()}
           <div class="panelHeader" style="position:sticky;top:0;z-index:5;
       padding-bottom:10px;flex-shrink:0;">
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
@@ -13914,7 +13335,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         applySnapHeight("default", true);
         attachPanelResizeHandle();
         triggerNodePanelWhoosh(panel);
-        fetchLocationStats("region", region.id);
 
         // ── Controls minimize toggle (mobile) — match country/city panel ──
         const controlsToggle = panel.querySelector("#panelControlsToggle");
@@ -16377,7 +15797,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </svg>
         </div>
       </div>
-      ${panelStatsHTML()}
       <div class="panelHeader" style="position:sticky;top:0;z-index:5;
       padding-bottom:10px;flex-shrink:0;">
         <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
@@ -16398,9 +15817,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     panel.classList.add("active");
     applySnapHeight("default", true);
     attachPanelResizeHandle();
-    // Stats for the destination node
-    fetchLocationStats(flow.dst.type === "city" ? "city" : "country", flow.dst.id);
-    
+
     // Close handler
     panel.querySelector(".closePanel").onclick = () => {
       if (window.closeArticleDetail) window.closeArticleDetail();
