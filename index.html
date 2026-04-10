@@ -12299,6 +12299,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         async function translateCard(e, btn) {
           e.preventDefault(); e.stopPropagation();
           if (btn.classList.contains("done") || btn.classList.contains("error")) return;
+          if (!window.__checkTier?.('pro')) {
+            window.__openPricing?.();
+            return;
+          }
           const articleId = btn.dataset.id;
           const title     = btn.dataset.title;
           const summary   = btn.dataset.summary;
@@ -23475,6 +23479,10 @@ body.ticker-active .gTickerLabel {
   const customTags = new Set();
 
   function openBriefingLauncher() {
+    if (!window.__checkTier?.('pro')) {
+      window.__openPricing?.();
+      return;
+    }
     const el = document.getElementById('bLauncherTodaySection');
     if (episode && episode.status === 'ready') {
       document.getElementById('bLauncherTodayHeadline').textContent = episode.headline || '';
@@ -24293,6 +24301,7 @@ body.ticker-active .gTickerLabel {
 
     const summaryPromise = (async () => {
       if (!threadId) return null;
+      if (!window.__checkTier?.('pro')) return '__pro_locked__';
       try {
         const res = await fetch(`${BASE}/api/cluster-node/summary`, {
           method: "POST",
@@ -24348,6 +24357,13 @@ body.ticker-active .gTickerLabel {
       if (_selected !== node) return;
       const el = document.getElementById("cdSummaryBody");
       if (!el) return;
+      if (summary === '__pro_locked__') {
+        el.innerHTML = `<div class="cdSummaryText" style="opacity:0.55;cursor:pointer;display:flex;align-items:center;gap:8px" onclick="window.__openPricing?.()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>Deep analysis is available on <strong style="color:rgba(255,195,70,1)">Pro</strong></span>
+        </div>`;
+        return;
+      }
       if (summary) {
         el.innerHTML = `<div class="cdSummaryText"></div>`;
         typewriterText(el.querySelector(".cdSummaryText"), summary);
