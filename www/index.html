@@ -6782,6 +6782,17 @@ body.ticker-active #flowControls {
         border-radius: 16px;
       }
 
+      /* ── Flow article card — full-width on mobile ── */
+      #flowArticleCard {
+        right: 10px !important;
+        left: 10px !important;
+        width: auto !important;
+        max-height: min(55vh, 400px) !important;
+        top: calc(env(safe-area-inset-top, 0px) + 10px) !important;
+      }
+      #flowArcBackBtn {
+        left: 10px !important;
+      }
       /* ── Flow controls — prevent side overflow & nudge up ── */
       #flowControls {
         min-width: 0 !important;
@@ -8252,24 +8263,7 @@ window.sourceBiasBadgeHTML = function(bias) {
     <!-- Collapsible transparent origin panel — shown when flow arcs were
          launched from an article/video card or cluster node panel. Lets
          the user see (and return to) the originating content. -->
-    <!-- Briefing-style article card for flow-arc redirects from news feed.
-         Fades in alongside the globe when showArticleFlows / showThreadFlows
-         is called from an article or thread card. -->
-    <div id="flowArticleCard" aria-hidden="true">
-      <div class="fac-header">
-        <div class="fac-sourceDot"></div>
-        <div class="fac-sourceName" id="facSourceName">—</div>
-        <div class="fac-kicker" id="facKicker">Article</div>
-        <button class="fac-returnBtn" id="facReturnBtn" title="Back to source card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
-        <button class="fac-closeBtn" id="facCloseBtn" title="Close">&times;</button>
-      </div>
-      <div class="fac-body" id="facBody">
-        <div id="facImageWrap"></div>
-        <div class="fac-title" id="facTitle"></div>
-        <div class="fac-summary" id="facSummary"></div>
-        <div class="fac-meta" id="facMeta"></div>
-      </div>
-    </div>
+    <!-- flowArticleCard moved outside #pageTrack — see below #pageTrack close -->
 
     <div id="flowOriginPanel" aria-hidden="true">
       <button class="flowOriginPanelCollapse" id="flowOriginPanelCollapse" title="Collapse">
@@ -8408,11 +8402,7 @@ window.sourceBiasBadgeHTML = function(bias) {
     <div class="faiMeta" id="faiMeta"></div>
   </div>
 
-  <!-- Back button for flow arc card navigation -->
-  <div id="flowArcBackBtn" onclick="window.__flowArcGoBack?.()">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-    <span id="flowArcBackLabel">Back</span>
-  </div>
+  <!-- flowArcBackBtn moved outside #pageTrack — see below #pageTrack close -->
 
   <!-- Heatmap control panel -->
   <div id="semHeatPanel">
@@ -18485,6 +18475,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
 </div><!-- /pageNews -->
 
 </div><!-- /pageTrack -->
+
+<!-- Briefing-style article card for flow-arc redirects from news feed.
+     Positioned OUTSIDE #pageTrack so position:fixed works correctly on
+     iOS WKWebView (treats fixed as absolute inside a transformed ancestor). -->
+<div id="flowArticleCard" aria-hidden="true">
+  <div class="fac-header">
+    <div class="fac-sourceDot"></div>
+    <div class="fac-sourceName" id="facSourceName">—</div>
+    <div class="fac-kicker" id="facKicker">Article</div>
+    <button class="fac-returnBtn" id="facReturnBtn" title="Back to source card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
+    <button class="fac-closeBtn" id="facCloseBtn" title="Close">&times;</button>
+  </div>
+  <div class="fac-body" id="facBody">
+    <div id="facImageWrap"></div>
+    <div class="fac-title" id="facTitle"></div>
+    <div class="fac-summary" id="facSummary"></div>
+    <div class="fac-meta" id="facMeta"></div>
+  </div>
+</div>
+
+<!-- Back button for flow arc card navigation -->
+<div id="flowArcBackBtn" onclick="window.__flowArcGoBack?.()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+  <span id="flowArcBackLabel">Back</span>
+</div>
 
 <div id="clusterDetail"></div>
 
