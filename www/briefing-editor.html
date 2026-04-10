@@ -603,6 +603,36 @@
     .cat-science { background: rgba(45, 212, 191, 0.15); color: #2dd4bf; }
     .cat-default { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
 
+    /* Segment editor */
+    .segment-card { background: #111827; border: 1px solid #1e293b; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+    .segment-header { padding: 12px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; background: #0f1629; }
+    .segment-header:hover { background: #131b33; }
+    .segment-body { padding: 16px; display: none; }
+    .segment-card.open .segment-body { display: block; }
+    .seg-field { margin-bottom: 12px; }
+    .seg-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .seg-textarea { width: 100%; min-height: 80px; background: #0a0e17; border: 1px solid #1e293b; color: #e2e8f0; border-radius: 6px; padding: 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+    .seg-input { background: #0a0e17; border: 1px solid #1e293b; color: #e2e8f0; border-radius: 4px; padding: 4px 8px; font-size: 12px; width: 100%; }
+    .seg-input.short { width: 80px; }
+    .seg-row { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; flex-wrap: wrap; }
+    .seg-row .seg-input { flex: 1; min-width: 60px; }
+    .seg-remove { background: none; border: none; color: #ef4444; cursor: pointer; font-size: 14px; padding: 2px 6px; }
+    .seg-remove:hover { color: #f87171; }
+    .seg-add { background: none; border: 1px dashed #334155; color: #64748b; border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer; margin-top: 4px; }
+    .seg-add:hover { border-color: #00d4ff; color: #00d4ff; }
+    .arc-arrow { color: #00d4ff; font-size: 14px; margin: 0 4px; }
+    .seg-checkbox { accent-color: #00d4ff; }
+    .seg-article-row { display: flex; gap: 8px; align-items: center; padding: 2px 0; font-size: 12px; }
+    .seg-panel-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 12px; background: #0d1117; border-radius: 4px; padding: 6px 8px; margin-bottom: 4px; }
+    .seg-panel-type { background: #1e293b; color: #94a3b8; padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+    .seg-type-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+    .seg-type-badge.intro { background: #1e3a5f; color: #60a5fa; }
+    .seg-type-badge.story { background: #1a3329; color: #4ade80; }
+    .seg-type-badge.outro { background: #3b1f4e; color: #c084fc; }
+    .seg-type-badge.keywords { background: #3b3510; color: #facc15; }
+    .step-desc { color: #94a3b8; font-size: 0.85rem; margin-bottom: 16px; }
+    .step-actions { display: flex; justify-content: space-between; margin-top: 24px; gap: 12px; }
+
     /* Responsive */
     @media (max-width: 600px) {
       .editor-wrap { padding: 16px 12px 60px; }
@@ -639,7 +669,10 @@
         <span class="step-num">2</span><span class="step-label">Enrich</span>
       </div>
       <div class="step-pill" id="pill-3">
-        <span class="step-num">3</span><span class="step-label">Review</span>
+        <span class="step-num">3</span><span class="step-label">Edit Segments</span>
+      </div>
+      <div class="step-pill" id="pill-4">
+        <span class="step-num">4</span><span class="step-label">Generate</span>
       </div>
     </div>
 
@@ -672,8 +705,19 @@
       </div>
     </div>
 
-    <!-- Step 3: Review -->
+    <!-- Step 3: Edit Segments -->
     <div id="step-3" class="hidden">
+      <h2>Edit Segments</h2>
+      <p class="step-desc">Review and customize each segment's content, locations, arcs, and media.</p>
+      <div id="segments-container"></div>
+      <div class="step-actions">
+        <button class="btn-secondary" onclick="goToStep(2)">&larr; Back</button>
+        <button class="btn-primary" onclick="goToStep(4)" id="to-finalize-btn">Continue to Review &rarr;</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Review & Generate Audio -->
+    <div id="step-4" class="hidden">
       <h3 style="font-size:1rem; margin-bottom:16px;">Review Selections</h3>
       <div style="overflow-x:auto;">
         <table class="review-table" id="review-table">
@@ -697,11 +741,11 @@
       </div>
 
       <div class="generate-section">
-        <button class="generate-btn" id="generate-btn" onclick="generateBriefing()">Generate Briefing</button>
+        <button class="generate-btn" id="generate-audio-btn" onclick="generateAudio()">Generate Audio</button>
       </div>
 
       <div class="nav-buttons">
-        <button class="btn-secondary" onclick="goToStep(2)">&larr; Back</button>
+        <button class="btn-secondary" onclick="goToStep(3)">&larr; Back</button>
         <span></span>
       </div>
     </div>
@@ -724,6 +768,8 @@
     let selectedIds = new Set();
     let enrichData = {}; // thread_id -> { youtube_url, video_meta, steering_hint }
     let orderedIds = [];
+    let currentEpisodeId = null;
+    let editableSegments = [];
 
     // ---- Auth ----
     async function checkAuth() {
@@ -889,7 +935,17 @@
 
     // ---- Step navigation ----
     function goToStep(n) {
-      [1, 2, 3].forEach(i => {
+      // When moving from step 2 to step 3, run generation first
+      if (n === 3 && !editableSegments.length) {
+        runGenerationThenEdit();
+        return;
+      }
+      // When moving from step 3 to step 4, save edited segments first
+      if (n === 4) {
+        saveEditedSegments();
+      }
+
+      [1, 2, 3, 4].forEach(i => {
         document.getElementById(`step-${i}`).classList.toggle('hidden', i !== n);
         const pill = document.getElementById(`pill-${i}`);
         pill.classList.remove('active', 'done');
@@ -898,7 +954,18 @@
       });
 
       if (n === 2) buildEnrichList();
-      if (n === 3) buildReview();
+      if (n === 3) renderSegmentEditor(editableSegments);
+      if (n === 4) buildReview();
+    }
+
+    function showStep(n) {
+      [1, 2, 3, 4].forEach(i => {
+        document.getElementById(`step-${i}`).classList.toggle('hidden', i !== n);
+        const pill = document.getElementById(`pill-${i}`);
+        pill.classList.remove('active', 'done');
+        if (i < n) pill.classList.add('done');
+        if (i === n) pill.classList.add('active');
+      });
     }
 
     // ---- Step 2: Enrich ----
@@ -1012,8 +1079,8 @@
       btn.textContent = 'Resolve';
     }
 
-    // ---- Step 3: Review ----
-    function buildManifest() {
+    // ---- Step 4: Review ----
+    function buildManifest(opts = {}) {
       const threads = orderedIds.map(id => {
         const t = allThreads.find(th => (th.thread_id || th.id) === id);
         const d = enrichData[id] || {};
@@ -1032,10 +1099,13 @@
         return entry;
       });
 
+      const options = { force: true, force_audio: true };
+      if (opts.no_audio) options.no_audio = true;
+
       return {
         created_at: new Date().toISOString(),
         selected_threads: threads,
-        options: { force: true, force_audio: true }
+        options
       };
     }
 
@@ -1072,33 +1142,75 @@
       arrow.innerHTML = block.classList.contains('hidden') ? '&#9654;' : '&#9660;';
     }
 
-    // ---- Generate ----
-    async function generateBriefing() {
-      const manifest = buildManifest();
+    // ---- SSE streaming helper ----
+    function showProgressOverlay(title, subtitle) {
       const overlay = document.getElementById('progress-overlay');
       const spinner = document.getElementById('progress-spinner');
       const msg = document.getElementById('progress-msg');
       const sub = document.getElementById('progress-sub');
       const closeBtn = document.getElementById('progress-close');
+      const logPanel = document.getElementById('log-panel');
 
       overlay.classList.add('visible');
       spinner.style.display = 'block';
-      msg.textContent = 'Generating briefing...';
+      msg.textContent = title;
       msg.className = 'progress-msg';
-      sub.textContent = 'Streaming logs from generator';
+      sub.textContent = subtitle;
       closeBtn.classList.add('hidden');
-      document.getElementById('generate-btn').disabled = true;
-
-      const logPanel = document.getElementById('log-panel');
       logPanel.innerHTML = '';
+    }
 
-      function appendLog(text, cls = '') {
-        const el = document.createElement('div');
-        el.className = 'log-line' + (cls ? ' ' + cls : '');
-        el.textContent = text;
-        logPanel.appendChild(el);
-        logPanel.scrollTop = logPanel.scrollHeight;
+    function appendLog(text, cls = '') {
+      const logPanel = document.getElementById('log-panel');
+      const el = document.createElement('div');
+      el.className = 'log-line' + (cls ? ' ' + cls : '');
+      el.textContent = text;
+      logPanel.appendChild(el);
+      logPanel.scrollTop = logPanel.scrollHeight;
+    }
+
+    async function streamSSE(res) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalStatus = null;
+      let episodeId = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.type === 'log') {
+              appendLog(evt.data);
+            } else if (evt.type === 'error') {
+              appendLog(evt.data, 'error');
+            } else if (evt.type === 'done') {
+              appendLog(evt.data, 'done');
+              finalStatus = 'done';
+              if (evt.episode_id) episodeId = evt.episode_id;
+            } else if (evt.type === 'fail') {
+              appendLog(evt.data, 'fail');
+              finalStatus = 'fail';
+            }
+          } catch (_) {}
+        }
       }
+      return { finalStatus, episodeId };
+    }
+
+    // ---- Generate (Phase 1: no_audio) ----
+    async function runGenerationThenEdit() {
+      const manifest = buildManifest({ no_audio: true });
+
+      showProgressOverlay('Generating briefing...', 'Streaming logs from generator (no audio)');
 
       try {
         const res = await fetch(`${API_BASE}/api/admin/briefing-editor/generate`, {
@@ -1112,62 +1224,465 @@
           throw new Error(err.error || err.message || 'Generation failed');
         }
 
-        // Read SSE stream
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let finalStatus = null;
+        const { finalStatus, episodeId } = await streamSSE(res);
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+        document.getElementById('progress-spinner').style.display = 'none';
 
-          const lines = buffer.split('\n');
-          buffer = lines.pop(); // keep incomplete line
+        if (finalStatus === 'done') {
+          if (episodeId) currentEpisodeId = episodeId;
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const evt = JSON.parse(line.slice(6));
-              if (evt.type === 'log') {
-                appendLog(evt.data);
-              } else if (evt.type === 'error') {
-                appendLog(evt.data, 'error');
-              } else if (evt.type === 'done') {
-                appendLog(evt.data, 'done');
-                finalStatus = 'done';
-              } else if (evt.type === 'fail') {
-                appendLog(evt.data, 'fail');
-                finalStatus = 'fail';
-              }
-            } catch (_) {}
-          }
+          // Fetch segments
+          const segRes = await fetch(`${API_BASE}/api/admin/briefing-editor/segments/${currentEpisodeId}`, {
+            headers: authHeaders()
+          });
+          if (!segRes.ok) throw new Error('Failed to fetch segments');
+          const segData = await segRes.json();
+          editableSegments = Array.isArray(segData) ? segData : (segData.segments || []);
+
+          // Close overlay and go to step 3
+          document.getElementById('progress-overlay').classList.remove('visible');
+          renderSegmentEditor(editableSegments);
+          showStep(3);
+        } else {
+          const msg = document.getElementById('progress-msg');
+          msg.className = 'progress-msg result-error';
+          msg.textContent = 'Generation failed';
+          document.getElementById('progress-sub').textContent = 'Check the log below for details';
+          document.getElementById('progress-close').classList.remove('hidden');
+        }
+      } catch (e) {
+        document.getElementById('progress-spinner').style.display = 'none';
+        const msg = document.getElementById('progress-msg');
+        msg.className = 'progress-msg result-error';
+        msg.textContent = 'Generation failed';
+        document.getElementById('progress-sub').textContent = e.message;
+        appendLog(e.message, 'error');
+        document.getElementById('progress-close').classList.remove('hidden');
+      }
+    }
+
+    // ---- Save edited segments ----
+    async function saveEditedSegments() {
+      if (!currentEpisodeId) return;
+      const segments = collectEditedSegments();
+      try {
+        await fetch(`${API_BASE}/api/admin/briefing-editor/segments/${currentEpisodeId}`, {
+          method: 'PUT',
+          headers: authHeaders(),
+          body: JSON.stringify({ segments })
+        });
+      } catch (e) {
+        console.error('Failed to save segments:', e);
+      }
+    }
+
+    // ---- Generate Audio (Phase 2) ----
+    async function generateAudio() {
+      if (!currentEpisodeId) return;
+
+      // Save segments before generating audio
+      await saveEditedSegments();
+
+      showProgressOverlay('Generating audio...', 'Streaming logs from audio generator');
+      document.getElementById('generate-audio-btn').disabled = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/briefing-editor/generate-audio/${currentEpisodeId}`, {
+          method: 'POST',
+          headers: authHeaders()
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || err.message || 'Audio generation failed');
         }
 
-        spinner.style.display = 'none';
+        const { finalStatus } = await streamSSE(res);
+
+        document.getElementById('progress-spinner').style.display = 'none';
+        const msg = document.getElementById('progress-msg');
+        const sub = document.getElementById('progress-sub');
+
         if (finalStatus === 'done') {
           msg.className = 'progress-msg result-success';
-          msg.textContent = 'Briefing generated!';
+          msg.textContent = 'Briefing generated with audio!';
           sub.textContent = 'Briefing is now live in the app';
         } else {
           msg.className = 'progress-msg result-error';
-          msg.textContent = 'Generation failed';
+          msg.textContent = 'Audio generation failed';
           sub.textContent = 'Check the log below for details';
         }
       } catch (e) {
-        spinner.style.display = 'none';
+        document.getElementById('progress-spinner').style.display = 'none';
+        const msg = document.getElementById('progress-msg');
         msg.className = 'progress-msg result-error';
-        msg.textContent = 'Generation failed';
-        sub.textContent = e.message;
+        msg.textContent = 'Audio generation failed';
+        document.getElementById('progress-sub').textContent = e.message;
         appendLog(e.message, 'error');
       }
-      closeBtn.classList.remove('hidden');
+      document.getElementById('progress-close').classList.remove('hidden');
     }
 
     function closeProgress() {
       document.getElementById('progress-overlay').classList.remove('visible');
-      document.getElementById('generate-btn').disabled = false;
+      const audioBtn = document.getElementById('generate-audio-btn');
+      if (audioBtn) audioBtn.disabled = false;
+    }
+
+    // ---- Segment Editor ----
+    function renderSegmentEditor(segments) {
+      const container = document.getElementById('segments-container');
+      container.innerHTML = '';
+
+      segments.forEach((seg, idx) => {
+        const segType = seg.segment_type || seg.type || 'story';
+        const isStory = segType === 'story';
+        const isIntroOutro = segType === 'intro' || segType === 'outro';
+        const threadTitle = seg.thread_title || seg.title || '';
+
+        const card = document.createElement('div');
+        card.className = 'segment-card';
+        card.id = `seg-card-${idx}`;
+
+        // Header
+        const headerLabel = isStory
+          ? `${escHtml(threadTitle)} — Segment ${seg.segment_number || idx + 1}`
+          : segType.charAt(0).toUpperCase() + segType.slice(1);
+
+        let bodyHtml = '';
+
+        // Voiceover
+        bodyHtml += `
+          <div class="seg-field">
+            <div class="seg-label">Voiceover</div>
+            <textarea class="seg-textarea" data-seg="${idx}" data-field="voiceover">${escHtml(seg.voiceover || '')}</textarea>
+          </div>`;
+
+        if (isIntroOutro) {
+          // Globe animate fields
+          const ga = seg.globe_animate || {};
+          bodyHtml += `
+            <div class="seg-field">
+              <div class="seg-label">Globe Animate</div>
+              <div class="seg-row">
+                <input class="seg-input short" data-seg="${idx}" data-field="globe_animate.lat" placeholder="lat" value="${ga.lat ?? ''}" />
+                <input class="seg-input short" data-seg="${idx}" data-field="globe_animate.lng" placeholder="lng" value="${ga.lng ?? ''}" />
+                <input class="seg-input short" data-seg="${idx}" data-field="globe_animate.zoom" placeholder="zoom" value="${ga.zoom ?? ''}" />
+              </div>
+            </div>`;
+        }
+
+        if (isStory) {
+          // Transition
+          bodyHtml += `
+            <div class="seg-field">
+              <div class="seg-label">Transition</div>
+              <input class="seg-input" data-seg="${idx}" data-field="transition" value="${escHtml(seg.transition || '')}" />
+            </div>`;
+
+          // Globe Focus
+          const gf = seg.globe_focus || {};
+          bodyHtml += `
+            <div class="seg-field">
+              <div class="seg-label">Globe Focus</div>
+              <div class="seg-row">
+                <input class="seg-input short" data-seg="${idx}" data-field="globe_focus.lat" placeholder="lat" value="${gf.lat ?? ''}" />
+                <input class="seg-input short" data-seg="${idx}" data-field="globe_focus.lng" placeholder="lng" value="${gf.lng ?? ''}" />
+                <input class="seg-input short" data-seg="${idx}" data-field="globe_focus.zoom" placeholder="zoom" value="${gf.zoom ?? ''}" />
+              </div>
+            </div>`;
+
+          // Primary Location
+          const pl = seg.primary_location || {};
+          bodyHtml += `
+            <div class="seg-field">
+              <div class="seg-label">Primary Location</div>
+              <div class="seg-row">
+                <select class="seg-input" style="width:100px" data-seg="${idx}" data-field="primary_location.type">
+                  <option value="none" ${(!pl.type || pl.type === 'none') ? 'selected' : ''}>none</option>
+                  <option value="city" ${pl.type === 'city' ? 'selected' : ''}>city</option>
+                  <option value="country" ${pl.type === 'country' ? 'selected' : ''}>country</option>
+                </select>
+                <input class="seg-input" data-seg="${idx}" data-field="primary_location.name" placeholder="Name" value="${escHtml(pl.name || '')}" />
+                <input class="seg-input short" data-seg="${idx}" data-field="primary_location.lat" placeholder="lat" value="${pl.lat ?? ''}" />
+                <input class="seg-input short" data-seg="${idx}" data-field="primary_location.lon" placeholder="lon" value="${pl.lon ?? ''}" />
+              </div>
+            </div>`;
+
+          // Secondary Locations
+          const secLocs = seg.secondary_locations || [];
+          bodyHtml += `
+            <div class="seg-field" id="sec-locs-${idx}">
+              <div class="seg-label">Secondary Locations</div>
+              ${secLocs.map((loc, li) => `
+                <div class="seg-row" data-seg="${idx}" data-loc="${li}">
+                  <input class="seg-input" data-field="sec_name" placeholder="Name" value="${escHtml(loc.name || '')}" />
+                  <input class="seg-input short" data-field="sec_lat" placeholder="lat" value="${loc.lat ?? ''}" />
+                  <input class="seg-input short" data-field="sec_lon" placeholder="lon" value="${loc.lon ?? ''}" />
+                  <button class="seg-remove" onclick="removeSecondaryLocation(${idx}, ${li})">&#10005;</button>
+                </div>
+              `).join('')}
+              <button class="seg-add" onclick="addSecondaryLocation(${idx})">+ Add Location</button>
+            </div>`;
+
+          // Flow Arcs
+          const arcs = seg.flow_arcs || [];
+          bodyHtml += `
+            <div class="seg-field" id="flow-arcs-${idx}">
+              <div class="seg-label">Flow Arcs</div>
+              ${arcs.map((arc, ai) => `
+                <div class="seg-row" data-seg="${idx}" data-arc="${ai}">
+                  <input class="seg-input" data-field="arc_from_name" placeholder="From" value="${escHtml(arc.from_name || '')}" />
+                  <input class="seg-input short" data-field="arc_from_lat" placeholder="lat" value="${arc.from_lat ?? ''}" />
+                  <input class="seg-input short" data-field="arc_from_lng" placeholder="lng" value="${arc.from_lng ?? ''}" />
+                  <span class="arc-arrow">&rarr;</span>
+                  <input class="seg-input" data-field="arc_to_name" placeholder="To" value="${escHtml(arc.to_name || '')}" />
+                  <input class="seg-input short" data-field="arc_to_lat" placeholder="lat" value="${arc.to_lat ?? ''}" />
+                  <input class="seg-input short" data-field="arc_to_lng" placeholder="lng" value="${arc.to_lng ?? ''}" />
+                  <button class="seg-remove" onclick="removeFlowArc(${idx}, ${ai})">&#10005;</button>
+                </div>
+              `).join('')}
+              <button class="seg-add" onclick="addFlowArc(${idx})">+ Add Arc</button>
+            </div>`;
+
+          // Articles
+          const articles = seg.articles || [];
+          bodyHtml += `
+            <div class="seg-field" id="articles-${idx}">
+              <div class="seg-label">Articles</div>
+              ${articles.map((art, ai) => {
+                const artId = typeof art === 'object' ? (art.id || art.article_id || '') : art;
+                const included = typeof art === 'object' ? (art.included !== false) : true;
+                return `
+                <div class="seg-article-row" data-seg="${idx}" data-art="${ai}">
+                  <input type="checkbox" class="seg-checkbox" data-field="art_included" ${included ? 'checked' : ''} />
+                  <span>${escHtml(String(artId))}</span>
+                  <button class="seg-remove" onclick="removeArticle(${idx}, ${ai})">&#10005;</button>
+                </div>`;
+              }).join('')}
+              <div class="seg-row" style="margin-top:4px;">
+                <input class="seg-input" id="new-art-${idx}" placeholder="Article ID" />
+                <button class="seg-add" onclick="addArticle(${idx})">Add</button>
+              </div>
+            </div>`;
+
+          // Video
+          const vid = seg.video || {};
+          const videoId = vid.video_id || vid.id || '';
+          bodyHtml += `
+            <div class="seg-field">
+              <div class="seg-label">Video</div>
+              <input class="seg-input" data-seg="${idx}" data-field="video_id" placeholder="YouTube Video ID" value="${escHtml(videoId)}" />
+              ${videoId ? `<div style="margin-top:6px;"><img src="https://img.youtube.com/vi/${escHtml(videoId)}/mqdefault.jpg" style="max-width:200px;border-radius:4px;" /></div>` : ''}
+            </div>`;
+
+          // Data Panels
+          const panels = seg.data_panels || [];
+          if (panels.length > 0) {
+            bodyHtml += `
+              <div class="seg-field" id="panels-${idx}">
+                <div class="seg-label">Data Panels</div>
+                ${panels.map((p, pi) => `
+                  <div class="seg-panel-row" data-seg="${idx}" data-panel="${pi}">
+                    <input type="checkbox" class="seg-checkbox" data-field="panel_included" ${p.included !== false ? 'checked' : ''} />
+                    <span class="seg-panel-type">${escHtml(p.chart_type || 'chart')}</span>
+                    <span>${escHtml(p.title || '')} ${p.source ? '&mdash; ' + escHtml(p.source) : ''}</span>
+                  </div>
+                `).join('')}
+              </div>`;
+          }
+        }
+
+        card.innerHTML = `
+          <div class="segment-header" onclick="toggleSegment(${idx})">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="seg-type-badge ${segType}">${segType}</span>
+              <span>${headerLabel}</span>
+            </div>
+            <span id="seg-tog-${idx}" style="color:#94a3b8;">&#9654;</span>
+          </div>
+          <div class="segment-body">${bodyHtml}</div>
+        `;
+
+        container.appendChild(card);
+      });
+    }
+
+    function toggleSegment(idx) {
+      const card = document.getElementById(`seg-card-${idx}`);
+      card.classList.toggle('open');
+      const tog = document.getElementById(`seg-tog-${idx}`);
+      tog.innerHTML = card.classList.contains('open') ? '&#9660;' : '&#9654;';
+    }
+
+    function collectEditedSegments() {
+      return editableSegments.map((seg, idx) => {
+        const clone = JSON.parse(JSON.stringify(seg));
+        const segType = clone.segment_type || clone.type || 'story';
+
+        // Voiceover
+        const voEl = document.querySelector(`textarea[data-seg="${idx}"][data-field="voiceover"]`);
+        if (voEl) clone.voiceover = voEl.value;
+
+        if (segType === 'intro' || segType === 'outro') {
+          clone.globe_animate = clone.globe_animate || {};
+          const gaLat = document.querySelector(`input[data-seg="${idx}"][data-field="globe_animate.lat"]`);
+          const gaLng = document.querySelector(`input[data-seg="${idx}"][data-field="globe_animate.lng"]`);
+          const gaZoom = document.querySelector(`input[data-seg="${idx}"][data-field="globe_animate.zoom"]`);
+          if (gaLat) clone.globe_animate.lat = parseFloat(gaLat.value) || 0;
+          if (gaLng) clone.globe_animate.lng = parseFloat(gaLng.value) || 0;
+          if (gaZoom) clone.globe_animate.zoom = parseFloat(gaZoom.value) || 1;
+        }
+
+        if (segType === 'story') {
+          // Transition
+          const trEl = document.querySelector(`input[data-seg="${idx}"][data-field="transition"]`);
+          if (trEl) clone.transition = trEl.value;
+
+          // Globe Focus
+          clone.globe_focus = clone.globe_focus || {};
+          const gfLat = document.querySelector(`input[data-seg="${idx}"][data-field="globe_focus.lat"]`);
+          const gfLng = document.querySelector(`input[data-seg="${idx}"][data-field="globe_focus.lng"]`);
+          const gfZoom = document.querySelector(`input[data-seg="${idx}"][data-field="globe_focus.zoom"]`);
+          if (gfLat) clone.globe_focus.lat = parseFloat(gfLat.value) || 0;
+          if (gfLng) clone.globe_focus.lng = parseFloat(gfLng.value) || 0;
+          if (gfZoom) clone.globe_focus.zoom = parseFloat(gfZoom.value) || 1;
+
+          // Primary Location
+          clone.primary_location = clone.primary_location || {};
+          const plType = document.querySelector(`select[data-seg="${idx}"][data-field="primary_location.type"]`);
+          const plName = document.querySelector(`input[data-seg="${idx}"][data-field="primary_location.name"]`);
+          const plLat = document.querySelector(`input[data-seg="${idx}"][data-field="primary_location.lat"]`);
+          const plLon = document.querySelector(`input[data-seg="${idx}"][data-field="primary_location.lon"]`);
+          if (plType) clone.primary_location.type = plType.value;
+          if (plName) clone.primary_location.name = plName.value;
+          if (plLat) clone.primary_location.lat = parseFloat(plLat.value) || 0;
+          if (plLon) clone.primary_location.lon = parseFloat(plLon.value) || 0;
+
+          // Secondary Locations
+          const secRows = document.querySelectorAll(`#sec-locs-${idx} .seg-row[data-loc]`);
+          clone.secondary_locations = [];
+          secRows.forEach(row => {
+            clone.secondary_locations.push({
+              name: row.querySelector('[data-field="sec_name"]').value,
+              lat: parseFloat(row.querySelector('[data-field="sec_lat"]').value) || 0,
+              lon: parseFloat(row.querySelector('[data-field="sec_lon"]').value) || 0
+            });
+          });
+
+          // Flow Arcs
+          const arcRows = document.querySelectorAll(`#flow-arcs-${idx} .seg-row[data-arc]`);
+          clone.flow_arcs = [];
+          arcRows.forEach(row => {
+            clone.flow_arcs.push({
+              from_name: row.querySelector('[data-field="arc_from_name"]').value,
+              from_lat: parseFloat(row.querySelector('[data-field="arc_from_lat"]').value) || 0,
+              from_lng: parseFloat(row.querySelector('[data-field="arc_from_lng"]').value) || 0,
+              to_name: row.querySelector('[data-field="arc_to_name"]').value,
+              to_lat: parseFloat(row.querySelector('[data-field="arc_to_lat"]').value) || 0,
+              to_lng: parseFloat(row.querySelector('[data-field="arc_to_lng"]').value) || 0
+            });
+          });
+
+          // Articles
+          const artRows = document.querySelectorAll(`#articles-${idx} .seg-article-row`);
+          clone.articles = [];
+          artRows.forEach(row => {
+            const cb = row.querySelector('[data-field="art_included"]');
+            const span = row.querySelector('span');
+            if (span) {
+              clone.articles.push({
+                id: span.textContent,
+                included: cb ? cb.checked : true
+              });
+            }
+          });
+
+          // Video
+          const vidEl = document.querySelector(`input[data-seg="${idx}"][data-field="video_id"]`);
+          if (vidEl) {
+            const vidVal = vidEl.value.trim();
+            clone.video = vidVal ? { video_id: vidVal } : null;
+          }
+
+          // Data Panels
+          const panelRows = document.querySelectorAll(`#panels-${idx} .seg-panel-row`);
+          if (panelRows.length > 0 && clone.data_panels) {
+            panelRows.forEach((row, pi) => {
+              const cb = row.querySelector('[data-field="panel_included"]');
+              if (cb && clone.data_panels[pi]) {
+                clone.data_panels[pi].included = cb.checked;
+              }
+            });
+          }
+        }
+
+        return clone;
+      });
+    }
+
+    function addSecondaryLocation(segIdx) {
+      editableSegments[segIdx].secondary_locations = editableSegments[segIdx].secondary_locations || [];
+      // Collect current values before re-render
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].secondary_locations.push({ name: '', lat: 0, lon: 0 });
+      renderSegmentEditor(editableSegments);
+      // Re-open the card
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    function removeSecondaryLocation(segIdx, locIdx) {
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].secondary_locations.splice(locIdx, 1);
+      renderSegmentEditor(editableSegments);
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    function addFlowArc(segIdx) {
+      editableSegments[segIdx].flow_arcs = editableSegments[segIdx].flow_arcs || [];
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].flow_arcs.push({ from_name: '', from_lat: 0, from_lng: 0, to_name: '', to_lat: 0, to_lng: 0 });
+      renderSegmentEditor(editableSegments);
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    function removeFlowArc(segIdx, arcIdx) {
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].flow_arcs.splice(arcIdx, 1);
+      renderSegmentEditor(editableSegments);
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    function addArticle(segIdx) {
+      const input = document.getElementById(`new-art-${segIdx}`);
+      const val = input ? input.value.trim() : '';
+      if (!val) return;
+      editableSegments[segIdx].articles = editableSegments[segIdx].articles || [];
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].articles.push({ id: val, included: true });
+      renderSegmentEditor(editableSegments);
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    function removeArticle(segIdx, artIdx) {
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].articles.splice(artIdx, 1);
+      renderSegmentEditor(editableSegments);
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    // Sync a single segment's DOM values back into editableSegments
+    function syncSegmentFromDOM(segIdx) {
+      const collected = collectEditedSegments();
+      if (collected[segIdx]) {
+        editableSegments[segIdx] = collected[segIdx];
+      }
     }
 
     // ---- Utils ----

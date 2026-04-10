@@ -6113,6 +6113,11 @@ body.ticker-active #flowControls {
     body.briefing-active #hoverLineEl {
       display: none !important;
     }
+    body.briefing-active #hoverCard.briefing-forced,
+    body.briefing-active #hoverLineEl.briefing-forced {
+      display: block !important;
+      pointer-events: none;
+    }
 
     /* ── Vertical View Sidebar ── */
     #viewSidebar {
@@ -12099,8 +12104,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const card   = document.getElementById("hoverCard");
         const lineEl = document.getElementById("hoverLineEl");
         card.classList.remove("hcVisible");
+        card.classList.remove("briefing-forced");
         card.classList.add("hcErase");
         lineEl.style.opacity = "0";
+        lineEl.classList.remove("briefing-forced");
         if (hoverEraseTimer) clearTimeout(hoverEraseTimer);
         hoverEraseTimer = setTimeout(() => { card.classList.remove("hcErase"); }, 150);
       }
@@ -13690,6 +13697,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // simplified segment object, merging so any extra briefing fields are kept
         const enriched = Object.assign({}, nodeObj, arr[idx] || {});
         showHoverCard(enriched, sx, sy);
+        // Force-show during briefing (overrides body.briefing-active display:none)
+        const card = document.getElementById('hoverCard');
+        const lineEl = document.getElementById('hoverLineEl');
+        if (card) card.classList.add('briefing-forced');
+        if (lineEl) lineEl.classList.add('briefing-forced');
       };
 
       // Hide the hover card (briefing cleanup between segments)
@@ -21131,22 +21143,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function signOut() {
     try {
       const { error } = await sb.auth.signOut({ scope: 'local' });
-      if (error) throw error;
-      clearAuthUI();
-      window.location.replace('/');
+      if (error) console.warn('[auth] signOut error:', error.message || error);
     } catch (err) {
-      if (String(err?.message || '').includes('another request stole it') || String(err?.message || '').includes('released because another request stole it')) {
-        await sleep(150);
-        const retry = await sb.auth.signOut({ scope: 'local' }).catch((retryErr) => ({ error: retryErr }));
-        if (retry?.error) {
-          console.warn('[auth] signOut retry failed:', retry.error.message || retry.error);
-          clearAuthUI();
-          window.location.replace('/');
-        }
-        return;
-      }
-      throw err;
+      console.warn('[auth] signOut error:', err?.message || err);
     }
+    clearAuthUI();
+    window.location.replace('/');
   }
 
   async function forgotPassword() {
@@ -21192,7 +21194,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
   siSubmit.addEventListener('click', signIn);
   suSubmit.addEventListener('click', signUp);
-  acctDpSignOut.addEventListener('click', signOut);
+  acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
   forgotLink.addEventListener('click', forgotPassword);
 
   siPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
@@ -23292,6 +23294,13 @@ body.ticker-active .gTickerLabel {
       if (!_isCentroid(rawToLat, rawToLng) && window.briefingPulseAt) {
         window.briefingPulseAt(rawToLat, rawToLng);
       }
+      // Show hover cards for arc endpoints (from first, then to after delay)
+      if (window.briefingShowLabelAt) {
+        window.briefingShowLabelAt(rawFromLat, rawFromLng);
+        addBTimer(setTimeout(() => {
+          if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng);
+        }, 600));
+      }
 
       if (distKm < DOMESTIC_KM) {
         // Domestic: pulse both centroids, skip the arc line
@@ -23966,7 +23975,8 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── News ticker (scrolling marquee) ──────────────────────────────────────
-  const TICKER_PX_PER_SEC = 90; // scroll speed
+  const TICKER_PX_PER_SEC = 34; // scroll speed
+  const TICKER_MIN_DURATION_SEC = 72;
   let _briefingTickerArticles = [];
 
   function _buildTickerHTML(articles) {
@@ -24006,7 +24016,7 @@ body.ticker-active .gTickerLabel {
     el.classList.remove('reset');
     requestAnimationFrame(() => {
       const halfW = el.scrollWidth / 2;
-      el.style.animationDuration = (halfW / TICKER_PX_PER_SEC).toFixed(1) + 's';
+      el.style.animationDuration = Math.max(TICKER_MIN_DURATION_SEC, halfW / TICKER_PX_PER_SEC).toFixed(1) + 's';
     });
   }
 
@@ -24773,7 +24783,8 @@ body.ticker-active .gTickerLabel {
 (function () {
   'use strict';
   const API = window.__API_BASE || 'https://earth-wjr6.onrender.com';
-  const SPEED = 80; // px/sec
+  const SPEED = 28; // px/sec
+  const MIN_TICKER_DURATION = 84;
   const REFRESH_MS = 10 * 60 * 1000; // refresh articles every 10 min
   const CACHE_KEY = 'gTickerCacheV1';
   let _articles = [];
@@ -24887,7 +24898,7 @@ body.ticker-active .gTickerLabel {
       }
       return;
     }
-    el.style.animationDuration = `${Math.max(24, halfW / SPEED).toFixed(1)}s`;
+    el.style.animationDuration = `${Math.max(MIN_TICKER_DURATION, halfW / SPEED).toFixed(1)}s`;
   }
 
   // ── Start / restart animation ─────────────────────────────────────────────

@@ -2329,6 +2329,127 @@ app.get('/api/admin/briefing-editor/status', requireAdmin, async (req, res) => {
   }
 });
 
+// Fetch segments for editing
+app.get('/api/admin/briefing-editor/segments/:episodeId', requireAdmin, async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const { rows } = await pool.query(`
+      SELECT id, headline, segments, status,
+             (audio_data IS NOT NULL) AS has_audio
+      FROM briefing_episodes WHERE id = $1
+    `, [episodeId]);
+    if (!rows.length) return res.status(404).json({ error: 'Episode not found' });
+    const ep = rows[0];
+    const segments = typeof ep.segments === 'string' ? JSON.parse(ep.segments) : ep.segments;
+    res.json({
+      episode_id: ep.id,
+      headline: ep.headline,
+      status: ep.status,
+      has_audio: ep.has_audio,
+      segments
+    });
+  } catch (err) {
+    console.error('[briefing-editor] segments fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch segments' });
+  }
+});
+
+// Save edited segments
+app.put('/api/admin/briefing-editor/segments/:episodeId', requireAdmin, async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const { segments, headline } = req.body;
+    if (!segments || !Array.isArray(segments)) {
+      return res.status(400).json({ error: 'segments array required' });
+    }
+
+    const updates = ['segments = $1'];
+    const params = [JSON.stringify(segments)];
+    let paramIdx = 2;
+
+    if (headline) {
+      updates.push(`headline = $${paramIdx}`);
+      params.push(headline);
+      paramIdx++;
+    }
+
+    params.push(episodeId);
+    await pool.query(
+      `UPDATE briefing_episodes SET ${updates.join(', ')} WHERE id = $${paramIdx}`,
+      params
+    );
+
+    res.json({ ok: true, message: 'Segments saved' });
+  } catch (err) {
+    console.error('[briefing-editor] segments save error:', err.message);
+    res.status(500).json({ error: 'Failed to save segments' });
+  }
+});
+
+// Generate audio for edited segments — streams logs via SSE
+app.post('/api/admin/briefing-editor/generate-audio/:episodeId', requireAdmin, async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+
+    // Verify episode exists
+    const { rows } = await pool.query(
+      'SELECT id, segments FROM briefing_episodes WHERE id = $1',
+      [episodeId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Episode not found' });
+    }
+
+    // SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    const send = (type, data) => {
+      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+    };
+
+    send('log', `Starting audio generation for episode ${episodeId}`);
+
+    const child = spawn('node', [
+      'briefingGenerator.js', '--force', '--audio-only'
+    ], {
+      cwd: __dirname,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+      env: { ...process.env }
+    });
+
+    child.stdout.on('data', d => {
+      const lines = d.toString().split('\n').filter(Boolean);
+      for (const line of lines) send('log', line);
+    });
+    child.stderr.on('data', d => {
+      const lines = d.toString().split('\n').filter(Boolean);
+      for (const line of lines) send('error', line);
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        send('done', 'Audio generated successfully');
+      } else {
+        send('fail', `Audio generation exited with code ${code}`);
+      }
+      res.end();
+    });
+
+    req.on('close', () => {
+      if (!child.killed) child.kill();
+    });
+  } catch (err) {
+    console.error('[briefing-editor] audio gen error:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to start audio generation' });
+    }
+  }
+});
+
 // Serve briefing editor page
 app.get('/briefing-editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));

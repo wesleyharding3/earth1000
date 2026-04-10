@@ -39,6 +39,7 @@ const NO_AUDIO     = process.argv.includes('--no-audio');
 const FORCE_AUDIO  = process.argv.includes('--force-audio'); // re-synthesise even if audio exists
 const PICK_MODE    = process.argv.includes('--pick');        // interactive thread selection
 const PANELS_ONLY  = process.argv.includes('--panels-only'); // regenerate only data panels for today's episode
+const AUDIO_ONLY   = process.argv.includes('--audio-only');  // re-synthesise audio for an existing episode
 const NO_PANELS    = process.argv.includes('--no-panels');   // skip data panel generation entirely
 const MANIFEST_PATH = (() => {
   const idx = process.argv.indexOf('--manifest');
@@ -205,6 +206,101 @@ async function run() {
     const segs = typeof ep.segments === 'string' ? JSON.parse(ep.segments) : ep.segments;
     await regeneratePanelsForEpisode(ep.id, segs);
     console.log(`✅ Panels regenerated for episode ${ep.id} in ${elapsed(t0)}`);
+    await pool.end();
+    return;
+  }
+
+  // ── --audio-only fast path: re-synthesise audio for an existing episode ──
+  if (AUDIO_ONLY) {
+    const { rows } = await pool.query(
+      `SELECT id, headline, segments FROM briefing_episodes WHERE user_id IS NULL AND target_date=$1 AND segments IS NOT NULL ORDER BY id DESC LIMIT 1`,
+      [targetDate]
+    );
+    if (!rows.length) {
+      console.log(`✗ No episode with segments for ${targetDate}. Generate segments first.`);
+      await pool.end();
+      return;
+    }
+    const ep = rows[0];
+    let segments = typeof ep.segments === 'string' ? JSON.parse(ep.segments) : ep.segments;
+    if (!segments?.length) {
+      console.log(`✗ Episode ${ep.id} has no segments.`);
+      await pool.end();
+      return;
+    }
+
+    console.log(`   [${elapsed(t0)}] Audio-only mode: episode ${ep.id}, ${segments.length} segments`);
+
+    if (!ELEVENLABS_KEY) {
+      console.warn(`   ⚠ ELEVENLABS_API_KEY not set — cannot synthesise audio`);
+      await pool.end();
+      return;
+    }
+
+    // Build one text piece per segment (voiceover + optional transition)
+    const textPieces = segments.map(seg => {
+      const base = seg.voiceover_text || '';
+      const tr   = seg.transition ? (' ' + seg.transition) : '';
+      return (base + tr).trim();
+    });
+
+    const audioBuffers     = [];
+    const pieceDurationsMs = [];
+    const pieceWordTimings = [];
+
+    console.log(`   [${elapsed(t0)}] Synthesising ${textPieces.length} audio pieces with ElevenLabs...`);
+
+    for (let pi = 0; pi < textPieces.length; pi++) {
+      const text = textPieces[pi];
+      if (!text) { audioBuffers.push(Buffer.alloc(0)); pieceDurationsMs.push(0); pieceWordTimings.push([]); continue; }
+      try {
+        const { buffer, wordTimings, durationMs } = await synthesiseAudio(text);
+        audioBuffers.push(buffer);
+        pieceDurationsMs.push(durationMs);
+        pieceWordTimings.push(wordTimings || []);
+        console.log(`   [${elapsed(t0)}] Piece ${pi + 1}/${textPieces.length} — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(wordTimings || []).length}w · ${(durationMs/1000).toFixed(1)}s`);
+      } catch (err) {
+        console.warn(`   ⚠ Audio piece ${pi} failed: ${err.message}`);
+        audioBuffers.push(Buffer.alloc(0));
+        pieceDurationsMs.push(0);
+        pieceWordTimings.push([]);
+      }
+    }
+
+    // Stamp each segment with its audio start offset and per-word timings
+    let cumMs = 0;
+    for (let si = 0; si < segments.length; si++) {
+      segments[si].start_ms     = cumMs;
+      segments[si].duration_ms  = pieceDurationsMs[si];
+      segments[si].word_timings = pieceWordTimings[si] || [];
+      cumMs += pieceDurationsMs[si];
+    }
+
+    // Concatenate all non-empty buffers into one MP3 file
+    const concatted = Buffer.concat(audioBuffers.filter(b => b.byteLength > 0));
+    let audioData = null;
+    if (concatted.byteLength === 0) {
+      console.warn(`   ⚠ All audio pieces failed — no audio stored (check ELEVENLABS_VOICE_ID and API key)`);
+    } else {
+      audioData = concatted;
+      console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB total, ${(cumMs / 1000).toFixed(1)}s estimated`);
+    }
+
+    // Save audio_data and updated segments back to DB
+    await pool.query(`
+      UPDATE briefing_episodes
+      SET segments   = $1,
+          audio_data = $2,
+          status     = 'ready',
+          generated_at = NOW()
+      WHERE id = $3
+    `, [
+      JSON.stringify(segments),
+      audioData,
+      ep.id
+    ]);
+
+    console.log(`✅ Audio-only regeneration complete for episode ${ep.id} in ${elapsed(t0)}`);
     await pool.end();
     return;
   }
