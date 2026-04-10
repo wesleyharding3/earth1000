@@ -3002,42 +3002,161 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     const days  = Math.min(parseInt(req.query.days,  10) || 7,  30);
 
     const { rows } = await pool.query(`
+      WITH candidate_articles AS (
+        SELECT
+          sta.thread_id,
+          a.id,
+          a.published_at,
+          a.sentiment_score
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE a.published_at > NOW() - ($2 || ' days')::interval
+      ),
+      thread_country_matches AS (
+        -- Entity-based country involvement: mirrors /api/flows/thread/:id
+        SELECT DISTINCT
+          ca.thread_id,
+          ca.id AS article_id,
+          ca.published_at,
+          ca.sentiment_score
+        FROM candidate_articles ca
+        JOIN article_entity_mentions aem ON aem.article_id = ca.id
+        JOIN entities e ON e.id = aem.entity_id
+        WHERE e.entity_type = 'location'
+          AND LOWER(e.country_code) = LOWER($1)
+          AND aem.role IN ('subject', 'actor', 'location')
+          AND aem.confidence >= 0.6
+
+        UNION
+
+        -- Content/source routing fallback: mirrors the flow fallback path
+        SELECT DISTINCT
+          ca.thread_id,
+          ca.id AS article_id,
+          ca.published_at,
+          ca.sentiment_score
+        FROM candidate_articles ca
+        JOIN article_locations al ON al.article_id = ca.id
+        JOIN countries co ON co.id = al.country_id
+        WHERE co.iso_code = $1
+          AND al.routing_type IN ('content', 'source')
+      ),
+      ranked_threads AS (
+        SELECT
+          t.id                    AS thread_id,
+          t.title,
+          t.description,
+          t.importance,
+          t.article_count,
+          t.status,
+          t.primary_category,
+          t.keywords,
+          t.first_seen_at,
+          t.last_updated_at,
+          t.breaking_signal_score,
+          t.distinct_source_count,
+          COUNT(DISTINCT m.article_id) AS in_country_articles,
+          AVG(m.sentiment_score) FILTER (WHERE m.sentiment_score IS NOT NULL)
+                               AS avg_sentiment,
+          MAX(m.published_at)   AS last_in_country_at
+        FROM story_threads t
+        JOIN thread_country_matches m ON m.thread_id = t.id
+        WHERE t.status IN ('active', 'cooling')
+          AND COALESCE(t.article_count, 0) > 0
+        GROUP BY t.id
+        ORDER BY t.importance DESC NULLS LAST,
+                 COUNT(DISTINCT m.article_id) DESC,
+                 MAX(m.published_at) DESC,
+                 t.last_updated_at DESC
+        LIMIT $3
+      )
       SELECT
-        t.id                    AS thread_id,
-        t.title,
-        t.description,
-        t.importance,
-        t.article_count,
-        t.status,
-        t.primary_category,
-        t.first_seen_at,
-        t.last_updated_at,
-        t.breaking_signal_score,
-        t.distinct_source_count,
-        COUNT(DISTINCT a.id) AS in_country_articles,
-        AVG(a.sentiment_score) FILTER (WHERE a.sentiment_score IS NOT NULL)
-                             AS avg_sentiment,
-        MAX(a.published_at) FILTER (WHERE a.country_id = co.id)
-                             AS last_in_country_at
-      FROM story_threads t
-      JOIN story_thread_articles sta ON sta.thread_id = t.id
-      JOIN news_articles a           ON a.id = sta.article_id
-      JOIN countries co              ON co.id = a.country_id
-      WHERE co.iso_code = $1
-        AND a.published_at > NOW() - ($2 || ' days')::interval
-        AND t.status IN ('active', 'cooling')
-        AND COALESCE(t.article_count, 0) > 0
-      GROUP BY t.id, co.id
-      ORDER BY t.importance DESC NULLS LAST,
-               COUNT(DISTINCT a.id) DESC,
-               t.last_updated_at DESC
-      LIMIT $3
+        rt.*,
+        h.hero_image_url,
+        h.hero_iso_code
+      FROM ranked_threads rt
+      LEFT JOIN LATERAL (
+        SELECT
+          a.image_url AS hero_image_url,
+          co.iso_code AS hero_iso_code
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.thread_id = rt.thread_id
+        ORDER BY
+          (a.image_url IS NOT NULL AND a.image_url <> '') DESC,
+          sta.relevance_score DESC,
+          a.published_at DESC
+        LIMIT 1
+      ) h ON TRUE
+      ORDER BY rt.importance DESC NULLS LAST,
+               rt.in_country_articles DESC,
+               rt.last_in_country_at DESC,
+               rt.last_updated_at DESC
     `, [iso, String(days), limit]);
 
     res.json({ iso_code: iso, count: rows.length, threads: rows });
   } catch (err) {
     console.error("[threads/by-country]", err.message);
     res.status(500).json({ error: "Failed to fetch country threads", detail: err.message });
+  }
+});
+
+app.get("/api/threads/id/:id", async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.id, 10);
+    if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
+
+    const { rows } = await pool.query(`
+      SELECT
+        st.id AS thread_id,
+        st.title,
+        st.description,
+        st.primary_category,
+        st.geographic_scope,
+        st.importance,
+        st.keywords,
+        st.article_count,
+        st.status,
+        st.last_updated_at,
+        st.distinct_source_count,
+        st.breaking_signal_score
+      FROM story_threads st
+      WHERE st.id = $1
+        AND st.article_count >= 1
+      LIMIT 1
+    `, [threadId]);
+
+    if (!rows.length) return res.status(404).json({ error: "Thread not found" });
+
+    const thread = rows[0];
+    const { rows: heroRows } = await pool.query(`
+      SELECT
+        a.image_url AS hero_image_url,
+        co.iso_code AS hero_iso_code
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      WHERE sta.thread_id = $1
+      ORDER BY
+        (a.image_url IS NOT NULL AND a.image_url <> '') DESC,
+        sta.relevance_score DESC,
+        a.published_at DESC
+      LIMIT 1
+    `, [threadId]);
+
+    const hero = heroRows[0] || {};
+    res.json({
+      ...thread,
+      latest_published_at: thread.last_updated_at,
+      hero_image_url: hero.hero_image_url || null,
+      hero_catalog_image_url: null,
+      hero_source_name: null,
+      hero_iso_code: hero.hero_iso_code || null
+    });
+  } catch (err) {
+    console.error("[threads/id/:id]", err.message);
+    res.status(500).json({ error: "Failed to fetch thread", detail: err.message });
   }
 });
 

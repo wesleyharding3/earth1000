@@ -538,15 +538,15 @@
       fill: white; opacity: 0;
     }
     .ci-dot.phase1 {
-      animation: ciDotFade 350ms ease-out forwards,
-                 ciDotGrow 350ms ease-out forwards;
+      animation: ciDotFade 117ms ease-out forwards,
+                 ciDotGrow 117ms ease-out forwards;
     }
     @keyframes ciDotFade { 0% { opacity: 0; } 100% { opacity: 1; } }
     @keyframes ciDotGrow { 0% { r: 0; } 100% { r: 2.5; } }
 
     /* --- Dot brightness ramp + spark (phase 2) --- */
     .ci-dot.phase2 {
-      animation: ciDotSpark 250ms ease-in-out forwards;
+      animation: ciDotSpark 83ms ease-in-out forwards;
     }
     @keyframes ciDotSpark {
       0%   { r: 2.5; fill: white; filter: drop-shadow(0 0 0px white); }
@@ -563,7 +563,7 @@
     }
     .ci-line-up.phase3 {
       opacity: 1;
-      animation: ciLineUp 400ms ease-out forwards;
+      animation: ciLineUp 133ms ease-out forwards;
     }
     @keyframes ciLineUp {
       0%   { stroke-dashoffset: 46; filter: drop-shadow(0 0 0px white); }
@@ -596,7 +596,7 @@
 
     /* --- Compass pulse glow (phase 6) --- */
     #compass.ci-pulse {
-      animation: ciPulse 800ms ease-in-out;
+      animation: ciPulse 267ms ease-in-out;
     }
     @keyframes ciPulse {
       0%   { box-shadow: 0 0 0 0 rgba(255,220,140,0); }
@@ -620,7 +620,7 @@
 
     /* --- Scale shimmer on completion --- */
     .si-shimmer {
-      animation: siShimmer 600ms ease-in-out;
+      animation: siShimmer 200ms ease-in-out;
     }
     @keyframes siShimmer {
       0%   { filter: brightness(1) drop-shadow(0 0 0px rgba(255,255,255,0)); }
@@ -1940,6 +1940,24 @@ body.ticker-active #flowControls {
 #flowControls.aggregate-mode .flowPlaybackRow { display: none; }
 #flowControls.aggregate-mode .flowPanelRow:has(#flowSpeed) { display: none; }
 #flowControls.aggregate-mode .flowAggStats { display: block; }
+
+/* Briefing timer in flow panel */
+.flowBriefingTimer {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 11px; color: rgba(255,255,255,0.6);
+}
+.flowTimerIcon {
+  width: 14px; height: 14px; flex-shrink: 0;
+  color: #60c8ff;
+}
+.flowTimerLabel {
+  font-variant-numeric: tabular-nums; color: #60c8ff; font-weight: 600;
+}
+.flowTimerSeg {
+  margin-left: auto; color: rgba(255,255,255,0.35); font-size: 10px;
+}
 
 /* Close button */
 .flowCloseBtn {
@@ -8082,8 +8100,15 @@ window.sourceBiasBadgeHTML = function(bias) {
 
       <!-- Aggregate stats (aggregate mode only) -->
       <div class="flowAggStats" id="flowAggStats">
-        <span class="aggNum" id="aggRouteCount">0</span> routes · 
+        <span class="aggNum" id="aggRouteCount">0</span> routes ·
         <span class="aggNum" id="aggArticleCount">0</span> articles
+      </div>
+
+      <!-- Briefing timer (visible during active briefing) -->
+      <div class="flowBriefingTimer" id="flowBriefingTimer" style="display:none;">
+        <svg class="flowTimerIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span class="flowTimerLabel" id="flowTimerLabel">0:00 / 0:00</span>
+        <span class="flowTimerSeg" id="flowTimerSeg">Seg 1/1</span>
       </div>
     </div>
   </div>
@@ -12964,14 +12989,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // ─── 3a. Point fades in ───
           dot.classList.add("phase1");
-          await wait(350);
+          await wait(117);
 
           // ─── 3b. Line grows up from point to radius ───
           stemLine.classList.add("phase3");
 
           // ─── 3c. Scale: top cap appears, then vertical line draws down ───
           const labels = labelsEl ? Array.from(labelsEl.querySelectorAll(".scaleBarLabel")) : [];
-          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(4px)"; lbl.style.transition = "opacity 250ms ease-out, transform 250ms ease-out"; });
+          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(6px)"; lbl.style.transition = "opacity 180ms ease-out, transform 180ms ease-out"; });
 
           // Get bar height so we can use pixel-based clip (avoids % rounding issues with ::before/::after)
           const barH = barLine ? barLine.offsetHeight : 120;
@@ -12984,20 +13009,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             barLine.style.clipPath = `inset(0 0 ${barH - capH}px 0)`;
           }
           scaleEl.style.opacity = "1";
-          await wait(300);
+          await wait(100);
 
           // ─── 3d. Centroid + line pulse ───
           dot.classList.remove("phase1");
           dot.classList.add("phase2");
           stemLine.style.transition = "none";
           stemLine.style.filter = "drop-shadow(0 0 10px rgba(255,220,140,0.8))";
-          await wait(250);
+          await wait(83);
           stemLine.style.filter = "";
 
           // ─── 3e. Vertical line draws down, ticks + labels appear at edge ───
           const scaleTicks = barLine ? Array.from(barLine.querySelectorAll(".scaleBarTick")) : [];
-          scaleTicks.forEach(tk => { tk.style.opacity = "0"; tk.style.transition = "opacity 200ms ease-out"; });
-          const scaleDuration = 900;
+          scaleTicks.forEach(tk => { tk.style.opacity = "0"; tk.style.transition = "opacity 80ms ease-out"; });
+          const scaleDuration = 300;
           const scaleStart = performance.now();
           const labelCount = labels.length;
           const tickCount = scaleTicks.length;
@@ -13014,9 +13039,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const revealPx = capH + eased * (barH - capH);
               if (barLine) barLine.style.clipPath = `inset(0 0 ${barH - revealPx}px 0)`;
 
-              // Labels fade in as bar edge reaches their vertical position
+              // Labels fade in sequentially top→bottom, staggered behind the bar edge.
+              // First label starts at 8% progress, last at 85%, evenly spaced between.
               for (let i = 0; i < labelCount; i++) {
-                const labelPos = labelCount > 1 ? i / (labelCount - 1) : 0;
+                const labelPos = labelCount > 1
+                  ? 0.08 + (i / (labelCount - 1)) * 0.77
+                  : 0.5;
                 if (!labelRevealed[i] && eased >= labelPos) {
                   labelRevealed[i] = true;
                   labels[i].style.opacity = "1";
@@ -13046,14 +13074,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ─── 3f. Line splits: anchor stays at north, leader starts sweep ───
           anchorLine.style.opacity = "1";
           leaderLine.style.opacity = "1";
-          stemLine.style.transition = "opacity 100ms";
+          stemLine.style.transition = "opacity 33ms";
           stemLine.style.opacity = "0";
-          await wait(100);
+          await wait(33);
 
           // ─── 3g. Leader sweeps clockwise, compass wipes in behind it ───
           setConicMask(0);
           compassEl.style.opacity = "1";
-          const sweepDuration = 1500;
+          const sweepDuration = 500;
           const sweepStart = performance.now();
           await new Promise(resolve => {
             function tick(now) {
@@ -13079,18 +13107,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // Flash leader on reconnect
           leaderLine.style.filter = "drop-shadow(0 0 14px rgba(255,255,255,1)) drop-shadow(0 0 20px rgba(255,220,140,0.7))";
-          await wait(80);
+          await wait(27);
           overlay.remove();
 
           // ─── 3h. Compass pulse ───
-          await wait(100);
+          await wait(33);
           compassEl.classList.add("ci-pulse");
           compassEl.classList.add("ci-outline-build");
 
           // ═══════════════════════════════════════════════════════════════
           // Cleanup
           // ═══════════════════════════════════════════════════════════════
-          await wait(600);
+          await wait(200);
           compassEl.classList.remove("ci-pulse", "ci-outline-build");
           scaleEl.classList.remove("hud-intro", "si-shimmer");
           compassEl.style.webkitMaskImage = "";
@@ -17653,9 +17681,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       });
 
-      function openThreadInPanel(t) {
-        // Build a node-like object compatible with the cluster's openNodePanel
-        const node = {
+      function buildThreadPanelNode(t) {
+        return {
           thread_id: t.thread_id,
           id: t.thread_id,
           title: t.title,
@@ -17664,17 +17691,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
           importance: t.importance || 5,
           article_count: t.article_count || 0,
           language_count: 0,
-          source_country_count: 0,
+          source_country_count: t.distinct_source_count || 0,
           feature_keywords: t.keywords || [],
           top_article_ids: [],
           article_ids: [],
           __kind: t.__kind || 'thread'
         };
+      }
+
+      function openThreadInPanel(t) {
+        // Build a node-like object compatible with the cluster's openNodePanel
+        const node = buildThreadPanelNode(t);
         // Use the cluster page's openNodePanel if available
         if (window.__clusterOpenNodePanel) {
           window.__clusterOpenNodePanel(node);
         }
       }
+
+      window.openThreadInPanel = async function(input) {
+        if (!input) return;
+        if (typeof input === 'object') {
+          return openThreadInPanel(input);
+        }
+        const threadId = parseInt(input, 10);
+        if (!threadId) return;
+        try {
+          const res = await fetch(`${API}/api/threads/id/${threadId}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const thread = await res.json();
+          openThreadInPanel(thread);
+        } catch (err) {
+          console.warn('Failed to open thread panel:', err);
+        }
+      };
+      window.__openThread = window.openThreadInPanel;
     })();
 
     function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -21539,7 +21589,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   pointer-events: none;
   line-height: 1.5;
 }
-#briefingOverlay.open .bDotsMeta { opacity: 1; transform: translateY(0); }
+#briefingOverlay.open .bDotsMeta { display: none; }
 .bDotsMetaLogo {
   font-size: 10px; font-weight: 700; letter-spacing: 3px;
   color: #60c8ff; text-transform: uppercase; display: block;
@@ -21554,7 +21604,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   padding: 0 24px 8px;
   opacity: 0; transition: opacity 0.5s ease 0.4s;
 }
-#briefingOverlay.open .bDots { opacity: 1; }
+#briefingOverlay.open .bDots { display: none; }
 .bDot {
   width: 6px; height: 6px; border-radius: 50%;
   background: rgba(255,255,255,0.3); cursor: pointer;
@@ -21935,7 +21985,7 @@ body.ticker-active .gTickerLabel {
 /* ── Captions — single sentence at a time, just above the control bar ── */
 .bCaptions {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 78px);
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 100px);
   left: 50%; transform: translateX(-50%);
   max-width: min(720px, calc(100vw - 48px));
   background: rgba(0,0,0,0.74); backdrop-filter: blur(6px);
@@ -21965,10 +22015,16 @@ body.ticker-active .gTickerLabel {
 .bCapWord.lit { opacity: 1; }
 
 /* ── Controls — sit just above the bottom nav bar ── */
-.bControls {
+.bControlsWrap {
   position: absolute;
   bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 14px);
   left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  opacity: 0; transition: opacity 0.5s ease 0.5s;
+  z-index: 2;
+}
+#briefingOverlay.open .bControlsWrap { opacity: 1; }
+.bControls {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 8px 12px;
   border-radius: 999px;
@@ -21977,10 +22033,29 @@ body.ticker-active .gTickerLabel {
   box-shadow: 0 16px 34px rgba(0,0,0,0.34);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  opacity: 0; transition: opacity 0.5s ease 0.5s;
-  z-index: 2;
 }
-#briefingOverlay.open .bControls { opacity: 1; }
+/* Seek slider row beneath the pill */
+.bSeekWrap {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; max-width: 320px; padding: 0 4px;
+}
+.bSeekTime, .bSeekDur {
+  font-size: 10px; color: rgba(255,255,255,0.5);
+  font-variant-numeric: tabular-nums; min-width: 28px; text-align: center;
+  font-family: inherit;
+}
+.bSeekSlider {
+  flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+  background: rgba(255,255,255,0.15); border-radius: 2px; outline: none;
+  cursor: pointer;
+}
+.bSeekSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px;
+  border-radius: 50%; background: #60c8ff; border: none; cursor: pointer;
+}
+.bSeekSlider::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%; background: #60c8ff; border: none; cursor: pointer;
+}
 .bControlBtn {
   background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
   border-radius: 50%; width: 38px; height: 38px;
@@ -21994,6 +22069,15 @@ body.ticker-active .gTickerLabel {
   background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
 }
 .bControlBtn.primary:hover { background: rgba(96,200,255,0.35); }
+.bControlBtn.speed {
+  width: auto; border-radius: 18px; padding: 0 10px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.55);
+}
+.bControlBtn.speed.active {
+  background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
+  color: #60c8ff;
+}
 .bControlBtn.cc {
   width: auto; border-radius: 18px; padding: 0 12px;
   font-size: 11px; font-weight: 700; letter-spacing: 1px;
@@ -22043,10 +22127,11 @@ body.ticker-active .gTickerLabel {
 }
 .bRecapTitle { color: #fff; font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .bRecapClose {
-  background: none; border: 1px solid rgba(255,255,255,0.2); color: #aaa;
-  border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px;
+  background: rgba(255,80,80,0.15); border: 1px solid rgba(255,80,80,0.35); color: rgba(255,255,255,0.8);
+  border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
+  z-index: 11;
 }
-.bRecapClose:hover { background: rgba(255,255,255,0.08); color: #fff; }
+.bRecapClose:hover { background: rgba(255,80,80,0.3); color: #fff; }
 .bRecapGrid {
   flex: 1; overflow-y: auto; overflow-x: hidden;
   padding: 16px 20px 24px;
@@ -22471,12 +22556,20 @@ body.ticker-active .gTickerLabel {
       <div class="bTickerItem" id="bTickerItem"></div>
     </div>
   </div>
-  <div class="bControls">
-    <button class="bControlBtn" id="bPrev" title="Previous">&#8592;</button>
-    <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
-    <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
-    <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
-    <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
+  <div class="bControlsWrap">
+    <div class="bControls">
+      <button class="bControlBtn" id="bPrev" title="Previous">&#8592;</button>
+      <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
+      <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
+      <button class="bControlBtn speed" id="bSpeed" title="Playback speed">1x</button>
+      <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
+      <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
+    </div>
+    <div class="bSeekWrap">
+      <span class="bSeekTime" id="bSeekTime">0:00</span>
+      <input type="range" class="bSeekSlider" id="bSeekSlider" min="0" max="1000" value="0" step="1" />
+      <span class="bSeekDur" id="bSeekDur">0:00</span>
+    </div>
   </div>
   <!-- End-of-briefing recap -->
   <div class="bRecap" id="bRecap">
@@ -22535,6 +22628,7 @@ body.ticker-active .gTickerLabel {
   let briefingTimers    = [];
   let activeTUListeners = [];
   let captionsOn    = false;
+  let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
@@ -22609,6 +22703,18 @@ body.ticker-active .gTickerLabel {
     return Math.max(4, (words / WORDS_PER_MIN) * 60);
   }
 
+  function elapsedUpTo(idx) {
+    let t = 0;
+    for (let i = 0; i < idx; i++) t += getSegmentDuration(i);
+    return t;
+  }
+  function totalBriefingDuration() {
+    if (!episode) return 0;
+    let t = 0;
+    for (let i = 0; i < episode.segments.length; i++) t += getSegmentDuration(i);
+    return t;
+  }
+
   // ── Init ────────────────────────────────────────────────────────────────
   async function init() {
     try {
@@ -22659,7 +22765,10 @@ body.ticker-active .gTickerLabel {
     document.getElementById('briefingOverlay').classList.add('open');
     document.dispatchEvent(new Event('briefingOpen'));
     playing = true;
+    playbackRate = 1;
     updatePlayBtn();
+    updateSpeedBtn();
+    startSeekLoop();
     // Seed briefing ticker immediately with all episode article IDs
     const allIds = (episode.segments || []).flatMap(s => s.article_ids || []);
     if (allIds.length) {
@@ -22697,7 +22806,12 @@ body.ticker-active .gTickerLabel {
     document.getElementById('bTickerItem').innerHTML = '';
     stopTicker();
     document.getElementById('bCaptions').classList.remove('visible');
+    stopSeekLoop();
     updatePlayBtn();
+    // Clear polygon highlights
+    if (window.__flowClearHighlights) window.__flowClearHighlights();
+    const fTimer = document.getElementById('flowBriefingTimer');
+    if (fTimer) fTimer.style.display = 'none';
   }
 
   // ── Location Briefing Options + Request ──────────────────────────────────
@@ -22923,26 +23037,57 @@ body.ticker-active .gTickerLabel {
   // Arcs shorter than DOMESTIC_KM are intra-country connections — drawing a
   // curved line inside a single country looks awkward. Replace with ring pulses.
   const DOMESTIC_KM = 700;
+  // Resolve any lat/lon to the nearest country centroid
+  function _toCountryCentroid(lat, lng) {
+    const countries = window.__globeCountries || [];
+    let best = null, bestD = Infinity;
+    for (const c of countries) {
+      if (c.lat == null) continue;
+      const d = Math.abs(c.lat - lat) + Math.abs((c.lon ?? c.lng ?? 0) - lng);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (!best) return { lat, lng };
+    return { lat: best.lat, lng: best.lon ?? best.lng ?? 0 };
+  }
+
+  // Check if a lat/lon is a country centroid (within tolerance)
+  function _isCentroid(lat, lng) {
+    const countries = window.__globeCountries || [];
+    return countries.some(c =>
+      c.lat != null &&
+      Math.abs(c.lat - lat) < 1.5 &&
+      Math.abs((c.lon ?? c.lng ?? 0) - lng) < 1.5
+    );
+  }
+
   function drawSegmentArcs(seg) {
     if (!seg.flow_arcs?.length || !window.buildArcLines) return;
     for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
       const arc = seg.flow_arcs[ai];
       if (arc.from_lat == null || arc.to_lat == null) continue;
 
-      // ── Resolve endpoints: in city view, redirect country centroids to capitals ──
-      const resolve = window.resolveArcEndpoint || ((lat, lng) => ({ lat, lng }));
-      const from = resolve(arc.from_lat, arc.from_lng ?? arc.from_lon);
-      const to   = resolve(arc.to_lat,   arc.to_lng   ?? arc.to_lon);
+      const rawFromLat = arc.from_lat, rawFromLng = arc.from_lng ?? arc.from_lon ?? 0;
+      const rawToLat   = arc.to_lat,   rawToLng   = arc.to_lng   ?? arc.to_lon   ?? 0;
+
+      // Always shoot arcs from/to country centroids
+      const from = _toCountryCentroid(rawFromLat, rawFromLng);
+      const to   = _toCountryCentroid(rawToLat,   rawToLng);
 
       const distKm = haversineKm(from.lat, from.lng, to.lat, to.lng);
 
-      // Suppress arc when both endpoints resolve to the same city, or are
-      // within the same country (intra-country arcs are noise, not signal)
       const samePoint = Math.abs(from.lat - to.lat) < 0.1 && Math.abs(from.lng - to.lng) < 0.1;
       if (samePoint) continue;
 
+      // For city endpoints (not country centroids), show temporary pulse dot
+      if (!_isCentroid(rawFromLat, rawFromLng) && window.briefingPulseAt) {
+        window.briefingPulseAt(rawFromLat, rawFromLng);
+      }
+      if (!_isCentroid(rawToLat, rawToLng) && window.briefingPulseAt) {
+        window.briefingPulseAt(rawToLat, rawToLng);
+      }
+
       if (distKm < DOMESTIC_KM) {
-        // Domestic: pulse both endpoints, skip the arc line
+        // Domestic: pulse both centroids, skip the arc line
         if (window.briefingPulseAt) {
           window.briefingPulseAt(from.lat, from.lng);
           addBTimer(setTimeout(() => {
@@ -23005,6 +23150,47 @@ body.ticker-active .gTickerLabel {
         window.setBriefingViewMode('city');
       }
 
+      // Illuminate country polygons for primary + arc + secondary countries
+      {
+        const isoSet = new Set();
+        const globeC = window.__globeCountries || [];
+        // Find nearest country by lat/lon
+        const _nearestIso = (lat, lon) => {
+          if (lat == null || lon == null) return null;
+          let best = null, bestD = Infinity;
+          for (const c of globeC) {
+            if (c.lat == null) continue;
+            const d = Math.abs(c.lat - lat) + Math.abs((c.lon ?? c.lng ?? 0) - lon);
+            if (d < bestD) { bestD = d; best = c; }
+          }
+          return best ? (best.iso_code || best.key || '').toUpperCase() : null;
+        };
+        // By name fallback
+        const _findIso = (name) => {
+          if (!name) return null;
+          const n = name.trim().toLowerCase();
+          const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
+          return c ? (c.iso_code || c.key || '').toUpperCase() : null;
+        };
+        if (seg.primary_country) {
+          const iso = _findIso(seg.primary_country.name) || _nearestIso(seg.primary_country.lat, seg.primary_country.lon);
+          if (iso) isoSet.add(iso);
+        }
+        for (const arc of (seg.flow_arcs || [])) {
+          const fromIso = _findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon);
+          const toIso   = _findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon);
+          if (fromIso) isoSet.add(fromIso);
+          if (toIso)   isoSet.add(toIso);
+        }
+        for (const loc of secondary) {
+          const iso = _findIso(loc.name) || _nearestIso(loc.lat, loc.lon);
+          if (iso) isoSet.add(iso);
+        }
+        if (isoSet.size && window.__flowHighlightCountries) {
+          window.__flowHighlightCountries(isoSet);
+        }
+      }
+
       // 6 %: focus camera on primary location + hover label after globe settles
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
@@ -23036,7 +23222,6 @@ body.ticker-active .gTickerLabel {
         // different countries (haversine > DOMESTIC_KM) and isn't already
         // covered by a generator-supplied flow_arc gets a synthetic arc.
         if (primary && window.buildArcLines) {
-          const resolve = window.resolveArcEndpoint || ((lat, lng) => ({ lat, lng }));
           secondary.forEach((sec, i) => {
             const distKm = haversineKm(primary.lat, primary.lon ?? primary.lng ?? 0,
                                        sec.lat,    sec.lon  ?? sec.lng  ?? 0);
@@ -23050,10 +23235,18 @@ body.ticker-active .gTickerLabel {
               return (d1 < 200 && d2 < 200) || (d3 < 200 && d4 < 200);
             });
             if (covered) return;
-            const rFrom = resolve(primary.lat, primary.lon ?? primary.lng ?? 0);
-            const rTo   = resolve(sec.lat,     sec.lon  ?? sec.lng  ?? 0);
+            // Use country centroids for arc endpoints
+            const rFrom = _toCountryCentroid(primary.lat, primary.lon ?? primary.lng ?? 0);
+            const rTo   = _toCountryCentroid(sec.lat,     sec.lon  ?? sec.lng  ?? 0);
             const samePoint = Math.abs(rFrom.lat - rTo.lat) < 0.1 && Math.abs(rFrom.lng - rTo.lng) < 0.1;
             if (samePoint) return;
+            // Pulse city nodes if endpoints are cities (not centroids)
+            if (!_isCentroid(primary.lat, primary.lon ?? primary.lng ?? 0) && window.briefingPulseAt) {
+              window.briefingPulseAt(primary.lat, primary.lon ?? primary.lng ?? 0);
+            }
+            if (!_isCentroid(sec.lat, sec.lon ?? sec.lng ?? 0) && window.briefingPulseAt) {
+              window.briefingPulseAt(sec.lat, sec.lon ?? sec.lng ?? 0);
+            }
             try {
               if (window.buildBriefingArc) {
                 const mesh = window.buildBriefingArc(rFrom.lat, rFrom.lng, rTo.lat, rTo.lng, 0.13, 2.5);
@@ -23136,6 +23329,7 @@ body.ticker-active .gTickerLabel {
     // Reset globe state — always return to country view so city-view never sticks
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
+    if (window.__flowClearHighlights) window.__flowClearHighlights();
     if (window.setBriefingViewMode) window.setBriefingViewMode('country');
 
     // Stop ALL audio — guarantee only one voice at a time
@@ -23160,6 +23354,7 @@ body.ticker-active .gTickerLabel {
         sa._segIdx = idx;
       }
       audio = sa;
+      sa.playbackRate = playbackRate;
       const curIdx = idx;
       const estDur = getSegmentDuration(idx);
       let started = false;
@@ -23173,7 +23368,7 @@ body.ticker-active .gTickerLabel {
         started = true;
         const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
         clearBTimers();  // clear any stale timers before setting new ones
-        startGlobeTimers(curIdx, seg, realDur);
+        startGlobeTimers(curIdx, seg, realDur / playbackRate);
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
 
         // Trigger the next segment ~180ms BEFORE the current audio actually
@@ -23183,7 +23378,7 @@ body.ticker-active .gTickerLabel {
         // segments. For story segments with a video, keep the long pause.
         if (!seg.video_id) {
           clearTimeout(segTimer);
-          const advanceInMs = Math.max(120, Math.round(realDur * 1000) - 180);
+          const advanceInMs = Math.max(120, Math.round((realDur * 1000) / playbackRate) - 180);
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx || !playing) return;
             goToSegment(curIdx + 1);
@@ -23207,7 +23402,7 @@ body.ticker-active .gTickerLabel {
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx) return;
             goToSegment(curIdx + 1);
-          }, VIDEO_PAUSE_SECS * 1000);
+          }, (VIDEO_PAUSE_SECS * 1000) / playbackRate);
         } else {
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx) return;
@@ -23218,7 +23413,7 @@ body.ticker-active .gTickerLabel {
 
       // Fallback: advance anyway if audio stalls or never fires ended.
       // Guard includes !playing so a long pause can never trigger an advance.
-      const fallbackMs = Math.round(estDur * 1000) + 6000;
+      const fallbackMs = Math.round((estDur * 1000) / playbackRate) + 6000;
       segTimer = setTimeout(() => {
         if (segIdx !== curIdx || !playing) return;
         console.warn(`[briefing] fallback advance seg ${curIdx}`);
@@ -23228,13 +23423,13 @@ body.ticker-active .gTickerLabel {
     } else {
       // No per-segment audio — word-count timer only
       const estDur = getSegmentDuration(idx);
-      startGlobeTimers(idx, seg, estDur);
+      startGlobeTimers(idx, seg, estDur / playbackRate);
       if (playing) {
         const curIdx = idx;
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
-        }, Math.max(120, Math.round(estDur * 1000) - 180));
+        }, Math.max(120, Math.round((estDur * 1000) / playbackRate) - 180));
       }
     }
 
@@ -23815,7 +24010,7 @@ body.ticker-active .gTickerLabel {
       segTimer = setTimeout(() => {
         if (segIdx !== curIdx) return;
         goToSegment(curIdx + 1);
-      }, remaining * 1000 + 800);
+      }, (remaining * 1000 + 800) / playbackRate);
     }
     updatePlayBtn();
   }
@@ -23825,58 +24020,128 @@ body.ticker-active .gTickerLabel {
     if (btn) btn.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
   }
 
-  // ── Caption typewriter (sentence-by-sentence) ────────────────────────────
-  // Each segment's voiceover is split into sentences (by punctuation). At any
-  // moment only the currently-spoken sentence is shown, with its words typed
-  // in via the ElevenLabs character alignment (seg.word_timings).
+  // ── Playback speed ──────────────────────────────────────────────────────
+  function cycleSpeed() {
+    const speeds = [1, 1.5, 2];
+    const cur = speeds.indexOf(playbackRate);
+    playbackRate = speeds[(cur + 1) % speeds.length];
+    if (audio) audio.playbackRate = playbackRate;
+    updateSpeedBtn();
+  }
+  function updateSpeedBtn() {
+    const btn = document.getElementById('bSpeed');
+    if (!btn) return;
+    btn.textContent = playbackRate === 1 ? '1x' : playbackRate === 1.5 ? '1.5x' : '2x';
+    btn.classList.toggle('active', playbackRate !== 1);
+  }
+
+  // ── Seek slider ─────────────────────────────────────────────────────────
+  let _seekRAF = 0;
+  let _seekDragging = false;
+
+  function fmtTime(s) {
+    if (!isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return m + ':' + String(sec).padStart(2, '0');
+  }
+
+  function startSeekLoop() {
+    cancelAnimationFrame(_seekRAF);
+    const slider = document.getElementById('bSeekSlider');
+    const timeEl = document.getElementById('bSeekTime');
+    const durEl  = document.getElementById('bSeekDur');
+    const fTimer = document.getElementById('flowBriefingTimer');
+    const fLabel = document.getElementById('flowTimerLabel');
+    const fSeg   = document.getElementById('flowTimerSeg');
+    if (fTimer) fTimer.style.display = '';
+    if (!slider) return;
+    (function tick() {
+      _seekRAF = requestAnimationFrame(tick);
+      if (_seekDragging) return;
+      if (audio && isFinite(audio.duration) && audio.duration > 0) {
+        const pct = (audio.currentTime / audio.duration) * 1000;
+        slider.value = pct;
+        if (timeEl) timeEl.textContent = fmtTime(audio.currentTime);
+        if (durEl)  durEl.textContent  = fmtTime(audio.duration);
+      } else {
+        slider.value = 0;
+        if (timeEl) timeEl.textContent = '0:00';
+        const est = episode ? getSegmentDuration(segIdx) : 0;
+        if (durEl) durEl.textContent = fmtTime(est);
+      }
+      // Flow panel timer
+      if (fLabel && episode) {
+        const elapsed = episode ? elapsedUpTo(segIdx) + (audio ? audio.currentTime : 0) : 0;
+        const total   = episode ? totalBriefingDuration() : 0;
+        fLabel.textContent = fmtTime(elapsed) + ' / ' + fmtTime(total);
+      }
+      if (fSeg && episode) {
+        fSeg.textContent = 'Seg ' + (segIdx + 1) + '/' + episode.segments.length;
+      }
+    })();
+  }
+
+  function stopSeekLoop() {
+    cancelAnimationFrame(_seekRAF);
+    _seekRAF = 0;
+  }
+
+  // ── Caption typewriter (chunk-based, ~25 chars per chunk) ─────────────────
+  // Words fill a ~25-character line; once the last word in a chunk is spoken,
+  // the line clears and the next chunk refills. Each word types in letter-by-
+  // letter synced to audio.currentTime or ElevenLabs character alignment.
+  const CAP_CHUNK_CHARS = 25;
   let _capRAF    = 0;
   let _capRunId  = 0;
-  let _capSentences = [];
-  let _capCurSent   = -1;
-  let _capCurSpans  = [];
+  let _capChunks = [];   // [{ words, startMs, endMs }]
+  let _capCurChunk = -1;
+  let _capCurSpans = [];
   let _capCurRevealed = -1;
   let _capFallbackStart = 0;
-  let _capFallbackRate  = 0;
 
   function _capStop() {
     if (_capRAF) cancelAnimationFrame(_capRAF);
     _capRAF = 0;
   }
 
-  function _capBuildSentences(words) {
+  // Build chunks: pack words until adding the next word would exceed ~25 chars,
+  // then start a new chunk. Always finish the current word (never break mid-word).
+  function _capBuildChunks(words) {
     if (!words.length) return [];
-    const sentences = [];
+    const chunks = [];
     let cur = [];
+    let charCount = 0;
     for (const wt of words) {
-      cur.push(wt);
-      if (/[.!?…]["')\]]?$/.test(wt.w)) {
-        sentences.push(cur);
-        cur = [];
+      const addLen = cur.length ? 1 + wt.w.length : wt.w.length; // space + word
+      if (charCount + addLen > CAP_CHUNK_CHARS && cur.length > 0) {
+        chunks.push(cur);
+        cur = [wt];
+        charCount = wt.w.length;
+      } else {
+        cur.push(wt);
+        charCount += addLen;
       }
     }
-    if (cur.length) sentences.push(cur);
-    return sentences.map(ws => ({
+    if (cur.length) chunks.push(cur);
+    return chunks.map(ws => ({
       words: ws,
-      start: ws[0].t,
-      end:   ws[ws.length - 1].t,
+      startMs: ws[0].t,
+      endMs:   ws[ws.length - 1].t,
     }));
   }
 
-  function _capRenderSentence(el, sentenceIdx) {
-    const s = _capSentences[sentenceIdx];
-    if (!s) { el.innerHTML = ''; _capCurSpans = []; return; }
+  function _capRenderChunk(el, chunkIdx) {
+    const c = _capChunks[chunkIdx];
+    if (!c) { el.innerHTML = ''; _capCurSpans = []; return; }
     el.innerHTML = '';
     _capCurSpans = [];
-    // Build a flat list of character spans with per-char timestamps so the
-    // sentence reveals letter-by-letter, perfectly synced to the audio.
-    // Each word's characters are spread linearly between word.t and the
-    // next word's t (or sentence end + a small tail).
-    const tailPad = 220; // ms after sentence-end for the final word's chars
-    for (let wi = 0; wi < s.words.length; wi++) {
-      const wt   = s.words[wi];
-      const next = s.words[wi + 1];
+    const tailPad = 220;
+    for (let wi = 0; wi < c.words.length; wi++) {
+      const wt   = c.words[wi];
+      const next = c.words[wi + 1];
       const tStart = wt.t;
-      const tEnd   = next ? next.t : (s.end + tailPad);
+      const tEnd   = next ? next.t : (c.endMs + tailPad);
       if (wi > 0) {
         const sp = document.createElement('span');
         sp.className = 'bCapChar';
@@ -23908,7 +24173,7 @@ body.ticker-active .gTickerLabel {
     const myRun = _capRunId;
     const text = seg?.voiceover_text || '';
     el.classList.toggle('visible', captionsOn && !!text);
-    if (!text) { el.innerHTML = ''; _capSentences = []; _capCurSpans = []; _capCurSent = -1; return; }
+    if (!text) { el.innerHTML = ''; _capChunks = []; _capCurSpans = []; _capCurChunk = -1; return; }
 
     const real = Array.isArray(seg.word_timings) && seg.word_timings.length;
     const flatWords = real
@@ -23918,15 +24183,15 @@ body.ticker-active .gTickerLabel {
     const estDur = (audio && isFinite(audio.duration) && audio.duration > 1)
       ? audio.duration
       : getSegmentDuration(segIdx);
-    _capFallbackRate  = flatWords.length ? (estDur * 1000) / flatWords.length : 0;
     _capFallbackStart = performance.now();
 
     if (!real) {
-      flatWords.forEach((w, i) => { w.t = Math.round(i * _capFallbackRate); });
+      const rate = flatWords.length ? (estDur * 1000) / flatWords.length : 0;
+      flatWords.forEach((w, i) => { w.t = Math.round(i * rate); });
     }
 
-    _capSentences = _capBuildSentences(flatWords);
-    _capCurSent   = -1;
+    _capChunks   = _capBuildChunks(flatWords);
+    _capCurChunk = -1;
 
     const tick = () => {
       if (myRun !== _capRunId) return;
@@ -23934,19 +24199,19 @@ body.ticker-active .gTickerLabel {
         ? audio.currentTime * 1000
         : (performance.now() - _capFallbackStart);
 
-      let sIdx = 0;
-      for (let i = 0; i < _capSentences.length; i++) {
-        if (_capSentences[i].start <= audioMs) sIdx = i;
+      // Find which chunk we're in
+      let cIdx = 0;
+      for (let i = 0; i < _capChunks.length; i++) {
+        if (_capChunks[i].startMs <= audioMs) cIdx = i;
         else break;
       }
-      if (sIdx !== _capCurSent) {
-        _capCurSent = sIdx;
-        _capRenderSentence(el, sIdx);
+      if (cIdx !== _capCurChunk) {
+        _capCurChunk = cIdx;
+        _capRenderChunk(el, cIdx);
       }
 
-      // Reveal characters within the current sentence (typewriter)
-      const sent = _capSentences[_capCurSent];
-      if (sent && _capCurSpans.length) {
+      // Reveal characters within the current chunk (typewriter)
+      if (_capCurSpans.length) {
         let target = _capCurRevealed;
         for (let i = target + 1; i < _capCurSpans.length; i++) {
           const sp = _capCurSpans[i];
@@ -24180,6 +24445,25 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1, true));
   document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1), true));
   document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
+  document.getElementById('bSpeed')?.addEventListener('click', cycleSpeed);
+  // Seek slider — scrub within current segment's audio
+  const _seekSlider = document.getElementById('bSeekSlider');
+  if (_seekSlider) {
+    _seekSlider.addEventListener('input', () => {
+      _seekDragging = true;
+      if (audio && isFinite(audio.duration)) {
+        const t = (parseFloat(_seekSlider.value) / 1000) * audio.duration;
+        const timeEl = document.getElementById('bSeekTime');
+        if (timeEl) timeEl.textContent = fmtTime(t);
+      }
+    });
+    _seekSlider.addEventListener('change', () => {
+      _seekDragging = false;
+      if (audio && isFinite(audio.duration)) {
+        audio.currentTime = (parseFloat(_seekSlider.value) / 1000) * audio.duration;
+      }
+    });
+  }
 
   // Recap: close button — fully tears down the briefing
   document.getElementById('bRecapClose')?.addEventListener('click', () => {
@@ -26219,9 +26503,14 @@ body.ticker-active .gTickerLabel {
       return { ...a, type: t };
     });
 
-    // Stable secondary sort: thread rank beats article rank at equal score.
-    // Caller can still pre-sort by score — this is just the tiebreak.
+    // Threads represent multi-article convergence, so they should float to the
+    // top of any mixed feed they inhabit. Within the thread lane we still sort
+    // by importance/breaking signal; articles/videos keep score-based ordering.
     normalized.sort((a, b) => {
+      const aThread = a.type === 'thread';
+      const bThread = b.type === 'thread';
+      if (aThread !== bThread) return aThread ? -1 : 1;
+
       const sa = Number(a[scoreField] != null ? a[scoreField] : (a.importance || 0));
       const sb = Number(b[scoreField] != null ? b[scoreField] : (b.importance || 0));
       if (sb !== sa) return sb - sa;

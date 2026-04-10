@@ -29,6 +29,8 @@ const parser = new Parser({
   }
 });
 
+const INITIAL_YOUTUBE_BASE_PRIORITY = 1.15;
+
 /* =========================================
    Utilities
 ========================================= */
@@ -175,7 +177,7 @@ async function fetchChannel(source, stopwordCache) {
            $4, $5, $6,
            $7, $8, NOW(),
            $9, $10,
-           'video', $11, 0.75
+           'video', $11, $12
          )
          RETURNING id`,
         [
@@ -189,7 +191,8 @@ async function fetchChannel(source, stopwordCache) {
           publishedAt,
           thumbnail,
           source.language || "en",
-          videoId
+          videoId,
+          INITIAL_YOUTUBE_BASE_PRIORITY
         ]
       );
 

@@ -207,6 +207,8 @@ module.exports = { classifyArticle };
 const CONFIG = {
   MIN_POPULARITY:      0.90,
   MAX_POPULARITY:      1.60,
+  YOUTUBE_POPULARITY_FLOOR: 1.25,
+  YOUTUBE_PRIORITY_BOOST:   1.18,
   MAX_TAG_MULTIPLIER:  1.20,
   MIN_TAG_MULTIPLIER:  1.00,
   CITY_SOURCE_PENALTY: 0.01,
@@ -268,6 +270,12 @@ function clampPopularity(score) {
   return score;
 }
 
+function getEffectivePopularity(score, { isYouTube = false } = {}) {
+  const clamped = clampPopularity(score);
+  if (!isYouTube) return clamped;
+  return Math.max(clamped, CONFIG.YOUTUBE_POPULARITY_FLOOR);
+}
+
 function computeDecay(publishedAt) {
   if (!publishedAt) return 1.0;
   const ageMs    = Date.now() - new Date(publishedAt).getTime();
@@ -288,6 +296,7 @@ function calculatePriority({
   popularityScore,
   popularityTier,
   publishedAt,
+  isYouTube,
   isCitySource,
   cityPenaltyOverride
 }) {
@@ -299,7 +308,7 @@ function calculatePriority({
   // MAX_POPULARITY to nudge it back toward 0→1 before blending.
   const normalized    = normalizeIntensity(rawIntensity, maxIntensity);
   const tagMultiplier = computeTagMultiplier(tagWeightSum);
-  const popularity    = clampPopularity(popularityScore);
+  const popularity    = getEffectivePopularity(popularityScore, { isYouTube });
   const qualityScore  = Math.min(1, (normalized * tagMultiplier * popularity) / CONFIG.MAX_POPULARITY);
 
   // Blend: recency dominates at 75%
@@ -314,7 +323,8 @@ function calculatePriority({
     ? (cityPenaltyOverride !== undefined ? cityPenaltyOverride : defaultPenalty) 
     : 1.0;
 
-  const finalScore = blended * tierBonus * cityPenalty;
+  const surfaceBoost = isYouTube ? CONFIG.YOUTUBE_PRIORITY_BOOST : 1.0;
+  const finalScore = blended * tierBonus * cityPenalty * surfaceBoost;
 
   return parseFloat(finalScore.toFixed(8));
 }
@@ -466,6 +476,7 @@ function rankArticles(articles = [], maxIntensity, options = {}) {
       popularityScore: article.popularity_score,
       popularityTier:  article.popularity_tier,
       publishedAt:     article.published_at,
+      isYouTube:       article.youtube_source_id != null,
       isCitySource:    skipCityPenalty ? false : !!article.city_id
     })
   }));

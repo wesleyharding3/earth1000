@@ -73,7 +73,10 @@ const ARTICLE_FIELDS = `
   COALESCE(ns.name,             ys.name)             AS source_name,
   COALESCE(ns.bias,             'unknown')           AS source_bias,
   COALESCE(ns.site_url,         ys.site_url)         AS site_url,
-  COALESCE(ns.popularity_score, ys.popularity_score, 1.0) AS popularity_score,
+  CASE
+    WHEN a.youtube_source_id IS NOT NULL THEN GREATEST(COALESCE(ys.popularity_score, 1.0), 1.25)
+    ELSE COALESCE(ns.popularity_score, ys.popularity_score, 1.0)
+  END AS popularity_score,
   COALESCE(ns.popularity_tier,  ys.popularity_tier,  1)   AS popularity_tier,
   co.iso_code,
   -- base_priority is the pre-computed classification score from classifyArticle.
