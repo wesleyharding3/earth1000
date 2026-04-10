@@ -23489,6 +23489,14 @@ body.ticker-active .gTickerLabel {
         }
       }
 
+      // 50 %: swap article cards → data panels
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        const ap = document.getElementById('bArticlePanel');
+        if (ap) ap.classList.remove('visible');
+        renderDataPanelsForSegment(idx);
+      }, ms(0.50)));
+
       // 95 %: clear pulses, return to country view, hide all hover cards;
       //        arcs stay until next segment starts
       addBTimer(setTimeout(() => {
@@ -23501,8 +23509,11 @@ body.ticker-active .gTickerLabel {
     } else if (seg.type === 'keywords' || seg.type === 'summary') {
       // Slow globe rotation only — no city/country focus for recap segments
       if (window.setBriefingViewMode) window.setBriefingViewMode('country');
+      // Non-story: show data panels immediately (no article cards to sequence)
+      renderDataPanelsForSegment(idx);
     } else if (seg.globe_animate && window.startFocus) {
       window.startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0);
+      renderDataPanelsForSegment(idx);
     }
   }
 
@@ -23668,10 +23679,12 @@ body.ticker-active .gTickerLabel {
     }
 
     // ── Article panel + ticker (non-blocking) ──────────────────────────────
+    // Data panels are sequenced AFTER article panel via startGlobeTimers (50%)
+    {
+      const dp = document.getElementById('bDataPanels');
+      if (dp) { dp.innerHTML = ''; dp.classList.remove('visible'); }
+    }
     loadArticlePanel(seg.article_ids?.length ? seg.article_ids : []);
-
-    // ── Data analytics panels for this segment ──────────────────────────────
-    renderDataPanelsForSegment(idx);
 
     updateDots();
     updatePlayBtn();
@@ -24102,7 +24115,8 @@ body.ticker-active .gTickerLabel {
   let detailAudio = null;
   // Pause detail audio and clear both local and global refs
   function stopDetailAudio() {
-    stopDetailAudio();
+    if (detailAudio) { try { detailAudio.pause(); } catch (_) {} detailAudio = null; }
+    if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
     window._detailAudio = null;
   }
 
