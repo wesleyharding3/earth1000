@@ -538,15 +538,15 @@
       fill: white; opacity: 0;
     }
     .ci-dot.phase1 {
-      animation: ciDotFade 600ms ease-out forwards,
-                 ciDotGrow 600ms ease-out forwards;
+      animation: ciDotFade 350ms ease-out forwards,
+                 ciDotGrow 350ms ease-out forwards;
     }
     @keyframes ciDotFade { 0% { opacity: 0; } 100% { opacity: 1; } }
     @keyframes ciDotGrow { 0% { r: 0; } 100% { r: 2.5; } }
 
     /* --- Dot brightness ramp + spark (phase 2) --- */
     .ci-dot.phase2 {
-      animation: ciDotSpark 400ms ease-in-out forwards;
+      animation: ciDotSpark 250ms ease-in-out forwards;
     }
     @keyframes ciDotSpark {
       0%   { r: 2.5; fill: white; filter: drop-shadow(0 0 0px white); }
@@ -558,15 +558,15 @@
     /* --- Two lines emerge from center (phase 3) --- */
     .ci-line-up {
       stroke: white; stroke-width: 1.8;
-      stroke-dasharray: 25; stroke-dashoffset: 25;
+      stroke-dasharray: 46; stroke-dashoffset: 46;
       opacity: 0;
     }
     .ci-line-up.phase3 {
       opacity: 1;
-      animation: ciLineUp 500ms ease-out forwards;
+      animation: ciLineUp 400ms ease-out forwards;
     }
     @keyframes ciLineUp {
-      0%   { stroke-dashoffset: 25; filter: drop-shadow(0 0 0px white); }
+      0%   { stroke-dashoffset: 46; filter: drop-shadow(0 0 0px white); }
       100% { stroke-dashoffset: 0;  filter: drop-shadow(0 0 4px rgba(255,255,255,0.4)); }
     }
 
@@ -12894,7 +12894,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         async function run() {
           while (!window.__globeActive) await wait(100);
-          await wait(200);
+          await wait(120);
 
           // ═══════════════════════════════════════════════════════════════
           // PHASE 1: Bottom ticker + page nav slide up from below
@@ -12907,20 +12907,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
             el.style.opacity = "0";
           });
           if (pageNav) {
-            pageNav.style.transition = "transform 600ms cubic-bezier(0.22, 1, 0.36, 1), opacity 400ms ease-out";
+            pageNav.style.transition = "transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms ease-out";
             pageNav.offsetHeight;
             pageNav.style.transform = "translateY(0)";
             pageNav.style.opacity = "1";
           }
           setTimeout(() => {
             if (globalTicker) {
-              globalTicker.style.transition = "transform 600ms cubic-bezier(0.22, 1, 0.36, 1), opacity 400ms ease-out";
+              globalTicker.style.transition = "transform 400ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms ease-out";
               globalTicker.offsetHeight;
               globalTicker.style.transform = "translateY(0)";
               globalTicker.style.opacity = "1";
             }
-          }, 100);
-          await wait(400);
+          }, 80);
+          await wait(280);
 
           // ═══════════════════════════════════════════════════════════════
           // PHASE 2: Top nav buttons fade in quick sequence
@@ -12934,19 +12934,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
           navBtns.forEach(btn => {
             if (btn.style.display === "none" || getComputedStyle(btn).display === "none") return;
             setTimeout(() => {
-              btn.style.transition = "opacity 280ms ease-out, transform 280ms ease-out";
+              btn.style.transition = "opacity 200ms ease-out, transform 200ms ease-out";
               btn.style.opacity = "1";
               btn.style.transform = "translateY(0)";
             }, btnDelay);
-            btnDelay += 80;
+            btnDelay += 60;
           });
           if (searchBtn) {
             setTimeout(() => {
-              searchBtn.style.transition = "opacity 280ms ease-out, transform 280ms ease-out";
+              searchBtn.style.transition = "opacity 200ms ease-out, transform 200ms ease-out";
               searchBtn.style.opacity = "1"; searchBtn.style.transform = "translateY(0)";
             }, btnDelay);
           }
-          await wait(btnDelay + 300);
+          await wait(btnDelay + 180);
 
           // ═══════════════════════════════════════════════════════════════
           // PHASE 3: Compass + Scale animation
@@ -12954,7 +12954,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // ─── 3a. Point fades in ───
           dot.classList.add("phase1");
-          await wait(600);
+          await wait(350);
 
           // ─── 3b. Line grows up from point to radius ───
           stemLine.classList.add("phase3");
@@ -12966,14 +12966,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
             barLine.style.clipPath = "inset(0 0 100% 0)";
           }
           scaleEl.style.opacity = "1";
-          await wait(500);
+          await wait(400);
 
           // ─── 3d. Centroid + line pulse ───
           dot.classList.remove("phase1");
           dot.classList.add("phase2");
           stemLine.style.transition = "none";
           stemLine.style.filter = "drop-shadow(0 0 10px rgba(255,220,140,0.8))";
-          await wait(400);
+          await wait(250);
           stemLine.style.filter = "";
 
           // ─── 3e. Scale bar draws down + labels fade in at bar edge ───
@@ -12983,7 +12983,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           scaleTicks.forEach(t => { t.style.opacity = "0"; t.style.transition = "opacity 250ms ease-out"; });
 
           // Single rAF loop: clip-path drives bar, labels + ticks reveal as edge passes
-          const scaleDuration = 1400;
+          const scaleDuration = 900;
           const scaleStart = performance.now();
           const labelCount = labels.length;
           const tickCount = scaleTicks.length;
@@ -13005,7 +13005,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // Labels are evenly distributed top→bottom (index 0 = top, last = bottom)
               for (let i = 0; i < labelCount; i++) {
                 const labelPos = labelCount > 1 ? i / (labelCount - 1) : 0; // 0→1
-                if (!labelRevealed[i] && eased >= labelPos * 0.85) {
+                if (!labelRevealed[i] && eased >= labelPos) {
                   labelRevealed[i] = true;
                   labels[i].style.opacity = "1";
                   labels[i].style.transform = "translateX(0)";
@@ -13015,7 +13015,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // Reveal ticks as edge passes
               for (let i = 0; i < tickCount; i++) {
                 const tickPos = tickCount > 1 ? (i + 1) / (tickCount + 1) : 0.5;
-                if (!tickRevealed[i] && eased >= tickPos * 0.85) {
+                if (!tickRevealed[i] && eased >= tickPos) {
                   tickRevealed[i] = true;
                   scaleTicks[i].style.opacity = "1";
                 }
@@ -13030,14 +13030,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ─── 3f. Line splits: anchor stays at north, leader starts sweep ───
           anchorLine.style.opacity = "1";
           leaderLine.style.opacity = "1";
-          stemLine.style.transition = "opacity 150ms";
+          stemLine.style.transition = "opacity 100ms";
           stemLine.style.opacity = "0";
-          await wait(150);
+          await wait(100);
 
           // ─── 3g. Leader sweeps clockwise, compass wipes in behind it ───
           setConicMask(0);
           compassEl.style.opacity = "1";
-          const sweepDuration = 2200;
+          const sweepDuration = 1500;
           const sweepStart = performance.now();
           await new Promise(resolve => {
             function tick(now) {
@@ -13063,11 +13063,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // Flash leader on reconnect
           leaderLine.style.filter = "drop-shadow(0 0 14px rgba(255,255,255,1)) drop-shadow(0 0 20px rgba(255,220,140,0.7))";
-          await wait(120);
+          await wait(80);
           overlay.remove();
 
           // ─── 3h. Sync blink + pulse ───
-          await wait(200);
+          await wait(100);
           compassEl.classList.add("ci-pulse");
           scaleEl.classList.add("si-blink");
           compassEl.classList.add("ci-outline-build");
@@ -13075,7 +13075,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ═══════════════════════════════════════════════════════════════
           // Cleanup
           // ═══════════════════════════════════════════════════════════════
-          await wait(1000);
+          await wait(600);
           compassEl.classList.remove("ci-pulse", "ci-outline-build");
           scaleEl.classList.remove("hud-intro", "si-blink");
           compassEl.style.webkitMaskImage = "";
