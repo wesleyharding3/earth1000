@@ -1907,6 +1907,99 @@ async function refreshHeatmapSnapshots() {
   return results;
 }
 
+// ── Time-series (bucketed) snapshot refresh ─────────────────────────────────
+// Pre-computes bucketed aggregates for the most common time-series combos.
+// 7d_hour / 14d_hour are too large to pre-compute; they remain live-query.
+async function refreshHeatmapTsSnapshots() {
+  const tsPresets = [
+    { key: '7d_day',   days: 7,  trunc: 'day'  },   // most requested
+    { key: '1d_hour',  days: 1,  trunc: 'hour' },
+    { key: '14d_day',  days: 14, trunc: 'day'  },
+    { key: '3d_hour',  days: 3,  trunc: 'hour' },
+    { key: '3d_day',   days: 3,  trunc: 'day'  },
+    { key: '1d_day',   days: 1,  trunc: 'day'  },
+  ];
+
+  const results = [];
+  for (const { key, days, trunc } of tsPresets) {
+    const client = await pool.connect();
+    try {
+      // 2 min per TS preset — shorter than flat presets to stay within cron budget
+      await client.query('SET statement_timeout = 120000');
+
+      const { rows: countryRows } = await client.query(`
+        SELECT
+          date_trunc('${trunc}', a.published_at) AS bucket_time,
+          c.id AS ref_id, c.id AS country_id,
+          c.iso_code AS iso, NULL::text AS country_name,
+          c.name, c.latitude AS lat, c.longitude AS lon,
+          COUNT(*)::int AS n,
+          COUNT(a.sentiment_score)::int AS sent_n,
+          AVG(a.sentiment_score)::float AS avg_sent
+        FROM news_articles a
+        JOIN countries c ON c.id = a.country_id
+        WHERE a.published_at > NOW() - make_interval(days => $1)
+          AND a.country_id IS NOT NULL
+          AND a.city_id IS NULL
+          AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+        GROUP BY date_trunc('${trunc}', a.published_at), c.id, c.name, c.iso_code, c.latitude, c.longitude
+        ORDER BY bucket_time, n DESC
+        LIMIT 20000
+      `, [days]);
+
+      const { rows: cityRows } = await client.query(`
+        SELECT
+          date_trunc('${trunc}', a.published_at) AS bucket_time,
+          ci.id AS ref_id, ci.country_id,
+          co.iso_code AS iso, co.name AS country_name,
+          ci.name, ci.latitude AS lat, ci.longitude AS lon,
+          COUNT(*)::int AS n,
+          COUNT(a.sentiment_score)::int AS sent_n,
+          AVG(a.sentiment_score)::float AS avg_sent
+        FROM news_articles a
+        JOIN cities ci ON ci.id = a.city_id
+        LEFT JOIN countries co ON co.id = ci.country_id
+        WHERE a.published_at > NOW() - make_interval(days => $1)
+          AND a.city_id IS NOT NULL
+          AND ci.latitude IS NOT NULL AND ci.longitude IS NOT NULL
+        GROUP BY date_trunc('${trunc}', a.published_at), ci.id, ci.country_id, co.iso_code, co.name, ci.name, ci.latitude, ci.longitude
+        ORDER BY bucket_time, n DESC
+        LIMIT 40000
+      `, [days]);
+
+      await client.query('BEGIN');
+      await client.query('DELETE FROM heatmap_ts_snapshots WHERE preset = $1', [key]);
+
+      const insertChunk = async (rows, level) => {
+        const CHUNK = 200;
+        for (let c = 0; c < rows.length; c += CHUNK) {
+          const chunk = rows.slice(c, c + CHUNK);
+          const vals = chunk.map((r, i) => {
+            const off = i * 12;
+            return `($${off+1},'${level}',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},$${off+12},NOW())`;
+          }).join(',');
+          const params = chunk.flatMap(r => [key, r.bucket_time, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
+          await client.query(`INSERT INTO heatmap_ts_snapshots (preset,level,bucket_time,ref_id,country_id,iso,country_name,name,lat,lon,n,sent_n,avg_sent,refreshed_at) VALUES ${vals}`, params);
+        }
+      };
+
+      if (countryRows.length) await insertChunk(countryRows, 'country');
+      if (cityRows.length)    await insertChunk(cityRows, 'city');
+
+      await client.query('COMMIT');
+      console.log(`[heatmap-ts-refresh] preset=${key} countries=${countryRows.length} cities=${cityRows.length}`);
+      results.push({ preset: key, ok: true });
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      console.error(`[heatmap-ts-refresh] preset=${key} failed:`, e.message);
+      results.push({ preset: key, ok: false, error: e.message });
+    } finally {
+      client.release();
+    }
+  }
+  return results;
+}
+
 // GET|POST /api/admin/refresh-heatmap — triggered by Render cron every 10-15 min
 // Accepts both GET (Render cron jobs hit URLs via GET) and POST.
 // Auth: pass secret as query param ?key= or Authorization header.
@@ -1919,14 +2012,22 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
   }
   try {
     const t0 = Date.now();
-    const results = await refreshHeatmapSnapshots();
+    const flatResults = await refreshHeatmapSnapshots();
+    // Time-series snapshots run after flat — if they fail, flat results are still saved
+    let tsResults = [];
+    try {
+      tsResults = await refreshHeatmapTsSnapshots();
+    } catch (e) {
+      console.error('[heatmap-ts-refresh] failed:', e.message);
+      tsResults = [{ ok: false, error: e.message }];
+    }
     const elapsed = Date.now() - t0;
-    console.log(`[heatmap-refresh] completed in ${elapsed}ms`);
+    console.log(`[heatmap-refresh] completed in ${elapsed}ms (flat + ts)`);
     // Bust in-memory TTL cache so next request picks up fresh snapshot
     for (const k of _ttlCache.keys()) {
       if (k.startsWith('heatmap:')) _ttlCache.delete(k);
     }
-    res.json({ ok: true, elapsed_ms: elapsed, presets: results });
+    res.json({ ok: true, elapsed_ms: elapsed, presets: flatResults, ts_presets: tsResults });
   } catch (err) {
     console.error("[heatmap-refresh] failed:", err.message, err.stack);
     res.status(500).json({ error: "Refresh failed", detail: err.message });
@@ -1957,9 +2058,22 @@ app.get("/api/heatmap", async (req, res) => {
     const presetKey = SNAPSHOT_PRESETS[days];
     const useSnapshot = presetKey && !keyword && !threadId && bucket === 'none' && !fromIso && !toIso;
 
+    // ── Time-series snapshot fast-path ─────────────────────────────────
+    // Pre-computed bucketed snapshots for standard combos.
+    const TS_SNAPSHOT_PRESETS = {
+      '1_hour': '1d_hour', '1_day': '1d_day',
+      '3_hour': '3d_hour', '3_day': '3d_day',
+      '7_day':  '7d_day',  '14_day': '14d_day',
+    };
+    const tsPresetKey = TS_SNAPSHOT_PRESETS[`${days}_${bucket}`];
+    const useTsSnapshot = tsPresetKey && !keyword && !threadId && !fromIso && !toIso;
+
     // cache key — v2 adds the country-wash + city-cluster split
     const _cacheKey = `heatmap:v2:${mode}:${bucket}:${keyword}:${threadId||''}:${days}:${fromIso||''}:${toIso||''}`;
-    const _cached = await ttlCached(_cacheKey, 60_000, async () => {
+    // Bucketed queries from snapshots are cheap; live-query fallback is expensive.
+    // TS snapshot hit: 60s. TS live fallback (7d_hour, 14d_hour): 3 min. Standard: 1 min.
+    const _cacheTtl = bucket !== 'none' ? (useTsSnapshot ? 60_000 : 180_000) : 60_000;
+    const _cached = await ttlCached(_cacheKey, _cacheTtl, async () => {
 
       if (useSnapshot) {
         try {
@@ -1979,6 +2093,27 @@ app.get("/api/heatmap", async (req, res) => {
           }
         } catch (e) {
           console.error('[heatmap] snapshot read failed, falling back to live query:', e.message);
+        }
+      }
+
+      // ── Time-series snapshot fast-path ─────────────────────────────────
+      if (useTsSnapshot) {
+        try {
+          const [countryRes, cityRes] = await Promise.all([
+            pool.query(
+              `SELECT bucket_time AS t, ref_id AS country_id, iso, country_name, name, lat, lon, n, sent_n, avg_sent
+               FROM heatmap_ts_snapshots WHERE preset = $1 AND level = 'country'
+               ORDER BY bucket_time, n DESC`, [tsPresetKey]),
+            pool.query(
+              `SELECT bucket_time AS t, ref_id AS city_id, country_id, iso, country_name, name, lat, lon, n, sent_n, avg_sent
+               FROM heatmap_ts_snapshots WHERE preset = $1 AND level = 'city'
+               ORDER BY bucket_time, n DESC`, [tsPresetKey]),
+          ]);
+          if (countryRes.rows.length > 0) {
+            return { countryRows: countryRes.rows, cityRows: cityRes.rows };
+          }
+        } catch (e) {
+          console.error('[heatmap] ts-snapshot read failed, falling back to live query:', e.message);
         }
       }
 
@@ -2064,30 +2199,26 @@ app.get("/api/heatmap", async (req, res) => {
         LIMIT ${bucketExpr ? 40000 : 1500}
       `;
 
-      const client = await pool.connect();
-      try {
-        await client.query(`SET LOCAL statement_timeout = 60000`);
-        // Run sequentially so a slow half doesn't block the other, and so
-        // a single failing query degrades gracefully to an empty list
-        // instead of 500'ing the whole heatmap response.
-        let countryRows = [];
-        let cityRows    = [];
+      // Run country + city in parallel for ~2× speed-up on bucketed queries.
+      // Each gets its own connection so one slow half can't block the other.
+      async function _heatmapQuery(sql) {
+        const c = await pool.connect();
         try {
-          const cRes = await client.query(sqlCountry, params);
-          countryRows = cRes.rows;
+          await c.query(`SET statement_timeout = 90000`);
+          const r = await c.query(sql, params);
+          return r.rows;
         } catch (e) {
-          console.error("[heatmap] country query failed:", e.message);
+          console.error("[heatmap] query failed:", e.message);
+          return [];
+        } finally {
+          c.release();
         }
-        try {
-          const ciRes = await client.query(sqlCity, params);
-          cityRows = ciRes.rows;
-        } catch (e) {
-          console.error("[heatmap] city query failed:", e.message);
-        }
-        return { countryRows, cityRows };
-      } finally {
-        client.release();
       }
+      const [countryRows, cityRows] = await Promise.all([
+        _heatmapQuery(sqlCountry),
+        _heatmapQuery(sqlCity),
+      ]);
+      return { countryRows, cityRows };
     });
 
     const { countryRows, cityRows } = _cached;

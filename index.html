@@ -26691,15 +26691,10 @@ body.ticker-active .gTickerLabel {
       `national breakdown · click city for articles`
     );
 
-    // Back button from a further city drill-down returns here.
-    _inspectorBackFn = () => {
-      _setInspectorTitle(
-        bucket.name || 'Country',
-        true,
-        `national breakdown · click city for articles`
-      );
-      renderInspectorCountryDetail(key);
-    };
+    // Clear back-fn so the ← button falls through to renderInspectorCountryRanking().
+    // If the user drills into a city, renderInspectorCityDetail sets _inspectorBackFn
+    // to return here.
+    _inspectorBackFn = null;
 
     const nationalPct = (bucket.n / globalTotal) * 100;
 
@@ -26837,13 +26832,23 @@ body.ticker-active .gTickerLabel {
   async function renderInspectorCityDetail(iso, cityName) {
     if (!inspectorEl) return;
     const body = inspectorEl.querySelector('.semHeatInspBody');
-    const prevBack = _inspectorBackFn; // country-detail's back fn
+    // Find the country key that contains this city so back can return there.
+    let parentKey = null;
+    if (_inspectorCtx && _inspectorCtx.byCountry) {
+      for (const [k, bucket] of _inspectorCtx.byCountry) {
+        if ((bucket.iso || '') === iso || bucket.cities.some(c => c.name === cityName)) {
+          parentKey = k; break;
+        }
+      }
+    }
     _setInspectorTitle(
       cityName,
       true,
       `${iso ? iso + ' · ' : ''}articles in this city`
     );
-    _inspectorBackFn = prevBack; // one click back returns to country view
+    _inspectorBackFn = parentKey
+      ? () => renderInspectorCountryDetail(parentKey)
+      : () => renderInspectorCountryRanking();
     body.innerHTML = `<div class="sigBarLoading">Loading stories for ${escapeHtml(cityName)}…</div>`;
     try {
       const API = window.__API || 'https://earth-wjr6.onrender.com';
