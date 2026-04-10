@@ -20,18 +20,57 @@ const { extractArticleSignals } = require("./sentimentLexicon");
 
 const app = express();
 console.log("Node version:", process.version);
+
+// ── Simple in-memory rate limiter ─────────────────────────────────────────
+function rateLimit({ windowMs = 60_000, max = 100 } = {}) {
+  const hits = new Map();
+  // Prune expired entries every minute
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of hits) {
+      if (now - entry.start > windowMs) hits.delete(key);
+    }
+  }, 60_000).unref();
+
+  return (req, res, next) => {
+    const key = req.ip;
+    const now = Date.now();
+    let entry = hits.get(key);
+    if (!entry || now - entry.start > windowMs) {
+      entry = { start: now, count: 0 };
+      hits.set(key, entry);
+    }
+    entry.count++;
+    if (entry.count > max) {
+      return res.status(429).json({ error: 'Too many requests, slow down' });
+    }
+    next();
+  };
+}
+
+// General API: 200 req/min per IP — generous for normal use
+const apiLimiter = rateLimit({ windowMs: 60_000, max: 200 });
+// Expensive endpoints: 30 req/min per IP
+const heavyLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+// Search: 60 req/min per IP
+const searchLimiter = rateLimit({ windowMs: 60_000, max: 60 });
+const _prodOrigins = [
+  "https://earth00.com",
+  "https://www.earth00.com",
+  "https://wesleyharding3.github.io",
+  "https://earth0.onrender.com",
+  "https://earth-wjr6.onrender.com",
+  "capacitor://localhost",
+  "ionic://localhost"
+];
+const _devOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5500",
+];
 const corsOptions = {
-  origin: [
-    "https://earth00.com",
-    "https://www.earth00.com",
-    "https://wesleyharding3.github.io",
-    "https://earth0.onrender.com",
-    "https://earth-wjr6.onrender.com",
-    "http://localhost:3000",
-    "http://localhost:5500",
-    "capacitor://localhost",
-    "ionic://localhost"
-  ],
+  origin: process.env.NODE_ENV === 'production'
+    ? _prodOrigins
+    : [..._prodOrigins, ..._devOrigins],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Authorization", "Content-Type", "Accept"],
   optionsSuccessStatus: 204,
@@ -40,6 +79,9 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
+
+// Apply general rate limit to all API routes
+app.use('/api', apiLimiter);
 
 const DATE_LIKE_KEYWORD_PATTERNS = [
   /^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?$/i,
@@ -744,7 +786,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   return { total: offset + results.length + (hasMore ? 1 : 0), articles: results };
 }
 
-app.get("/api/news/search", async (req, res) => {
+app.get("/api/news/search", searchLimiter, async (req, res) => {
   try {
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
@@ -919,7 +961,7 @@ app.get("/api/news/search", async (req, res) => {
 
   } catch (err) {
     console.error("Search error:", err.message);
-    res.status(500).json({ error: "Search failed", detail: err.message });
+    res.status(500).json({ error: "Search failed", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -942,7 +984,7 @@ app.get("/api/news/search", async (req, res) => {
    while high-volume destinations still get more flows (but dampened via sqrt).
    Example: USA with 100 articles → ~10 flows, Luxembourg with 4 → ~2 flows
 ========================================= */
-app.get("/api/flows", async (req, res) => {
+app.get("/api/flows", heavyLimiter, async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
     let viewMode = req.query.view_mode || "country";  // country, city, region/regions
@@ -1467,7 +1509,7 @@ app.get("/api/flows", async (req, res) => {
 
   } catch (err) {
     console.error("Flows error:", err.message);
-    res.status(500).json({ error: "Failed to fetch flows", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch flows", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -1566,7 +1608,7 @@ app.get("/api/flows/article/:id", async (req, res) => {
     res.json(_cached);
   } catch (err) {
     console.error("[flows/article]", err.message);
-    res.status(500).json({ error: "Failed to fetch article flows", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch article flows", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -1668,7 +1710,7 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     res.json(_cached);
   } catch (err) {
     console.error("[flows/thread]", err.message);
-    res.status(500).json({ error: "Failed to fetch thread flows", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch thread flows", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -1790,7 +1832,7 @@ app.get("/api/flows/thread/:id/route", async (req, res) => {
     res.json({ articles: rows });
   } catch (err) {
     console.error("[flows/thread/route]", err.message);
-    res.status(500).json({ error: "Failed to fetch route articles", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch route articles", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -1855,7 +1897,7 @@ app.get("/api/threads/:id/timeline", async (req, res) => {
     });
   } catch (err) {
     console.error("[threads/timeline]", err.message);
-    res.status(500).json({ error: "Failed to fetch thread timeline", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch thread timeline", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -2144,7 +2186,7 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
     res.json({ ok: true, elapsed_ms: elapsed, presets: flatResults, ts_presets: tsResults });
   } catch (err) {
     console.error("[heatmap-refresh] failed:", err.message, err.stack);
-    res.status(500).json({ error: "Refresh failed", detail: err.message });
+    res.status(500).json({ error: "Refresh failed", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -2309,7 +2351,7 @@ app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) =
   } catch (err) {
     console.error('[briefing-editor] generate error:', err.message);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to start generation', detail: err.message });
+      res.status(500).json({ error: 'Failed to start generation', detail: req.user?.is_admin ? err.message : undefined });
     }
   }
 });
@@ -2464,7 +2506,7 @@ app.get('/briefing-editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));
 });
 
-app.get("/api/heatmap", async (req, res) => {
+app.get("/api/heatmap", heavyLimiter, async (req, res) => {
   try {
     const mode     = (req.query.mode || "coverage").toLowerCase();
     const bucket   = (req.query.bucket || "none").toLowerCase();
@@ -2755,7 +2797,7 @@ app.get("/api/heatmap", async (req, res) => {
     res.json({ mode, bucket, buckets });
   } catch (err) {
     console.error("[heatmap]", err.message);
-    res.status(500).json({ error: "Failed to fetch heatmap", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch heatmap", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -2934,7 +2976,7 @@ app.get("/api/timelines/latest", async (req, res) => {
     res.json(_cached);
   } catch (err) {
     console.error("[timelines/latest]", err.message);
-    res.status(500).json({ error: "Failed to fetch timelines", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch timelines", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -3067,7 +3109,7 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     res.json(_cached);
   } catch (err) {
     console.error("[flows/timeline]", err.message);
-    res.status(500).json({ error: "Failed to fetch timeline flows", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch timeline flows", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -3236,7 +3278,7 @@ app.get("/api/sentiment/country/:iso", async (req, res) => {
     res.json({ iso_code: iso, count: cached.length, articles: cached });
   } catch (err) {
     console.error("[sentiment/country]", err.message);
-    res.status(500).json({ error: "Failed to fetch country sentiment", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch country sentiment", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -3300,7 +3342,7 @@ app.get("/api/keywords/:keyword/references", async (req, res) => {
     res.json({ keyword, count: rows.length, articles: rows });
   } catch (err) {
     console.error("[keywords/references]", err.message);
-    res.status(500).json({ error: "Failed to fetch keyword references", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch keyword references", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -3429,7 +3471,7 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     res.json({ iso_code: iso, count: rows.length, threads: rows });
   } catch (err) {
     console.error("[threads/by-country]", err.message);
-    res.status(500).json({ error: "Failed to fetch country threads", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch country threads", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -3487,7 +3529,7 @@ app.get("/api/threads/id/:id", async (req, res) => {
     });
   } catch (err) {
     console.error("[threads/id/:id]", err.message);
-    res.status(500).json({ error: "Failed to fetch thread", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch thread", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -3683,7 +3725,7 @@ app.get("/api/threads/latest", async (req, res) => {
     res.json(_cached);
   } catch (err) {
     console.error("[threads/latest]", err.message, err.stack);
-    res.status(500).json({ error: "Failed to fetch threads", detail: err.message });
+    res.status(500).json({ error: "Failed to fetch threads", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 
@@ -4655,6 +4697,8 @@ async function resolveCountryIdByIso(rawIso) {
   );
 
   const id = rows[0]?.id ?? null;
+  // Cap cache at 500 entries (there are ~200 countries, so this is generous)
+  if (keywordCountryIdCache.size >= 500) keywordCountryIdCache.clear();
   keywordCountryIdCache.set(iso, id);
   return id;
 }
@@ -5705,4 +5749,36 @@ async function _warmFeedCaches() {
 setTimeout(_warmFeedCaches, 5000);
 setInterval(_warmFeedCaches, 90_000).unref?.();
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// ── Health check ──────────────────────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: Math.round(process.uptime()),
+    pool: {
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting: pool.waitingCount
+    }
+  });
+});
+
+// ── Start server with graceful shutdown ───────────────────────────────────
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+function gracefulShutdown(signal) {
+  console.log(`\n${signal} received — shutting down gracefully`);
+  server.close(() => {
+    console.log('HTTP server closed');
+    pool.end().then(() => {
+      console.log('DB pool drained');
+      process.exit(0);
+    });
+  });
+  // Force exit after 30s if connections don't drain
+  setTimeout(() => {
+    console.error('Forced exit — connections did not drain in 30s');
+    process.exit(1);
+  }, 30_000).unref();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));

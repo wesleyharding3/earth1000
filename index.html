@@ -7208,6 +7208,77 @@ body.ticker-active #flowControls {
 
 <!-- Twinkling starfield for site loader -->
 <script>
+/* ── Global fetch wrapper: default 20s timeout on all requests ── */
+(function() {
+  const _origFetch = window.fetch;
+  const DEFAULT_TIMEOUT = 20000;
+  window.fetch = function(input, init) {
+    // Don't override if caller already set a signal
+    if (init?.signal) return _origFetch.call(this, input, init);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
+    const opts = Object.assign({}, init, { signal: controller.signal });
+    return _origFetch.call(this, input, opts).finally(() => clearTimeout(timeout));
+  };
+})();
+
+/* ── Offline / online detection ── */
+(function() {
+  let _offlineBanner = null;
+  function showOfflineBanner() {
+    if (_offlineBanner) return;
+    _offlineBanner = document.createElement('div');
+    _offlineBanner.id = 'offlineBanner';
+    _offlineBanner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999999;' +
+      'background:rgba(180,60,60,0.92);color:#fff;text-align:center;padding:8px 16px;' +
+      'font:13px/1.4 -apple-system,sans-serif;backdrop-filter:blur(8px);' +
+      '-webkit-backdrop-filter:blur(8px);';
+    _offlineBanner.textContent = 'You are offline — some features may be unavailable';
+    document.body.appendChild(_offlineBanner);
+  }
+  function hideOfflineBanner() {
+    if (_offlineBanner) { _offlineBanner.remove(); _offlineBanner = null; }
+  }
+  window.addEventListener('offline', showOfflineBanner);
+  window.addEventListener('online', hideOfflineBanner);
+  if (!navigator.onLine) showOfflineBanner();
+})();
+
+/* ── Capacitor-safe external link handling ── */
+(function() {
+  const isCapacitor = typeof window.Capacitor !== 'undefined';
+
+  // Override window.open to use Capacitor Browser plugin or SFSafariViewController
+  const _origOpen = window.open;
+  window.open = function(url, target) {
+    if (!url || url === '#') return null;
+    try {
+      const parsed = new URL(url, location.href);
+      // Only intercept external URLs in Capacitor
+      if (isCapacitor && parsed.origin !== location.origin) {
+        if (window.Capacitor?.Plugins?.Browser?.open) {
+          window.Capacitor.Plugins.Browser.open({ url: parsed.href });
+        } else {
+          // Fallback: use native webkit handler if available
+          _origOpen.call(window, parsed.href, '_system');
+        }
+        return null;
+      }
+    } catch (_) {}
+    return _origOpen.call(window, url, target);
+  };
+
+  // Intercept target="_blank" link clicks in Capacitor
+  if (isCapacitor) {
+    document.addEventListener('click', function(e) {
+      const a = e.target.closest('a[target="_blank"]');
+      if (!a || !a.href || a.href === '#') return;
+      e.preventDefault();
+      window.open(a.href, '_blank');
+    }, true);
+  }
+})();
+
 /* ── Global helper: source-bias badge (used by multiple panels) ── */
 window.sourceBiasBadgeHTML = function(bias) {
   const raw = String(bias || 'unknown').toLowerCase();
@@ -11225,7 +11296,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (transMeshGroups.rail !== null) return;
         transMeshGroups.rail = undefined; // mark loading
         try {
-          const res = await fetch("railways.geojson");
+          const res = await fetch("https://earth00.com/railways.geojson");
           if (!res.ok) throw new Error("HTTP " + res.status);
           const geojson = await res.json();
           transMeshGroups.rail = buildLinesFromGeojson(geojson, TRANS_COLORS.rail, 0.001, 'rail');
