@@ -17769,6 +17769,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Default to Threads view on load.
       setView('threads');
 
+      // Called by the page-navigation system when the user swipes/taps to
+      // the News page. Re-triggers loading for the active view so skeletons
+      // + fetch fire even if the initial (hidden-page) attempt failed or
+      // hadn't visibly started.
+      window.__newsPageActivated = function () {
+        if (currentView === 'threads') {
+          if (!threadsLoaded) {
+            // Show skeletons so the user sees activity (the fetch may
+            // already be in flight from the hidden-page init).
+            threadsGrid.innerHTML = skels(1);
+            if (!threadsInFlight) loadThreads();
+          }
+        } else if (currentView === 'timelines') {
+          if (!timelinesLoaded) {
+            threadsGrid.innerHTML = skels(1);
+            if (!timelinesInFlight) loadTimelines();
+          }
+        } else if (currentView === 'feed' && !feedBootstrapped) {
+          feedBootstrapped = true;
+          runSearch();
+        }
+      };
+
       // ── Recency-based status & ranking ────────────────────────────
       // Overwrites t.status based on latest_published_at:
       //   • within 24h  → active
@@ -18591,6 +18614,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       dots.forEach((d, i) => d.classList.toggle("active", i === idx));
       document.getElementById("pageNav").style.pointerEvents = "all";
+      // When arriving at the News page, kick off loading if data isn't ready.
+      if (idx === 2 && typeof window.__newsPageActivated === 'function') {
+        window.__newsPageActivated();
+      }
       const onGlobe = idx === 1;
       ["compass","scaleBar","topLeftCluster","settingsSidebar",
        "flowControls","flowTooltip"].forEach(id => {

@@ -18223,7 +18223,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     el = document.createElement("div");
     el.id = "flowCtxCard";
     el.innerHTML = `
-      <button class="flowCtxReturn" title="Back to source card"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
       <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       <div class="flowCtxKind"></div>
       <div class="flowCtxImgWrap"></div>
@@ -18250,29 +18249,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { window.hideFlowArcBackBtn?.(); } catch (_) {}
       _flowArcOrigin = null;
       window.__flowArcOriginForHeat = null;
-      hideFlowCtxCard();
-    });
-    el.querySelector(".flowCtxReturn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      e.preventDefault();
-      // Navigate back to the origin page where the source card lives.
-      if (_flowArcOrigin) {
-        window.__flowArcGoBack?.();
-        return;
-      }
-      const heatOrigin = window.__flowArcOriginForHeat;
-      if (heatOrigin && typeof heatOrigin.page === 'number') {
-        try {
-          if (window.__semHeatActive && typeof window.__semHeatClose === 'function') {
-            window.__semHeatClose();
-          }
-        } catch (_) {}
-        hideFlowCtxCard();
-        window.__flowArcOriginForHeat = null;
-        window.__goToPage?.(heatOrigin.page);
-        return;
-      }
-      // No origin — just dismiss.
       hideFlowCtxCard();
     });
     return el;
@@ -18307,23 +18283,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       lbl.textContent = label;
       btn.classList.add("visible");
     }
-    // Also show embedded back buttons in flow controls
-    const minBtn = document.getElementById("flowMinOriginBtn");
-    if (minBtn) { minBtn.style.display = ""; minBtn.title = label; }
-    const panelRow = document.getElementById("flowPanelOriginRow");
-    const panelLbl = document.getElementById("flowPanelOriginLabel");
-    if (panelRow) panelRow.style.display = "";
-    if (panelLbl) panelLbl.textContent = label;
   }
 
   function hideFlowArcBackBtn() {
     const btn = document.getElementById("flowArcBackBtn");
     if (btn) btn.classList.remove("visible");
-    // Also hide embedded back buttons in flow controls
-    const minBtn = document.getElementById("flowMinOriginBtn");
-    if (minBtn) minBtn.style.display = "none";
-    const panelRow = document.getElementById("flowPanelOriginRow");
-    if (panelRow) panelRow.style.display = "none";
     _flowArcOrigin = null;
     hideFlowCtxCard();
   }
@@ -18514,7 +18478,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         showFlowCtxCard({
           kind: "Thread · Flow arcs",
           title: _ctxThread.title || _ctxThread.translated_title || "Untitled thread",
-          imageUrl: _ctxThread.image_url || _ctxThread.thumbnail_url || _ctxThread.hero_url || null,
+          imageUrl: _ctxThread.hero_image_url || _ctxThread.image_url || _ctxThread.thumbnail_url || null,
           meta: _ctxThread.category || _ctxThread.status || "",
         });
       }
@@ -18555,7 +18519,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         showFlowCtxCard({
           kind: "Thread · Flow arcs",
           title: _t.title || _t.translated_title || "Untitled thread",
-          imageUrl: _t.image_url || _t.thumbnail_url || _t.hero_url || null,
+          imageUrl: _t.hero_image_url || _t.image_url || _t.thumbnail_url || null,
           meta: _t.category || _t.status || `${flows.length} route${flows.length !== 1 ? "s" : ""}`,
         });
       }
@@ -18603,7 +18567,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         showFlowCtxCard({
           kind: "Timeline · Flow arcs",
           title: _ctxTimeline.title || _ctxTimeline.translated_title || "Untitled timeline",
-          imageUrl: _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || _ctxTimeline.hero_url || null,
+          imageUrl: _ctxTimeline.hero_image_url || _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || null,
           meta: _ctxTimeline.category || _ctxTimeline.status || "",
         });
       }
@@ -18644,7 +18608,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         showFlowCtxCard({
           kind: "Timeline · Flow arcs",
           title: _tl.title || _tl.translated_title || "Untitled timeline",
-          imageUrl: _tl.image_url || _tl.thumbnail_url || _tl.hero_url || null,
+          imageUrl: _tl.hero_image_url || _tl.image_url || _tl.thumbnail_url || null,
           meta: _tl.category || _tl.status || `${flows.length} route${flows.length !== 1 ? "s" : ""}`,
         });
       }
@@ -27142,7 +27106,7 @@ body.ticker-active .gTickerLabel {
         window.showFlowCtxCard({
           kind: "Thread · Sentiment",
           title: _ctxThread.title || threadTitle || "Untitled thread",
-          imageUrl: _ctxThread.image_url || _ctxThread.thumbnail_url || _ctxThread.hero_url || null,
+          imageUrl: _ctxThread.hero_image_url || _ctxThread.image_url || _ctxThread.thumbnail_url || null,
           meta: _ctxThread.category || _ctxThread.status || "",
         });
       } catch (_) {}
