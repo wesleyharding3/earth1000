@@ -4740,10 +4740,10 @@ function spawnBuilder(scriptName, label) {
 setTimeout(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder startup"), 3 * 60_000);
 setInterval(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder"),   30 * 60 * 1000).unref?.(); // every 30m
 
-// Umbrella timelines — 7d window, parabolic weighting. Staggered 6 min
-// after boot so it doesn't collide with threadBuilder startup.
+// Umbrella timelines — 30d window, parabolic weighting. Runs once per day.
+// Staggered 6 min after boot so it doesn't collide with threadBuilder startup.
 setTimeout(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder startup"), 6 * 60_000);
-setInterval(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder"), 2 * 60 * 60 * 1000).unref?.(); // every 2h
+setInterval(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder"), 24 * 60 * 60 * 1000).unref?.(); // once daily
 
 startArticleListener().catch(console.error);
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

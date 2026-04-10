@@ -5,11 +5,14 @@
  *
  * Timelines vs Threads:
  *   • Threads  — 48h tight meta-story, built by storyThreadBuilder.js
- *   • Timelines — 7-day broad umbrella arcs ("Iran war", "Venezuela
- *                 succession"), built by this file.
+ *   • Timelines — 30-day broad umbrella arcs ("NATO", "Iran Israel War",
+ *                 "US-China Trade War"), built by this file. Runs once
+ *                 per day. Ties together threads (active, cooling, and
+ *                 dormant) plus old and new articles under overarching
+ *                 geopolitical narratives.
  *
  * Core mechanics:
- *   1. 7-day lookback (168h), parabolic / logistic weighting that peaks
+ *   1. 30-day lookback (720h), parabolic / logistic weighting that peaks
  *      around ~24h old and decays toward both edges. This biases grouping
  *      toward articles from the last day while still letting older
  *      references anchor a timeline as historical context.
@@ -33,7 +36,7 @@
  *      panel can render them as pinned historical markers.
  *
  * Usage:
- *   node storyTimelineBuilder.js             — process last 168 hours
+ *   node storyTimelineBuilder.js             — process last 720 hours (30d)
  *   node storyTimelineBuilder.js --hours=240 — custom lookback window
  */
 
@@ -43,14 +46,14 @@ const Anthropic = require("@anthropic-ai/sdk");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const LOOKBACK_HOURS       = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "168");
+const LOOKBACK_HOURS       = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "720");
 const PARABOLIC_PEAK_HOURS = 24;        // the age we weight heaviest
 const CLAUDE_BATCH         = 28;
 const MIN_CLUSTER          = 2;
 const MIN_SHARED_KW        = 1;         // broader than threads (2)
 const MIN_SHARED_KW_FALLBACK = 2;       // for generic keyword pairs
-const MAX_PER_SOURCE       = 6;
-const TOTAL_ARTICLE_LIMIT  = 500;
+const MAX_PER_SOURCE       = 10;        // wider per-source allowance for 30d window
+const TOTAL_ARTICLE_LIMIT  = 800;       // larger pool for monthly lookback
 const BASE_PRIORITY_FLOOR  = 0.7;       // top decile
 const ENTITY_LINK_BOOST    = true;
 
@@ -62,14 +65,16 @@ const SKIP_KEYWORDS = new Set([
 ]);
 
 // ─── Parabolic / logistic weighting ──────────────────────────────────────────
-// Goal: heavy mass near 24h, long-tailed out to 168h, with a modest gaussian
-// bump at the peak so the curve isn't a flat logistic. Anchors (very old
-// references) get a small nonzero weight so they can still attach as context.
+// Goal: heavy mass near 24h, long-tailed out to 720h (30d), with a modest
+// gaussian bump at the peak so the curve isn't a flat logistic. Older articles
+// retain meaningful weight (floor 0.10) so 30-day-old articles still contribute
+// to umbrella grouping — they're context, not noise.
 function parabolicWeight(ageHours) {
   const h = Math.max(0, ageHours);
-  const logistic = 1 / (1 + Math.exp(0.045 * (h - PARABOLIC_PEAK_HOURS)));
+  // Gentler decay (0.012 vs 0.045) so the tail extends across the full month
+  const logistic = 1 / (1 + Math.exp(0.012 * (h - PARABOLIC_PEAK_HOURS)));
   const gaussian = Math.exp(-Math.pow(h - PARABOLIC_PEAK_HOURS, 2) / 1800);
-  const base = Math.max(0.05, logistic * (1 + 0.4 * gaussian));
+  const base = Math.max(0.10, logistic * (1 + 0.4 * gaussian));
   return Number(base.toFixed(5));
 }
 
@@ -125,6 +130,9 @@ async function run() {
     await sleep(1500);
   }
 
+  console.log(`\n   [${elapsed()}] Broadening overly specific timeline titles...`);
+  await broadenTimelineTitles();
+
   console.log(`\n   [${elapsed()}] Attaching historical anchors...`);
   await attachHistoricalAnchors();
 
@@ -162,9 +170,6 @@ async function getTimelineArticlePool(hours) {
         AND (
           COALESCE(ns.fetch_tier, 1) IN (2, 3, 4)
           OR COALESCE(a.base_priority, 0) >= ${BASE_PRIORITY_FLOOR}
-        )
-        AND NOT EXISTS (
-          SELECT 1 FROM story_timeline_articles sta WHERE sta.article_id = a.id
         )
     )
     SELECT id, title, summary, translated_summary, published_at, base_priority,
@@ -320,22 +325,28 @@ async function evaluateWithClaude(articles, existingTimelines) {
     cat:   t.primary_category
   }));
 
-  const prompt = `You are the editor of a GLOBAL TIMELINE — the UMBRELLA ARCS view of world geopolitics. Your job is the OPPOSITE of a breaking-news ticker: your job is to group all stories touching the same ongoing arc into ONE broad timeline, even when keywords diverge and sub-stories look distinct.
+  const prompt = `You are the editor of a GLOBAL TIMELINE — the UMBRELLA ARCS view of world geopolitics. Your job is the OPPOSITE of a breaking-news ticker: your job is to group all stories touching the same ongoing arc into ONE broad timeline, even when keywords diverge and sub-stories look distinct. This is a 30-DAY lookback — you are building MONTH-SCALE narratives, not daily news cycles.
 
 ═══ WHAT A TIMELINE IS ═══
-A timeline is a LIVING ARC — a multi-week/multi-month thread of world events that share:
-  • A named geopolitical subject (a war, a succession crisis, a sanctions regime, a peace process, a humanitarian emergency)
-  • A core actor or theater (country, alliance, conflict zone, leader)
-  • A through-line that lets a reader follow ONE story as it evolves
+A timeline is a BROAD UMBRELLA ARC — a multi-week/multi-month geopolitical narrative that absorbs ALL sub-stories, events, developments, and angles under one roof. Think of how a newspaper's "Iran" desk covers everything Iran-related under one banner.
 
-Examples of GOOD timeline titles:
-  • "Iran War and Strait of Hormuz Crisis"
-  • "Venezuela: Maduro Succession and US Pressure Campaign"
-  • "Ukraine-Russia War Year 4"
-  • "Gaza War and Regional Spillover"
-  • "West Africa Sahel Jihadist Offensive"
-  • "US-China Technology and Trade Decoupling"
-  • "Sudan Civil War and Darfur Crisis"
+The NAME should be as BROAD as possible — name the arc, not the event:
+  • "NATO" not "NATO Summit Response to Baltic Deployment"
+  • "Iran Israel War" not "Iran-Israel Strikes Escalation in March"
+  • "US-China Trade War" not "US-China Tariff Dispute Over Semiconductors"
+  • "Ukraine Russia War" not "Ukraine-Russia War: Bakhmut Offensive"
+
+Examples of GOOD timeline titles (SHORT, BROAD, UMBRELLA-LEVEL):
+  • "NATO"
+  • "Iran Israel War"
+  • "Ukraine Russia War"
+  • "Gaza War"
+  • "Venezuela Crisis"
+  • "US-China Trade War"
+  • "Sahel Insurgency"
+  • "Sudan Civil War"
+  • "North Korea"
+  • "EU Migration Crisis"
 
 ═══ GROUP BROADLY ═══
 If an article touches an existing timeline's arc EVEN TANGENTIALLY, attach it to that timeline via existing_timeline_id. Do NOT split an arc into micro-threads. A single "Iran" timeline should absorb:
@@ -356,7 +367,7 @@ A single "Venezuela" timeline should absorb:
 The one exception: if a sub-story has clearly escaped its parent arc and become its own multi-country crisis (e.g. the Houthi Red Sea shipping campaign arguably becomes its own arc). In that case you can create a sibling timeline and link scope.
 
 ═══ SCOPE SLUG ═══
-Every timeline has a "scope" — a stable slug that names the umbrella ("iran_war", "venezuela_maduro", "ukraine_russia_war", "gaza_war", "sahel_jihadist", "us_china_trade", "sudan_civil_war"). Reuse scopes across runs so timelines persist. Invent a new scope only when an arc is genuinely new.
+Every timeline has a "scope" — a stable slug that names the umbrella. Keep scopes BROAD and stable: "nato", "iran_israel", "ukraine_russia", "gaza", "venezuela", "us_china", "sahel", "sudan", "north_korea", "eu_migration". Reuse scopes across runs so timelines persist. Invent a new scope only when an arc is genuinely new. NEVER make scopes event-specific.
 
 ═══ PARABOLIC WEIGHTING (CONTEXT FOR YOU) ═══
 The age_h and weight fields show how strongly the system thinks each article should anchor a timeline. Articles near 24h old are weighted heaviest; older articles are mostly anchors / historical context. Use weight as a hint for which article to mark as the anchor_article_id — pick one with high weight that best represents the arc, NOT necessarily the oldest one.
@@ -432,6 +443,7 @@ async function persistTimelineDefs(defs, validIdSet, existingMap) {
         await pool.query(`
           UPDATE story_timelines
           SET last_updated_at = NOW(),
+              status          = 'active',
               importance      = GREATEST(importance, $1),
               article_count   = article_count + $2,
               keywords        = (SELECT ARRAY(SELECT DISTINCT unnest(keywords || $3::text[])))
@@ -552,27 +564,83 @@ async function attachHistoricalAnchors() {
   }
 }
 
+async function broadenTimelineTitles() {
+  // Audit existing timelines — rename overly specific titles to broad
+  // umbrella-level names. Sends batches of titles to Claude for renaming.
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, title, scope, keywords, primary_category
+      FROM story_timelines
+      WHERE status IN ('active', 'cooling')
+        AND LENGTH(title) > 35
+      ORDER BY importance DESC
+      LIMIT 100
+    `);
+    if (!rows.length) { console.log(`   No titles need broadening.`); return; }
+
+    const batches = chunkArray(rows, 40);
+    let renamed = 0;
+    for (const batch of batches) {
+      const resp = await client.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 2000,
+        messages: [{ role: "user", content: `You are renaming geopolitical timeline titles to be as BROAD and SHORT as possible. These are umbrella arcs, NOT specific events.
+
+Rules:
+- Maximum 5 words, ideally 2-3
+- Name the ARC not the event: "NATO" not "NATO Response to Baltic Threat"
+- Name the conflict not the battle: "Ukraine Russia War" not "Ukraine-Russia Bakhmut Offensive"
+- If already broad enough (≤5 words, names the arc), keep it unchanged
+- Return the SAME id with the new title
+
+TIMELINES TO RENAME:
+${JSON.stringify(batch.map(t => ({ id: t.id, title: t.title, scope: t.scope })), null, 2)}
+
+Return ONLY a JSON array: [{"id": 123, "title": "New Broad Title"}]
+Omit entries that don't need renaming.` }]
+      });
+      const text = resp.content[0].text.trim();
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) continue;
+      const renames = JSON.parse(jsonMatch[0]);
+      for (const r of renames) {
+        if (!r.id || !r.title) continue;
+        await pool.query(`UPDATE story_timelines SET title = $1 WHERE id = $2`, [r.title, r.id]);
+        renamed++;
+      }
+      await sleep(1000);
+    }
+    console.log(`   Broadened ${renamed} timeline title(s).`);
+  } catch (e) {
+    console.warn(`   ⚠ Title broadening skipped: ${e.message}`);
+  }
+}
+
 async function coolDownTimelines() {
-  // Timelines live longer than threads because they're umbrella arcs —
-  // 21d → cooling, 45d → dormant.
+  // With 30-day lookback, timelines live much longer — they're broad
+  // geopolitical arcs that can span months. 45d → cooling, 90d → dormant.
   const a = await pool.query(`
     UPDATE story_timelines SET status = 'cooling'
-    WHERE status = 'active' AND last_updated_at < NOW() - INTERVAL '21 days'
+    WHERE status = 'active' AND last_updated_at < NOW() - INTERVAL '45 days'
   `);
   const c = await pool.query(`
     UPDATE story_timelines SET status = 'dormant'
-    WHERE status = 'cooling' AND last_updated_at < NOW() - INTERVAL '24 days'
+    WHERE status = 'cooling' AND last_updated_at < NOW() - INTERVAL '90 days'
   `);
   console.log(`   active→cooling: ${a.rowCount} | cooling→dormant: ${c.rowCount}`);
 }
 
 async function getActiveTimelines() {
+  // Include active, cooling, AND dormant timelines so the builder can
+  // reactivate dormant arcs when new articles touch them.
   const { rows } = await pool.query(`
-    SELECT id, title, description, scope, keywords, primary_category, geographic_scope, importance, article_count
+    SELECT id, title, description, scope, keywords, primary_category, geographic_scope, importance, article_count, status
     FROM story_timelines
-    WHERE status = 'active' AND last_updated_at > NOW() - INTERVAL '60 days'
-    ORDER BY importance DESC, last_updated_at DESC
-    LIMIT 200
+    WHERE last_updated_at > NOW() - INTERVAL '90 days'
+    ORDER BY
+      CASE status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
+      importance DESC, last_updated_at DESC
+    LIMIT 300
   `);
   return rows;
 }
