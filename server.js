@@ -4798,4 +4798,33 @@ setTimeout(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder startu
 setInterval(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder"), 24 * 60 * 60 * 1000).unref?.(); // once daily
 
 startArticleListener().catch(console.error);
+
+// ── Cache warming — keep threads & timelines hot so no user hits a cold query ──
+// The TTL cache is 120s. We refresh every 90s so the cache never expires.
+// First warm runs 5s after boot (after the pool is ready).
+async function _warmFeedCaches() {
+  const http = require('http');
+  const base = `http://localhost:${PORT}`;
+  const urls = [
+    `${base}/api/threads/latest?limit=30`,
+    `${base}/api/timelines/latest?limit=30`,
+  ];
+  for (const url of urls) {
+    try {
+      await new Promise((resolve, reject) => {
+        const r = http.get(url, res => {
+          res.resume(); // drain
+          res.on('end', resolve);
+        });
+        r.on('error', reject);
+        r.setTimeout(15000, () => { r.destroy(); reject(new Error('timeout')); });
+      });
+    } catch (e) {
+      console.warn('[cache-warm]', url, e.message);
+    }
+  }
+}
+setTimeout(_warmFeedCaches, 5000);
+setInterval(_warmFeedCaches, 90_000).unref?.();
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

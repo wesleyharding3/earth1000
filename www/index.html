@@ -7443,7 +7443,9 @@ window.sourceBiasBadgeHTML = function(bias) {
     const finish = () => { done++; if (done >= 2) resolve(); };
     setTimeout(resolve, 4000); // ceiling
 
-    fetch(`${API}/api/threads/latest?limit=10`)
+    const _preAc = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    if (_preAc) setTimeout(() => _preAc.abort(), 6000);
+    fetch(`${API}/api/threads/latest?limit=10`, _preAc ? { signal: _preAc.signal } : {})
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         if (Array.isArray(data) && data.length) window.__preloadedThreads = data;
@@ -17779,9 +17781,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__newsPageActivated = function () {
         if (currentView === 'threads') {
           if (!threadsLoaded) {
-            // Show skeletons so the user sees activity (the fetch may
-            // already be in flight from the hidden-page init).
             threadsGrid.innerHTML = skels(1);
+            // The abort-controller retry loop guarantees threadsInFlight
+            // resolves within ~40s. If it's still null, kick a fresh load.
             if (!threadsInFlight) loadThreads();
           }
         } else if (currentView === 'timelines') {
@@ -17915,29 +17917,44 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         threadsInFlight = (async () => {
-          try {
-            // Fetch a sane initial slice. The lazy renderer paints these in
-            // chunks of 15; if the user scrolls past the slice, we can grow
-            // it on demand later. Dropped from 250 → 80: the user only sees
-            // ~5 cards before scrolling and the smaller payload (~80 KB vs
-            // 250 KB) cuts cold-open latency roughly 3x on mobile.
-            const params = new URLSearchParams({ limit: 80 });
-            if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
-            if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
-            const res = await fetch(`${API}/api/threads/latest?${params}`);
-            if (!res.ok) throw new Error('Failed');
-            threadsData = await res.json();
-            applyRecencyStatus(threadsData);
-            threadsLoaded = true;
-            if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
-          } catch (e) {
-            if (currentView === 'threads') {
-              threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span></div>`;
+          // Retry up to 3 attempts with a 12-second timeout each.
+          // WKWebView + Render cold-starts can hang silently for 60s+,
+          // leaving the user staring at skeletons. The abort controller
+          // guarantees we fail fast and retry instead.
+          const MAX_RETRIES = 3;
+          const TIMEOUT_MS  = 12000;
+          for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            const timer = ac ? setTimeout(() => ac.abort(), TIMEOUT_MS) : null;
+            try {
+              const params = new URLSearchParams({ limit: 30 });
+              if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
+              if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
+              const fetchOpts = ac ? { signal: ac.signal } : {};
+              const res = await fetch(`${API}/api/threads/latest?${params}`, fetchOpts);
+              clearTimeout(timer);
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              threadsData = await res.json();
+              applyRecencyStatus(threadsData);
+              threadsLoaded = true;
+              if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
+              return; // success — exit retry loop
+            } catch (e) {
+              clearTimeout(timer);
+              console.warn(`[threads] attempt ${attempt + 1}/${MAX_RETRIES} failed:`, e.message);
+              if (attempt < MAX_RETRIES - 1) {
+                // Brief pause before retry — let a cold server wake up.
+                await new Promise(r => setTimeout(r, 1500));
+                continue;
+              }
+              // All retries exhausted — show error with manual retry button.
+              if (currentView === 'threads') {
+                threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load threads</span><button onclick="threadsInFlight=null;loadThreads()" style="margin-top:12px;padding:8px 20px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:14px;cursor:pointer">Retry</button></div>`;
+              }
             }
-          } finally {
-            threadsInFlight = null;
           }
         })();
+        threadsInFlight.finally(() => { threadsInFlight = null; });
 
         return threadsInFlight;
       }
@@ -17954,27 +17971,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (timelinesInFlight) return timelinesInFlight;
 
         timelinesInFlight = (async () => {
-          try {
-            const params = new URLSearchParams({ limit: 80 });
-            if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
-            if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
-            const res = await fetch(`${API}/api/timelines/latest?${params}`);
-            if (!res.ok) throw new Error('Failed');
-            const raw = await res.json();
-            // Tag each item so the card renderer routes to the timeline
-            // flow endpoint instead of the thread one.
-            timelinesData = (raw || []).map(t => ({ ...t, __kind: 'timeline' }));
-            applyRecencyStatus(timelinesData);
-            timelinesLoaded = true;
-            if (currentView === 'timelines') { activeGridData = timelinesData; renderThreads(); }
-          } catch (e) {
-            if (currentView === 'timelines') {
-              threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load timelines</span></div>`;
+          const MAX_RETRIES = 3;
+          const TIMEOUT_MS  = 12000;
+          for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+            const timer = ac ? setTimeout(() => ac.abort(), TIMEOUT_MS) : null;
+            try {
+              const params = new URLSearchParams({ limit: 30 });
+              if (threadsFromInput?.value) params.set('from_date', threadsFromInput.value);
+              if (threadsToInput?.value)   params.set('to_date',   threadsToInput.value);
+              const fetchOpts = ac ? { signal: ac.signal } : {};
+              const res = await fetch(`${API}/api/timelines/latest?${params}`, fetchOpts);
+              clearTimeout(timer);
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              const raw = await res.json();
+              timelinesData = (raw || []).map(t => ({ ...t, __kind: 'timeline' }));
+              applyRecencyStatus(timelinesData);
+              timelinesLoaded = true;
+              if (currentView === 'timelines') { activeGridData = timelinesData; renderThreads(); }
+              return;
+            } catch (e) {
+              clearTimeout(timer);
+              console.warn(`[timelines] attempt ${attempt + 1}/${MAX_RETRIES} failed:`, e.message);
+              if (attempt < MAX_RETRIES - 1) {
+                await new Promise(r => setTimeout(r, 1500));
+                continue;
+              }
+              if (currentView === 'timelines') {
+                threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Failed to load timelines</span><button onclick="timelinesInFlight=null;loadTimelines()" style="margin-top:12px;padding:8px 20px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:#fff;font-size:14px;cursor:pointer">Retry</button></div>`;
+              }
             }
-          } finally {
-            timelinesInFlight = null;
           }
         })();
+        timelinesInFlight.finally(() => { timelinesInFlight = null; });
 
         return timelinesInFlight;
       }
