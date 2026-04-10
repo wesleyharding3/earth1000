@@ -2235,6 +2235,7 @@ app.get("/api/timelines/latest", async (req, res) => {
           AND t.article_count >= 2
         ORDER BY
           CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
+          CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0 ELSE 1 END,
           t.importance DESC,
           t.parabolic_weight_sum DESC,
           t.last_updated_at DESC NULLS LAST
@@ -2670,6 +2671,7 @@ app.get("/api/threads/latest", async (req, res) => {
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
+        CASE WHEN st.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0 ELSE 1 END,
         st.importance DESC,
         st.article_count DESC,
         st.last_updated_at DESC NULLS LAST
