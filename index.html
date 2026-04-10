@@ -3747,9 +3747,6 @@ body.ticker-active #flowControls {
       bottom: -100%;
       left: 0;
       width: 100%;
-      /* Default height matched to News Briefing data-panel vertical real
-         estate (70vh) so an expanded article card fits cleanly without
-         clipping. Falls back gracefully on short viewports. */
       height: min(70vh, calc(var(--app-height, 100vh) - 24px));
       display: flex;
       flex-direction: column;
@@ -3768,8 +3765,6 @@ body.ticker-active #flowControls {
       transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
     }
     #clusterDetail.open {
-      /* Sit flush with the bottom of the safe area — directly over the
-         nav buttons + ticker bar (covers them while open). */
       bottom: env(safe-area-inset-bottom);
       opacity: 1;
       pointer-events: all;
@@ -3778,6 +3773,36 @@ body.ticker-active #flowControls {
     #clusterDetail.cdMaximized {
       height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
       border-radius: 20px 20px 0 0;
+    }
+    /* Minimized state — collapsed to just the header bar */
+    #clusterDetail.cdMinimized {
+      height: auto !important;
+    }
+    #clusterDetail.cdMinimized .cdSections { display: none; }
+    #clusterDetail.cdMinimized .cdMeta { display: none; }
+    /* Minimize button */
+    .cdMinimize {
+      width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+      border-radius: 3px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.5); font-size: 16px; cursor: pointer; flex-shrink: 0;
+      transition: background 0.12s, color 0.12s; line-height: 1;
+    }
+    .cdMinimize:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    /* Mobile: smaller panel, left-aligned, positioned lower */
+    @media (max-width: 640px) {
+      #clusterDetail {
+        width: 92%;
+        left: 4%;
+        right: auto;
+        height: min(55vh, calc(var(--app-height, 100vh) - 120px));
+        border-radius: 16px 16px 0 0;
+      }
+      #clusterDetail.cdMaximized {
+        width: 100%;
+        left: 0;
+        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+        border-radius: 16px 16px 0 0;
+      }
     }
     #cdResizeHandle {
       position: absolute;
@@ -17689,11 +17714,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Close flow arcs, labels, timeline, and info card
     window.__flowClosePanel?.();
     hideFlowArcBackBtn();
+    hideFlowCtxCard?.();
     document.getElementById("flowTimeline")?.classList.remove("visible");
     document.getElementById("flowArcInfoCard")?.classList.remove("visible");
 
     // Navigate back to the origin page
     window.__goToPage?.(origin.page);
+
+    // Scroll the news page back to the threads/timelines grid
+    if (origin.type === 'thread' || origin.type === 'timeline') {
+      requestAnimationFrame(() => {
+        const gridId = origin.type === 'thread' ? 'nfThreadsGrid' : 'nfThreadsGrid';
+        const grid = document.getElementById(gridId);
+        if (grid) grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
   };
 
   // Wire up embedded back-to-origin buttons in flow controls
@@ -23843,8 +23878,11 @@ body.ticker-active .gTickerLabel {
       ? "bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease"
       : "none";
     detailEl.classList.toggle("cdMaximized", s === "max");
+    detailEl.classList.toggle("cdMinimized", s === "min");
     if (s === "max") {
-      detailEl.style.height = "";  /* let CSS .cdMaximized rule handle it (includes safe-area-inset-top) */
+      detailEl.style.height = "";
+    } else if (s === "min") {
+      detailEl.style.height = "";  /* auto via CSS */
     } else {
       detailEl.style.height = CD_DEFAULT_H() + "px";
     }
@@ -23854,7 +23892,7 @@ body.ticker-active .gTickerLabel {
 
   function closeNodePanel() {
     if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
-    detailEl.classList.remove("open");
+    detailEl.classList.remove("open", "cdMaximized", "cdMinimized");
     cdSnapState = "default";
     detailEl.style.height = "";
     _selected = null;
@@ -23967,6 +24005,7 @@ body.ticker-active .gTickerLabel {
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
           </div>
+          <div class="cdMinimize" id="cdMinimizeBtn" title="Minimize panel">&#x2012;</div>
           <div class="cdClose" id="cdCloseBtn">\u2715</div>
         </div>
         <div class="cdMeta">
@@ -24018,6 +24057,14 @@ body.ticker-active .gTickerLabel {
     detailEl.classList.add("open");
 
     document.getElementById("cdCloseBtn").addEventListener("click", (e) => { e.stopPropagation(); closeNodePanel(); });
+    document.getElementById("cdMinimizeBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (cdSnapState === "min") {
+        cdApplySnap("default");
+      } else {
+        cdApplySnap("min");
+      }
+    });
     document.getElementById("cdResizeHandle").addEventListener("click", (e) => {
       e.stopPropagation();
       cdApplySnap(cdSnapState === "max" ? "default" : "max");

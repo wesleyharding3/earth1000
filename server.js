@@ -1602,53 +1602,40 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     `, [threadId]);
 
     if (involvedCountries.length < 2) {
-      // Fallback: if entity extraction hasn't run or found < 2 countries,
-      // try content-routed article_locations (legacy behavior)
-      const { rows } = await pool.query(`
-        WITH thread_flows AS (
-          SELECT
-            COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
-            COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
-            COALESCE(src_city.name, src_co.name)           AS src_place,
-            CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
-            CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
-            src_co.iso_code AS src_iso,
-            COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
-            COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
-            COALESCE(dst_city.name, dst_co.name)           AS dst_place,
-            CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
-            CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
-            dst_co.iso_code AS dst_iso
-          FROM story_thread_articles sta
-          JOIN news_articles a        ON a.id = sta.article_id
-          JOIN article_locations al   ON al.article_id = a.id
-          JOIN countries src_co       ON src_co.id = a.country_id
-          JOIN countries dst_co       ON dst_co.id = al.country_id
-          LEFT JOIN cities src_city   ON src_city.id = a.city_id
-          LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
-          WHERE sta.thread_id = $1
-            AND al.routing_type = 'content'
-        )
+      // Fallback: find distinct content-routed countries across all articles
+      // in this thread, then draw arcs between them (country↔country, not
+      // source→country which shows where reporters are, not the story).
+      const { rows: contentCountries } = await pool.query(`
         SELECT
-          src_lat, src_lon, src_place, src_id, src_type, src_iso,
-          dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
-          COUNT(*) AS flow_count
-        FROM thread_flows
-        GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
-                 dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
-        ORDER BY flow_count DESC
-        LIMIT 100
+          co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+          co.iso_code AS iso,
+          COUNT(DISTINCT al.article_id) AS mention_count
+        FROM story_thread_articles sta
+        JOIN article_locations al ON al.article_id = sta.article_id
+        JOIN countries co ON co.id = al.country_id
+        WHERE sta.thread_id = $1
+          AND al.routing_type = 'content'
+        GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+        ORDER BY mention_count DESC
+        LIMIT 10
       `, [threadId]);
 
-      if (!rows.length) return { flows: [], maxCount: 0 };
-      const maxCount = parseInt(rows[0].flow_count) || 1;
-      const flows = rows.map(r => ({
-        src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
-               place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso },
-        dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
-               place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso },
-        count: parseInt(r.flow_count)
-      }));
+      if (contentCountries.length < 2) return { flows: [], maxCount: 0 };
+
+      // Connect consecutive content-country pairs (most-mentioned first)
+      const flows = [];
+      for (let i = 0; i < contentCountries.length - 1; i++) {
+        const src = contentCountries[i];
+        const dst = contentCountries[i + 1];
+        flows.push({
+          src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
+                 place: src.place, id: src.id, type: 'country', iso: src.iso },
+          dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
+                 place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
+          count: parseInt(src.mention_count) + parseInt(dst.mention_count)
+        });
+      }
+      const maxCount = Math.max(...flows.map(f => f.count));
       return { flows, maxCount };
     }
 
@@ -2706,52 +2693,38 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     `, [timelineId]);
 
     if (involvedCountries.length < 2) {
-      // Fallback to content-routed article_locations
-      const { rows } = await pool.query(`
-        WITH tl_flows AS (
-          SELECT
-            COALESCE(src_city.latitude, src_co.latitude)   AS src_lat,
-            COALESCE(src_city.longitude, src_co.longitude) AS src_lon,
-            COALESCE(src_city.name, src_co.name)           AS src_place,
-            CASE WHEN a.city_id IS NOT NULL THEN a.city_id ELSE a.country_id END AS src_id,
-            CASE WHEN a.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS src_type,
-            src_co.iso_code AS src_iso,
-            COALESCE(dst_city.latitude, dst_co.latitude)   AS dst_lat,
-            COALESCE(dst_city.longitude, dst_co.longitude) AS dst_lon,
-            COALESCE(dst_city.name, dst_co.name)           AS dst_place,
-            CASE WHEN al.city_id IS NOT NULL THEN al.city_id ELSE al.country_id END AS dst_id,
-            CASE WHEN al.city_id IS NOT NULL THEN 'city' ELSE 'country' END AS dst_type,
-            dst_co.iso_code AS dst_iso
-          FROM story_timeline_articles sta
-          JOIN news_articles a        ON a.id = sta.article_id
-          JOIN article_locations al   ON al.article_id = a.id
-          JOIN countries src_co       ON src_co.id = a.country_id
-          JOIN countries dst_co       ON dst_co.id = al.country_id
-          LEFT JOIN cities src_city   ON src_city.id = a.city_id
-          LEFT JOIN cities dst_city   ON dst_city.id = al.city_id
-          WHERE sta.timeline_id = $1
-            AND al.routing_type = 'content'
-        )
+      // Fallback: find distinct content-routed countries across all articles
+      // in this timeline, then draw arcs between them (country↔country).
+      const { rows: contentCountries } = await pool.query(`
         SELECT
-          src_lat, src_lon, src_place, src_id, src_type, src_iso,
-          dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso,
-          COUNT(*) AS flow_count
-        FROM tl_flows
-        GROUP BY src_lat, src_lon, src_place, src_id, src_type, src_iso,
-                 dst_lat, dst_lon, dst_place, dst_id, dst_type, dst_iso
-        ORDER BY flow_count DESC
-        LIMIT 100
+          co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+          co.iso_code AS iso,
+          COUNT(DISTINCT al.article_id) AS mention_count
+        FROM story_timeline_articles sta
+        JOIN article_locations al ON al.article_id = sta.article_id
+        JOIN countries co ON co.id = al.country_id
+        WHERE sta.timeline_id = $1
+          AND al.routing_type = 'content'
+        GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+        ORDER BY mention_count DESC
+        LIMIT 10
       `, [timelineId]);
 
-      if (!rows.length) return { flows: [], maxCount: 0 };
-      const maxCount = parseInt(rows[0].flow_count) || 1;
-      const flows = rows.map(r => ({
-        src: { lat: parseFloat(r.src_lat), lon: parseFloat(r.src_lon),
-               place: r.src_place, id: r.src_id, type: r.src_type, iso: r.src_iso },
-        dst: { lat: parseFloat(r.dst_lat), lon: parseFloat(r.dst_lon),
-               place: r.dst_place, id: r.dst_id, type: r.dst_type, iso: r.dst_iso },
-        count: parseInt(r.flow_count)
-      }));
+      if (contentCountries.length < 2) return { flows: [], maxCount: 0 };
+
+      const flows = [];
+      for (let i = 0; i < contentCountries.length - 1; i++) {
+        const src = contentCountries[i];
+        const dst = contentCountries[i + 1];
+        flows.push({
+          src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
+                 place: src.place, id: src.id, type: 'country', iso: src.iso },
+          dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
+                 place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
+          count: parseInt(src.mention_count) + parseInt(dst.mention_count)
+        });
+      }
+      const maxCount = Math.max(...flows.map(f => f.count));
       return { flows, maxCount };
     }
 
