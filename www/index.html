@@ -17657,6 +17657,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const ra = STATUS_RANK[a.status] ?? 1;
           const rb = STATUS_RANK[b.status] ?? 1;
           if (ra !== rb) return ra - rb;
+          // Push "environment" category below other categories
+          const _lowCat = c => { const lc = (c || '').toLowerCase(); return lc === 'environment' || lc === 'climate' ? 1 : 0; };
+          const ea = _lowCat(a.primary_category);
+          const eb = _lowCat(b.primary_category);
+          if (ea !== eb) return ea - eb;
           const da = new Date(a.latest_published_at || 0).getTime();
           const db = new Date(b.latest_published_at || 0).getTime();
           return db - da;
@@ -22013,7 +22018,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 .bTickerItem {
   display: inline-block; white-space: nowrap;
-  animation: bTickerScroll 60s linear infinite;
+  animation: bTickerScroll 200s linear infinite;
   will-change: transform;
 }
 .bTickerItem.reset { animation: none; }
@@ -22124,7 +22129,7 @@ body.ticker-active .gTickerLabel {
 }
 .gTickerTrack {
   display: inline-block; white-space: nowrap;
-  animation: gTickerScroll 80s linear infinite;
+  animation: gTickerScroll 240s linear infinite;
   will-change: transform;
 }
 .gTickerTrack.reset { animation: none; }
@@ -23975,8 +23980,8 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── News ticker (scrolling marquee) ──────────────────────────────────────
-  const TICKER_PX_PER_SEC = 14; // scroll speed
-  const TICKER_MIN_DURATION_SEC = 160;
+  const TICKER_PX_PER_SEC = 6; // scroll speed — very slow, readable
+  const TICKER_MIN_DURATION_SEC = 300;
   let _briefingTickerArticles = [];
 
   function _buildTickerHTML(articles) {

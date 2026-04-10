@@ -2860,19 +2860,13 @@ app.get("/api/timelines/latest", async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const _cacheKey = `timelines/latest:${limit}`;
-    const _cached = await ttlCached(_cacheKey, 30_000, async () => {
+    const _cached = await ttlCached(_cacheKey, 60_000, async () => {
       const { rows: timelines } = await pool.query(`
         SELECT
           t.id AS timeline_id, t.title, t.description, t.scope,
           t.primary_category, t.geographic_scope, t.importance, t.keywords,
           t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
-          t.historical_anchors, t.status, t.last_updated_at,
-          COALESCE((
-            SELECT COUNT(DISTINCT a.country_id)
-            FROM story_timeline_articles sta
-            JOIN news_articles a ON a.id = sta.article_id
-            WHERE sta.timeline_id = t.id AND a.country_id IS NOT NULL
-          ), 0)::int AS country_count
+          t.historical_anchors, t.status, t.last_updated_at
         FROM story_timelines t
         WHERE t.status IN ('active','cooling','dormant')
           AND t.article_count >= 2
