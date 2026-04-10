@@ -1727,18 +1727,22 @@ app.get("/api/ocean/temperature", async (req, res) => {
 // /api/heatmap endpoint can read from a tiny snapshot table (~2k rows per
 // preset) instead of scanning 300k+ news_articles rows.
 async function refreshHeatmapSnapshots() {
+  // Process each preset independently — own connection, own timeout.
+  // If one preset fails (e.g. 90d is too large), the others still succeed.
   const presets = [
+    { key: '7d',  days: 7   },   // default — most important, run first
     { key: '1d',  days: 1   },
-    { key: '7d',  days: 7   },
     { key: '30d', days: 30  },
     { key: '90d', days: 90  },
   ];
 
-  const client = await pool.connect();
-  try {
-    await client.query('SET LOCAL statement_timeout = 120000');
+  const results = [];
+  for (const { key, days } of presets) {
+    const client = await pool.connect();
+    try {
+      // 5 min timeout per preset — generous for large scans
+      await client.query('SET LOCAL statement_timeout = 300000');
 
-    for (const { key, days } of presets) {
       const { rows: countryRows } = await client.query(`
         SELECT
           c.id AS ref_id, c.id AS country_id,
@@ -1778,42 +1782,46 @@ async function refreshHeatmapSnapshots() {
       `, [days]);
 
       await client.query('BEGIN');
-      try {
-        await client.query('DELETE FROM heatmap_snapshots WHERE preset = $1', [key]);
+      await client.query('DELETE FROM heatmap_snapshots WHERE preset = $1', [key]);
 
-        if (countryRows.length) {
-          const vals = countryRows.map((r, i) => {
+      if (countryRows.length) {
+        const vals = countryRows.map((r, i) => {
+          const off = i * 11;
+          return `($${off+1},'country',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},NOW())`;
+        }).join(',');
+        const params = countryRows.flatMap(r => [key, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
+        await client.query(`INSERT INTO heatmap_snapshots (preset,level,ref_id,country_id,iso,country_name,name,lat,lon,n,sent_n,avg_sent,refreshed_at) VALUES ${vals}`, params);
+      }
+
+      if (cityRows.length) {
+        const CHUNK = 200;
+        for (let c = 0; c < cityRows.length; c += CHUNK) {
+          const chunk = cityRows.slice(c, c + CHUNK);
+          const vals = chunk.map((r, i) => {
             const off = i * 11;
-            return `($${off+1},'country',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},NOW())`;
+            return `($${off+1},'city',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},NOW())`;
           }).join(',');
-          const params = countryRows.flatMap(r => [key, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
+          const params = chunk.flatMap(r => [key, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
           await client.query(`INSERT INTO heatmap_snapshots (preset,level,ref_id,country_id,iso,country_name,name,lat,lon,n,sent_n,avg_sent,refreshed_at) VALUES ${vals}`, params);
         }
-
-        if (cityRows.length) {
-          // Batch in chunks of 200 to stay within Postgres param limits
-          const CHUNK = 200;
-          for (let c = 0; c < cityRows.length; c += CHUNK) {
-            const chunk = cityRows.slice(c, c + CHUNK);
-            const vals = chunk.map((r, i) => {
-              const off = i * 11;
-              return `($${off+1},'city',$${off+2},$${off+3},$${off+4},$${off+5},$${off+6},$${off+7},$${off+8},$${off+9},$${off+10},$${off+11},NOW())`;
-            }).join(',');
-            const params = chunk.flatMap(r => [key, r.ref_id, r.country_id, r.iso, r.country_name, r.name, r.lat, r.lon, r.n, r.sent_n, r.avg_sent]);
-            await client.query(`INSERT INTO heatmap_snapshots (preset,level,ref_id,country_id,iso,country_name,name,lat,lon,n,sent_n,avg_sent,refreshed_at) VALUES ${vals}`, params);
-          }
-        }
-
-        await client.query('COMMIT');
-        console.log(`[heatmap-refresh] preset=${key} countries=${countryRows.length} cities=${cityRows.length}`);
-      } catch (e) {
-        await client.query('ROLLBACK');
-        throw e;
       }
+
+      await client.query('COMMIT');
+      console.log(`[heatmap-refresh] preset=${key} countries=${countryRows.length} cities=${cityRows.length}`);
+      results.push({ preset: key, ok: true });
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      console.error(`[heatmap-refresh] preset=${key} failed:`, e.message);
+      results.push({ preset: key, ok: false, error: e.message });
+    } finally {
+      client.release();
     }
-  } finally {
-    client.release();
   }
+  // If ALL presets failed, throw so the endpoint returns 500
+  if (results.every(r => !r.ok)) {
+    throw new Error(`All presets failed: ${results.map(r => r.error).join('; ')}`);
+  }
+  return results;
 }
 
 // GET|POST /api/admin/refresh-heatmap — triggered by Render cron every 10-15 min
@@ -1828,14 +1836,14 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
   }
   try {
     const t0 = Date.now();
-    await refreshHeatmapSnapshots();
+    const results = await refreshHeatmapSnapshots();
     const elapsed = Date.now() - t0;
     console.log(`[heatmap-refresh] completed in ${elapsed}ms`);
     // Bust in-memory TTL cache so next request picks up fresh snapshot
     for (const k of _ttlCache.keys()) {
       if (k.startsWith('heatmap:')) _ttlCache.delete(k);
     }
-    res.json({ ok: true, elapsed_ms: elapsed });
+    res.json({ ok: true, elapsed_ms: elapsed, presets: results });
   } catch (err) {
     console.error("[heatmap-refresh] failed:", err.message, err.stack);
     res.status(500).json({ error: "Refresh failed", detail: err.message });
