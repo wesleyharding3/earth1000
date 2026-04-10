@@ -16941,6 +16941,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Kept as a single reference so renderThreads() doesn't need to know which is which
       // (threads and timelines share a card shape).
       let activeGridData = [];
+      // Infinite scroll state
+      const GRID_PAGE_SIZE = 40;
+      let gridRenderedCount = 0;
+      let gridScrollLoading = false;
 
       function setView(view) {
         currentView = view;
@@ -17061,7 +17065,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           threadsGrid.innerHTML = skels(1);
         }
         try {
-          const res = await fetch(`${API}/api/threads/latest?limit=200`);
+          const res = await fetch(`${API}/api/threads/latest?limit=1000`);
           if (!res.ok) throw new Error('Failed');
           threadsData = await res.json();
           applyRecencyStatus(threadsData);
@@ -17077,7 +17081,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       async function loadTimelines() {
         if (currentView === 'timelines') threadsGrid.innerHTML = skels(1);
         try {
-          const res = await fetch(`${API}/api/timelines/latest?limit=200`);
+          const res = await fetch(`${API}/api/timelines/latest?limit=1000`);
           if (!res.ok) throw new Error('Failed');
           const raw = await res.json();
           // Tag each item as a timeline so the card renderer and click handler
@@ -17105,19 +17109,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const label = currentView === 'timelines' ? 'timelines' : 'threads';
           threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No ${label} found</span></div>`;
           threadsCount.innerHTML = '';
+          gridRenderedCount = 0;
           return;
         }
         updateThreadsMeta();
-        threadsGrid.innerHTML = activeGridData.map(threadCardHTML).join('');
-        threadsGrid.querySelectorAll('.nfThreadCard').forEach(card => {
+        // Render first batch
+        gridRenderedCount = 0;
+        threadsGrid.innerHTML = '';
+        appendGridPage();
+      }
+
+      function appendGridPage() {
+        if (gridRenderedCount >= activeGridData.length) return;
+        const batch = activeGridData.slice(gridRenderedCount, gridRenderedCount + GRID_PAGE_SIZE);
+        const fragment = document.createDocumentFragment();
+        const tmp = document.createElement('div');
+        tmp.innerHTML = batch.map(threadCardHTML).join('');
+        while (tmp.firstChild) {
+          const card = tmp.firstChild;
           card.addEventListener('click', () => {
             try {
               const t = JSON.parse(card.dataset.thread);
               openThreadInPanel(t);
             } catch(e) { console.warn('Failed to open item:', e); }
           });
-        });
+          fragment.appendChild(card);
+        }
+        threadsGrid.appendChild(fragment);
+        gridRenderedCount += batch.length;
       }
+
+      // Infinite scroll on threads/timelines viewport
+      threadsVp.addEventListener('scroll', () => {
+        if (gridRenderedCount >= activeGridData.length || gridScrollLoading) return;
+        const scrollBottom = threadsVp.scrollTop + threadsVp.clientHeight;
+        if (scrollBottom >= threadsVp.scrollHeight - 300) {
+          gridScrollLoading = true;
+          requestAnimationFrame(() => {
+            appendGridPage();
+            gridScrollLoading = false;
+          });
+        }
+      });
 
       function openThreadInPanel(t) {
         // Build a node-like object compatible with the cluster's openNodePanel
@@ -24141,6 +24174,13 @@ body.ticker-active .gTickerLabel {
         </div>
       </div>
       <div class="cdSections" id="cdSectionsEl">
+        ${node.description ? `<div class="cdSection" id="cdDescSection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 3h10M3 6.5h10M3 10h7" stroke-linecap="round"/></svg>
+            Summary
+          </div>
+          <div class="cdDescBody" style="font-size:13px;line-height:1.55;color:rgba(255,255,255,0.82);padding:0 2px">${esc(node.description)}</div>
+        </div>` : ''}
         <div class="cdSection" id="cdSummarySection">
           <div class="cdSectionLabel">
             <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6.5"/><path d="M8 5v4M8 11v.01" stroke-linecap="round"/></svg>
