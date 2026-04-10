@@ -17482,6 +17482,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Default to Threads view on load
       setView('threads');
 
+      // ── Recency-based status & ranking ────────────────────────────
+      const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
+      function applyRecencyStatus(data) {
+        const now = Date.now();
+        const H24 = 24 * 60 * 60 * 1000;
+        const H48 = 48 * 60 * 60 * 1000;
+        for (const t of data) {
+          if (t.latest_published_at) {
+            const age = now - new Date(t.latest_published_at).getTime();
+            if (age <= H24)      t.status = 'active';
+            else if (age <= H48) t.status = 'cooling';
+            else                 t.status = 'dormant';
+          }
+        }
+        data.sort((a, b) => {
+          const ra = STATUS_RANK[a.status] ?? 1;
+          const rb = STATUS_RANK[b.status] ?? 1;
+          if (ra !== rb) return ra - rb;
+          const da = new Date(a.latest_published_at || 0).getTime();
+          const db = new Date(b.latest_published_at || 0).getTime();
+          return db - da;
+        });
+      }
+
       function threadCardHTML(t) {
         const catColor = THREAD_CAT_COLORS[(t.primary_category || '').toLowerCase()] || THREAD_CAT_COLORS.default;
         // Image cascade (highest priority first):

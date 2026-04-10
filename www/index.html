@@ -5130,8 +5130,8 @@ body.ticker-active #flowControls {
       gap: 8px;
       flex-shrink: 0;
     }
-    /* Push collapse button to far right of title row */
-    .nfTitleRow > .nfCollapseBtn { margin-left: auto; }
+    /* Push collapse button to far right of meta bar */
+    #nfMeta > .nfCollapseBtn { margin-left: auto; }
 
     /* ── Filter row: scrollable strip of filter controls ── */
     .nfFiltersRow {
@@ -16871,11 +16871,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
           </div>
         </div>
-        <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
-          <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="2,3.5 5,6.5 8,3.5"/>
-          </svg>
-        </button>
       </div>
       <!-- Row 2: filter strip (feed mode only, collapsible) -->
       <div class="nfFiltersRow">
@@ -17001,6 +16996,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <div id="nfMeta">
       <span class="nfMetaCount" id="nfMetaCount"></span>
       <div class="nfMetaPills" id="nfMetaPills"></div>
+      <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
+        <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="2,3.5 5,6.5 8,3.5"/>
+        </svg>
+      </button>
     </div>
     <!-- ── WELCOME ── -->
     <div id="nfWelcome">
@@ -17769,6 +17769,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Default to Threads view on load.
       setView('threads');
 
+      // ── Recency-based status & ranking ────────────────────────────
+      // Overwrites t.status based on latest_published_at:
+      //   • within 24h  → active
+      //   • 24-48h      → cooling  (ranked lower)
+      //   • beyond 48h  → dormant  (ranked lowest)
+      // Sorts in-place: active first, cooling second, dormant last.
+      const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
+      function applyRecencyStatus(data) {
+        const now = Date.now();
+        const H24 = 24 * 60 * 60 * 1000;
+        const H48 = 48 * 60 * 60 * 1000;
+        for (const t of data) {
+          if (t.latest_published_at) {
+            const age = now - new Date(t.latest_published_at).getTime();
+            if (age <= H24)      t.status = 'active';
+            else if (age <= H48) t.status = 'cooling';
+            else                 t.status = 'dormant';
+          }
+        }
+        data.sort((a, b) => {
+          const ra = STATUS_RANK[a.status] ?? 1;
+          const rb = STATUS_RANK[b.status] ?? 1;
+          if (ra !== rb) return ra - rb;
+          // Within same tier, newer first
+          const da = new Date(a.latest_published_at || 0).getTime();
+          const db = new Date(b.latest_published_at || 0).getTime();
+          return db - da;
+        });
+      }
+
       function threadCardHTML(t) {
         const catColor = THREAD_CAT_COLORS[(t.primary_category || '').toLowerCase()] || THREAD_CAT_COLORS.default;
         // Image cascade (highest priority first):
@@ -17840,12 +17870,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       async function loadThreads() {
+        // Always show skeletons when switching to threads and data isn't ready,
+        // even if the fetch is already in flight — clears stale timelines cards.
+        if (currentView === 'threads' && !threadsLoaded) {
+          threadsGrid.innerHTML = skels(1);
+        }
         if (threadsInFlight) return threadsInFlight;
 
         // Hydrate instantly from the preload (fired at page boot) so the
         // threads grid is populated the moment the user opens the panel.
         if (Array.isArray(window.__preloadedThreads) && window.__preloadedThreads.length && !threadsLoaded) {
           threadsData = window.__preloadedThreads;
+          applyRecencyStatus(threadsData);
           threadsLoaded = true;
           if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
         } else if (currentView === 'threads') {
@@ -17865,6 +17901,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const res = await fetch(`${API}/api/threads/latest?${params}`);
             if (!res.ok) throw new Error('Failed');
             threadsData = await res.json();
+            applyRecencyStatus(threadsData);
             threadsLoaded = true;
             if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
           } catch (e) {
@@ -17883,8 +17920,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // so we tag each row with __kind='timeline' and reuse the existing
       // renderer / lazy-pagination path through activeGridData.
       async function loadTimelines() {
+        // Always show skeletons when switching to timelines and data isn't ready,
+        // even if the fetch is already in flight — clears stale threads cards.
+        if (currentView === 'timelines' && !timelinesLoaded) {
+          threadsGrid.innerHTML = skels(1);
+        }
         if (timelinesInFlight) return timelinesInFlight;
-        if (currentView === 'timelines') threadsGrid.innerHTML = skels(1);
 
         timelinesInFlight = (async () => {
           try {
@@ -17897,6 +17938,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             // Tag each item so the card renderer routes to the timeline
             // flow endpoint instead of the thread one.
             timelinesData = (raw || []).map(t => ({ ...t, __kind: 'timeline' }));
+            applyRecencyStatus(timelinesData);
             timelinesLoaded = true;
             if (currentView === 'timelines') { activeGridData = timelinesData; renderThreads(); }
           } catch (e) {
