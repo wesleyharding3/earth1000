@@ -1647,7 +1647,7 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       thread_id:           thread.id,
       thread_title:        thread.title,
       article_ids:         uniqueIds,
-      video_id:            thread.videoId,
+      video_id:            thread._youtubeOverride?.video_id || thread.videoId,
       voiceover_text:      ns.voiceover,
       transition:          ns.transition || null,
       globe_focus:         thread.globeFocus

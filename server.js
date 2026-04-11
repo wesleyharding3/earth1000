@@ -2497,6 +2497,44 @@ app.get('/api/admin/briefing-editor/segments/:episodeId', requireAdmin, async (r
   }
 });
 
+// Resolve location name(s) to coordinates — tries countries first, then cities
+app.post('/api/admin/briefing-editor/resolve-coords', requireAdmin, async (req, res) => {
+  try {
+    const names = req.body?.names;
+    if (!Array.isArray(names) || !names.length) return res.json({});
+    const lower = names.map(n => (n || '').toLowerCase().trim());
+    const coords = {};
+
+    // Countries
+    const { rows: cRows } = await pool.query(
+      `SELECT name, latitude AS lat, longitude AS lon FROM countries WHERE LOWER(name) = ANY($1::text[])`,
+      [lower]
+    );
+    for (const r of cRows) {
+      const orig = names.find(n => n.toLowerCase().trim() === r.name.toLowerCase());
+      if (orig) coords[orig] = { lat: parseFloat(r.lat), lon: parseFloat(r.lon), type: 'country' };
+    }
+
+    // Cities — only names not matched as countries
+    const remaining = names.filter(n => !coords[n]);
+    if (remaining.length) {
+      const { rows: ciRows } = await pool.query(
+        `SELECT name, latitude AS lat, longitude AS lon FROM cities WHERE LOWER(name) = ANY($1::text[])`,
+        [remaining.map(n => n.toLowerCase().trim())]
+      );
+      for (const r of ciRows) {
+        const orig = remaining.find(n => n.toLowerCase().trim() === r.name.toLowerCase());
+        if (orig) coords[orig] = { lat: parseFloat(r.lat), lon: parseFloat(r.lon), type: 'city' };
+      }
+    }
+
+    res.json(coords);
+  } catch (err) {
+    console.error('[briefing-editor] resolve-coords error:', err.message);
+    res.status(500).json({ error: 'Failed to resolve coordinates' });
+  }
+});
+
 // Save edited segments
 app.put('/api/admin/briefing-editor/segments/:episodeId', requireAdmin, async (req, res) => {
   try {

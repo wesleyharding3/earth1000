@@ -1480,7 +1480,7 @@
 
           // Video
           const vid = seg.video || {};
-          const videoId = vid.video_id || vid.id || '';
+          const videoId = vid.video_id || vid.id || seg.video_id || '';
           bodyHtml += `
             <div class="seg-field">
               <div class="seg-label">Video</div>
@@ -1517,6 +1517,51 @@
         `;
 
         container.appendChild(card);
+      });
+      // Attach auto-resolve listeners to arc name inputs
+      attachArcResolveListeners();
+      // Auto-resolve any arcs that have names but missing coordinates
+      autoResolveEmptyCoords(segments);
+    }
+
+    async function autoResolveEmptyCoords(segments) {
+      // Collect all arc names with 0,0 coordinates
+      const namesToResolve = new Set();
+      for (const seg of segments) {
+        for (const arc of (seg.flow_arcs || [])) {
+          if (arc.from_name && (!arc.from_lat || arc.from_lat === 0) && (!arc.from_lng || arc.from_lng === 0))
+            namesToResolve.add(arc.from_name);
+          if (arc.to_name && (!arc.to_lat || arc.to_lat === 0) && (!arc.to_lng || arc.to_lng === 0))
+            namesToResolve.add(arc.to_name);
+        }
+      }
+      if (!namesToResolve.size) return;
+      // Filter out already cached
+      const uncached = [...namesToResolve].filter(n => !_coordCache[n]);
+      if (uncached.length) {
+        try {
+          const res = await fetch(`${API_BASE}/api/admin/briefing-editor/resolve-coords`, {
+            method: 'POST', headers: authHeaders(),
+            body: JSON.stringify({ names: uncached })
+          });
+          if (res.ok) {
+            const coords = await res.json();
+            Object.assign(_coordCache, coords);
+          }
+        } catch (_) {}
+      }
+      // Apply cached coords to DOM inputs
+      document.querySelectorAll('.seg-row[data-arc]').forEach(row => {
+        ['from', 'to'].forEach(dir => {
+          const nameInput = row.querySelector(`[data-field="arc_${dir}_name"]`);
+          const latInput  = row.querySelector(`[data-field="arc_${dir}_lat"]`);
+          const lngInput  = row.querySelector(`[data-field="arc_${dir}_lng"]`);
+          if (!nameInput || !latInput || !lngInput) return;
+          const name = nameInput.value.trim();
+          const coord = _coordCache[name];
+          if (coord && (!latInput.value || latInput.value === '0')) latInput.value = coord.lat;
+          if (coord && (!lngInput.value || lngInput.value === '0')) lngInput.value = coord.lon;
+        });
       });
     }
 
@@ -1610,11 +1655,12 @@
             }
           });
 
-          // Video
+          // Video — store both formats for compatibility
           const vidEl = document.querySelector(`input[data-seg="${idx}"][data-field="video_id"]`);
           if (vidEl) {
             const vidVal = vidEl.value.trim();
             clone.video = vidVal ? { video_id: vidVal } : null;
+            clone.video_id = vidVal || null;
           }
 
           // Data Panels
@@ -1652,11 +1698,58 @@
       if (card && !card.classList.contains('open')) toggleSegment(segIdx);
     }
 
+    // ── Auto-resolve location names to coordinates ──
+    // Caches resolved names so repeated lookups don't hit the API
+    const _coordCache = {};
+    async function resolveArcCoords(nameInput) {
+      const name = nameInput.value.trim();
+      if (!name) return;
+      // Check cache first
+      if (_coordCache[name]) {
+        applyResolvedCoords(nameInput, _coordCache[name]);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/briefing-editor/resolve-coords`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ names: [name] })
+        });
+        if (!res.ok) return;
+        const coords = await res.json();
+        if (coords[name]) {
+          _coordCache[name] = coords[name];
+          applyResolvedCoords(nameInput, coords[name]);
+        }
+      } catch (_) {}
+    }
+
+    function applyResolvedCoords(nameInput, coord) {
+      const row = nameInput.closest('.seg-row');
+      if (!row) return;
+      const field = nameInput.dataset.field; // arc_from_name or arc_to_name
+      const prefix = field.startsWith('arc_from') ? 'arc_from' : 'arc_to';
+      const latInput = row.querySelector(`[data-field="${prefix}_lat"]`);
+      const lngInput = row.querySelector(`[data-field="${prefix}_lng"]`);
+      if (latInput && (!latInput.value || latInput.value === '0')) latInput.value = coord.lat;
+      if (lngInput && (!lngInput.value || lngInput.value === '0')) lngInput.value = coord.lon;
+    }
+
+    // Attach auto-resolve listeners after segment editor renders
+    function attachArcResolveListeners() {
+      document.querySelectorAll('[data-field="arc_from_name"], [data-field="arc_to_name"]').forEach(input => {
+        if (input._resolveAttached) return;
+        input._resolveAttached = true;
+        input.addEventListener('blur', () => resolveArcCoords(input));
+      });
+    }
+
     function addFlowArc(segIdx) {
       editableSegments[segIdx].flow_arcs = editableSegments[segIdx].flow_arcs || [];
       syncSegmentFromDOM(segIdx);
       editableSegments[segIdx].flow_arcs.push({ from_name: '', from_lat: 0, from_lng: 0, to_name: '', to_lat: 0, to_lng: 0 });
       renderSegmentEditor(editableSegments);
+      attachArcResolveListeners();
       const card = document.getElementById(`seg-card-${segIdx}`);
       if (card && !card.classList.contains('open')) toggleSegment(segIdx);
     }
@@ -1665,6 +1758,7 @@
       syncSegmentFromDOM(segIdx);
       editableSegments[segIdx].flow_arcs.splice(arcIdx, 1);
       renderSegmentEditor(editableSegments);
+      attachArcResolveListeners();
       const card = document.getElementById(`seg-card-${segIdx}`);
       if (card && !card.classList.contains('open')) toggleSegment(segIdx);
     }
