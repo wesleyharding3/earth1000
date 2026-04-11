@@ -4399,6 +4399,82 @@ body.ticker-active #flowControls {
       background: rgba(255,200,140,0.10);
       border-left: 2px solid rgba(255,200,140,0.85);
     }
+    /* ── Enhanced keyword interpanel ── */
+    .kwi-ref-interpanel { display: flex; flex-direction: column; gap: 0; }
+    .kwi-ref-spark {
+      padding: 8px 8px 4px;
+      border-bottom: 1px solid rgba(255,200,140,0.1);
+      flex-shrink: 0;
+    }
+    .kwi-ref-spark canvas {
+      width: 100%; height: 52px; display: block; border-radius: 4px;
+    }
+    .kwi-ref-spark-label {
+      font-size: 9px; color: rgba(255,255,255,0.3); text-transform: uppercase;
+      letter-spacing: 0.08em; margin-bottom: 4px; font-weight: 600;
+    }
+    .kwi-ref-articles {
+      display: flex; flex-direction: column; gap: 3px;
+      padding: 6px 4px; overflow-y: auto; max-height: 240px;
+    }
+    .kwi-ref-articles::-webkit-scrollbar { width: 5px; }
+    .kwi-ref-articles::-webkit-scrollbar-thumb { background: rgba(255,200,140,0.2); border-radius: 3px; }
+    .kwi-ref-card {
+      display: flex; gap: 8px; padding: 6px; border-radius: 6px;
+      background: rgba(255,255,255,0.03); cursor: pointer;
+      transition: background 0.12s; align-items: center; min-height: 0;
+    }
+    .kwi-ref-card:hover { background: rgba(74,158,255,0.1); }
+    .kwi-ref-card-img {
+      width: 48px; height: 36px; border-radius: 4px; object-fit: cover;
+      flex-shrink: 0; background: rgba(255,255,255,0.06);
+    }
+    .kwi-ref-card-body { flex: 1; min-width: 0; }
+    .kwi-ref-card-title {
+      font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.82);
+      line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .kwi-ref-card-meta {
+      font-size: 9px; color: rgba(255,255,255,0.35); margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Expanded article card overlay */
+    .kwi-ref-expand {
+      position: absolute; left: 8px; right: 8px; bottom: 8px;
+      background: rgba(10,14,22,0.97); border: 1px solid rgba(255,200,140,0.2);
+      border-radius: 10px; z-index: 10; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      animation: kwiRefSlideIn 0.18s ease-out; overflow: hidden;
+    }
+    .kwi-ref-expand-img {
+      width: 100%; height: 140px; object-fit: cover; display: block;
+    }
+    .kwi-ref-expand-body { padding: 10px 12px 12px; }
+    .kwi-ref-expand-title {
+      font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.9);
+      line-height: 1.35; margin-bottom: 4px;
+    }
+    .kwi-ref-expand-summary {
+      font-size: 11px; color: rgba(255,255,255,0.55); line-height: 1.5;
+      display: -webkit-box; -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .kwi-ref-expand-meta {
+      font-size: 9px; color: rgba(255,255,255,0.35); margin-top: 6px;
+      display: flex; gap: 8px; align-items: center;
+    }
+    .kwi-ref-expand-close {
+      position: absolute; top: 6px; right: 8px;
+      background: rgba(0,0,0,0.6); border: none; color: rgba(255,255,255,0.7);
+      width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+      font-size: 13px; display: flex; align-items: center; justify-content: center;
+    }
+    .kwi-ref-expand-close:hover { background: rgba(0,0,0,0.8); color: #fff; }
+    .kwi-ref-expand-link {
+      display: inline-block; margin-top: 8px; font-size: 10px;
+      color: #4a9eff; text-decoration: none; font-weight: 600;
+    }
+    .kwi-ref-expand-link:hover { text-decoration: underline; }
 
     /* ── Keyword Intelligence Widget ── */
     .kwi-widget {
@@ -6494,6 +6570,25 @@ body.ticker-active #flowControls {
         z-index: 10000 !important;
       }
 
+      /* ── KWI widget — fill more screen on mobile ── */
+      .kwi-widget {
+        min-width: 0 !important;
+        border-radius: 10px;
+      }
+      .stats-row {
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+      }
+      .kwi-trending-list { padding: 0 4px; }
+      .kwi-trending-item { padding: 9px 8px; gap: 6px; }
+      .kwi-trending-keyword { font-size: 13px; }
+      .kwi-trending-mentions { font-size: 11px; }
+      .kwi-skel-item { padding: 9px 8px; }
+      .kwi-skel-bar { height: 14px; }
+      .kwi-header { padding: 12px 12px 11px; }
+      .kwi-mode-tabs { padding: 0 8px 6px; }
+      .kwi-footer { padding: 8px 12px; }
+
       /* ── Mobile ticker: flush to bottom, fills safe area via padding ── */
       #globalTicker {
         bottom: 0 !important;
@@ -6555,12 +6650,12 @@ body.ticker-active #flowControls {
       }
       .gTickerSource,
       .gTickerLocation,
-      .gTickerDate { font-size: 12px !important; }
+      .gTickerDate { font-size: 7px !important; }
       .gTickerTitle,
-      .gTickerSummary { font-size: 14px !important; }
+      .gTickerSummary { font-size: 9px !important; }
       .gTickerDiv {
-        margin: 0 14px;
-        font-size: 14px !important;
+        margin: 0 12px;
+        font-size: 9px !important;
         line-height: 1;
       }
 
@@ -6998,7 +7093,7 @@ body.ticker-active #flowControls {
   transition: color 0.15s;
 }
 .kwi-explain-close:hover { color: rgba(255,255,255,0.7); }
-.kwi-explain-body { padding: 10px 12px 12px; }
+.kwi-explain-body { padding: 10px 12px 12px; max-height: 200px; overflow-y: auto; }
 .kwi-explain-text {
   font-size: 12px; color: rgba(255,255,255,0.72); line-height: 1.65;
 }
@@ -7607,8 +7702,8 @@ window.sourceBiasBadgeHTML = function(bias) {
             <span class="kwi-title">Keyword Intelligence</span>
           </div>
           <div class="kwi-header-right">
-            <button class="kwi-ai-btn" id="kwiAiBtn" onclick="window.kwiExplainKeyword()" title="AI Context — Enterprise">
-              ✦ AI Context
+            <button class="kwi-ai-btn" id="kwiAiBtn" onclick="window.kwiExplainKeyword()" title="Keyword Context">
+              ✦ Context
             </button>
           </div>
         </div>
@@ -7616,7 +7711,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         <!-- AI Explain Panel (hidden by default) -->
         <div class="kwi-explain-panel" id="kwiExplainPanel" style="display:none;">
           <div class="kwi-explain-header">
-            <span class="kwi-explain-badge">✦ Enterprise AI · Keyword Context</span>
+            <span class="kwi-explain-badge">✦ Keyword Context</span>
             <button class="kwi-explain-close" onclick="window.kwiCloseExplain()">✕</button>
           </div>
           <div class="kwi-explain-body">
@@ -20088,17 +20183,86 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   // Click on a trending keyword row toggles an inline expandable
-  // references interpanel directly beneath the row. Shows the ranked
-  // article list (base_priority DESC) with bar-collapse UX. Clicking
-  // the same keyword again collapses it. Clicking a different keyword
-  // collapses the current one and opens the new one.
+  // interpanel with a 30-day sparkline + scrollable article cards.
   let _kwiOpenRefKeyword = null;
+  let _kwiExpandEl = null; // currently expanded article card overlay
+
+  function _kwiDrawSparkline(canvas, series) {
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+    if (!series.length) return;
+    const vals = series.map(d => d.mentions);
+    const maxV = Math.max(...vals, 1);
+    const pad = { top: 4, bottom: 4, left: 0, right: 0 };
+    const pw = w - pad.left - pad.right, ph = h - pad.top - pad.bottom;
+    const step = pw / Math.max(vals.length - 1, 1);
+    // fill
+    ctx.beginPath();
+    ctx.moveTo(pad.left, pad.top + ph);
+    vals.forEach((v, i) => {
+      ctx.lineTo(pad.left + i * step, pad.top + ph - (v / maxV) * ph);
+    });
+    ctx.lineTo(pad.left + (vals.length - 1) * step, pad.top + ph);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, pad.top, 0, h);
+    grad.addColorStop(0, 'rgba(255,200,140,0.25)');
+    grad.addColorStop(1, 'rgba(255,200,140,0)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    // line
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      const x = pad.left + i * step, y = pad.top + ph - (v / maxV) * ph;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = 'rgba(255,200,140,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  function _kwiCloseExpand() {
+    if (_kwiExpandEl) { _kwiExpandEl.remove(); _kwiExpandEl = null; }
+  }
+
+  function _kwiShowExpand(article, panel) {
+    _kwiCloseExpand();
+    const imgSrc = article.image_url || '';
+    const title = article.title || article.original_title || '';
+    const summary = article.summary || '';
+    const source = article.source_name || '';
+    const date = article.published_at ? new Date(article.published_at).toLocaleDateString() : '';
+    const url = article.article_url || '#';
+    const el = document.createElement('div');
+    el.className = 'kwi-ref-expand';
+    el.innerHTML =
+      (imgSrc ? `<img class="kwi-ref-expand-img" src="${imgSrc}" alt="" onerror="this.style.display='none'"/>` : '') +
+      `<button class="kwi-ref-expand-close" onclick="event.stopPropagation()">✕</button>` +
+      `<div class="kwi-ref-expand-body">` +
+        `<div class="kwi-ref-expand-title">${title}</div>` +
+        (summary ? `<div class="kwi-ref-expand-summary">${summary}</div>` : '') +
+        `<div class="kwi-ref-expand-meta"><span>${source}</span><span>${date}</span></div>` +
+        (url !== '#' ? `<a class="kwi-ref-expand-link" href="${url}" target="_blank" rel="noopener">Open article ↗</a>` : '') +
+      `</div>`;
+    el.querySelector('.kwi-ref-expand-close').addEventListener('click', _kwiCloseExpand);
+    // close when clicking outside
+    el.addEventListener('click', e => e.stopPropagation());
+    panel.style.position = 'relative';
+    panel.appendChild(el);
+    _kwiExpandEl = el;
+  }
+
   window.kwiTrendingClick = function(keyword, evt) {
     if (evt) evt.stopPropagation();
     const row = evt && evt.currentTarget;
-    if (!row) return kwiDoSearch(keyword); // fallback to old behavior
+    if (!row) return kwiDoSearch(keyword);
 
-    // If already open for this same keyword, collapse & return.
+    _kwiCloseExpand();
+
+    // Toggle off if same keyword
     const existing = row.nextElementSibling;
     if (existing && existing.classList.contains('kwi-ref-interpanel')) {
       existing.remove();
@@ -20106,7 +20270,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       row.classList.remove('kwi-trending-item-active');
       return;
     }
-    // Close any other open interpanel in the list.
+    // Close any other open interpanel
     const container = row.parentElement;
     if (container) {
       container.querySelectorAll('.kwi-ref-interpanel').forEach(el => el.remove());
@@ -20117,29 +20281,74 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const panel = document.createElement('div');
     panel.className = 'kwi-ref-interpanel';
-    panel.innerHTML = `<div class="sigBarLoading">Loading references for "${keyword}"…</div>`;
+    panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:11px;">Loading…</div>`;
     row.insertAdjacentElement('afterend', panel);
 
     const API = window.__API || 'https://earth-wjr6.onrender.com';
-    fetch(`${API}/api/keywords/${encodeURIComponent(keyword)}/references?limit=150&days=14`)
-      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(data => {
-        if (_kwiOpenRefKeyword !== keyword) return; // user clicked away
-        const articles = Array.isArray(data.articles) ? data.articles : [];
-        if (!articles.length) {
-          panel.innerHTML = `<div class="sigBarEmpty">No references found in the last 14 days.</div>`;
-          return;
-        }
-        const listEl = document.createElement('div');
-        listEl.className = 'sigBarList';
-        window.__renderSignalBarList(listEl, articles, { highlight: false, scoreField: 'base_priority' });
-        panel.innerHTML = '';
-        panel.appendChild(listEl);
-      })
-      .catch(err => {
-        console.error('[kwi references]', err);
-        panel.innerHTML = `<div class="sigBarEmpty">Failed to load references.</div>`;
+    const enc = encodeURIComponent(keyword);
+
+    // Fetch trend + articles in parallel
+    Promise.all([
+      fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/api/keywords/${enc}/references?limit=20&days=14`).then(r => r.ok ? r.json() : { articles: [] })
+    ]).then(([trendRaw, refData]) => {
+      if (_kwiOpenRefKeyword !== keyword) return;
+
+      const series = normalizeTrendSeries(trendRaw);
+      const articles = (Array.isArray(refData.articles) ? refData.articles : []).slice(0, 20);
+
+      panel.innerHTML = '';
+
+      // Sparkline section
+      const sparkSection = document.createElement('div');
+      sparkSection.className = 'kwi-ref-spark';
+      sparkSection.innerHTML = `<div class="kwi-ref-spark-label">30-day mentions</div>`;
+      const sparkCanvas = document.createElement('canvas');
+      sparkSection.appendChild(sparkCanvas);
+      panel.appendChild(sparkSection);
+
+      // Draw sparkline after DOM insertion
+      requestAnimationFrame(() => _kwiDrawSparkline(sparkCanvas, series));
+
+      // Articles section
+      if (!articles.length) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:11px;';
+        empty.textContent = 'No recent articles found.';
+        panel.appendChild(empty);
+        return;
+      }
+
+      const listEl = document.createElement('div');
+      listEl.className = 'kwi-ref-articles';
+
+      articles.forEach(a => {
+        const card = document.createElement('div');
+        card.className = 'kwi-ref-card';
+        const imgSrc = a.image_url || '';
+        const title = a.title || a.original_title || 'Untitled';
+        const source = a.source_name || '';
+        const date = a.published_at ? new Date(a.published_at).toLocaleDateString() : '';
+        card.innerHTML =
+          (imgSrc ? `<img class="kwi-ref-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.style.display='none'"/>` : `<div class="kwi-ref-card-img" style="background:rgba(255,255,255,0.04);"></div>`) +
+          `<div class="kwi-ref-card-body">` +
+            `<div class="kwi-ref-card-title">${title}</div>` +
+            `<div class="kwi-ref-card-meta">${source}${date ? ' · ' + date : ''}</div>` +
+          `</div>`;
+        card.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _kwiShowExpand(a, panel);
+        });
+        listEl.appendChild(card);
       });
+
+      panel.appendChild(listEl);
+    }).catch(err => {
+      console.error('[kwi interpanel]', err);
+      if (_kwiOpenRefKeyword === keyword) {
+        panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.35);font-size:11px;">Failed to load data.</div>`;
+      }
+    });
   };
 
   // ── Load trending keywords (default view) ─────────────────────────────────
@@ -20740,7 +20949,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } finally {
       btn.disabled = false;
       btn.classList.remove('loading');
-      btn.textContent = '✦ AI Context';
+      btn.textContent = '✦ Context';
       kwiExplaining = false;
     }
   };
@@ -21323,7 +21532,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const { createClient } = supabase;
   const sb = window.__earthSupabase || createClient(
     'https://hqzabwjwuszupxwookgx.supabase.co',
-    'sb_publishable_9mT1GessoNyi5cvPN-PSbw_IcTydubW'
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhxemFid2p3dXN6dXB4d29va2d4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMzYwMjAsImV4cCI6MjA4OTcxMjAyMH0.1YnyeezzdQYqPcroyAR84rnlbd7XLqCU_1BNQLvfG78',
+    {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: window.localStorage,
+        storageKey: 'sb-hqzabwjwuszupxwookgx-auth-token'
+      }
+    }
   );
   window.__earthSupabase = sb;
 
