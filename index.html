@@ -21126,6 +21126,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             bWrap.innerHTML = '';
             bWrap.classList.remove('visible');
           }
+          // Also handle inline video card in article panel
+          const videoCard = iframe.closest('.bAPVideoCard');
+          if (videoCard) { videoCard.remove(); }
           break;
         }
       }
@@ -21280,7 +21283,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const { createClient } = supabase;
   const sb = window.__earthSupabase || createClient(
     'https://hqzabwjwuszupxwookgx.supabase.co',
-    'sb_publishable_9mT1GessoNyi5cvPN-PSbw_IcTydubW'
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhxemFid2p3dXN6dXB4d29va2d4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxMzYwMjAsImV4cCI6MjA4OTcxMjAyMH0.1YnyeezzdQYqPcroyAR84rnlbd7XLqCU_1BNQLvfG78'
   );
   window.__earthSupabase = sb;
 
@@ -22488,6 +22491,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   box-shadow: 0 8px 32px rgba(0,0,0,0.6);
 }
 .bAPCard:hover { background: rgba(255,255,255,0.07); }
+.bAPVideoCard { cursor: default; }
+.bAPVideoCard:hover { background: rgba(6,10,20,0.92); }
+.bAPVideoCard iframe {
+  width: 100%; aspect-ratio: 16/9; display: block; border: none;
+}
 .bAPCardImg { width: 100%; height: 76px; object-fit: cover; display: block; }
 .bAPCardImgNone { width: 100%; height: 76px; background: rgba(255,255,255,0.04); }
 .bAPCardBody { padding: 8px 10px; }
@@ -24236,41 +24244,20 @@ body.ticker-active .gTickerLabel {
       audioNext.load();
     }
 
-    // ── Video embed ────────────────────────────────────────────────────────
+    // ── Video + Article panel (unified) ────────────────────────────────────
+    // When a segment has a video, the video card replaces one of the article
+    // cards in the left panel — saving screen real estate, especially mobile.
+    // The separate right-side bVideoWrap is no longer used.
     const videoWrap = document.getElementById('bVideoWrap');
-    if (seg.video_id) {
-      const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
-      const vidDate = seg.published_at
-        ? fmtDate(seg.published_at)
-        : fmtDate(new Date());
-      videoWrap.innerHTML = `
-        <div class="bVideoMetaBar top">
-          <span class="bVideoSource" id="bVideoSource">—</span>
-        </div>
-        <iframe src="https://www.youtube.com/embed/${seg.video_id}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"></iframe>
-        <div class="bVideoMetaBar bottom">
-          ${vidLoc ? `<span class="bVideoLocation">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-              <circle cx="12" cy="9" r="2.5"/>
-            </svg>
-            ${vidLoc}
-          </span>` : '<span></span>'}
-          <span class="bVideoDate">${vidDate}</span>
-        </div>`;
-      videoWrap.classList.add('visible');
-    } else {
-      videoWrap.innerHTML = '';
-      videoWrap.classList.remove('visible');
-    }
+    videoWrap.innerHTML = '';
+    videoWrap.classList.remove('visible');
 
-    // ── Article panel + ticker (non-blocking) ──────────────────────────────
     // Data panels are sequenced AFTER article panel via startGlobeTimers (50%)
     {
       const dp = document.getElementById('bDataPanels');
       if (dp) { dp.innerHTML = ''; dp.classList.remove('visible'); }
     }
-    loadArticlePanel(seg.article_ids?.length ? seg.article_ids : []);
+    loadArticlePanel(seg.article_ids?.length ? seg.article_ids : [], seg.video_id || null, seg);
 
     updateDots();
     updatePlayBtn();
@@ -24593,23 +24580,50 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Article panel + ticker loader ─────────────────────────────────────────
-  async function loadArticlePanel(ids) {
+  function makeVideoCard(videoId, seg) {
+    const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
+    const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
+    return `<div class="bAPCard bAPVideoCard">
+      <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1"
+        allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"></iframe>
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource" id="bVideoSource">—</span>
+          ${vidLoc ? `<span class="bAPCardLocation">${vidLoc}</span>` : ''}
+          <span class="bAPCardDate">${vidDate}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  async function loadArticlePanel(ids, videoId, seg) {
     const panel   = document.getElementById('bArticlePanel');
     const snapIdx = segIdx;
     panel.classList.remove('visible');
-    if (!ids?.length) { panel.innerHTML = ''; return; } // keep seeded ticker alive
+    if (!ids?.length && !videoId) { panel.innerHTML = ''; return; }
     stopTicker();
     try {
-      const res = await fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`);
-      if (!res.ok) throw new Error('fetch');
-      const articles = await res.json();
+      let articles = [];
+      if (ids?.length) {
+        const res = await fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`);
+        if (!res.ok) throw new Error('fetch');
+        articles = await res.json();
+      }
       if (segIdx !== snapIdx) return;
-      // Left panel: first 2
-      panel.innerHTML = articles.slice(0, 2).map(makeAPCard).join('');
-      if (articles.length) panel.classList.add('visible');
+      // When video present: video card first, then 1 article card
+      // When no video: 2 article cards
+      const cards = [];
+      if (videoId) {
+        cards.push(makeVideoCard(videoId, seg));
+        cards.push(...articles.slice(0, 1).map(makeAPCard));
+      } else {
+        cards.push(...articles.slice(0, 2).map(makeAPCard));
+      }
+      panel.innerHTML = cards.join('');
+      if (cards.length) panel.classList.add('visible');
       // Ticker: all articles, looping
-      startTicker(articles);
-      // Backfill video source name
+      if (articles.length) startTicker(articles);
+      // Backfill video source name from first article
       const srcEl = document.getElementById('bVideoSource');
       if (srcEl && articles.length) srcEl.textContent = articles[0].source_name || '—';
     } catch (_) {
