@@ -21673,7 +21673,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       await applySession(data?.session || null);
     } catch (err) {
       console.warn('[auth] initial session load failed:', err.message);
-      clearAuthUI();
+      // Don't clear auth UI on transient network errors — the session may
+      // still be valid in localStorage. onAuthStateChange will fire when
+      // connectivity recovers and update the UI then.
     }
   })();
 
