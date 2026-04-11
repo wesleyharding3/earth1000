@@ -1496,6 +1496,12 @@ The editor who curated today's stories has historically favoured coverage of: ${
       throw new Error(`Claude returned malformed JSON for narrative: ${firstErr.message}`);
     }
   }
+  // Cap segments to exactly the number of threads — Claude sometimes generates extras
+  const validIds = new Set(threadData.map(t => t.id));
+  result.segments = result.segments.filter(s => validIds.has(s.thread_id));
+  if (result.segments.length > threadData.length) {
+    result.segments = result.segments.slice(0, threadData.length);
+  }
   // Post-process: interleave segments to break same-country/region clusters
   result.segments = interleaveSegments(result.segments, threadData);
   return result;

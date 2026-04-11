@@ -1231,12 +1231,24 @@
         if (finalStatus === 'done') {
           if (episodeId) currentEpisodeId = episodeId;
 
-          // Fetch segments
-          const segRes = await fetch(`${API_BASE}/api/admin/briefing-editor/segments/${currentEpisodeId}`, {
-            headers: authHeaders()
-          });
-          if (!segRes.ok) throw new Error('Failed to fetch segments');
-          const segData = await segRes.json();
+          // Fetch segments — retry up to 3 times (DB may be under pressure after generation)
+          let segData;
+          for (let segAttempt = 1; segAttempt <= 3; segAttempt++) {
+            // Re-read token from localStorage in case it was refreshed by another tab
+            const freshToken = localStorage.getItem('sb-access-token');
+            if (freshToken) token = freshToken;
+            const segRes = await fetch(`${API_BASE}/api/admin/briefing-editor/segments/${currentEpisodeId}`, {
+              headers: authHeaders()
+            });
+            if (segRes.ok) {
+              segData = await segRes.json();
+              break;
+            }
+            const errBody = await segRes.json().catch(() => ({}));
+            appendLog(`Segments fetch attempt ${segAttempt}/3 failed: HTTP ${segRes.status} — ${errBody.error || 'unknown'}`, 'warn');
+            if (segAttempt === 3) throw new Error(`Failed to fetch segments (HTTP ${segRes.status})`);
+            await new Promise(r => setTimeout(r, 3000));
+          }
           editableSegments = Array.isArray(segData) ? segData : (segData.segments || []);
 
           // Close overlay and go to step 3

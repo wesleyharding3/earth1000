@@ -2390,8 +2390,10 @@ app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) =
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
     });
-    const send = (type, data) => {
-      res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+    const send = (type, data, extra) => {
+      const evt = { type, data };
+      if (extra) Object.assign(evt, extra);
+      res.write(`data: ${JSON.stringify(evt)}\n\n`);
     };
     send('log', `Manifest saved: ${manifestPath}`);
 
@@ -2410,9 +2412,14 @@ app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) =
       env: { ...process.env }
     });
 
+    let _detectedEpisodeId = null;
     child.stdout.on('data', d => {
-      const lines = d.toString().split('\n').filter(Boolean);
+      const text = d.toString();
+      const lines = text.split('\n').filter(Boolean);
       for (const line of lines) send('log', line);
+      // Extract episode ID from generator output so we can pass it to the client
+      const epMatch = text.match(/Episode id[=:]\s*(\d+)/i);
+      if (epMatch) _detectedEpisodeId = parseInt(epMatch[1]);
     });
     child.stderr.on('data', d => {
       const lines = d.toString().split('\n').filter(Boolean);
@@ -2421,7 +2428,7 @@ app.post('/api/admin/briefing-editor/generate', requireAdmin, async (req, res) =
 
     child.on('close', (code) => {
       if (code === 0) {
-        send('done', 'Briefing generated successfully');
+        send('done', 'Briefing generated successfully', { episode_id: _detectedEpisodeId });
       } else {
         send('fail', `Generator exited with code ${code}`);
       }
