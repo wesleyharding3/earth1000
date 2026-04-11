@@ -1077,6 +1077,7 @@
             <div class="video-title">${escHtml(meta.title || 'Video resolved')}</div>
             <div class="video-id">${escHtml(meta.video_id || '')}</div>
             ${meta.embeddable ? '<div style="color:#22c55e;font-size:11px;">✓ Embeddable</div>' : ''}
+            ${meta.has_captions ? '<div style="color:#60c8ff;font-size:11px;">CC Captions available</div>' : '<div style="color:#94a3b8;font-size:11px;">No captions detected</div>'}
           </div>
         `;
       } catch (e) {
@@ -1491,11 +1492,40 @@
           // Video
           const vid = seg.video || {};
           const videoId = vid.video_id || vid.id || seg.video_id || '';
+          const focal = vid.focal || seg.video_focal || {};
+          const focalEnabled = !!focal.enabled;
+          const focalStart = focal.start_sec ?? '';
+          const focalEnd = focal.end_sec ?? '';
           bodyHtml += `
             <div class="seg-field">
               <div class="seg-label">Video</div>
               <input class="seg-input" data-seg="${idx}" data-field="video_id" placeholder="YouTube Video ID" value="${escHtml(videoId)}" />
               ${videoId ? `<div style="margin-top:6px;"><img src="https://img.youtube.com/vi/${escHtml(videoId)}/mqdefault.jpg" style="max-width:200px;border-radius:4px;" /></div>` : ''}
+            </div>
+            <div class="seg-field" style="padding-left:12px;border-left:2px solid rgba(96,200,255,0.2);">
+              <div class="seg-label" style="color:#60c8ff;">Focal Video Moment</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <input type="checkbox" data-seg="${idx}" data-field="focal_enabled" ${focalEnabled ? 'checked' : ''} />
+                <span style="font-size:11px;color:rgba(255,255,255,0.5);">Enable focal video — enlarges & plays with sound mid-segment</span>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;">
+                  <label style="font-size:10px;color:rgba(255,255,255,0.35);">Start (sec)</label>
+                  <input class="seg-input" data-seg="${idx}" data-field="focal_start" type="number" min="0" step="1" placeholder="e.g. 13" value="${escHtml(String(focalStart))}" />
+                </div>
+                <div style="flex:1;">
+                  <label style="font-size:10px;color:rgba(255,255,255,0.35);">End (sec)</label>
+                  <input class="seg-input" data-seg="${idx}" data-field="focal_end" type="number" min="0" step="1" placeholder="e.g. 28" value="${escHtml(String(focalEnd))}" />
+                </div>
+                <div style="flex:1;">
+                  <label style="font-size:10px;color:rgba(255,255,255,0.35);">Trigger at %</label>
+                  <input class="seg-input" data-seg="${idx}" data-field="focal_trigger_pct" type="number" min="10" max="80" step="5" placeholder="35" value="${escHtml(String(focal.trigger_pct ?? 35))}" />
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                <input type="checkbox" data-seg="${idx}" data-field="focal_captions" ${focal.captions !== false ? 'checked' : ''} />
+                <span style="font-size:10px;color:rgba(255,255,255,0.4);">Enable captions during focal</span>
+              </div>
             </div>`;
 
           // Data Panels
@@ -1671,6 +1701,26 @@
             const vidVal = vidEl.value.trim();
             clone.video = vidVal ? { video_id: vidVal } : null;
             clone.video_id = vidVal || null;
+            // Focal video settings
+            const focalCb = document.querySelector(`input[data-seg="${idx}"][data-field="focal_enabled"]`);
+            const focalStartEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_start"]`);
+            const focalEndEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_end"]`);
+            const focalTriggerEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_trigger_pct"]`);
+            const focalCaptionsCb = document.querySelector(`input[data-seg="${idx}"][data-field="focal_captions"]`);
+            if (focalCb?.checked && focalStartEl && focalEndEl && vidVal) {
+              const focalData = {
+                enabled: true,
+                start_sec: parseInt(focalStartEl.value) || 0,
+                end_sec: parseInt(focalEndEl.value) || 15,
+                trigger_pct: parseInt(focalTriggerEl?.value) || 35,
+                captions: focalCaptionsCb?.checked !== false
+              };
+              if (clone.video) clone.video.focal = focalData;
+              clone.video_focal = focalData;
+            } else {
+              if (clone.video) delete clone.video.focal;
+              delete clone.video_focal;
+            }
           }
 
           // Data Panels

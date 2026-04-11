@@ -21531,67 +21531,62 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const APP_ORIGIN = window.location.origin;
   const API_BASE = window.__API_BASE || 'https://earth-wjr6.onrender.com';
   // ── Persistent storage adapter (survives Capacitor WKWebView restarts) ──
-  // Mirrors auth tokens to both localStorage AND IndexedDB so closing/
-  // reopening the mobile app never loses the session.
+  // Mirrors auth tokens to both localStorage AND a cookie. Cookies are
+  // synchronous and persist across WKWebView restarts, so Supabase can
+  // read them immediately on init (unlike IndexedDB which is async).
   const _AUTH_STORAGE_KEY = 'sb-hqzabwjwuszupxwookgx-auth-token';
   const _authStorage = (() => {
-    const DB_NAME = 'earth_auth', STORE = 'kv';
-    let _dbReady = null;
-    function openDB() {
-      if (_dbReady) return _dbReady;
-      _dbReady = new Promise((resolve, reject) => {
-        try {
-          const req = indexedDB.open(DB_NAME, 1);
-          req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => resolve(null);
-        } catch (_) { resolve(null); }
-      });
-      return _dbReady;
-    }
-    async function idbSet(key, val) {
-      const db = await openDB();
-      if (!db) return;
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(val, key);
-    }
-    async function idbGet(key) {
-      const db = await openDB();
-      if (!db) return null;
-      return new Promise(resolve => {
-        const tx = db.transaction(STORE, 'readonly');
-        const req = tx.objectStore(STORE).get(key);
-        req.onsuccess = () => resolve(req.result ?? null);
-        req.onerror = () => resolve(null);
-      });
-    }
-    async function idbRemove(key) {
-      const db = await openDB();
-      if (!db) return;
-      const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).delete(key);
-    }
-    // On startup, restore from IndexedDB if localStorage is empty
-    (async () => {
+    const COOKIE_KEY = 'earth_auth_backup';
+    const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
+
+    function setCookie(val) {
       try {
-        const lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
-        if (!lsVal) {
-          const idbVal = await idbGet(_AUTH_STORAGE_KEY);
-          if (idbVal) localStorage.setItem(_AUTH_STORAGE_KEY, idbVal);
-        }
+        // Encode to base64 to avoid cookie special-char issues
+        const encoded = btoa(unescape(encodeURIComponent(val)));
+        document.cookie = `${COOKIE_KEY}=${encoded}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
       } catch (_) {}
-    })();
+    }
+    function getCookie() {
+      try {
+        const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${COOKIE_KEY}=([^;]*)`));
+        if (!match || !match[1]) return null;
+        return decodeURIComponent(escape(atob(match[1])));
+      } catch (_) { return null; }
+    }
+    function clearCookie() {
+      document.cookie = `${COOKIE_KEY}=; max-age=0; path=/; SameSite=Lax`;
+    }
+
+    // On startup: restore from cookie if localStorage is empty (synchronous!)
+    try {
+      const lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
+      if (!lsVal) {
+        const cookieVal = getCookie();
+        if (cookieVal) localStorage.setItem(_AUTH_STORAGE_KEY, cookieVal);
+      }
+    } catch (_) {}
+
     return {
       getItem(key) {
-        return localStorage.getItem(key);
+        const val = localStorage.getItem(key);
+        if (val) return val;
+        // Fallback: try cookie
+        if (key === _AUTH_STORAGE_KEY) {
+          const cookieVal = getCookie();
+          if (cookieVal) {
+            localStorage.setItem(key, cookieVal);
+            return cookieVal;
+          }
+        }
+        return null;
       },
       setItem(key, value) {
         localStorage.setItem(key, value);
-        idbSet(key, value).catch(() => {});
+        if (key === _AUTH_STORAGE_KEY) setCookie(value);
       },
       removeItem(key) {
         localStorage.removeItem(key);
-        idbRemove(key).catch(() => {});
+        if (key === _AUTH_STORAGE_KEY) clearCookie();
       }
     };
   })();
@@ -21921,12 +21916,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     showMsg('Check your email to confirm your account!', 'success');
   }
 
+  let _userInitiatedSignOut = false;
   async function signOut() {
+    _userInitiatedSignOut = true;
     try {
       await sb.auth.signOut({ scope: 'local' });
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
+    // Also clear IndexedDB backup
+    _authStorage.removeItem(_AUTH_STORAGE_KEY);
     clearAuthUI();
     accountDropdown.classList.remove('open');
     const tc = document.getElementById('topLeftCluster');
@@ -22111,9 +22110,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (event === 'SIGNED_UP' && !_onboardingShownThisSession) {
         try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
       }
-    } else if (event === 'SIGNED_OUT') {
-      // Explicit sign-out — always clear
+    } else if (event === 'SIGNED_OUT' && _userInitiatedSignOut) {
+      // Explicit user-initiated sign-out — always clear
+      _userInitiatedSignOut = false;
       clearAuthUI();
+    } else if (event === 'SIGNED_OUT' && hasPersistedSession()) {
+      // Supabase fired SIGNED_OUT during token refresh failure —
+      // tokens still exist, so keep the user logged in
+      console.warn('[auth] SIGNED_OUT fired but tokens persist — ignoring (refresh failure)');
     } else if (!hasPersistedSession()) {
       // No session in storage either — genuinely logged out
       clearAuthUI();
@@ -22137,7 +22141,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       await applySession(data?.session || null, 'INITIAL_SESSION');
     } catch (err) {
       console.warn('[auth] initial session load failed:', err.message);
-      // Don't clear — onAuthStateChange handles it with the persisted-token check
+      // Network error on refresh — if tokens exist, keep UI logged in
+      if (hasPersistedSession()) {
+        console.warn('[auth] keeping UI logged in — persisted tokens exist');
+        // Try to parse user info from stored token for UI
+        try {
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed?.user) updateAccountUI(parsed.user);
+          }
+        } catch (_) {}
+      }
     }
   })();
 
@@ -22883,6 +22898,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .bAPVideoCard iframe {
   width: 100%; aspect-ratio: 16/9; display: block; border: none;
 }
+
+/* ── Focal Video Mode — enlarges video to span screen horizontally ── */
+.bFocalVideo {
+  position: fixed !important;
+  left: 50% !important; top: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  width: min(92vw, 800px) !important;
+  max-width: none !important;
+  z-index: 100010 !important;
+  opacity: 0;
+  transition: opacity 0.6s ease, transform 0.6s ease;
+  pointer-events: all;
+}
+.bFocalVideo.focal-in {
+  opacity: 1;
+}
+.bFocalVideo iframe {
+  width: 100% !important;
+  aspect-ratio: 16/9 !important;
+  min-height: 200px !important;
+  border-radius: 12px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 120px rgba(96,200,255,0.08);
+}
+.bFocalVideo .bAPCardBody { display: none; }
+/* Dim the background during focal video */
+.bFocalScrim {
+  position: fixed; inset: 0; z-index: 100009;
+  background: rgba(0,0,0,0.65);
+  opacity: 0; transition: opacity 0.5s ease;
+  pointer-events: none;
+}
+.bFocalScrim.visible { opacity: 1; }
+@media (max-width: 720px) {
+  .bFocalVideo { width: 96vw !important; }
+}
+
 .bAPCardImg { width: 100%; height: 76px; object-fit: cover; display: block; }
 .bAPCardImgNone { width: 100%; height: 76px; background: rgba(255,255,255,0.04); }
 .bAPCardBody { padding: 8px 10px; }
@@ -23691,6 +23742,7 @@ body.ticker-active .gTickerLabel {
 
 <!-- Briefing overlay HTML -->
 <div id="briefingOverlay">
+  <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
   <div class="bThreadLabel" id="bThreadLabel"></div>
@@ -23946,6 +23998,7 @@ body.ticker-active .gTickerLabel {
     playing = false;
     clearTimeout(segTimer);
     clearBTimers();
+    if (_focalActive) endFocalVideo();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.__clearBriefingCityMask) window.__clearBriefingCityMask();
@@ -24477,9 +24530,35 @@ body.ticker-active .gTickerLabel {
         }
       }
 
+      // Focal video moment — enlarge video, play with sound, pause narrator
+      {
+        const focal = seg.video?.focal || seg.video_focal;
+        if (focal?.enabled && seg.video_id) {
+          const fStart = focal.start_sec ?? 0;
+          const fEnd = focal.end_sec ?? 15;
+          const triggerPct = (focal.trigger_pct ?? 35) / 100;
+          const enableCC = focal.captions !== false;
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx) return;
+            startFocalVideo(fStart, fEnd, enableCC);
+          }, ms(triggerPct)));
+        }
+      }
+
       // 50 %: swap article cards → data panels
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
+        // Don't swap if focal video is still playing
+        if (_focalActive) {
+          // Retry after focal ends
+          addBTimer(setTimeout(() => {
+            if (segIdx !== idx) return;
+            const ap = document.getElementById('bArticlePanel');
+            if (ap) ap.classList.remove('visible');
+            renderDataPanelsForSegment(idx);
+          }, 2000));
+          return;
+        }
         const ap = document.getElementById('bArticlePanel');
         if (ap) ap.classList.remove('visible');
         renderDataPanelsForSegment(idx);
@@ -24528,6 +24607,7 @@ body.ticker-active .gTickerLabel {
     const seg = episode.segments[idx];
 
     // Reset globe state — always return to country view so city-view never sticks
+    if (_focalActive) endFocalVideo();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.__flowClearHighlights) window.__flowClearHighlights();
@@ -25009,8 +25089,9 @@ body.ticker-active .gTickerLabel {
   function makeVideoCard(videoId, seg) {
     const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
-    return `<div class="bAPCard bAPVideoCard" data-video-id="${videoId}">
-      <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=0"
+    // enablejsapi=1 for focal video control (seek, mute, captions)
+    return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}">
+      <iframe id="bVideoIframe" src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&cc_load_policy=1&origin=${encodeURIComponent(window.location.origin)}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         referrerpolicy="strict-origin-when-cross-origin"
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
@@ -25022,6 +25103,74 @@ body.ticker-active .gTickerLabel {
         </div>
       </div>
     </div>`;
+  }
+
+  // ── Focal Video Controller ────────────────────────────────────────────────
+  // Manages the sequence: narrator pauses → video enlarges → plays with sound
+  // → video shrinks → narrator resumes.
+  let _focalActive = false;
+
+  function _postYTCommand(iframe, func, args) {
+    if (!iframe?.contentWindow) return;
+    iframe.contentWindow.postMessage(JSON.stringify({
+      event: 'command', func, args: args || []
+    }), '*');
+  }
+
+  function startFocalVideo(startSec, endSec, enableCaptions) {
+    const card = document.getElementById('bVideoCard');
+    const iframe = document.getElementById('bVideoIframe');
+    const scrim = document.getElementById('bFocalScrim');
+    if (!card || !iframe) return;
+
+    _focalActive = true;
+    const duration = (endSec - startSec) * 1000;
+
+    // Pause narrator audio
+    if (audio) { try { audio.pause(); } catch (_) {} }
+
+    // Enlarge video card to focal mode
+    card.classList.add('bFocalVideo');
+    if (scrim) scrim.classList.add('visible');
+    requestAnimationFrame(() => card.classList.add('focal-in'));
+
+    // Seek to start, unmute, play
+    _postYTCommand(iframe, 'seekTo', [startSec, true]);
+    _postYTCommand(iframe, 'unMute');
+    _postYTCommand(iframe, 'playVideo');
+    // Enable captions if configured
+    if (enableCaptions) {
+      _postYTCommand(iframe, 'setOption', ['captions', 'track', { languageCode: 'en' }]);
+    }
+
+    // After duration, shrink back and resume narrator
+    addBTimer(setTimeout(() => {
+      endFocalVideo();
+    }, duration));
+  }
+
+  function endFocalVideo() {
+    if (!_focalActive) return;
+    _focalActive = false;
+
+    const card = document.getElementById('bVideoCard');
+    const iframe = document.getElementById('bVideoIframe');
+    const scrim = document.getElementById('bFocalScrim');
+
+    // Mute video, shrink card
+    if (iframe) {
+      _postYTCommand(iframe, 'mute');
+    }
+    if (card) {
+      card.classList.remove('focal-in');
+      setTimeout(() => card.classList.remove('bFocalVideo'), 600);
+    }
+    if (scrim) scrim.classList.remove('visible');
+
+    // Resume narrator audio
+    if (audio && playing) {
+      try { audio.play().catch(() => {}); } catch (_) {}
+    }
   }
 
   async function loadArticlePanel(ids, videoId, seg) {

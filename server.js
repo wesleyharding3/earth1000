@@ -2383,11 +2383,24 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
       }
     } catch (_) {}
 
+    // Check if captions/subtitles are available via timedtext API
+    let hasCaptions = false;
+    try {
+      const ccResp = await fetch(`https://video.google.com/timedtext?type=list&v=${videoId}`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      if (ccResp.ok) {
+        const ccText = await ccResp.text();
+        hasCaptions = ccText.includes('<track');
+      }
+    } catch (_) {}
+
     res.json({
       video_id: videoId,
       title,
       author,
       embeddable: true,
+      has_captions: hasCaptions,
       thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
     });
   } catch (err) {
