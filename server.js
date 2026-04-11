@@ -112,11 +112,13 @@ async function getCountryLookup() {
   const { rows } = await pool.query(
     `SELECT name, iso_code FROM countries WHERE name IS NOT NULL AND length(name) >= 4 ORDER BY length(name) DESC`
   );
-  const entries = rows.map(r => ({
-    name: r.name,
-    iso: r.iso_code.toLowerCase(),
-    re: new RegExp(`\\b${r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
-  }));
+  const entries = rows
+    .filter(r => r.iso_code)  // skip countries with no ISO code
+    .map(r => ({
+      name: r.name,
+      iso: r.iso_code.toLowerCase(),
+      re: new RegExp(`\\b${r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+    }));
   _jsCountryLookup = entries;
   return entries;
 }
