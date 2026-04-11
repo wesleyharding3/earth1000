@@ -586,15 +586,15 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
-  transition: background 0.2s, border-color 0.2s, transform 0.35s cubic-bezier(0.32,0.72,0,1);
-  color: rgba(255,255,255,0.45);
+  background: none;
+  border: none;
+  transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+  color: rgba(255,255,255,0.85);
+  filter: drop-shadow(0 0 6px rgba(255,255,255,0.5)) drop-shadow(0 0 14px rgba(255,255,255,0.25));
 }
 #panelResizeHandle:hover #panelResizeArrow {
-  background: rgba(255,255,255,0.12);
-  border-color: rgba(255,255,255,0.28);
-  color: rgba(255,255,255,0.9);
+  color: #fff;
+  filter: drop-shadow(0 0 8px rgba(255,255,255,0.7)) drop-shadow(0 0 20px rgba(255,255,255,0.4));
 }
 #panelResizeArrow svg {
   width: 12px; height: 12px;
@@ -6275,6 +6275,7 @@ body.ticker-active #flowControls {
     body.briefing-active #hoverLineEl.briefing-forced {
       display: block !important;
       pointer-events: none;
+      z-index: 100005 !important;
     }
 
     /* ── Vertical View Sidebar ── */
@@ -6868,9 +6869,33 @@ body.ticker-active #flowControls {
       }
 
       /* Weather/time pills: sit in the top-right row */
+      .panelTitleMetaRight {
+        position: absolute;
+        top: 0;
+        right: 28px;
+        left: calc(50% + 20px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        bottom: 0;
+        margin: 0;
+        z-index: 105;
+        pointer-events: none;
+      }
+      .panelTitleMetaRight > * { pointer-events: all; }
       #cityMetaPills {
-        flex-shrink: 0;
-        margin-left: auto;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        margin: 0;
+      }
+      .cityMetaPill {
+        font-size: 9px !important;
+        padding: 2px 7px !important;
+        border-radius: 10px !important;
+      }
+      .panelTitleRowDesktop {
+        padding-right: 0 !important;
       }
 
       /* Briefing + close buttons: grouped right */
@@ -12143,6 +12168,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (cx + CW > window.innerWidth - 12)  cx = sx - OFF - CW;
         if (cy < 70)                            cy = sy + 14;
         if (cy + CH > window.innerHeight - 80)  cy = sy - CH - 14;
+
+        // ── Safe-area & collision clamping (mobile + briefing) ──
+        const isMobile = window.innerWidth <= 720;
+        const saL = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sal') || '0') || 0;
+        const saR = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sar') || '0') || 0;
+        const saT = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat') || '0') || 0;
+        const saB = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab') || '0') || 0;
+        // Clamp within viewport + safe area
+        const pad = 8;
+        cx = Math.max(saL + pad, Math.min(cx, window.innerWidth - CW - saR - pad));
+        cy = Math.max(saT + pad + 50, Math.min(cy, window.innerHeight - CH - saB - pad - 60));
+
+        // During briefing on mobile, avoid article panel (left) and data panels (bottom center)
+        if (isMobile && window.briefingActive) {
+          const artPanel = document.querySelector('.bArticlePanel.visible');
+          if (artPanel) {
+            const ar = artPanel.getBoundingClientRect();
+            // If hover card overlaps article panel, push it right
+            if (cx < ar.right + pad && cx + CW > ar.left - pad &&
+                cy + CH > ar.top - pad && cy < ar.bottom + pad) {
+              cx = ar.right + pad;
+            }
+          }
+          const dataPanel = document.querySelector('.bDataPanels.visible');
+          if (dataPanel) {
+            const dr = dataPanel.getBoundingClientRect();
+            // If hover card overlaps data panels, push it above
+            if (cx < dr.right + pad && cx + CW > dr.left - pad &&
+                cy + CH > dr.top - pad && cy < dr.bottom + pad) {
+              cy = dr.top - CH - pad;
+            }
+          }
+          // Re-clamp after collision avoidance
+          cx = Math.max(saL + pad, Math.min(cx, window.innerWidth - CW - saR - pad));
+          cy = Math.max(saT + pad + 50, Math.min(cy, window.innerHeight - CH - saB - pad - 60));
+        }
+
         card.style.left = cx + "px";
         card.style.top  = cy + "px";
         const ancX = cx < sx ? cx + CW : cx;
@@ -22683,11 +22745,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
   .bArticlePanel {
     top: auto;
     bottom: calc(48px + env(safe-area-inset-bottom, 0px));
-    left: 50%; right: auto;
-    transform: translateX(-50%);
-    width: min(270px, 80vw);
+    left: env(safe-area-inset-left, 8px);
+    right: auto;
+    transform: none;
+    width: 30vw;
+    max-width: 140px;
     padding: 0 0 10px;
   }
+  .bAPCardImg, .bAPCardImgNone { height: 48px; }
+  .bAPCardBody { padding: 5px 6px; }
+  .bAPCardTitle { font-size: 9px; -webkit-line-clamp: 2; }
+  .bAPCardMeta { gap: 3px; margin-bottom: 2px; }
+  .bAPCardSource, .bAPCardLocation, .bAPCardDate { font-size: 7px; }
+  .bAPVideoCard iframe { aspect-ratio: 16/9; }
 }
 .bAPCard {
   background: rgba(6,10,20,0.92); border: 1px solid rgba(255,255,255,0.1);
@@ -22737,7 +22807,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   opacity: 0; transition: opacity 0.5s ease;
   overflow: hidden; pointer-events: none;
 }
-#briefingOverlay.open .bTicker { opacity: 1; pointer-events: all; }
+/* bTicker disabled — briefing now feeds into globalTicker */
+#briefingOverlay.open .bTicker { display: none; }
 .bTickerLabel {
   flex-shrink: 0;
   background: #ff9940; color: #000;
@@ -22785,7 +22856,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 #globalTicker.hidden { opacity: 0; pointer-events: none; transform: translateY(4px); }
-.briefing-active #globalTicker { display: none; }
+/* briefing-active: keep global ticker visible, just restyle it */
+.briefing-active #globalTicker { display: flex; }
 
 /* ── Ticker-active: oval buttons above ticker bar ── */
 body.ticker-active #globalTicker {
@@ -24761,7 +24833,8 @@ body.ticker-active .gTickerLabel {
 
   function startTicker(articles) {
     _briefingTickerArticles = articles;
-    const el = document.getElementById('bTickerItem');
+    // Feed briefing articles into the global ticker
+    const el = document.getElementById('gTickerTrack');
     if (!el) return;
     el.classList.add('reset');
     el.innerHTML = '';
@@ -24770,6 +24843,9 @@ body.ticker-active .gTickerLabel {
     el.innerHTML = half + '<span class="bTickerDiv">◆</span>' + half;
     void el.offsetWidth;
     el.classList.remove('reset');
+    // Show the global ticker if hidden
+    const gt = document.getElementById('globalTicker');
+    if (gt) gt.classList.remove('hidden');
     requestAnimationFrame(() => {
       const halfW = el.scrollWidth / 2;
       el.style.animationDuration = Math.max(TICKER_MIN_DURATION_SEC, halfW / TICKER_PX_PER_SEC).toFixed(1) + 's';
@@ -24777,7 +24853,7 @@ body.ticker-active .gTickerLabel {
   }
 
   function stopTicker() {
-    const el = document.getElementById('bTickerItem');
+    const el = document.getElementById('gTickerTrack');
     if (el) { el.classList.add('reset'); el.innerHTML = ''; }
   }
 
@@ -24786,8 +24862,9 @@ body.ticker-active .gTickerLabel {
     const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
     return `<div class="bAPCard bAPVideoCard">
-      <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1"
-        allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"></iframe>
+      <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}"
+        allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerpolicy="no-referrer-when-downgrade"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
           <span class="bAPCardSource" id="bVideoSource">—</span>
