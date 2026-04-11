@@ -7915,7 +7915,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         </svg>
         <div class="btnTooltip">
           <div class="btnTooltipTitle">Map View</div>
-          <div class="btnTooltipSub">Switch between Country, City, Ocean &amp; Transport layers</div>
+          <div class="btnTooltipSub">Switch between Country, City &amp; Transport layers</div>
         </div>
       </div>
       <div id="viewDropdown">
@@ -7927,9 +7927,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
         <div class="viewOption" data-mode="regions">
           <span class="viewOptionDot"></span>Regions
-        </div>
-        <div class="viewOption" data-mode="ocean">
-          <span class="viewOptionDot"></span>Ocean
         </div>
         <div class="viewOption" data-mode="transportation">
           <span class="viewOptionDot"></span>Transportation
@@ -8182,114 +8179,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div>
 
-      <!-- Ocean view -->
-      <div class="sidebarPanel" id="sidebarPanelOcean">
-        <div class="sidebarViewBadge">
-          <div class="sidebarViewBadgeDot"></div>
-          <span class="sidebarViewBadgeLabel">Ocean</span>
-        </div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Overlay</div>
-          <div class="layerList">
-            <div class="layerOpt active" data-layer="temperature">
-              <div class="layerDot"></div>
-              <span class="layerLabel">Temperature</span>
-            </div>
-            <div class="layerOpt soon" data-layer="salinity">
-              <div class="layerDot"></div>
-              <span class="layerLabel">Salinity</span>
-              <span class="layerSoon">soon</span>
-            </div>
-            <div class="layerOpt soon" data-layer="ph">
-              <div class="layerDot"></div>
-              <span class="layerLabel">pH</span>
-              <span class="layerSoon">soon</span>
-            </div>
-            <div class="layerOpt soon" data-layer="co2">
-              <div class="layerDot"></div>
-              <span class="layerLabel">CO₂</span>
-              <span class="layerSoon">soon</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="sidebarDivider"></div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Color Scale</div>
-          <div class="colorScaleBar"></div>
-          <div class="colorScaleLabels"><span>−2°C</span><span>15°C</span><span>32°C</span></div>
-        </div>
-
-        <div class="sidebarDivider"></div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Opacity</div>
-          <div class="sliderRow">
-            <div class="sliderLabelRow">
-              <span class="sliderLabel">Heatmap</span>
-              <span class="sliderValue" id="oceanOpacityVal">80%</span>
-            </div>
-            <input class="settingsSlider" type="range" id="oceanOpacitySlider"
-                   min="0" max="1" step="0.01" value="0.8" />
-          </div>
-        </div>
-
-        <div class="sidebarDivider"></div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Time Series</div>
-          <div class="sliderRow">
-            <div class="sliderLabelRow">
-              <span class="sliderLabel">Year</span>
-              <span class="sliderValue" id="oceanYearVal">2020</span>
-            </div>
-            <input class="settingsSlider" type="range" id="oceanYearSlider"
-                   min="2020" max="2023" step="1" value="2020" />
-          </div>
-          <div class="sliderRow" style="margin-top:10px;">
-            <div class="sliderLabelRow">
-              <span class="sliderLabel">Month</span>
-              <span class="sliderValue" id="oceanMonthVal">Jan</span>
-            </div>
-            <input class="settingsSlider" type="range" id="oceanMonthSlider"
-                   min="1" max="12" step="1" value="1" />
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
-            <button id="oceanPlayBtn" style="
-              flex:1; padding:6px 0; border-radius:7px;
-              background:rgba(255,180,80,0.18); border:1px solid rgba(255,180,80,0.35);
-              color:rgba(255,180,80,1); font-size:11px; cursor:pointer; letter-spacing:0.04em;
-            ">▶ Play</button>
-            <button id="oceanStepBackBtn" style="
-              padding:6px 10px; border-radius:7px;
-              background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
-              color:rgba(255,255,255,0.7); font-size:11px; cursor:pointer;
-            ">◀</button>
-            <button id="oceanStepFwdBtn" style="
-              padding:6px 10px; border-radius:7px;
-              background:rgba(255,255,255,0.07); border:1px solid rgba(255,255,255,0.12);
-              color:rgba(255,255,255,0.7); font-size:11px; cursor:pointer;
-            ">▶</button>
-          </div>
-          <div style="margin-top:8px;font-size:10px;opacity:0.4;text-align:center;" id="oceanLoadingLabel"></div>
-        </div>
-
-        <div class="sidebarDivider"></div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Globe Motion</div>
-          <div class="sliderRow">
-            <div class="sliderLabelRow">
-              <span class="sliderLabel">Ambient Rotation</span>
-              <span class="sliderValue" id="ambientValOcean">—</span>
-            </div>
-            <input class="settingsSlider" type="range" id="ambientSliderOcean"
-                   min="0" max="0.0020" step="0.00005" value="0.0004" />
-          </div>
-        </div>
-      </div>
 
       <!-- Transportation view -->
       <div class="sidebarPanel" id="sidebarPanelTransportation">
@@ -10182,51 +10071,10 @@ function computeCityTiers(cities) {
         })
         .catch(err => console.warn("land/geojson load failed:", err));
 
-      // ── Land mask for ocean heatmap ──────────────────────────────
-      function buildLandMask(geojson) {
-        const W = OCEAN_W, H = OCEAN_H;
-        const mask = new Uint8Array(W * H);
-
-        // Collect all rings from Polygon / MultiPolygon features
-        const rings = [];
-        geojson.features.forEach(f => {
-          const g = f.geometry;
-          if (!g) return;
-          const polys = g.type === "Polygon" ? [g.coordinates]
-                      : g.type === "MultiPolygon" ? g.coordinates : [];
-          polys.forEach(poly => poly.forEach(ring => rings.push(ring)));
-        });
-
-        // For each canvas pixel, cast a ray and count crossings (even-odd rule)
-        for (let py = 0; py < H; py++) {
-          const lat = 90 - (py + 0.5) / H * 180;          // centre of pixel
-          for (let px = 0; px < W; px++) {
-            const lon = (px + 0.5) / W * 360 - 180;
-            let inside = false;
-            for (const ring of rings) {
-              const n = ring.length;
-              let j = n - 1;
-              for (let i = 0; i < n; i++) {
-                const xi = ring[i][0], yi = ring[i][1];
-                const xj = ring[j][0], yj = ring[j][1];
-                if (((yi > lat) !== (yj > lat)) &&
-                    (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
-                  inside = !inside;
-                }
-                j = i;
-              }
-            }
-            if (inside) mask[py * W + px] = 1;
-          }
-        }
-        landMask = mask;
-      }
-
       fetch("custom.geo.json")
         .then(res => res.json())
         .then(data => {
           boundaryLayer.loadGeoJSON(data);
-          buildLandMask(data);
           if (window.__repaintSurfaceOverlay) window.__repaintSurfaceOverlay();
         });
 
@@ -10324,7 +10172,7 @@ function computeCityTiers(cities) {
       function updateNodeGlow() {
         // Skip glow updates when neither country nor city nodes are visible
         const m = window.__currentViewMode;
-        if (m === "regions" || m === "environment" || m === "ocean" || m === "transportation") return;
+        if (m === "regions" || m === "environment" || m === "transportation") return;
         const activePoints = currentViewMode === "country" ? countryPoints : cityPoints;
         const activeMaterial = currentViewMode === "country" ? countryMat : cityMat;
         const inactivePoints = currentViewMode === "country" ? cityPoints : countryPoints;
@@ -10820,8 +10668,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // All ambient sliders stay in sync
       function formatSpeed(v) { return v === 0 ? "Off" : (v * 10000).toFixed(1) + "x"; }
 
-      const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderOcean","ambientSliderTransportation","ambientSliderDefault"];
-      const ambientVals    = ["ambientVal","ambientValCity","ambientValOcean","ambientValTransportation","ambientValDefault"];
+      const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderTransportation","ambientSliderDefault"];
+      const ambientVals    = ["ambientVal","ambientValCity","ambientValTransportation","ambientValDefault"];
 
       ambientSliders.forEach(id => {
         const el = document.getElementById(id);
@@ -10927,253 +10775,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       syncGlobeThemeControls();
 
-      // Ocean-specific controls
-      const oceanOpacitySlider = document.getElementById("oceanOpacitySlider");
-      const oceanOpacityVal    = document.getElementById("oceanOpacityVal");
-      const oceanYearSlider    = document.getElementById("oceanYearSlider");
-      const oceanYearVal       = document.getElementById("oceanYearVal");
-      const oceanMonthSlider   = document.getElementById("oceanMonthSlider");
-      const oceanMonthVal      = document.getElementById("oceanMonthVal");
-      const oceanPlayBtn       = document.getElementById("oceanPlayBtn");
-      const oceanStepBackBtn   = document.getElementById("oceanStepBackBtn");
-      const oceanStepFwdBtn    = document.getElementById("oceanStepFwdBtn");
-      const oceanLoadingLabel  = document.getElementById("oceanLoadingLabel");
 
-      const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-      // ── Heatmap state ──────────────────────────────────────────────
-      window.__oceanOpacity = 0.8;
-      window.__oceanYear    = 2020;
-      window.__oceanMonth   = 1;
-      window.__oceanLayer   = "temperature";
-
-      // Canvas texture approach: paint lat/lon grid → THREE texture on sphere shell
-      const OCEAN_W = 512, OCEAN_H = 256;
-      const oceanCanvas  = document.createElement("canvas");
-      oceanCanvas.width  = OCEAN_W;
-      oceanCanvas.height = OCEAN_H;
-      const oceanCtx     = oceanCanvas.getContext("2d");
-
-      const oceanTexture = new THREE.CanvasTexture(oceanCanvas);
-      const oceanGeo     = new THREE.SphereGeometry(radius + 0.004, 64, 32);
-      const oceanMat     = new THREE.MeshBasicMaterial({
-        map: oceanTexture, transparent: true, opacity: 0.8,
-        depthWrite: false, side: THREE.FrontSide,
-      });
-      const oceanMesh    = new THREE.Mesh(oceanGeo, oceanMat);
-      oceanMesh.visible  = false;
-      scene.add(oceanMesh);
-
-      // Keep ocean shell rotating with the globe scene
-      window.__oceanMeshSync = function() {
-        if (oceanMesh.visible) {
-          oceanMat.opacity = window.__oceanOpacity ?? 0.8;
-        }
-      };
-
-      // Temperature → colour (purple → blue → cyan → green → yellow → orange → red)
-      function tempToColor(t) {
-        // t in range −2…32°C → 0…1
-        const n = Math.max(0, Math.min(1, (t + 2) / 34));
-        // 5-stop gradient
-        const stops = [
-          [0.00, [80,  0, 130]],
-          [0.20, [0,   0, 220]],
-          [0.42, [0, 200, 220]],
-          [0.60, [0, 200,  50]],
-          [0.78, [255,220,  0]],
-          [0.90, [255,100,  0]],
-          [1.00, [255,  0,  0]],
-        ];
-        for (let i = 1; i < stops.length; i++) {
-          const [t0, c0] = stops[i-1];
-          const [t1, c1] = stops[i];
-          if (n <= t1) {
-            const f = (n - t0) / (t1 - t0);
-            return [
-              Math.round(c0[0] + f*(c1[0]-c0[0])),
-              Math.round(c0[1] + f*(c1[1]-c0[1])),
-              Math.round(c0[2] + f*(c1[2]-c0[2])),
-            ];
-          }
-        }
-        return [255, 0, 0];
-      }
-
-      // Paint canvas from flat data array [{lat,lon,temperature}]
-      function paintHeatmap(data) {
-        // Grid: 0.25° resolution → 1440 √ó 720, but we downsample to OCEAN_W √ó OCEAN_H
-        const grid = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
-        const cnt  = new Uint16Array(OCEAN_W * OCEAN_H);
-        for (const p of data) {
-          const u = ((parseFloat(p.lon) + 180) / 360) * OCEAN_W;
-          const v = ((90 - parseFloat(p.lat)) / 180)  * OCEAN_H;
-          const ix = Math.floor(u) % OCEAN_W;
-          const iy = Math.min(Math.floor(v), OCEAN_H - 1);
-          const idx = iy * OCEAN_W + ix;
-          if (isNaN(grid[idx])) grid[idx] = 0;
-          grid[idx] += parseFloat(p.temperature);
-          cnt[idx]++;
-        }
-
-        // Blur pass: fill empty ocean cells from neighbours (1-pass simple spread)
-        const filled = new Float32Array(OCEAN_W * OCEAN_H).fill(NaN);
-        for (let y = 0; y < OCEAN_H; y++) {
-          for (let x = 0; x < OCEAN_W; x++) {
-            const i = y * OCEAN_W + x;
-            if (cnt[i] > 0) { filled[i] = grid[i] / cnt[i]; continue; }
-            let sum = 0, n = 0;
-            for (let dy = -36; dy <= 36; dy++) {
-              for (let dx = -36; dx <= 36; dx++) {
-                const nx = (x + dx + OCEAN_W) % OCEAN_W;
-                const ny = Math.max(0, Math.min(OCEAN_H-1, y + dy));
-                const ni = ny * OCEAN_W + nx;
-                if (cnt[ni] > 0) { sum += grid[ni] / cnt[ni]; n++; }
-              }
-            }
-            if (n > 0) filled[i] = sum / n;
-          }
-        }
-
-        const img = oceanCtx.createImageData(OCEAN_W, OCEAN_H);
-        for (let i = 0; i < OCEAN_W * OCEAN_H; i++) {
-          const t = filled[i];
-          if (isNaN(t) || (landMask && landMask[i] === 1)) { img.data[i*4+3] = 0; continue; }
-          const [r,g,b] = tempToColor(t);
-          img.data[i*4+0] = r;
-          img.data[i*4+1] = g;
-          img.data[i*4+2] = b;
-          img.data[i*4+3] = 200;
-        }
-        // Blur for fluid texture
-        const rawCanvas = document.createElement("canvas");
-        rawCanvas.width = OCEAN_W; rawCanvas.height = OCEAN_H;
-        rawCanvas.getContext("2d").putImageData(img, 0, 0);
-        oceanCtx.clearRect(0, 0, OCEAN_W, OCEAN_H);
-        oceanCtx.filter = "blur(24px)";
-        oceanCtx.drawImage(rawCanvas, 0, 0);
-        oceanCtx.filter = "none";
-        // Re-apply land mask after blur (blur bleeds colour onto land edges)
-        if (landMask) {
-          const blurred = oceanCtx.getImageData(0, 0, OCEAN_W, OCEAN_H);
-          for (let i = 0; i < OCEAN_W * OCEAN_H; i++) {
-            if (landMask[i] === 1) blurred.data[i*4+3] = 0;
-          }
-          oceanCtx.putImageData(blurred, 0, 0);
-        }
-        oceanTexture.needsUpdate = true;
-      }
-
-      // Cache: key = "year-month"
-      const oceanCache = {};
-      let   oceanFetching = false;
-
-      async function loadOceanData(year, month) {
-        const key = `${year}-${month}`;
-        if (oceanCache[key]) { paintHeatmap(oceanCache[key]); return; }
-        if (oceanFetching) return;
-        oceanFetching = true;
-        oceanLoadingLabel.textContent = `Loading ${MONTH_NAMES[month-1]} ${year}…`;
-        try {
-          const res  = await fetch(
-            `https://earth-wjr6.onrender.com/api/ocean/temperature?year=${year}&month=${month}&limit=50000`
-          );
-          const data = await res.json();
-          oceanCache[key] = data;
-          paintHeatmap(data);
-          oceanLoadingLabel.textContent = `${data.length.toLocaleString()} readings`;
-        } catch(e) {
-          oceanLoadingLabel.textContent = "Error loading data";
-          console.error("Ocean fetch error:", e);
-        } finally {
-          oceanFetching = false;
-        }
-      }
-
-      // Show / hide based on current view mode
-      function syncOceanVisibility() {
-        const on = (window.__currentViewMode === "ocean") && (window.__oceanLayer === "temperature");
-        oceanMesh.visible = on;
-        if (on) loadOceanData(window.__oceanYear, window.__oceanMonth);
-      }
-
-      // Expose so the viewOption click can trigger it
-      window.__syncOceanVisibility = syncOceanVisibility;
-
-      // Opacity synced each frame via animate hook below
-      oceanOpacitySlider.addEventListener("input", () => {
-        const v = parseFloat(oceanOpacitySlider.value);
-        oceanOpacityVal.textContent = Math.round(v * 100) + "%";
-        window.__oceanOpacity = v;
-        oceanMat.opacity = v;
-      });
-
-      oceanYearSlider.addEventListener("input", () => {
-        window.__oceanYear = parseInt(oceanYearSlider.value);
-        oceanYearVal.textContent = oceanYearSlider.value;
-        syncOceanVisibility();
-      });
-
-      oceanMonthSlider.addEventListener("input", () => {
-        window.__oceanMonth = parseInt(oceanMonthSlider.value);
-        oceanMonthVal.textContent = MONTH_NAMES[window.__oceanMonth - 1];
-        syncOceanVisibility();
-      });
-
-      [oceanOpacitySlider, oceanYearSlider, oceanMonthSlider].forEach(
-        el => el.addEventListener("pointerdown", e => e.stopPropagation())
-      );
-
-      // Step buttons
-      function stepMonth(delta) {
-        let m = window.__oceanMonth + delta;
-        let y = window.__oceanYear;
-        if (m > 12) { m = 1;  y = Math.min(y + 1, 2023); }
-        if (m < 1)  { m = 12; y = Math.max(y - 1, 2020); }
-        window.__oceanMonth = m;
-        window.__oceanYear  = y;
-        oceanMonthSlider.value = m;
-        oceanYearSlider.value  = y;
-        oceanMonthVal.textContent = MONTH_NAMES[m-1];
-        oceanYearVal.textContent  = y;
-        syncOceanVisibility();
-      }
-      oceanStepBackBtn.addEventListener("click", (e) => { e.stopPropagation(); stepMonth(-1); });
-      oceanStepFwdBtn.addEventListener("click",  (e) => { e.stopPropagation(); stepMonth(+1); });
-      [oceanPlayBtn, oceanStepBackBtn, oceanStepFwdBtn].forEach(
-        el => el.addEventListener("pointerdown", e => e.stopPropagation())
-      );
-
-      // Auto-play: advance one month every 2 s
-      let oceanPlaying = false, oceanPlayInterval = null;
-      oceanPlayBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        oceanPlaying = !oceanPlaying;
-        oceanPlayBtn.textContent = oceanPlaying ? "⏹ Stop" : "▶ Play";
-        if (oceanPlaying) {
-          oceanPlayInterval = setInterval(() => {
-            if (!oceanFetching) stepMonth(+1);
-          }, 2000);
-        } else {
-          clearInterval(oceanPlayInterval);
-        }
-      });
-
-      // Ocean layer dots — clicking toggles the active overlay
-      document.querySelectorAll("#sidebarPanelOcean .layerOpt:not(.soon)").forEach(opt => {
-        opt.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const alreadyActive = opt.classList.contains("active");
-          document.querySelectorAll("#sidebarPanelOcean .layerOpt").forEach(o => o.classList.remove("active"));
-          if (!alreadyActive) {
-            opt.classList.add("active");
-            window.__oceanLayer = opt.dataset.layer;
-          } else {
-            window.__oceanLayer = null;
-          }
-          syncOceanVisibility();
-        });
-      });
 
       // ──────────────────────────────────────────────────────────
       //  TRANSPORTATION VIEW
@@ -11783,7 +11385,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Fade centroid nodes — hard-hide in ocean/transportation regardless of opacity
         if (regionPoints) {
           const mode = window.__currentViewMode;
-          const blocked = mode === "ocean" || mode === "transportation" || _semHide;
+          const blocked = mode === "transportation" || _semHide;
           regionPoints.visible = !blocked && (active || regionPoints.material.opacity > 0.01);
           regionPoints.material.opacity += (regionTargetOpacity - regionPoints.material.opacity) * 0.04;
         }
@@ -12096,14 +11698,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           setActiveMode(mode);
           setSidebarPanel(mode);
           if (mode === "city")           { targetCityOpacity = 1.0; targetCountryOpacity = 0.0; }
-          else if (mode === "ocean")      { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else if (mode === "transportation") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else if (mode === "regions")    { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else if (mode === "environment") { targetCityOpacity = 0.0; targetCountryOpacity = 0.0; }
           else                            { targetCityOpacity = 0.0; targetCountryOpacity = 1.0; }
           window.__currentViewMode = mode;
           if (window.__clearAmbientCache) window.__clearAmbientCache();
-          if (window.__syncOceanVisibility) window.__syncOceanVisibility();
           if (window.__syncTransportationVisibility) window.__syncTransportationVisibility();
           if (window.__syncRegionsVisibility) window.__syncRegionsVisibility();
           if (window.__syncEnvironmentVisibility) window.__syncEnvironmentVisibility();
@@ -12221,7 +11821,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (flowControlsVisible) { hideHoverCard(); return; }
 
         if (window.briefingActive) { hideHoverCard(); return; }
-        if (panelOpen || currentViewMode === "ocean" || currentViewMode === "transportation") { hideHoverCard(); return; }
+        if (panelOpen || currentViewMode === "transportation") { hideHoverCard(); return; }
         if (currentViewMode === "regions") { updateRegionHoverLabels(); return; }
         if (currentViewMode === "environment") { updateEnvironmentHoverLabels(); return; }
 
@@ -12470,7 +12070,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           focusLocked = true;  // Keep camera frozen until drag or new focus
         }
         
-        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
+        if (currentViewMode === "transportation") return;
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -12589,7 +12189,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           focusLocked = true;  // Keep camera frozen until drag or new focus
         }
         
-        if (currentViewMode === "ocean" || currentViewMode === "transportation") return;
+        if (currentViewMode === "transportation") return;
         const rect = renderer.domElement.getBoundingClientRect();
         mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
         mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
@@ -14582,8 +14182,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           }
         }
-        // Sync ocean heatmap mesh with globe rotation
-        if (window.__oceanMeshSync) window.__oceanMeshSync();
         tickShootingStars();
         renderer.render(scene, camera);
       }
@@ -15068,7 +14666,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             && ambientSpeed > 0
             && !window.briefingActive
             && !window.__semHeatActive
-            && currentViewMode !== "ocean"
             && currentViewMode !== "transportation"
             && !document.getElementById("infoPanel")?.classList.contains("active")
             && !document.getElementById("flowControls")?.classList.contains("visible");
