@@ -563,7 +563,7 @@
     /* Panel resize handle */
 #panelResizeHandle {
   position: absolute;
-  top: 10px;        /* half its height above the panel */
+  top: -6px;
   left: 50%;
   transform: translateX(-50%);
   width: auto;
@@ -20994,10 +20994,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="adpVideoWrap">
           <iframe
             class="adpVideoFrame"
-            src="https://www.youtube.com/embed/${article.video_id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1&controls=1&enablejsapi=1"
+            src="https://www.youtube-nocookie.com/embed/${article.video_id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1&controls=1"
             title="${safeTitle}"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerpolicy="no-referrer-when-downgrade"
+            referrerpolicy="no-referrer"
             allowfullscreen
           ></iframe>
         </div>`;
@@ -21366,7 +21366,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const isError = data.event === 'onError' ||
         (data.event === 'infoDelivery' && data.info && data.info.error);
       if (!isError) return;
-      const iframes = document.querySelectorAll('iframe[src*="youtube.com/embed"]');
+      const iframes = document.querySelectorAll('iframe[src*="youtube.com/embed"], iframe[src*="youtube-nocookie.com/embed"]');
       for (const iframe of iframes) {
         if (iframe.contentWindow === e.source) {
           const wrap = iframe.closest('.adpVideoWrap');
@@ -25091,9 +25091,9 @@ body.ticker-active .gTickerLabel {
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
     // enablejsapi=1 for focal video control (seek, mute, captions)
     return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}">
-      <iframe id="bVideoIframe" src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&cc_load_policy=1&origin=${encodeURIComponent(window.location.origin)}"
+      <iframe id="bVideoIframe" src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&cc_load_policy=1"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-        referrerpolicy="strict-origin-when-cross-origin"
+        referrerpolicy="no-referrer"
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
@@ -26093,10 +26093,12 @@ body.ticker-active .gTickerLabel {
   function _canMeasureTicker() {
     const ticker = document.getElementById('globalTicker');
     const track = document.getElementById('gTickerTrack');
-    return !!(ticker && track)
-      && !document.body.classList.contains('briefing-active')
-      && !ticker.classList.contains('hidden')
-      && ticker.offsetParent !== null;
+    if (!ticker || !track) return false;
+    if (document.body.classList.contains('briefing-active')) return false;
+    if (ticker.classList.contains('hidden')) return false;
+    // offsetParent is null for position:fixed elements — use visibility check instead
+    const style = getComputedStyle(ticker);
+    return style.display !== 'none' && style.visibility !== 'hidden';
   }
 
   function _renderTicker(articles) {

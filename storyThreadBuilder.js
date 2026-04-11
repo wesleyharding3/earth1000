@@ -940,7 +940,7 @@ async function dedupSimilarThreads() {
 
       const titleSim = jaccard(a._titleTokens, b._titleTokens);
       const kwSim    = jaccard(a._kwSet, b._kwSet);
-      if (titleSim >= 0.60 || kwSim >= 0.70) {
+      if (titleSim >= 0.50 || kwSim >= 0.55) {
         union(a.id, b.id);
       }
     }
