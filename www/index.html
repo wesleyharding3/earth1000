@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Earth00</title>
+  <meta name="description" content="Real-time global news intelligence on an interactive 3D globe. Track stories, flow arcs, and briefings across every country.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Earth00 — Global News Intelligence">
+  <meta property="og:description" content="Real-time global news on an interactive 3D globe. Track stories, flow arcs, and briefings across every country.">
+  <meta property="og:image" content="https://earth00.com/favicon-512.png">
+  <meta property="og:url" content="https://earth00.com">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Earth00 — Global News Intelligence">
+  <meta name="twitter:description" content="Real-time global news on an interactive 3D globe.">
+  <meta name="twitter:image" content="https://earth00.com/favicon-512.png">
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png">
   <link rel="icon" type="image/png" sizes="512x512" href="/favicon-512.png">
@@ -58,6 +68,11 @@
                    sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+    }
+
+    *:focus-visible {
+      outline: 2px solid rgba(255,180,80,0.6);
+      outline-offset: 2px;
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -2668,6 +2683,8 @@ body.ticker-active #flowControls {
       -webkit-box-orient: vertical;
       overflow: hidden;
       margin-bottom: 5px;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .articleCardSummary {
@@ -2678,6 +2695,8 @@ body.ticker-active #flowControls {
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
 
     .articleCardDate {
@@ -5950,11 +5969,13 @@ body.ticker-active #flowControls {
       color: rgba(255,255,255,0.92);
       display: -webkit-box; -webkit-line-clamp: 3;
       -webkit-box-orient: vertical; overflow: hidden;
+      word-break: break-word; overflow-wrap: anywhere;
     }
     .nfCardSummary {
       font-size: 11px; line-height: 1.5; color: rgba(255,255,255,0.40);
       display: -webkit-box; -webkit-line-clamp: 2;
       -webkit-box-orient: vertical; overflow: hidden;
+      word-break: break-word; overflow-wrap: anywhere;
     }
     .nfCardFooter {
       display: flex; justify-content: space-between;
@@ -5979,6 +6000,37 @@ body.ticker-active #flowControls {
       opacity: 1 !important;
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
+    .nfBookmarkBtn {
+      background: none; border: none; padding: 2px; cursor: pointer;
+      color: rgba(255,255,255,0.25); transition: color 0.15s; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .nfBookmarkBtn svg { width: 14px; height: 14px; }
+    .nfBookmarkBtn:hover { color: rgba(255,195,70,0.7); }
+    .nfBookmarkBtn.saved { color: rgba(255,195,70,0.9); }
+    /* Leader tweet cards (inline in news feed grid) */
+    .nfCard.leaderTweet {
+      border: 1px solid rgba(255,180,80,0.12);
+    }
+    .nfCard.leaderTweet .nfCardBody { padding: 10px 12px; }
+    .ldTweetBadge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+      color: rgba(255,195,70,0.8); margin-bottom: 4px;
+    }
+    .ldTweetBadge svg { width: 11px; height: 11px; }
+    .ldTweetHandle { font-size: 11px; color: rgba(255,180,80,0.5); }
+    .ldTweetText {
+      font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.7);
+      word-break: break-word; overflow-wrap: anywhere;
+      display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .ldTweetText a { color: rgba(255,180,80,0.7); text-decoration: none; }
+    .ldTweetText a:hover { text-decoration: underline; }
+    .ldTweetStats {
+      display: flex; gap: 12px; margin-top: 6px; font-size: 10px; color: rgba(255,255,255,0.2);
+    }
+    .ldTweetStats span { display: flex; align-items: center; gap: 3px; }
     .nfCardFooterLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow: hidden; }
     .nfCardFooterRight { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: 6px; }
     .nfCardTranslateBtn { position: static !important; margin: 0 !important; }
@@ -7163,6 +7215,72 @@ body.ticker-active #flowControls {
   color: rgba(255,100,100,0.75);
 }
 .acctDpBtn.signout:hover { background: rgba(255,50,50,0.08); color: rgba(255,130,130,1); }
+.acctDpCount {
+  margin-left: auto; font-size: 10px; font-weight: 700;
+  background: rgba(255,180,80,0.18); color: rgba(255,195,70,0.9);
+  padding: 1px 7px; border-radius: 10px; min-width: 18px; text-align: center;
+}
+/* Library panel (Saved / History) */
+#libraryPanel {
+  display: none; position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(380px, 92vw); background: rgba(8,14,26,0.98);
+  border-left: 1px solid rgba(255,255,255,0.1);
+  box-shadow: -10px 0 40px rgba(0,0,0,0.6); z-index: 600;
+  flex-direction: column; overflow: hidden;
+  transform: translateX(100%); transition: transform 0.25s ease;
+}
+#libraryPanel.open { display: flex; transform: translateX(0); }
+.libHeader {
+  display: flex; align-items: center; gap: 10px; padding: 16px 18px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.libTitle { font-size: 15px; font-weight: 600; color: rgba(255,255,255,0.9); flex: 1; }
+.libClose {
+  width: 28px; height: 28px; border-radius: 50%; border: none;
+  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 16px; transition: background 0.15s;
+}
+.libClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.libTabs {
+  display: flex; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.libTab {
+  flex: 1; padding: 10px; text-align: center; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.4); cursor: pointer; text-transform: uppercase;
+  letter-spacing: 0.05em; border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+.libTab.active { color: rgba(255,195,70,0.9); border-bottom-color: rgba(255,195,70,0.6); }
+.libTab:hover { color: rgba(255,255,255,0.7); }
+.libContent { flex: 1; overflow-y: auto; padding: 12px; }
+.libEmpty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 40px 20px; color: rgba(255,255,255,0.3); text-align: center;
+}
+.libEmpty svg { width: 36px; height: 36px; opacity: 0.35; }
+.libEmpty span { font-size: 13px; line-height: 1.5; }
+.libItem {
+  display: flex; gap: 10px; padding: 10px; border-radius: 10px; cursor: pointer;
+  transition: background 0.15s; margin-bottom: 4px;
+}
+.libItem:hover { background: rgba(255,255,255,0.04); }
+.libItemBody { flex: 1; min-width: 0; }
+.libItemTitle {
+  font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word; overflow-wrap: anywhere;
+}
+.libItemMeta {
+  font-size: 10px; color: rgba(255,255,255,0.3); margin-top: 4px;
+}
+.libItemRemove {
+  align-self: center; width: 22px; height: 22px; border-radius: 50%;
+  border: none; background: transparent; color: rgba(255,255,255,0.25);
+  cursor: pointer; font-size: 13px; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0; transition: all 0.15s;
+}
+.libItemRemove:hover { background: rgba(255,50,50,0.12); color: rgba(255,100,100,0.8); }
 </style>
 </head>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -7209,6 +7327,14 @@ body.ticker-active #flowControls {
 
 <!-- Twinkling starfield for site loader -->
 <script>
+/* ── Date formatting utility ── */
+window.fmtDate = function(d) {
+  if (!d) return '';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt)) return '';
+  return dt.toISOString().slice(0, 10);
+};
+
 /* ── Global fetch wrapper: default 20s timeout on all requests ── */
 (function() {
   const _origFetch = window.fetch;
@@ -7670,6 +7796,19 @@ window.sourceBiasBadgeHTML = function(bias) {
             <polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/>
           </svg>
           Upgrade Plan
+        </div>
+        <div class="acctDpBtn" id="acctDpSaved">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+          </svg>
+          Saved
+          <span class="acctDpCount" id="acctDpSavedCount" style="display:none">0</span>
+        </div>
+        <div class="acctDpBtn" id="acctDpHistory">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          History
         </div>
         <div class="acctDpBtn signout" id="acctDpSignOut">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -8661,8 +8800,13 @@ const loader = new THREE.TextureLoader();
           }
           init(cities, countries);
         } catch (err) {
-          console.error("Failed to load initial data:", err);
-          init([], []); // init with empty to avoid undefined errors
+          console.error("Bootstrap:", err);
+          init([], []);
+          // Show user-facing connection error
+          const banner = document.createElement('div');
+          banner.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:999999;background:rgba(20,20,30,0.95);color:rgba(255,255,255,0.8);padding:24px 32px;border-radius:12px;text-align:center;font:14px/1.6 -apple-system,sans-serif;max-width:320px;border:1px solid rgba(255,255,255,0.1);';
+          banner.innerHTML = '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">Connection Error</div>Unable to reach the server.<br>Check your connection and try again.<br><button onclick="location.reload()" style="margin-top:14px;padding:8px 24px;background:rgba(255,180,80,0.9);color:#111;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Retry</button>';
+          document.body.appendChild(banner);
         }
       }
     );
@@ -12695,7 +12839,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   </div>
                   <div class="articleCardFooter">
                     ${originLabel}
-                    <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                    <div class="articleCardDate">${fmtDate(article.published_at)}</div>
                   </div>
                 </div>
               </div>
@@ -12768,7 +12912,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             btn.textContent = "✓"; btn.classList.add("done");
           } catch (err) {
             console.error("Translation failed:", err);
-            btn.textContent = "✗"; btn.classList.add("error"); btn.disabled = false;
+            btn.textContent = "✗"; btn.title = "Translation failed — tap to retry"; btn.classList.add("error"); btn.disabled = false;
           }
         }
         window.translateCard = translateCard;
@@ -12818,7 +12962,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           });
           if (!filtered.length && !loading) {
             const emptyLabel = (filterQuery || hasMediaNarrowing) ? "No matching items." : "No recent articles.";
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}</div>`;
+            const emptyHint = (filterQuery || hasMediaNarrowing) ? "<br><span style='opacity:0.5;font-size:11px;font-weight:400;'>Try broadening your filters.</span>" : "";
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}${emptyHint}</div>`;
             return;
           }
           track.innerHTML = filtered.map(articleCardHTML).join("");
@@ -12863,8 +13008,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             timeElement.textContent = new Date().toLocaleTimeString("en-US", { timeZone: cityTimezone, hour:"2-digit", minute:"2-digit" });
           }
           updateLocalTime();
-          if (timeInterval) clearInterval(timeInterval);
-          timeInterval = setInterval(updateLocalTime, 1000);
+          clearInterval(timeInterval);
+          timeInterval = setInterval(updateLocalTime, 30000);
 
           // ── Weather ──
           // WMO weather interpretation codes → { emoji, label }
@@ -13966,7 +14111,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           });
           if (!filtered.length && !loading) {
             const emptyLabel = (filterQuery || hasMediaNarrowing) ? "No matching items." : "No recent articles for this region.";
-            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}</div>`;
+            const emptyHint = (filterQuery || hasMediaNarrowing) ? "<br><span style='opacity:0.5;font-size:11px;font-weight:400;'>Try broadening your filters.</span>" : "";
+            track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}${emptyHint}</div>`;
             return;
           }
           track.innerHTML = filtered.map(a => {
@@ -13978,7 +14124,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               : (aCatalog ? `<img class="articleCardImage" src="${aCatalog}" alt="" loading="lazy" onerror="this.src='${flagUrl}'">` : (a.iso_code ? `<img class="articleCardImage" src="${flagUrl}" alt="" loading="lazy">` : `<div class="articleCardImagePlaceholder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`));
             const title = a.translated_title || a.title || "";
             const summary = a.translated_summary || a.summary || "";
-            const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric"}) : "";
+            const date = a.published_at ? fmtDate(a.published_at) : "";
             const cityTag = a.city_name ? `<span style="opacity:0.5">· ${a.city_name}</span>` : "";
             const sourceLine = `${window.sourceBiasBadgeHTML(a.source_bias)}<span>${a.source_name||""}</span> ${date ? `<span style="opacity:0.5">· ${date}</span>` : ""} ${cityTag}`;
             const needsTranslation = articleNeedsTranslation(a);
@@ -14724,8 +14870,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           document.getElementById("ahFlagEl").textContent     = nodeFlag;
           document.getElementById("ahSource").textContent     = article.source_name || "";
           document.getElementById("ahHeadlineEl").textContent = "";
-          document.getElementById("ahDateEl").textContent     = new Date(article.published_at)
-            .toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+          document.getElementById("ahDateEl").textContent     = fmtDate(article.published_at);
 
           positionCard(sx, sy);
 
@@ -15760,7 +15905,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     } catch(e) {
       console.error("Flow load error:", e);
-      document.getElementById("flowStats").textContent = "Error loading data";
+      document.getElementById("flowStats").innerHTML = `<span style="color:#ff6b6b">Failed to load</span> — <span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
     }
   }
 
@@ -15901,7 +16046,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     flowData.forEach((flow, idx) => {
       if (!flow.publishedAt) return;
       const d = new Date(flow.publishedAt);
-      const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      const dateStr = fmtDate(d);
       
       if (!datePositions.has(dateStr)) {
         datePositions.set(dateStr, { firstIndex: idx, lastIndex: idx, date: d });
@@ -16008,9 +16153,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Update tooltip
     const date = getDateAtFrac(frac);
     if (date) {
-      dateTooltip.textContent = date.toLocaleDateString("en-US", { 
-        month: "short", day: "numeric", year: "numeric" 
-      });
+      dateTooltip.textContent = fmtDate(date);
       dateTooltip.style.left = (frac * 100) + "%";
     }
     
@@ -16129,7 +16272,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         } else {
           // Individual mode tooltip
           ftTitle.textContent = flow.title || "(no title)";
-          ftMeta.textContent  = `${flow.sourceName || ""} · ${new Date(flow.publishedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
+          ftMeta.textContent  = `${flow.sourceName || ""} · ${fmtDate(flow.publishedAt)}`;
           ftRoute.textContent = `${flow.src.place || "?"} → ${flow.dst.place || "?"} (${flow.routingType})`;
         }
         tooltip.style.left    = (e.clientX + 14) + "px";
@@ -16281,7 +16424,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         metaEl.textContent  = '';
       } else {
         titleEl.textContent = flow.title || "1 article on this route";
-        const datePart = flow.publishedAt ? new Date(flow.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+        const datePart = flow.publishedAt ? fmtDate(flow.publishedAt) : "";
         metaEl.textContent = [flow.sourceName || '', datePart].filter(Boolean).join(' · ');
       }
       hintEl.textContent = 'click to view articles ↓';
@@ -16591,7 +16734,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 </div>
                 <div class="articleCardFooter">
                   ${originLabel}
-                  <div class="articleCardDate">${new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</div>
+                  <div class="articleCardDate">${fmtDate(article.published_at)}</div>
                 </div>
               </div>
             </div>
@@ -16679,7 +16822,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <div class="articleCardTitle">${article.title || ""}</div>
                 </div>
                 <div class="articleCardFooter">
-                  <div class="articleCardDate">${article.published_at ? new Date(article.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : ""}</div>
+                  <div class="articleCardDate">${article.published_at ? fmtDate(article.published_at) : ""}</div>
                 </div>
               </div>
             </div>
@@ -17474,6 +17617,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
       searchBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg> Search`;
     }
 
+    /* ── Leader tweets: fetch and interleave into feed ── */
+    let _leaderTweets = [];
+    let _leaderTweetsFetched = false;
+    function fetchLeaderTweets() {
+      if (_leaderTweetsFetched) return;
+      _leaderTweetsFetched = true;
+      fetch(`${API}/api/leader-tweets?days=3&limit=30`)
+        .then(r => r.ok ? r.json() : { tweets: [] })
+        .then(data => {
+          _leaderTweets = (data.tweets || []).map(t => ({ ...t, _type: 'tweet' }));
+          if (_leaderTweets.length && articles.length) {
+            renderCards(filtered(), true);
+          }
+        })
+        .catch(() => {});
+    }
+
+    function interleaveTweets(list) {
+      if (!_leaderTweets.length) return list;
+      const merged = [];
+      let ti = 0;
+      for (let i = 0; i < list.length; i++) {
+        merged.push(list[i]);
+        if ((i + 1) % 8 === 0 && ti < _leaderTweets.length) {
+          merged.push(_leaderTweets[ti++]);
+        }
+      }
+      return merged;
+    }
+
     function filtered() {
       const allBiasActive = activeBiases.size === BIAS_OPTIONS.length;
       const allMediaActive = mediaShowArticle && mediaShowVideo;
@@ -17521,8 +17694,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function renderCards(list, forceFullRebuild) {
+      list = interleaveTweets(list);
       if (!list.length && !loading) {
-        grid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No articles found</span></div>`;
+        grid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No articles found</span><span style="font-size:11px;text-transform:none;letter-spacing:0;font-weight:400;opacity:0.5;margin-top:4px;">Try broadening your filters or adjusting the date range.</span></div>`;
         _lastRenderedCount = 0;
         return;
       }
@@ -17555,7 +17729,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
       metaCount.innerHTML = "";
     }
 
+    function tweetCardHTML(t) {
+      const FLAG_CDN_T = 'https://flagcdn.com/w40/';
+      const flag = t.iso_code ? `<img class="nfCardImg" src="${FLAG_CDN_T}${t.iso_code}.png" alt="" style="width:100%;height:100%;object-fit:contain;padding:18px;background:#0a0a0a;">` : '';
+      const text = (t.tweet_text || '').replace(/https?:\/\/\S+/g, m => `<a href="${m}" target="_blank" rel="noopener">${m}</a>`);
+      const xUrl = `https://x.com/${t.twitter_handle}/status/${t.tweet_id}`;
+      return `
+      <div style="position:relative">
+        <div class="nfCard leaderTweet" onclick="window.open('${xUrl}','_blank')" style="cursor:pointer;">
+          ${flag}
+          <div class="nfCardBody">
+            <div>
+              <div class="ldTweetBadge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg> WORLD LEADER</div>
+              <div class="nfCardSrc"><span>${esc(t.leader_name)}</span></div>
+              <div class="nfCardTitle" style="-webkit-line-clamp:1;font-size:11px;font-weight:400;color:rgba(255,255,255,0.4);margin-bottom:4px;">${esc(t.leader_title || '')} · ${esc(t.country || '')}</div>
+              <div class="ldTweetText">${text}</div>
+            </div>
+            <div class="nfCardFooter">
+              <div class="nfCardFooterLeft">
+                <div class="ldTweetHandle">@${esc(t.twitter_handle)}</div>
+                <div class="nfCardDate">${fmtDate(t.tweet_created_at)}</div>
+              </div>
+              <div class="nfCardFooterRight">
+                <div class="ldTweetStats">
+                  <span title="Retweets">${(t.retweet_count || 0).toLocaleString()}</span>
+                  <span title="Likes">${(t.like_count || 0).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
     function cardHTML(a) {
+      if (a._type === 'tweet') return tweetCardHTML(a);
       const hasImg = a.image_url && a.image_url.trim();
       const isVideo = a.media_type === 'video' || a.video_id;
       const _catNf = a.catalog_image_url || '';
@@ -17588,8 +17796,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       else if (a.iso_code) parts.push(a.iso_code.trim().toUpperCase());
       const videoPrefix = isVideo ? `<span style="font-size:8px;opacity:0.6;margin-right:2px;">▶</span>` : "";
       const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
-      const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+      const date = a.published_at ? fmtDate(a.published_at) : "";
       const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+      const _isSaved = window.__libraryIsSaved && window.__libraryIsSaved(a.id);
+      const bookmarkBtn = `<button class="nfBookmarkBtn${_isSaved ? ' saved' : ''}" onclick="toggleBookmark(event,this,${a.id})" title="${_isSaved ? 'Remove bookmark' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
       return `
       <div style="position:relative">
         ${flowArcBtn}
@@ -17601,7 +17811,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
               <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
             </div>
-            <div class="nfCardFooter"><div class="nfCardFooterLeft">${origin}${date ? `<div class="nfCardDate">${date}</div>` : ""}</div><div class="nfCardFooterRight">${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
+            <div class="nfCardFooter"><div class="nfCardFooterLeft">${origin}${date ? `<div class="nfCardDate">${date}</div>` : ""}</div><div class="nfCardFooterRight">${bookmarkBtn}${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
           </div>
         </div>
       </div>`;
@@ -17613,10 +17823,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const article = JSON.parse(el.dataset.article);
         if (article && window.openArticleDetail) {
           window.openArticleDetail(article, { type: 'feed' });
+          if (window.__libraryTrackView) window.__libraryTrackView(article);
         }
       } catch(e) {
         console.warn('Failed to open article:', e);
       }
+    };
+
+    window.toggleBookmark = function(e, btn, articleId) {
+      e.stopPropagation();
+      const card = btn.closest('.nfCard');
+      if (!card) return;
+      try {
+        const a = JSON.parse(card.dataset.article);
+        if (window.__libraryIsSaved && window.__libraryIsSaved(articleId)) {
+          window.__libraryUnsave(articleId);
+          btn.classList.remove('saved');
+          btn.querySelector('svg').setAttribute('fill', 'none');
+          btn.title = 'Save';
+        } else {
+          window.__librarySave(a);
+          btn.classList.add('saved');
+          btn.querySelector('svg').setAttribute('fill', 'currentColor');
+          btn.title = 'Remove bookmark';
+        }
+      } catch (err) { console.warn('Bookmark toggle error:', err); }
     };
 
     viewport.addEventListener("scroll", () => {
@@ -17701,7 +17932,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (!threadsLoaded) loadThreads();
           else { activeGridData = threadsData; renderThreads(); }
         }
-        if (view === 'feed' && !feedBootstrapped) { feedBootstrapped = true; runSearch(); }
+        if (view === 'feed') {
+          if (!feedBootstrapped) { feedBootstrapped = true; runSearch(); }
+          fetchLeaderTweets();
+        }
       }
 
       pillTimelines.addEventListener('click', () => setView('timelines'));
@@ -17847,7 +18081,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function renderThreads() {
         if (!activeGridData.length) {
           const label = currentView === 'timelines' ? 'timelines' : 'threads';
-          threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No ${label} found</span></div>`;
+          threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No ${label} found</span><span style="font-size:11px;text-transform:none;letter-spacing:0;font-weight:400;opacity:0.5;margin-top:4px;">Try broadening your filters or adjusting the date range.</span></div>`;
           threadsCount.innerHTML = '';
           gridRenderedCount = 0;
           return;
@@ -19153,9 +19387,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Render timeline events
     trackEl.innerHTML = data.timeline.map(ev => {
-      const date = ev.publishedAt
-        ? new Date(ev.publishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-        : "";
+      const date = ev.publishedAt ? fmtDate(ev.publishedAt) : "";
       const sentClass = ev.sentiment != null
         ? (ev.sentiment < -0.2 ? "negative" : ev.sentiment > 0.2 ? "positive" : "")
         : "";
@@ -20016,7 +20248,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (i % labelStep === 0 || i === allDates.length - 1) {
         const x = PAD.left + (i / xDivisor) * chartW;
         const d = new Date(date);
-        ctx.fillText(d.toLocaleDateString('en-US', {month:'short', day:'numeric'}), x, H - 8);
+        ctx.fillText(fmtDate(d), x, H - 8);
       }
     });
     
@@ -20416,9 +20648,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     
     // Date formatting
     const pubDate = article.published_at ? new Date(article.published_at) : null;
-    const dateStr = pubDate ? pubDate.toLocaleDateString('en-US', { 
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-    }) : '';
+    const dateStr = pubDate ? fmtDate(pubDate) : '';
     const timeStr = pubDate ? pubDate.toLocaleTimeString('en-US', { 
       hour: 'numeric', minute: '2-digit' 
     }) : '';
@@ -21272,6 +21502,104 @@ const settingsToggle     = document.getElementById("settingsToggle");
   siSubmit.addEventListener('click', signIn);
   suSubmit.addEventListener('click', signUp);
   acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
+
+  /* ── Library (Saved / History) ── */
+  const libraryPanel = document.getElementById('libraryPanel');
+  const libContent   = document.getElementById('libContent');
+  const libClose     = document.getElementById('libClose');
+  let _libTab = 'saved';
+  let _savedItems  = JSON.parse(localStorage.getItem('earth00_saved') || '[]');
+  let _historyItems = JSON.parse(localStorage.getItem('earth00_history') || '[]');
+
+  function _persistSaved()  { localStorage.setItem('earth00_saved', JSON.stringify(_savedItems)); }
+  function _persistHistory() { localStorage.setItem('earth00_history', JSON.stringify(_historyItems)); }
+
+  function _updateSavedCount() {
+    const el = document.getElementById('acctDpSavedCount');
+    if (_savedItems.length) { el.textContent = _savedItems.length; el.style.display = ''; }
+    else { el.style.display = 'none'; }
+  }
+
+  function _libEmpty(msg) {
+    return `<div class="libEmpty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span>${msg}</span>
+    </div>`;
+  }
+
+  function _renderLib() {
+    const items = _libTab === 'saved' ? _savedItems : _historyItems;
+    if (!items.length) {
+      libContent.innerHTML = _libEmpty(
+        _libTab === 'saved'
+          ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
+          : 'No browsing history yet.'
+      );
+      return;
+    }
+    libContent.innerHTML = items.map((it, i) => `
+      <div class="libItem" data-idx="${i}" data-url="${it.url || ''}">
+        <div class="libItemBody">
+          <div class="libItemTitle">${it.title || 'Untitled'}</div>
+          <div class="libItemMeta">${it.source || ''} · ${it.date || ''}</div>
+        </div>
+        ${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}
+      </div>`).join('');
+
+    libContent.querySelectorAll('.libItem').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.closest('.libItemRemove')) return;
+        const url = el.dataset.url;
+        if (url) window.open(url, '_blank');
+      });
+    });
+    libContent.querySelectorAll('.libItemRemove').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.rm);
+        _savedItems.splice(idx, 1);
+        _persistSaved(); _updateSavedCount(); _renderLib();
+      });
+    });
+  }
+
+  function openLibrary(tab) {
+    _libTab = tab || 'saved';
+    libraryPanel.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
+    _renderLib();
+    accountDropdown.classList.remove('open');
+    requestAnimationFrame(() => libraryPanel.classList.add('open'));
+  }
+
+  libClose.addEventListener('click', () => libraryPanel.classList.remove('open'));
+  libraryPanel.querySelectorAll('.libTab').forEach(t => {
+    t.addEventListener('click', () => { _libTab = t.dataset.lib; libraryPanel.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
+  });
+  document.getElementById('acctDpSaved').addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
+  document.getElementById('acctDpHistory').addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
+
+  // Public API for other parts of the app to save/track items
+  window.__librarySave = function(item) {
+    if (_savedItems.some(s => s.id === item.id)) return;
+    _savedItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: item.url || '', date: item.published_at ? item.published_at.slice(0, 10) : '' });
+    if (_savedItems.length > 200) _savedItems.length = 200;
+    _persistSaved(); _updateSavedCount();
+  };
+  window.__libraryUnsave = function(id) {
+    _savedItems = _savedItems.filter(s => s.id !== id);
+    _persistSaved(); _updateSavedCount(); if (libraryPanel.classList.contains('open') && _libTab === 'saved') _renderLib();
+  };
+  window.__libraryIsSaved = function(id) { return _savedItems.some(s => s.id === id); };
+  window.__libraryTrackView = function(item) {
+    _historyItems = _historyItems.filter(h => h.id !== item.id);
+    _historyItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: item.url || '', date: new Date().toISOString().slice(0, 10) });
+    if (_historyItems.length > 500) _historyItems.length = 500;
+    _persistHistory();
+  };
+  _updateSavedCount();
+
   forgotLink.addEventListener('click', forgotPassword);
 
   siPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
@@ -22090,7 +22418,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 .bTickerItem {
   display: inline-block; white-space: nowrap;
-  animation: bTickerScroll 600s linear infinite;
+  animation: bTickerScroll 1800s linear infinite;
   will-change: transform;
 }
 .bTickerItem.reset { animation: none; }
@@ -22201,7 +22529,7 @@ body.ticker-active .gTickerLabel {
 }
 .gTickerTrack {
   display: inline-block; white-space: nowrap;
-  animation: gTickerScroll 600s linear infinite;
+  animation: gTickerScroll 1800s linear infinite;
   will-change: transform;
 }
 .gTickerTrack.reset { animation: none; }
@@ -22949,9 +23277,7 @@ body.ticker-active .gTickerLabel {
       : `<span style="opacity:0.7">${article.source_name || ''}</span>`;
 
     const title = article.translated_title || article.title || '';
-    const date = article.published_at
-      ? new Date(article.published_at).toLocaleDateString("en-US", {month:"short", day:"numeric"})
-      : '';
+    const date = article.published_at ? fmtDate(article.published_at) : '';
 
     return `
       <div class="bCard" style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
@@ -23042,8 +23368,7 @@ body.ticker-active .gTickerLabel {
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
     // Dots meta: "Earth Briefing" + date above nav dots
-    const metaDate = new Date(episode.target_date)
-      .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const metaDate = fmtDate(episode.target_date);
     document.getElementById('bDotsMeta').innerHTML =
       `<span class="bDotsMetaLogo">Earth Briefing</span><span class="bDotsMetaDate">${metaDate}</span>`;
     buildDots();
@@ -23751,8 +24076,8 @@ body.ticker-active .gTickerLabel {
     if (seg.video_id) {
       const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
       const vidDate = seg.published_at
-        ? new Date(seg.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-        : new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        ? fmtDate(seg.published_at)
+        : fmtDate(new Date());
       videoWrap.innerHTML = `
         <div class="bVideoMetaBar top">
           <span class="bVideoSource" id="bVideoSource">—</span>
@@ -24033,7 +24358,7 @@ body.ticker-active .gTickerLabel {
     const flag = a.iso_code ? `https://flagcdn.com/w80/${a.iso_code.toLowerCase()}.png` : '';
     const src  = img || flag;
     const date = a.published_at
-      ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      ? fmtDate(a.published_at)
       : '';
     const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
     const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
@@ -24052,14 +24377,14 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── News ticker (scrolling marquee) ──────────────────────────────────────
-  const TICKER_PX_PER_SEC = 3; // scroll speed — crawl pace
-  const TICKER_MIN_DURATION_SEC = 500;
+  const TICKER_PX_PER_SEC = 1; // scroll speed — very slow crawl
+  const TICKER_MIN_DURATION_SEC = 1500;
   let _briefingTickerArticles = [];
 
   function _buildTickerHTML(articles) {
     return articles.map(a => {
       const date     = a.published_at
-        ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        ? fmtDate(a.published_at)
         : '';
       const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
       const summary  = (a.translated_summary || a.summary || '').replace(/</g, '&lt;');
@@ -24587,8 +24912,7 @@ body.ticker-active .gTickerLabel {
     const el = document.getElementById('bLauncherTodaySection');
     if (episode && episode.status === 'ready') {
       document.getElementById('bLauncherTodayHeadline').textContent = episode.headline || '';
-      document.getElementById('bLauncherTodayDate').textContent = new Date(episode.target_date)
-        .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+      document.getElementById('bLauncherTodayDate').textContent = fmtDate(episode.target_date);
       if (el) el.style.display = '';
     } else {
       if (el) el.style.display = 'none';
@@ -24860,8 +25184,8 @@ body.ticker-active .gTickerLabel {
 (function () {
   'use strict';
   const API = window.__API_BASE || 'https://earth-wjr6.onrender.com';
-  const SPEED = 3; // px/sec — crawl pace
-  const MIN_TICKER_DURATION = 500;
+  const SPEED = 1; // px/sec — very slow crawl
+  const MIN_TICKER_DURATION = 1500;
   const REFRESH_MS = 10 * 60 * 1000; // refresh articles every 10 min
   const CACHE_KEY = 'gTickerCacheV1';
   let _articles = [];
@@ -24911,7 +25235,7 @@ body.ticker-active .gTickerLabel {
   function _buildHTML(articles) {
     return articles.map(a => {
       const date     = a.published_at
-        ? new Date(a.published_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        ? fmtDate(a.published_at)
         : '';
       const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
       const summary  = (a.summary || '').replace(/</g, '&lt;');
@@ -25267,7 +25591,7 @@ body.ticker-active .gTickerLabel {
     const flag = a.iso_code ? `https://flagcdn.com/w80/${a.iso_code.toLowerCase()}.png` : "";
     const src = img || flag;
     const isVideo = a.media_type === "video" || !!a.video_id;
-    const date = a.published_at ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+    const date = a.published_at ? fmtDate(a.published_at) : "";
     const title = esc(a.translated_title || a.title || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
     return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
@@ -25289,9 +25613,7 @@ body.ticker-active .gTickerLabel {
     const title = esc(a.translated_title || a.title || "Untitled");
     const source = esc(a.source_name || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
-    const date = a.published_at
-      ? new Date(a.published_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-      : "";
+    const date = a.published_at ? fmtDate(a.published_at) : "";
     return `<div class="cdTimelineItem" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
       <div class="cdTimelineDot${isVideo ? " video" : ""}"></div>
       <div class="cdTimelineDate">${date}${isAnchor ? '<span class="cdTimelineTag anchor">Anchor</span>' : ""}${isVideo ? '<span class="cdTimelineTag video">Video</span>' : ""}</div>
@@ -26866,8 +27188,7 @@ body.ticker-active .gTickerLabel {
     function fmtDate(d) {
       if (!d) return '';
       try {
-        const dt = new Date(d);
-        return dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+        return fmtDate(d);
       } catch { return ''; }
     }
 
@@ -28877,6 +29198,19 @@ body.ticker-active .gTickerLabel {
      onmouseout="this.style.color='rgba(255,255,255,0.22)'">
     Privacy Policy
   </a>
+</div>
+
+<!-- Library panel (Saved / History) -->
+<div id="libraryPanel">
+  <div class="libHeader">
+    <span class="libTitle">Library</span>
+    <button class="libClose" id="libClose">&times;</button>
+  </div>
+  <div class="libTabs">
+    <div class="libTab active" data-lib="saved">Saved</div>
+    <div class="libTab" data-lib="history">History</div>
+  </div>
+  <div class="libContent" id="libContent"></div>
 </div>
 
 </body>

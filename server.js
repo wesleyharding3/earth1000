@@ -4930,24 +4930,40 @@ app.get("/api/keywords/autocomplete", async (req, res) => {
 });
 
 // GET /api/keywords/cooccurrence?keyword=climate&days=7&limit=12
-// Co-occurrence storage was intentionally removed, so keep this endpoint as a
-// fast empty response instead of letting the widget fail on a 404/500.
+// Returns keywords that frequently appear alongside the given keyword
+// within the same articles over the specified time window.
 app.get("/api/keywords/cooccurrence", async (req, res) => {
   const keyword = normalizeLowerString(req.query.keyword);
+  if (!keyword) return res.json([]);
   const daysInt = clampQueryInt(req.query.days, 7, 1, 365);
   const limitInt = clampQueryInt(req.query.limit, 12, 1, 50);
-  const cacheKey = makeKeywordCacheKey("cooccurrence-disabled", [
-    keyword || "none",
+  const cacheKey = makeKeywordCacheKey("cooccurrence", [
+    keyword,
     daysInt,
     limitInt,
   ]);
 
   try {
-    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.autocomplete);
+    setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.top);
     const rows = await getCachedKeywordPayload(
       cacheKey,
-      KEYWORD_ROUTE_TTLS.autocomplete,
-      async () => []
+      KEYWORD_ROUTE_TTLS.top,
+      async () => {
+        const { rows } = await pool.query(
+          `SELECT ak2.normalized_keyword AS keyword, COUNT(DISTINCT ak2.article_id) AS count
+           FROM article_keywords ak1
+           JOIN articles a ON a.id = ak1.article_id AND a.published_at >= NOW() - ($2 || ' days')::interval
+           JOIN article_keywords ak2 ON ak2.article_id = ak1.article_id
+             AND ak2.normalized_keyword IS NOT NULL
+             AND ak2.normalized_keyword <> $1
+           WHERE ak1.normalized_keyword = $1
+           GROUP BY ak2.normalized_keyword
+           ORDER BY count DESC
+           LIMIT $3`,
+          [keyword, String(daysInt), limitInt]
+        );
+        return rows;
+      }
     );
     res.json(rows);
   } catch (err) {
@@ -5748,6 +5764,46 @@ async function _warmFeedCaches() {
 }
 setTimeout(_warmFeedCaches, 5000);
 setInterval(_warmFeedCaches, 90_000).unref?.();
+
+// ── World Leaders tweets ─────────────────────────────────────────────────
+app.get('/api/leader-tweets', async (req, res) => {
+  const iso   = (req.query.iso || '').trim().toLowerCase();
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+  const days  = Math.min(parseInt(req.query.days) || 7, 30);
+
+  const cacheKey = `leader-tweets:${iso || 'all'}:${days}:${limit}`;
+  try {
+    const cached = ttlCached(cacheKey, 60_000, async () => {
+      let q, params;
+      if (iso) {
+        q = `SELECT tweet_id, twitter_handle, leader_name, leader_title, country, iso_code,
+                    tweet_text, tweet_created_at, retweet_count, like_count, reply_count,
+                    media_urls, is_retweet, is_reply
+             FROM leader_tweets
+             WHERE iso_code = $1 AND tweet_created_at > NOW() - ($2 || ' days')::interval
+               AND is_retweet = FALSE
+             ORDER BY tweet_created_at DESC LIMIT $3`;
+        params = [iso, String(days), limit];
+      } else {
+        q = `SELECT tweet_id, twitter_handle, leader_name, leader_title, country, iso_code,
+                    tweet_text, tweet_created_at, retweet_count, like_count, reply_count,
+                    media_urls, is_retweet, is_reply
+             FROM leader_tweets
+             WHERE tweet_created_at > NOW() - ($1 || ' days')::interval
+               AND is_retweet = FALSE
+             ORDER BY tweet_created_at DESC LIMIT $2`;
+        params = [String(days), limit];
+      }
+      const { rows } = await pool.query(q, params);
+      return rows;
+    });
+    const rows = await cached;
+    res.json({ tweets: rows, count: rows.length });
+  } catch (err) {
+    console.error('[leader-tweets]', err.message);
+    res.status(500).json({ error: 'Failed to load leader tweets' });
+  }
+});
 
 // ── Health check ──────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
