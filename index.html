@@ -21541,7 +21541,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   suPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signUp(); });
   suEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signUp(); });
 
-  async function applySession(session) {
+  // ── Onboarding state (declared early to avoid TDZ) ──────────
+  let _obHomeCountry = null;
+  let _obHomeCity    = null;
+  let _obInterests   = []; // [{type:'country'|'city', id, name}]
+  let _onboardingShownThisSession = false;
+
+  async function applySession(session, event) {
     const user = session?.user ?? null;
     window.__authToken = session?.access_token ?? null;
     updateAccountUI(user);
@@ -21549,7 +21555,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
       try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
       try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
-      try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
+      if (!_onboardingShownThisSession) {
+        try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
+      }
     } else {
       clearAuthUI();
     }
@@ -21557,7 +21565,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Auth state — fires on load + every sign-in/out ───────────
   sb.auth.onAuthStateChange(async (_event, session) => {
-    await applySession(session);
+    await applySession(session, _event);
   });
 
   (async function initAuth() {
@@ -21572,14 +21580,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   })();
 
   // ── Onboarding questionnaire ──────────────────────────────────
-  let _obHomeCountry = null;
-  let _obHomeCity    = null;
-  let _obInterests   = []; // [{type:'country'|'city', id, name}]
-
   async function maybeShowOnboarding(userId) {
     const { data } = await sb.from('briefing_preferences')
       .select('user_id').eq('user_id', userId).maybeSingle();
-    if (data) return; // already set (or skipped)
+    if (data) { _onboardingShownThisSession = true; return; }
+    _onboardingShownThisSession = true;
     showOnboarding();
   }
 
