@@ -13739,7 +13739,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Tube geometry gives us real screen-space thickness
         // (WebGL ignores LineSegments linewidth on most platforms).
         const curve = new THREE.CatmullRomCurve3(pts);
-        const TUBE_RADIUS = R * 0.014;
+        const TUBE_RADIUS = R * 0.003;
         const geo = new THREE.TubeGeometry(curve, STEPS, TUBE_RADIUS, 10, false);
 
         const mat = new THREE.ShaderMaterial({
@@ -13898,20 +13898,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Reverse-lookup the nearest node from lat/lon and show its hover card.
       // Used when ring pulses fire on secondary locations that have no nodeObj.
-      window.briefingShowLabelAt = function(lat, lon) {
-        const isCityMode = window.__currentViewMode === 'city';
-        const arr = isCityMode ? cities : countries;
-        let best = null, bestDist = Infinity;
-        for (const n of arr) {
-          if (n.lat == null) continue;
-          const dLat = n.lat - lat;
-          const dLon = (n.lon ?? n.lng ?? 0) - lon;
-          const d = dLat * dLat + dLon * dLon;
-          if (d < bestDist) { bestDist = d; best = n; }
+      window.briefingShowLabelAt = function(lat, lon, name) {
+        // If a name is provided, find by name first (exact match)
+        if (name) {
+          const nl = name.trim().toLowerCase();
+          // Try country first
+          const country = countries.find(c => c.name && c.name.toLowerCase() === nl);
+          if (country) { window.briefingShowLabel(country, false); return; }
+          // Then city
+          const city = cities.find(c => c.name && c.name.toLowerCase() === nl);
+          if (city) { window.briefingShowLabel(city, true); return; }
         }
-        // Only show if we find a node within ~6 degrees
-        if (best && bestDist < 36) {
-          window.briefingShowLabel(best, isCityMode);
+        // Fallback: find nearest country node (prefer country over city for briefing)
+        let bestCountry = null, bestCD = Infinity;
+        for (const c of countries) {
+          if (c.lat == null) continue;
+          const d = (c.lat - lat) ** 2 + ((c.lon ?? c.lng ?? 0) - lon) ** 2;
+          if (d < bestCD) { bestCD = d; bestCountry = c; }
+        }
+        if (bestCountry && bestCD < 16) {
+          window.briefingShowLabel(bestCountry, false);
+          return;
+        }
+        // Last resort: nearest city within tight radius
+        let bestCity = null, bestCityD = Infinity;
+        for (const c of cities) {
+          if (c.lat == null) continue;
+          const d = (c.lat - lat) ** 2 + ((c.lon ?? c.lng ?? 0) - lon) ** 2;
+          if (d < bestCityD) { bestCityD = d; bestCity = c; }
+        }
+        if (bestCity && bestCityD < 1) {
+          window.briefingShowLabel(bestCity, true);
         }
       };
 
@@ -22782,7 +22799,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   .bAPCardTitle { font-size: 9px; -webkit-line-clamp: 2; }
   .bAPCardMeta { gap: 3px; margin-bottom: 2px; }
   .bAPCardSource, .bAPCardLocation, .bAPCardDate { font-size: 7px; }
-  .bAPVideoCard iframe { aspect-ratio: 16/9; }
+  .bAPVideoCard {
+    width: 56vw !important;
+    max-width: 240px !important;
+  }
+  .bAPVideoCard iframe { aspect-ratio: 16/9; min-height: 120px; }
 }
 .bAPCard {
   background: rgba(6,10,20,0.92); border: 1px solid rgba(255,255,255,0.1);
@@ -24151,9 +24172,9 @@ body.ticker-active .gTickerLabel {
       }
       // Show hover cards for arc endpoints (from first, then to after delay)
       if (window.briefingShowLabelAt) {
-        window.briefingShowLabelAt(rawFromLat, rawFromLng);
+        window.briefingShowLabelAt(rawFromLat, rawFromLng, arc.from_name);
         addBTimer(setTimeout(() => {
-          if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng);
+          if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng, arc.to_name);
         }, 600));
       }
 
@@ -24213,8 +24234,8 @@ body.ticker-active .gTickerLabel {
         return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - primary.lon) > 0.5;
       });
       const tourNodes = [];
-      if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon });
-      for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon });
+      if (primary) tourNodes.push({ lat: primary.lat, lon: primary.lon, name: primary.name });
+      for (const loc of secondary) tourNodes.push({ lat: loc.lat, lon: loc.lon, name: loc.name });
 
       // t=0: always switch to city view — country polygons provide country context
       if (window.setBriefingViewMode) {
@@ -24349,7 +24370,7 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
             // Show hover card for this pulsed node
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon);
+            if (window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon, loc.name);
           }, i * 350));
         });
       }, ms(0.20)));
@@ -24365,7 +24386,7 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx || !window.startFocus) return;
             window.startFocus(node.lat, node.lon);
             if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon);
+            if (window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon, node.name);
           }, ms(frac)));
         }
       } else if (tourNodes.length === 1) {
@@ -24375,7 +24396,7 @@ body.ticker-active .gTickerLabel {
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon);
+            if (window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon, tourNodes[0].name);
           }, ms(frac)));
         }
       }
