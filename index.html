@@ -563,7 +563,7 @@
     /* Panel resize handle */
 #panelResizeHandle {
   position: absolute;
-  top: -6px;
+  top: -14px;
   left: 50%;
   transform: translateX(-50%);
   width: auto;
@@ -4110,7 +4110,7 @@ body.ticker-active #flowControls {
       flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
-      padding: 16px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
+      padding: 16px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 4px);
       box-sizing: border-box;
     }
     .stats-row > * {
@@ -4123,7 +4123,7 @@ body.ticker-active #flowControls {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: max(16px, env(safe-area-inset-top, 0px)) 20px 8px;
+      padding: max(8px, env(safe-area-inset-top, 0px)) 20px 8px;
       flex-shrink: 0;
     }
     #statsTitle {
@@ -6823,10 +6823,18 @@ body.ticker-active #flowControls {
       /* ── Remove mid-right mobile zoom/recenter controls ── */
       #globeNavControls { display: none !important; }
 
-      /* ── Pricing / auth modals — full comfortable padding ── */
-      #pricingCard  { padding: 28px 18px 22px; }
+      /* ── Pricing / auth modals — compact for mobile viewport ── */
+      #pricingCard  { padding: 18px 14px 14px; }
       #authCard     { padding: 28px 20px 22px; }
-      .pricingTitle { font-size: var(--t-lg); }
+      .pricingTitle { font-size: 17px; margin-bottom: 2px; }
+      .pricingSubtitle { font-size: 12px; margin-bottom: 10px; }
+      .pricingTierCard { padding: 10px 12px 10px; border-radius: 12px; }
+      .pricingTierName { font-size: 10px; margin-bottom: 4px; }
+      .pricingTierPrice { font-size: 22px; }
+      .pricingTierFeatures { margin: 6px 0 8px; gap: 3px; }
+      .pricingTierFeatures li { font-size: 11px; }
+      .pricingTierCta { padding: 8px; font-size: 12px; }
+      .pricingNote { margin-top: 10px; font-size: 10px; }
 
       /* ── News feed — single column on very narrow ── */
       #nfGrid { grid-template-columns: 1fr; gap: 12px; }
@@ -20320,9 +20328,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const enc = encodeURIComponent(keyword);
 
     // Fetch trend + articles in parallel
+    const _sig = AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined;
     Promise.all([
-      fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`).then(r => r.ok ? r.json() : []),
-      fetch(`${API}/api/keywords/${enc}/references?limit=20&days=14`).then(r => r.ok ? r.json() : { articles: [] })
+      fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`, { signal: _sig }).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/api/keywords/${enc}/references?limit=20&days=14`, { signal: _sig }).then(r => r.ok ? r.json() : { articles: [] })
     ]).then(([trendRaw, refData]) => {
       if (_kwiOpenRefKeyword !== keyword) return;
 
@@ -23132,7 +23141,7 @@ body.ticker-active .gTickerLabel {
 }
 .gTickerTrack {
   display: inline-block; white-space: nowrap;
-  animation: gTickerScroll 1800s linear infinite;
+  animation: gTickerScroll 180s linear infinite;
   will-change: transform;
 }
 .gTickerTrack.reset { animation: none; }
@@ -26044,8 +26053,9 @@ body.ticker-active .gTickerLabel {
 (function () {
   'use strict';
   const API = window.__API_BASE || 'https://earth-wjr6.onrender.com';
-  const SPEED = 1; // px/sec — very slow crawl
-  const MIN_TICKER_DURATION = 1500;
+  const _isMobileTicker = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600;
+  const SPEED = _isMobileTicker ? 35 : 30; // px/sec
+  const MIN_TICKER_DURATION = 60;
   const REFRESH_MS = 10 * 60 * 1000; // refresh articles every 10 min
   const CACHE_KEY = 'gTickerCacheV1';
   let _articles = [];
