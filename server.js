@@ -2506,6 +2506,11 @@ app.get('/briefing-editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));
 });
 
+// Serve tweet curator page
+app.get('/tweet-curator', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'tweet-curator.html'));
+});
+
 app.get("/api/heatmap", heavyLimiter, async (req, res) => {
   try {
     const mode     = (req.query.mode || "coverage").toLowerCase();
@@ -5765,35 +5770,27 @@ async function _warmFeedCaches() {
 setTimeout(_warmFeedCaches, 5000);
 setInterval(_warmFeedCaches, 90_000).unref?.();
 
-// ── World Leaders tweets ─────────────────────────────────────────────────
+// ── World Leaders tweets (oEmbed, admin-curated) ────────────────────────
+const { processTweetUrls } = require('./twitterFetcher');
+
+// Public: get curated leader tweets
 app.get('/api/leader-tweets', async (req, res) => {
   const iso   = (req.query.iso || '').trim().toLowerCase();
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-  const days  = Math.min(parseInt(req.query.days) || 7, 30);
 
-  const cacheKey = `leader-tweets:${iso || 'all'}:${days}:${limit}`;
+  const cacheKey = `leader-tweets:${iso || 'all'}:${limit}`;
   try {
     const cached = ttlCached(cacheKey, 60_000, async () => {
-      let q, params;
-      if (iso) {
-        q = `SELECT tweet_id, twitter_handle, leader_name, leader_title, country, iso_code,
-                    tweet_text, tweet_created_at, retweet_count, like_count, reply_count,
-                    media_urls, is_retweet, is_reply
-             FROM leader_tweets
-             WHERE iso_code = $1 AND tweet_created_at > NOW() - ($2 || ' days')::interval
-               AND is_retweet = FALSE
-             ORDER BY tweet_created_at DESC LIMIT $3`;
-        params = [iso, String(days), limit];
-      } else {
-        q = `SELECT tweet_id, twitter_handle, leader_name, leader_title, country, iso_code,
-                    tweet_text, tweet_created_at, retweet_count, like_count, reply_count,
-                    media_urls, is_retweet, is_reply
-             FROM leader_tweets
-             WHERE tweet_created_at > NOW() - ($1 || ' days')::interval
-               AND is_retweet = FALSE
-             ORDER BY tweet_created_at DESC LIMIT $2`;
-        params = [String(days), limit];
-      }
+      const q = iso
+        ? `SELECT id, tweet_id, tweet_url, twitter_handle, leader_name, leader_title,
+                  country, iso_code, tweet_text, oembed_html, pinned, created_at
+           FROM leader_tweets WHERE iso_code = $1
+           ORDER BY pinned DESC, created_at DESC LIMIT $2`
+        : `SELECT id, tweet_id, tweet_url, twitter_handle, leader_name, leader_title,
+                  country, iso_code, tweet_text, oembed_html, pinned, created_at
+           FROM leader_tweets
+           ORDER BY pinned DESC, created_at DESC LIMIT $1`;
+      const params = iso ? [iso, limit] : [limit];
       const { rows } = await pool.query(q, params);
       return rows;
     });
@@ -5802,6 +5799,44 @@ app.get('/api/leader-tweets', async (req, res) => {
   } catch (err) {
     console.error('[leader-tweets]', err.message);
     res.status(500).json({ error: 'Failed to load leader tweets' });
+  }
+});
+
+// Admin: add tweet URLs (newline or comma separated)
+app.post('/api/admin/leader-tweets', async (req, res) => {
+  if (!req.user?.is_admin) return res.status(403).json({ error: 'Admin only' });
+  const { urls } = req.body;
+  if (!urls || typeof urls !== 'string') return res.status(400).json({ error: 'urls string required' });
+  try {
+    const results = await processTweetUrls(pool, urls, req.user.id);
+    res.json({ results });
+  } catch (err) {
+    console.error('[admin/leader-tweets]', err.message);
+    res.status(500).json({ error: 'Failed to process tweets' });
+  }
+});
+
+// Admin: delete a curated tweet
+app.delete('/api/admin/leader-tweets/:id', async (req, res) => {
+  if (!req.user?.is_admin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    await pool.query('DELETE FROM leader_tweets WHERE id = $1', [req.params.id]);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
+// Admin: toggle pin
+app.patch('/api/admin/leader-tweets/:id/pin', async (req, res) => {
+  if (!req.user?.is_admin) return res.status(403).json({ error: 'Admin only' });
+  try {
+    const { rows } = await pool.query(
+      'UPDATE leader_tweets SET pinned = NOT pinned WHERE id = $1 RETURNING id, pinned', [req.params.id]
+    );
+    res.json(rows[0] || { error: 'Not found' });
+  } catch (err) {
+    res.status(500).json({ error: 'Pin toggle failed' });
   }
 });
 

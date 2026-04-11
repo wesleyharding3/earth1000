@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Earth Tweet Curator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0a0e17;
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .wrap {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 24px 16px 80px;
+    }
+
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+    h1 span { color: #00d4ff; }
+    .subtitle { color: #94a3b8; font-size: 0.85rem; margin-bottom: 24px; }
+
+    .hidden { display: none !important; }
+
+    /* Auth gate */
+    .auth-gate {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 60vh; text-align: center; gap: 16px;
+    }
+    .auth-gate h2 { font-size: 1.2rem; margin-bottom: 8px; }
+    .auth-gate input {
+      width: 100%; max-width: 420px; padding: 10px 14px;
+      background: #111827; border: 1px solid #1e293b; border-radius: 6px;
+      color: #e2e8f0; font-size: 0.9rem; outline: none;
+    }
+    .auth-gate input:focus { border-color: #00d4ff; }
+    .auth-error { color: #ef4444; font-size: 0.85rem; display: none; }
+
+    /* Buttons */
+    .btn-primary {
+      background: #00d4ff; color: #0a0e17; border: none;
+      padding: 10px 24px; border-radius: 6px; font-size: 0.9rem;
+      font-weight: 600; cursor: pointer;
+    }
+    .btn-primary:hover { background: #00b8d9; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-danger {
+      background: transparent; color: #ef4444; border: 1px solid #ef4444;
+      padding: 6px 12px; border-radius: 6px; font-size: 0.78rem;
+      font-weight: 600; cursor: pointer;
+    }
+    .btn-danger:hover { background: rgba(239,68,68,0.1); }
+
+    .btn-small {
+      background: transparent; color: #94a3b8; border: 1px solid #1e293b;
+      padding: 6px 12px; border-radius: 6px; font-size: 0.78rem;
+      font-weight: 600; cursor: pointer;
+    }
+    .btn-small:hover { border-color: #94a3b8; }
+
+    /* Add section */
+    .add-section {
+      background: #111827; border: 1px solid #1e293b; border-radius: 10px;
+      padding: 20px; margin-bottom: 28px;
+    }
+    .add-section h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .add-section p { color: #94a3b8; font-size: 0.82rem; margin-bottom: 12px; }
+
+    textarea {
+      width: 100%; min-height: 120px; padding: 12px;
+      background: #0a0e17; border: 1px solid #1e293b; border-radius: 6px;
+      color: #e2e8f0; font-family: monospace; font-size: 0.85rem;
+      resize: vertical; outline: none;
+    }
+    textarea:focus { border-color: #00d4ff; }
+
+    .add-actions {
+      display: flex; align-items: center; gap: 12px; margin-top: 12px;
+    }
+
+    .add-status { color: #94a3b8; font-size: 0.82rem; }
+    .add-status.error { color: #ef4444; }
+    .add-status.success { color: #22c55e; }
+
+    /* Results */
+    .results-box {
+      background: #0a0e17; border: 1px solid #1e293b; border-radius: 6px;
+      padding: 12px; margin-top: 12px; font-size: 0.82rem; display: none;
+      max-height: 200px; overflow-y: auto;
+    }
+    .result-line { padding: 4px 0; border-bottom: 1px solid #111827; }
+    .result-line.ok { color: #22c55e; }
+    .result-line.fail { color: #ef4444; }
+
+    /* Tweet list */
+    .tweet-list h2 {
+      font-size: 1.1rem; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .tweet-count {
+      background: #1e293b; padding: 2px 10px; border-radius: 12px;
+      font-size: 0.75rem; color: #94a3b8;
+    }
+
+    .filters {
+      display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .filters select, .filters input {
+      background: #111827; border: 1px solid #1e293b; border-radius: 6px;
+      color: #e2e8f0; padding: 8px 12px; font-size: 0.82rem; outline: none;
+    }
+    .filters select:focus, .filters input:focus { border-color: #00d4ff; }
+
+    .tweet-card {
+      background: #111827; border: 1px solid #1e293b; border-radius: 10px;
+      padding: 16px; margin-bottom: 10px;
+      transition: border-color 0.2s;
+    }
+    .tweet-card:hover { border-color: #334155; }
+    .tweet-card.pinned { border-color: #f59e0b; }
+
+    .tc-header {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .tc-leader { font-weight: 600; font-size: 0.92rem; }
+    .tc-handle { color: #00d4ff; font-size: 0.82rem; }
+    .tc-meta { color: #94a3b8; font-size: 0.78rem; margin-top: 2px; }
+    .tc-text {
+      color: #cbd5e1; font-size: 0.85rem; margin: 8px 0;
+      word-break: break-word; overflow-wrap: anywhere;
+    }
+    .tc-actions {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .tc-pin-badge {
+      background: rgba(245,158,11,0.15); color: #f59e0b;
+      font-size: 0.72rem; font-weight: 600; padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .empty-state {
+      text-align: center; color: #64748b; padding: 40px 20px;
+      font-size: 0.9rem;
+    }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid #1e293b; border-top-color: #00d4ff;
+      border-radius: 50%; animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🌍 <span>Tweet Curator</span></h1>
+    <p class="subtitle">Add and manage world leader tweets for the news feed</p>
+
+    <!-- Auth Gate -->
+    <div id="auth-gate" class="auth-gate">
+      <h2>Admin Access Required</h2>
+      <input type="password" id="token-input" placeholder="sb-access-token..." />
+      <button class="btn-primary" onclick="submitToken()">Authenticate</button>
+      <p id="auth-error" class="auth-error"></p>
+    </div>
+
+    <!-- Editor -->
+    <div id="editor" class="hidden">
+
+      <!-- Add tweets section -->
+      <div class="add-section">
+        <h2>Add Tweet URLs</h2>
+        <p>Paste tweet URLs (one per line or comma-separated). Supports twitter.com and x.com links.</p>
+        <textarea id="url-input" placeholder="https://x.com/POTUS/status/1234567890&#10;https://twitter.com/EmmanuelMacron/status/9876543210&#10;..."></textarea>
+        <div class="add-actions">
+          <button class="btn-primary" id="submit-btn" onclick="submitUrls()">Submit Tweets</button>
+          <span class="add-status" id="add-status"></span>
+        </div>
+        <div class="results-box" id="results-box"></div>
+      </div>
+
+      <!-- Existing tweets -->
+      <div class="tweet-list">
+        <h2>Curated Tweets <span class="tweet-count" id="tweet-count">0</span></h2>
+        <div class="filters">
+          <input type="text" id="filter-search" placeholder="Search by leader or handle..." oninput="renderTweets()" />
+          <select id="filter-country" onchange="renderTweets()">
+            <option value="">All countries</option>
+          </select>
+          <select id="filter-pinned" onchange="renderTweets()">
+            <option value="">All</option>
+            <option value="pinned">Pinned only</option>
+            <option value="unpinned">Unpinned only</option>
+          </select>
+        </div>
+        <div id="tweet-list-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    let token = localStorage.getItem('sb-access-token') || '';
+    let allTweets = [];
+
+    // ── Auth ──────────────────────────────────────────────────────────
+    async function checkAuth() {
+      if (!token) { showLogin(); return; }
+      try {
+        const res = await fetch(`${API_BASE}/api/auth/profile`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!res.ok) throw new Error('Auth failed');
+        const data = await res.json();
+        if (!data.is_admin) { showAuthError('Admin access required'); return; }
+        showEditor();
+      } catch (e) {
+        showLogin();
+      }
+    }
+
+    function showLogin() {
+      document.getElementById('auth-gate').classList.remove('hidden');
+      document.getElementById('editor').classList.add('hidden');
+    }
+
+    function showAuthError(msg) {
+      const el = document.getElementById('auth-error');
+      el.textContent = msg; el.style.display = 'block';
+      showLogin();
+    }
+
+    function submitToken() {
+      token = document.getElementById('token-input').value.trim();
+      if (!token) return;
+      localStorage.setItem('sb-access-token', token);
+      document.getElementById('auth-error').style.display = 'none';
+      checkAuth();
+    }
+
+    function showEditor() {
+      document.getElementById('auth-gate').classList.add('hidden');
+      document.getElementById('editor').classList.remove('hidden');
+      loadTweets();
+    }
+
+    function authHeaders() {
+      return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+    }
+
+    // ── Load existing tweets ──────────────────────────────────────────
+    async function loadTweets() {
+      const body = document.getElementById('tweet-list-body');
+      body.innerHTML = '<div style="text-align:center;padding:20px;"><span class="spinner"></span></div>';
+      try {
+        const res = await fetch(`${API_BASE}/api/leader-tweets?days=90&limit=500`, {
+          headers: authHeaders()
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        allTweets = data.tweets || [];
+        buildCountryFilter();
+        renderTweets();
+      } catch (err) {
+        body.innerHTML = `<div class="empty-state">Failed to load tweets: ${err.message}</div>`;
+      }
+    }
+
+    function buildCountryFilter() {
+      const sel = document.getElementById('filter-country');
+      const countries = [...new Set(allTweets.map(t => t.country).filter(Boolean))].sort();
+      sel.innerHTML = '<option value="">All countries</option>' +
+        countries.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+
+    function renderTweets() {
+      const search = document.getElementById('filter-search').value.toLowerCase();
+      const country = document.getElementById('filter-country').value;
+      const pinFilter = document.getElementById('filter-pinned').value;
+      const body = document.getElementById('tweet-list-body');
+
+      let list = allTweets;
+      if (search) list = list.filter(t =>
+        (t.leader_name || '').toLowerCase().includes(search) ||
+        (t.twitter_handle || '').toLowerCase().includes(search) ||
+        (t.tweet_text || '').toLowerCase().includes(search)
+      );
+      if (country) list = list.filter(t => t.country === country);
+      if (pinFilter === 'pinned') list = list.filter(t => t.pinned);
+      if (pinFilter === 'unpinned') list = list.filter(t => !t.pinned);
+
+      document.getElementById('tweet-count').textContent = list.length;
+
+      if (!list.length) {
+        body.innerHTML = '<div class="empty-state">No tweets found. Add some above!</div>';
+        return;
+      }
+
+      body.innerHTML = list.map(t => {
+        const date = t.created_at ? new Date(t.created_at).toISOString().slice(0, 10) : '';
+        const text = (t.tweet_text || '').slice(0, 200) + ((t.tweet_text || '').length > 200 ? '…' : '');
+        const flag = t.iso_code ? `<img src="https://flagcdn.com/20x15/${t.iso_code.toLowerCase()}.png" style="vertical-align:middle;margin-right:4px;" alt="">` : '';
+        return `
+          <div class="tweet-card${t.pinned ? ' pinned' : ''}" id="tc-${t.id}">
+            <div class="tc-header">
+              <div>
+                <div class="tc-leader">${flag}${esc(t.leader_name || t.twitter_handle)}</div>
+                <div class="tc-handle">@${esc(t.twitter_handle)}</div>
+                <div class="tc-meta">${esc(t.country || '')}${t.country && date ? ' · ' : ''}${date}</div>
+              </div>
+              <div class="tc-actions">
+                ${t.pinned ? '<span class="tc-pin-badge">PINNED</span>' : ''}
+                <button class="btn-small" onclick="togglePin(${t.id})">${t.pinned ? 'Unpin' : 'Pin'}</button>
+                <button class="btn-danger" onclick="deleteTweet(${t.id})">Delete</button>
+              </div>
+            </div>
+            <div class="tc-text">${esc(text)}</div>
+            <a href="${esc(t.tweet_url)}" target="_blank" rel="noopener" style="color:#00d4ff;font-size:0.78rem;">View on X ↗</a>
+          </div>`;
+      }).join('');
+    }
+
+    // ── Submit URLs ───────────────────────────────────────────────────
+    async function submitUrls() {
+      const input = document.getElementById('url-input');
+      const urls = input.value.trim();
+      if (!urls) return;
+
+      const btn = document.getElementById('submit-btn');
+      const status = document.getElementById('add-status');
+      const box = document.getElementById('results-box');
+
+      btn.disabled = true;
+      status.className = 'add-status';
+      status.innerHTML = '<span class="spinner"></span> Processing...';
+      box.style.display = 'none';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/leader-tweets`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ urls })
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const results = data.results || [];
+
+        const ok = results.filter(r => r.success).length;
+        const fail = results.filter(r => r.error).length;
+
+        status.className = fail ? 'add-status error' : 'add-status success';
+        status.textContent = `${ok} added${fail ? `, ${fail} failed` : ''}`;
+
+        box.style.display = 'block';
+        box.innerHTML = results.map(r =>
+          r.success
+            ? `<div class="result-line ok">✓ @${esc(r.tweet?.twitter_handle || '?')} — ${esc(r.tweet?.leader_name || '')}</div>`
+            : `<div class="result-line fail">✗ ${esc(r.error || r.url)}</div>`
+        ).join('');
+
+        if (ok > 0) {
+          input.value = '';
+          loadTweets();
+        }
+      } catch (err) {
+        status.className = 'add-status error';
+        status.textContent = err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ── Pin / Delete ──────────────────────────────────────────────────
+    async function togglePin(id) {
+      try {
+        await fetch(`${API_BASE}/api/admin/leader-tweets/${id}/pin`, {
+          method: 'PATCH', headers: authHeaders()
+        });
+        loadTweets();
+      } catch (err) {
+        alert('Pin toggle failed: ' + err.message);
+      }
+    }
+
+    async function deleteTweet(id) {
+      if (!confirm('Delete this tweet?')) return;
+      try {
+        await fetch(`${API_BASE}/api/admin/leader-tweets/${id}`, {
+          method: 'DELETE', headers: authHeaders()
+        });
+        const card = document.getElementById('tc-' + id);
+        if (card) card.style.display = 'none';
+        allTweets = allTweets.filter(t => t.id !== id);
+        document.getElementById('tweet-count').textContent = allTweets.length;
+      } catch (err) {
+        alert('Delete failed: ' + err.message);
+      }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s || '';
+      return d.innerHTML;
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────
+    document.getElementById('token-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') submitToken();
+    });
+    checkAuth();
+  </script>
+</body>
+</html>
