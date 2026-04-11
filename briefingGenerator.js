@@ -488,8 +488,20 @@ async function run() {
         }
       }
     }
-    const narrative = await generateNarrative(threadData, storyContexts, prefProfileForNarrative);
-    if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments — aborting');
+    let narrative;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        narrative = await generateNarrative(threadData, storyContexts, prefProfileForNarrative);
+        if (!narrative.segments?.length) throw new Error('Claude returned 0 story segments');
+        break;
+      } catch (narErr) {
+        if (attempt < 2) {
+          console.warn(`   [${elapsed(t0)}] Narrative attempt ${attempt} failed (${narErr.message}), retrying...`);
+        } else {
+          throw new Error(`Narrative generation failed after ${attempt} attempts: ${narErr.message}`);
+        }
+      }
+    }
     console.log(`   [${elapsed(t0)}] Narrative ready — headline: "${narrative.headline}" (${narrative.segments.length} segments)`);
     console.log('\n══ CLAUDE NARRATIVE OUTPUT ══════════════════════════════════');
     console.log(`  HEADLINE : ${narrative.headline}`);
@@ -1453,7 +1465,37 @@ The editor who curated today's stories has historically favoured coverage of: ${
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error('Claude returned no valid JSON for narrative');
 
-  const result = JSON.parse(jsonMatch[0]);
+  let rawJson = jsonMatch[0];
+  let result;
+  try {
+    result = JSON.parse(rawJson);
+  } catch (firstErr) {
+    // Attempt repair: fix common LLM JSON issues
+    // 1. Strip trailing commas before } or ]
+    let repaired = rawJson.replace(/,\s*([}\]])/g, '$1');
+    // 2. Fix unescaped control characters inside strings
+    repaired = repaired.replace(/[\x00-\x1f]/g, m => {
+      if (m === '\n') return '\\n';
+      if (m === '\r') return '\\r';
+      if (m === '\t') return '\\t';
+      return '';
+    });
+    // 3. Replace smart/curly quotes with straight quotes (common LLM issue)
+    repaired = repaired.replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '\\"');
+    repaired = repaired.replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
+    try {
+      result = JSON.parse(repaired);
+      console.warn('[narrative] JSON repaired successfully (fixed trailing commas / control chars)');
+    } catch (secondErr) {
+      // Log context around the failure point for debugging
+      const pos = parseInt(String(firstErr.message).match(/position (\d+)/)?.[1] || '0');
+      if (pos > 0) {
+        const ctx = rawJson.slice(Math.max(0, pos - 80), pos + 80);
+        console.error(`[narrative] JSON error near position ${pos}:\n…${ctx}…`);
+      }
+      throw new Error(`Claude returned malformed JSON for narrative: ${firstErr.message}`);
+    }
+  }
   // Post-process: interleave segments to break same-country/region clusters
   result.segments = interleaveSegments(result.segments, threadData);
   return result;
