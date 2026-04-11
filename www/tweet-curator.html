@@ -208,8 +208,29 @@
 
   <script>
     const API_BASE = window.location.origin;
-    let token = localStorage.getItem('sb-access-token') || '';
+    let token = '';
     let allTweets = [];
+
+    // Try to auto-detect token from Supabase session or manual storage
+    function detectToken() {
+      // 1. Check manual paste storage
+      const manual = localStorage.getItem('sb-access-token');
+      if (manual) return manual;
+      // 2. Check Supabase client session storage
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+            const raw = localStorage.getItem(key);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw);
+            if (parsed?.access_token) return parsed.access_token;
+          }
+        }
+      } catch (_) {}
+      return '';
+    }
+    token = detectToken();
 
     // ── Auth ──────────────────────────────────────────────────────────
     async function checkAuth() {
@@ -223,6 +244,7 @@
         if (!data.is_admin) { showAuthError('Admin access required'); return; }
         showEditor();
       } catch (e) {
+        console.error('Auth check failed:', e);
         showLogin();
       }
     }

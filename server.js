@@ -2641,6 +2641,192 @@ app.get('/tweet-curator', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'tweet-curator.html'));
 });
 
+// Serve unified editor platform
+app.get('/editor', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'earth-editor.html'));
+});
+
+/* =========================================
+   Timeline Editor — Data Panel Workflow
+   ========================================= */
+
+// Search data sources by keyword — returns matching adapter+indicator catalog entries
+app.post('/api/admin/timeline-editor/search-data', requireAdmin, async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query || typeof query !== 'string') return res.status(400).json({ error: 'query required' });
+    const q = query.toLowerCase().trim();
+    const available = dataPanels ? require('./dataSources').listAvailable() : [];
+    const results = [];
+    for (const adapter of available) {
+      for (const indicator of (adapter.catalog || [])) {
+        const text = [indicator.label, indicator.id, indicator.unit, adapter.label, adapter.description]
+          .filter(Boolean).join(' ').toLowerCase();
+        if (text.includes(q)) {
+          results.push({
+            adapter: adapter.name,
+            adapter_label: adapter.label,
+            id: indicator.id,
+            label: indicator.label,
+            unit: indicator.unit || null,
+            description: adapter.description || ''
+          });
+        }
+      }
+    }
+    // Sort: exact match in label first, then by adapter
+    results.sort((a, b) => {
+      const aExact = a.label.toLowerCase().includes(q) ? 0 : 1;
+      const bExact = b.label.toLowerCase().includes(q) ? 0 : 1;
+      return aExact - bExact || a.adapter.localeCompare(b.adapter);
+    });
+    res.json({ results: results.slice(0, 30) });
+  } catch (err) {
+    console.error('[timeline-editor] search-data error:', err.message);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// Generate a data panel for a timeline using Haiku (cheap)
+app.post('/api/admin/timeline-editor/generate-panel', requireAdmin, async (req, res) => {
+  try {
+    const { timeline_id, timeline_title, timeline_description, adapter, indicator, indicator_label } = req.body;
+    if (!timeline_id || !adapter || !indicator) return res.status(400).json({ error: 'Missing fields' });
+
+    const adapterMod = require('./dataSources').getAdapter(adapter);
+    if (!adapterMod) return res.status(400).json({ error: `Adapter "${adapter}" not available` });
+
+    // Use Haiku to create a smart query + chart metadata
+    const Anthropic = require('@anthropic-ai/sdk');
+    const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const prompt = `You are a data journalist creating a data panel for a news timeline story.
+
+TIMELINE: "${timeline_title}"
+DESCRIPTION: ${timeline_description || 'N/A'}
+DATA SOURCE: ${adapter} — indicator: ${indicator} (${indicator_label})
+
+Create a query and chart metadata for this data panel. The query must match the adapter's expected format:
+- worldbank: { indicator: '<id>', countries: ['Country1',...], years: [2015..2024] }
+- owid: { indicator: '<slug>', countries: ['Country'], year_min: 2010 }
+- eia: { indicator: '<series>', limit: 24 }
+- fred: { indicator: '<series>', limit: 60 }
+- comtrade: { indicator: '<hsCode>', reporter: 'Country', partner: 'all', flow: 'X', years: [2019..2024] }
+- acled: { indicator: 'all', country: 'Country', months: 18 }
+- gdelt: { indicator: 'volume', query: 'topic', span: '6months' }
+- usgs: { indicator: 'sig-30d' }
+- noaa: { indicator: 'temp-anomaly-land-ocean', year_min: 1980 }
+
+Return ONLY valid JSON:
+{
+  "title": "Short chart title (max 60 chars)",
+  "subtitle": "Optional 1-line context",
+  "caption": "1-2 sentence explanation tying chart to story",
+  "chart_type": "line|bar|stacked_bar|area|pie|scatter",
+  "query": { /* adapter-specific parameters */ }
+}`;
+
+    const resp = await aiClient.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 600,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    const text = resp.content[0].text;
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return res.status(500).json({ error: 'AI returned no JSON' });
+
+    const meta = JSON.parse(match[0]);
+    const validTypes = ['line','bar','stacked_bar','area','pie','scatter'];
+    if (!validTypes.includes(meta.chart_type)) meta.chart_type = 'line';
+
+    // Fetch real data from the adapter
+    let data = null;
+    let generated_by = 'ai_real';
+    try {
+      data = await adapterMod.fetch(meta.query || {});
+    } catch (fetchErr) {
+      console.warn('[timeline-editor] adapter fetch failed:', fetchErr.message);
+      generated_by = 'ai_composed';
+    }
+
+    const panel = {
+      title: String(meta.title || indicator_label).slice(0, 120),
+      subtitle: meta.subtitle || null,
+      caption: meta.caption || null,
+      chart_type: meta.chart_type,
+      data: data || {},
+      source_name: adapterMod.label,
+      source_url: data?.source_url || null,
+      generated_by,
+      adapter,
+      query: meta.query || {}
+    };
+
+    res.json(panel);
+  } catch (err) {
+    console.error('[timeline-editor] generate-panel error:', err.message);
+    res.status(500).json({ error: 'Panel generation failed' });
+  }
+});
+
+// Save a data panel for a timeline
+app.post('/api/admin/timeline-editor/save-panel', requireAdmin, async (req, res) => {
+  try {
+    const { timeline_id, panel } = req.body;
+    if (!timeline_id || !panel) return res.status(400).json({ error: 'Missing fields' });
+
+    // Get current max ord for this timeline
+    const { rows: ordRows } = await pool.query(
+      `SELECT COALESCE(MAX(ord), -1) AS max_ord FROM data_panels WHERE scope_type = 'timeline' AND scope_id = $1`,
+      [timeline_id]
+    );
+    const nextOrd = (ordRows[0]?.max_ord ?? -1) + 1;
+
+    const { rows } = await pool.query(`
+      INSERT INTO data_panels (scope_type, scope_id, ord, title, subtitle, caption, chart_type, data, source_name, source_url, generated_by, adapter, query)
+      VALUES ('timeline', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      RETURNING id
+    `, [timeline_id, nextOrd, panel.title, panel.subtitle, panel.caption, panel.chart_type,
+        JSON.stringify(panel.data || {}), panel.source_name, panel.source_url, panel.generated_by, panel.adapter,
+        JSON.stringify(panel.query || {})]);
+
+    res.json({ id: rows[0].id, success: true });
+  } catch (err) {
+    console.error('[timeline-editor] save-panel error:', err.message);
+    res.status(500).json({ error: 'Save failed' });
+  }
+});
+
+// Get saved panels for a timeline
+app.get('/api/admin/timeline-editor/panels/:timelineId', requireAdmin, async (req, res) => {
+  try {
+    const tlId = parseInt(req.params.timelineId, 10);
+    if (!Number.isFinite(tlId)) return res.status(400).json({ error: 'bad id' });
+    const { rows } = await pool.query(
+      `SELECT id, title, subtitle, caption, chart_type, data, source_name, source_url, generated_by, adapter, query, created_at
+       FROM data_panels WHERE scope_type = 'timeline' AND scope_id = $1 ORDER BY ord`,
+      [tlId]
+    );
+    res.json({ panels: rows });
+  } catch (err) {
+    console.error('[timeline-editor] load panels error:', err.message);
+    res.status(500).json({ error: 'Load failed' });
+  }
+});
+
+// Delete a timeline data panel
+app.delete('/api/admin/timeline-editor/panels/:panelId', requireAdmin, async (req, res) => {
+  try {
+    const panelId = parseInt(req.params.panelId, 10);
+    if (!Number.isFinite(panelId)) return res.status(400).json({ error: 'bad id' });
+    await pool.query(`DELETE FROM data_panels WHERE id = $1`, [panelId]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[timeline-editor] delete panel error:', err.message);
+    res.status(500).json({ error: 'Delete failed' });
+  }
+});
+
 app.get("/api/heatmap", heavyLimiter, async (req, res) => {
   try {
     const mode     = (req.query.mode || "coverage").toLowerCase();
@@ -4283,38 +4469,12 @@ app.get("/api/briefing/:episodeId/panels", async (req, res) => {
   }
 });
 
-// GET /api/threads/:threadId/panels — lazy: generate on first view, cached afterwards
+// GET /api/threads/:threadId/panels — returns cached panels only (auto-generation disabled to cut Claude costs)
 app.get("/api/threads/:threadId/panels", async (req, res) => {
   try {
     const threadId = parseInt(req.params.threadId, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
-    let rows = await dataPanels.loadPanels(pool, { type: 'thread', id: threadId });
-    if (!rows.length) {
-      // Lazy generation: pull thread + recent articles, generate, cache
-      const { rows: thrRows } = await pool.query(
-        `SELECT id, title, primary_category, geographic_scope, keywords FROM story_threads WHERE id = $1`,
-        [threadId]
-      );
-      if (!thrRows.length) return res.status(404).json({ error: "thread not found" });
-      const thread = thrRows[0];
-      const { rows: arts } = await pool.query(`
-        SELECT a.id, a.title, a.translated_title, a.summary, a.translated_summary, a.published_at
-        FROM story_thread_articles sta
-        JOIN news_articles a ON a.id = sta.article_id
-        WHERE sta.thread_id = $1
-        ORDER BY a.published_at DESC
-        LIMIT 8
-      `, [threadId]);
-      thread.articles = arts;
-      const generated = await dataPanels.generatePanelsForThread(thread, { min: 2, max: 5 }).catch(e => {
-        console.warn(`[threads/panels] generate failed: ${e.message}`);
-        return [];
-      });
-      if (generated.length) {
-        await dataPanels.savePanels(pool, generated, { type: 'thread', id: threadId });
-        rows = await dataPanels.loadPanels(pool, { type: 'thread', id: threadId });
-      }
-    }
+    const rows = await dataPanels.loadPanels(pool, { type: 'thread', id: threadId });
     res.json({ thread_id: threadId, panels: rows, count: rows.length });
   } catch (err) {
     console.error("[threads/panels]", err.message);

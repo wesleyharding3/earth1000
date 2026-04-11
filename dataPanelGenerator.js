@@ -91,7 +91,7 @@ RULES:
 - If the story is genuinely not chart-friendly (pure human-interest, single-event spot news), return { "panels": [] }.`;
 
   const resp = await client.messages.create({
-    model:      'claude-sonnet-4-6',
+    model:      'claude-haiku-4-5',
     max_tokens: 1500,
     messages:   [{ role: 'user', content: prompt }],
   });
@@ -137,7 +137,7 @@ Return ONLY valid JSON:
   "source_url":  null
 }`;
   const resp = await client.messages.create({
-    model:      'claude-sonnet-4-6',
+    model:      'claude-haiku-4-5',
     max_tokens: 800,
     messages:   [{ role: 'user', content: prompt }],
   });

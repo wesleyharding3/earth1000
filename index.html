@@ -17984,6 +17984,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Default to Threads view on load
       setView('threads');
 
+      // Expose a hook for goTo() to re-trigger the news view when the
+      // user navigates to the news page. This guarantees the skeleton /
+      // cards are visible even if the boot-time load ran while the page
+      // was hidden and the grid ended up empty or stale.
+      window.__ensureNewsView = function() {
+        if (currentView === 'threads') {
+          if (!threadsLoaded) {
+            // Still loading — make sure skeleton is visible
+            threadsGrid.innerHTML = skels(1);
+            loadThreads();
+          } else if (!activeGridData.length && threadsData.length) {
+            // Data loaded but grid is empty — re-render
+            activeGridData = threadsData;
+            renderThreads();
+          } else if (!threadsData.length) {
+            // Data never loaded — retry
+            threadsLoaded = false;
+            threadsGrid.innerHTML = skels(1);
+            loadThreads();
+          }
+        } else if (currentView === 'timelines') {
+          if (!timelinesLoaded) {
+            loadTimelines();
+          } else if (!activeGridData.length && timelinesData.length) {
+            activeGridData = timelinesData;
+            renderThreads();
+          }
+        } else if (currentView === 'feed') {
+          if (!feedBootstrapped) {
+            feedBootstrapped = true;
+            runSearch();
+          }
+        }
+      };
+
       // ── Recency-based status & ranking ────────────────────────────
       const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
       function applyRecencyStatus(data) {
@@ -18785,6 +18820,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const el = document.getElementById(id);
         if (el) el.style.display = onGlobe ? "" : "none";
       });
+      // When arriving at the news page, ensure the active view is rendered.
+      // The boot call to setView('threads') may have loaded data while the
+      // page was hidden — if the grid is empty (fetch in flight or failed),
+      // re-trigger the view so the skeleton / retry / render fires visibly.
+      if (idx === 2 && typeof window.__ensureNewsView === 'function') {
+        window.__ensureNewsView();
+      }
     }
 
     dots.forEach(dot => {

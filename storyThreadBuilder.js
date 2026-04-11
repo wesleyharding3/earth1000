@@ -56,15 +56,18 @@ async function run() {
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
 
   console.log(`   [${elapsed()}] Normalizing recent multilingual keywords...`);
+  // Use a dedicated client with extended timeout for the heavy normalization query
+  const normClient = await pool.connect();
+  await normClient.query("SET statement_timeout = 120000"); // 2 min
   const normalization = await normalizeRecentKeywords({
-    pool,
+    pool: normClient,
     anthropicClient: client,
     logger: console,
     scope: { hours: LOOKBACK_HOURS }
   }).catch(err => {
     console.warn(`   ⚠ Keyword normalization skipped: ${err.message}`);
     return null;
-  });
+  }).finally(() => normClient.release());
   if (normalization) {
     console.log(`   [${elapsed()}] Keyword normalization provider=${normalization.provider} updated_keywords=${normalization.updatedKeywords} updated_rows=${normalization.updatedRows}`);
   }
@@ -1049,7 +1052,11 @@ async function getUnthreadedArticles(hours) {
   // Step 1: keep the 48h window, but bias selection toward the freshest articles.
   // We still cap at 5 per source, then reserve the first tranche for the last 6h
   // before filling the rest from the older remainder of the 48h window.
-  const { rows: baseRows } = await pool.query(`
+  // Use a dedicated client with extended timeout for this heavy query.
+  const client = await pool.connect();
+  try {
+    await client.query("SET statement_timeout = 120000"); // 2 min for heavy query
+    const { rows: baseRows } = await client.query(`
     WITH ranked AS (
       SELECT
         a.id, a.title, a.summary, a.translated_summary,
@@ -1066,12 +1073,11 @@ async function getUnthreadedArticles(hours) {
       LEFT JOIN cities    ci       ON ci.id = a.city_id
       LEFT JOIN news_sources ns    ON ns.id = a.source_id
       LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN story_thread_articles sta ON sta.article_id = a.id
       WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
         AND a.published_at < NOW()
         AND a.title IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
-        )
+        AND sta.article_id IS NULL
     ),
     fresh AS (
       SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
@@ -1101,9 +1107,9 @@ async function getUnthreadedArticles(hours) {
 
   if (!baseRows.length) return [];
 
-  // Step 2: fetch keywords for just those article IDs
+  // Step 2: fetch keywords for just those article IDs (still on the extended-timeout client)
   const ids = baseRows.map(r => r.id);
-  const { rows: kwRows } = await pool.query(`
+  const { rows: kwRows } = await client.query(`
     SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
     FROM article_keywords
     WHERE article_id = ANY($1::int[])
@@ -1115,6 +1121,9 @@ async function getUnthreadedArticles(hours) {
   return baseRows
     .map(a => ({ ...a, keywords: kwMap.get(a.id) || [] }))
     .filter(a => a.keywords.length > 0);
+  } finally {
+    client.release();
+  }
 }
 
 async function getActiveThreads() {

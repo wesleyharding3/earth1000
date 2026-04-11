@@ -554,20 +554,35 @@ async function run() {
     let segments = await buildSegments(narrative, threadData, allArcs, entityCoords);
 
     // ── 6a. Generate data analytics panels FIRST so they're visible in script review
+    // When running in manifest mode, only generate panels for segments explicitly
+    // marked as eligible via dp_eligible_segments (editor checkbox). This cuts Sonnet
+    // costs by skipping segments the editor didn't flag.
+    const dpEligibleSet = MANIFEST_MODE && manifest?.options?.dp_eligible_segments
+      ? new Set(manifest.options.dp_eligible_segments.map(Number))
+      : null; // null = all eligible (automatic/pick mode)
     if (!NO_PANELS) {
       const minTotal = PICK_MODE ? PANELS_MIN_PICK : PANELS_MIN_GENERAL;
       const maxTotal = PICK_MODE ? PANELS_MAX_PICK : PANELS_MAX_GENERAL;
-      const storyCount = segments.filter(s => s.type === 'story').length || 1;
-      // Distribute the global cap across stories — at least 0, up to ceil(max/stories)
+      const eligibleStories = segments.filter((s, si) => {
+        if (s.type !== 'story') return false;
+        if (dpEligibleSet && !dpEligibleSet.has(si)) return false;
+        return true;
+      });
+      const storyCount = eligibleStories.length || 1;
       const perStoryMax = Math.max(1, Math.ceil(maxTotal / storyCount));
       const perStoryMin = 0;
-      console.log(`   [${elapsed(t0)}] Generating data panels (target ${minTotal}-${maxTotal} total, up to ${perStoryMax}/story)...`);
+      console.log(`   [${elapsed(t0)}] Generating data panels (target ${minTotal}-${maxTotal} total, up to ${perStoryMax}/story, ${eligibleStories.length} eligible)...`);
 
       let totalPanels = 0;
       const usedPanels = [];  // track across segments to prevent duplicates
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         if (seg.type !== 'story') continue;
+        // In manifest mode, skip segments not marked eligible
+        if (dpEligibleSet && !dpEligibleSet.has(i)) {
+          seg.data_panels = [];
+          continue;
+        }
         if (totalPanels >= maxTotal) { seg.data_panels = []; continue; }
         const remaining = maxTotal - totalPanels;
         const cap = Math.min(perStoryMax, remaining);
@@ -584,7 +599,6 @@ async function run() {
         }
       }
 
-      // If under the floor, that's fine — we don't force charts where they don't fit.
       console.log(`   [${elapsed(t0)}] Total data panels: ${totalPanels}`);
     }
 
