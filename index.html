@@ -6564,15 +6564,19 @@ body.ticker-active #flowControls {
       .kwi-title { font-size: 10px; }
       .kwi-location-context { font-size: 10px; }
       /* Interpanel: let it breathe on mobile */
+      /* Interpanel: fill available space on mobile */
       .kwi-ref-interpanel {
-        max-height: none !important;
+        max-height: 60vh !important;
         margin: 0 4px 4px !important;
         padding: 4px !important;
+        overflow-y: auto !important;
       }
       .kwi-ref-articles {
-        max-height: none !important;
-        overflow-y: visible !important;
+        max-height: 45vh !important;
+        overflow-y: auto !important;
+        padding: 4px 2px !important;
       }
+      .kwi-ref-spark { padding: 6px 6px 3px; }
       .kwi-ref-spark canvas { height: 44px; }
       .kwi-ref-card-img { width: 40px; height: 30px; }
       .kwi-ref-card { padding: 5px; gap: 6px; }
@@ -6643,9 +6647,9 @@ body.ticker-active #flowControls {
       }
       .gTickerSource,
       .gTickerLocation,
-      .gTickerDate { font-size: 7px !important; }
+      .gTickerDate { font-size: 8px !important; }
       .gTickerTitle,
-      .gTickerSummary { font-size: 9px !important; }
+      .gTickerSummary { font-size: 10.5px !important; }
       .gTickerDiv {
         margin: 0 12px;
         font-size: 9px !important;
@@ -6675,8 +6679,30 @@ body.ticker-active #flowControls {
       /* Show on tap via .tooltip-visible class instead of :hover */
       .iconBtn:hover .btnTooltip { opacity: 0; transition-delay: 0s; }
       .btnTooltip.tooltip-visible { opacity: 1 !important; pointer-events: auto; }
-      #citySearch.expanded,
-      #searchResults { width: 180px; }
+      /* Search bar: drop below navbar, full width from left */
+      #searchWrapper {
+        position: static;
+      }
+      #citySearch {
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 54px);
+        left: 8px;
+        right: 8px;
+        width: auto !important;
+        border-radius: 12px;
+        z-index: 41;
+      }
+      #citySearch.expanded {
+        width: auto !important;
+        padding: 0 14px !important;
+      }
+      #searchResults {
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 98px);
+        left: 8px;
+        width: calc(100vw - 16px);
+        z-index: 41;
+      }
 
       #compass {
         top: calc(env(safe-area-inset-top, 0px) + 10px);
@@ -7836,21 +7862,6 @@ window.sourceBiasBadgeHTML = function(bias) {
   </div>
 
   <div id="topLeftCluster">
-    <div class="iconBtn" id="briefingBtn" style="display:none">
-      <!-- Newspaper icon — more recognisable as "news" than info-circle -->
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2"/>
-        <line x1="7" y1="8" x2="17" y2="8"/>
-        <line x1="7" y1="12" x2="17" y2="12"/>
-        <line x1="7" y1="16" x2="13" y2="16"/>
-        <circle cx="17" cy="16.5" r="1.5" fill="currentColor" stroke="none" opacity="0.6"/>
-      </svg>
-      <span class="briefingBtnBadge" style="display:none"></span>
-      <div class="btnTooltip">
-        <div class="btnTooltipTitle btnTooltipAccent">Daily Briefing</div>
-        <div class="btnTooltipSub" id="briefingTooltipSub">Audio + video roundup of today's global news</div>
-      </div>
-    </div>
     <div class="iconBtn" id="settingsToggle">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round">
@@ -7974,6 +7985,20 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div class="btnTooltip">
         <div class="btnTooltipTitle btnTooltipAccent">Heatmap</div>
         <div class="btnTooltipSub">Visualize coverage, sentiment &amp; volume by keyword</div>
+      </div>
+    </div>
+    <div class="iconBtn" id="briefingBtn" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="7" y1="8" x2="17" y2="8"/>
+        <line x1="7" y1="12" x2="17" y2="12"/>
+        <line x1="7" y1="16" x2="13" y2="16"/>
+        <circle cx="17" cy="16.5" r="1.5" fill="currentColor" stroke="none" opacity="0.6"/>
+      </svg>
+      <span class="briefingBtnBadge" style="display:none"></span>
+      <div class="btnTooltip">
+        <div class="btnTooltipTitle btnTooltipAccent">Daily Briefing</div>
+        <div class="btnTooltipSub" id="briefingTooltipSub">Audio + video roundup of today's global news</div>
       </div>
     </div>
     <div id="searchWrapper">
@@ -19732,7 +19757,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const growth = baselineCount > 0 ? `${momentum >= 10 ? momentum.toFixed(0) : momentum.toFixed(1)}x` : 'NEW';
       const badgeClass = baselineCount > 0 ? 'kwi-badge-rising' : 'kwi-badge-new';
       return `
-        <div class="kwi-trending-item" onclick="kwiTrendingClick('${escapeForSingleQuotedJs(r.keyword)}')">
+        <div class="kwi-trending-item" onclick="kwiTrendingClick('${escapeForSingleQuotedJs(r.keyword)}', event)">
           <div class="kwi-trending-rank">${i + 1}</div>
           <div class="kwi-trending-keyword">${r.keyword}</div>
           <span class="kwi-trending-badge ${badgeClass}">${growth}</span>
@@ -24931,10 +24956,15 @@ body.ticker-active .gTickerLabel {
       window.__openPricing?.();
       return;
     }
+    // Save today's episode on first open so past briefings don't overwrite it
+    if (!_todayEpisode && episode && episode.status === 'ready') {
+      _todayEpisode = episode;
+    }
+    const todayEp = _todayEpisode || episode;
     const el = document.getElementById('bLauncherTodaySection');
-    if (episode && episode.status === 'ready') {
-      document.getElementById('bLauncherTodayHeadline').textContent = episode.headline || '';
-      document.getElementById('bLauncherTodayDate').textContent = fmtDate(episode.target_date);
+    if (todayEp && todayEp.status === 'ready') {
+      document.getElementById('bLauncherTodayHeadline').textContent = todayEp.headline || '';
+      document.getElementById('bLauncherTodayDate').textContent = fmtDate(todayEp.target_date);
       if (el) el.style.display = '';
     } else {
       if (el) el.style.display = 'none';
@@ -24947,6 +24977,7 @@ body.ticker-active .gTickerLabel {
 
   // ── Past Briefings Archive ────────────────────────────────────────────────
   let archiveLoaded = false;
+  let _todayEpisode = null; // preserve today's briefing when viewing past ones
   async function loadArchive() {
     if (archiveLoaded) return;
     const list = document.getElementById('bArchiveList');
@@ -24989,7 +25020,12 @@ body.ticker-active .gTickerLabel {
         }
         throw new Error(data.error || 'Failed');
       }
+      // Save today's episode before overwriting
+      if (!_todayEpisode && episode && episode.status === 'ready') {
+        _todayEpisode = episode;
+      }
       episode = await res.json();
+      archiveLoaded = false; // allow archive to reload next time
       closeBriefingLauncher();
       openBriefing();
     } catch (e) {
@@ -27559,6 +27595,7 @@ body.ticker-active .gTickerLabel {
           background: rgba(6,10,18,0.65);
           padding: 8px 10px 10px 10px;
           box-shadow: inset 0 0 0 1px rgba(255,200,140,0.22);
+          flex-direction: column; align-items: stretch;
         }
         .sigBarTitle {
           flex: 1; min-width: 0;
@@ -27579,13 +27616,16 @@ body.ticker-active .gTickerLabel {
           max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .sigBarExpanded {
-          display: none; flex-direction: column; gap: 6px;
-          font-size: 11px; color: rgba(255,255,255,0.82); line-height: 1.45;
+          display: none; flex-direction: column; gap: 4px;
+          font-size: 11px; color: rgba(255,255,255,0.82); line-height: 1.4;
+          max-height: 220px; overflow-y: auto;
         }
+        .sigBarExpanded::-webkit-scrollbar { width: 4px; }
+        .sigBarExpanded::-webkit-scrollbar-thumb { background: rgba(255,200,140,0.2); border-radius: 2px; }
         .sigBarRow.expanded .sigBarExpanded { display: flex; }
         .sigBarImg {
-          width: 100%; max-height: 120px; object-fit: cover;
-          border-radius: 6px; margin-bottom: 4px;
+          width: 100%; max-height: 80px; object-fit: cover;
+          border-radius: 5px; margin-bottom: 4px;
         }
         .sigBarMeta {
           display: flex; align-items: center; gap: 8px;
