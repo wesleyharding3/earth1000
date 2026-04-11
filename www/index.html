@@ -17143,7 +17143,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <span class="nfPageTitle">News Feed</span>
         <div class="nfTitleActions">
           <div class="nfViewToggle" id="nfViewToggle">
-            <div class="nfViewPill active" data-view="timelines" id="nfViewTimelines">Timelines</div>
+            <div class="nfViewPill active" data-view="timelines" id="nfViewTimelines">Lines</div>
             <div class="nfViewPill" data-view="threads" id="nfViewThreads">Threads</div>
             <div class="nfViewPill" data-view="feed" id="nfViewFeed">Feed</div>
           </div>
@@ -18035,8 +18035,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         threadsVp.style.display    = inGrid ? '' : 'none';
         feedMeta.style.display     = view === 'feed' ? '' : 'none';
         threadsMeta.style.display  = inGrid ? '' : 'none';
-        // Clear stale grid content and reset scroll state immediately on view switch
+        // Clear stale grid content, stats bar, and reset scroll state immediately on view switch
         if (inGrid) {
+          const placeholder = view === 'timelines' ? '— lines · — articles' : '— threads · — articles';
+          threadsCount.innerHTML = placeholder;
           activeGridData = [];
           gridRenderedCount = 0;
           threadsGrid.innerHTML = '';
@@ -18227,13 +18229,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function updateThreadsMeta() {
         const totalArticles = activeGridData.reduce((sum, t) => sum + (t.article_count || 0), 0);
         const count = activeGridData.length;
-        const label = currentView === 'timelines' ? 'timeline' : 'thread';
+        const label = currentView === 'timelines' ? 'line' : 'thread';
         threadsCount.innerHTML = `<strong>${count.toLocaleString()}</strong> ${label}${count !== 1 ? 's' : ''} · <strong>${totalArticles.toLocaleString()}</strong> article${totalArticles !== 1 ? 's' : ''}`;
       }
 
       function renderThreads() {
         if (!activeGridData.length) {
-          const label = currentView === 'timelines' ? 'timelines' : 'threads';
+          const label = currentView === 'timelines' ? 'lines' : 'threads';
           threadsGrid.innerHTML = `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg><span>No ${label} found</span><span style="font-size:11px;text-transform:none;letter-spacing:0;font-weight:400;opacity:0.5;margin-top:4px;">Try broadening your filters or adjusting the date range.</span></div>`;
           threadsCount.innerHTML = '';
           gridRenderedCount = 0;
@@ -19323,7 +19325,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     try {
       const originPage = window.__currentPage || 2;
-      _flowArcOrigin = { type: 'timeline', page: originPage, label: 'Back to Timelines' };
+      _flowArcOrigin = { type: 'timeline', page: originPage, label: 'Back to Lines' };
 
       window.__clusterCloseNodePanel?.();
       window.closeArticleDetail?.();
@@ -19392,7 +19394,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
-      const backLabel = originPage === 2 ? "Back to Timelines" : originPage === 0 ? "Back to Briefing" : "Back";
+      const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
       // Surface compact floating card for the originating timeline.
@@ -22630,15 +22632,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 .bTickerItem.reset { animation: none; }
 .bTickerSource {
-  font-size: 9px; font-weight: 700; letter-spacing: 1.2px;
+  font-size: 7px; font-weight: 700; letter-spacing: 1.2px;
   color: #ff9940; text-transform: uppercase;
 }
-.bTickerLocation { font-size: 9px; color: rgba(255,153,64,0.65); font-weight: 600; }
-.bTickerDate { font-size: 10px; color: rgba(255,255,255,0.35); }
-.bTickerTitle { font-size: 11px; font-weight: 600; color: #fff; }
-.bTickerSummary { font-size: 11px; color: rgba(255,255,255,0.5); }
+.bTickerLocation { font-size: 7px; color: rgba(255,153,64,0.65); font-weight: 600; }
+.bTickerDate { font-size: 8px; color: rgba(255,255,255,0.35); }
+.bTickerTitle { font-size: 9px; font-weight: 600; color: #fff; }
+.bTickerSummary { font-size: 9px; color: rgba(255,255,255,0.5); }
 .bTickerSep { color: rgba(255,153,64,0.3); }
-.bTickerDiv { color: #ff9940; margin: 0 24px; font-size: 14px; }
+.bTickerDiv { color: #ff9940; margin: 0 24px; font-size: 11px; }
 
 /* ── Global persistent ticker ── */
 @keyframes gTickerScroll {
