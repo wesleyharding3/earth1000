@@ -21544,10 +21544,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__authToken = session?.access_token ?? null;
     updateAccountUI(user);
     if (user) {
-      await ensureSubscription(user.id);
-      await loadSettings(user.id);
-      await loadProfile();
-      await maybeShowOnboarding(user.id);
+      try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
+      try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
+      try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
+      try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
     } else {
       clearAuthUI();
     }
