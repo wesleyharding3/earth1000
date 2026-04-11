@@ -6542,21 +6542,45 @@ body.ticker-active #flowControls {
       /* ── KWI widget — fill more screen on mobile ── */
       .kwi-widget {
         min-width: 0 !important;
-        border-radius: 10px;
+        border-radius: 8px;
+        border-width: 0.5px;
       }
       .stats-row {
-        padding-left: 8px !important;
-        padding-right: 8px !important;
+        padding-left: 4px !important;
+        padding-right: 4px !important;
+        gap: 8px !important;
       }
-      .kwi-trending-list { padding: 0 4px; }
-      .kwi-trending-item { padding: 9px 8px; gap: 6px; }
-      .kwi-trending-keyword { font-size: 13px; }
-      .kwi-trending-mentions { font-size: 11px; }
-      .kwi-skel-item { padding: 9px 8px; }
-      .kwi-skel-bar { height: 14px; }
-      .kwi-header { padding: 12px 12px 11px; }
-      .kwi-mode-tabs { padding: 0 8px 6px; }
-      .kwi-footer { padding: 8px 12px; }
+      .kwi-trending-list { padding: 0 2px; }
+      .kwi-trending-item { padding: 7px 6px; gap: 5px; }
+      .kwi-trending-keyword { font-size: 12px; }
+      .kwi-trending-mentions { font-size: 10px; }
+      .kwi-trending-rank { font-size: 10px; min-width: 16px; }
+      .kwi-skel-item { padding: 7px 6px; }
+      .kwi-skel-bar { height: 12px; }
+      .kwi-header { padding: 8px 10px 7px; }
+      .kwi-mode-tabs { padding: 0 6px 4px; }
+      .kwi-mode-tab { padding: 8px 10px; font-size: 11px; }
+      .kwi-footer { padding: 6px 10px; }
+      .kwi-title { font-size: 10px; }
+      .kwi-location-context { font-size: 10px; }
+      /* Interpanel: let it breathe on mobile */
+      .kwi-ref-interpanel {
+        max-height: none !important;
+        margin: 0 4px 4px !important;
+        padding: 4px !important;
+      }
+      .kwi-ref-articles {
+        max-height: none !important;
+        overflow-y: visible !important;
+      }
+      .kwi-ref-spark canvas { height: 44px; }
+      .kwi-ref-card-img { width: 40px; height: 30px; }
+      .kwi-ref-card { padding: 5px; gap: 6px; }
+      .kwi-ref-card-title { font-size: 10px; }
+      .kwi-ref-card-meta { font-size: 8px; }
+      .kwi-ref-expand-img { height: 110px; }
+      .kwi-ref-expand-title { font-size: 12px; }
+      .kwi-ref-expand-summary { font-size: 10px; }
 
       /* ── Mobile ticker: flush to bottom, fills safe area via padding ── */
       #globalTicker {
@@ -12013,6 +12037,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__dragSelectCooloffMs = DRAG_SELECT_COOLOFF_MS;
 
       window.addEventListener("click", event => {
+        if (window.__currentPage !== undefined && window.__currentPage !== 1) return;
         if (window.briefingActive) return;   // globe locked during briefing
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         // If a touch-initiated node selection just happened, skip this click.
@@ -12145,6 +12170,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Clear any stale deferred pick from a previous touch.
         _pendingTouchPick = null;
         _pendingTouchPickTime = 0;
+        if (window.__currentPage !== undefined && window.__currentPage !== 1) return;
         if (window.briefingActive) return;   // globe locked during briefing
         if (window.__semHeatActive) return;  // heatmap mode disables node selection
         if (event.touches.length !== 1) return;
