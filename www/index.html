@@ -4382,6 +4382,7 @@ body.ticker-active #flowControls {
       background: rgba(6,10,18,0.55);
       border: 1px solid rgba(255,200,140,0.18);
       border-radius: 6px;
+      min-height: 50%;
       max-height: 320px;
       overflow-y: auto;
       animation: kwiRefSlideIn 0.18s ease-out;
@@ -5244,12 +5245,12 @@ body.ticker-active #flowControls {
       transition: transform 0.22s;
     }
     /* chevron points up (collapse) when expanded, down (expand) when collapsed */
-    #nfQueryBar.nf-collapsed .nfCollapseBtn svg { transform: rotate(0deg); }
-    #nfQueryBar:not(.nf-collapsed) .nfCollapseBtn svg { transform: rotate(180deg); }
+    #newsFeedPage.nf-collapsed .nfCollapseBtn svg { transform: rotate(0deg); }
+    #newsFeedPage:not(.nf-collapsed) .nfCollapseBtn svg { transform: rotate(180deg); }
 
     /* ── Collapsed state: hide filter strip and builder ── */
-    #nfQueryBar.nf-collapsed .nfFiltersRow,
-    #nfQueryBar.nf-collapsed #nfBuilderRow {
+    #newsFeedPage.nf-collapsed .nfFiltersRow,
+    #newsFeedPage.nf-collapsed #nfBuilderRow {
       display: none !important;
     }
 
@@ -6616,6 +6617,54 @@ body.ticker-active #flowControls {
       .kwi-ref-expand-title { font-size: 12px; }
       .kwi-ref-expand-summary { font-size: 10px; }
 
+      /* ── News feed filters: stack on mobile ── */
+      .nfFiltersRow {
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
+        gap: 6px !important;
+      }
+      .nfTagWrap,
+      .nfBiasWrap {
+        flex: 1 1 calc(50% - 3px);
+        min-width: 0;
+      }
+      .nfTagBtn,
+      .nfBiasBtn {
+        width: 100%;
+        height: 30px !important;
+        font-size: 10px !important;
+        justify-content: center;
+      }
+      .nfTagDropdown {
+        position: fixed !important;
+        top: auto !important; bottom: 60px;
+        left: 8px !important; right: 8px !important;
+        width: auto !important;
+        max-height: 50vh !important;
+        z-index: 210 !important;
+      }
+      .nfBiasDrop {
+        position: fixed !important;
+        top: auto !important; bottom: 60px;
+        left: 8px !important; right: 8px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-height: 50vh !important;
+        z-index: 210 !important;
+      }
+      .nfMediaToggles {
+        order: 3;
+        flex: 1 1 100%;
+        display: flex;
+        gap: 6px;
+      }
+      .nfMediaBtn {
+        flex: 1 1 0 !important;
+        justify-content: center !important;
+        height: 30px !important;
+      }
+      .nfTextWrap { order: 4; flex: 1 1 100%; }
+
       /* ── Mobile ticker: flush to bottom, fills safe area via padding ── */
       #globalTicker {
         bottom: 0 !important;
@@ -6929,6 +6978,21 @@ body.ticker-active #flowControls {
       .flowMinBar {
         max-width: 100%;
         box-sizing: border-box;
+      }
+      .flowMinBtn,
+      .flowCloseBtn {
+        background: none !important;
+        border: none !important;
+        color: rgba(255,255,255,0.85) !important;
+        text-shadow: 0 0 8px rgba(255,255,255,0.5), 0 0 16px rgba(255,255,255,0.25);
+        font-size: 18px !important;
+        width: 28px !important;
+        height: 28px !important;
+      }
+      .flowMinBtn:hover,
+      .flowCloseBtn:hover {
+        color: #fff !important;
+        text-shadow: 0 0 12px rgba(255,255,255,0.7), 0 0 24px rgba(255,255,255,0.4);
       }
 
       /* ── View sidebar — clear top-left control buttons ── */
@@ -17721,10 +17785,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     (function() {
       const queryBar = document.getElementById('nfQueryBar');
       const collapseBtn = document.getElementById('nfCollapseBtn');
-      queryBar.classList.add('nf-collapsed');
+      const feedPage = document.getElementById('newsFeedPage');
+      feedPage.classList.add('nf-collapsed');
       collapseBtn.addEventListener('click', function(e) {
         e.stopPropagation();
-        queryBar.classList.toggle('nf-collapsed');
+        feedPage.classList.toggle('nf-collapsed');
       });
     })();
 
