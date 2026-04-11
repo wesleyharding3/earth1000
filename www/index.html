@@ -21435,9 +21435,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const email = siEmail.value.trim(), pw = siPassword.value;
     if (!email || !pw) return showMsg('Please fill in all fields.', 'error');
     siSubmit.disabled = true; siSubmit.textContent = 'Signing in…';
-    const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+    const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
     siSubmit.disabled = false; siSubmit.textContent = 'Sign In';
     if (error) return showMsg(error.message, 'error');
+    // Apply session directly — don't rely solely on onAuthStateChange
+    if (data?.session) await applySession(data.session);
     closeModal();
   }
 
