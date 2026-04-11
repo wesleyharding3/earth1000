@@ -1739,7 +1739,6 @@ async function getRisingKeywordsForSegment(limit = 3) {
       JOIN news_articles a ON a.id = ak.article_id
       WHERE COALESCE(ak.normalized_keyword, ak.keyword) = $1
         AND a.published_at > NOW() - INTERVAL '7 days'
-        AND a.status = 'ready'
       ORDER BY a.published_at DESC
       LIMIT 3
     `, [kw.keyword]);
