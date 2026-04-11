@@ -2356,25 +2356,38 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
     if (!videoId) return res.status(400).json({ error: 'Could not extract YouTube video ID from URL' });
 
     // Try to get video info via oEmbed (no API key needed)
+    let title = 'YouTube Video', author = '';
     try {
       const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
       const resp = await fetch(oembedUrl);
       if (resp.ok) {
         const data = await resp.json();
-        return res.json({
-          video_id: videoId,
-          title: data.title || 'Unknown',
-          author: data.author_name || '',
-          thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
-        });
+        title = data.title || 'Unknown';
+        author = data.author_name || '';
+      } else if (resp.status === 401 || resp.status === 403) {
+        return res.status(400).json({ error: 'Video is not embeddable (embedding disabled by owner)' });
+      } else if (resp.status === 404) {
+        return res.status(400).json({ error: 'Video not found or unavailable' });
       }
     } catch (_) {}
 
-    // Fallback — return basic info
+    // Check embed endpoint (catches error 150/153 — owner disabled embedding)
+    try {
+      const embedResp = await fetch(`https://www.youtube-nocookie.com/embed/${videoId}`, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(5000)
+      });
+      const xfo = embedResp.headers.get('x-frame-options');
+      if (xfo && xfo.toLowerCase() === 'sameorigin') {
+        return res.status(400).json({ error: 'Video cannot be embedded (X-Frame-Options restriction)' });
+      }
+    } catch (_) {}
+
     res.json({
       video_id: videoId,
-      title: 'YouTube Video',
-      author: '',
+      title,
+      author,
+      embeddable: true,
       thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
     });
   } catch (err) {

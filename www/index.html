@@ -9830,6 +9830,29 @@ function computeCityTiers(cities) {
       let countryPopMask = null;
       let cityPopMask    = null;
 
+      // Briefing mask — when set, only these city indices glow
+      let briefingCityMask = null;
+      window.__setBriefingCityMask = function(latLons) {
+        if (!latLons || !latLons.length) { briefingCityMask = null; return; }
+        const mask = new Uint8Array(cities.length);
+        const TOLE = 0.35;
+        for (const { lat, lon } of latLons) {
+          let bestIdx = -1, bestD = Infinity;
+          for (let i = 0; i < cities.length; i++) {
+            const d = Math.abs(cities[i].lat - lat) + Math.abs((cities[i].lon ?? cities[i].lng ?? 0) - lon);
+            if (d < bestD) { bestD = d; bestIdx = i; }
+          }
+          if (bestIdx >= 0 && bestD < TOLE) mask[bestIdx] = 1;
+          // Also include nearby cities (same metro area) within ~0.3°
+          for (let i = 0; i < cities.length; i++) {
+            const d = Math.abs(cities[i].lat - lat) + Math.abs((cities[i].lon ?? cities[i].lng ?? 0) - lon);
+            if (d < TOLE) mask[i] = 1;
+          }
+        }
+        briefingCityMask = mask;
+      };
+      window.__clearBriefingCityMask = function() { briefingCityMask = null; };
+
       function resetPopFilter(type) {
         const suffix = type === "city" ? "City" : "Country";
         const maxPop = type === "city" ? CITY_POP_MAX : COUNTRY_POP_MAX;
@@ -10453,6 +10476,8 @@ function computeCityTiers(cities) {
               if (cityPopMask && !cityPopMask[gi]) glow = 0;
               // GDP filter mask
               if (cityGdpMask && !cityGdpMask[gi]) glow = 0;
+              // Briefing mask — only show cities used in the current segment
+              if (briefingCityMask && !briefingCityMask[gi]) glow = 0;
 
               colArr.setXYZ(li, glow, glow * 0.92, glow * 0.85);
             }
@@ -22744,7 +22769,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 @media (max-width: 720px) {
   .bArticlePanel {
     top: auto;
-    bottom: calc(48px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
     left: env(safe-area-inset-left, 8px);
     right: auto;
     transform: none;
@@ -23663,6 +23688,7 @@ body.ticker-active .gTickerLabel {
   let segTimer      = null;
   let audio         = null;    // current segment's Audio element
   let audioNext     = null;    // preloaded next segment's Audio element
+  let _resumeSingle = false;   // true when "Resume from here" plays one segment then returns to recap
   let arcMeshes     = [];
   let briefingTimers    = [];
   let activeTUListeners = [];
@@ -23825,6 +23851,7 @@ body.ticker-active .gTickerLabel {
     clearBTimers();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
+    if (window.__clearBriefingCityMask) window.__clearBriefingCityMask();
     // Ease camera back to default orbit distance
     if (window._globeResetZoom) window._globeResetZoom();
     if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
@@ -24193,6 +24220,23 @@ body.ticker-active .gTickerLabel {
       if (window.setBriefingViewMode) {
         window.setBriefingViewMode('city');
       }
+      // Only show city nodes used in this segment, not all cities
+      {
+        const _segCities = [];
+        if (seg.primary_city) _segCities.push({ lat: seg.primary_city.lat, lon: seg.primary_city.lon ?? seg.primary_city.lng });
+        for (const loc of secondary) {
+          if (loc.lat != null) _segCities.push({ lat: loc.lat, lon: loc.lon ?? loc.lng });
+        }
+        for (const arc of (seg.flow_arcs || [])) {
+          if (arc.from_lat != null) _segCities.push({ lat: arc.from_lat, lon: arc.from_lng ?? arc.from_lon });
+          if (arc.to_lat != null)   _segCities.push({ lat: arc.to_lat,   lon: arc.to_lng ?? arc.to_lon });
+        }
+        if (_segCities.length && window.__setBriefingCityMask) {
+          window.__setBriefingCityMask(_segCities);
+        } else if (window.__clearBriefingCityMask) {
+          window.__clearBriefingCityMask();
+        }
+      }
 
       // Illuminate country polygons for primary + arc + secondary countries
       {
@@ -24373,6 +24417,13 @@ body.ticker-active .gTickerLabel {
 
     // End of briefing → show recap
     if (!episode || idx >= episode.segments.length) {
+      _resumeSingle = false;
+      showRecap();
+      return;
+    }
+    // "Resume from here" plays one segment then returns to recap
+    if (_resumeSingle && !seek && idx !== segIdx) {
+      _resumeSingle = false;
       showRecap();
       return;
     }
@@ -24815,14 +24866,14 @@ body.ticker-active .gTickerLabel {
       const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
       const summary  = (a.translated_summary || a.summary || '').replace(/</g, '&lt;');
       const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
-      return `<span class="bTickerItem-entry" data-bid="${a.id}" onclick="window._bTickerClick(this)" style="cursor:pointer;">` +
-        `<span class="bTickerSource">${a.source_name || ''}</span>` +
-        (location ? ` <span class="bTickerSep">·</span> <span class="bTickerLocation">${location}</span>` : '') +
-        (date ? ` <span class="bTickerDate">${date}</span>` : '') +
-        ` <span class="bTickerSep">—</span> <span class="bTickerTitle">${title}</span>` +
-        (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '') +
+      return `<span class="gTickerItem" data-gid="${a.id}" onclick="window._gTickerClick?.(this)" style="cursor:pointer;">` +
+        `<span class="gTickerSource">${a.source_name || ''}</span>` +
+        (location ? ` <span class="gTickerSep">·</span> <span class="gTickerLocation">${location}</span>` : '') +
+        (date ? ` <span class="gTickerDate">${date}</span>` : '') +
+        ` <span class="gTickerSep">—</span> <span class="gTickerTitle">${title}</span>` +
+        (summary ? ` <span class="gTickerSep">—</span> <span class="gTickerSummary">${summary}</span>` : '') +
         `</span>`;
-    }).join('<span class="bTickerDiv">◆</span>');
+    }).join('<span class="gTickerDiv">◆</span>');
   }
 
   window._bTickerClick = function(el) {
@@ -24861,10 +24912,11 @@ body.ticker-active .gTickerLabel {
   function makeVideoCard(videoId, seg) {
     const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
-    return `<div class="bAPCard bAPVideoCard">
-      <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}"
+    return `<div class="bAPCard bAPVideoCard" data-video-id="${videoId}">
+      <iframe src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=0"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-        referrerpolicy="no-referrer-when-downgrade"></iframe>
+        referrerpolicy="strict-origin-when-cross-origin"
+        onerror="this.closest('.bAPVideoCard').remove()"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
           <span class="bAPCardSource" id="bVideoSource">—</span>
@@ -25627,8 +25679,8 @@ body.ticker-active .gTickerLabel {
   document.getElementById('briefingBtn')?.addEventListener('click', openBriefingLauncher);
   document.getElementById('bClose')?.addEventListener('click', closeBriefing);
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
-  document.getElementById('bNext')?.addEventListener('click', () => goToSegment(segIdx + 1, true));
-  document.getElementById('bPrev')?.addEventListener('click', () => goToSegment(Math.max(0, segIdx - 1), true));
+  document.getElementById('bNext')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(segIdx + 1, true); });
+  document.getElementById('bPrev')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(Math.max(0, segIdx - 1), true); });
   document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
   document.getElementById('bSpeed')?.addEventListener('click', cycleSpeed);
   // Seek slider — scrub within current segment's audio
@@ -25671,6 +25723,7 @@ body.ticker-active .gTickerLabel {
       const idx = parseInt(replayBtn.dataset.idx);
       document.getElementById('bStoryDetail').classList.remove('open');
       document.getElementById('bRecap').classList.remove('open');
+      _resumeSingle = true;  // play this segment, then return to recap
       playing = true; updatePlayBtn();
       goToSegment(idx, true);
       return;

@@ -1056,8 +1056,17 @@
           headers: authHeaders(),
           body: JSON.stringify({ url })
         });
-        if (!res.ok) throw new Error('Resolve failed');
-        const meta = await res.json();
+        const body = await res.json();
+        if (!res.ok) {
+          const vp = document.getElementById(`vp-${id}`);
+          vp.classList.add('visible');
+          vp.innerHTML = `<span style="color:#ef4444;">⚠ ${escHtml(body.error || 'Resolve failed')}</span>`;
+          enrichData[id].video_meta = null;
+          btn.disabled = false;
+          btn.textContent = 'Resolve';
+          return;
+        }
+        const meta = body;
         enrichData[id].video_meta = meta;
 
         const vp = document.getElementById(`vp-${id}`);
@@ -1067,6 +1076,7 @@
           <div class="video-info">
             <div class="video-title">${escHtml(meta.title || 'Video resolved')}</div>
             <div class="video-id">${escHtml(meta.video_id || '')}</div>
+            ${meta.embeddable ? '<div style="color:#22c55e;font-size:11px;">✓ Embeddable</div>' : ''}
           </div>
         `;
       } catch (e) {
