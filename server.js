@@ -520,6 +520,38 @@ app.use(optionalAuth);
 app.use("/api/payments", payments.router);
 
 /* =========================================
+   Video embed proxy — serves YouTube embed in
+   an HTTPS HTML page so Capacitor/WKWebView
+   gets a valid origin (fixes error 153 on mobile)
+========================================= */
+app.get("/api/video-embed", (req, res) => {
+  const videoId = (req.query.v || '').replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!videoId) return res.status(400).send('Missing video ID');
+  const autoplay = req.query.autoplay !== '0' ? '1' : '0';
+  const mute = req.query.mute !== '0' ? '1' : '0';
+  const enablejsapi = req.query.jsapi === '1' ? '1' : '0';
+  const cc = req.query.cc === '1' ? '1' : '0';
+  const params = new URLSearchParams({
+    autoplay, mute, playsinline: '1', rel: '0',
+    modestbranding: '1', controls: '1'
+  });
+  if (enablejsapi === '1') params.set('enablejsapi', '1');
+  if (cc === '1') params.set('cc_load_policy', '1');
+
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:#000}
+iframe{width:100%;height:100%;border:none}</style></head>
+<body><iframe src="https://www.youtube.com/embed/${videoId}?${params}"
+allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share"
+allowfullscreen></iframe>
+<script>
+window.addEventListener('message',function(e){try{window.parent.postMessage(e.data,'*')}catch(_){}});
+</script></body></html>`);
+});
+
+/* =========================================
    Auth — Profile (requires valid JWT)
 ========================================= */
 app.get("/api/auth/profile", async (req, res) => {

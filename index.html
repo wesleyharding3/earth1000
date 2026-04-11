@@ -7682,6 +7682,30 @@ window.fmtDate = function(d) {
   }
 })();
 
+/* ── YouTube embed URL helper (proxied on Capacitor to avoid error 153) ── */
+window._ytEmbedUrl = function(videoId, opts) {
+  opts = opts || {};
+  const _isCapacitor = typeof window.Capacitor !== 'undefined';
+  if (_isCapacitor) {
+    const API = window.__API || 'https://earth-wjr6.onrender.com';
+    const p = new URLSearchParams({ v: videoId });
+    if (opts.autoplay === false) p.set('autoplay', '0');
+    if (opts.mute === false) p.set('mute', '0');
+    if (opts.jsapi) p.set('jsapi', '1');
+    if (opts.cc) p.set('cc', '1');
+    return `${API}/api/video-embed?${p}`;
+  }
+  // Desktop/browser: direct YouTube embed
+  const p = new URLSearchParams({
+    autoplay: opts.autoplay === false ? '0' : '1',
+    mute: opts.mute === false ? '0' : '1',
+    playsinline: '1', rel: '0', modestbranding: '1', controls: '1'
+  });
+  if (opts.jsapi) { p.set('enablejsapi', '1'); }
+  if (opts.cc) { p.set('cc_load_policy', '1'); }
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${p}`;
+};
+
 /* ── Global helper: source-bias badge (used by multiple panels) ── */
 window.sourceBiasBadgeHTML = function(bias) {
   const raw = String(bias || 'unknown').toLowerCase();
@@ -13848,10 +13872,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const rect = renderer.domElement.getBoundingClientRect();
         const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
         const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
-        // Hide if point is behind the globe (z > 1 in NDC)
+        // Hide if point is on the far side of the globe (not visible to camera)
         const card = document.getElementById('hoverCard');
         const lineEl = document.getElementById('hoverLineEl');
-        if (projected.z > 1) {
+        // Check if point faces the camera: dot(surfaceNormal, cameraDir) > 0 means visible
+        const camDir = pos.clone().sub(camera.position).normalize();
+        const surfaceNormal = pos.clone().normalize();
+        const dot = surfaceNormal.dot(camDir);
+        if (dot > -0.05 || projected.z > 1) {
           if (card) card.style.opacity = '0';
           if (lineEl) lineEl.style.opacity = '0';
           return;
@@ -13876,6 +13904,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           posArr[idx * 3], posArr[idx * 3 + 1], posArr[idx * 3 + 2]
         ).applyMatrix4(pts.matrixWorld);
         const projected = pos.clone().project(camera);
+        // Skip if point is on the far side of the globe
+        const camDir = pos.clone().sub(camera.position).normalize();
+        const surfaceNormal = pos.clone().normalize();
+        if (surfaceNormal.dot(camDir) > -0.05 || projected.z > 1) return;
         const rect = renderer.domElement.getBoundingClientRect();
         const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
         const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
@@ -20994,7 +21026,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="adpVideoWrap">
           <iframe
             class="adpVideoFrame"
-            src="https://www.youtube-nocookie.com/embed/${article.video_id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1&controls=1"
+            src="${window._ytEmbedUrl(article.video_id)}"
             title="${safeTitle}"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
             referrerpolicy="no-referrer"
@@ -25091,7 +25123,7 @@ body.ticker-active .gTickerLabel {
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
     // enablejsapi=1 for focal video control (seek, mute, captions)
     return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}">
-      <iframe id="bVideoIframe" src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1&enablejsapi=1&cc_load_policy=1"
+      <iframe id="bVideoIframe" src="${window._ytEmbedUrl(videoId, { jsapi: true, cc: true })}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         referrerpolicy="no-referrer"
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
