@@ -768,43 +768,80 @@ app.get("/api/tags", async (req, res) => {
 async function _executeNewsSearch({ effectiveLimit, offset }) {
   const conditions = [`a.city_id IS NULL`, `a.published_at > NOW() - INTERVAL '72 hours'`];
   const params = [effectiveLimit + 1, offset];
-  const { rows } = await pool.query(`
-    SELECT * FROM (
+  try {
+    const { rows } = await pool.query(`
+      SELECT * FROM (
+        SELECT
+          a.id, a.title, a.translated_title, a.url, a.article_url,
+          a.summary, a.translated_summary,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          a.published_at, a.sentiment_score,
+          l.iso_code_2 AS language, a.base_priority,
+          COALESCE(ns.name, ys.name) AS source_name,
+          ns.source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+          COALESCE(cfb.boost_score, 1.0) AS country_boost,
+          GREATEST(
+            POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+            0.02
+          ) AS recency_decay,
+          a.media_type, a.video_id, a.duration_seconds
+        FROM news_articles a
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN languages l ON l.id = ns.language_id
+        JOIN countries src_co ON src_co.id = a.country_id
+        LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE ${conditions.join(' AND ')}
+      ) sub
+      ORDER BY (
+        (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
+        * POWER(sub.country_boost, 2.0)
+      ) DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+
+    return _finalizeSearchResults(rows, effectiveLimit, offset);
+  } catch (err) {
+    // Fallback: lightweight query when the full query times out under DB pressure
+    console.warn('[news/search] Full query failed, trying lightweight fallback:', err.message);
+    const { rows } = await pool.query(`
       SELECT
         a.id, a.title, a.translated_title, a.url, a.article_url,
         a.summary, a.translated_summary,
         COALESCE(a.image_url, img_a.public_url) AS image_url,
         img_a.public_url AS catalog_image_url,
         a.published_at, a.sentiment_score,
-        l.iso_code_2 AS language, a.base_priority,
-        COALESCE(ns.name, ys.name) AS source_name,
-        ns.source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        COALESCE(ns.site_url, ys.site_url) AS site_url,
+        NULL AS language, a.base_priority,
+        NULL AS source_name, NULL AS source_summary,
+        'unknown' AS source_bias, NULL AS site_url,
         src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-        COALESCE(cfb.boost_score, 1.0) AS country_boost,
+        1.0 AS country_boost,
         GREATEST(
           POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
           0.02
         ) AS recency_decay,
         a.media_type, a.video_id, a.duration_seconds
       FROM news_articles a
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN languages l ON l.id = ns.language_id
       JOIN countries src_co ON src_co.id = a.country_id
-      LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
       LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      WHERE ${conditions.join(' AND ')}
-    ) sub
-    ORDER BY (
-      (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
-      * POWER(sub.country_boost, 2.0)
-    ) DESC
-    LIMIT $1 OFFSET $2
-  `, params);
+      WHERE a.city_id IS NULL
+        AND a.published_at > NOW() - INTERVAL '72 hours'
+      ORDER BY a.base_priority DESC NULLS LAST, a.published_at DESC
+      LIMIT $1 OFFSET $2
+    `, params);
 
+    return _finalizeSearchResults(rows, effectiveLimit, offset);
+  }
+}
+
+function _finalizeSearchResults(rows, effectiveLimit, offset) {
   const hasMore = rows.length > effectiveLimit;
   if (hasMore) rows.pop();
 
@@ -856,7 +893,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
       const cacheKey = `news/search:default:${effectiveLimit}`;
-      const cached = await ttlCached(cacheKey, 20_000, async () => {
+      const cached = await ttlCached(cacheKey, 60_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset: 0 });
       });
       return res.json(cached);

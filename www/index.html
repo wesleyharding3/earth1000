@@ -7344,11 +7344,16 @@ window.fmtDate = function(d) {
 (function() {
   const _origFetch = window.fetch;
   const DEFAULT_TIMEOUT = 20000;
+  const LONG_TIMEOUT = 45000;
+  // Endpoints that hit heavy DB queries under load get a longer leash
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
+    const url = typeof input === 'string' ? input : input?.url || '';
+    const ms = LONG_TIMEOUT_PATTERNS.some(p => url.includes(p)) ? LONG_TIMEOUT : DEFAULT_TIMEOUT;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT);
+    const timeout = setTimeout(() => controller.abort(), ms);
     const opts = Object.assign({}, init, { signal: controller.signal });
     return _origFetch.call(this, input, opts).finally(() => clearTimeout(timeout));
   };
@@ -17596,6 +17601,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       return `${API}/api/news/search?${p}`;
     }
 
+    let _fetchRetries = 0;
+    const MAX_FETCH_RETRIES = 2;
     function fetchPage() {
       if (loading || !hasMore) return;
       loading = true; spinRow.classList.add("on");
@@ -17604,6 +17611,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
+          _fetchRetries = 0;
           const page = Array.isArray(data) ? data : (data.articles || []);
           if (data.total != null) totalCount = data.total;
           if (page.length < LIMIT) hasMore = false;
@@ -17613,7 +17621,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         .catch(err => {
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
           console.error("Search error:", err);
-          if (!articles.length) grid.innerHTML = errState();
+          if (_fetchRetries < MAX_FETCH_RETRIES) {
+            _fetchRetries++;
+            console.log(`Retrying feed fetch (${_fetchRetries}/${MAX_FETCH_RETRIES})…`);
+            setTimeout(fetchPage, 3000);
+          } else {
+            _fetchRetries = 0;
+            if (!articles.length) grid.innerHTML = errState();
+          }
         });
     }
 
@@ -21637,8 +21652,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
       try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
       try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
-      // Only show onboarding once per session, and only for new sign-ups
-      if (!_onboardingShownThisSession) {
+      // Only show onboarding for brand-new accounts (SIGNED_UP event), never on regular login
+      if (event === 'SIGNED_UP' && !_onboardingShownThisSession) {
         try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
       }
     } else {
