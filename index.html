@@ -4119,6 +4119,13 @@ body.ticker-active #flowControls {
     }
 
 
+    #statsHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: max(16px, env(safe-area-inset-top, 0px)) 20px 8px;
+      flex-shrink: 0;
+    }
     #statsTitle {
       font-size: 13px;
       font-weight: 700;
@@ -4127,6 +4134,17 @@ body.ticker-active #flowControls {
       color: #4ab8ff;
       text-shadow: 0 0 10px rgba(74,184,255,0.9), 0 0 24px rgba(74,184,255,0.55), 0 0 48px rgba(74,184,255,0.25);
       user-select: none;
+    }
+    #statsAccentCanvas {
+      flex: 0 0 auto;
+      display: block;
+      width: 100%;
+      height: 6px;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
+      position: relative;
+      z-index: 1;
     }
 
     /* ── Thread Detail Panel ── */
@@ -5372,6 +5390,11 @@ body.ticker-active #flowControls {
       display: -webkit-box; -webkit-line-clamp: 2;
       -webkit-box-orient: vertical; overflow: hidden;
     }
+    .nfThreadCardGeo {
+      font-size: 10px; line-height: 1.3; color: rgba(74,184,255,0.7);
+      letter-spacing: 0.04em; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .nfThreadCardDesc {
       font-size: 11px; line-height: 1.45; color: rgba(255,255,255,0.38);
       display: -webkit-box; -webkit-line-clamp: 2;
@@ -6082,6 +6105,37 @@ body.ticker-active #flowControls {
       opacity: 1 !important;
     }
     .nfCardDate { font-size: 10px; color: rgba(255,255,255,0.20); white-space: nowrap; }
+    .nfBookmarkBtn {
+      background: none; border: none; padding: 2px; cursor: pointer;
+      color: rgba(255,255,255,0.25); transition: color 0.15s; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .nfBookmarkBtn svg { width: 14px; height: 14px; }
+    .nfBookmarkBtn:hover { color: rgba(255,195,70,0.7); }
+    .nfBookmarkBtn.saved { color: rgba(255,195,70,0.9); }
+    /* Leader tweet cards (inline in news feed grid) */
+    .nfCard.leaderTweet {
+      border: 1px solid rgba(255,180,80,0.12);
+    }
+    .nfCard.leaderTweet .nfCardBody { padding: 10px 12px; }
+    .ldTweetBadge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+      color: rgba(255,195,70,0.8); margin-bottom: 4px;
+    }
+    .ldTweetBadge svg { width: 11px; height: 11px; }
+    .ldTweetHandle { font-size: 11px; color: rgba(255,180,80,0.5); }
+    .ldTweetText {
+      font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.7);
+      word-break: break-word; overflow-wrap: anywhere;
+      display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .ldTweetText a { color: rgba(255,180,80,0.7); text-decoration: none; }
+    .ldTweetText a:hover { text-decoration: underline; }
+    .ldTweetStats {
+      display: flex; gap: 12px; margin-top: 6px; font-size: 10px; color: rgba(255,255,255,0.2);
+    }
+    .ldTweetStats span { display: flex; align-items: center; gap: 3px; }
     .nfCardFooterLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow: hidden; }
     .nfCardFooterRight { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: 6px; }
     .nfCardTranslateBtn { position: static !important; margin: 0 !important; }
@@ -6564,7 +6618,6 @@ body.ticker-active #flowControls {
       .kwi-footer { padding: 6px 10px; }
       .kwi-title { font-size: 10px; }
       .kwi-location-context { font-size: 10px; }
-      /* Interpanel: let it breathe on mobile */
       /* Interpanel: fill available space on mobile */
       .kwi-ref-interpanel {
         max-height: 60vh !important;
@@ -6973,7 +7026,6 @@ body.ticker-active #flowControls {
       /* ── Stats page — safe area insets for top bar & bottom nav ── */
       #statsHeader {
         padding-top: calc(env(safe-area-inset-top, 0px) + 20px);
-        flex-shrink: 0;
       }
       .stats-row {
         padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
@@ -7238,6 +7290,15 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 }
 .authField input:focus { border-color: rgba(255,160,40,0.5); }
 .authField input::placeholder { color: rgba(255,255,255,0.18); }
+.authRemember {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: rgba(255,255,255,0.5);
+  cursor: pointer; margin-top: 4px; user-select: none;
+}
+.authRemember input[type="checkbox"] {
+  width: 14px; height: 14px; accent-color: rgba(255,160,40,0.9);
+  cursor: pointer;
+}
 .authSubmit {
   width: 100%; padding: 13px; background: rgba(255,160,40,0.92);
   border: none; border-radius: 10px; color: #000;
@@ -7405,6 +7466,7 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   background: rgba(255,180,80,0.18); color: rgba(255,195,70,0.9);
   padding: 1px 7px; border-radius: 10px; min-width: 18px; text-align: center;
 }
+/* Library panel (Saved / History) */
 #libraryPanel {
   display: none; position: fixed; top: 0; right: 0; bottom: 0;
   width: min(380px, 92vw); background: rgba(8,14,26,0.98);
@@ -7414,51 +7476,57 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   transform: translateX(100%); transition: transform 0.25s ease;
 }
 #libraryPanel.open { display: flex; transform: translateX(0); }
-.libHeader { display: flex; align-items: center; gap: 10px; padding: 16px 18px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+.libHeader {
+  display: flex; align-items: center; gap: 10px; padding: 16px 18px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
 .libTitle { font-size: 15px; font-weight: 600; color: rgba(255,255,255,0.9); flex: 1; }
-.libClose { width: 28px; height: 28px; border-radius: 50%; border: none; background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+.libClose {
+  width: 28px; height: 28px; border-radius: 50%; border: none;
+  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 16px; transition: background 0.15s;
+}
 .libClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
-.libTabs { display: flex; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.libTab { flex: 1; padding: 10px; text-align: center; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.4); cursor: pointer; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid transparent; }
+.libTabs {
+  display: flex; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.libTab {
+  flex: 1; padding: 10px; text-align: center; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.4); cursor: pointer; text-transform: uppercase;
+  letter-spacing: 0.05em; border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
 .libTab.active { color: rgba(255,195,70,0.9); border-bottom-color: rgba(255,195,70,0.6); }
+.libTab:hover { color: rgba(255,255,255,0.7); }
 .libContent { flex: 1; overflow-y: auto; padding: 12px; }
-.libEmpty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px 20px; color: rgba(255,255,255,0.3); text-align: center; }
+.libEmpty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 40px 20px; color: rgba(255,255,255,0.3); text-align: center;
+}
 .libEmpty svg { width: 36px; height: 36px; opacity: 0.35; }
 .libEmpty span { font-size: 13px; line-height: 1.5; }
-.libItem { display: flex; gap: 10px; padding: 10px; border-radius: 10px; cursor: pointer; transition: background 0.15s; margin-bottom: 4px; }
+.libItem {
+  display: flex; gap: 10px; padding: 10px; border-radius: 10px; cursor: pointer;
+  transition: background 0.15s; margin-bottom: 4px;
+}
 .libItem:hover { background: rgba(255,255,255,0.04); }
 .libItemBody { flex: 1; min-width: 0; }
-.libItemTitle { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
-.libItemMeta { font-size: 10px; color: rgba(255,255,255,0.3); margin-top: 4px; }
-.libItemRemove { align-self: center; width: 22px; height: 22px; border-radius: 50%; border: none; background: transparent; color: rgba(255,255,255,0.25); cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.libItemTitle {
+  font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.85);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word; overflow-wrap: anywhere;
+}
+.libItemMeta {
+  font-size: 10px; color: rgba(255,255,255,0.3); margin-top: 4px;
+}
+.libItemRemove {
+  align-self: center; width: 22px; height: 22px; border-radius: 50%;
+  border: none; background: transparent; color: rgba(255,255,255,0.25);
+  cursor: pointer; font-size: 13px; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0; transition: all 0.15s;
+}
 .libItemRemove:hover { background: rgba(255,50,50,0.12); color: rgba(255,100,100,0.8); }
-.nfBookmarkBtn { background: none; border: none; padding: 2px; cursor: pointer; color: rgba(255,255,255,0.25); transition: color 0.15s; display: flex; align-items: center; justify-content: center; }
-.nfBookmarkBtn svg { width: 14px; height: 14px; }
-.nfBookmarkBtn:hover { color: rgba(255,195,70,0.7); }
-.nfBookmarkBtn.saved { color: rgba(255,195,70,0.9); }
-    /* Leader tweet cards (inline in news feed grid) */
-    .nfCard.leaderTweet {
-      border: 1px solid rgba(255,180,80,0.12);
-    }
-    .nfCard.leaderTweet .nfCardBody { padding: 10px 12px; }
-    .ldTweetBadge {
-      display: inline-flex; align-items: center; gap: 4px;
-      font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
-      color: rgba(255,195,70,0.8); margin-bottom: 4px;
-    }
-    .ldTweetBadge svg { width: 11px; height: 11px; }
-    .ldTweetHandle { font-size: 11px; color: rgba(255,180,80,0.5); }
-    .ldTweetText {
-      font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.7);
-      word-break: break-word; overflow-wrap: anywhere;
-      display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
-    }
-    .ldTweetText a { color: rgba(255,180,80,0.7); text-decoration: none; }
-    .ldTweetText a:hover { text-decoration: underline; }
-    .ldTweetStats {
-      display: flex; gap: 12px; margin-top: 6px; font-size: 10px; color: rgba(255,255,255,0.2);
-    }
-    .ldTweetStats span { display: flex; align-items: center; gap: 3px; }
 </style>
 </head>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -7766,6 +7834,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div id="statsHeader">
         <span id="statsTitle">Statistics</span>
       </div>
+      <canvas id="statsAccentCanvas" aria-hidden="true"></canvas>
 
       <div class="stats-row">
 
@@ -8291,7 +8360,6 @@ window.sourceBiasBadgeHTML = function(bias) {
           </div>
         </div>
       </div>
-
 
       <!-- Transportation view -->
       <div class="sidebarPanel" id="sidebarPanelTransportation">
@@ -8873,6 +8941,7 @@ const loader = new THREE.TextureLoader();
         } catch (err) {
           console.error("Bootstrap:", err);
           init([], []);
+          // Show user-facing connection error
           const banner = document.createElement('div');
           banner.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:999999;background:rgba(20,20,30,0.95);color:rgba(255,255,255,0.8);padding:24px 32px;border-radius:12px;text-align:center;font:14px/1.6 -apple-system,sans-serif;max-width:320px;border:1px solid rgba(255,255,255,0.1);';
           banner.innerHTML = '<div style="font-size:18px;font-weight:600;margin-bottom:8px;">Connection Error</div>Unable to reach the server.<br>Check your connection and try again.<br><button onclick="location.reload()" style="margin-top:14px;padding:8px 24px;background:rgba(255,180,80,0.9);color:#111;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Retry</button>';
@@ -10887,8 +10956,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
       syncGlobeThemeControls();
-
-
 
       // ──────────────────────────────────────────────────────────
       //  TRANSPORTATION VIEW
@@ -17470,6 +17537,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       request
         .then(data => {
+          // prefetch resolved into _prefetchedData — grab from there if it landed
           const resolved = (_prefetchedData && _prefetchedData.offset === offset)
             ? _prefetchedData.data : data;
           _prefetchedData = null;
@@ -17764,6 +17832,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
         diplomacy: "#3de87a", environment: "#40e8b0", technology: "#aa66ff",
         society: "#e870d0", sports: "#ff66cc", culture: "#ffe040", default: "#6ab4ff"
       };
+      // ISO code → country name resolver for thread/timeline cards
+      function _isoToName(iso) {
+        if (!iso) return '';
+        const gc = Array.isArray(window.__globeCountries) ? window.__globeCountries : [];
+        const up = iso.toUpperCase();
+        for (const c of gc) {
+          if ((c.iso_code || c.iso || c.code || '').toUpperCase() === up)
+            return c.name || c.country || iso;
+        }
+        return iso;
+      }
+      function _resolveGeoScope(scope) {
+        if (!scope) return [];
+        const arr = Array.isArray(scope) ? scope : [scope];
+        return arr.map(s => {
+          if (typeof s === 'string' && /^[a-z]{2}$/i.test(s.trim())) return _isoToName(s.trim());
+          return s;
+        }).filter(Boolean).slice(0, 3);
+      }
       const feedPage      = document.getElementById('newsFeedPage');
       const toggleWrap    = document.getElementById('nfViewToggle');
       const pillTimelines = document.getElementById('nfViewTimelines');
@@ -17918,6 +18005,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           : `this.style.display='none'`;
         const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 3) : [];
         const title = esc(t.title || 'Untitled thread');
+        const geoNames = _resolveGeoScope(t.geographic_scope);
+        const geoLabel = geoNames.length ? geoNames.map(n => esc(n)).join(', ') : '';
         const desc  = esc(t.description || '');
         const cat   = esc((t.primary_category || 'story').toUpperCase());
         const count = t.article_count || 0;
@@ -17940,6 +18029,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 ${statusBadge}
               </div>
               <div class="nfThreadCardTitle">${title}</div>
+              ${geoLabel ? `<div class="nfThreadCardGeo">${geoLabel}</div>` : ''}
               <div class="nfThreadCardDesc">${desc}</div>
             </div>
             <div class="nfThreadCardFooter">
@@ -18131,6 +18221,139 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div></div>`;
     }
     function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Statistics Accent Line — blue interactive canvas (mirrors News Feed style)
+    // ══════════════════════════════════════════════════════════════════
+    (function() {
+      const canvas = document.getElementById('statsAccentCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d', { alpha: true });
+      const DPR = Math.min(2, window.devicePixelRatio || 1);
+      let cssW = 0, cssH = 0;
+
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        cssW = r.width || (canvas.parentElement?.getBoundingClientRect().width || 0);
+        cssH = 6;
+        canvas.width  = Math.max(1, Math.round(cssW * DPR));
+        canvas.height = Math.max(1, Math.round(cssH * DPR));
+        canvas.style.height = cssH + 'px';
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      }
+      resize();
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(resize);
+        ro.observe(canvas);
+        if (canvas.parentElement) ro.observe(canvas.parentElement);
+      } else {
+        window.addEventListener('resize', resize);
+      }
+
+      const ripples = [];
+      function seedRipple(xFrac, intensity = 0.5, life = 1200) {
+        const x0 = Math.max(0, Math.min(1, xFrac)) * cssW;
+        ripples.push({
+          x0, amp: intensity, born: performance.now(), life,
+          speed: 240 + intensity * 360,
+          spread: 44 + intensity * 60,
+        });
+        if (ripples.length > 24) ripples.shift();
+      }
+
+      function strum(intensity = 0.5, xFrac = 0.5) {
+        seedRipple(xFrac, intensity, 900 + intensity * 900);
+      }
+      window.__statsAccentStrum = strum;
+
+      // Initial launch strums
+      setTimeout(() => strum(0.95, 1.0), 420);
+      setTimeout(() => strum(0.55, 1.0), 900);
+
+      // Ambient pulses
+      function scheduleAmbient() {
+        const delay = 1600 + Math.random() * 1400;
+        setTimeout(() => {
+          strum(0.22 + Math.random() * 0.28, 1.0);
+          scheduleAmbient();
+        }, delay);
+      }
+      setTimeout(scheduleAmbient, 2200);
+
+      // Blue palette
+      const BASE_R = 0x4a, BASE_G = 0xb8, BASE_B = 0xff;
+      const ACCENT_R = 0x80, ACCENT_G = 0xd0, ACCENT_B = 0xff;
+      const WAVE_LAMBDA = 28;
+      const AMP_SCALE = 0.82;
+
+      function frame(t) {
+        requestAnimationFrame(frame);
+        if (cssW <= 0) return;
+        const pg = document.getElementById('pageStats');
+        if (pg && pg.offsetParent === null) return;
+
+        ctx.clearRect(0, 0, cssW, cssH);
+        const cy = cssH / 2;
+        const now = t || performance.now();
+        const breath = 0.32 + 0.15 * Math.sin(now * 0.00068 * 2 * Math.PI);
+        const step = 2;
+        const samples = Math.ceil(cssW / step) + 1;
+        const yOff  = new Float32Array(samples);
+        const brite = new Float32Array(samples);
+
+        // Standing ambient wave
+        {
+          const period = 7200;
+          const phase = (now % period) / period * 2 * Math.PI;
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            yOff[si] += Math.sin(phase + (x / (WAVE_LAMBDA * 1.6)) * 2 * Math.PI) * cy * 0.10 * breath;
+          }
+        }
+
+        // Ripple accumulation
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const r = ripples[i];
+          const age = (now - r.born) / 1000;
+          const tNorm = age / (r.life / 1000);
+          if (tNorm >= 1) { ripples.splice(i, 1); continue; }
+          const envelope = r.amp * Math.exp(-1.9 * tNorm);
+          if (envelope < 0.005) { ripples.splice(i, 1); continue; }
+          const travel = r.speed * age;
+          const sigma = r.spread * (1.0 + tNorm * 1.6);
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            const dx = x - (r.x0 - travel);
+            const env = envelope * Math.exp(-(dx * dx) / (2 * sigma * sigma));
+            yOff[si] += env * Math.sin((dx / WAVE_LAMBDA) * 2 * Math.PI) * cy * AMP_SCALE;
+            if (env > brite[si]) brite[si] = env;
+          }
+        }
+
+        // Draw two lines (upper + lower)
+        for (let pass = 0; pass < 2; pass++) {
+          const sign = pass === 0 ? -1 : 1;
+          ctx.beginPath();
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            const y = cy + sign * (0.6 + yOff[si]);
+            si === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          const b = brite[0] || 0;
+          const alpha = Math.min(1, breath * 0.7 + b * 0.6);
+          const cr = Math.round(BASE_R + (ACCENT_R - BASE_R) * Math.min(1, b * 2));
+          const cg = Math.round(BASE_G + (ACCENT_G - BASE_G) * Math.min(1, b * 2));
+          const cb = Math.round(BASE_B + (ACCENT_B - BASE_B) * Math.min(1, b * 2));
+          ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha.toFixed(3)})`;
+          ctx.lineWidth = 1.1;
+          ctx.shadowColor = `rgba(${BASE_R},${BASE_G},${BASE_B},${(alpha * 0.55).toFixed(3)})`;
+          ctx.shadowBlur = 4;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+      }
+      requestAnimationFrame(frame);
+    })();
 
     // ══════════════════════════════════════════════════════════════════
     // News Feed Accent Line — dynamic interactive canvas element
@@ -19317,9 +19540,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Render timeline events
     trackEl.innerHTML = data.timeline.map(ev => {
-      const date = ev.publishedAt
-        ? fmtDate(ev.publishedAt)
-        : "";
+      const date = ev.publishedAt ? fmtDate(ev.publishedAt) : "";
       const sentClass = ev.sentiment != null
         ? (ev.sentiment < -0.2 ? "negative" : ev.sentiment > 0.2 ? "positive" : "")
         : "";
@@ -20019,6 +20240,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       panel.appendChild(listEl);
     }).catch(err => {
+      if (err.name === 'AbortError') return;   // timeout / navigation — silent
       console.error('[kwi interpanel]', err);
       if (_kwiOpenRefKeyword === keyword) {
         panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.35);font-size:11px;">Failed to load data.</div>`;
@@ -21181,6 +21403,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <label>Password</label>
         <input type="password" id="siPassword" placeholder="••••••••" autocomplete="current-password" />
       </div>
+      <label class="authRemember"><input type="checkbox" id="siRemember" checked /> Remember me</label>
       <button class="authSubmit" id="siSubmit">Sign In</button>
       <div class="authForgot"><a id="forgotLink">Forgot password?</a></div>
     </div>
@@ -21238,6 +21461,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const formSignup      = document.getElementById('authFormSignup');
   const siEmail         = document.getElementById('siEmail');
   const siPassword      = document.getElementById('siPassword');
+  const siRemember      = document.getElementById('siRemember');
   const siSubmit        = document.getElementById('siSubmit');
   const suEmail         = document.getElementById('suEmail');
   const suPassword      = document.getElementById('suPassword');
@@ -21501,6 +21725,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
     siSubmit.disabled = false; siSubmit.textContent = 'Sign In';
     if (error) return showMsg(error.message, 'error');
+    // Remember me: if unchecked, move tokens to sessionStorage so they
+    // clear when the browser tab closes.
+    if (!siRemember.checked && data?.session) {
+      const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        sessionStorage.setItem(key, raw);
+        localStorage.removeItem(key);
+      }
+    }
     // Apply session directly — don't rely solely on onAuthStateChange
     if (data?.session) await applySession(data.session);
     closeModal();
@@ -21586,49 +21820,87 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _libTab = 'saved';
   let _savedItems  = JSON.parse(localStorage.getItem('earth00_saved') || '[]');
   let _historyItems = JSON.parse(localStorage.getItem('earth00_history') || '[]');
+
   function _persistSaved()  { localStorage.setItem('earth00_saved', JSON.stringify(_savedItems)); }
   function _persistHistory() { localStorage.setItem('earth00_history', JSON.stringify(_historyItems)); }
+
   function _updateSavedCount() {
     const el = document.getElementById('acctDpSavedCount');
     if (_savedItems.length) { el.textContent = _savedItems.length; el.style.display = ''; }
     else { el.style.display = 'none'; }
   }
+
   function _libEmpty(msg) {
-    return `<div class="libEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg><span>${msg}</span></div>`;
+    return `<div class="libEmpty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span>${msg}</span>
+    </div>`;
   }
+
   function _renderLib() {
     const items = _libTab === 'saved' ? _savedItems : _historyItems;
     if (!items.length) {
-      libContent.innerHTML = _libEmpty(_libTab === 'saved' ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.' : 'No browsing history yet.');
+      libContent.innerHTML = _libEmpty(
+        _libTab === 'saved'
+          ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
+          : 'No browsing history yet.'
+      );
       return;
     }
-    libContent.innerHTML = items.map((it, i) => `<div class="libItem" data-idx="${i}" data-url="${it.url || ''}"><div class="libItemBody"><div class="libItemTitle">${it.title || 'Untitled'}</div><div class="libItemMeta">${it.source || ''} · ${it.date || ''}</div></div>${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}</div>`).join('');
+    libContent.innerHTML = items.map((it, i) => `
+      <div class="libItem" data-idx="${i}" data-url="${it.url || ''}">
+        <div class="libItemBody">
+          <div class="libItemTitle">${it.title || 'Untitled'}</div>
+          <div class="libItemMeta">${it.source || ''} · ${it.date || ''}</div>
+        </div>
+        ${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}
+      </div>`).join('');
+
     libContent.querySelectorAll('.libItem').forEach(el => {
-      el.addEventListener('click', e => { if (e.target.closest('.libItemRemove')) return; const url = el.dataset.url; if (url) window.open(url, '_blank'); });
+      el.addEventListener('click', e => {
+        if (e.target.closest('.libItemRemove')) return;
+        const url = el.dataset.url;
+        if (url) window.open(url, '_blank');
+      });
     });
     libContent.querySelectorAll('.libItemRemove').forEach(btn => {
-      btn.addEventListener('click', e => { e.stopPropagation(); _savedItems.splice(parseInt(btn.dataset.rm), 1); _persistSaved(); _updateSavedCount(); _renderLib(); });
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.rm);
+        _savedItems.splice(idx, 1);
+        _persistSaved(); _updateSavedCount(); _renderLib();
+      });
     });
   }
+
   function openLibrary(tab) {
     _libTab = tab || 'saved';
     libraryPanel.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
-    _renderLib(); accountDropdown.classList.remove('open');
+    _renderLib();
+    accountDropdown.classList.remove('open');
     requestAnimationFrame(() => libraryPanel.classList.add('open'));
   }
+
   libClose.addEventListener('click', () => libraryPanel.classList.remove('open'));
   libraryPanel.querySelectorAll('.libTab').forEach(t => {
     t.addEventListener('click', () => { _libTab = t.dataset.lib; libraryPanel.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
   });
   document.getElementById('acctDpSaved').addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
   document.getElementById('acctDpHistory').addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
+
+  // Public API for other parts of the app to save/track items
   window.__librarySave = function(item) {
     if (_savedItems.some(s => s.id === item.id)) return;
     _savedItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: item.url || '', date: item.published_at ? item.published_at.slice(0, 10) : '' });
     if (_savedItems.length > 200) _savedItems.length = 200;
     _persistSaved(); _updateSavedCount();
   };
-  window.__libraryUnsave = function(id) { _savedItems = _savedItems.filter(s => s.id !== id); _persistSaved(); _updateSavedCount(); if (libraryPanel.classList.contains('open') && _libTab === 'saved') _renderLib(); };
+  window.__libraryUnsave = function(id) {
+    _savedItems = _savedItems.filter(s => s.id !== id);
+    _persistSaved(); _updateSavedCount(); if (libraryPanel.classList.contains('open') && _libTab === 'saved') _renderLib();
+  };
   window.__libraryIsSaved = function(id) { return _savedItems.some(s => s.id === id); };
   window.__libraryTrackView = function(item) {
     _historyItems = _historyItems.filter(h => h.id !== item.id);
@@ -21650,7 +21922,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function hasPersistedSession() {
     try {
       const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
       return !!(parsed?.access_token || parsed?.refresh_token);
@@ -21703,7 +21975,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function maybeShowOnboarding(userId) {
     const { data } = await sb.from('briefing_preferences')
       .select('user_id').eq('user_id', userId).maybeSingle();
-    if (data) { _onboardingShownThisSession = true; return; }
+    if (data) { _onboardingShownThisSession = true; return; } // already set (or skipped)
     _onboardingShownThisSession = true;
     showOnboarding();
   }
@@ -22694,7 +22966,7 @@ body.ticker-active .gTickerLabel {
 /* ── Controls — sit just above the bottom nav bar ── */
 .bControlsWrap {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + 42px + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 20px);
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 14px);
   left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   opacity: 0; transition: opacity 0.5s ease 0.5s;
@@ -23359,9 +23631,7 @@ body.ticker-active .gTickerLabel {
       : `<span style="opacity:0.7">${article.source_name || ''}</span>`;
 
     const title = article.translated_title || article.title || '';
-    const date = article.published_at
-      ? fmtDate(article.published_at)
-      : '';
+    const date = article.published_at ? fmtDate(article.published_at) : '';
 
     return `
       <div class="bCard" style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);">
@@ -24180,7 +24450,6 @@ body.ticker-active .gTickerLabel {
     // ── Video + Article panel (unified) ────────────────────────────────────
     // When a segment has a video, the video card replaces one of the article
     // cards in the left panel — saving screen real estate, especially mobile.
-    // The separate right-side bVideoWrap is no longer used.
     const videoWrap = document.getElementById('bVideoWrap');
     videoWrap.innerHTML = '';
     videoWrap.classList.remove('visible');
@@ -25051,6 +25320,7 @@ body.ticker-active .gTickerLabel {
       const res = await fetch(`${API}/api/briefing/recent?limit=30`);
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
+      // Filter out today's briefing (already shown above)
       const today = new Date().toISOString().slice(0, 10);
       const past = data.filter(b => b.target_date !== today);
       if (!past.length) {
@@ -25790,9 +26060,7 @@ body.ticker-active .gTickerLabel {
     const title = esc(a.translated_title || a.title || "Untitled");
     const source = esc(a.source_name || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
-    const date = a.published_at
-      ? fmtDate(a.published_at)
-      : "";
+    const date = a.published_at ? fmtDate(a.published_at) : "";
     return `<div class="cdTimelineItem" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
       <div class="cdTimelineDot${isVideo ? " video" : ""}"></div>
       <div class="cdTimelineDate">${date}${isAnchor ? '<span class="cdTimelineTag anchor">Anchor</span>' : ""}${isVideo ? '<span class="cdTimelineTag video">Video</span>' : ""}</div>
@@ -27366,9 +27634,9 @@ body.ticker-active .gTickerLabel {
     }
     function fmtDate(d) {
       if (!d) return '';
-      const dt = d instanceof Date ? d : new Date(d);
-      if (isNaN(dt)) return '';
-      return dt.toISOString().slice(0, 10);
+      try {
+        return fmtDate(d);
+      } catch { return ''; }
     }
 
     // Normalize types: anything without a tag becomes 'article'.
@@ -29391,6 +29659,7 @@ body.ticker-active .gTickerLabel {
   </a>
 </div>
 
+<!-- Library panel (Saved / History) -->
 <div id="libraryPanel">
   <div class="libHeader">
     <span class="libTitle">Library</span>

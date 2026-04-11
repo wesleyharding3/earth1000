@@ -4119,6 +4119,13 @@ body.ticker-active #flowControls {
     }
 
 
+    #statsHeader {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: max(16px, env(safe-area-inset-top, 0px)) 20px 8px;
+      flex-shrink: 0;
+    }
     #statsTitle {
       font-size: 13px;
       font-weight: 700;
@@ -4127,6 +4134,17 @@ body.ticker-active #flowControls {
       color: #4ab8ff;
       text-shadow: 0 0 10px rgba(74,184,255,0.9), 0 0 24px rgba(74,184,255,0.55), 0 0 48px rgba(74,184,255,0.25);
       user-select: none;
+    }
+    #statsAccentCanvas {
+      flex: 0 0 auto;
+      display: block;
+      width: 100%;
+      height: 6px;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
+      position: relative;
+      z-index: 1;
     }
 
     /* ── Thread Detail Panel ── */
@@ -5371,6 +5389,11 @@ body.ticker-active #flowControls {
       color: rgba(255,255,255,0.92);
       display: -webkit-box; -webkit-line-clamp: 2;
       -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .nfThreadCardGeo {
+      font-size: 10px; line-height: 1.3; color: rgba(74,184,255,0.7);
+      letter-spacing: 0.04em; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .nfThreadCardDesc {
       font-size: 11px; line-height: 1.45; color: rgba(255,255,255,0.38);
@@ -7003,7 +7026,6 @@ body.ticker-active #flowControls {
       /* ── Stats page — safe area insets for top bar & bottom nav ── */
       #statsHeader {
         padding-top: calc(env(safe-area-inset-top, 0px) + 20px);
-        flex-shrink: 0;
       }
       .stats-row {
         padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
@@ -7268,6 +7290,15 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 }
 .authField input:focus { border-color: rgba(255,160,40,0.5); }
 .authField input::placeholder { color: rgba(255,255,255,0.18); }
+.authRemember {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: rgba(255,255,255,0.5);
+  cursor: pointer; margin-top: 4px; user-select: none;
+}
+.authRemember input[type="checkbox"] {
+  width: 14px; height: 14px; accent-color: rgba(255,160,40,0.9);
+  cursor: pointer;
+}
 .authSubmit {
   width: 100%; padding: 13px; background: rgba(255,160,40,0.92);
   border: none; border-radius: 10px; color: #000;
@@ -7803,6 +7834,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div id="statsHeader">
         <span id="statsTitle">Statistics</span>
       </div>
+      <canvas id="statsAccentCanvas" aria-hidden="true"></canvas>
 
       <div class="stats-row">
 
@@ -17800,6 +17832,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
         diplomacy: "#3de87a", environment: "#40e8b0", technology: "#aa66ff",
         society: "#e870d0", sports: "#ff66cc", culture: "#ffe040", default: "#6ab4ff"
       };
+      // ISO code → country name resolver for thread/timeline cards
+      function _isoToName(iso) {
+        if (!iso) return '';
+        const gc = Array.isArray(window.__globeCountries) ? window.__globeCountries : [];
+        const up = iso.toUpperCase();
+        for (const c of gc) {
+          if ((c.iso_code || c.iso || c.code || '').toUpperCase() === up)
+            return c.name || c.country || iso;
+        }
+        return iso;
+      }
+      function _resolveGeoScope(scope) {
+        if (!scope) return [];
+        const arr = Array.isArray(scope) ? scope : [scope];
+        return arr.map(s => {
+          if (typeof s === 'string' && /^[a-z]{2}$/i.test(s.trim())) return _isoToName(s.trim());
+          return s;
+        }).filter(Boolean).slice(0, 3);
+      }
       const feedPage      = document.getElementById('newsFeedPage');
       const toggleWrap    = document.getElementById('nfViewToggle');
       const pillTimelines = document.getElementById('nfViewTimelines');
@@ -17954,6 +18005,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           : `this.style.display='none'`;
         const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 3) : [];
         const title = esc(t.title || 'Untitled thread');
+        const geoNames = _resolveGeoScope(t.geographic_scope);
+        const geoLabel = geoNames.length ? geoNames.map(n => esc(n)).join(', ') : '';
         const desc  = esc(t.description || '');
         const cat   = esc((t.primary_category || 'story').toUpperCase());
         const count = t.article_count || 0;
@@ -17976,6 +18029,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 ${statusBadge}
               </div>
               <div class="nfThreadCardTitle">${title}</div>
+              ${geoLabel ? `<div class="nfThreadCardGeo">${geoLabel}</div>` : ''}
               <div class="nfThreadCardDesc">${desc}</div>
             </div>
             <div class="nfThreadCardFooter">
@@ -18167,6 +18221,139 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div></div>`;
     }
     function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Statistics Accent Line — blue interactive canvas (mirrors News Feed style)
+    // ══════════════════════════════════════════════════════════════════
+    (function() {
+      const canvas = document.getElementById('statsAccentCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d', { alpha: true });
+      const DPR = Math.min(2, window.devicePixelRatio || 1);
+      let cssW = 0, cssH = 0;
+
+      function resize() {
+        const r = canvas.getBoundingClientRect();
+        cssW = r.width || (canvas.parentElement?.getBoundingClientRect().width || 0);
+        cssH = 6;
+        canvas.width  = Math.max(1, Math.round(cssW * DPR));
+        canvas.height = Math.max(1, Math.round(cssH * DPR));
+        canvas.style.height = cssH + 'px';
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      }
+      resize();
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(resize);
+        ro.observe(canvas);
+        if (canvas.parentElement) ro.observe(canvas.parentElement);
+      } else {
+        window.addEventListener('resize', resize);
+      }
+
+      const ripples = [];
+      function seedRipple(xFrac, intensity = 0.5, life = 1200) {
+        const x0 = Math.max(0, Math.min(1, xFrac)) * cssW;
+        ripples.push({
+          x0, amp: intensity, born: performance.now(), life,
+          speed: 240 + intensity * 360,
+          spread: 44 + intensity * 60,
+        });
+        if (ripples.length > 24) ripples.shift();
+      }
+
+      function strum(intensity = 0.5, xFrac = 0.5) {
+        seedRipple(xFrac, intensity, 900 + intensity * 900);
+      }
+      window.__statsAccentStrum = strum;
+
+      // Initial launch strums
+      setTimeout(() => strum(0.95, 1.0), 420);
+      setTimeout(() => strum(0.55, 1.0), 900);
+
+      // Ambient pulses
+      function scheduleAmbient() {
+        const delay = 1600 + Math.random() * 1400;
+        setTimeout(() => {
+          strum(0.22 + Math.random() * 0.28, 1.0);
+          scheduleAmbient();
+        }, delay);
+      }
+      setTimeout(scheduleAmbient, 2200);
+
+      // Blue palette
+      const BASE_R = 0x4a, BASE_G = 0xb8, BASE_B = 0xff;
+      const ACCENT_R = 0x80, ACCENT_G = 0xd0, ACCENT_B = 0xff;
+      const WAVE_LAMBDA = 28;
+      const AMP_SCALE = 0.82;
+
+      function frame(t) {
+        requestAnimationFrame(frame);
+        if (cssW <= 0) return;
+        const pg = document.getElementById('pageStats');
+        if (pg && pg.offsetParent === null) return;
+
+        ctx.clearRect(0, 0, cssW, cssH);
+        const cy = cssH / 2;
+        const now = t || performance.now();
+        const breath = 0.32 + 0.15 * Math.sin(now * 0.00068 * 2 * Math.PI);
+        const step = 2;
+        const samples = Math.ceil(cssW / step) + 1;
+        const yOff  = new Float32Array(samples);
+        const brite = new Float32Array(samples);
+
+        // Standing ambient wave
+        {
+          const period = 7200;
+          const phase = (now % period) / period * 2 * Math.PI;
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            yOff[si] += Math.sin(phase + (x / (WAVE_LAMBDA * 1.6)) * 2 * Math.PI) * cy * 0.10 * breath;
+          }
+        }
+
+        // Ripple accumulation
+        for (let i = ripples.length - 1; i >= 0; i--) {
+          const r = ripples[i];
+          const age = (now - r.born) / 1000;
+          const tNorm = age / (r.life / 1000);
+          if (tNorm >= 1) { ripples.splice(i, 1); continue; }
+          const envelope = r.amp * Math.exp(-1.9 * tNorm);
+          if (envelope < 0.005) { ripples.splice(i, 1); continue; }
+          const travel = r.speed * age;
+          const sigma = r.spread * (1.0 + tNorm * 1.6);
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            const dx = x - (r.x0 - travel);
+            const env = envelope * Math.exp(-(dx * dx) / (2 * sigma * sigma));
+            yOff[si] += env * Math.sin((dx / WAVE_LAMBDA) * 2 * Math.PI) * cy * AMP_SCALE;
+            if (env > brite[si]) brite[si] = env;
+          }
+        }
+
+        // Draw two lines (upper + lower)
+        for (let pass = 0; pass < 2; pass++) {
+          const sign = pass === 0 ? -1 : 1;
+          ctx.beginPath();
+          for (let si = 0; si < samples; si++) {
+            const x = si * step;
+            const y = cy + sign * (0.6 + yOff[si]);
+            si === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          const b = brite[0] || 0;
+          const alpha = Math.min(1, breath * 0.7 + b * 0.6);
+          const cr = Math.round(BASE_R + (ACCENT_R - BASE_R) * Math.min(1, b * 2));
+          const cg = Math.round(BASE_G + (ACCENT_G - BASE_G) * Math.min(1, b * 2));
+          const cb = Math.round(BASE_B + (ACCENT_B - BASE_B) * Math.min(1, b * 2));
+          ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha.toFixed(3)})`;
+          ctx.lineWidth = 1.1;
+          ctx.shadowColor = `rgba(${BASE_R},${BASE_G},${BASE_B},${(alpha * 0.55).toFixed(3)})`;
+          ctx.shadowBlur = 4;
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+        }
+      }
+      requestAnimationFrame(frame);
+    })();
 
     // ══════════════════════════════════════════════════════════════════
     // News Feed Accent Line — dynamic interactive canvas element
@@ -20053,6 +20240,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       panel.appendChild(listEl);
     }).catch(err => {
+      if (err.name === 'AbortError') return;   // timeout / navigation — silent
       console.error('[kwi interpanel]', err);
       if (_kwiOpenRefKeyword === keyword) {
         panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.35);font-size:11px;">Failed to load data.</div>`;
@@ -21215,6 +21403,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <label>Password</label>
         <input type="password" id="siPassword" placeholder="••••••••" autocomplete="current-password" />
       </div>
+      <label class="authRemember"><input type="checkbox" id="siRemember" checked /> Remember me</label>
       <button class="authSubmit" id="siSubmit">Sign In</button>
       <div class="authForgot"><a id="forgotLink">Forgot password?</a></div>
     </div>
@@ -21272,6 +21461,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const formSignup      = document.getElementById('authFormSignup');
   const siEmail         = document.getElementById('siEmail');
   const siPassword      = document.getElementById('siPassword');
+  const siRemember      = document.getElementById('siRemember');
   const siSubmit        = document.getElementById('siSubmit');
   const suEmail         = document.getElementById('suEmail');
   const suPassword      = document.getElementById('suPassword');
@@ -21535,6 +21725,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
     siSubmit.disabled = false; siSubmit.textContent = 'Sign In';
     if (error) return showMsg(error.message, 'error');
+    // Remember me: if unchecked, move tokens to sessionStorage so they
+    // clear when the browser tab closes.
+    if (!siRemember.checked && data?.session) {
+      const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        sessionStorage.setItem(key, raw);
+        localStorage.removeItem(key);
+      }
+    }
     // Apply session directly — don't rely solely on onAuthStateChange
     if (data?.session) await applySession(data.session);
     closeModal();
@@ -21722,7 +21922,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function hasPersistedSession() {
     try {
       const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
       return !!(parsed?.access_token || parsed?.refresh_token);

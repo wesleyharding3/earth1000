@@ -17,9 +17,46 @@ const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 const { extractArticleSignals } = require("./sentimentLexicon");
+const { findFallbackImage } = require("./imageFallback");
 
 const app = express();
 console.log("Node version:", process.version);
+
+// ── Title-based country boost for threads/timelines ──────────────────────
+// Threads/timelines whose title or geographic_scope mention these countries
+// get a ranking boost so they surface higher in the feed.
+const TITLE_COUNTRY_BOOST = {
+  // Extra boost (!)
+  'russia': 1.8, 'israel': 1.8, 'iran': 1.8, 'united states': 1.8, 'lebanon': 1.8,
+  'russian': 1.8, 'israeli': 1.8, 'iranian': 1.8, 'american': 1.8, 'lebanese': 1.8,
+  'u.s.': 1.8, 'usa': 1.8,
+  // Standard boost
+  'turkey': 1.4, 'turkish': 1.4, 'japan': 1.4, 'japanese': 1.4,
+  'egypt': 1.4, 'egyptian': 1.4, 'south africa': 1.4, 'south african': 1.4,
+  'mexico': 1.4, 'mexican': 1.4, 'argentina': 1.4, 'argentine': 1.4,
+  'brazil': 1.4, 'brazilian': 1.4, 'venezuela': 1.4, 'venezuelan': 1.4,
+  'colombia': 1.4, 'colombian': 1.4, 'canada': 1.4, 'canadian': 1.4,
+  'australia': 1.4, 'australian': 1.4, 'thailand': 1.4, 'thai': 1.4,
+  'indonesia': 1.4, 'indonesian': 1.4, 'india': 1.4, 'indian': 1.4,
+  'pakistan': 1.4, 'pakistani': 1.4, 'china': 1.4, 'chinese': 1.4,
+  'germany': 1.4, 'german': 1.4, 'france': 1.4, 'french': 1.4,
+  'united kingdom': 1.4, 'british': 1.4, 'uk': 1.4,
+  'spain': 1.4, 'spanish': 1.4, 'hungary': 1.4, 'hungarian': 1.4,
+  'italy': 1.4, 'italian': 1.4, 'poland': 1.4, 'polish': 1.4,
+  'greece': 1.4, 'greek': 1.4, 'saudi arabia': 1.4, 'saudi': 1.4,
+};
+const _titleBoostPatterns = Object.keys(TITLE_COUNTRY_BOOST)
+  .sort((a, b) => b.length - a.length)
+  .map(k => ({ re: new RegExp(`\\b${k.replace(/\./g, '\\.')}\\b`, 'i'), boost: TITLE_COUNTRY_BOOST[k] }));
+
+function getTitleCountryBoost(item) {
+  const text = [item.title || '', ...(Array.isArray(item.geographic_scope) ? item.geographic_scope : [])].join(' ');
+  let max = 1.0;
+  for (const { re, boost } of _titleBoostPatterns) {
+    if (re.test(text) && boost > max) max = boost;
+  }
+  return max;
+}
 
 // ── Simple in-memory rate limiter ─────────────────────────────────────────
 function rateLimit({ windowMs = 60_000, max = 100 } = {}) {
@@ -3255,7 +3292,9 @@ app.get("/api/timelines/latest", async (req, res) => {
           AND t.article_count >= 2
         ORDER BY
           CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
-          CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0 ELSE 1 END,
+          CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
+               WHEN t.primary_category IN ('environment','climate') THEN 2
+               ELSE 1 END,
           t.importance DESC,
           t.parabolic_weight_sum DESC,
           t.last_updated_at DESC NULLS LAST
@@ -3291,13 +3330,11 @@ app.get("/api/timelines/latest", async (req, res) => {
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
       const textIsoMap = await resolveHeroIsoFromText(timelines, 'timeline_id');
-      return timelines.map(t => {
+      const mapped = timelines.map(t => {
         const h = heroMap.get(t.timeline_id);
         const subjectIso = textIsoMap.get(t.timeline_id);
         return {
           ...t,
-          // Frontend compatibility: render timeline cards via the same grid
-          // code that renders thread cards. Provide `thread_id` alias too.
           thread_id: t.timeline_id,
           latest_published_at: t.last_updated_at,
           hero_image_url: h?.hero_image_url || null,
@@ -3306,6 +3343,25 @@ app.get("/api/timelines/latest", async (req, res) => {
           hero_iso_code: subjectIso || h?.hero_iso_code || null
         };
       });
+      // Fallback image search for items missing hero images
+      await Promise.all(mapped.map(async (t) => {
+        if (t.hero_image_url || t.hero_catalog_image_url) return;
+        try {
+          const url = await findFallbackImage(t);
+          if (url) t.hero_image_url = url;
+        } catch (e) { /* silent */ }
+      }));
+      // Apply title-based country boost reranking
+      mapped.forEach(t => { t._titleBoost = getTitleCountryBoost(t); });
+      mapped.sort((a, b) => {
+        // Preserve status grouping, then apply boost within groups
+        const sa = a.status === 'active' ? 0 : a.status === 'cooling' ? 1 : 2;
+        const sb = b.status === 'active' ? 0 : b.status === 'cooling' ? 1 : 2;
+        if (sa !== sb) return sa - sb;
+        return ((b.importance || 0) * b._titleBoost) - ((a.importance || 0) * a._titleBoost);
+      });
+      mapped.forEach(t => { delete t._titleBoost; });
+      return mapped;
     });
     res.json(_cached);
   } catch (err) {
@@ -3924,7 +3980,9 @@ app.get("/api/threads/latest", async (req, res) => {
           WHEN 'dormant' THEN 2
           ELSE 3
         END,
-        CASE WHEN st.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0 ELSE 1 END,
+        CASE WHEN st.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
+             WHEN st.primary_category IN ('environment','climate') THEN 2
+             ELSE 1 END,
         st.importance DESC,
         st.article_count DESC,
         st.last_updated_at DESC NULLS LAST
@@ -4066,6 +4124,25 @@ app.get("/api/threads/latest", async (req, res) => {
         hero_iso_code: subjectIso || h?.hero_iso_code || null
       };
     });
+
+    // Fallback image search for items missing hero images
+    await Promise.all(result.map(async (t) => {
+      if (t.hero_image_url) return;
+      try {
+        const url = await findFallbackImage(t);
+        if (url) t.hero_image_url = url;
+      } catch (e) { /* silent */ }
+    }));
+
+    // Apply title-based country boost reranking
+    result.forEach(t => { t._titleBoost = getTitleCountryBoost(t); });
+    result.sort((a, b) => {
+      const sa = a.status === 'active' ? 0 : a.status === 'cooling' ? 1 : 2;
+      const sb = b.status === 'active' ? 0 : b.status === 'cooling' ? 1 : 2;
+      if (sa !== sb) return sa - sb;
+      return ((b.importance || 0) * b._titleBoost) - ((a.importance || 0) * a._titleBoost);
+    });
+    result.forEach(t => { delete t._titleBoost; });
 
     return result;
     });
