@@ -17563,6 +17563,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       lastKeyword = kwEl.value.trim(); searched = true;
       articles = []; offset = 0; hasMore = true; loading = false;
       _lastRenderedCount = 0;
+      // Reset prefetch state on new search
+      _prefetchedData = null; _prefetchInFlight = null; _prefetchOffset = -1;
       textFilter = ""; textFilter_el.value = "";
       welcome.style.display = "none";
       viewport.classList.add("on");
@@ -17579,6 +17581,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         hasMore = (window.__preloadedFeedTotal == null) || (totalCount > articles.length);
         renderCards(filtered());
         updateMetaCount();
+        prefetchNextPage();
       } else {
         grid.innerHTML = skels(12);
       }
@@ -17603,20 +17606,67 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     let _fetchRetries = 0;
     const MAX_FETCH_RETRIES = 2;
-    function fetchPage() {
-      if (loading || !hasMore) return;
-      loading = true; spinRow.classList.add("on");
-      if (window.__nfAccentPulse) window.__nfAccentPulse('load');
-      fetch(buildUrl(offset))
+
+    // ── Prefetch buffer: fetch the next page ahead of time ──
+    let _prefetchedData = null;   // { offset, data } — ready to consume
+    let _prefetchInFlight = null; // Promise for in-progress prefetch
+    let _prefetchOffset = -1;     // offset the prefetch is for
+
+    function prefetchNextPage() {
+      if (!hasMore) return;
+      const nextOffset = offset;
+      if (_prefetchOffset === nextOffset) return; // already prefetching/prefetched this offset
+      _prefetchOffset = nextOffset;
+      _prefetchedData = null;
+      _prefetchInFlight = fetch(buildUrl(nextOffset))
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
         .then(data => {
+          _prefetchedData = { offset: nextOffset, data };
+          _prefetchInFlight = null;
+        })
+        .catch(() => { _prefetchInFlight = null; });
+    }
+
+    function applyPageData(data) {
+      _fetchRetries = 0;
+      const page = Array.isArray(data) ? data : (data.articles || []);
+      if (data.total != null) totalCount = data.total;
+      if (page.length < LIMIT) hasMore = false;
+      articles = [...articles, ...page]; window.__nfArticles = articles;
+      offset += LIMIT; renderCards(filtered()); updateMetaCount();
+      // Kick off prefetch for the next page while user reads this one
+      prefetchNextPage();
+    }
+
+    function fetchPage() {
+      if (loading || !hasMore) return;
+
+      // If prefetch buffer has the data we need, consume it instantly
+      if (_prefetchedData && _prefetchedData.offset === offset) {
+        const data = _prefetchedData.data;
+        _prefetchedData = null;
+        loading = true;
+        applyPageData(data);
+        loading = false;
+        return;
+      }
+
+      loading = true; spinRow.classList.add("on");
+      if (window.__nfAccentPulse) window.__nfAccentPulse('load');
+
+      // If a prefetch is in flight for this offset, wait for it instead of double-fetching
+      const pending = (_prefetchInFlight && _prefetchOffset === offset) ? _prefetchInFlight : null;
+      const request = pending || fetch(buildUrl(offset))
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+
+      request
+        .then(data => {
+          // prefetch resolved into _prefetchedData — grab from there if it landed
+          const resolved = (_prefetchedData && _prefetchedData.offset === offset)
+            ? _prefetchedData.data : data;
+          _prefetchedData = null;
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
-          _fetchRetries = 0;
-          const page = Array.isArray(data) ? data : (data.articles || []);
-          if (data.total != null) totalCount = data.total;
-          if (page.length < LIMIT) hasMore = false;
-          articles = [...articles, ...page]; window.__nfArticles = articles;
-          offset += LIMIT; renderCards(filtered()); updateMetaCount();
+          applyPageData(resolved);
         })
         .catch(err => {
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
