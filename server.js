@@ -101,6 +101,37 @@ function parseOptionalPositiveInt(value, fallback = null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+// ── Resolve geographic_scope country names → ISO codes ──────────────────────
+// Batch-lookup: given an array of items that each have a geographic_scope
+// (array of country names), returns a Map<countryName, isoCode>.
+// Used to derive hero_iso_code from thread/timeline subject countries
+// rather than article origin country.
+async function resolveGeoScopeIsoMap(items) {
+  const names = new Set();
+  for (const item of items) {
+    const scope = Array.isArray(item.geographic_scope) ? item.geographic_scope : [];
+    for (const name of scope) {
+      if (name && typeof name === 'string') names.add(name.trim());
+    }
+  }
+  if (!names.size) return new Map();
+  const nameArr = [...names];
+  const { rows } = await pool.query(
+    `SELECT name, iso_code FROM countries WHERE name = ANY($1)`,
+    [nameArr]
+  );
+  return new Map(rows.map(r => [r.name, r.iso_code]));
+}
+
+function pickGeoScopeIso(geoScope, isoMap) {
+  const scope = Array.isArray(geoScope) ? geoScope : [];
+  for (const name of scope) {
+    const iso = isoMap.get(name?.trim());
+    if (iso) return iso;
+  }
+  return null;
+}
+
 // ── Tiny TTL cache + single-flight for hot read endpoints ────────────────────
 //
 // Coalesces concurrent requests for the same key into one DB query, then
@@ -382,6 +413,23 @@ async function resolveSupabaseUserFromRequest(req) {
       is_admin: false,
       tier: "free"
     };
+    // Look up actual admin flag + subscription tier
+    try {
+      const { data: profile } = await sba
+        .from("profiles")
+        .select("is_admin")
+        .eq("id", req.user.id)
+        .maybeSingle();
+      if (profile) req.user.is_admin = profile.is_admin || false;
+      const { data: subs } = await sba
+        .from("subscriptions")
+        .select("status, updated_at, tier_id")
+        .eq("user_id", req.user.id)
+        .eq("status", "active");
+      const activeSub = pickBestActiveSubscription(subs || []);
+      const tierRow = await resolveTierRecordById(activeSub?.tier_id);
+      req.user.tier = tierRow?.name || "free";
+    } catch (_) {}
     return req.user;
   } catch (_) {
     return null;
@@ -2963,8 +3011,10 @@ app.get("/api/timelines/latest", async (req, res) => {
       `, [timelineIds]);
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
+      const geoIsoMap = await resolveGeoScopeIsoMap(timelines);
       return timelines.map(t => {
         const h = heroMap.get(t.timeline_id);
+        const subjectIso = pickGeoScopeIso(t.geographic_scope, geoIsoMap);
         return {
           ...t,
           // Frontend compatibility: render timeline cards via the same grid
@@ -2974,7 +3024,7 @@ app.get("/api/timelines/latest", async (req, res) => {
           hero_image_url: h?.hero_image_url || null,
           hero_catalog_image_url: h?.hero_catalog_image_url || null,
           hero_source_name: h?.hero_source_name || null,
-          hero_iso_code: h?.hero_iso_code || null
+          hero_iso_code: subjectIso || h?.hero_iso_code || null
         };
       });
     });
@@ -3417,6 +3467,7 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
           t.status,
           t.primary_category,
           t.keywords,
+          t.geographic_scope,
           t.first_seen_at,
           t.last_updated_at,
           t.breaking_signal_score,
@@ -3470,6 +3521,12 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
                rt.last_in_country_at DESC,
                rt.last_updated_at DESC
     `, [iso, String(days), limit]);
+      // Override hero_iso_code with subject country from geographic_scope
+      const geoIsoMap = await resolveGeoScopeIsoMap(rows);
+      for (const row of rows) {
+        const subjectIso = pickGeoScopeIso(row.geographic_scope, geoIsoMap);
+        if (subjectIso) row.hero_iso_code = subjectIso;
+      }
       return rows;
     });
 
@@ -3524,13 +3581,15 @@ app.get("/api/threads/id/:id", async (req, res) => {
     `, [threadId]);
 
     const hero = heroRows[0] || {};
+    const geoIsoMap = await resolveGeoScopeIsoMap([thread]);
+    const subjectIso = pickGeoScopeIso(thread.geographic_scope, geoIsoMap);
     res.json({
       ...thread,
       latest_published_at: thread.last_updated_at,
       hero_image_url: hero.hero_image_url || null,
       hero_catalog_image_url: null,
       hero_source_name: null,
-      hero_iso_code: hero.hero_iso_code || null
+      hero_iso_code: subjectIso || hero.hero_iso_code || null
     });
   } catch (err) {
     console.error("[threads/id/:id]", err.message);
@@ -3712,15 +3771,20 @@ app.get("/api/threads/latest", async (req, res) => {
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
 
+    // Resolve geographic_scope country names → ISO codes so hero flags
+    // reflect thread subject countries, not article origin countries.
+    const geoIsoMap = await resolveGeoScopeIsoMap(threads);
+
     const result = threads.map(t => {
       const h = heroMap.get(t.thread_id);
+      const subjectIso = pickGeoScopeIso(t.geographic_scope, geoIsoMap);
       return {
         ...t,
         latest_published_at: t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
         hero_catalog_image_url: null,
         hero_source_name: null,
-        hero_iso_code: h?.hero_iso_code || null
+        hero_iso_code: subjectIso || h?.hero_iso_code || null
       };
     });
 

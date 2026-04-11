@@ -27703,15 +27703,23 @@ body.ticker-active .gTickerLabel {
         _inspectorSentimentOverview = null;
         body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No scored coverage within 1000 mi.</div>`;
       } else {
-        const rows = nearby
-          .filter(({p}) => p.avg_sent != null && p.sent_n)
-          .map(({p, d}) => ({
-            name: labelFor(p),
-            iso:  (p.iso_code || p.iso || '').toString().toUpperCase(),
-            sent: Number(p.avg_sent),
-            n:    p.sent_n || 0,
-            d
-          }))
+        // Group by country so each country appears once with weighted avg sentiment
+        const countryMap = new Map();
+        for (const {p, d} of nearby) {
+          if (p.avg_sent == null || !p.sent_n) continue;
+          const iso = (p.iso_code || p.iso || '').toString().toUpperCase();
+          const key = iso || labelFor(p);
+          let bucket = countryMap.get(key);
+          if (!bucket) {
+            bucket = { name: labelFor(p), iso, sentSum: 0, n: 0, minD: d };
+            countryMap.set(key, bucket);
+          }
+          bucket.sentSum += Number(p.avg_sent) * (p.sent_n || 0);
+          bucket.n += p.sent_n || 0;
+          if (d < bucket.minD) bucket.minD = d;
+        }
+        const rows = [...countryMap.values()]
+          .map(b => ({ name: b.name, iso: b.iso, sent: b.n ? b.sentSum / b.n : 0, n: b.n, d: b.minD }))
           .sort((a, b) => b.sent - a.sent);
         if (!rows.length) {
           _inspectorSentimentOverview = null;

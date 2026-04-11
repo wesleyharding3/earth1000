@@ -132,7 +132,8 @@ async function getRankedArticles(countryId, options = {}) {
       WHERE source_rank <= $2
       ORDER BY id DESC
     )
-    SELECT ${ARTICLE_FIELDS}
+    SELECT ${ARTICLE_FIELDS},
+      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
@@ -181,7 +182,8 @@ async function getRankedCityArticles(cityId, options = {}) {
       WHERE source_rank <= $2
       ORDER BY id DESC
     )
-    SELECT ${ARTICLE_FIELDS}
+    SELECT ${ARTICLE_FIELDS},
+      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}

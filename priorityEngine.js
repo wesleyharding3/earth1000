@@ -209,6 +209,7 @@ const CONFIG = {
   MAX_POPULARITY:      1.60,
   YOUTUBE_POPULARITY_FLOOR: 1.25,
   YOUTUBE_PRIORITY_BOOST:   1.18,
+  THREAD_BOOST:             1.55,   // Articles in story threads rank higher in node feeds
   MAX_TAG_MULTIPLIER:  1.20,
   MIN_TAG_MULTIPLIER:  1.00,
   CITY_SOURCE_PENALTY: 0.01,
@@ -298,7 +299,8 @@ function calculatePriority({
   publishedAt,
   isYouTube,
   isCitySource,
-  cityPenaltyOverride
+  cityPenaltyOverride,
+  inThread
 }) {
   // Recency: exponential decay score, 0→1 (fresh = 1.0, old = MIN_DECAY)
   const recencyScore = computeDecay(publishedAt);
@@ -324,7 +326,8 @@ function calculatePriority({
     : 1.0;
 
   const surfaceBoost = isYouTube ? CONFIG.YOUTUBE_PRIORITY_BOOST : 1.0;
-  const finalScore = blended * tierBonus * cityPenalty * surfaceBoost;
+  const threadBoost  = inThread ? CONFIG.THREAD_BOOST : 1.0;
+  const finalScore = blended * tierBonus * cityPenalty * surfaceBoost * threadBoost;
 
   return parseFloat(finalScore.toFixed(8));
 }
@@ -477,7 +480,8 @@ function rankArticles(articles = [], maxIntensity, options = {}) {
       popularityTier:  article.popularity_tier,
       publishedAt:     article.published_at,
       isYouTube:       article.youtube_source_id != null,
-      isCitySource:    skipCityPenalty ? false : !!article.city_id
+      isCitySource:    skipCityPenalty ? false : !!article.city_id,
+      inThread:        !!article.in_thread
     })
   }));
 
