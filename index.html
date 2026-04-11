@@ -8145,7 +8145,7 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="btnTooltipSub">Visualize coverage, sentiment &amp; volume by keyword</div>
       </div>
     </div>
-    <div class="iconBtn" id="briefingBtn" style="display:none">
+    <div class="iconBtn" id="briefingBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
         <line x1="7" y1="8" x2="17" y2="8"/>
@@ -21530,6 +21530,72 @@ const settingsToggle     = document.getElementById("settingsToggle");
 (function () {
   const APP_ORIGIN = window.location.origin;
   const API_BASE = window.__API_BASE || 'https://earth-wjr6.onrender.com';
+  // ── Persistent storage adapter (survives Capacitor WKWebView restarts) ──
+  // Mirrors auth tokens to both localStorage AND IndexedDB so closing/
+  // reopening the mobile app never loses the session.
+  const _AUTH_STORAGE_KEY = 'sb-hqzabwjwuszupxwookgx-auth-token';
+  const _authStorage = (() => {
+    const DB_NAME = 'earth_auth', STORE = 'kv';
+    let _dbReady = null;
+    function openDB() {
+      if (_dbReady) return _dbReady;
+      _dbReady = new Promise((resolve, reject) => {
+        try {
+          const req = indexedDB.open(DB_NAME, 1);
+          req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+        } catch (_) { resolve(null); }
+      });
+      return _dbReady;
+    }
+    async function idbSet(key, val) {
+      const db = await openDB();
+      if (!db) return;
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(val, key);
+    }
+    async function idbGet(key) {
+      const db = await openDB();
+      if (!db) return null;
+      return new Promise(resolve => {
+        const tx = db.transaction(STORE, 'readonly');
+        const req = tx.objectStore(STORE).get(key);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => resolve(null);
+      });
+    }
+    async function idbRemove(key) {
+      const db = await openDB();
+      if (!db) return;
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(key);
+    }
+    // On startup, restore from IndexedDB if localStorage is empty
+    (async () => {
+      try {
+        const lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
+        if (!lsVal) {
+          const idbVal = await idbGet(_AUTH_STORAGE_KEY);
+          if (idbVal) localStorage.setItem(_AUTH_STORAGE_KEY, idbVal);
+        }
+      } catch (_) {}
+    })();
+    return {
+      getItem(key) {
+        return localStorage.getItem(key);
+      },
+      setItem(key, value) {
+        localStorage.setItem(key, value);
+        idbSet(key, value).catch(() => {});
+      },
+      removeItem(key) {
+        localStorage.removeItem(key);
+        idbRemove(key).catch(() => {});
+      }
+    };
+  })();
+
   // ── Init Supabase client ─────────────────────────────────────
   const { createClient } = supabase;
   const sb = window.__earthSupabase || createClient(
@@ -21540,8 +21606,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        storage: window.localStorage,
-        storageKey: 'sb-hqzabwjwuszupxwookgx-auth-token'
+        storage: _authStorage,
+        storageKey: _AUTH_STORAGE_KEY
       }
     }
   );
@@ -21832,11 +21898,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Remember me: if unchecked, move tokens to sessionStorage so they
     // clear when the browser tab closes.
     if (!siRemember.checked && data?.session) {
-      const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
+      const key = _AUTH_STORAGE_KEY;
       const raw = localStorage.getItem(key);
       if (raw) {
         sessionStorage.setItem(key, raw);
-        localStorage.removeItem(key);
+        _authStorage.removeItem(key);  // clears both localStorage + IndexedDB
       }
     }
     // Apply session directly — don't rely solely on onAuthStateChange
@@ -23800,24 +23866,34 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Init ────────────────────────────────────────────────────────────────
+  let _briefingAvailable = false;
+
   async function init() {
     try {
       const res = await fetch(`${API}/api/briefing/today`);
-      if (!res.ok) return;
-      episode = await res.json();
-      if (episode.status !== 'ready') return;
-
-      const btn = document.getElementById('briefingBtn');
-      if (!btn) return;
-      btn.style.display = '';
-      btn.classList.add('briefingReady');
-      const badge = btn.querySelector('.briefingBtnBadge');
-      if (badge) badge.style.display = '';
-      btn.title = `Today's Briefing: ${episode.headline}`;
-      // Update tooltip sub-text with today's headline
-      const ttSub = document.getElementById('briefingTooltipSub');
-      if (ttSub && episode.headline) ttSub.textContent = episode.headline;
+      if (res.ok) {
+        episode = await res.json();
+        if (episode.status === 'ready') {
+          _briefingAvailable = true;
+          const btn = document.getElementById('briefingBtn');
+          if (btn) {
+            btn.classList.add('briefingReady');
+            const badge = btn.querySelector('.briefingBtnBadge');
+            if (badge) badge.style.display = '';
+            btn.title = `Today's Briefing: ${episode.headline}`;
+            const ttSub = document.getElementById('briefingTooltipSub');
+            if (ttSub && episode.headline) ttSub.textContent = episode.headline;
+          }
+        } else {
+          episode = null;
+        }
+      }
     } catch (_) {}
+    // If no briefing today, update tooltip to indicate
+    if (!_briefingAvailable) {
+      const ttSub = document.getElementById('briefingTooltipSub');
+      if (ttSub) ttSub.textContent = 'Check back tomorrow for your daily briefing';
+    }
 
     // Fetch available ElevenLabs voices and cache globally
     try {
@@ -25446,12 +25522,17 @@ body.ticker-active .gTickerLabel {
     }
     const todayEp = _todayEpisode || episode;
     const el = document.getElementById('bLauncherTodaySection');
+    const startBtn = document.getElementById('bLauncherStartToday');
     if (todayEp && todayEp.status === 'ready') {
       document.getElementById('bLauncherTodayHeadline').textContent = todayEp.headline || '';
       document.getElementById('bLauncherTodayDate').textContent = fmtDate(todayEp.target_date);
+      if (startBtn) { startBtn.style.display = ''; startBtn.disabled = false; }
       if (el) el.style.display = '';
     } else {
-      if (el) el.style.display = 'none';
+      document.getElementById('bLauncherTodayHeadline').textContent = 'Check back tomorrow for your daily briefing';
+      document.getElementById('bLauncherTodayDate').textContent = '';
+      if (startBtn) startBtn.style.display = 'none';
+      if (el) el.style.display = '';
     }
     hideLauncherInsuff();
     hideLauncherLoading();
