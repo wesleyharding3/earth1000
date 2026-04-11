@@ -21167,6 +21167,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   );
   window.__earthSupabase = sb;
 
+  // ── Onboarding state (must be declared before any function that references them) ──
+  let _obHomeCountry = null;
+  let _obHomeCity    = null;
+  let _obInterests   = [];
+  let _onboardingShownThisSession = false;
+
   // ── DOM refs ─────────────────────────────────────────────────
   const accountBtn      = document.getElementById('accountBtn');
   const accountBtnIcon  = document.getElementById('accountBtnIcon');
@@ -21615,12 +21621,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
   siEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signIn(); });
   suPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signUp(); });
   suEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signUp(); });
-
-  // ── Onboarding state (declared early to avoid TDZ) ──────────
-  let _obHomeCountry = null;
-  let _obHomeCity    = null;
-  let _obInterests   = []; // [{type:'country'|'city', id, name}]
-  let _onboardingShownThisSession = false;
 
   async function applySession(session, event) {
     const user = session?.user ?? null;
