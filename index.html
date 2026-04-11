@@ -22721,7 +22721,7 @@ body.ticker-active .gTickerLabel {
 /* ── Captions — single sentence at a time, just above the control bar ── */
 .bCaptions {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 100px);
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 152px);
   left: 50%; transform: translateX(-50%);
   max-width: min(720px, calc(100vw - 48px));
   background: rgba(0,0,0,0.74); backdrop-filter: blur(6px);
@@ -24156,6 +24156,30 @@ body.ticker-active .gTickerLabel {
           }, advanceInMs);
         }
       };
+
+      // Error handler: retry once on transient failures (502, network),
+      // then fall back to word-count timer if retry also fails.
+      let retried = false;
+      sa.addEventListener('error', () => {
+        if (segIdx !== curIdx || started) return;
+        if (!retried) {
+          retried = true;
+          console.warn(`[briefing] audio load error seg ${curIdx} — retrying`);
+          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?r=1`;
+          sa.load();
+          return;
+        }
+        // Retry failed — run segment on word-count timer with no audio
+        console.warn(`[briefing] audio retry failed seg ${curIdx} — using silent fallback`);
+        started = true;
+        clearBTimers();
+        startGlobeTimers(curIdx, seg, estDur / playbackRate);
+        clearTimeout(segTimer);
+        segTimer = setTimeout(() => {
+          if (segIdx !== curIdx || !playing) return;
+          goToSegment(curIdx + 1);
+        }, Math.round((estDur * 1000) / playbackRate) + (SEGMENT_BUFFER_MS / playbackRate));
+      });
 
       if (sa.readyState >= 1) {
         // Preloaded — metadata already available, fire immediately

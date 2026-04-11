@@ -4379,18 +4379,39 @@ app.get("/api/briefing/today", async (req, res) => {
   }
 });
 
+// ── Audio blob cache: avoid re-fetching 8MB from DB on every segment skip ──
+// Holds the most recently accessed episode's audio blob + segments in memory.
+// Expires after 10 minutes of inactivity. One entry only (episodes are
+// listened to sequentially, so only the active one matters).
+const _audioCache = { id: null, buf: null, segs: null, ts: 0 };
+const AUDIO_CACHE_TTL = 10 * 60 * 1000; // 10 min
+
+async function getAudioCached(episodeId) {
+  const now = Date.now();
+  if (_audioCache.id === episodeId && _audioCache.buf && (now - _audioCache.ts) < AUDIO_CACHE_TTL) {
+    _audioCache.ts = now; // refresh TTL
+    return { buf: _audioCache.buf, segs: _audioCache.segs };
+  }
+  const { rows } = await pool.query(
+    `SELECT audio_data, segments FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
+    [episodeId]
+  );
+  if (!rows.length) return null;
+  _audioCache.id = episodeId;
+  _audioCache.buf = rows[0].audio_data;
+  _audioCache.segs = rows[0].segments;
+  _audioCache.ts = now;
+  return { buf: _audioCache.buf, segs: _audioCache.segs };
+}
+
 // GET /api/briefing/audio/:id/:segIdx — serves one segment's MP3 slice (CBR 128kbps, 16 bytes/ms)
 app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
   try {
     const episodeId = parseInt(req.params.id);
     const segIdx    = parseInt(req.params.segIdx);
-    const { rows } = await pool.query(
-      `SELECT audio_data, segments FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
-      [episodeId]
-    );
-    if (!rows.length) return res.status(404).json({ error: "Audio not found" });
-    const buf  = rows[0].audio_data;
-    const segs = rows[0].segments;
+    const cached = await getAudioCached(episodeId);
+    if (!cached) return res.status(404).json({ error: "Audio not found" });
+    const { buf, segs } = cached;
     if (!segs || segIdx < 0 || segIdx >= segs.length) return res.status(404).json({ error: "Segment not found" });
     const seg  = segs[segIdx];
     const next = segs[segIdx + 1];
@@ -4412,15 +4433,13 @@ app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
   }
 });
 
-// GET /api/briefing/audio/:id — streams the MP3 audio for an episode
+// GET /api/briefing/audio/:id — streams the full MP3 audio for an episode
 app.get("/api/briefing/audio/:id", async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT audio_data FROM briefing_episodes WHERE id = $1 AND audio_data IS NOT NULL`,
-      [parseInt(req.params.id)]
-    );
-    if (!rows.length) return res.status(404).json({ error: "Audio not found" });
-    const buf = rows[0].audio_data;
+    const episodeId = parseInt(req.params.id);
+    const cached = await getAudioCached(episodeId);
+    if (!cached) return res.status(404).json({ error: "Audio not found" });
+    const buf = cached.buf;
     res.set("Content-Type", "audio/mpeg");
     res.set("Content-Length", buf.length);
     res.set("Accept-Ranges", "bytes");
