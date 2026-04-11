@@ -155,10 +155,11 @@ async function startArticleListener() {
         applyLexiconSentiment(articleId)
           .catch(err => console.warn(`⚠️  Lexicon sentiment failed [${articleId}]: ${err.message}`));
 
-        // Deep NLP analysis — fire-and-forget, only for high-priority articles.
-        // Writes sentiment_score + article_entities. Never blocks pipeline.
-        deepAnalyzeArticle(articleId)
-          .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
+        // Deep NLP analysis — DISABLED per-article fire-and-forget.
+        // Now runs post-threading in storyThreadBuilder.js: only the top 3
+        // articles per thread get deep-analyzed, cutting Haiku costs ~90%.
+        // deepAnalyzeArticle(articleId)
+        //   .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
 
         // ─── Timelines knowledge-graph extraction (PAUSED) ──────────────────
         // Fire-and-forget call to entityResolver.processArticleById, which:

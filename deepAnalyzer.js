@@ -167,7 +167,7 @@ Rules:
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
-async function deepAnalyzeArticle(articleId) {
+async function deepAnalyzeArticle(articleId, { skipThreshold = false } = {}) {
   const tag = `[deep:${articleId}]`;
   try {
     // ── 1. Load article ──────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ async function deepAnalyzeArticle(articleId) {
     const art = rows[0];
 
     // ── 2. Threshold + already-done check ────────────────────────────────────
-    if ((art.base_priority || 0) < PRIORITY_THRESHOLD) return;
+    if (!skipThreshold && (art.base_priority || 0) < PRIORITY_THRESHOLD) return;
     if (art.deep_analyzed_at) return; // idempotent
 
     // ── 3. Daily cap ─────────────────────────────────────────────────────────

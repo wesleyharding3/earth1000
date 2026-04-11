@@ -24,6 +24,7 @@ require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const { normalizeRecentKeywords } = require("./keywordNormalizer");
+const { deepAnalyzeArticle } = require("./deepAnalyzer");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -129,6 +130,14 @@ async function run() {
 
   console.log(`\n   [${elapsed()}] Cooling down inactive threads...`);
   await coolDownInactiveThreads();
+
+  // ── Deep-analyze top 3 articles per active thread ──────────────────────
+  // Replaces the old per-article fire-and-forget in articleListener.js.
+  // Only analyzes the highest-relevance articles that haven't been analyzed
+  // yet, cutting Haiku costs ~90%.
+  console.log(`\n   [${elapsed()}] Deep-analyzing top articles per thread...`);
+  const deepAnalyzed = await deepAnalyzeTopPerThread();
+  console.log(`   [${elapsed()}] Deep-analyzed ${deepAnalyzed} article(s)`);
 
   console.log(`\n✅ Done in ${((Date.now()-t0)/1000).toFixed(1)}s — ${created} threads created, ${updated} updated.\n`);
   await pool.end();
@@ -1185,6 +1194,61 @@ function computeArticleRelevanceScore(importance, publishedAt) {
   const ageHours = ageMs / (1000 * 60 * 60);
   const recencyFactor = Math.exp(-ageHours / RECENCY_HALF_LIFE_HOURS);
   return Number((base * recencyFactor).toFixed(4));
+}
+
+// ─── Post-threading deep analysis: top 3 per thread ─────────────────────────
+// For each active/cooling thread, find the top 3 articles (by relevance_score)
+// that haven't been deep-analyzed yet and run deepAnalyzeArticle on them.
+// This replaces the old fire-and-forget per-article approach, cutting costs ~90%.
+const TOP_PER_THREAD = 3;
+const DEEP_CONCURRENCY = 3;
+
+async function deepAnalyzeTopPerThread() {
+  // Get top un-analyzed articles per active thread in one query
+  const { rows } = await pool.query(`
+    SELECT sta.article_id
+    FROM (
+      SELECT sta.thread_id, sta.article_id, sta.relevance_score,
+             ROW_NUMBER() OVER (
+               PARTITION BY sta.thread_id
+               ORDER BY sta.relevance_score DESC, a.published_at DESC
+             ) AS rn
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      JOIN story_threads t ON t.id = sta.thread_id
+      WHERE t.status IN ('active', 'cooling')
+        AND a.deep_analyzed_at IS NULL
+    ) sta
+    WHERE sta.rn <= $1
+  `, [TOP_PER_THREAD]);
+
+  if (!rows.length) return 0;
+
+  const articleIds = rows.map(r => r.article_id);
+  console.log(`   Found ${articleIds.length} article(s) to deep-analyze across active threads`);
+
+  // Process with limited concurrency
+  let completed = 0;
+  let i = 0;
+  async function worker() {
+    while (i < articleIds.length) {
+      const id = articleIds[i++];
+      try {
+        await deepAnalyzeArticle(id, { skipThreshold: true });
+        completed++;
+      } catch (err) {
+        console.warn(`   ⚠️  Deep analysis failed [${id}]: ${err.message}`);
+      }
+    }
+  }
+
+  const workers = [];
+  for (let w = 0; w < Math.min(DEEP_CONCURRENCY, articleIds.length); w++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+
+  return completed;
 }
 
 run().catch(err => {

@@ -101,35 +101,51 @@ function parseOptionalPositiveInt(value, fallback = null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-// ── Resolve geographic_scope country names → ISO codes ──────────────────────
-// Batch-lookup: given an array of items that each have a geographic_scope
-// (array of country names), returns a Map<countryName, isoCode>.
-// Used to derive hero_iso_code from thread/timeline subject countries
-// rather than article origin country.
-async function resolveGeoScopeIsoMap(items) {
-  const names = new Set();
-  for (const item of items) {
-    const scope = Array.isArray(item.geographic_scope) ? item.geographic_scope : [];
-    for (const name of scope) {
-      if (name && typeof name === 'string') names.add(name.trim());
-    }
-  }
-  if (!names.size) return new Map();
-  const nameArr = [...names];
+// ── Resolve hero ISO code from title/description text ───────────────────────
+// Scans thread/timeline title + description for country name mentions and
+// returns the first matched country's ISO code. Uses a JS regex built once
+// from the countries table (sorted longest-first to prefer "South Korea"
+// over "Korea", etc.).
+let _jsCountryLookup = null;
+async function getCountryLookup() {
+  if (_jsCountryLookup) return _jsCountryLookup;
   const { rows } = await pool.query(
-    `SELECT name, iso_code FROM countries WHERE name = ANY($1)`,
-    [nameArr]
+    `SELECT name, iso_code FROM countries WHERE name IS NOT NULL AND length(name) >= 4 ORDER BY length(name) DESC`
   );
-  return new Map(rows.map(r => [r.name, r.iso_code]));
+  const entries = rows.map(r => ({
+    name: r.name,
+    iso: r.iso_code.toLowerCase(),
+    re: new RegExp(`\\b${r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i')
+  }));
+  _jsCountryLookup = entries;
+  return entries;
 }
 
-function pickGeoScopeIso(geoScope, isoMap) {
-  const scope = Array.isArray(geoScope) ? geoScope : [];
-  for (const name of scope) {
-    const iso = isoMap.get(name?.trim());
-    if (iso) return iso;
+// Given a text string (title + description), return the first country ISO match
+async function pickCountryIsoFromText(text) {
+  if (!text) return null;
+  const lookup = await getCountryLookup();
+  for (const entry of lookup) {
+    if (entry.re.test(text)) return entry.iso;
   }
   return null;
+}
+
+// Batch version: for an array of items with title+description,
+// returns a Map<itemId, isoCode> where itemId is thread_id or timeline_id.
+async function resolveHeroIsoFromText(items, idKey) {
+  const lookup = await getCountryLookup();
+  const result = new Map();
+  for (const item of items) {
+    const text = `${item.title || ''} ${item.description || ''}`;
+    for (const entry of lookup) {
+      if (entry.re.test(text)) {
+        result.set(item[idKey], entry.iso);
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 // ── Tiny TTL cache + single-flight for hot read endpoints ────────────────────
@@ -3279,10 +3295,10 @@ app.get("/api/timelines/latest", async (req, res) => {
       `, [timelineIds]);
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
-      const geoIsoMap = await resolveGeoScopeIsoMap(timelines);
+      const textIsoMap = await resolveHeroIsoFromText(timelines, 'timeline_id');
       return timelines.map(t => {
         const h = heroMap.get(t.timeline_id);
-        const subjectIso = pickGeoScopeIso(t.geographic_scope, geoIsoMap);
+        const subjectIso = textIsoMap.get(t.timeline_id);
         return {
           ...t,
           // Frontend compatibility: render timeline cards via the same grid
@@ -4039,13 +4055,13 @@ app.get("/api/threads/latest", async (req, res) => {
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
 
-    // Resolve geographic_scope country names → ISO codes so hero flags
-    // reflect thread subject countries, not article origin countries.
-    const geoIsoMap = await resolveGeoScopeIsoMap(threads);
+    // Resolve hero ISO from country names mentioned in title/description
+    // so hero flags reflect thread subject countries, not article origin.
+    const textIsoMap = await resolveHeroIsoFromText(threads, 'thread_id');
 
     const result = threads.map(t => {
       const h = heroMap.get(t.thread_id);
-      const subjectIso = pickGeoScopeIso(t.geographic_scope, geoIsoMap);
+      const subjectIso = textIsoMap.get(t.thread_id);
       return {
         ...t,
         latest_published_at: t.last_updated_at,
