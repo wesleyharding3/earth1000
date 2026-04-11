@@ -4048,21 +4048,54 @@ app.get("/api/briefing/audio/:id", async (req, res) => {
   }
 });
 
-// GET /api/briefing/recent — last 7 days of briefings (for a history panel)
+// GET /api/briefing/recent — past briefings index (date-indexed archive)
 app.get("/api/briefing/recent", async (req, res) => {
   try {
+    const limit = Math.min(parseInt(req.query.limit) || 30, 90);
     const { rows } = await pool.query(`
       SELECT id, target_date, headline, status, generated_at,
              (audio_data IS NOT NULL) AS has_audio
       FROM briefing_episodes
       WHERE user_id IS NULL AND status = 'ready'
+        AND location_type IS NULL
       ORDER BY target_date DESC
-      LIMIT 7
-    `);
+      LIMIT $1
+    `, [limit]);
     res.json(rows);
   } catch (err) {
     console.error("[briefing/recent]", err.message);
     res.status(500).json({ error: "Failed to fetch recent briefings" });
+  }
+});
+
+// GET /api/briefing/episode/:id — fetch a specific past briefing by ID
+app.get("/api/briefing/episode/:id", async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, target_date, headline, voiceover_script, segments, status, generated_at,
+             (audio_data IS NOT NULL) AS has_audio
+      FROM briefing_episodes
+      WHERE id = $1 AND status = 'ready'
+      LIMIT 1
+    `, [parseInt(req.params.id)]);
+    if (!rows.length) return res.status(404).json({ error: "Briefing not found" });
+
+    // Free-tier weekly access gate
+    if (req.user?.id) {
+      const tier = req.user.tier || "free";
+      const access = await checkBriefingAccess(req.user.id, rows[0].id, tier).catch(() => ({ allowed: true }));
+      if (!access.allowed) {
+        return res.status(403).json({
+          error: access.resetNote || "Weekly briefing limit reached",
+          limitReached: true, used: access.used, limit: access.limit, requiredTier: "pro",
+        });
+      }
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("[briefing/episode]", err.message);
+    res.status(500).json({ error: "Failed to fetch briefing" });
   }
 });
 

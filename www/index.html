@@ -23052,6 +23052,15 @@ body.ticker-active .gTickerLabel {
 }
 .bLauncherStartBtn.secondary:hover { background: rgba(255,255,255,0.12); color: #fff; }
 .bLauncherStartBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.bArchiveItem {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 6px; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.bArchiveItem:hover { background: rgba(96,200,255,0.07); border-color: rgba(96,200,255,0.18); }
+.bArchiveDate { font-size: 11px; color: rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
+.bArchiveHeadline { font-size: 12px; color: rgba(255,255,255,0.8); flex: 1; margin-right: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bArchiveAudio { font-size: 10px; color: rgba(96,200,255,0.6); flex-shrink: 0; }
 /* Insufficient content warning */
 .bLauncherInsuff {
   background: rgba(255,180,30,0.07); border: 1px solid rgba(255,180,30,0.25);
@@ -23103,6 +23112,14 @@ body.ticker-active .gTickerLabel {
       <div class="bLauncherTodayHeadline" id="bLauncherTodayHeadline">Loading…</div>
       <div class="bLauncherTodayDate" id="bLauncherTodayDate"></div>
       <button class="bLauncherStartBtn" id="bLauncherStartToday">Start Briefing →</button>
+    </div>
+
+    <!-- Past briefings archive -->
+    <div class="bLauncherSection" id="bLauncherArchiveSection">
+      <div class="bLauncherSectionLabel">Past Briefings</div>
+      <div id="bArchiveList" class="bArchiveList" style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:6px;">
+        <div style="color:rgba(255,255,255,0.3);font-size:12px;">Loading…</div>
+      </div>
     </div>
 
     <!-- Custom briefing form -->
@@ -24920,7 +24937,62 @@ body.ticker-active .gTickerLabel {
     hideLauncherInsuff();
     hideLauncherLoading();
     document.getElementById('bLauncher').classList.add('open');
+    loadArchive();
   }
+
+  // ── Past Briefings Archive ────────────────────────────────────────────────
+  let archiveLoaded = false;
+  async function loadArchive() {
+    if (archiveLoaded) return;
+    const list = document.getElementById('bArchiveList');
+    if (!list) return;
+    try {
+      const res = await fetch(`${API}/api/briefing/recent?limit=30`);
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json();
+      // Filter out today's briefing (already shown above)
+      const today = new Date().toISOString().slice(0, 10);
+      const past = data.filter(b => b.target_date !== today);
+      if (!past.length) {
+        list.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;">No past briefings yet.</div>';
+        return;
+      }
+      list.innerHTML = past.map(b => `
+        <div class="bArchiveItem" onclick="window.__playArchive(${b.id})">
+          <span class="bArchiveHeadline">${(b.headline || 'Untitled').replace(/</g,'&lt;')}</span>
+          <span class="bArchiveDate">${fmtDate(b.target_date)}</span>
+          ${b.has_audio ? '<span class="bArchiveAudio">♪</span>' : ''}
+        </div>
+      `).join('');
+      archiveLoaded = true;
+    } catch (e) {
+      list.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;">Failed to load archive.</div>';
+    }
+  }
+
+  window.__playArchive = async function(id) {
+    const list = document.getElementById('bArchiveList');
+    const origHTML = list.innerHTML;
+    list.innerHTML = '<div style="color:rgba(255,255,255,0.3);font-size:12px;">Loading briefing…</div>';
+    try {
+      const res = await fetch(`${API}/api/briefing/episode/${id}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.limitReached) {
+          list.innerHTML = origHTML;
+          alert(data.error || 'Weekly briefing limit reached. Upgrade to Pro for unlimited access.');
+          return;
+        }
+        throw new Error(data.error || 'Failed');
+      }
+      episode = await res.json();
+      closeBriefingLauncher();
+      openBriefing();
+    } catch (e) {
+      list.innerHTML = origHTML;
+      alert('Failed to load briefing: ' + e.message);
+    }
+  };
 
   function closeBriefingLauncher() {
     document.getElementById('bLauncher').classList.remove('open');
