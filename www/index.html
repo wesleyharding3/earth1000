@@ -7010,8 +7010,10 @@ body.ticker-active #flowControls {
   background: rgba(0,0,0,0.78); backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   align-items: center; justify-content: center;
+  touch-action: none;
 }
 #authOverlay.open { display: flex; pointer-events: all; }
+body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 #authCard {
   background: rgba(8,14,26,0.97); border: 1px solid rgba(255,255,255,0.14);
   border-radius: 22px; padding: 34px 30px; width: 370px;
@@ -21345,8 +21347,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     clearMsg();
     switchTab(tab);
     authOverlay.classList.add('open');
+    document.body.classList.add('auth-modal-open');
   }
-  function closeModal() { authOverlay.classList.remove('open'); }
+  function closeModal() {
+    authOverlay.classList.remove('open');
+    document.body.classList.remove('auth-modal-open');
+  }
 
   function switchTab(tab) {
     tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
@@ -21584,6 +21590,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   authClose.addEventListener('click', closeModal);
   authOverlay.addEventListener('click', e => { if (e.target === authOverlay) closeModal(); });
+  // Block all touch/pointer events from reaching elements behind the overlay
+  ['touchstart','touchmove','touchend','pointerdown','pointermove','pointerup','mousedown'].forEach(evt => {
+    authOverlay.addEventListener(evt, e => { e.stopPropagation(); }, { passive: false });
+  });
 
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
   siSubmit.addEventListener('click', signIn);
@@ -21694,11 +21704,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
   suPassword.addEventListener('keydown', e => { if (e.key === 'Enter') signUp(); });
   suEmail.addEventListener('keydown',    e => { if (e.key === 'Enter') signUp(); });
 
+  // Check whether Supabase has a persisted session in localStorage.
+  // Used to avoid logging the user out on transient network failures.
+  function hasPersistedSession() {
+    try {
+      const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
+      const raw = localStorage.getItem(key);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      return !!(parsed?.access_token || parsed?.refresh_token);
+    } catch { return false; }
+  }
+
   async function applySession(session, event) {
     const user = session?.user ?? null;
     window.__authToken = session?.access_token ?? null;
-    updateAccountUI(user);
     if (user) {
+      updateAccountUI(user);
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
       try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
       try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
@@ -21706,8 +21728,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (event === 'SIGNED_UP' && !_onboardingShownThisSession) {
         try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
       }
-    } else {
+    } else if (event === 'SIGNED_OUT') {
+      // Explicit sign-out — always clear
       clearAuthUI();
+    } else if (!hasPersistedSession()) {
+      // No session in storage either — genuinely logged out
+      clearAuthUI();
+    } else {
+      // Session is null but localStorage still has tokens — transient
+      // network failure during token refresh. Keep the UI as-is so the
+      // user doesn't flash to logged-out state on every slow reload.
+      console.warn('[auth] session null but persisted tokens exist — keeping UI');
     }
   }
 
@@ -21720,12 +21751,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try {
       const { data, error } = await sb.auth.getSession();
       if (error) throw error;
-      await applySession(data?.session || null);
+      await applySession(data?.session || null, 'INITIAL_SESSION');
     } catch (err) {
       console.warn('[auth] initial session load failed:', err.message);
-      // Don't clear auth UI on transient network errors — the session may
-      // still be valid in localStorage. onAuthStateChange will fire when
-      // connectivity recovers and update the UI then.
+      // Don't clear — onAuthStateChange handles it with the persisted-token check
     }
   })();
 
