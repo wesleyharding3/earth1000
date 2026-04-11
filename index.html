@@ -75,6 +75,11 @@
       outline-offset: 2px;
     }
 
+    /* Prevent iOS Safari auto-zoom on input focus (requires font-size >= 16px) */
+    @supports (-webkit-touch-callout: none) {
+      input, select, textarea { font-size: 16px !important; }
+    }
+
     /* ═══════════════════════════════════════════════════════════
        SITE LOADER
     ════════════════════════════════════════════════════════════ */
@@ -7017,7 +7022,7 @@ body.ticker-active #flowControls {
 .authField input {
   width: 100%; box-sizing: border-box; background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.11); border-radius: 10px;
-  padding: 12px 14px; color: #fff; font-size: 14px;
+  padding: 12px 14px; color: #fff; font-size: 16px;
   outline: none; transition: border-color 0.2s;
 }
 .authField input:focus { border-color: rgba(255,160,40,0.5); }
@@ -21412,13 +21417,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   async function signOut() {
     try {
-      const { error } = await sb.auth.signOut({ scope: 'local' });
-      if (error) console.warn('[auth] signOut error:', error.message || error);
+      await sb.auth.signOut({ scope: 'local' });
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
     clearAuthUI();
-    window.location.replace('/');
+    accountDropdown.classList.remove('open');
+    if (_topCluster) _topCluster.style.zIndex = '';
+    window.location.reload();
   }
 
   async function forgotPassword() {
