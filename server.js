@@ -2672,30 +2672,66 @@ app.post('/api/admin/timeline-editor/search-data', requireAdmin, async (req, res
     const { query } = req.body;
     if (!query || typeof query !== 'string') return res.status(400).json({ error: 'query required' });
     const q = query.toLowerCase().trim();
+    // Split query into words so "oil price" or "military spending" match
+    // indicators containing all the individual terms, not just the exact phrase.
+    // Expand common synonyms so natural queries hit the right indicators.
+    const SYNONYMS = {
+      spending: ['expenditure','spend','cost','budget'],
+      expenditure: ['spending','spend','cost','budget'],
+      price: ['cost','value','rate','prices'],
+      cost: ['price','expenditure','spending'],
+      army: ['military','defense','defence','armed'],
+      defense: ['military','defence','armed'],
+      weapon: ['arms','ammunition','military'],
+      arms: ['weapon','ammunition','military'],
+      emissions: ['emission','co2','carbon','pollution'],
+      oil: ['petroleum','fuel','crude'],
+      petroleum: ['oil','fuel','crude'],
+      war: ['conflict','military','armed'],
+      conflict: ['war','armed','violence'],
+      import: ['imports','trade'],
+      export: ['exports','trade'],
+      energy: ['electricity','power','fuel','oil'],
+    };
+    const rawWords = q.split(/\s+/).filter(w => w.length >= 2);
+    if (!rawWords.length) return res.json({ results: [] });
+    // For each query word, build a set of acceptable matches
+    const wordSets = rawWords.map(w => {
+      const syns = SYNONYMS[w] || [];
+      return [w, ...syns];
+    });
     const available = dataPanels ? require('./dataSources').listAvailable() : [];
     const results = [];
     for (const adapter of available) {
       for (const indicator of (adapter.catalog || [])) {
-        const text = [indicator.label, indicator.id, indicator.unit, adapter.label, adapter.description]
+        // Match against indicator-specific fields (NOT adapter.description,
+        // which is too broad and would match every indicator in the adapter).
+        const indicatorText = [indicator.label, indicator.id, indicator.unit]
           .filter(Boolean).join(' ').toLowerCase();
-        if (text.includes(q)) {
+        // Adapter name/label is useful but not the long description
+        const adapterText = [adapter.name, adapter.label].filter(Boolean).join(' ').toLowerCase();
+        const text = indicatorText + ' ' + adapterText;
+        // Every query word (or one of its synonyms) must appear in the text
+        const allMatch = wordSets.every(wSet => wSet.some(w => text.includes(w)));
+        if (allMatch) {
+          // Score: how many query words match in the indicator label specifically
+          const labelLower = indicator.label.toLowerCase();
+          const labelHits = wordSets.filter(wSet => wSet.some(w => labelLower.includes(w))).length;
           results.push({
             adapter: adapter.name,
             adapter_label: adapter.label,
             id: indicator.id,
             label: indicator.label,
             unit: indicator.unit || null,
-            description: adapter.description || ''
+            description: adapter.description || '',
+            _score: labelHits
           });
         }
       }
     }
-    // Sort: exact match in label first, then by adapter
-    results.sort((a, b) => {
-      const aExact = a.label.toLowerCase().includes(q) ? 0 : 1;
-      const bExact = b.label.toLowerCase().includes(q) ? 0 : 1;
-      return aExact - bExact || a.adapter.localeCompare(b.adapter);
-    });
+    // Sort: most label hits first, then by adapter name
+    results.sort((a, b) => b._score - a._score || a.adapter.localeCompare(b.adapter));
+    results.forEach(r => delete r._score);
     res.json({ results: results.slice(0, 30) });
   } catch (err) {
     console.error('[timeline-editor] search-data error:', err.message);

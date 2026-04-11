@@ -13905,6 +13905,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return { lat: capital.lat, lng: capital.lon ?? capital.lng };
       };
 
+      // ── Briefing hover-card tracking state ─────────────────────────────
+      // Stores the 3D reference so the render loop can re-project the card
+      // every frame, keeping the SVG line anchored to the globe coordinate
+      // as the globe rotates.
+      let _briefingHoverRef = null; // { posArr, pts, idx }
+
+      // Called from the render loop to update briefing hover card position
+      window._briefingTrackHoverCard = function() {
+        if (!_briefingHoverRef) return;
+        const { posArr, pts, idx: ni } = _briefingHoverRef;
+        if (!pts || !posArr) return;
+        const pos = new THREE.Vector3(
+          posArr[ni * 3], posArr[ni * 3 + 1], posArr[ni * 3 + 2]
+        ).applyMatrix4(pts.matrixWorld);
+        const projected = pos.clone().project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
+        const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+        // Hide if point is behind the globe (z > 1 in NDC)
+        const card = document.getElementById('hoverCard');
+        const lineEl = document.getElementById('hoverLineEl');
+        if (projected.z > 1) {
+          if (card) card.style.opacity = '0';
+          if (lineEl) lineEl.style.opacity = '0';
+          return;
+        }
+        if (card) card.style.opacity = '';
+        trackHoverCard(sx, sy);
+      };
+
       // Show hover card for a named node during briefing.
       // Pass the node object ({name, lat, lon, population, flag, country}) and
       // whether it is a city (true) or country (false) node.
@@ -13915,6 +13945,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const pts    = isCityNode ? cityPoints : countryPoints;
         const idx    = arr.findIndex(n => n.name === nodeObj.name);
         if (idx < 0 || !pts) return;
+        // Store tracking reference for render-loop updates
+        _briefingHoverRef = { posArr, pts, idx };
         const pos = new THREE.Vector3(
           posArr[idx * 3], posArr[idx * 3 + 1], posArr[idx * 3 + 2]
         ).applyMatrix4(pts.matrixWorld);
@@ -13934,7 +13966,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       };
 
       // Hide the hover card (briefing cleanup between segments)
-      window.briefingHideLabel = hideHoverCard;
+      window.briefingHideLabel = function() {
+        _briefingHoverRef = null;
+        hideHoverCard();
+      };
 
       // Reverse-lookup the nearest node from lat/lon and show its hover card.
       // Used when ring pulses fire on secondary locations that have no nodeObj.
@@ -14338,6 +14373,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         updateNodeGlow();
 
         updateHoverLabels();
+        // During briefing, track the hover card to the globe coordinate each frame
+        if (window.briefingActive && window._briefingTrackHoverCard) {
+          window._briefingTrackHoverCard();
+        }
 
         if (ringStates.some(s => s.active)) {
           ringStates.forEach((state, i) => {
@@ -23407,6 +23446,7 @@ body.ticker-active .gTickerLabel {
   const API           = 'https://earth-wjr6.onrender.com';
   const WORDS_PER_MIN = 148;
   const VIDEO_PAUSE_SECS = 18;
+  const SEGMENT_BUFFER_MS = 900;  // pause between non-video segments (ms)
 
   let episode       = null;
   let segIdx        = 0;
@@ -24175,14 +24215,15 @@ body.ticker-active .gTickerLabel {
         startGlobeTimers(curIdx, seg, realDur / playbackRate);
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
 
-        // Trigger the next segment ~180ms BEFORE the current audio actually
-        // ends. ElevenLabs adds a small bit of trailing silence to every
-        // clip, and starting the next clip slightly early lets its head
-        // overlap that silence — eliminating the audible gap between
-        // segments. For story segments with a video, keep the long pause.
+        // Advance to the next segment AFTER the audio finishes plus a short
+        // buffer pause. The buffer gives the listener a beat to absorb the
+        // story before the next one begins, and lets the globe finish its
+        // rotation to the next focal point. Video segments use their own
+        // longer pause (VIDEO_PAUSE_SECS).
         if (!seg.video_id) {
           clearTimeout(segTimer);
-          const advanceInMs = Math.max(120, Math.round((realDur * 1000) / playbackRate) - 180);
+          const bufferMs = SEGMENT_BUFFER_MS / playbackRate;
+          const advanceInMs = Math.round((realDur * 1000) / playbackRate) + bufferMs;
           segTimer = setTimeout(() => {
             if (segIdx !== curIdx || !playing) return;
             goToSegment(curIdx + 1);
@@ -24197,22 +24238,19 @@ body.ticker-active .gTickerLabel {
         sa.addEventListener('loadedmetadata', onReady, { once: true });
       }
 
-      // Backup: ended-driven advance in case the early-advance timer was
-      // cleared (e.g. user paused). Video segments still use the long pause.
+      // Backup: ended-driven advance in case the primary timer was cleared
+      // (e.g. user paused then resumed). Video segments use the long pause;
+      // regular segments use SEGMENT_BUFFER_MS for a breathing room gap.
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
         clearTimeout(segTimer);
-        if (seg.video_id) {
-          segTimer = setTimeout(() => {
-            if (segIdx !== curIdx) return;
-            goToSegment(curIdx + 1);
-          }, (VIDEO_PAUSE_SECS * 1000) / playbackRate);
-        } else {
-          segTimer = setTimeout(() => {
-            if (segIdx !== curIdx) return;
-            goToSegment(curIdx + 1);
-          }, 0);
-        }
+        const pauseMs = seg.video_id
+          ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
+          : SEGMENT_BUFFER_MS / playbackRate;
+        segTimer = setTimeout(() => {
+          if (segIdx !== curIdx) return;
+          goToSegment(curIdx + 1);
+        }, pauseMs);
       }, { once: true });
 
       // Fallback: advance anyway if audio stalls or never fires ended.
@@ -24233,7 +24271,7 @@ body.ticker-active .gTickerLabel {
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
-        }, Math.max(120, Math.round((estDur * 1000) / playbackRate) - 180));
+        }, Math.round((estDur * 1000) / playbackRate) + (SEGMENT_BUFFER_MS / playbackRate));
       }
     }
 
