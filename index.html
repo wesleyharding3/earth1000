@@ -952,8 +952,10 @@
       white-space: normal; max-width: 140px; margin-left: auto; margin-right: auto;
     }
     .btnTooltipAccent { color: #60c8ff; }
-    /* Briefing tooltip — taller to show headline */
-    #briefingBtn .btnTooltip { min-width: 180px; }
+    /* Right-side tooltips — right edge aligned under search icon, not over scale */
+    #briefingBtn .btnTooltip { min-width: 180px; left: auto; right: -44px; transform: none; text-align: left; }
+    #flowModeBtn .btnTooltip { left: auto; right: -194px; transform: none; text-align: left; }
+    #viewToggleWrapper .btnTooltip { left: auto; right: -144px; transform: none; text-align: left; }
 
     #settingsToggle.active svg {
       transform: rotate(60deg);
@@ -4131,9 +4133,11 @@ body.ticker-active #flowControls {
       font-weight: 700;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: #4ab8ff;
-      text-shadow: 0 0 10px rgba(74,184,255,0.9), 0 0 24px rgba(74,184,255,0.55), 0 0 48px rgba(74,184,255,0.25);
       user-select: none;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 10px rgba(74,184,255,0.35), 0 0 24px rgba(74,184,255,0.18);
+      position: relative;
     }
     #statsAccentCanvas {
       flex: 0 0 auto;
@@ -5226,10 +5230,12 @@ body.ticker-active #flowControls {
       font-weight: 700;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: #ffbe50;
-      text-shadow: 0 0 10px rgba(255,190,80,0.9), 0 0 24px rgba(255,180,60,0.55), 0 0 48px rgba(255,170,40,0.25);
       user-select: none;
       flex-shrink: 0;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 10px rgba(255,190,80,0.35), 0 0 24px rgba(255,180,60,0.18);
+      position: relative;
     }
 
     .nfTitleActions {
@@ -7088,6 +7094,31 @@ body.ticker-active #flowControls {
 
 /* ── Mobile controls: bigger touch targets, better visibility ── */
 @media (pointer: coarse) {
+  /* ── Panel resize: replace arrow bubble with swipeable grab bar ── */
+  #panelResizeHandle, #cdResizeHandle {
+    top: 0; left: 0; right: 0; width: 100%;
+    transform: none;
+    height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+    cursor: grab;
+  }
+  #panelResizeArrow, #cdResizeArrow {
+    width: 36px; height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.25);
+    border: none;
+    box-shadow: none;
+  }
+  #panelResizeArrow svg, #cdResizeArrow svg { display: none; }
+  #panelResizeArrow.flipped svg, #cdResizeArrow.flipped svg { display: none; }
+  #panelResizeHandle:hover #panelResizeArrow,
+  #cdResizeHandle:hover #cdResizeArrow {
+    background: rgba(255,255,255,0.4);
+    border: none;
+  }
+  #panelResizeHandle:active, #cdResizeHandle:active { cursor: grabbing; }
+
   /* Icon buttons — stronger contrast and larger targets on touch */
   .iconBtn {
     touch-action: manipulation;
@@ -8224,10 +8255,9 @@ window.sourceBiasBadgeHTML = function(bias) {
         </svg>
         <div class="btnTooltip">
           <div class="btnTooltipTitle">Search</div>
-          <div class="btnTooltipSub">Find any city or country on the globe</div>
         </div>
       </div>
-      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
+      <input type="text" id="citySearch" placeholder="Search city or country" autocomplete="off" />
       <div id="searchResults"></div>
     </div>
   </div>
@@ -9107,9 +9137,35 @@ const loader = new THREE.TextureLoader();
       if (!handle) return;
       updateArrow();
 
+      // Click toggle (desktop + tap fallback)
       handle.addEventListener("click", e => {
+        if (handle._didDrag) { handle._didDrag = false; return; }
         e.stopPropagation();
         applySnapHeight(snapState === "max" ? "default" : "max");
+      });
+
+      // Touch swipe to drag-resize (mobile)
+      handle.addEventListener("touchstart", e => {
+        e.stopPropagation();
+        const t = e.touches[0];
+        resizeDragging = true;
+        resizeStartY = t.clientY;
+        resizeStartH = parseFloat(infoPanel.style.height) || SNAP.default;
+        handle._didDrag = false;
+      }, { passive: true });
+
+      handle.addEventListener("touchmove", e => {
+        if (!resizeDragging) return;
+        handle._didDrag = true;
+        const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.touches[0].clientY)));
+        infoPanel.style.transition = "none";
+        infoPanel.style.height = h + "px";
+      }, { passive: true });
+
+      handle.addEventListener("touchend", () => {
+        if (!resizeDragging) return;
+        resizeDragging = false;
+        snapToNearest();
       });
     }
 
@@ -18413,6 +18469,125 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
 
     // ══════════════════════════════════════════════════════════════════
+    // Title Lava Lamp — organic merging blobs clipped to title text
+    // SVG goo filter (blur + contrast threshold) creates lava-lamp
+    // metaball effect with sharp edges. Blobs drift, pulse, rotate
+    // like jellyfish — the merge/separate is handled by the filter.
+    // ══════════════════════════════════════════════════════════════════
+    (function initLavaTitles() {
+      const NS = 'http://www.w3.org/2000/svg';
+      function el(tag, attrs) {
+        const e = document.createElementNS(NS, tag);
+        for (const k in attrs) e.setAttribute(k, attrs[k]);
+        return e;
+      }
+
+      function lava(target, dimFill, brightFill, uid) {
+        if (!target) return;
+        const raw = target.textContent.trim().toUpperCase();
+        const cs = getComputedStyle(target);
+        const rect = target.getBoundingClientRect();
+        const W = rect.width, H = rect.height;
+        if (!W || !H) return;
+
+        const fSize = cs.fontSize;
+        const fWeight = cs.fontWeight;
+        const fFamily = cs.fontFamily;
+        const fSpacing = (parseFloat(cs.letterSpacing) || 0) + 'px';
+
+        function mkText(fill) {
+          return el('text', {
+            x: 0, y: '50%', 'dominant-baseline': 'central',
+            'font-size': fSize, 'font-weight': fWeight,
+            'font-family': fFamily, 'letter-spacing': fSpacing,
+            fill: fill
+          });
+        }
+
+        // ── Build SVG ──
+        const svg = el('svg', { width: W, height: H });
+        svg.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;overflow:visible;';
+
+        const defs = el('defs', {});
+
+        // Goo filter: gaussian blur ➜ contrast threshold = sharp lava edges
+        const filt = el('filter', {
+          id: 'lv-' + uid, x: '-40%', y: '-40%', width: '180%', height: '180%'
+        });
+        filt.appendChild(el('feGaussianBlur', { in: 'SourceGraphic', stdDeviation: '4', result: 'b' }));
+        filt.appendChild(el('feColorMatrix', {
+          in: 'b', type: 'matrix',
+          values: '1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -8'
+        }));
+        defs.appendChild(filt);
+
+        // Clip path from text shape
+        const cp = el('clipPath', { id: 'tc-' + uid });
+        const cpT = mkText(dimFill); cpT.textContent = raw;
+        cp.appendChild(cpT);
+        defs.appendChild(cp);
+
+        svg.appendChild(defs);
+
+        // Dim base text (always visible)
+        const baseT = mkText(dimFill); baseT.textContent = raw;
+        svg.appendChild(baseT);
+
+        // Lava layer: blobs ➜ goo filter ➜ clip to text
+        const clipG = el('g', { 'clip-path': 'url(#tc-' + uid + ')' });
+        const filtG = el('g', { filter: 'url(#lv-' + uid + ')' });
+
+        const NUM = 5;
+        const blobs = [];
+        for (let i = 0; i < NUM; i++) {
+          const e = el('ellipse', { fill: brightFill });
+          filtG.appendChild(e);
+          blobs.push({
+            el: e,
+            // position oscillation
+            px: Math.random() * 6.28, py: Math.random() * 6.28,
+            fx: 0.1 + Math.random() * 0.18, fy: 0.14 + Math.random() * 0.22,
+            ax: 0.12 + Math.random() * 0.35, ay: 0.15 + Math.random() * 0.35,
+            ox: Math.random(), oy: 0.25 + Math.random() * 0.5,
+            // size pulsing
+            rx0: 10 + Math.random() * 14, ry0: 6 + Math.random() * 10,
+            rp: Math.random() * 6.28, rf: 0.2 + Math.random() * 0.25,
+            // rotation twist
+            tp: Math.random() * 6.28, tf: 0.06 + Math.random() * 0.12,
+          });
+        }
+        clipG.appendChild(filtG);
+        svg.appendChild(clipG);
+
+        target.appendChild(svg);
+
+        // ── Animate ──
+        function tick(t) {
+          const s = t * 0.001;
+          for (const b of blobs) {
+            const cx = (b.ox + b.ax * Math.sin(s * b.fx + b.px)) * W;
+            const cy = (b.oy + b.ay * Math.sin(s * b.fy + b.py)) * H;
+            const rx = b.rx0 + 5 * Math.sin(s * b.rf + b.rp);
+            const ry = b.ry0 + 4 * Math.cos(s * b.rf * 0.7 + b.rp);
+            const rot = 45 * Math.sin(s * b.tf + b.tp);
+            b.el.setAttribute('cx', cx);
+            b.el.setAttribute('cy', cy);
+            b.el.setAttribute('rx', rx);
+            b.el.setAttribute('ry', ry);
+            b.el.setAttribute('transform', `rotate(${rot},${cx},${cy})`);
+          }
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      }
+
+      lava(document.getElementById('statsTitle'),
+        'rgba(74,155,225,0.45)', '#9adcff', 's');
+      lava(document.querySelector('.nfPageTitle'),
+        'rgba(220,165,50,0.45)', '#ffe0a0', 'n');
+    })();
+
+    // ══════════════════════════════════════════════════════════════════
     // Statistics Accent Line — blue interactive canvas (mirrors News Feed style)
     // ══════════════════════════════════════════════════════════════════
     (function() {
@@ -26765,9 +26940,37 @@ body.ticker-active .gTickerLabel {
         cdApplySnap("min");
       }
     });
-    document.getElementById("cdResizeHandle").addEventListener("click", (e) => {
+    const _cdHandle = document.getElementById("cdResizeHandle");
+    let _cdDragging = false, _cdDragY = 0, _cdDragH = 0, _cdDidDrag = false;
+    _cdHandle.addEventListener("click", (e) => {
+      if (_cdDidDrag) { _cdDidDrag = false; return; }
       e.stopPropagation();
       cdApplySnap(cdSnapState === "max" ? "default" : "max");
+    });
+    _cdHandle.addEventListener("touchstart", (e) => {
+      e.stopPropagation();
+      _cdDragging = true; _cdDidDrag = false;
+      _cdDragY = e.touches[0].clientY;
+      _cdDragH = detailEl.getBoundingClientRect().height || CD_DEFAULT_H();
+    }, { passive: true });
+    _cdHandle.addEventListener("touchmove", (e) => {
+      if (!_cdDragging) return;
+      _cdDidDrag = true;
+      const h = Math.max(120, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - e.touches[0].clientY)));
+      detailEl.style.transition = "none";
+      detailEl.style.height = h + "px";
+    }, { passive: true });
+    _cdHandle.addEventListener("touchend", () => {
+      if (!_cdDragging) return;
+      _cdDragging = false;
+      if (!_cdDidDrag) return;
+      // Snap to nearest state
+      const curH = parseFloat(detailEl.style.height);
+      const defH = CD_DEFAULT_H();
+      const maxH = CD_MAX_H();
+      if (curH > (defH + maxH) / 2) cdApplySnap("max");
+      else if (curH < defH * 0.6) cdApplySnap("min");
+      else cdApplySnap("default");
     });
 
     const threadId = node.thread_id || node.id;

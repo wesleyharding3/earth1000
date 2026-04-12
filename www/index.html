@@ -952,8 +952,10 @@
       white-space: normal; max-width: 140px; margin-left: auto; margin-right: auto;
     }
     .btnTooltipAccent { color: #60c8ff; }
-    /* Briefing tooltip — taller to show headline */
-    #briefingBtn .btnTooltip { min-width: 180px; }
+    /* Right-side tooltips — right edge aligned under search icon, not over scale */
+    #briefingBtn .btnTooltip { min-width: 180px; left: auto; right: -44px; transform: none; text-align: left; }
+    #flowModeBtn .btnTooltip { left: auto; right: -194px; transform: none; text-align: left; }
+    #viewToggleWrapper .btnTooltip { left: auto; right: -144px; transform: none; text-align: left; }
 
     #settingsToggle.active svg {
       transform: rotate(60deg);
@@ -5325,7 +5327,7 @@ body.ticker-active #flowControls {
       flex: 1;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
-      padding: 12px 16px 80px;
+      padding: 12px 16px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 16px);
     }
     #nfThreadsViewport::-webkit-scrollbar { width: 4px; }
     #nfThreadsViewport::-webkit-scrollbar-thumb { background: rgba(212,168,67,0.18); border-radius: 4px; }
@@ -6003,7 +6005,7 @@ body.ticker-active #flowControls {
       scrollbar-gutter: stable;
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
-      padding: 14px 18px 80px;
+      padding: 14px 18px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 16px);
       display: none;
       min-height: 0;
     }
@@ -6738,12 +6740,13 @@ body.ticker-active #flowControls {
         letter-spacing: 1.2px;
         padding: 0 8px;
         padding-left: calc(8px + env(safe-area-inset-left, 0px));
-        padding-bottom: 4px;
-        height: 100% !important;
+        padding-bottom: calc(4px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+        height: calc(100% + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)) !important;
         min-height: 0 !important;
         display: flex;
         align-items: flex-end;
         box-sizing: border-box;
+        margin-bottom: calc(-1 * (var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)));
       }
       .gTickerTrackWrap {
         min-width: 0;
@@ -7088,6 +7091,31 @@ body.ticker-active #flowControls {
 
 /* ── Mobile controls: bigger touch targets, better visibility ── */
 @media (pointer: coarse) {
+  /* ── Panel resize: replace arrow bubble with swipeable grab bar ── */
+  #panelResizeHandle, #cdResizeHandle {
+    top: 0; left: 0; right: 0; width: 100%;
+    transform: none;
+    height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+    cursor: grab;
+  }
+  #panelResizeArrow, #cdResizeArrow {
+    width: 36px; height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.25);
+    border: none;
+    box-shadow: none;
+  }
+  #panelResizeArrow svg, #cdResizeArrow svg { display: none; }
+  #panelResizeArrow.flipped svg, #cdResizeArrow.flipped svg { display: none; }
+  #panelResizeHandle:hover #panelResizeArrow,
+  #cdResizeHandle:hover #cdResizeArrow {
+    background: rgba(255,255,255,0.4);
+    border: none;
+  }
+  #panelResizeHandle:active, #cdResizeHandle:active { cursor: grabbing; }
+
   /* Icon buttons — stronger contrast and larger targets on touch */
   .iconBtn {
     touch-action: manipulation;
@@ -8224,10 +8252,9 @@ window.sourceBiasBadgeHTML = function(bias) {
         </svg>
         <div class="btnTooltip">
           <div class="btnTooltipTitle">Search</div>
-          <div class="btnTooltipSub">Find any city or country on the globe</div>
         </div>
       </div>
-      <input type="text" id="citySearch" placeholder="Search city…" autocomplete="off" />
+      <input type="text" id="citySearch" placeholder="Search city or country" autocomplete="off" />
       <div id="searchResults"></div>
     </div>
   </div>
@@ -9107,9 +9134,35 @@ const loader = new THREE.TextureLoader();
       if (!handle) return;
       updateArrow();
 
+      // Click toggle (desktop + tap fallback)
       handle.addEventListener("click", e => {
+        if (handle._didDrag) { handle._didDrag = false; return; }
         e.stopPropagation();
         applySnapHeight(snapState === "max" ? "default" : "max");
+      });
+
+      // Touch swipe to drag-resize (mobile)
+      handle.addEventListener("touchstart", e => {
+        e.stopPropagation();
+        const t = e.touches[0];
+        resizeDragging = true;
+        resizeStartY = t.clientY;
+        resizeStartH = parseFloat(infoPanel.style.height) || SNAP.default;
+        handle._didDrag = false;
+      }, { passive: true });
+
+      handle.addEventListener("touchmove", e => {
+        if (!resizeDragging) return;
+        handle._didDrag = true;
+        const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.touches[0].clientY)));
+        infoPanel.style.transition = "none";
+        infoPanel.style.height = h + "px";
+      }, { passive: true });
+
+      handle.addEventListener("touchend", () => {
+        if (!resizeDragging) return;
+        resizeDragging = false;
+        snapToNearest();
       });
     }
 
@@ -26765,9 +26818,37 @@ body.ticker-active .gTickerLabel {
         cdApplySnap("min");
       }
     });
-    document.getElementById("cdResizeHandle").addEventListener("click", (e) => {
+    const _cdHandle = document.getElementById("cdResizeHandle");
+    let _cdDragging = false, _cdDragY = 0, _cdDragH = 0, _cdDidDrag = false;
+    _cdHandle.addEventListener("click", (e) => {
+      if (_cdDidDrag) { _cdDidDrag = false; return; }
       e.stopPropagation();
       cdApplySnap(cdSnapState === "max" ? "default" : "max");
+    });
+    _cdHandle.addEventListener("touchstart", (e) => {
+      e.stopPropagation();
+      _cdDragging = true; _cdDidDrag = false;
+      _cdDragY = e.touches[0].clientY;
+      _cdDragH = detailEl.getBoundingClientRect().height || CD_DEFAULT_H();
+    }, { passive: true });
+    _cdHandle.addEventListener("touchmove", (e) => {
+      if (!_cdDragging) return;
+      _cdDidDrag = true;
+      const h = Math.max(120, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - e.touches[0].clientY)));
+      detailEl.style.transition = "none";
+      detailEl.style.height = h + "px";
+    }, { passive: true });
+    _cdHandle.addEventListener("touchend", () => {
+      if (!_cdDragging) return;
+      _cdDragging = false;
+      if (!_cdDidDrag) return;
+      // Snap to nearest state
+      const curH = parseFloat(detailEl.style.height);
+      const defH = CD_DEFAULT_H();
+      const maxH = CD_MAX_H();
+      if (curH > (defH + maxH) / 2) cdApplySnap("max");
+      else if (curH < defH * 0.6) cdApplySnap("min");
+      else cdApplySnap("default");
     });
 
     const threadId = node.thread_id || node.id;
