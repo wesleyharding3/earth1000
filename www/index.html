@@ -18157,9 +18157,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const fallbackChain = [scraped, catalogRaw, flag].filter(Boolean);
         const src = fallbackChain[0] || '';
         const nextFallbacks = fallbackChain.slice(1);
-        const onErr = nextFallbacks.length
-          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';}})(this)`
-          : `this.style.display='none'`;
+        const _fbFn = nextFallbacks.length
+          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';el.parentElement.insertAdjacentHTML('afterbegin','<div class=nfThreadCardImgPh><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.5&quot;><circle cx=&quot;5&quot; cy=&quot;8&quot; r=&quot;2.5&quot;/><circle cx=&quot;11&quot; cy=&quot;5&quot; r=&quot;2&quot;/><circle cx=&quot;11&quot; cy=&quot;11&quot; r=&quot;2&quot;/><path d=&quot;M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5&quot;/></svg></div>');}})(this)`
+          : `this.style.display='none';this.parentElement.insertAdjacentHTML('afterbegin','<div class=nfThreadCardImgPh><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.5&quot;><circle cx=&quot;5&quot; cy=&quot;8&quot; r=&quot;2.5&quot;/><circle cx=&quot;11&quot; cy=&quot;5&quot; r=&quot;2&quot;/><circle cx=&quot;11&quot; cy=&quot;11&quot; r=&quot;2&quot;/><path d=&quot;M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5&quot;/></svg></div>')`;
+        const onErr = _fbFn;
+        const onLoad = `if(this.naturalWidth<10||this.naturalHeight<10){${_fbFn}}`;
         const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 3) : [];
         const title = esc(t.title || 'Untitled thread');
         const geoNames = _resolveGeoScope(t.geographic_scope);
@@ -18177,7 +18179,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
         return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
           ${src
-            ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}">`
+            ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
           <div class="nfThreadCardBody">
             <div>
