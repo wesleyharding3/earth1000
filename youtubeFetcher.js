@@ -35,7 +35,17 @@ const INITIAL_YOUTUBE_BASE_PRIORITY = 1.15;
    Utilities
 ========================================= */
 function cleanText(text) {
-  return text?.replace(/<[^>]*>/g, "").trim();
+  if (!text) return text;
+  return text
+    .replace(/<[^>]*>/g, "")
+    .replace(/&quot;/gi, '"')
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .trim();
 }
 
 function truncateAtWord(text, limit = 500) {
