@@ -5116,8 +5116,8 @@ app.get("/api/commodities", (req, res) => {
 ========================================= */
 
 const KEYWORD_ROUTE_TTLS = Object.freeze({
-  trending: 90 * 1000,
-  rising: 90 * 1000,
+  trending: 5 * 60 * 1000,   // 5 min in-memory (DB cache is primary)
+  rising: 5 * 60 * 1000,     // 5 min in-memory
   autocomplete: 30 * 1000,
   top: 60 * 1000,
   trend: 60 * 1000,
@@ -5347,23 +5347,24 @@ app.get("/api/keywords/trending", async (req, res) => {
     ]);
 
     // Check DB pre-computed cache for global requests (populated by keywordCron.js)
+    // Accept up to 48h old cache — stale data is far better than a slow live query
     if (!sourceCountryId && !aboutCountryId) {
-      const dbCached = await getDbKeywordCache("trending", "global", 1440); // 24h
+      const dbCached = await getDbKeywordCache("trending", "global", 2880); // 48h max staleness
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
-        // New format: { keywords, refs } with pre-baked article references
         if (dbCached.keywords && dbCached.refs) {
           const rows = dbCached.keywords.slice(0, limitInt);
           const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
           if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
           return res.json(rows);
         }
-        // Legacy format: plain array — return as-is, no expensive prefetch
         return res.json(Array.isArray(dbCached) ? dbCached.slice(0, limitInt) : dbCached);
       }
     }
 
+    // Cache miss — compute live and write-through to DB for next request
     setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
+    const isGlobal = !sourceCountryId && !aboutCountryId;
     const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.trending, async () => {
       const params = [daysInt];
       const clauses = ["k.date >= CURRENT_DATE - $1::int"];
@@ -5373,7 +5374,7 @@ app.get("/api/keywords/trending", async (req, res) => {
         defaultGlobal: true,
         alias: "k",
       });
-      params.push(limitInt);
+      params.push(limitInt > 50 ? limitInt : 50); // fetch at least 50 for cache
       const limitIdx = params.length;
 
       const result = await pool.query(
@@ -5391,11 +5392,22 @@ app.get("/api/keywords/trending", async (req, res) => {
         params
       );
 
-      return result.rows;
+      const keywords = result.rows;
+
+      // Write-through: save to DB cache so next request is instant
+      if (isGlobal && keywords.length > 0) {
+        pool.query(`
+          INSERT INTO keyword_intelligence_cache (mode, filter_key, results)
+          VALUES ($1, $2, $3)
+        `, ['trending', 'global', JSON.stringify({ keywords, refs: {} })]).catch(e =>
+          console.warn('[keywords/trending] write-through cache failed:', e.message)
+        );
+      }
+
+      return keywords;
     });
 
-    // Non-cached path: return keywords without prefetch (cron handles prefetch)
-    res.json(rows);
+    res.json(Array.isArray(rows) ? rows.slice(0, limitInt) : rows);
   } catch (err) {
     console.error("[keywords/trending]", err.message);
     res.status(500).json({ error: "trending failed" });
@@ -5431,24 +5443,25 @@ app.get("/api/keywords/rising", async (req, res) => {
     ]);
 
     // Check DB pre-computed cache for global requests (populated by keywordCron.js)
+    // Accept up to 12h old cache — stale rising data is better than nothing
     if (!sourceCountryId && !aboutCountryId) {
-      const dbCached = await getDbKeywordCache("rising", "global", 240); // 4h
+      const dbCached = await getDbKeywordCache("rising", "global", 720); // 12h max staleness
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
-        // New format: { keywords, refs } with pre-baked article references
         if (dbCached.keywords && dbCached.refs) {
           const rows = dbCached.keywords.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
           const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
           if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
           return res.json(rows);
         }
-        // Legacy format: plain array — return as-is, no expensive prefetch
         const cachedFiltered = (Array.isArray(dbCached) ? dbCached : []).filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
         return res.json(cachedFiltered);
       }
     }
 
+    // Cache miss — compute live and write-through
     setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
+    const isGlobal = !sourceCountryId && !aboutCountryId;
     const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.rising, async () => {
       const params = [daysInt, baselineDaysInt];
       const recentClauses = ["k.date >= CURRENT_DATE - $1::int"];
@@ -5505,12 +5518,22 @@ app.get("/api/keywords/rising", async (req, res) => {
         params
       );
 
-      return result.rows;
+      const keywords = result.rows;
+
+      // Write-through: save to DB cache so next request is instant
+      if (isGlobal && keywords.length > 0) {
+        pool.query(`
+          INSERT INTO keyword_intelligence_cache (mode, filter_key, results)
+          VALUES ($1, $2, $3)
+        `, ['rising', 'global', JSON.stringify({ keywords, refs: {} })]).catch(e =>
+          console.warn('[keywords/rising] write-through cache failed:', e.message)
+        );
+      }
+
+      return keywords;
     });
 
-    const filtered = rows.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
-
-    // Non-cached path: return keywords without prefetch (cron handles prefetch)
+    const filtered = (Array.isArray(rows) ? rows : []).filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
     res.json(filtered);
   } catch (err) {
     console.error("[keywords/rising]", err.message);
@@ -6537,7 +6560,7 @@ function runKeywordCron(label = "") {
   proc.on("error", err => console.error(`${tag} spawn error: ${err.message}`));
 }
 
-setTimeout(() => runKeywordCron(" startup"), 60_000);           // ~1 min after boot
+setTimeout(() => runKeywordCron(" startup"), 10_000);           // ~10s after boot
 setInterval(() => runKeywordCron(), 4 * 60 * 60 * 1000).unref?.(); // every 4h
 
 // ── Story builder automation ─────────────────────────────────────────────
