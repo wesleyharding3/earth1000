@@ -4110,7 +4110,7 @@ body.ticker-active #flowControls {
       flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
-      padding: 16px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 4px);
+      padding: 8px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       box-sizing: border-box;
     }
     .stats-row > * {
@@ -5024,17 +5024,31 @@ body.ticker-active #flowControls {
     
     .kwi-loading {
       position: absolute; inset: 0;
-      display: flex; align-items: center; justify-content: center;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
       background: rgba(16,20,28,0.7);
       border-radius: 8px;
-      font-size: 11px;
-      color: rgba(255,255,255,0.3);
-      letter-spacing: 0.08em;
       pointer-events: none;
       opacity: 0;
       transition: opacity 0.2s;
     }
     .kwi-loading.visible { opacity: 1; pointer-events: all; }
+    .kwi-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #4a9eff;
+      box-shadow: 0 0 8px #4a9eff, 0 0 16px rgba(74,158,255,0.4);
+      animation: kwiDotPulse 1.2s ease-in-out infinite;
+    }
+    .kwi-dot:nth-child(2) { animation-delay: 0.2s; }
+    .kwi-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes kwiDotPulse {
+      0%, 100% { opacity: 0.25; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+    .kwi-ref-dots {
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 14px 0;
+    }
+    .kwi-ref-dots .kwi-dot { width: 6px; height: 6px; }
 
     .pagePlaceholder {
       display: flex;
@@ -8007,7 +8021,7 @@ window.sourceBiasBadgeHTML = function(bias) {
           <div class="kwi-canvas-wrap" id="kwiCanvasWrap" style="display:none;">
             <canvas class="kwi-canvas" id="kwiCanvas"></canvas>
           </div>
-          <div class="kwi-loading" id="kwiLoading">LOADING…</div>
+          <div class="kwi-loading" id="kwiLoading"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>
         </div>
 
         <div class="kwi-footer">
@@ -20321,7 +20335,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const panel = document.createElement('div');
     panel.className = 'kwi-ref-interpanel';
-    panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:11px;">Loading…</div>`;
+    panel.innerHTML = `<div class="kwi-ref-dots"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>`;
     row.insertAdjacentElement('afterend', panel);
 
     const API = window.__API || 'https://earth-wjr6.onrender.com';

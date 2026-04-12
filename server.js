@@ -3746,7 +3746,21 @@ app.get("/api/keywords/:keyword/references", async (req, res) => {
     const days  = Math.min(parseInt(req.query.days, 10)  || 14,  60);
     const pat   = `%${keyword.toLowerCase()}%`;
 
+    // Fast path: match via article_keywords table (indexed), then fallback to title LIKE
     const { rows } = await pool.query(`
+      WITH matched_ids AS (
+        SELECT DISTINCT a.id
+        FROM news_articles a
+        JOIN article_keywords ak ON ak.article_id = a.id
+        WHERE a.published_at > NOW() - ($2 || ' days')::interval
+          AND LOWER(ak.keyword) = LOWER($4)
+        UNION
+        SELECT DISTINCT a.id
+        FROM news_articles a
+        WHERE a.published_at > NOW() - ($2 || ' days')::interval
+          AND (LOWER(a.title) LIKE $1 OR LOWER(COALESCE(a.translated_title, '')) LIKE $1)
+        LIMIT $3
+      )
       SELECT DISTINCT ON (a.id)
         a.id,
         COALESCE(a.translated_title, a.title)     AS title,
@@ -3762,22 +3776,16 @@ app.get("/api/keywords/:keyword/references", async (req, res) => {
         a.base_priority,
         a.sentiment_score
       FROM news_articles a
+      JOIN matched_ids m ON m.id = a.id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN cities ci ON ci.id = a.city_id
       LEFT JOIN news_sources ns ON ns.id = a.source_id
       LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
       LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      WHERE a.published_at > NOW() - ($2 || ' days')::interval
-        AND (
-          LOWER(a.title)              LIKE $1
-          OR LOWER(a.summary)         LIKE $1
-          OR LOWER(COALESCE(a.translated_title,  '')) LIKE $1
-          OR LOWER(COALESCE(a.translated_summary,'')) LIKE $1
-        )
       ORDER BY a.id, a.base_priority DESC NULLS LAST, a.published_at DESC
       LIMIT $3
-    `, [pat, String(days), limit]);
+    `, [pat, String(days), limit, keyword]);
 
     // Second-pass sort: by score, since DISTINCT ON forced id ordering.
     rows.sort((a, b) => {
