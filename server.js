@@ -5257,41 +5257,44 @@ async function _sendWithPrefetchRefs(req, res, rows, logTag) {
   if (prefetchN > 0 && rows.length > 0) {
     const topKws = rows.slice(0, prefetchN).map(r => r.keyword);
     try {
+      // Use a lateral join to get top 10 articles per keyword efficiently
       const refResult = await pool.query(`
-        SELECT DISTINCT ON (a.id, ak.keyword)
-          ak.keyword,
-          a.id,
-          COALESCE(a.translated_title, a.title) AS title,
-          a.title AS original_title,
-          COALESCE(a.translated_summary, a.summary) AS summary,
-          a.published_at, a.article_url, a.url,
-          COALESCE(a.image_url, img_a.public_url) AS image_url,
-          COALESCE(ns.name, ys.name) AS source_name,
-          COALESCE(ns.bias, 'unknown') AS source_bias,
-          a.media_type, a.video_id,
-          a.base_priority
-        FROM article_keywords ak
-        JOIN news_articles a ON a.id = ak.article_id
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-        WHERE LOWER(ak.keyword) = ANY($1)
-          AND a.published_at > NOW() - INTERVAL '14 days'
-        ORDER BY ak.keyword, a.id, a.base_priority DESC NULLS LAST
-      `, [topKws.map(k => k.toLowerCase())]);
+        WITH kw_list AS (
+          SELECT UNNEST($1::text[]) AS keyword
+        )
+        SELECT kl.keyword, sub.*
+        FROM kw_list kl
+        CROSS JOIN LATERAL (
+          SELECT
+            a.id,
+            COALESCE(a.translated_title, a.title) AS title,
+            a.title AS original_title,
+            COALESCE(a.translated_summary, a.summary) AS summary,
+            a.published_at, a.article_url, a.url,
+            COALESCE(a.image_url, img_a.public_url) AS image_url,
+            COALESCE(ns.name, ys.name) AS source_name,
+            COALESCE(ns.bias, 'unknown') AS source_bias,
+            a.media_type, a.video_id,
+            a.base_priority
+          FROM article_keywords ak
+          JOIN news_articles a ON a.id = ak.article_id
+          LEFT JOIN news_sources ns ON ns.id = a.source_id
+          LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+          LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+          LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+          WHERE LOWER(ak.keyword) = LOWER(kl.keyword)
+            AND a.published_at > NOW() - INTERVAL '14 days'
+          ORDER BY a.base_priority DESC NULLS LAST, a.published_at DESC
+          LIMIT 10
+        ) sub
+      `, [topKws]);
 
       const refMap = {};
       for (const r of refResult.rows) {
         const kw = r.keyword.toLowerCase();
         if (!refMap[kw]) refMap[kw] = [];
-        if (refMap[kw].length < 10) {
-          delete r.keyword;
-          refMap[kw].push(r);
-        }
-      }
-      for (const kw of Object.keys(refMap)) {
-        refMap[kw].sort((a, b) => (b.base_priority || 0) - (a.base_priority || 0) || new Date(b.published_at) - new Date(a.published_at));
+        delete r.keyword;
+        refMap[kw].push(r);
       }
       return res.json({ keywords: rows, refs: refMap });
     } catch (refErr) {
@@ -5331,6 +5334,14 @@ app.get("/api/keywords/trending", async (req, res) => {
       const dbCached = await getDbKeywordCache("trending", "global", 1440); // 24h
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
+        // New format: { keywords, refs } with pre-baked article references
+        if (dbCached.keywords && dbCached.refs) {
+          const rows = dbCached.keywords.slice(0, limitInt);
+          const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
+          if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
+          return res.json(rows);
+        }
+        // Legacy format: plain array
         const rows = dbCached.slice(0, limitInt);
         return _sendWithPrefetchRefs(req, res, rows, "[keywords/trending]");
       }
@@ -5407,6 +5418,14 @@ app.get("/api/keywords/rising", async (req, res) => {
       const dbCached = await getDbKeywordCache("rising", "global", 240); // 4h
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
+        // New format: { keywords, refs } with pre-baked article references
+        if (dbCached.keywords && dbCached.refs) {
+          const rows = dbCached.keywords.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
+          const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
+          if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
+          return res.json(rows);
+        }
+        // Legacy format: plain array
         const cachedFiltered = dbCached.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
         return _sendWithPrefetchRefs(req, res, cachedFiltered, "[keywords/rising]");
       }

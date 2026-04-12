@@ -119,6 +119,58 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
   }
 }
 
+// ── Prefetch article references for top keywords ────────────────────────────
+async function prefetchRefs(keywords, limit = 50) {
+  const topKws = keywords.slice(0, limit).map(r => r.keyword);
+  if (!topKws.length) return {};
+
+  const client = await pool.connect();
+  try {
+    await client.query('SET statement_timeout = 60000'); // 60s max
+    const { rows } = await client.query(`
+      WITH kw_list AS (
+        SELECT UNNEST($1::text[]) AS keyword
+      )
+      SELECT kl.keyword, sub.*
+      FROM kw_list kl
+      CROSS JOIN LATERAL (
+        SELECT
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.title AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at, a.article_url, a.url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          a.media_type, a.video_id,
+          a.base_priority
+        FROM article_keywords ak
+        JOIN news_articles a ON a.id = ak.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE LOWER(ak.keyword) = LOWER(kl.keyword)
+          AND a.published_at > NOW() - INTERVAL '14 days'
+        ORDER BY a.base_priority DESC NULLS LAST, a.published_at DESC
+        LIMIT 10
+      ) sub
+    `, [topKws]);
+
+    const refMap = {};
+    for (const r of rows) {
+      const kw = r.keyword.toLowerCase();
+      if (!refMap[kw]) refMap[kw] = [];
+      delete r.keyword;
+      refMap[kw].push(r);
+    }
+    return refMap;
+  } finally {
+    client.release();
+  }
+}
+
 // ── Cache writer ─────────────────────────────────────────────────────────────
 async function writeCache(mode, filterKey, results) {
   await pool.query(`
@@ -147,14 +199,16 @@ async function run() {
   try {
     if (DO_TRENDING) {
       const results = await computeTrending();
-      await writeCache('trending', 'global', results);
-      console.log(`[keywordCron] trending: ${results.length} keywords cached (${elapsed(t0)})`);
+      const refs = await prefetchRefs(results, 50);
+      await writeCache('trending', 'global', { keywords: results, refs });
+      console.log(`[keywordCron] trending: ${results.length} keywords + ${Object.keys(refs).length} ref sets cached (${elapsed(t0)})`);
     }
 
     if (DO_RISING) {
       const results = await computeRising();
-      await writeCache('rising', 'global', results);
-      console.log(`[keywordCron] rising:   ${results.length} keywords cached (${elapsed(t0)})`);
+      const refs = await prefetchRefs(results, 50);
+      await writeCache('rising', 'global', { keywords: results, refs });
+      console.log(`[keywordCron] rising:   ${results.length} keywords + ${Object.keys(refs).length} ref sets cached (${elapsed(t0)})`);
     }
 
     console.log(`[keywordCron] done in ${elapsed(t0)}`);
