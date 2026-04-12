@@ -36,7 +36,7 @@
       --touch-icon-size: 40px;
       --page-nav-height: 39px;
       --global-ticker-height: 36px;
-      --global-ticker-gap: 8px;
+      --global-ticker-gap: 0px;
       /* fluid type scale — multiplied by clamp() throughout */
       --t-xs:  clamp(9px,  2.2vw, 10px);
       --t-sm:  clamp(11px, 2.8vw, 13px);
@@ -2109,7 +2109,7 @@ body.ticker-active #flowControls {
 /* Close button */
 .flowCloseBtn {
   position: absolute;
-  top: 8px;
+  top: 10px;
   right: 10px;
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
@@ -2134,7 +2134,7 @@ body.ticker-active #flowControls {
 /* Minimize button */
 .flowMinBtn {
   position: absolute;
-  top: 8px;
+  top: 10px;
   right: calc(40px * var(--mobile-control-scale));
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
@@ -4123,7 +4123,7 @@ body.ticker-active #flowControls {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: max(8px, env(safe-area-inset-top, 0px)) 20px 8px;
+      padding: max(20px, env(safe-area-inset-top, 0px)) 20px 20px;
       flex-shrink: 0;
     }
     #statsTitle {
@@ -5361,9 +5361,12 @@ body.ticker-active #flowControls {
     .nfThreadCardImg {
       width: 100%; height: 200px;
       object-fit: cover; object-position: center center;
-      background: rgba(255,255,255,0.05);
+      background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
       display: block; flex-shrink: 0;
+      color: transparent; /* hides alt text and broken image icon */
     }
+    .nfThreadCardImg:-moz-broken { opacity: 0; }
+    .nfThreadCardImg::after { content: ''; display: block; }
     .nfThreadCardImgPh {
       width: 100%; height: 200px;
       background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
@@ -12780,6 +12783,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // Global handler for broken thread/timeline card images
         window._threadImgFail = function(el) {
+          if (el.dataset.replaced) return;
+          el.dataset.replaced = '1';
           el.style.display = 'none';
           if (el.parentElement) {
             const ph = document.createElement('div');
@@ -12788,6 +12793,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             el.parentElement.insertBefore(ph, el);
           }
         };
+
+        // Periodic sweep: catch broken images that onerror missed
+        // (Safari renders some as blue ? without firing onerror)
+        setInterval(function() {
+          document.querySelectorAll('img.nfThreadCardImg').forEach(function(img) {
+            if (img.dataset.replaced) return;
+            if (img.complete && (img.naturalWidth === 0 || img.naturalHeight === 0)) {
+              window._threadImgFail(img);
+            }
+          });
+        }, 2000);
 
         window.sourceBiasBadgeHTML = window.sourceBiasBadgeHTML || function sourceBiasBadgeHTML(bias) {
           const raw = String(bias || 'unknown').toLowerCase();

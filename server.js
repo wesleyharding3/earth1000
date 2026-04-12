@@ -5341,9 +5341,8 @@ app.get("/api/keywords/trending", async (req, res) => {
           if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
           return res.json(rows);
         }
-        // Legacy format: plain array
-        const rows = dbCached.slice(0, limitInt);
-        return _sendWithPrefetchRefs(req, res, rows, "[keywords/trending]");
+        // Legacy format: plain array — return as-is, no expensive prefetch
+        return res.json(Array.isArray(dbCached) ? dbCached.slice(0, limitInt) : dbCached);
       }
     }
 
@@ -5426,9 +5425,9 @@ app.get("/api/keywords/rising", async (req, res) => {
           if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
           return res.json(rows);
         }
-        // Legacy format: plain array
-        const cachedFiltered = dbCached.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
-        return _sendWithPrefetchRefs(req, res, cachedFiltered, "[keywords/rising]");
+        // Legacy format: plain array — return as-is, no expensive prefetch
+        const cachedFiltered = (Array.isArray(dbCached) ? dbCached : []).filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
+        return res.json(cachedFiltered);
       }
     }
 
