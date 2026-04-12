@@ -830,17 +830,28 @@
         const res = await fetch(`${API_BASE}/api/admin/briefing-editor/resolve-video`, {
           method: 'POST', headers: authHeaders(), body: JSON.stringify({ url })
         });
-        if (!res.ok) throw new Error('Resolve failed');
-        const meta = await res.json();
-        enrichData[id].video_meta = meta;
+        const body = await res.json();
+        if (!res.ok) {
+          const vp = document.getElementById(`vp-${id}`);
+          vp.classList.add('visible');
+          vp.innerHTML = `<div style="color:#ef4444;font-size:12px;padding:8px;">
+            <div style="font-weight:600;margin-bottom:4px;">&#9888; Video Blocked</div>
+            <div style="color:#fca5a5;">${escHtml(body.error || 'Resolve failed')}</div>
+          </div>`;
+          enrichData[id].video_meta = null;
+          return;
+        }
+        enrichData[id].video_meta = body;
         const vp = document.getElementById(`vp-${id}`);
         vp.classList.add('visible');
-        vp.innerHTML = `${meta.thumbnail ? `<img src="${escHtml(meta.thumbnail)}" alt="" />` : ''}
-          <div class="video-info"><div class="video-title">${escHtml(meta.title || 'Resolved')}</div><div class="video-id">${escHtml(meta.video_id || '')}</div></div>`;
+        vp.innerHTML = `${body.thumbnail ? `<img src="${escHtml(body.thumbnail)}" alt="" />` : ''}
+          <div class="video-info"><div class="video-title">${escHtml(body.title || 'Resolved')}</div><div class="video-id">${escHtml(body.video_id || '')}</div>
+          ${body.has_captions ? '<div style="color:#4ade80;font-size:10px;margin-top:2px;">&#9989; Captions available</div>' : '<div style="color:#fbbf24;font-size:10px;margin-top:2px;">&#9888; No captions detected</div>'}
+          </div>`;
       } catch (e) {
         const vp = document.getElementById(`vp-${id}`);
         vp.classList.add('visible');
-        vp.innerHTML = `<span style="color:#ef4444;">Failed to resolve</span>`;
+        vp.innerHTML = `<span style="color:#ef4444;">Failed to resolve — network error</span>`;
         enrichData[id].video_meta = null;
       }
       btn.disabled = false; btn.textContent = 'Resolve';
@@ -1310,7 +1321,22 @@
         const d = enrichData[id] || {};
         const entry = { thread_id: id, title: t.title };
         if (d.steering_hint) entry.steering_hint = d.steering_hint;
-        if (d.video_meta) entry.youtube_video = { url: d.youtube_url, title: d.video_meta.title || '', video_id: d.video_meta.video_id || '' };
+        if (d.video_meta) {
+          entry.youtube_video = { url: d.youtube_url, title: d.video_meta.title || '', video_id: d.video_meta.video_id || '' };
+        }
+        // Include featured video / focal settings if configured in segments
+        if (editableSegments?.length) {
+          const seg = editableSegments.find(s => String(s.thread_id) === String(id));
+          if (seg?.video_focal?.enabled) {
+            entry.featured_video = {
+              enabled: true,
+              duration_sec: (seg.video_focal.end_sec || 15) - (seg.video_focal.start_sec || 0),
+              narrator_transition: seg.video_focal.narrator_transition || '',
+              media_type: seg.media_type || 'youtube',
+              twitter_url: seg.twitter_url || null,
+            };
+          }
+        }
         return entry;
       });
       const options = { force: true, force_audio: true };

@@ -1107,6 +1107,19 @@
             video_id: d.video_meta.video_id || ''
           };
         }
+        // Include featured video / focal settings if configured in segments
+        if (editableSegments?.length) {
+          const seg = editableSegments.find(s => String(s.thread_id) === String(id));
+          if (seg?.video_focal?.enabled) {
+            entry.featured_video = {
+              enabled: true,
+              duration_sec: (seg.video_focal.end_sec || 15) - (seg.video_focal.start_sec || 0),
+              narrator_transition: seg.video_focal.narrator_transition || '',
+              media_type: seg.media_type || 'youtube',
+              twitter_url: seg.twitter_url || null,
+            };
+          }
+        }
         return entry;
       });
 

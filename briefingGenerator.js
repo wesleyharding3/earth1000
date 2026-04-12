@@ -486,6 +486,10 @@ async function run() {
           const td = threadData.find(t => String(t.id) === String(mt.thread_id));
           if (td) td._youtubeOverride = mt.youtube_video;
         }
+        if (mt.featured_video?.enabled) {
+          const td = threadData.find(t => String(t.id) === String(mt.thread_id));
+          if (td) td._featuredVideo = mt.featured_video;
+        }
       }
     }
     let narrative;
@@ -1379,6 +1383,15 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
           background_context:   t.deepContext.background,
         },
       } : {}),
+      // Featured video — narrator must hand off to this video mid-segment
+      ...(t._featuredVideo ? {
+        featured_video: {
+          enabled:              true,
+          duration_seconds:     t._featuredVideo.duration_sec || 15,
+          media_type:           t._featuredVideo.media_type || 'youtube',
+          narrator_transition:  t._featuredVideo.narrator_transition || '',
+        },
+      } : {}),
     };
   });
 
@@ -1460,6 +1473,17 @@ ENTITY RULES (critical for globe arc visualisation):
 - Cities must be major, well-known cities — avoid obscure towns.
 - type is "country" or "city" only.
 - CRITICAL: entities must match the story you are writing for that thread_id. Do NOT list entities from other stories.
+
+FEATURED VIDEO HANDOFF (critical for timing):
+- Some stories include a "featured_video" field. This means the narrator will pause mid-segment to hand off to a third-party video clip (a speech, press conference, street footage, etc.) that plays with audio for the specified duration.
+- When "featured_video" is present:
+  1. Write the voiceover in TWO parts, split by a natural pause point.
+  2. The FIRST part (before the handoff) should build context and end with a transition line that introduces the video. If "narrator_transition" is provided, use it verbatim as the last sentence of part 1. If empty, write a natural transition (e.g. "Here's a clip from the press conference...", "Footage from the streets of Beirut shows the situation firsthand...").
+  3. Mark the split point with the marker: [VIDEO_HANDOFF]
+  4. The SECOND part (after the video) should resume naturally, referencing what the viewer just saw (e.g. "Following those remarks...", "As we saw in that footage...").
+  5. Keep the total voiceover word count the same (55-75 words), but split it roughly 60/40 before/after the handoff.
+  6. Do NOT describe what's in the video — the viewer will see/hear it themselves.
+- For stories WITHOUT "featured_video", write a normal continuous voiceover as usual.
 
 CONTENT GUARDRAILS (must follow):
 - Do NOT report the death, assassination, or removal from power of any sitting head of state or major world leader unless it is explicitly confirmed as verified fact in the provided articles. If articles only speculate or reference rumours, write about the speculation/rumour angle instead (e.g. "speculation is growing about...").
@@ -1656,13 +1680,41 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       s => !primaryCoordKeys.has(_coordKey(s.lat, s.lon))
     );
 
+    // Split voiceover at [VIDEO_HANDOFF] marker if present (featured video segments)
+    let voiceoverText = ns.voiceover;
+    let voiceoverBeforeVideo = null;
+    let voiceoverAfterVideo = null;
+    if (voiceoverText.includes('[VIDEO_HANDOFF]')) {
+      const parts = voiceoverText.split('[VIDEO_HANDOFF]');
+      voiceoverBeforeVideo = parts[0].trim();
+      voiceoverAfterVideo = parts[1]?.trim() || '';
+      // Full voiceover is both parts joined (for TTS, the audio will be two separate clips)
+      voiceoverText = voiceoverBeforeVideo + ' ' + voiceoverAfterVideo;
+    }
+
     const storySeg = {
       type:                'story',
       thread_id:           thread.id,
       thread_title:        thread.title,
       article_ids:         uniqueIds,
       video_id:            thread._youtubeOverride?.video_id || thread.videoId,
-      voiceover_text:      ns.voiceover,
+      media_type:          thread._featuredVideo?.media_type || 'youtube',
+      twitter_url:         thread._featuredVideo?.media_type?.startsWith('twitter') ? (thread._featuredVideo?.twitter_url || null) : null,
+      voiceover_text:      voiceoverText,
+      voiceover_before_video: voiceoverBeforeVideo,
+      voiceover_after_video:  voiceoverAfterVideo,
+      video_focal:         thread._featuredVideo?.enabled ? {
+        enabled:              true,
+        start_sec:            0,
+        end_sec:              thread._featuredVideo?.duration_sec || 15,
+        // Trigger the video handoff at the point in the voiceover where the split occurs
+        trigger_pct:          voiceoverBeforeVideo
+          ? Math.round((voiceoverBeforeVideo.split(/\s+/).length / voiceoverText.split(/\s+/).length) * 100)
+          : 35,
+        captions:             true,
+        volume:               'medium',
+        narrator_transition:  thread._featuredVideo?.narrator_transition || '',
+      } : null,
       transition:          ns.transition || null,
       globe_focus:         thread.globeFocus
                              ? { lat: thread.globeFocus.lat, lng: thread.globeFocus.lng, zoom: 2.5 }

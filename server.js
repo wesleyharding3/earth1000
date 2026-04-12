@@ -2420,15 +2420,39 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
       }
     } catch (_) {}
 
-    // Check embed endpoint (catches error 150/153 — owner disabled embedding)
+    // Check embed endpoint — fetch the full HTML to detect blocked/unavailable videos.
+    // Videos blocked by content owners (AFP, SME, etc.) return 200 but the player
+    // body contains "UNPLAYABLE" or playability status indicating the restriction.
     try {
       const embedResp = await fetch(`https://www.youtube-nocookie.com/embed/${videoId}`, {
-        method: 'HEAD',
-        signal: AbortSignal.timeout(5000)
+        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'en' },
+        signal: AbortSignal.timeout(6000)
       });
       const xfo = embedResp.headers.get('x-frame-options');
       if (xfo && xfo.toLowerCase() === 'sameorigin') {
         return res.status(400).json({ error: 'Video cannot be embedded (X-Frame-Options restriction)' });
+      }
+      if (embedResp.ok) {
+        const embedHtml = await embedResp.text();
+        // Detect playability errors embedded in the player page
+        // These patterns cover: content owner blocks, geo-restrictions, age gates, removed videos
+        const blocked = /playabilityStatus.*?UNPLAYABLE/i.test(embedHtml)
+          || /playabilityStatus.*?ERROR/i.test(embedHtml)
+          || /playabilityStatus.*?LOGIN_REQUIRED/i.test(embedHtml)
+          || /blocked\s+it\s+from\s+display/i.test(embedHtml)
+          || /Video\s+unavailable/i.test(embedHtml)
+          || /content\s+from\s+[^,]+,\s+who\s+has\s+blocked/i.test(embedHtml)
+          || /"status":"UNPLAYABLE"/.test(embedHtml)
+          || /"status":"ERROR"/.test(embedHtml);
+        if (blocked) {
+          // Try to extract the specific reason
+          let reason = 'Video is blocked from embedding on third-party sites';
+          const reasonMatch = embedHtml.match(/"reason":"([^"]{1,200})"/);
+          const subMatch = embedHtml.match(/"subreason":"([^"]{1,200})"/);
+          if (reasonMatch) reason = reasonMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"');
+          if (subMatch) reason += ' — ' + subMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"');
+          return res.status(400).json({ error: reason });
+        }
       }
     } catch (_) {}
 
