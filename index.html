@@ -12778,6 +12778,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           else { el.src = flagUrl; }
         }
 
+        // Global handler for broken thread/timeline card images
+        window._threadImgFail = function(el) {
+          el.style.display = 'none';
+          if (el.parentElement) {
+            const ph = document.createElement('div');
+            ph.className = 'nfThreadCardImgPh';
+            ph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg>';
+            el.parentElement.insertBefore(ph, el);
+          }
+        };
+
         window.sourceBiasBadgeHTML = window.sourceBiasBadgeHTML || function sourceBiasBadgeHTML(bias) {
           const raw = String(bias || 'unknown').toLowerCase();
           const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw)
@@ -13373,19 +13384,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const revealPx = capH + eased * (barH - capH);
               if (barLine) barLine.style.clipPath = `inset(0 0 ${barH - revealPx}px 0)`;
 
-              // Labels fade in sequentially top→bottom, staggered behind the bar edge.
-              // First label starts at 8% progress, last at 85%, evenly spaced between.
-              for (let i = 0; i < labelCount; i++) {
-                const labelPos = labelCount > 1
-                  ? 0.08 + (i / (labelCount - 1)) * 0.77
-                  : 0.5;
-                if (!labelRevealed[i] && eased >= labelPos) {
-                  labelRevealed[i] = true;
-                  labels[i].style.opacity = "1";
-                  labels[i].style.transform = "translateX(0)";
-                }
-              }
-
               // Ticks (nicks) fade in right as the bar edge crosses them
               for (let i = 0; i < tickCount; i++) {
                 const tickPos = tickCount > 1 ? (i + 1) / (tickCount + 1) : 0.5;
@@ -13400,6 +13398,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
             requestAnimationFrame(scaleTick);
           });
+
+          // Labels fade in one by one in quick sequence after bar finishes drawing
+          const labelStagger = 70; // ms between each label
+          for (let i = 0; i < labelCount; i++) {
+            setTimeout(() => {
+              labels[i].style.opacity = "1";
+              labels[i].style.transform = "translateX(0)";
+            }, i * labelStagger);
+          }
+          await wait(labelCount * labelStagger);
 
           // ─── 3e-ii. Bar + bottom cap fully visible — shimmer entire scale ───
           if (barLine) barLine.style.clipPath = "";
@@ -18161,8 +18169,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const src = fallbackChain[0] || '';
         const nextFallbacks = fallbackChain.slice(1);
         const onErr = nextFallbacks.length
-          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';}})(this)`
-          : `this.style.display='none'`;
+          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{window._threadImgFail(el);}})(this)`
+          : `window._threadImgFail(this)`;
+        const onLoad = `if(this.naturalWidth<10||this.naturalHeight<10){window._threadImgFail(this)}`;
         const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 3) : [];
         const title = esc(t.title || 'Untitled thread');
         const geoNames = _resolveGeoScope(t.geographic_scope);
@@ -18180,7 +18189,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
         return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
           ${src
-            ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}">`
+            ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
           <div class="nfThreadCardBody">
             <div>
@@ -20173,7 +20182,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         url += `&about_country=${kwiLocationCountry.iso}`;
       }
 
-      const res = await fetch(url);
+      const _risingSig = AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined;
+      const res = await fetch(url, { signal: _risingSig });
       const risingPayload = await res.json();
       let rising;
       if (risingPayload && risingPayload.keywords) {
@@ -20186,10 +20196,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
 
       renderRisingList(rising);
-      document.getElementById('kwiFooterText').textContent = 
+      document.getElementById('kwiFooterText').textContent =
         `Rapidly rising · last 3 days vs. baseline`;
     } catch (err) {
-      if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
+      if (err.name === 'AbortError' || requestId !== kwiListRequestId || kwiMode !== 'rising') return;
       console.warn('[kwi] rising load error:', err.message);
       document.getElementById('kwiTrendingList').innerHTML = 
         '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">No rising keywords found</div>';
@@ -20459,9 +20469,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         risingUrl += `&about_country=${kwiLocationCountry.iso}`;
       }
 
+      const _trendSig = AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined;
       const [trendingRes, risingRes] = await Promise.all([
-        fetch(trendingUrl),
-        fetch(risingUrl)
+        fetch(trendingUrl, { signal: _trendSig }),
+        fetch(risingUrl, { signal: _trendSig })
       ]);
       const trendingPayload = await trendingRes.json();
       // Handle prefetched refs: response is { keywords, refs } when prefetch_refs > 0
@@ -20482,9 +20493,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       document.getElementById('kwiFooterText').textContent = 
         `${locationLabel} · last ${kwiDays} days`;
     } catch (err) {
-      if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
+      if (err.name === 'AbortError' || requestId !== kwiListRequestId || kwiMode !== 'trending') return;
       console.warn('[kwi] trending load error:', err.message);
-      document.getElementById('kwiTrendingList').innerHTML = 
+      document.getElementById('kwiTrendingList').innerHTML =
         '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">Failed to load trends</div>';
     } finally {
       if (requestId === kwiListRequestId && kwiMode === 'trending') kwiSetLoading(false);
@@ -21514,9 +21525,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="pricingTierName">Free</div>
         <div class="pricingTierPrice">$0<span>/mo</span></div>
         <ul class="pricingTierFeatures">
-          <li>2 global briefings / week</li>
-          <li>5 article translations / day</li>
-          <li>Custom briefings at $2.50 each</li>
           <li>Globe + cluster explorer</li>
         </ul>
         <button class="pricingTierCta current-plan" id="pricingCtaFree">Current plan</button>
@@ -21527,10 +21535,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="pricingTierName">Pro</div>
         <div class="pricingTierPrice">$5<span>/mo</span></div>
         <ul class="pricingTierFeatures">
-          <li>All 7 daily briefings</li>
-          <li>5 article translations / day</li>
-          <li>5 context explanations / day</li>
-          <li>Custom briefings at $2.50 each</li>
+          <li>Daily briefings</li>
+          <li>Article translation</li>
         </ul>
         <button class="pricingTierCta active" id="pricingCtaProManage" style="display:none" onclick="window.__cancelPayPal()">Manage subscription</button>
         <div id="pricingPaypalPro" class="pricingPaypalBtn"></div>
@@ -21541,10 +21547,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="pricingTierName">Enterprise</div>
         <div class="pricingTierPrice">$25<span>/mo</span></div>
         <ul class="pricingTierFeatures">
-          <li>All daily briefings</li>
-          <li>20 translations / month</li>
-          <li>20 context explanations / day</li>
-          <li>10 custom briefings / month</li>
+          <li>Daily briefings</li>
+          <li>Article translation</li>
+          <li>AI context explanations</li>
+          <li>Extra monthly custom briefing</li>
         </ul>
         <button class="pricingTierCta active" id="pricingCtaEnterpriseManage" style="display:none" onclick="window.__cancelPayPal()">Manage subscription</button>
         <div id="pricingPaypalEnterprise" class="pricingPaypalBtn"></div>
@@ -22236,9 +22242,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       clearAuthUI();
     } else {
       // Session is null but localStorage still has tokens — transient
-      // network failure during token refresh. Keep the UI as-is so the
-      // user doesn't flash to logged-out state on every slow reload.
+      // network failure during token refresh. Keep the UI as-is and
+      // restore the access token so API calls still work.
       console.warn('[auth] session null but persisted tokens exist — keeping UI');
+      try {
+        const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.access_token) window.__authToken = parsed.access_token;
+          if (parsed?.user) updateAccountUI(parsed.user);
+        }
+      } catch (_) {}
     }
   }
 
@@ -22251,17 +22265,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try {
       const { data, error } = await sb.auth.getSession();
       if (error) throw error;
-      await applySession(data?.session || null, 'INITIAL_SESSION');
-    } catch (err) {
-      console.warn('[auth] initial session load failed:', err.message);
-      // Network error on refresh — if tokens exist, keep UI logged in
-      if (hasPersistedSession()) {
-        console.warn('[auth] keeping UI logged in — persisted tokens exist');
-        // Try to parse user info from stored token for UI
+
+      if (data?.session) {
+        await applySession(data.session, 'INITIAL_SESSION');
+      } else if (hasPersistedSession()) {
+        // getSession returned null but we have stored tokens — try manual refresh
+        console.warn('[auth] getSession returned null, attempting manual refresh');
         try {
           const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
+            if (parsed?.refresh_token) {
+              const { data: refreshData, error: refreshErr } = await sb.auth.refreshSession({
+                refresh_token: parsed.refresh_token
+              });
+              if (!refreshErr && refreshData?.session) {
+                console.log('[auth] manual refresh succeeded');
+                await applySession(refreshData.session, 'INITIAL_SESSION');
+                return;
+              }
+            }
+            // Refresh failed but tokens exist — keep UI logged in with stored data
+            if (parsed?.access_token) window.__authToken = parsed.access_token;
+            if (parsed?.user) updateAccountUI(parsed.user);
+          }
+        } catch (_) {}
+      } else {
+        await applySession(null, 'INITIAL_SESSION');
+      }
+    } catch (err) {
+      console.warn('[auth] initial session load failed:', err.message);
+      if (hasPersistedSession()) {
+        console.warn('[auth] keeping UI logged in — persisted tokens exist');
+        try {
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed?.access_token) window.__authToken = parsed.access_token;
             if (parsed?.user) updateAccountUI(parsed.user);
           }
         } catch (_) {}
