@@ -7948,8 +7948,8 @@ window._ytEmbedUrl = function(videoId, opts) {
   if (opts.jsapi) p.set('enablejsapi', '1');
   if (opts.cc) p.set('cc_load_policy', '1');
 
-  if (isCapacitor || _isMobileBrowser) {
-    // Capacitor + mobile browser: use server proxy so the embed origin is
+  if (isCapacitor) {
+    // Capacitor only: use server proxy so the embed origin is
     // earth-wjr6.onrender.com (a real domain YouTube trusts).
     // Direct embeds from https://localhost trigger error 153.
     const API = window.__API || 'https://earth-wjr6.onrender.com';
@@ -21773,7 +21773,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             src="${window._ytEmbedUrl(article.video_id)}"
             title="${safeTitle}"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerpolicy="no-referrer"
+            referrerpolicy="origin"
             allowfullscreen
           ></iframe>
         </div>`;
@@ -25900,7 +25900,7 @@ body.ticker-active .gTickerLabel {
     return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}">
       <iframe id="bVideoIframe" src="${window._ytEmbedUrl(videoId, { jsapi: true, cc: true })}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-        referrerpolicy="no-referrer"
+        referrerpolicy="origin"
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">

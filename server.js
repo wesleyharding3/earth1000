@@ -551,9 +551,11 @@ app.get("/api/video-embed", (req, res) => {
   res.send(`<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="referrer" content="origin">
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:#000}
 iframe{width:100%;height:100%;border:none}</style></head>
 <body><iframe id="ytplayer" src="https://www.youtube.com/embed/${videoId}?${params}"
+referrerpolicy="origin"
 allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share"
 allowfullscreen></iframe>
 <script>
