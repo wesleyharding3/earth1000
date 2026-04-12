@@ -7712,8 +7712,13 @@ window.fmtDate = function(d) {
 /* ── YouTube embed URL helper (proxied on Capacitor to avoid error 153) ── */
 window._ytEmbedUrl = function(videoId, opts) {
   opts = opts || {};
-  const _isCapacitor = typeof window.Capacitor !== 'undefined';
-  if (_isCapacitor) {
+  const _isMobile = typeof window.Capacitor !== 'undefined'
+    || window.matchMedia('(pointer: coarse)').matches
+    || window.innerWidth <= 768;
+
+  if (_isMobile) {
+    // All mobile (Capacitor + mobile browser) goes through server proxy
+    // Proxy serves YouTube embed from proper HTTPS origin — fixes error 153
     const API = window.__API || 'https://earth-wjr6.onrender.com';
     const p = new URLSearchParams({ v: videoId });
     if (opts.autoplay === false) p.set('autoplay', '0');
@@ -7722,7 +7727,7 @@ window._ytEmbedUrl = function(videoId, opts) {
     if (opts.cc) p.set('cc', '1');
     return `${API}/api/video-embed?${p}`;
   }
-  // Desktop/browser: direct YouTube embed
+  // Desktop browser: direct YouTube embed
   const p = new URLSearchParams({
     autoplay: opts.autoplay === false ? '0' : '1',
     mute: opts.mute === false ? '0' : '1',

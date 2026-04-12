@@ -533,18 +533,21 @@ app.get("/api/video-embed", (req, res) => {
   const cc = req.query.cc === '1' ? '1' : '0';
   const params = new URLSearchParams({
     autoplay, mute, playsinline: '1', rel: '0',
-    modestbranding: '1', controls: '1'
+    modestbranding: '1', controls: '1',
+    origin: 'https://earth-wjr6.onrender.com'
   });
   if (enablejsapi === '1') params.set('enablejsapi', '1');
   if (cc === '1') params.set('cc_load_policy', '1');
 
   res.setHeader('Content-Type', 'text/html');
+  res.setHeader('X-Frame-Options', 'ALLOWALL');
   res.send(`<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:#000}
 iframe{width:100%;height:100%;border:none}</style></head>
 <body><iframe src="https://www.youtube.com/embed/${videoId}?${params}"
 allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share"
+referrerpolicy="no-referrer"
 allowfullscreen></iframe>
 <script>
 window.addEventListener('message',function(e){try{window.parent.postMessage(e.data,'*')}catch(_){}});
