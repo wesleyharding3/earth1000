@@ -21564,7 +21564,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const isError = data.event === 'onError' ||
         (data.event === 'infoDelivery' && data.info && data.info.error);
       if (!isError) return;
-      const iframes = document.querySelectorAll('iframe[src*="youtube.com/embed"], iframe[src*="youtube-nocookie.com/embed"]');
+      const iframes = document.querySelectorAll('iframe[src*="youtube.com/embed"], iframe[src*="youtube-nocookie.com/embed"], iframe[src*="/api/video-embed"]');
       for (const iframe of iframes) {
         if (iframe.contentWindow === e.source) {
           const wrap = iframe.closest('.adpVideoWrap');

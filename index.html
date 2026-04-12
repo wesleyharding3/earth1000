@@ -4139,6 +4139,167 @@ body.ticker-active #flowControls {
       text-shadow: 0 0 10px rgba(74,184,255,0.35), 0 0 24px rgba(74,184,255,0.18);
       position: relative;
     }
+
+    /* ── Stats View Toggle (blue pills) ── */
+    .statsViewToggle {
+      display: flex;
+      border-radius: 20px;
+      border: 1px solid rgba(74,184,255,0.18);
+      overflow: hidden;
+      flex-shrink: 0;
+      background: rgba(74,184,255,0.04);
+      margin-left: auto;
+    }
+    .statsViewPill {
+      display: flex; align-items: center;
+      padding: 5px 14px;
+      font-size: 10px; font-weight: 700;
+      letter-spacing: 0.10em; text-transform: uppercase;
+      color: rgba(74,184,255,0.35);
+      cursor: pointer; user-select: none;
+      transition: color 0.2s, background 0.2s;
+      white-space: nowrap;
+    }
+    .statsViewPill:first-child { border-radius: 20px 0 0 20px; }
+    .statsViewPill:last-child  { border-radius: 0 20px 20px 0; }
+    .statsViewPill.active { color: rgba(140,215,255,0.95); background: rgba(74,184,255,0.10); }
+    .statsViewPill:hover:not(.active) { color: rgba(74,184,255,0.60); }
+
+    /* ── Stats panels (Sources & Globe) ── */
+    .stats-panel {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .stats-panel-scroll {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-y: auto;
+      padding-bottom: 20px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(74,184,255,0.2) transparent;
+    }
+    .stats-panel-scroll::-webkit-scrollbar { width: 5px; }
+    .stats-panel-scroll::-webkit-scrollbar-track { background: transparent; }
+    .stats-panel-scroll::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
+
+    /* Source Intelligence sections */
+    .si-section {
+      background: #10141c;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .si-section-header {
+      padding: 12px 16px;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: rgba(74,184,255,0.7);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, transparent 100%);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .si-section-body {
+      padding: 12px 16px;
+      color: rgba(255,255,255,0.7);
+      font-size: 12px;
+    }
+    .si-rank-list { list-style: none; margin: 0; padding: 0; }
+    .si-rank-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .si-rank-item:last-child { border-bottom: none; }
+    .si-rank-num {
+      font-size: 10px; font-weight: 700; color: rgba(74,184,255,0.5);
+      width: 20px; text-align: right; flex-shrink: 0;
+    }
+    .si-rank-name { flex: 1; color: rgba(255,255,255,0.8); font-size: 12px; }
+    .si-rank-bar-wrap {
+      flex: 1; height: 4px; background: rgba(255,255,255,0.06);
+      border-radius: 2px; overflow: hidden; min-width: 60px;
+    }
+    .si-rank-bar {
+      height: 100%; border-radius: 2px;
+      background: linear-gradient(90deg, rgba(74,184,255,0.5), rgba(74,184,255,0.8));
+      transition: width 0.6s ease;
+    }
+    .si-rank-val {
+      font-size: 10px; font-weight: 600; color: rgba(74,184,255,0.7);
+      min-width: 36px; text-align: right; flex-shrink: 0;
+    }
+    .si-empty {
+      text-align: center; padding: 24px 16px;
+      color: rgba(255,255,255,0.3); font-size: 12px;
+    }
+
+    /* Globe Statistics categories */
+    .gs-category {
+      background: #10141c;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .gs-category-header {
+      padding: 14px 18px;
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: rgba(74,184,255,0.8);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, transparent 100%);
+      cursor: pointer; user-select: none;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .gs-category-header::after {
+      content: '▾'; font-size: 10px; color: rgba(74,184,255,0.4);
+      transition: transform 0.25s;
+    }
+    .gs-category.collapsed .gs-category-header::after { transform: rotate(-90deg); }
+    .gs-category.collapsed .gs-category-body { display: none; }
+    .gs-category-body { padding: 14px 18px; }
+
+    /* Globe sub-widget cards */
+    .gs-widget {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .gs-widget:last-child { margin-bottom: 0; }
+    .gs-widget-title {
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: rgba(74,184,255,0.6);
+      margin-bottom: 8px;
+    }
+    .gs-widget-value {
+      font-size: 20px; font-weight: 700;
+      color: rgba(255,255,255,0.9);
+      margin-bottom: 4px;
+    }
+    .gs-widget-sub {
+      font-size: 10px; color: rgba(255,255,255,0.35);
+    }
+    .gs-widget-chart {
+      width: 100%; height: 80px;
+      margin-top: 8px;
+    }
+    .gs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .gs-grid .gs-widget { margin-bottom: 0; }
+
     #statsAccentCanvas {
       flex: 0 0 auto;
       display: block;
@@ -7085,6 +7246,7 @@ body.ticker-active #flowControls {
       #statsHeader {
         padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
       }
+      .statsViewPill { padding: 4px 10px; font-size: 9px; }
       .stats-row {
         padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       }
@@ -7945,6 +8107,11 @@ window.sourceBiasBadgeHTML = function(bias) {
 
       <div id="statsHeader">
         <span id="statsTitle">Statistics</span>
+        <div class="statsViewToggle" id="statsViewToggle">
+          <div class="statsViewPill active" data-view="words" id="statsViewWords">Words</div>
+          <div class="statsViewPill" data-view="sources" id="statsViewSources">Sources</div>
+          <div class="statsViewPill" data-view="globe" id="statsViewGlobe">Globe</div>
+        </div>
       </div>
       <canvas id="statsAccentCanvas" aria-hidden="true"></canvas>
 
@@ -8072,6 +8239,90 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div><!-- /kwi-widget -->
 
+      <!-- ── Source Intelligence Panel ── -->
+      <div class="stats-panel" id="statsSourcesPanel" style="display:none;">
+        <div class="stats-panel-scroll">
+          <div class="si-section" id="siCountryDist">
+            <div class="si-section-header">Country Distribution</div>
+            <div class="si-section-body" id="siCountryDistBody">
+              <div class="si-empty">Loading source data…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siCountryRank">
+            <div class="si-section-header">Country Rankings — Articles / Day</div>
+            <div class="si-section-body" id="siCountryRankBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siCityRank">
+            <div class="si-section-header">City Rankings — Articles / Day</div>
+            <div class="si-section-body" id="siCityRankBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siSourceRank">
+            <div class="si-section-header">Source Rankings — Output / Day</div>
+            <div class="si-section-body" id="siSourceRankBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siSourceCountry">
+            <div class="si-section-header">Countries by Source Count</div>
+            <div class="si-section-body" id="siSourceCountryBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Globe Statistics Panel ── -->
+      <div class="stats-panel" id="statsGlobePanel" style="display:none;">
+        <div class="stats-panel-scroll">
+
+          <div class="gs-category" id="gsCommodities">
+            <div class="gs-category-header">Commodities &amp; Resources</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsCommoditiesGrid"></div>
+            </div>
+          </div>
+
+          <div class="gs-category" id="gsEconomic">
+            <div class="gs-category-header">Economic Indicators</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsEconomicGrid"></div>
+            </div>
+          </div>
+
+          <div class="gs-category" id="gsDemographics">
+            <div class="gs-category-header">Demographics</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsDemographicsGrid"></div>
+            </div>
+          </div>
+
+          <div class="gs-category" id="gsGeopolitical">
+            <div class="gs-category-header">Geopolitical</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsGeopoliticalGrid"></div>
+            </div>
+          </div>
+
+          <div class="gs-category" id="gsEnergy">
+            <div class="gs-category-header">Energy &amp; Environment</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsEnergyGrid"></div>
+            </div>
+          </div>
+
+          <div class="gs-category" id="gsUnique">
+            <div class="gs-category-header">Unique Metrics</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsUniqueGrid"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
 
       </div><!-- /stats-row -->
 
@@ -21275,6 +21526,296 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   };
 
+})();
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// STATS VIEW TOGGLE — Words / Sources / Globe
+// ═══════════════════════════════════════════════════════════════════════════
+(function() {
+  const API = window.__API || 'https://earth-wjr6.onrender.com';
+
+  const pillWords   = document.getElementById('statsViewWords');
+  const pillSources = document.getElementById('statsViewSources');
+  const pillGlobe   = document.getElementById('statsViewGlobe');
+  const kwiWidget   = document.getElementById('kwi');
+  const srcPanel    = document.getElementById('statsSourcesPanel');
+  const glbPanel    = document.getElementById('statsGlobePanel');
+
+  let currentStatsView = 'words';
+  let sourcesLoaded = false;
+  let globeLoaded   = false;
+
+  function setStatsView(view) {
+    currentStatsView = view;
+    pillWords.classList.toggle('active', view === 'words');
+    pillSources.classList.toggle('active', view === 'sources');
+    pillGlobe.classList.toggle('active', view === 'globe');
+    kwiWidget.style.display = view === 'words' ? '' : 'none';
+    srcPanel.style.display  = view === 'sources' ? '' : 'none';
+    glbPanel.style.display  = view === 'globe' ? '' : 'none';
+    if (view === 'sources' && !sourcesLoaded) { sourcesLoaded = true; loadSourcesData(); }
+    if (view === 'globe' && !globeLoaded)     { globeLoaded = true; loadGlobeData(); }
+  }
+
+  pillWords.addEventListener('click', () => setStatsView('words'));
+  pillSources.addEventListener('click', () => setStatsView('sources'));
+  pillGlobe.addEventListener('click', () => setStatsView('globe'));
+
+  // Wrap existing ensureKwiView to respect active tab
+  const origEnsure = window.__ensureKwiView;
+  window.__ensureKwiView = function() {
+    if (currentStatsView === 'words' && origEnsure) origEnsure();
+  };
+
+  // ── Helper: render a ranked list ──
+  function renderRankList(containerId, items, labelKey, valueKey, fmtVal) {
+    const body = document.getElementById(containerId);
+    if (!items || !items.length) { body.innerHTML = '<div class="si-empty">No data available</div>'; return; }
+    const max = Math.max(...items.map(d => d[valueKey] || 0));
+    const ul = document.createElement('ul');
+    ul.className = 'si-rank-list';
+    items.slice(0, 25).forEach((d, i) => {
+      const li = document.createElement('li');
+      li.className = 'si-rank-item';
+      const pct = max > 0 ? ((d[valueKey] || 0) / max * 100) : 0;
+      li.innerHTML = `
+        <span class="si-rank-num">${i + 1}</span>
+        <span class="si-rank-name">${d[labelKey] || '—'}</span>
+        <div class="si-rank-bar-wrap"><div class="si-rank-bar" style="width:${pct}%"></div></div>
+        <span class="si-rank-val">${fmtVal ? fmtVal(d[valueKey]) : (d[valueKey] || 0)}</span>`;
+      ul.appendChild(li);
+    });
+    body.innerHTML = '';
+    body.appendChild(ul);
+  }
+
+  function fmtNum(n) {
+    if (n == null) return '—';
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(Math.round(n));
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // SOURCES TAB
+  // ══════════════════════════════════════════════════════════════════
+  async function loadSourcesData() {
+    try {
+      const res = await fetch(`${API}/api/news/sources-stats`);
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+
+      if (data.countryDistribution) {
+        renderRankList('siCountryDistBody', data.countryDistribution, 'country', 'articles', fmtNum);
+      }
+      if (data.countryRankings) {
+        renderRankList('siCountryRankBody', data.countryRankings, 'country', 'avgPerDay', n => n?.toFixed(1) || '—');
+      }
+      if (data.cityRankings) {
+        renderRankList('siCityRankBody', data.cityRankings, 'city', 'avgPerDay', n => n?.toFixed(1) || '—');
+      }
+      if (data.sourceRankings) {
+        renderRankList('siSourceRankBody', data.sourceRankings, 'source', 'avgPerDay', n => n?.toFixed(1) || '—');
+      }
+      if (data.countriesBySourceCount) {
+        renderRankList('siSourceCountryBody', data.countriesBySourceCount, 'country', 'sourceCount', fmtNum);
+      }
+    } catch (err) {
+      console.warn('Sources stats load failed:', err);
+      ['siCountryDistBody','siCountryRankBody','siCityRankBody','siSourceRankBody','siSourceCountryBody']
+        .forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="si-empty">Failed to load — try again later</div>';
+        });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // GLOBE TAB
+  // ══════════════════════════════════════════════════════════════════
+
+  // Category collapse toggle
+  document.querySelectorAll('.gs-category-header').forEach(hdr => {
+    hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('collapsed'));
+  });
+
+  // Globe widget definitions
+  const GLOBE_SECTIONS = {
+    gsCommoditiesGrid: {
+      title: 'Commodities & Resources',
+      widgets: [
+        { id: 'oil',       label: 'Crude Oil',     unit: '$/bbl' },
+        { id: 'natgas',    label: 'Natural Gas',   unit: '$/MMBtu' },
+        { id: 'coal',      label: 'Coal',          unit: '$/ton' },
+        { id: 'steel',     label: 'Steel',         unit: '$/ton' },
+        { id: 'aluminum',  label: 'Aluminum',      unit: '$/ton' },
+        { id: 'copper',    label: 'Copper',        unit: '$/lb' },
+        { id: 'lithium',   label: 'Lithium',       unit: '$/ton' },
+        { id: 'cobalt',    label: 'Cobalt',        unit: '$/ton' },
+        { id: 'rareearth', label: 'Rare Earths',   unit: 'index' },
+        { id: 'gold',      label: 'Gold',          unit: '$/oz' },
+        { id: 'silver',    label: 'Silver',        unit: '$/oz' },
+        { id: 'platinum',  label: 'Platinum',      unit: '$/oz' },
+        { id: 'palladium', label: 'Palladium',     unit: '$/oz' },
+        { id: 'lumber',    label: 'Lumber',        unit: '$/mbf' },
+        { id: 'cotton',    label: 'Cotton',        unit: '¢/lb' },
+        { id: 'rubber',    label: 'Rubber',        unit: '$/kg' },
+        { id: 'wheat',     label: 'Wheat',         unit: '$/bu' },
+        { id: 'corn',      label: 'Corn',          unit: '$/bu' },
+        { id: 'soybeans',  label: 'Soybeans',      unit: '$/bu' },
+        { id: 'coffee',    label: 'Coffee',        unit: '¢/lb' },
+        { id: 'cocoa',     label: 'Cocoa',         unit: '$/ton' },
+      ]
+    },
+    gsEconomicGrid: {
+      title: 'Economic Indicators',
+      widgets: [
+        { id: 'gdp',           label: 'GDP (Global)',           unit: '$' },
+        { id: 'gdp_growth',    label: 'GDP Growth',             unit: '%' },
+        { id: 'inflation',     label: 'Inflation / CPI',        unit: '%' },
+        { id: 'unemployment',  label: 'Unemployment',           unit: '%' },
+        { id: 'trade_balance', label: 'Trade Balance',          unit: '$' },
+        { id: 'debt_gdp',      label: 'Debt-to-GDP',           unit: '%' },
+        { id: 'currency',      label: 'Currency Strength',      unit: 'index' },
+        { id: 'interest',      label: 'Interest Rates',         unit: '%' },
+        { id: 'stock_market',  label: 'Stock Markets',          unit: 'index' },
+      ]
+    },
+    gsDemographicsGrid: {
+      title: 'Demographics',
+      widgets: [
+        { id: 'population',    label: 'World Population',       unit: '' },
+        { id: 'pop_growth',    label: 'Population Growth',      unit: '%/yr' },
+        { id: 'median_age',    label: 'Median Age',             unit: 'years' },
+        { id: 'life_expect',   label: 'Life Expectancy',        unit: 'years' },
+        { id: 'migration',     label: 'Migration Flows',        unit: 'net/yr' },
+        { id: 'internet',      label: 'Internet Penetration',   unit: '%' },
+      ]
+    },
+    gsGeopoliticalGrid: {
+      title: 'Geopolitical',
+      widgets: [
+        { id: 'military',      label: 'Military Spending',      unit: '% GDP' },
+        { id: 'trade_blocs',   label: 'Trade Agreements',       unit: 'active' },
+        { id: 'sanctions',     label: 'Sanctions Status',       unit: 'countries' },
+      ]
+    },
+    gsEnergyGrid: {
+      title: 'Energy & Environment',
+      widgets: [
+        { id: 'renewable',     label: 'Renewable Energy',       unit: '% total' },
+        { id: 'co2',           label: 'CO₂ Emissions',          unit: 'Mt/yr' },
+        { id: 'co2_capita',    label: 'CO₂ per Capita',         unit: 't/yr' },
+        { id: 'energy_coal',   label: 'Coal Share',             unit: '%' },
+        { id: 'energy_gas',    label: 'Natural Gas Share',      unit: '%' },
+        { id: 'energy_nuclear',label: 'Nuclear Share',          unit: '%' },
+        { id: 'energy_hydro',  label: 'Hydropower Share',       unit: '%' },
+        { id: 'energy_wind',   label: 'Wind Share',             unit: '%' },
+        { id: 'energy_solar',  label: 'Solar Share',            unit: '%' },
+      ]
+    },
+    gsUniqueGrid: {
+      title: 'Unique Metrics',
+      widgets: [
+        { id: 'water_stress',  label: 'Water Stress Index',     unit: 'score' },
+        { id: 'food_import',   label: 'Food Import Dependency', unit: '% cal' },
+        { id: 'rare_supply',   label: 'Rare Earth Supply Chain', unit: '' },
+        { id: 'satellites',    label: 'Satellites in Orbit',    unit: 'count' },
+        { id: 'swf',           label: 'Sovereign Wealth Funds', unit: '$' },
+        { id: 'languages',     label: 'Linguistic Diversity',   unit: 'languages' },
+      ]
+    }
+  };
+
+  function loadGlobeData() {
+    // Render placeholder widget cards for each section
+    for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
+      const grid = document.getElementById(gridId);
+      if (!grid) continue;
+      grid.innerHTML = '';
+      section.widgets.forEach(w => {
+        const card = document.createElement('div');
+        card.className = 'gs-widget';
+        card.id = 'gs-' + w.id;
+        card.innerHTML = `
+          <div class="gs-widget-title">${w.label}</div>
+          <div class="gs-widget-value" style="color:rgba(255,255,255,0.2);">—</div>
+          <div class="gs-widget-sub">${w.unit}</div>`;
+        grid.appendChild(card);
+      });
+    }
+
+    // Fetch globe data
+    fetchGlobeStats();
+  }
+
+  async function fetchGlobeStats() {
+    try {
+      const res = await fetch(`${API}/api/globe-stats`);
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+
+      for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
+        section.widgets.forEach(w => {
+          const card = document.getElementById('gs-' + w.id);
+          if (!card) return;
+          const val = data[w.id];
+          if (val == null) return;
+
+          const valEl = card.querySelector('.gs-widget-value');
+          const subEl = card.querySelector('.gs-widget-sub');
+
+          // Simple scalar value
+          if (typeof val === 'number') {
+            valEl.style.color = '';
+            valEl.textContent = fmtNum(val);
+            return;
+          }
+
+          // Multi-country series data (from World Bank / adapters)
+          if (val.series && val.labels) {
+            // Show the latest value of the first series as headline
+            const firstSeries = val.series[0];
+            const latestVal = [...firstSeries.values].reverse().find(v => v != null);
+            valEl.style.color = '';
+            valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
+            if (subEl) subEl.textContent = val.unit || w.unit;
+
+            // Build a mini sparkline-style list of all countries
+            if (val.series.length > 1) {
+              let existing = card.querySelector('.gs-series-list');
+              if (!existing) {
+                existing = document.createElement('div');
+                existing.className = 'gs-series-list';
+                existing.style.cssText = 'margin-top:8px;font-size:10px;color:rgba(255,255,255,0.5);';
+                card.appendChild(existing);
+              }
+              existing.innerHTML = val.series.map(s => {
+                const lv = [...s.values].reverse().find(v => v != null);
+                return `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
+                  <span>${s.name}</span><span style="color:rgba(74,184,255,0.7)">${lv != null ? fmtNum(lv) : '—'}</span>
+                </div>`;
+              }).join('');
+            }
+            return;
+          }
+
+          // String value
+          if (typeof val === 'string') {
+            valEl.style.color = '';
+            valEl.textContent = val;
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Globe stats load failed:', err);
+    }
+  }
+
+  window.__statsSetView = setStatsView;
 })();
 </script>
 

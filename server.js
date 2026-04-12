@@ -531,26 +531,38 @@ app.get("/api/video-embed", (req, res) => {
   const mute = req.query.mute !== '0' ? '1' : '0';
   const enablejsapi = req.query.jsapi === '1' ? '1' : '0';
   const cc = req.query.cc === '1' ? '1' : '0';
+
+  // Derive origin from the request itself so the proxy page IS the origin
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'earth-wjr6.onrender.com';
+  const selfOrigin = `${proto}://${host}`;
+
   const params = new URLSearchParams({
     autoplay, mute, playsinline: '1', rel: '0',
     modestbranding: '1', controls: '1',
-    origin: 'https://earth-wjr6.onrender.com'
+    origin: selfOrigin,
+    enablejsapi: '1'          // always enable so we can relay errors back
   });
-  if (enablejsapi === '1') params.set('enablejsapi', '1');
   if (cc === '1') params.set('cc_load_policy', '1');
 
   res.setHeader('Content-Type', 'text/html');
   res.setHeader('X-Frame-Options', 'ALLOWALL');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.send(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>*{margin:0;padding:0}html,body{width:100%;height:100%;overflow:hidden;background:#000}
 iframe{width:100%;height:100%;border:none}</style></head>
-<body><iframe src="https://www.youtube.com/embed/${videoId}?${params}"
+<body><iframe id="ytplayer" src="https://www.youtube.com/embed/${videoId}?${params}"
 allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share"
-referrerpolicy="no-referrer"
 allowfullscreen></iframe>
 <script>
-window.addEventListener('message',function(e){try{window.parent.postMessage(e.data,'*')}catch(_){}});
+// Relay YT IFrame API messages (including errors) to parent so Capacitor can catch them
+window.addEventListener('message',function(e){
+  try{window.parent.postMessage(e.data,'*')}catch(_){}
+});
+// Also relay via onError callback
+function onYouTubeIframeAPIReady(){}
 </script></body></html>`);
 });
 
@@ -6268,6 +6280,206 @@ app.get("/api/stats/location", async (req, res) => {
   } catch (err) {
     console.error("[stats/location]", err.message);
     res.status(500).json({ error: "Failed to fetch location stats" });
+  }
+});
+
+/* =========================================
+   Source Intelligence — /api/news/sources-stats
+========================================= */
+app.get("/api/news/sources-stats", async (req, res) => {
+  try {
+    const data = await ttlCached('sources-stats:all', 300_000, async () => {
+      // 1. Country distribution — total articles per country (last 30 days)
+      const countryDistQ = pool.query(`
+        SELECT co.name AS country, co.iso_code, COUNT(*)::int AS articles
+        FROM news_articles a
+        JOIN countries co ON co.id = a.country_id
+        WHERE a.published_at > NOW() - INTERVAL '30 days'
+          AND a.country_id IS NOT NULL
+        GROUP BY co.id, co.name, co.iso_code
+        ORDER BY articles DESC
+        LIMIT 50
+      `);
+
+      // 2. Country rankings — avg articles per day (last 30 days)
+      const countryRankQ = pool.query(`
+        SELECT co.name AS country, co.iso_code,
+               COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
+        FROM news_articles a
+        JOIN countries co ON co.id = a.country_id
+        WHERE a.published_at > NOW() - INTERVAL '30 days'
+          AND a.country_id IS NOT NULL
+        GROUP BY co.id, co.name, co.iso_code
+        HAVING COUNT(*) >= 5
+        ORDER BY "avgPerDay" DESC
+        LIMIT 30
+      `);
+
+      // 3. City rankings — avg articles per day (last 30 days)
+      const cityRankQ = pool.query(`
+        SELECT ci.name AS city, co.name AS country,
+               COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
+        FROM news_articles a
+        JOIN cities ci ON ci.id = a.city_id
+        JOIN countries co ON co.id = ci.country_id
+        WHERE a.published_at > NOW() - INTERVAL '30 days'
+          AND a.city_id IS NOT NULL
+        GROUP BY ci.id, ci.name, co.name
+        HAVING COUNT(*) >= 3
+        ORDER BY "avgPerDay" DESC
+        LIMIT 30
+      `);
+
+      // 4. Source rankings — avg articles per day (last 30 days)
+      const sourceRankQ = pool.query(`
+        SELECT COALESCE(ns.name, ys.name) AS source,
+               COALESCE(ns.site_url, ys.site_url) AS site_url,
+               COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
+        FROM news_articles a
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        WHERE a.published_at > NOW() - INTERVAL '30 days'
+        GROUP BY COALESCE(ns.name, ys.name), COALESCE(ns.site_url, ys.site_url)
+        HAVING COUNT(*) >= 3
+        ORDER BY "avgPerDay" DESC
+        LIMIT 30
+      `);
+
+      // 5. Countries by distinct source count
+      const sourceCountryQ = pool.query(`
+        SELECT co.name AS country, co.iso_code,
+               COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS "sourceCount"
+        FROM news_articles a
+        JOIN countries co ON co.id = a.country_id
+        WHERE a.published_at > NOW() - INTERVAL '30 days'
+          AND a.country_id IS NOT NULL
+        GROUP BY co.id, co.name, co.iso_code
+        HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1
+        ORDER BY "sourceCount" DESC
+        LIMIT 30
+      `);
+
+      const [countryDist, countryRank, cityRank, sourceRank, sourceCountry] =
+        await Promise.all([countryDistQ, countryRankQ, cityRankQ, sourceRankQ, sourceCountryQ]);
+
+      return {
+        countryDistribution:    countryDist.rows,
+        countryRankings:        countryRank.rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) })),
+        cityRankings:           cityRank.rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) })),
+        sourceRankings:         sourceRank.rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) })),
+        countriesBySourceCount: sourceCountry.rows,
+      };
+    });
+    res.json(data);
+  } catch (err) {
+    console.error("Sources stats error:", err);
+    res.status(500).json({ error: "Failed to fetch source stats" });
+  }
+});
+
+/* =========================================
+   Globe Statistics — /api/globe-stats
+   Aggregates data from external adapters (World Bank, FRED, EIA, OWID)
+   with aggressive caching (1 hour) since these are slow external APIs.
+========================================= */
+app.get("/api/globe-stats", async (req, res) => {
+  try {
+    const data = await ttlCached('globe-stats:all', 3_600_000, async () => {
+      const dataSources = require('./dataSources');
+      const results = {};
+
+      // Helper: fetch from an adapter, return latest value or null
+      async function latest(adapterName, indicator, opts = {}) {
+        try {
+          const adapter = dataSources.getAdapter(adapterName);
+          if (!adapter) return null;
+          const data = await adapter.fetch({ indicator, ...opts });
+          if (!data || !data.series || !data.series.length) return null;
+          // Get the most recent non-null value
+          const values = data.series[0].values;
+          for (let i = values.length - 1; i >= 0; i--) {
+            if (values[i] != null) return { value: values[i], unit: data.unit, source: data.source_url };
+          }
+          return null;
+        } catch { return null; }
+      }
+
+      // Helper: fetch World Bank for top countries
+      async function wbTopCountries(indicator, countries, years) {
+        try {
+          const adapter = dataSources.getAdapter('worldbank');
+          if (!adapter) return null;
+          const data = await adapter.fetch({ indicator, countries, years });
+          return data;
+        } catch { return null; }
+      }
+
+      // ── Commodities (FRED + EIA) ──
+      const commodityFetches = {
+        oil:       latest('fred', 'DCOILWTICO'),
+        natgas:    latest('eia', 'NG.RNGWHHD.D'),
+      };
+
+      // ── Economic (World Bank — global aggregates) ──
+      const topEconomies = ['United States', 'China', 'Japan', 'Germany', 'India', 'United Kingdom'];
+      const recentYears = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 5 + i);
+      const economicFetches = {
+        gdp:          wbTopCountries('NY.GDP.MKTP.CD', topEconomies, recentYears),
+        gdp_growth:   latest('worldbank', 'NY.GDP.MKTP.KD.ZG', { countries: ['World'], years: recentYears }),
+        inflation:    latest('worldbank', 'FP.CPI.TOTL.ZG', { countries: ['World'], years: recentYears }),
+        unemployment: latest('worldbank', 'SL.UEM.TOTL.ZS', { countries: ['World'], years: recentYears }),
+        interest:     latest('fred', 'FEDFUNDS'),
+        debt_gdp:     latest('fred', 'GFDEBTN'),
+      };
+
+      // ── Demographics (World Bank) ──
+      const demoFetches = {
+        population:  latest('worldbank', 'SP.POP.TOTL', { countries: ['World'], years: recentYears }),
+        life_expect: latest('worldbank', 'SP.DYN.LE00.IN', { countries: ['World'], years: recentYears }),
+      };
+
+      // ── Energy (World Bank + EIA) ──
+      const energyFetches = {
+        co2_capita: latest('worldbank', 'EN.ATM.CO2E.PC', { countries: ['World'], years: recentYears }),
+      };
+
+      // ── Military (World Bank) ──
+      const geoFetches = {
+        military: wbTopCountries('MS.MIL.XPND.CD', ['United States', 'China', 'Russia', 'India', 'Saudi Arabia', 'United Kingdom'], recentYears),
+      };
+
+      // Collect all named fetches
+      const allKeys = [];
+      const allPromises = [];
+      for (const group of [commodityFetches, economicFetches, demoFetches, energyFetches, geoFetches]) {
+        for (const [key, promise] of Object.entries(group)) {
+          allKeys.push(key);
+          allPromises.push(promise);
+        }
+      }
+
+      const settled = await Promise.allSettled(allPromises);
+      for (let i = 0; i < allKeys.length; i++) {
+        const r = settled[i];
+        if (r.status === 'fulfilled' && r.value != null) {
+          const v = r.value;
+          // For simple latest-value results
+          if (v.value != null) {
+            results[allKeys[i]] = v.value;
+          }
+          // For multi-country series results (from wbTopCountries)
+          else if (v.series) {
+            results[allKeys[i]] = v;
+          }
+        }
+      }
+
+      return results;
+    });
+    res.json(data);
+  } catch (err) {
+    console.error("Globe stats error:", err);
+    res.status(500).json({ error: "Failed to fetch globe stats" });
   }
 });
 
