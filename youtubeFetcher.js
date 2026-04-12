@@ -301,11 +301,13 @@ async function fetchYouTube() {
    Run
 ========================================= */
 fetchYouTube()
-  .then(() => {
+  .then(async () => {
     console.log("📺 YouTube fetcher finished");
+    await pool.end();
     process.exit(0);
   })
-  .catch((err) => {
+  .catch(async (err) => {
     console.error("📺 YouTube fetcher crashed:", err);
+    await pool.end().catch(() => {});
     process.exit(1);
   });

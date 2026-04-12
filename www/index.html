@@ -23744,8 +23744,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
   pointer-events: none;
 }
 .bFocalScrim.visible { opacity: 1; }
+/* Narrator transition overlay — shows before focal media takes over */
+.bFocalTransition {
+  position: fixed; left: 50%; bottom: 18%;
+  transform: translateX(-50%);
+  z-index: 100012;
+  max-width: min(88vw, 600px);
+  padding: 14px 28px;
+  background: rgba(0,0,0,0.85);
+  border: 1px solid rgba(96,200,255,0.2);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.92);
+  font-size: 15px; font-style: italic;
+  text-align: center; line-height: 1.5;
+  opacity: 0; transition: opacity 0.5s ease;
+  pointer-events: none;
+}
+.bFocalTransition.visible { opacity: 1; }
+/* Twitter embed card */
+.bAPTwitterCard .bTwitterEmbed {
+  min-height: 120px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px;
+}
+.bAPTwitterCard .bTwitterLoading {
+  color: rgba(255,255,255,0.35); font-size: 11px;
+}
+/* Auto-enabled captions during focal */
+.focal-captions-on { display: block !important; }
 @media (max-width: 720px) {
   .bFocalVideo { width: 96vw !important; }
+  .bFocalTransition { font-size: 13px; bottom: 14%; }
 }
 
 .bAPCardImg { width: 100%; height: 76px; object-fit: cover; display: block; }
@@ -25344,17 +25373,28 @@ body.ticker-active .gTickerLabel {
         }
       }
 
-      // Focal video moment — enlarge video, play with sound, pause narrator
+      // Featured media moment — enlarge video/tweet, play with sound, pause narrator
       {
         const focal = seg.video?.focal || seg.video_focal;
-        if (focal?.enabled && seg.video_id) {
+        const hasMedia = seg.video_id || seg.twitter_url || seg.video?.twitter_url;
+        if (focal?.enabled && hasMedia) {
           const fStart = focal.start_sec ?? 0;
           const fEnd = focal.end_sec ?? 15;
           const triggerPct = (focal.trigger_pct ?? 35) / 100;
           const enableCC = focal.captions !== false;
+          const volumeLevel = focal.volume || 'medium';
+          const transition = focal.narrator_transition || '';
+
           addBTimer(setTimeout(() => {
             if (segIdx !== idx) return;
-            startFocalVideo(fStart, fEnd, enableCC);
+            // If there's a narrator transition line, show it briefly before focal
+            if (transition) {
+              showFocalTransition(transition, () => {
+                startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
+              });
+            } else {
+              startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
+            }
           }, ms(triggerPct)));
         }
       }
@@ -25903,8 +25943,17 @@ body.ticker-active .gTickerLabel {
   function makeVideoCard(videoId, seg) {
     const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
+    const mediaType = seg.video?.media_type || seg.media_type || 'youtube';
+    const twitterUrl = seg.video?.twitter_url || seg.twitter_url || '';
+
+    // Twitter/X embed
+    if ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && twitterUrl) {
+      return makeTwitterCard(twitterUrl, mediaType, seg);
+    }
+
+    // YouTube embed (default)
     // enablejsapi=1 for focal video control (seek, mute, captions)
-    return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}">
+    return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}" data-media-type="youtube">
       <iframe id="bVideoIframe" src="${window._ytEmbedUrl(videoId, { jsapi: true, cc: true })}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         referrerpolicy="origin"
@@ -25919,10 +25968,84 @@ body.ticker-active .gTickerLabel {
     </div>`;
   }
 
-  // ── Focal Video Controller ────────────────────────────────────────────────
-  // Manages the sequence: narrator pauses → video enlarges → plays with sound
-  // → video shrinks → narrator resumes.
+  // ── Twitter/X Embed Card ────────────────────────────────────────────────
+  function makeTwitterCard(tweetUrl, mediaType, seg) {
+    const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
+    const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
+    // Extract tweet ID from URL for embed
+    const tweetIdMatch = tweetUrl.match(/status\/(\d+)/);
+    const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
+    const isVideo = mediaType === 'twitter_video';
+    return `<div class="bAPCard bAPVideoCard bAPTwitterCard" id="bVideoCard" data-tweet-id="${tweetId}" data-tweet-url="${tweetUrl.replace(/"/g, '&quot;')}" data-media-type="${mediaType}">
+      <div id="bTwitterEmbed" class="bTwitterEmbed">
+        <div class="bTwitterLoading">Loading ${isVideo ? 'video' : 'post'}...</div>
+      </div>
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource" id="bVideoSource">X / Twitter</span>
+          ${vidLoc ? `<span class="bAPCardLocation">${vidLoc}</span>` : ''}
+          <span class="bAPCardDate">${vidDate}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // Load Twitter widget JS and render embed
+  function loadTwitterEmbed(tweetUrl, containerId) {
+    const container = document.getElementById(containerId || 'bTwitterEmbed');
+    if (!container) return;
+    // Inject oEmbed via platform.twitter.com widgets
+    if (!window.twttr) {
+      const s = document.createElement('script');
+      s.src = 'https://platform.twitter.com/widgets.js';
+      s.charset = 'utf-8';
+      s.async = true;
+      document.head.appendChild(s);
+      s.onload = () => _renderTweet(tweetUrl, container);
+    } else {
+      _renderTweet(tweetUrl, container);
+    }
+  }
+
+  function _renderTweet(url, container) {
+    const idMatch = url.match(/status\/(\d+)/);
+    if (!idMatch || !window.twttr?.widgets) {
+      container.innerHTML = `<a href="${url}" target="_blank" rel="noopener" style="color:#60c8ff;font-size:12px;">View on X</a>`;
+      return;
+    }
+    container.innerHTML = '';
+    window.twttr.widgets.createTweet(idMatch[1], container, {
+      theme: 'dark', width: 320, dnt: true, conversation: 'none'
+    }).catch(() => {
+      container.innerHTML = `<a href="${url}" target="_blank" rel="noopener" style="color:#60c8ff;font-size:12px;">View on X</a>`;
+    });
+  }
+
+  // ── Focal Transition Overlay ───────────────────────────────────────────
+  // Shows narrator's transition line before the featured media takes over.
+  function showFocalTransition(text, onDone) {
+    let overlay = document.getElementById('bFocalTransition');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'bFocalTransition';
+      overlay.className = 'bFocalTransition';
+      document.getElementById('briefingView')?.appendChild(overlay);
+    }
+    overlay.textContent = text;
+    overlay.classList.add('visible');
+    // Show for 3 seconds then fade and trigger focal
+    addBTimer(setTimeout(() => {
+      overlay.classList.remove('visible');
+      addBTimer(setTimeout(() => { if (onDone) onDone(); }, 500));
+    }, 3000));
+  }
+
+  // ── Focal / Featured Media Controller ──────────────────────────────────
+  // Manages the sequence: narrator speaks transition → pauses → media enlarges
+  // → plays with sound at configured volume → media shrinks → narrator resumes.
+  // Supports YouTube videos, Twitter posts, and Twitter videos.
   let _focalActive = false;
+  let _focalCaptionsWereOff = false; // track if we auto-enabled captions
 
   function _postYTCommand(iframe, func, args) {
     if (!iframe?.contentWindow) return;
@@ -25931,11 +26054,15 @@ body.ticker-active .gTickerLabel {
     }), '*');
   }
 
-  function startFocalVideo(startSec, endSec, enableCaptions) {
+  const _volumeLevels = { low: 25, medium: 50, high: 75 };
+
+  function startFocalVideo(startSec, endSec, enableCaptions, volumeLevel) {
     const card = document.getElementById('bVideoCard');
-    const iframe = document.getElementById('bVideoIframe');
     const scrim = document.getElementById('bFocalScrim');
-    if (!card || !iframe) return;
+    if (!card) return;
+
+    const mediaType = card.dataset.mediaType || 'youtube';
+    const isTwitter = mediaType === 'twitter_post' || mediaType === 'twitter_video';
 
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
@@ -25943,18 +26070,33 @@ body.ticker-active .gTickerLabel {
     // Pause narrator audio
     if (audio) { try { audio.pause(); } catch (_) {} }
 
-    // Enlarge video card to focal mode
+    // Enlarge media card to focal mode
     card.classList.add('bFocalVideo');
     if (scrim) scrim.classList.add('visible');
     requestAnimationFrame(() => card.classList.add('focal-in'));
 
-    // Seek to start, unmute, play
-    _postYTCommand(iframe, 'seekTo', [startSec, true]);
-    _postYTCommand(iframe, 'unMute');
-    _postYTCommand(iframe, 'playVideo');
-    // Enable captions if configured
-    if (enableCaptions) {
-      _postYTCommand(iframe, 'setOption', ['captions', 'track', { languageCode: 'en' }]);
+    if (isTwitter) {
+      // Twitter embeds: just show enlarged, no programmatic audio control
+      // For twitter_video, the user interacts with the embedded player
+    } else {
+      // YouTube: seek, set volume, unmute, play
+      const iframe = document.getElementById('bVideoIframe');
+      if (iframe) {
+        _postYTCommand(iframe, 'seekTo', [startSec, true]);
+        _postYTCommand(iframe, 'unMute');
+        const vol = _volumeLevels[volumeLevel] || 50;
+        _postYTCommand(iframe, 'setVolume', [vol]);
+        _postYTCommand(iframe, 'playVideo');
+        // Enable captions if configured
+        if (enableCaptions) {
+          // Track whether user had captions off so we can restore
+          _focalCaptionsWereOff = !document.querySelector('.bCaptionsActive');
+          _postYTCommand(iframe, 'setOption', ['captions', 'track', { languageCode: 'en' }]);
+          // Auto-show our own caption overlay if we have generated captions
+          const capEl = document.getElementById('bCaptionOverlay');
+          if (capEl) capEl.classList.add('focal-captions-on');
+        }
+      }
     }
 
     // After duration, shrink back and resume narrator
@@ -25968,13 +26110,25 @@ body.ticker-active .gTickerLabel {
     _focalActive = false;
 
     const card = document.getElementById('bVideoCard');
-    const iframe = document.getElementById('bVideoIframe');
     const scrim = document.getElementById('bFocalScrim');
+    const mediaType = card?.dataset?.mediaType || 'youtube';
 
-    // Mute video, shrink card
-    if (iframe) {
-      _postYTCommand(iframe, 'mute');
+    if (mediaType === 'youtube') {
+      const iframe = document.getElementById('bVideoIframe');
+      // Mute video, continue playing silently
+      if (iframe) {
+        _postYTCommand(iframe, 'mute');
+        _postYTCommand(iframe, 'setVolume', [0]);
+      }
+      // Restore captions state if we auto-enabled them
+      if (_focalCaptionsWereOff) {
+        const capEl = document.getElementById('bCaptionOverlay');
+        if (capEl) capEl.classList.remove('focal-captions-on');
+        _focalCaptionsWereOff = false;
+      }
     }
+
+    // Shrink card back
     if (card) {
       card.classList.remove('focal-in');
       setTimeout(() => card.classList.remove('bFocalVideo'), 600);
@@ -25990,8 +26144,10 @@ body.ticker-active .gTickerLabel {
   async function loadArticlePanel(ids, videoId, seg) {
     const panel   = document.getElementById('bArticlePanel');
     const snapIdx = segIdx;
+    const twitterUrl = seg?.video?.twitter_url || seg?.twitter_url || '';
+    const hasMedia = videoId || twitterUrl;
     panel.classList.remove('visible');
-    if (!ids?.length && !videoId) { panel.innerHTML = ''; return; }
+    if (!ids?.length && !hasMedia) { panel.innerHTML = ''; return; }
     stopTicker();
     try {
       let articles = [];
@@ -26001,10 +26157,10 @@ body.ticker-active .gTickerLabel {
         articles = await res.json();
       }
       if (segIdx !== snapIdx) return;
-      // When video present: video card first, then 1 article card
-      // When no video: 2 article cards
+      // When media present: media card first, then 1 article card
+      // When no media: 2 article cards
       const cards = [];
-      if (videoId) {
+      if (hasMedia) {
         cards.push(makeVideoCard(videoId, seg));
         cards.push(...articles.slice(0, 1).map(makeAPCard));
       } else {
@@ -26012,6 +26168,11 @@ body.ticker-active .gTickerLabel {
       }
       panel.innerHTML = cards.join('');
       if (cards.length) panel.classList.add('visible');
+      // Initialize Twitter embed if present
+      const tweetCard = document.getElementById('bVideoCard');
+      if (tweetCard?.dataset?.tweetUrl) {
+        loadTwitterEmbed(tweetCard.dataset.tweetUrl, 'bTwitterEmbed');
+      }
       // Ticker: all articles, looping
       if (articles.length) startTicker(articles);
       // Backfill video source name from first article

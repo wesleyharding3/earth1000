@@ -947,9 +947,66 @@
 
           const vid = seg.video || {};
           const videoId = vid.video_id || vid.id || seg.video_id || '';
-          bodyHtml += `<div class="seg-field"><div class="seg-label">Video</div>
-            <input class="seg-input" data-seg="${idx}" data-field="video_id" placeholder="YouTube Video ID" value="${escHtml(videoId)}" />
-            ${videoId ? `<div style="margin-top:6px;"><img src="https://img.youtube.com/vi/${escHtml(videoId)}/mqdefault.jpg" style="max-width:200px;border-radius:4px;" /></div>` : ''}</div>`;
+          const mediaType = vid.media_type || seg.media_type || 'youtube';
+          const twitterUrl = vid.twitter_url || seg.twitter_url || '';
+          const focal = vid.focal || seg.video_focal || {};
+          const focalEnabled = !!focal.enabled;
+          const focalStart = focal.start_sec ?? '';
+          const focalEnd = focal.end_sec ?? '';
+          const focalVolume = focal.volume || 'medium';
+          const focalTransition = focal.narrator_transition || '';
+          bodyHtml += `<div class="seg-field"><div class="seg-label">Media</div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+              <select class="seg-input" data-seg="${idx}" data-field="media_type" style="flex:1;" onchange="toggleMediaFields(${idx}, this.value)">
+                <option value="youtube" ${mediaType === 'youtube' ? 'selected' : ''}>YouTube Video</option>
+                <option value="twitter_post" ${mediaType === 'twitter_post' ? 'selected' : ''}>Twitter/X Post</option>
+                <option value="twitter_video" ${mediaType === 'twitter_video' ? 'selected' : ''}>Twitter/X Video</option>
+              </select>
+            </div>
+            <div id="media-yt-${idx}" style="display:${mediaType === 'youtube' ? 'block' : 'none'};">
+              <input class="seg-input" data-seg="${idx}" data-field="video_id" placeholder="YouTube Video ID" value="${escHtml(videoId)}" />
+              ${videoId ? `<div style="margin-top:6px;"><img src="https://img.youtube.com/vi/${escHtml(videoId)}/mqdefault.jpg" style="max-width:200px;border-radius:4px;" /></div>` : ''}
+            </div>
+            <div id="media-tw-${idx}" style="display:${mediaType !== 'youtube' ? 'block' : 'none'};">
+              <input class="seg-input" data-seg="${idx}" data-field="twitter_url" placeholder="https://x.com/user/status/123..." value="${escHtml(twitterUrl)}" />
+              <span style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;display:block;">Full tweet URL — post or video</span>
+            </div>
+          </div>
+          <div class="seg-field" style="padding-left:12px;border-left:2px solid rgba(96,200,255,0.2);">
+            <div class="seg-label" style="color:#60c8ff;">Featured Media Moment</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <input type="checkbox" data-seg="${idx}" data-field="focal_enabled" ${focalEnabled ? 'checked' : ''} onchange="toggleFeaturedFields(${idx}, this.checked)" />
+              <span style="font-size:11px;color:rgba(255,255,255,0.5);">Featured — narrator hands off to media, expands fullscreen with audio</span>
+            </div>
+            <div id="featured-fields-${idx}" style="display:${focalEnabled ? 'block' : 'none'};">
+              <div style="margin-bottom:8px;">
+                <label style="font-size:10px;color:rgba(255,255,255,0.35);">Narrator Transition Line</label>
+                <input class="seg-input" data-seg="${idx}" data-field="focal_transition" placeholder="e.g. Here's a clip from Erdogan..." value="${escHtml(focalTransition)}" />
+              </div>
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;"><label style="font-size:10px;color:rgba(255,255,255,0.35);">Start (sec)</label>
+                  <input class="seg-input" data-seg="${idx}" data-field="focal_start" type="number" min="0" step="1" placeholder="e.g. 13" value="${escHtml(String(focalStart))}" /></div>
+                <div style="flex:1;"><label style="font-size:10px;color:rgba(255,255,255,0.35);">End (sec)</label>
+                  <input class="seg-input" data-seg="${idx}" data-field="focal_end" type="number" min="0" step="1" placeholder="e.g. 28" value="${escHtml(String(focalEnd))}" /></div>
+                <div style="flex:1;"><label style="font-size:10px;color:rgba(255,255,255,0.35);">Trigger at %</label>
+                  <input class="seg-input" data-seg="${idx}" data-field="focal_trigger_pct" type="number" min="10" max="80" step="5" placeholder="35" value="${escHtml(String(focal.trigger_pct ?? 35))}" /></div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:6px;">
+                <div style="flex:1;"><label style="font-size:10px;color:rgba(255,255,255,0.35);">Volume</label>
+                  <select class="seg-input" data-seg="${idx}" data-field="focal_volume">
+                    <option value="low" ${focalVolume === 'low' ? 'selected' : ''}>Low (25%)</option>
+                    <option value="medium" ${focalVolume === 'medium' ? 'selected' : ''}>Medium (50%)</option>
+                    <option value="high" ${focalVolume === 'high' ? 'selected' : ''}>High (75%)</option>
+                  </select></div>
+                <div style="flex:1;display:flex;align-items:center;gap:8px;padding-top:14px;">
+                  <input type="checkbox" data-seg="${idx}" data-field="focal_captions" ${focal.captions !== false ? 'checked' : ''} />
+                  <span style="font-size:10px;color:rgba(255,255,255,0.4);">Auto-enable captions</span></div>
+                <div style="flex:1;display:flex;align-items:center;gap:8px;padding-top:14px;">
+                  <input type="checkbox" data-seg="${idx}" data-field="focal_generate_captions" ${focal.generate_captions ? 'checked' : ''} />
+                  <span style="font-size:10px;color:rgba(255,255,255,0.4);">Generate captions</span></div>
+              </div>
+            </div>
+          </div>`;
 
           const panels = seg.data_panels || [];
           if (panels.length > 0) {
@@ -984,6 +1041,18 @@
       // Update visual
       const label = document.querySelector(`#seg-card-${idx} .dp-eligible`);
       if (label) label.classList.toggle('checked', checked);
+    }
+
+    function toggleMediaFields(idx, mediaType) {
+      const ytDiv = document.getElementById(`media-yt-${idx}`);
+      const twDiv = document.getElementById(`media-tw-${idx}`);
+      if (ytDiv) ytDiv.style.display = mediaType === 'youtube' ? 'block' : 'none';
+      if (twDiv) twDiv.style.display = mediaType !== 'youtube' ? 'block' : 'none';
+    }
+
+    function toggleFeaturedFields(idx, enabled) {
+      const el = document.getElementById(`featured-fields-${idx}`);
+      if (el) el.style.display = enabled ? 'block' : 'none';
     }
 
     function toggleSegment(idx) {
@@ -1116,11 +1185,50 @@
             const span = row.querySelector('span');
             if (span) clone.articles.push({ id: span.textContent, included: cb ? cb.checked : true });
           });
+          const mediaTypeEl = document.querySelector(`select[data-seg="${idx}"][data-field="media_type"]`);
           const vidEl = document.querySelector(`input[data-seg="${idx}"][data-field="video_id"]`);
+          const twitterUrlEl = document.querySelector(`input[data-seg="${idx}"][data-field="twitter_url"]`);
+          const selectedMediaType = mediaTypeEl?.value || 'youtube';
+          clone.media_type = selectedMediaType;
+
           if (vidEl) {
             const v = vidEl.value.trim();
-            clone.video = v ? { video_id: v } : null;
+            clone.video = v ? { video_id: v, media_type: selectedMediaType } : null;
             clone.video_id = v || null;
+          }
+          if (twitterUrlEl) {
+            const twUrl = twitterUrlEl.value.trim();
+            clone.twitter_url = twUrl || null;
+            if (clone.video) clone.video.twitter_url = twUrl || null;
+            else if (twUrl) clone.video = { twitter_url: twUrl, media_type: selectedMediaType };
+          }
+
+          // Featured media / focal settings
+          const focalCb = document.querySelector(`input[data-seg="${idx}"][data-field="focal_enabled"]`);
+          const focalStartEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_start"]`);
+          const focalEndEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_end"]`);
+          const focalTriggerEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_trigger_pct"]`);
+          const focalCaptionsCb = document.querySelector(`input[data-seg="${idx}"][data-field="focal_captions"]`);
+          const focalGenCaptionsCb = document.querySelector(`input[data-seg="${idx}"][data-field="focal_generate_captions"]`);
+          const focalVolumeEl = document.querySelector(`select[data-seg="${idx}"][data-field="focal_volume"]`);
+          const focalTransitionEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_transition"]`);
+          const hasMedia = (clone.video_id || clone.twitter_url);
+          if (focalCb?.checked && focalStartEl && focalEndEl && hasMedia) {
+            const focalData = {
+              enabled: true,
+              start_sec: parseInt(focalStartEl.value) || 0,
+              end_sec: parseInt(focalEndEl.value) || 15,
+              trigger_pct: parseInt(focalTriggerEl?.value) || 35,
+              captions: focalCaptionsCb?.checked !== false,
+              generate_captions: focalGenCaptionsCb?.checked || false,
+              volume: focalVolumeEl?.value || 'medium',
+              narrator_transition: focalTransitionEl?.value?.trim() || ''
+            };
+            if (clone.video) clone.video.focal = focalData;
+            clone.video_focal = focalData;
+          } else {
+            if (clone.video) delete clone.video.focal;
+            delete clone.video_focal;
           }
           const panelRows = document.querySelectorAll(`#panels-${idx} .seg-panel-row`);
           if (panelRows.length && clone.data_panels) {
