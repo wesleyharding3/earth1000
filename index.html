@@ -7275,6 +7275,14 @@ body.ticker-active #flowControls {
   /* Ensure close/minimize buttons sit above the full-width resize handle */
   #infoPanel .panelHeader { z-index: 10 !important; }
   .cdHeader { position: relative; z-index: 10; }
+  /* Extend the swipeable grab zone to include the full header area */
+  #infoPanel .panelHeader { touch-action: none; cursor: grab; }
+  .cdHeader { touch-action: none; cursor: grab; }
+  /* GPU hint for smooth drag */
+  #infoPanel.panel-dragging, #clusterDetail.panel-dragging {
+    will-change: height;
+    transition: none !important;
+  }
   #panelResizeArrow, #cdResizeArrow {
     width: 36px; height: 4px;
     border-radius: 2px;
@@ -9367,34 +9375,38 @@ const loader = new THREE.TextureLoader();
     }
 
     function snapToNearest() {
-      const currentH = parseFloat(infoPanel.style.height);
+      const currentH = _rafTargetH || parseFloat(infoPanel.style.height);
       const min = SNAP.min;
       const def = SNAP.default;
       const max = SNAP.max();
-      const dragDir = currentH < resizeStartH ? -1 : 1; // -1 = swiping down (shrinking)
 
-      // Direction-biased snapping: 30% threshold in drag direction, 50% otherwise
-      if (dragDir < 0) {
-        // Swiping down — favor smaller states
-        if (snapState === "max" && currentH < max - (max - def) * 0.3) { applySnapHeight("default"); return; }
-        if ((snapState === "default" || snapState === "max") && currentH < def - (def - min) * 0.3) { applySnapHeight("min"); return; }
-      } else {
-        // Swiping up — favor larger states
-        if (snapState === "min" && currentH > min + (def - min) * 0.3) { applySnapHeight("default"); return; }
-        if ((snapState === "default" || snapState === "min") && currentH > def + (max - def) * 0.3) { applySnapHeight("max"); return; }
+      const FLICK = 0.35;
+      if (_velocity < -FLICK) {
+        if (snapState === "max") { applySnapHeight("default"); return; }
+        applySnapHeight("min"); return;
+      }
+      if (_velocity > FLICK) {
+        if (snapState === "min") { applySnapHeight("default"); return; }
+        applySnapHeight("max"); return;
       }
 
-      // Fallback: snap to nearest
+      const dragDir = currentH < resizeStartH ? -1 : 1;
+      if (dragDir < 0) {
+        if (snapState === "max" && currentH < max - (max - def) * 0.2) { applySnapHeight("default"); return; }
+        if (currentH < def - (def - min) * 0.2) { applySnapHeight("min"); return; }
+      } else {
+        if (snapState === "min" && currentH > min + (def - min) * 0.2) { applySnapHeight("default"); return; }
+        if (currentH > def + (max - def) * 0.2) { applySnapHeight("max"); return; }
+      }
+
       const states = [
         { state: "min", value: min },
         { state: "default", value: def },
         { state: "max", value: max }
       ];
-
       states.sort((a, b) =>
         Math.abs(currentH - a.value) - Math.abs(currentH - b.value)
       );
-
       applySnapHeight(states[0].state);
     }
 
@@ -9405,64 +9417,98 @@ const loader = new THREE.TextureLoader();
       arrow.classList.toggle("flipped", snapState === "max");
     }
 
+    let _rafPending = false;
+    let _rafTargetH = 0;
+    let _lastMoveTime = 0;
+    let _velocity = 0;
+
+    function _rafApplyH() {
+      _rafPending = false;
+      infoPanel.style.height = _rafTargetH + "px";
+    }
+
+    function _scheduleH(h) {
+      _rafTargetH = h;
+      if (!_rafPending) { _rafPending = true; requestAnimationFrame(_rafApplyH); }
+    }
+
+    function _startDrag(clientY, fromEl) {
+      resizeDragging = true;
+      resizeStartY = clientY;
+      resizeStartH = parseFloat(infoPanel.style.height) || SNAP.default;
+      _velocity = 0;
+      _lastMoveTime = performance.now();
+      infoPanel.classList.add("panel-dragging");
+      if (fromEl) fromEl._didDrag = false;
+    }
+
+    function _moveDrag(clientY, fromEl) {
+      if (!resizeDragging) return;
+      if (fromEl) fromEl._didDrag = true;
+      const now = performance.now();
+      const dt = now - _lastMoveTime;
+      const newH = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - clientY)));
+      if (dt > 0) {
+        const instantV = (newH - _rafTargetH) / dt;
+        _velocity = _velocity * 0.6 + instantV * 0.4;
+      }
+      _lastMoveTime = now;
+      _scheduleH(newH);
+    }
+
+    function _endDrag() {
+      if (!resizeDragging) return;
+      resizeDragging = false;
+      infoPanel.classList.remove("panel-dragging");
+      document.body.style.cursor = "";
+      snapToNearest();
+    }
+
     function attachPanelResizeHandle() {
       const handle = document.getElementById("panelResizeHandle");
       if (!handle) return;
       updateArrow();
 
-      // Click toggle (desktop + tap fallback)
       handle.addEventListener("click", e => {
         if (handle._didDrag) { handle._didDrag = false; return; }
         e.stopPropagation();
         applySnapHeight(snapState === "max" ? "default" : "max");
       });
 
-      // Touch swipe to drag-resize (mobile)
       handle.addEventListener("touchstart", e => {
         e.stopPropagation();
-        const t = e.touches[0];
-        resizeDragging = true;
-        resizeStartY = t.clientY;
-        resizeStartH = parseFloat(infoPanel.style.height) || SNAP.default;
-        handle._didDrag = false;
+        _startDrag(e.touches[0].clientY, handle);
       }, { passive: true });
+      handle.addEventListener("touchmove", e => { _moveDrag(e.touches[0].clientY, handle); }, { passive: true });
+      handle.addEventListener("touchend", _endDrag);
 
-      handle.addEventListener("touchmove", e => {
-        if (!resizeDragging) return;
-        handle._didDrag = true;
-        const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.touches[0].clientY)));
-        infoPanel.style.transition = "none";
-        infoPanel.style.height = h + "px";
-      }, { passive: true });
-
-      handle.addEventListener("touchend", () => {
-        if (!resizeDragging) return;
-        resizeDragging = false;
-        snapToNearest();
-      });
+      const header = infoPanel.querySelector(".panelHeader");
+      if (header) {
+        header.addEventListener("touchstart", e => {
+          if (e.target.closest("button, a, input, select, textarea, .closePanel")) return;
+          _startDrag(e.touches[0].clientY, handle);
+        }, { passive: true });
+        header.addEventListener("touchmove", e => {
+          if (!resizeDragging) return;
+          _moveDrag(e.touches[0].clientY, handle);
+        }, { passive: true });
+        header.addEventListener("touchend", e => {
+          if (!resizeDragging) return;
+          _endDrag();
+        });
+      }
     }
 
     window.addEventListener("mousemove", e => {
       if (!resizeDragging) return;
-      const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.clientY)));
-      infoPanel.style.height = h + "px";
+      _moveDrag(e.clientY, null);
     });
-    window.addEventListener("mouseup", () => {
-      if (!resizeDragging) return;
-      resizeDragging = false;
-      document.body.style.cursor = "";
-      snapToNearest();
-    });
+    window.addEventListener("mouseup", _endDrag);
     window.addEventListener("touchmove", e => {
       if (!resizeDragging) return;
-      const h = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - e.touches[0].clientY)));
-      infoPanel.style.height = h + "px";
+      _moveDrag(e.touches[0].clientY, null);
     }, { passive: true });
-    window.addEventListener("touchend", () => {
-      if (!resizeDragging) return;
-      resizeDragging = false;
-      snapToNearest();
-    });
+    window.addEventListener("touchend", _endDrag);
 
     // ───────────────────────────────────────────────────────────
 // CITY TIER CONFIG
@@ -27506,45 +27552,75 @@ body.ticker-active .gTickerLabel {
     document.getElementById("cdCloseBtn").addEventListener("click", (e) => { e.stopPropagation(); closeNodePanel(); });
     const _cdHandle = document.getElementById("cdResizeHandle");
     let _cdDragging = false, _cdDragY = 0, _cdDragH = 0, _cdDidDrag = false;
+    let _cdRafPending = false, _cdRafH = 0, _cdVelocity = 0, _cdLastMoveT = 0;
+
+    function _cdRafApply() { _cdRafPending = false; detailEl.style.height = _cdRafH + "px"; }
+    function _cdScheduleH(h) { _cdRafH = h; if (!_cdRafPending) { _cdRafPending = true; requestAnimationFrame(_cdRafApply); } }
+
+    function _cdStartDrag(clientY) {
+      _cdDragging = true; _cdDidDrag = false;
+      _cdDragY = clientY;
+      _cdDragH = detailEl.getBoundingClientRect().height || CD_DEFAULT_H();
+      _cdVelocity = 0; _cdLastMoveT = performance.now();
+      detailEl.classList.add("panel-dragging");
+    }
+    function _cdMoveDrag(clientY) {
+      if (!_cdDragging) return;
+      _cdDidDrag = true;
+      const now = performance.now();
+      const dt = now - _cdLastMoveT;
+      const newH = Math.max(120, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
+      if (dt > 0) { _cdVelocity = _cdVelocity * 0.6 + ((newH - _cdRafH) / dt) * 0.4; }
+      _cdLastMoveT = now;
+      _cdScheduleH(newH);
+    }
+    function _cdEndDrag() {
+      if (!_cdDragging) return;
+      _cdDragging = false;
+      detailEl.classList.remove("panel-dragging");
+      if (!_cdDidDrag) return;
+      const curH = _cdRafH || parseFloat(detailEl.style.height);
+      const defH = CD_DEFAULT_H();
+      const maxH = CD_MAX_H();
+      const FLICK = 0.35;
+      if (_cdVelocity < -FLICK) {
+        if (cdSnapState === "max") { cdApplySnap("default"); return; }
+        cdApplySnap("min"); return;
+      }
+      if (_cdVelocity > FLICK) {
+        if (cdSnapState === "min") { cdApplySnap("default"); return; }
+        cdApplySnap("max"); return;
+      }
+      const dragDir = curH < _cdDragH ? -1 : 1;
+      if (dragDir < 0) {
+        if (curH < defH * 0.75) { cdApplySnap("min"); return; }
+        if (curH < _cdDragH - (maxH - defH) * 0.2) { cdApplySnap("default"); return; }
+        cdApplySnap(cdSnapState); return;
+      } else {
+        if (curH > defH + (maxH - defH) * 0.2) { cdApplySnap("max"); return; }
+        if (curH > 120 + (defH - 120) * 0.3) { cdApplySnap("default"); return; }
+        cdApplySnap(cdSnapState);
+      }
+    }
+
     _cdHandle.addEventListener("click", (e) => {
       if (_cdDidDrag) { _cdDidDrag = false; return; }
       e.stopPropagation();
       cdApplySnap(cdSnapState === "max" ? "default" : "max");
     });
-    _cdHandle.addEventListener("touchstart", (e) => {
-      e.stopPropagation();
-      _cdDragging = true; _cdDidDrag = false;
-      _cdDragY = e.touches[0].clientY;
-      _cdDragH = detailEl.getBoundingClientRect().height || CD_DEFAULT_H();
-    }, { passive: true });
-    _cdHandle.addEventListener("touchmove", (e) => {
-      if (!_cdDragging) return;
-      _cdDidDrag = true;
-      const h = Math.max(120, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - e.touches[0].clientY)));
-      detailEl.style.transition = "none";
-      detailEl.style.height = h + "px";
-    }, { passive: true });
-    _cdHandle.addEventListener("touchend", () => {
-      if (!_cdDragging) return;
-      _cdDragging = false;
-      if (!_cdDidDrag) return;
-      // Snap to nearest state
-      const curH = parseFloat(detailEl.style.height);
-      const defH = CD_DEFAULT_H();
-      const maxH = CD_MAX_H();
-      const dragDir = curH < _cdDragH ? -1 : 1; // -1 = swiping down
-      if (dragDir < 0) {
-        // Swiping down — 30% threshold to shrink
-        if (curH < defH * 0.75) cdApplySnap("min");
-        else if (curH < _cdDragH - (maxH - defH) * 0.3) cdApplySnap("default");
-        else cdApplySnap(cdSnapState);
-      } else {
-        // Swiping up — 30% threshold to grow
-        if (curH > defH + (maxH - defH) * 0.3) cdApplySnap("max");
-        else if (curH > 120 + (defH - 120) * 0.3) cdApplySnap("default");
-        else cdApplySnap(cdSnapState);
-      }
-    });
+    _cdHandle.addEventListener("touchstart", (e) => { e.stopPropagation(); _cdStartDrag(e.touches[0].clientY); }, { passive: true });
+    _cdHandle.addEventListener("touchmove", (e) => { _cdMoveDrag(e.touches[0].clientY); }, { passive: true });
+    _cdHandle.addEventListener("touchend", _cdEndDrag);
+
+    const _cdHeaderEl = detailEl.querySelector(".cdHeader");
+    if (_cdHeaderEl) {
+      _cdHeaderEl.addEventListener("touchstart", (e) => {
+        if (e.target.closest("button, a, input, select, textarea, .cdClose")) return;
+        _cdStartDrag(e.touches[0].clientY);
+      }, { passive: true });
+      _cdHeaderEl.addEventListener("touchmove", (e) => { _cdMoveDrag(e.touches[0].clientY); }, { passive: true });
+      _cdHeaderEl.addEventListener("touchend", _cdEndDrag);
+    }
 
     const threadId = node.thread_id || node.id;
     let allArticles = [];
