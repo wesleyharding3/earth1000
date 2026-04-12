@@ -4124,9 +4124,16 @@ body.ticker-active #flowControls {
     #statsHeader {
       display: flex;
       align-items: center;
-      gap: 20px;
-      padding: max(20px, env(safe-area-inset-top, 0px)) 20px 20px;
+      justify-content: space-between;
+      gap: 8px;
+      padding: max(16px, env(safe-area-inset-top, 0px)) 20px 16px;
       flex-shrink: 0;
+    }
+    @media (min-width: 769px) {
+      #statsHeader {
+        justify-content: flex-start;
+        gap: 20px;
+      }
     }
     #statsTitle {
       font-size: 13px;
@@ -7263,7 +7270,11 @@ body.ticker-active #flowControls {
     display: flex; align-items: center; justify-content: center;
     touch-action: none;
     cursor: grab;
+    z-index: 5;
   }
+  /* Ensure close/minimize buttons sit above the full-width resize handle */
+  #infoPanel .panelHeader { z-index: 10 !important; }
+  .cdHeader { position: relative; z-index: 10; }
   #panelResizeArrow, #cdResizeArrow {
     width: 36px; height: 4px;
     border-radius: 2px;
@@ -8145,7 +8156,7 @@ window.sourceBiasBadgeHTML = function(bias) {
 
         <!-- Mode tabs -->
         <div class="kwi-mode-tabs">
-          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">Trending</button>
+          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">Trend</button>
           <button class="kwi-mode-tab" data-mode="rising" onclick="kwiSetMode('rising')">Rising</button>
           <button class="kwi-mode-tab" data-mode="graph" onclick="kwiSetMode('graph')">Graph</button>
           <button class="kwi-mode-tab" data-mode="search" onclick="kwiSetMode('search')">Search</button>
@@ -8967,7 +8978,6 @@ window.sourceBiasBadgeHTML = function(bias) {
     <div class="semHeatHeader">
       <div class="semHeatTitle">Heatmap</div>
       <div class="semHeatHeaderActions">
-        <button class="semHeatMin" id="semHeatMinBtn" title="Minimize">−</button>
         <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
       </div>
     </div>
@@ -9361,7 +9371,20 @@ const loader = new THREE.TextureLoader();
       const min = SNAP.min;
       const def = SNAP.default;
       const max = SNAP.max();
+      const dragDir = currentH < resizeStartH ? -1 : 1; // -1 = swiping down (shrinking)
 
+      // Direction-biased snapping: 30% threshold in drag direction, 50% otherwise
+      if (dragDir < 0) {
+        // Swiping down — favor smaller states
+        if (snapState === "max" && currentH < max - (max - def) * 0.3) { applySnapHeight("default"); return; }
+        if ((snapState === "default" || snapState === "max") && currentH < def - (def - min) * 0.3) { applySnapHeight("min"); return; }
+      } else {
+        // Swiping up — favor larger states
+        if (snapState === "min" && currentH > min + (def - min) * 0.3) { applySnapHeight("default"); return; }
+        if ((snapState === "default" || snapState === "min") && currentH > def + (max - def) * 0.3) { applySnapHeight("max"); return; }
+      }
+
+      // Fallback: snap to nearest
       const states = [
         { state: "min", value: min },
         { state: "default", value: def },
@@ -13393,7 +13416,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // Close
         const closeBtn = panel.querySelector(".closePanel");
-        closeBtn.addEventListener("click", () => {
+        closeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
           panel.classList.remove("maximized");
@@ -14562,7 +14586,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         viewport.addEventListener("wheel", (e) => { e.stopPropagation(); }, { passive: true });
 
         const closeBtn = panel.querySelector(".closePanel");
-        closeBtn.addEventListener("click", () => {
+        closeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
           panel.classList.remove("maximized");
@@ -17039,9 +17064,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     attachPanelResizeHandle();
     
     // Close handler
-    panel.querySelector(".closePanel").onclick = () => {
+    panel.querySelector(".closePanel").onclick = (e) => {
+      e.stopPropagation();
       if (window.closeArticleDetail) window.closeArticleDetail();
       panel.classList.remove("active");
+      panel.classList.remove("maximized");
+      snapState = "default";
+      panel.style.height = "";
+      document.body.classList.remove("panel-open");
     };
     
     // Fetch articles
@@ -17154,9 +17184,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (typeof triggerNodePanelWhoosh === "function") triggerNodePanelWhoosh(panel);
 
     // Close handler
-    panel.querySelector(".closePanel").addEventListener("click", () => {
+    panel.querySelector(".closePanel").addEventListener("click", (e) => {
+      e.stopPropagation();
       panel.classList.remove("active");
       panel.classList.remove("maximized");
+      snapState = "default";
+      panel.style.height = "";
       document.body.classList.remove("panel-open");
     });
 
@@ -22088,7 +22121,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!isDragging) return;
     isDragging = false;
     const diff = touchCurrentY - touchStartY;
-    if (diff > 100) {
+    if (diff > 50) {
       closeArticlePanel();
     }
     panel.style.transform = '';
@@ -27413,7 +27446,6 @@ body.ticker-active .gTickerLabel {
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
           </div>
-          <div class="cdMinimize" id="cdMinimizeBtn" title="Minimize panel">&#x2012;</div>
           <div class="cdClose" id="cdCloseBtn">\u2715</div>
         </div>
         <div class="cdMeta">
@@ -27472,14 +27504,6 @@ body.ticker-active .gTickerLabel {
     detailEl.classList.add("open");
 
     document.getElementById("cdCloseBtn").addEventListener("click", (e) => { e.stopPropagation(); closeNodePanel(); });
-    document.getElementById("cdMinimizeBtn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (cdSnapState === "min") {
-        cdApplySnap("default");
-      } else {
-        cdApplySnap("min");
-      }
-    });
     const _cdHandle = document.getElementById("cdResizeHandle");
     let _cdDragging = false, _cdDragY = 0, _cdDragH = 0, _cdDidDrag = false;
     _cdHandle.addEventListener("click", (e) => {
@@ -27508,9 +27532,18 @@ body.ticker-active .gTickerLabel {
       const curH = parseFloat(detailEl.style.height);
       const defH = CD_DEFAULT_H();
       const maxH = CD_MAX_H();
-      if (curH > (defH + maxH) / 2) cdApplySnap("max");
-      else if (curH < defH * 0.6) cdApplySnap("min");
-      else cdApplySnap("default");
+      const dragDir = curH < _cdDragH ? -1 : 1; // -1 = swiping down
+      if (dragDir < 0) {
+        // Swiping down — 30% threshold to shrink
+        if (curH < defH * 0.75) cdApplySnap("min");
+        else if (curH < _cdDragH - (maxH - defH) * 0.3) cdApplySnap("default");
+        else cdApplySnap(cdSnapState);
+      } else {
+        // Swiping up — 30% threshold to grow
+        if (curH > defH + (maxH - defH) * 0.3) cdApplySnap("max");
+        else if (curH > 120 + (defH - 120) * 0.3) cdApplySnap("default");
+        else cdApplySnap(cdSnapState);
+      }
     });
 
     const threadId = node.thread_id || node.id;
@@ -28845,15 +28878,6 @@ body.ticker-active .gTickerLabel {
   // on demand via /api/threads/by-country/:iso and merges them into the
   // bar list alongside articles and videos.
 
-  // ── Minimize button ────────────────────────────────────────────────────
-  const minBtn = document.getElementById('semHeatMinBtn');
-  if (minBtn) {
-    minBtn.addEventListener('click', () => {
-      const minimized = panel.classList.toggle('minimized');
-      minBtn.textContent = minimized ? '+' : '−';
-      minBtn.title       = minimized ? 'Expand' : 'Minimize';
-    });
-  }
 
   // ══════════════════════════════════════════════════════════════════════
   // Shared signal-bar-list renderer — used by the Regional Sentiment

@@ -4124,19 +4124,192 @@ body.ticker-active #flowControls {
     #statsHeader {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
-      padding: max(20px, env(safe-area-inset-top, 0px)) 20px 20px;
+      padding: max(16px, env(safe-area-inset-top, 0px)) 20px 16px;
       flex-shrink: 0;
+    }
+    @media (min-width: 769px) {
+      #statsHeader {
+        justify-content: flex-start;
+        gap: 20px;
+      }
     }
     #statsTitle {
       font-size: 13px;
       font-weight: 700;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: #4ab8ff;
-      text-shadow: 0 0 10px rgba(74,184,255,0.9), 0 0 24px rgba(74,184,255,0.55), 0 0 48px rgba(74,184,255,0.25);
       user-select: none;
+      color: transparent;
+      background: radial-gradient(
+        circle 60px at var(--shimmer-x, 50%) var(--shimmer-y, 50%),
+        #b8e4ff 0%,
+        #4ab8ff 40%,
+        rgba(74,184,255,0.55) 70%,
+        rgba(74,184,255,0.3) 100%
+      ) text;
+      -webkit-background-clip: text;
+      background-clip: text;
+      text-shadow: 0 0 10px rgba(74,184,255,0.3), 0 0 24px rgba(74,184,255,0.15);
     }
+
+    /* ── Stats View Toggle (blue pills) ── */
+    .statsViewToggle {
+      display: flex;
+      border-radius: 20px;
+      border: 1px solid rgba(74,184,255,0.18);
+      overflow: hidden;
+      flex-shrink: 0;
+      background: rgba(74,184,255,0.04);
+    }
+    .statsViewPill {
+      display: flex; align-items: center;
+      padding: 5px 14px;
+      font-size: 10px; font-weight: 700;
+      letter-spacing: 0.10em; text-transform: uppercase;
+      color: rgba(74,184,255,0.35);
+      cursor: pointer; user-select: none;
+      transition: color 0.2s, background 0.2s;
+      white-space: nowrap;
+    }
+    .statsViewPill:first-child { border-radius: 20px 0 0 20px; }
+    .statsViewPill:last-child  { border-radius: 0 20px 20px 0; }
+    .statsViewPill.active { color: rgba(140,215,255,0.95); background: rgba(74,184,255,0.10); }
+    .statsViewPill:hover:not(.active) { color: rgba(74,184,255,0.60); }
+
+    /* ── Stats panels (Sources & Globe) ── */
+    .stats-panel {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .stats-panel-scroll {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-y: auto;
+      padding-bottom: 20px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(74,184,255,0.2) transparent;
+    }
+    .stats-panel-scroll::-webkit-scrollbar { width: 5px; }
+    .stats-panel-scroll::-webkit-scrollbar-track { background: transparent; }
+    .stats-panel-scroll::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
+
+    .si-section {
+      background: #10141c;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .si-section-header {
+      padding: 12px 16px;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: rgba(74,184,255,0.7);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, transparent 100%);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .si-section-body {
+      padding: 12px 16px;
+      color: rgba(255,255,255,0.7);
+      font-size: 12px;
+    }
+    .si-rank-list { list-style: none; margin: 0; padding: 0; }
+    .si-rank-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .si-rank-item:last-child { border-bottom: none; }
+    .si-rank-num {
+      font-size: 10px; font-weight: 700; color: rgba(74,184,255,0.5);
+      width: 20px; text-align: right; flex-shrink: 0;
+    }
+    .si-rank-name { flex: 1; color: rgba(255,255,255,0.8); font-size: 12px; }
+    .si-rank-bar-wrap {
+      flex: 1; height: 4px; background: rgba(255,255,255,0.06);
+      border-radius: 2px; overflow: hidden; min-width: 60px;
+    }
+    .si-rank-bar {
+      height: 100%; border-radius: 2px;
+      background: linear-gradient(90deg, rgba(74,184,255,0.5), rgba(74,184,255,0.8));
+      transition: width 0.6s ease;
+    }
+    .si-rank-val {
+      font-size: 10px; font-weight: 600; color: rgba(74,184,255,0.7);
+      min-width: 36px; text-align: right; flex-shrink: 0;
+    }
+    .si-empty {
+      text-align: center; padding: 24px 16px;
+      color: rgba(255,255,255,0.3); font-size: 12px;
+    }
+
+    .gs-category {
+      background: #10141c;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+    }
+    .gs-category-header {
+      padding: 14px 18px;
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: rgba(74,184,255,0.8);
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, transparent 100%);
+      cursor: pointer; user-select: none;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .gs-category-header::after {
+      content: '▾'; font-size: 10px; color: rgba(74,184,255,0.4);
+      transition: transform 0.25s;
+    }
+    .gs-category.collapsed .gs-category-header::after { transform: rotate(-90deg); }
+    .gs-category.collapsed .gs-category-body { display: none; }
+    .gs-category-body { padding: 14px 18px; }
+
+    .gs-widget {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .gs-widget:last-child { margin-bottom: 0; }
+    .gs-widget-title {
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: rgba(74,184,255,0.6);
+      margin-bottom: 8px;
+    }
+    .gs-widget-value {
+      font-size: 20px; font-weight: 700;
+      color: rgba(255,255,255,0.9);
+      margin-bottom: 4px;
+    }
+    .gs-widget-sub {
+      font-size: 10px; color: rgba(255,255,255,0.35);
+    }
+    .gs-widget-chart {
+      width: 100%; height: 80px;
+      margin-top: 8px;
+    }
+    .gs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+    }
+    .gs-grid .gs-widget { margin-bottom: 0; }
+
     #statsAccentCanvas {
       flex: 0 0 auto;
       display: block;
@@ -5228,10 +5401,19 @@ body.ticker-active #flowControls {
       font-weight: 700;
       letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: #ffbe50;
-      text-shadow: 0 0 10px rgba(255,190,80,0.9), 0 0 24px rgba(255,180,60,0.55), 0 0 48px rgba(255,170,40,0.25);
       user-select: none;
       flex-shrink: 0;
+      color: transparent;
+      background: radial-gradient(
+        circle 60px at var(--shimmer-x, 50%) var(--shimmer-y, 50%),
+        #ffe8b0 0%,
+        #ffbe50 40%,
+        rgba(255,190,80,0.55) 70%,
+        rgba(255,170,40,0.3) 100%
+      ) text;
+      -webkit-background-clip: text;
+      background-clip: text;
+      text-shadow: 0 0 10px rgba(255,190,80,0.3), 0 0 24px rgba(255,180,60,0.15);
     }
 
     .nfTitleActions {
@@ -7082,6 +7264,7 @@ body.ticker-active #flowControls {
       #statsHeader {
         padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
       }
+      .statsViewPill { padding: 4px 10px; font-size: 9px; }
       .stats-row {
         padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       }
@@ -7099,7 +7282,11 @@ body.ticker-active #flowControls {
     display: flex; align-items: center; justify-content: center;
     touch-action: none;
     cursor: grab;
+    z-index: 5;
   }
+  /* Ensure close/minimize buttons sit above the full-width resize handle */
+  #infoPanel .panelHeader { z-index: 10 !important; }
+  .cdHeader { position: relative; z-index: 10; }
   #panelResizeArrow, #cdResizeArrow {
     width: 36px; height: 4px;
     border-radius: 2px;
@@ -7740,29 +7927,38 @@ window.fmtDate = function(d) {
 /* ── YouTube embed URL helper (proxied on Capacitor to avoid error 153) ── */
 window._ytEmbedUrl = function(videoId, opts) {
   opts = opts || {};
-  const _isMobile = typeof window.Capacitor !== 'undefined'
-    || window.matchMedia('(pointer: coarse)').matches
-    || window.innerWidth <= 768;
+  const isCapacitor = typeof window.Capacitor !== 'undefined';
+  const _isMobileBrowser = !isCapacitor &&
+    (window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 768);
 
-  if (_isMobile) {
-    // All mobile (Capacitor + mobile browser) goes through server proxy
-    // Proxy serves YouTube embed from proper HTTPS origin — fixes error 153
-    const API = window.__API || 'https://earth-wjr6.onrender.com';
-    const p = new URLSearchParams({ v: videoId });
-    if (opts.autoplay === false) p.set('autoplay', '0');
-    if (opts.mute === false) p.set('mute', '0');
-    if (opts.jsapi) p.set('jsapi', '1');
-    if (opts.cc) p.set('cc', '1');
-    return `${API}/api/video-embed?${p}`;
-  }
-  // Desktop browser: direct YouTube embed
+  // Build common params
   const p = new URLSearchParams({
     autoplay: opts.autoplay === false ? '0' : '1',
     mute: opts.mute === false ? '0' : '1',
     playsinline: '1', rel: '0', modestbranding: '1', controls: '1'
   });
-  if (opts.jsapi) { p.set('enablejsapi', '1'); }
-  if (opts.cc) { p.set('cc_load_policy', '1'); }
+  if (opts.jsapi) p.set('enablejsapi', '1');
+  if (opts.cc) p.set('cc_load_policy', '1');
+
+  if (isCapacitor) {
+    // Capacitor: embed YouTube directly — Capacitor now serves from https://
+    // so YouTube accepts the origin. Use youtube-nocookie for privacy.
+    p.set('origin', location.origin);
+    return `https://www.youtube-nocookie.com/embed/${videoId}?${p}`;
+  }
+
+  if (_isMobileBrowser) {
+    // Mobile browser: use server proxy for reliable playback
+    const API = window.__API || 'https://earth-wjr6.onrender.com';
+    const proxyP = new URLSearchParams({ v: videoId });
+    if (opts.autoplay === false) proxyP.set('autoplay', '0');
+    if (opts.mute === false) proxyP.set('mute', '0');
+    if (opts.jsapi) proxyP.set('jsapi', '1');
+    if (opts.cc) proxyP.set('cc', '1');
+    return `${API}/api/video-embed?${proxyP}`;
+  }
+
+  // Desktop browser: direct YouTube embed
   return `https://www.youtube-nocookie.com/embed/${videoId}?${p}`;
 };
 
@@ -7942,6 +8138,11 @@ window.sourceBiasBadgeHTML = function(bias) {
 
       <div id="statsHeader">
         <span id="statsTitle">Statistics</span>
+        <div class="statsViewToggle" id="statsViewToggle">
+          <div class="statsViewPill active" data-view="words" id="statsViewWords">Words</div>
+          <div class="statsViewPill" data-view="sources" id="statsViewSources">Sources</div>
+          <div class="statsViewPill" data-view="globe" id="statsViewGlobe">Globe</div>
+        </div>
       </div>
       <canvas id="statsAccentCanvas" aria-hidden="true"></canvas>
 
@@ -7976,7 +8177,7 @@ window.sourceBiasBadgeHTML = function(bias) {
 
         <!-- Mode tabs -->
         <div class="kwi-mode-tabs">
-          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">Trending</button>
+          <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">Trend</button>
           <button class="kwi-mode-tab" data-mode="rising" onclick="kwiSetMode('rising')">Rising</button>
           <button class="kwi-mode-tab" data-mode="graph" onclick="kwiSetMode('graph')">Graph</button>
           <button class="kwi-mode-tab" data-mode="search" onclick="kwiSetMode('search')">Search</button>
@@ -8069,6 +8270,83 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div><!-- /kwi-widget -->
 
+      <!-- ── Source Intelligence Panel ── -->
+      <div class="stats-panel" id="statsSourcesPanel" style="display:none;">
+        <div class="stats-panel-scroll">
+          <div class="si-section" id="siCountryDist">
+            <div class="si-section-header">Country Distribution</div>
+            <div class="si-section-body" id="siCountryDistBody">
+              <div class="si-empty">Loading source data…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siCountryRank">
+            <div class="si-section-header">Country Rankings — Articles / Day</div>
+            <div class="si-section-body" id="siCountryRankBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siCityRank">
+            <div class="si-section-header">City Rankings — Articles / Day</div>
+            <div class="si-section-body" id="siCityRankBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siSourceRank">
+            <div class="si-section-header">Source Rankings — Output / Day</div>
+            <div class="si-section-body" id="siSourceRankBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section" id="siSourceCountry">
+            <div class="si-section-header">Countries by Source Count</div>
+            <div class="si-section-body" id="siSourceCountryBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Globe Statistics Panel ── -->
+      <div class="stats-panel" id="statsGlobePanel" style="display:none;">
+        <div class="stats-panel-scroll">
+          <div class="gs-category" id="gsCommodities">
+            <div class="gs-category-header">Commodities &amp; Resources</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsCommoditiesGrid"></div>
+            </div>
+          </div>
+          <div class="gs-category" id="gsEconomic">
+            <div class="gs-category-header">Economic Indicators</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsEconomicGrid"></div>
+            </div>
+          </div>
+          <div class="gs-category" id="gsDemographics">
+            <div class="gs-category-header">Demographics</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsDemographicsGrid"></div>
+            </div>
+          </div>
+          <div class="gs-category" id="gsGeopolitical">
+            <div class="gs-category-header">Geopolitical</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsGeopoliticalGrid"></div>
+            </div>
+          </div>
+          <div class="gs-category" id="gsEnergy">
+            <div class="gs-category-header">Energy &amp; Environment</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsEnergyGrid"></div>
+            </div>
+          </div>
+          <div class="gs-category" id="gsUnique">
+            <div class="gs-category-header">Unique Metrics</div>
+            <div class="gs-category-body">
+              <div class="gs-grid" id="gsUniqueGrid"></div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       </div><!-- /stats-row -->
 
@@ -8714,7 +8992,6 @@ window.sourceBiasBadgeHTML = function(bias) {
     <div class="semHeatHeader">
       <div class="semHeatTitle">Heatmap</div>
       <div class="semHeatHeaderActions">
-        <button class="semHeatMin" id="semHeatMinBtn" title="Minimize">−</button>
         <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
       </div>
     </div>
@@ -9108,17 +9385,28 @@ const loader = new THREE.TextureLoader();
       const min = SNAP.min;
       const def = SNAP.default;
       const max = SNAP.max();
+      const dragDir = currentH < resizeStartH ? -1 : 1; // -1 = swiping down (shrinking)
 
+      // Direction-biased snapping: 30% threshold in drag direction, 50% otherwise
+      if (dragDir < 0) {
+        // Swiping down — favor smaller states
+        if (snapState === "max" && currentH < max - (max - def) * 0.3) { applySnapHeight("default"); return; }
+        if ((snapState === "default" || snapState === "max") && currentH < def - (def - min) * 0.3) { applySnapHeight("min"); return; }
+      } else {
+        // Swiping up — favor larger states
+        if (snapState === "min" && currentH > min + (def - min) * 0.3) { applySnapHeight("default"); return; }
+        if ((snapState === "default" || snapState === "min") && currentH > def + (max - def) * 0.3) { applySnapHeight("max"); return; }
+      }
+
+      // Fallback: snap to nearest
       const states = [
         { state: "min", value: min },
         { state: "default", value: def },
         { state: "max", value: max }
       ];
-
       states.sort((a, b) =>
         Math.abs(currentH - a.value) - Math.abs(currentH - b.value)
       );
-
       applySnapHeight(states[0].state);
     }
 
@@ -13140,7 +13428,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // Close
         const closeBtn = panel.querySelector(".closePanel");
-        closeBtn.addEventListener("click", () => {
+        closeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
           if (window.closeArticleDetail) window.closeArticleDetail();
           panel.classList.remove("active");
           panel.classList.remove("maximized");
@@ -16786,9 +17075,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     attachPanelResizeHandle();
     
     // Close handler
-    panel.querySelector(".closePanel").onclick = () => {
+    panel.querySelector(".closePanel").onclick = (e) => {
+      e.stopPropagation();
       if (window.closeArticleDetail) window.closeArticleDetail();
       panel.classList.remove("active");
+      panel.classList.remove("maximized");
+      snapState = "default";
+      panel.style.height = "";
+      document.body.classList.remove("panel-open");
     };
     
     // Fetch articles
@@ -16901,9 +17195,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (typeof triggerNodePanelWhoosh === "function") triggerNodePanelWhoosh(panel);
 
     // Close handler
-    panel.querySelector(".closePanel").addEventListener("click", () => {
+    panel.querySelector(".closePanel").addEventListener("click", (e) => {
+      e.stopPropagation();
       panel.classList.remove("active");
       panel.classList.remove("maximized");
+      snapState = "default";
+      panel.style.height = "";
       document.body.classList.remove("panel-open");
     });
 
@@ -18464,6 +18761,45 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div></div>`;
     }
     function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Title Shimmer Animation — roaming light within Statistics & News Feed titles
+    // ══════════════════════════════════════════════════════════════════
+    (function initTitleShimmers() {
+      function shimmer(el) {
+        if (!el) return;
+        let x = Math.random() * 100, y = Math.random() * 100;
+        let vx = (Math.random() - 0.5) * 0.6;
+        let vy = (Math.random() - 0.5) * 0.4;
+        let ax = 0, ay = 0;
+        const nudgeInterval = 1800 + Math.random() * 2400;
+        let lastNudge = performance.now();
+
+        function tick(now) {
+          if (now - lastNudge > nudgeInterval) {
+            ax = (Math.random() - 0.5) * 0.04;
+            ay = (Math.random() - 0.5) * 0.03;
+            lastNudge = now;
+          }
+          vx += ax; vy += ay;
+          vx *= 0.993; vy *= 0.993;
+          const speed = Math.sqrt(vx * vx + vy * vy);
+          if (speed > 0.8) { vx *= 0.8 / speed; vy *= 0.8 / speed; }
+          if (speed < 0.1) { vx += (Math.random() - 0.5) * 0.15; vy += (Math.random() - 0.5) * 0.1; }
+          x += vx; y += vy;
+          if (x < -10) { x = -10; vx = Math.abs(vx) * 0.6 + 0.1; }
+          if (x > 110) { x = 110; vx = -Math.abs(vx) * 0.6 - 0.1; }
+          if (y < -20) { y = -20; vy = Math.abs(vy) * 0.6 + 0.1; }
+          if (y > 120) { y = 120; vy = -Math.abs(vy) * 0.6 - 0.1; }
+          el.style.setProperty('--shimmer-x', x + '%');
+          el.style.setProperty('--shimmer-y', y + '%');
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      }
+      shimmer(document.getElementById('statsTitle'));
+      shimmer(document.querySelector('.nfPageTitle'));
+    })();
 
     // ══════════════════════════════════════════════════════════════════
     // Statistics Accent Line — blue interactive canvas (mirrors News Feed style)
@@ -21158,6 +21494,195 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
+// STATS VIEW TOGGLE — Words / Sources / Globe
+// ═══════════════════════════════════════════════════════════════════════════
+(function() {
+  const API = window.__API || 'https://earth-wjr6.onrender.com';
+
+  const pillWords   = document.getElementById('statsViewWords');
+  const pillSources = document.getElementById('statsViewSources');
+  const pillGlobe   = document.getElementById('statsViewGlobe');
+  const kwiWidget   = document.getElementById('kwi');
+  const srcPanel    = document.getElementById('statsSourcesPanel');
+  const glbPanel    = document.getElementById('statsGlobePanel');
+
+  let currentStatsView = 'words';
+  let sourcesLoaded = false;
+  let globeLoaded   = false;
+
+  function setStatsView(view) {
+    currentStatsView = view;
+    pillWords.classList.toggle('active', view === 'words');
+    pillSources.classList.toggle('active', view === 'sources');
+    pillGlobe.classList.toggle('active', view === 'globe');
+    kwiWidget.style.display = view === 'words' ? '' : 'none';
+    srcPanel.style.display  = view === 'sources' ? '' : 'none';
+    glbPanel.style.display  = view === 'globe' ? '' : 'none';
+    if (view === 'sources' && !sourcesLoaded) { sourcesLoaded = true; loadSourcesData(); }
+    if (view === 'globe' && !globeLoaded)     { globeLoaded = true; loadGlobeData(); }
+  }
+
+  pillWords.addEventListener('click', () => setStatsView('words'));
+  pillSources.addEventListener('click', () => setStatsView('sources'));
+  pillGlobe.addEventListener('click', () => setStatsView('globe'));
+
+  const origEnsure = window.__ensureKwiView;
+  window.__ensureKwiView = function() {
+    if (currentStatsView === 'words' && origEnsure) origEnsure();
+  };
+
+  function renderRankList(containerId, items, labelKey, valueKey, fmtVal) {
+    const body = document.getElementById(containerId);
+    if (!items || !items.length) { body.innerHTML = '<div class="si-empty">No data available</div>'; return; }
+    const max = Math.max(...items.map(d => d[valueKey] || 0));
+    const ul = document.createElement('ul');
+    ul.className = 'si-rank-list';
+    items.slice(0, 25).forEach((d, i) => {
+      const li = document.createElement('li');
+      li.className = 'si-rank-item';
+      const pct = max > 0 ? ((d[valueKey] || 0) / max * 100) : 0;
+      li.innerHTML = `
+        <span class="si-rank-num">${i + 1}</span>
+        <span class="si-rank-name">${d[labelKey] || '—'}</span>
+        <div class="si-rank-bar-wrap"><div class="si-rank-bar" style="width:${pct}%"></div></div>
+        <span class="si-rank-val">${fmtVal ? fmtVal(d[valueKey]) : (d[valueKey] || 0)}</span>`;
+      ul.appendChild(li);
+    });
+    body.innerHTML = '';
+    body.appendChild(ul);
+  }
+
+  function fmtNum(n) {
+    if (n == null) return '—';
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(Math.round(n));
+  }
+
+  async function loadSourcesData() {
+    try {
+      const res = await fetch(`${API}/api/news/sources-stats`);
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      if (data.countryDistribution) renderRankList('siCountryDistBody', data.countryDistribution, 'country', 'articles', fmtNum);
+      if (data.countryRankings) renderRankList('siCountryRankBody', data.countryRankings, 'country', 'avgPerDay', n => n?.toFixed(1) || '—');
+      if (data.cityRankings) renderRankList('siCityRankBody', data.cityRankings, 'city', 'avgPerDay', n => n?.toFixed(1) || '—');
+      if (data.sourceRankings) renderRankList('siSourceRankBody', data.sourceRankings, 'source', 'avgPerDay', n => n?.toFixed(1) || '—');
+      if (data.countriesBySourceCount) renderRankList('siSourceCountryBody', data.countriesBySourceCount, 'country', 'sourceCount', fmtNum);
+    } catch (err) {
+      console.warn('Sources stats load failed:', err);
+      ['siCountryDistBody','siCountryRankBody','siCityRankBody','siSourceRankBody','siSourceCountryBody']
+        .forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = '<div class="si-empty">Failed to load — try again later</div>'; });
+    }
+  }
+
+  document.querySelectorAll('.gs-category-header').forEach(hdr => {
+    hdr.addEventListener('click', () => hdr.parentElement.classList.toggle('collapsed'));
+  });
+
+  const GLOBE_SECTIONS = {
+    gsCommoditiesGrid: { widgets: [
+      { id: 'oil', label: 'Crude Oil', unit: '$/bbl' }, { id: 'natgas', label: 'Natural Gas', unit: '$/MMBtu' },
+      { id: 'coal', label: 'Coal', unit: '$/ton' }, { id: 'steel', label: 'Steel', unit: '$/ton' },
+      { id: 'aluminum', label: 'Aluminum', unit: '$/ton' }, { id: 'copper', label: 'Copper', unit: '$/lb' },
+      { id: 'lithium', label: 'Lithium', unit: '$/ton' }, { id: 'cobalt', label: 'Cobalt', unit: '$/ton' },
+      { id: 'rareearth', label: 'Rare Earths', unit: 'index' }, { id: 'gold', label: 'Gold', unit: '$/oz' },
+      { id: 'silver', label: 'Silver', unit: '$/oz' }, { id: 'platinum', label: 'Platinum', unit: '$/oz' },
+      { id: 'palladium', label: 'Palladium', unit: '$/oz' }, { id: 'lumber', label: 'Lumber', unit: '$/mbf' },
+      { id: 'cotton', label: 'Cotton', unit: '¢/lb' }, { id: 'rubber', label: 'Rubber', unit: '$/kg' },
+      { id: 'wheat', label: 'Wheat', unit: '$/bu' }, { id: 'corn', label: 'Corn', unit: '$/bu' },
+      { id: 'soybeans', label: 'Soybeans', unit: '$/bu' }, { id: 'coffee', label: 'Coffee', unit: '¢/lb' },
+      { id: 'cocoa', label: 'Cocoa', unit: '$/ton' },
+    ]},
+    gsEconomicGrid: { widgets: [
+      { id: 'gdp', label: 'GDP (Global)', unit: '$' }, { id: 'gdp_growth', label: 'GDP Growth', unit: '%' },
+      { id: 'inflation', label: 'Inflation / CPI', unit: '%' }, { id: 'unemployment', label: 'Unemployment', unit: '%' },
+      { id: 'trade_balance', label: 'Trade Balance', unit: '$' }, { id: 'debt_gdp', label: 'Debt-to-GDP', unit: '%' },
+      { id: 'currency', label: 'Currency Strength', unit: 'index' }, { id: 'interest', label: 'Interest Rates', unit: '%' },
+      { id: 'stock_market', label: 'Stock Markets', unit: 'index' },
+    ]},
+    gsDemographicsGrid: { widgets: [
+      { id: 'population', label: 'World Population', unit: '' }, { id: 'pop_growth', label: 'Population Growth', unit: '%/yr' },
+      { id: 'median_age', label: 'Median Age', unit: 'years' }, { id: 'life_expect', label: 'Life Expectancy', unit: 'years' },
+      { id: 'migration', label: 'Migration Flows', unit: 'net/yr' }, { id: 'internet', label: 'Internet Penetration', unit: '%' },
+    ]},
+    gsGeopoliticalGrid: { widgets: [
+      { id: 'military', label: 'Military Spending', unit: '% GDP' },
+      { id: 'trade_blocs', label: 'Trade Agreements', unit: 'active' },
+      { id: 'sanctions', label: 'Sanctions Status', unit: 'countries' },
+    ]},
+    gsEnergyGrid: { widgets: [
+      { id: 'renewable', label: 'Renewable Energy', unit: '% total' }, { id: 'co2', label: 'CO₂ Emissions', unit: 'Mt/yr' },
+      { id: 'co2_capita', label: 'CO₂ per Capita', unit: 't/yr' }, { id: 'energy_coal', label: 'Coal Share', unit: '%' },
+      { id: 'energy_gas', label: 'Natural Gas Share', unit: '%' }, { id: 'energy_nuclear', label: 'Nuclear Share', unit: '%' },
+      { id: 'energy_hydro', label: 'Hydropower Share', unit: '%' }, { id: 'energy_wind', label: 'Wind Share', unit: '%' },
+      { id: 'energy_solar', label: 'Solar Share', unit: '%' },
+    ]},
+    gsUniqueGrid: { widgets: [
+      { id: 'water_stress', label: 'Water Stress Index', unit: 'score' }, { id: 'food_import', label: 'Food Import Dependency', unit: '% cal' },
+      { id: 'rare_supply', label: 'Rare Earth Supply Chain', unit: '' }, { id: 'satellites', label: 'Satellites in Orbit', unit: 'count' },
+      { id: 'swf', label: 'Sovereign Wealth Funds', unit: '$' }, { id: 'languages', label: 'Linguistic Diversity', unit: 'languages' },
+    ]}
+  };
+
+  function loadGlobeData() {
+    for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
+      const grid = document.getElementById(gridId);
+      if (!grid) continue;
+      grid.innerHTML = '';
+      section.widgets.forEach(w => {
+        const card = document.createElement('div');
+        card.className = 'gs-widget';
+        card.id = 'gs-' + w.id;
+        card.innerHTML = `<div class="gs-widget-title">${w.label}</div><div class="gs-widget-value" style="color:rgba(255,255,255,0.2);">—</div><div class="gs-widget-sub">${w.unit}</div>`;
+        grid.appendChild(card);
+      });
+    }
+    fetchGlobeStats();
+  }
+
+  async function fetchGlobeStats() {
+    try {
+      const res = await fetch(`${API}/api/globe-stats`);
+      if (!res.ok) throw new Error(res.status);
+      const data = await res.json();
+      for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
+        section.widgets.forEach(w => {
+          const card = document.getElementById('gs-' + w.id);
+          if (!card) return;
+          const val = data[w.id];
+          if (val == null) return;
+          const valEl = card.querySelector('.gs-widget-value');
+          const subEl = card.querySelector('.gs-widget-sub');
+          if (typeof val === 'number') { valEl.style.color = ''; valEl.textContent = fmtNum(val); return; }
+          if (val.series && val.labels) {
+            const firstSeries = val.series[0];
+            const latestVal = [...firstSeries.values].reverse().find(v => v != null);
+            valEl.style.color = ''; valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
+            if (subEl) subEl.textContent = val.unit || w.unit;
+            if (val.series.length > 1) {
+              let existing = card.querySelector('.gs-series-list');
+              if (!existing) { existing = document.createElement('div'); existing.className = 'gs-series-list'; existing.style.cssText = 'margin-top:8px;font-size:10px;color:rgba(255,255,255,0.5);'; card.appendChild(existing); }
+              existing.innerHTML = val.series.map(s => {
+                const lv = [...s.values].reverse().find(v => v != null);
+                return `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);"><span>${s.name}</span><span style="color:rgba(74,184,255,0.7)">${lv != null ? fmtNum(lv) : '—'}</span></div>`;
+              }).join('');
+            }
+            return;
+          }
+          if (typeof val === 'string') { valEl.style.color = ''; valEl.textContent = val; }
+        });
+      }
+    } catch (err) { console.warn('Globe stats load failed:', err); }
+  }
+
+  window.__statsSetView = setStatsView;
+})();
+</script>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
 // ARTICLE DETAIL PANEL
 // ═══════════════════════════════════════════════════════════════════════════
 (function() {
@@ -21426,7 +21951,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!isDragging) return;
     isDragging = false;
     const diff = touchCurrentY - touchStartY;
-    if (diff > 100) {
+    if (diff > 50) {
       closeArticlePanel();
     }
     panel.style.transform = '';
@@ -26751,7 +27276,6 @@ body.ticker-active .gTickerLabel {
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
           </div>
-          <div class="cdMinimize" id="cdMinimizeBtn" title="Minimize panel">&#x2012;</div>
           <div class="cdClose" id="cdCloseBtn">\u2715</div>
         </div>
         <div class="cdMeta">
@@ -26810,14 +27334,7 @@ body.ticker-active .gTickerLabel {
     detailEl.classList.add("open");
 
     document.getElementById("cdCloseBtn").addEventListener("click", (e) => { e.stopPropagation(); closeNodePanel(); });
-    document.getElementById("cdMinimizeBtn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (cdSnapState === "min") {
-        cdApplySnap("default");
-      } else {
-        cdApplySnap("min");
-      }
-    });
+    // cdMinimizeBtn removed — redundant
     const _cdHandle = document.getElementById("cdResizeHandle");
     let _cdDragging = false, _cdDragY = 0, _cdDragH = 0, _cdDidDrag = false;
     _cdHandle.addEventListener("click", (e) => {
@@ -26846,9 +27363,18 @@ body.ticker-active .gTickerLabel {
       const curH = parseFloat(detailEl.style.height);
       const defH = CD_DEFAULT_H();
       const maxH = CD_MAX_H();
-      if (curH > (defH + maxH) / 2) cdApplySnap("max");
-      else if (curH < defH * 0.6) cdApplySnap("min");
-      else cdApplySnap("default");
+      const dragDir = curH < _cdDragH ? -1 : 1; // -1 = swiping down
+      if (dragDir < 0) {
+        // Swiping down — 30% threshold to shrink
+        if (curH < defH * 0.75) cdApplySnap("min");
+        else if (curH < _cdDragH - (maxH - defH) * 0.3) cdApplySnap("default");
+        else cdApplySnap(cdSnapState);
+      } else {
+        // Swiping up — 30% threshold to grow
+        if (curH > defH + (maxH - defH) * 0.3) cdApplySnap("max");
+        else if (curH > 120 + (defH - 120) * 0.3) cdApplySnap("default");
+        else cdApplySnap(cdSnapState);
+      }
     });
 
     const threadId = node.thread_id || node.id;
@@ -28183,15 +28709,7 @@ body.ticker-active .gTickerLabel {
   // on demand via /api/threads/by-country/:iso and merges them into the
   // bar list alongside articles and videos.
 
-  // ── Minimize button ────────────────────────────────────────────────────
-  const minBtn = document.getElementById('semHeatMinBtn');
-  if (minBtn) {
-    minBtn.addEventListener('click', () => {
-      const minimized = panel.classList.toggle('minimized');
-      minBtn.textContent = minimized ? '+' : '−';
-      minBtn.title       = minimized ? 'Expand' : 'Minimize';
-    });
-  }
+  // ── Minimize button removed ────────────────────────────────────────────
 
   // ══════════════════════════════════════════════════════════════════════
   // Shared signal-bar-list renderer — used by the Regional Sentiment

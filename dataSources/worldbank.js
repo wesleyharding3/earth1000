@@ -23,6 +23,13 @@ const CATALOG = [
   { id: 'VC.IHR.PSRC.P5',     label: 'Intentional homicides (per 100k people)', unit: 'per 100k' },
   { id: 'SM.POP.REFG',        label: 'Refugee population by country of asylum', unit: 'people' },
   { id: 'EG.IMP.CONS.ZS',     label: 'Energy imports, net (% of energy use)',   unit: '%' },
+  { id: 'NY.GDP.MKTP.KD.ZG',  label: 'GDP growth (annual %)',                  unit: '%' },
+  { id: 'SP.DYN.LE00.IN',     label: 'Life expectancy at birth (years)',        unit: 'years' },
+  { id: 'SP.POP.GROW',        label: 'Population growth (annual %)',            unit: '%' },
+  { id: 'SM.POP.NETM',        label: 'Net migration',                           unit: 'people' },
+  { id: 'IT.NET.USER.ZS',     label: 'Internet users (% of population)',        unit: '%' },
+  { id: 'GC.DOD.TOTL.GD.ZS',  label: 'Central government debt (% of GDP)',     unit: '% of GDP' },
+  { id: 'EG.FEC.RNEW.ZS',    label: 'Renewable energy consumption (%)',         unit: '%' },
 ];
 
 async function fetchOne(iso3, indicator, years) {

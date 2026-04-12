@@ -6418,6 +6418,19 @@ app.get("/api/globe-stats", async (req, res) => {
       const commodityFetches = {
         oil:       latest('fred', 'DCOILWTICO'),
         natgas:    latest('eia', 'NG.RNGWHHD.D'),
+        coal:      latest('fred', 'PCOALAUUSDM'),
+        gold:      latest('fred', 'GOLDAMGBD228NLBM'),
+        silver:    latest('fred', 'PSILVERUSDM'),
+        platinum:  latest('fred', 'PPLATINUSDM'),
+        copper:    latest('fred', 'PCOPPUSDM'),
+        aluminum:  latest('fred', 'PALUMUSDM'),
+        wheat:     latest('fred', 'PWHEAMTUSDM'),
+        corn:      latest('fred', 'PCOREUSDM'),
+        soybeans:  latest('fred', 'PSOYBUSDM'),
+        coffee:    latest('fred', 'PCOFFOTMUSDM'),
+        cocoa:     latest('fred', 'PCOCOAUSDM'),
+        cotton:    latest('fred', 'PCOTTUSDM'),
+        lumber:    latest('fred', 'WPU101'),
       };
 
       // ── Economic (World Bank — global aggregates) ──
@@ -6435,12 +6448,16 @@ app.get("/api/globe-stats", async (req, res) => {
       // ── Demographics (World Bank) ──
       const demoFetches = {
         population:  latest('worldbank', 'SP.POP.TOTL', { countries: ['World'], years: recentYears }),
+        pop_growth:  latest('worldbank', 'SP.POP.GROW', { countries: ['World'], years: recentYears }),
         life_expect: latest('worldbank', 'SP.DYN.LE00.IN', { countries: ['World'], years: recentYears }),
+        internet:    latest('worldbank', 'IT.NET.USER.ZS', { countries: ['World'], years: recentYears }),
+        migration:   wbTopCountries('SM.POP.NETM', ['United States', 'Germany', 'Turkey', 'Russia', 'United Kingdom', 'Canada'], recentYears),
       };
 
-      // ── Energy (World Bank + EIA) ──
+      // ── Energy (World Bank) ──
       const energyFetches = {
-        co2_capita: latest('worldbank', 'EN.ATM.CO2E.PC', { countries: ['World'], years: recentYears }),
+        co2_capita:  latest('worldbank', 'EN.ATM.CO2E.PC', { countries: ['World'], years: recentYears }),
+        renewable:   latest('worldbank', 'EG.FEC.RNEW.ZS', { countries: ['World'], years: recentYears }),
       };
 
       // ── Military (World Bank) ──

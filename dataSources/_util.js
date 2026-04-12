@@ -40,6 +40,7 @@ async function fetchText(url, opts = {}) {
 // ISO-3 country code lookup for the World Bank / Comtrade APIs.
 // Small curated list — covers ~all major world powers and hotspots.
 const ISO3 = {
+  'world':'WLD','global':'WLD',
   'united states':'USA','usa':'USA','us':'USA','america':'USA',
   'china':'CHN','japan':'JPN','south korea':'KOR','korea':'KOR','north korea':'PRK',
   'india':'IND','pakistan':'PAK','bangladesh':'BGD','sri lanka':'LKA','nepal':'NPL','afghanistan':'AFG',

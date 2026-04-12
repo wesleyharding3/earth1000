@@ -15,6 +15,20 @@ const CATALOG = [
   { id: 'DEXCHUS',    label: 'Yuan / US$ exchange rate',                      unit: 'CNY per US$' },
   { id: 'PAYEMS',     label: 'US nonfarm payrolls',                           unit: 'thousands' },
   { id: 'GFDEBTN',    label: 'US federal debt (total public)',                unit: 'million US$' },
+  { id: 'GOLDAMGBD228NLBM', label: 'Gold spot price (London)',              unit: 'US$/troy oz' },
+  { id: 'DCOILBRENTEU',     label: 'Brent crude oil spot',                  unit: 'US$/barrel' },
+  { id: 'PCOPPUSDM',        label: 'Copper price (global)',                  unit: 'US$/lb' },
+  { id: 'PALUMUSDM',        label: 'Aluminum price (global)',                unit: 'US$/metric ton' },
+  { id: 'PCOALAUUSDM',      label: 'Coal price (Australian)',                unit: 'US$/metric ton' },
+  { id: 'PWHEAMTUSDM',      label: 'Wheat price (global)',                   unit: 'US$/metric ton' },
+  { id: 'PCOREUSDM',        label: 'Corn price (global)',                    unit: 'US$/metric ton' },
+  { id: 'PCOFFOTMUSDM',     label: 'Coffee price (global)',                  unit: 'US¢/lb' },
+  { id: 'PCOCOAUSDM',       label: 'Cocoa price (global)',                   unit: 'US$/metric ton' },
+  { id: 'PCOTTUSDM',        label: 'Cotton price (global)',                  unit: 'US¢/lb' },
+  { id: 'PSOYBUSDM',        label: 'Soybean price (global)',                 unit: 'US$/metric ton' },
+  { id: 'PSILVERUSDM',      label: 'Silver price (global)',                  unit: 'US$/troy oz' },
+  { id: 'PPLATINUSDM',      label: 'Platinum price (global)',                unit: 'US$/troy oz' },
+  { id: 'WPU101',           label: 'Lumber PPI',                             unit: 'index' },
 ];
 
 async function fetch(query) {
