@@ -19059,6 +19059,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (idx === 2 && typeof window.__ensureNewsView === 'function') {
         window.__ensureNewsView();
       }
+      // When arriving at the stats page, ensure KWI trending has loaded
+      if (idx === 0 && typeof window.__ensureKwiView === 'function') {
+        window.__ensureKwiView();
+      }
     }
 
     dots.forEach(dot => {
@@ -20756,10 +20760,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
   }
 
-  // Initialize with trending keywords on page load
-  requestAnimationFrame(() => {
-    if (kwiMode === 'trending') kwiLoadTrending();
-  });
+  // Pre-fetch trending data in background after app starts
+  let _kwiInitialLoadDone = false;
+  setTimeout(() => {
+    if (kwiMode === 'trending') {
+      kwiLoadTrending().then(() => { _kwiInitialLoadDone = true; }).catch(() => {});
+    }
+  }, 1500); // slight delay to let critical bootstrap finish first
+
+  // Called when user navigates to stats page — re-trigger if list is empty
+  window.__ensureKwiView = function() {
+    const list = document.getElementById('kwiTrendingList');
+    if (!_kwiInitialLoadDone || (list && !list.children.length)) {
+      if (kwiMode === 'trending') kwiLoadTrending().then(() => { _kwiInitialLoadDone = true; }).catch(() => {});
+      else if (kwiMode === 'rising') kwiLoadRising();
+    }
+  };
 
   async function kwiLoad() {
     if (!kwiKeyword) return;
@@ -22651,7 +22667,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _showPayPalUnavailable('Subscription plan is not configured yet.');
       return;
     }
-    container.innerHTML = `<button class="pricingTierCta active" type="button">Continue with PayPal</button>`;
+    const _isMobilePricing = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600;
+    const _ctaLabel = _isMobilePricing ? 'Get Started' : 'Continue with PayPal';
+    container.innerHTML = `<button class="pricingTierCta active" type="button">${_ctaLabel}</button>`;
     container.querySelector('button')?.addEventListener('click', () => {
       if (!window.__authToken) {
         window.__openAuthModal?.();

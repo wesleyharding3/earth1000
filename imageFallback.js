@@ -10,6 +10,46 @@
 
 const WIKI_API = 'https://commons.wikimedia.org/w/api.php';
 
+/* ── In-memory cache ── */
+const _fallbackCache = new Map();   // query -> url|null
+const CACHE_TTL = 30 * 60 * 1000;  // 30 min
+const MAX_CACHE = 500;
+
+function _cacheGet(key) {
+  const entry = _fallbackCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.ts > CACHE_TTL) { _fallbackCache.delete(key); return undefined; }
+  return entry.val;
+}
+function _cacheSet(key, val) {
+  if (_fallbackCache.size >= MAX_CACHE) {
+    // evict oldest
+    const oldest = _fallbackCache.keys().next().value;
+    _fallbackCache.delete(oldest);
+  }
+  _fallbackCache.set(key, { val, ts: Date.now() });
+}
+
+/* ── Concurrency limiter ── */
+let _activeRequests = 0;
+const MAX_CONCURRENT = 3;
+const _queue = [];
+
+function _acquireSlot() {
+  if (_activeRequests < MAX_CONCURRENT) {
+    _activeRequests++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => _queue.push(resolve));
+}
+function _releaseSlot() {
+  _activeRequests--;
+  if (_queue.length > 0) {
+    _activeRequests++;
+    _queue.shift()();
+  }
+}
+
 /**
  * Build a search query from thread/timeline metadata.
  * Prioritises geographic + topic keywords for relevance.
@@ -110,12 +150,28 @@ async function findFallbackImage(item) {
   );
   if (!query.trim()) return null;
 
-  const results = await searchWikimediaCommons(query, 5);
-  if (!results.length) return null;
+  // Check cache first
+  const cached = _cacheGet(query);
+  if (cached !== undefined) return cached;
 
-  // Prefer landscape images (better for cards)
-  const landscape = results.filter(r => r.width > r.height);
-  return (landscape[0] || results[0]).url;
+  // Acquire concurrency slot
+  await _acquireSlot();
+  try {
+    // Double-check cache (another request may have filled it while we waited)
+    const cached2 = _cacheGet(query);
+    if (cached2 !== undefined) return cached2;
+
+    const results = await searchWikimediaCommons(query, 5);
+    if (!results.length) { _cacheSet(query, null); return null; }
+
+    // Prefer landscape images (better for cards)
+    const landscape = results.filter(r => r.width > r.height);
+    const url = (landscape[0] || results[0]).url;
+    _cacheSet(query, url);
+    return url;
+  } finally {
+    _releaseSlot();
+  }
 }
 
 module.exports = { findFallbackImage, searchWikimediaCommons, buildSearchQuery };

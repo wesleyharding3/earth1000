@@ -3401,14 +3401,19 @@ app.get("/api/timelines/latest", async (req, res) => {
           hero_iso_code: subjectIso || h?.hero_iso_code || null
         };
       });
-      // Fallback image search for items missing hero images
-      await Promise.all(mapped.map(async (t) => {
-        if (t.hero_image_url || t.hero_catalog_image_url) return;
-        try {
-          const url = await findFallbackImage(t);
-          if (url) t.hero_image_url = url;
-        } catch (e) { /* silent */ }
-      }));
+      // Fallback image search for items missing hero images (capped + timeout)
+      const _noImgTl = mapped.filter(t => !t.hero_image_url && !t.hero_catalog_image_url).slice(0, 10);
+      if (_noImgTl.length) {
+        await Promise.race([
+          Promise.all(_noImgTl.map(async (t) => {
+            try {
+              const url = await findFallbackImage(t);
+              if (url) t.hero_image_url = url;
+            } catch (e) { /* silent */ }
+          })),
+          new Promise(r => setTimeout(r, 6000))
+        ]);
+      }
       // Apply title-based country boost reranking
       mapped.forEach(t => { t._titleBoost = getTitleCountryBoost(t); });
       mapped.sort((a, b) => {
@@ -4191,14 +4196,19 @@ app.get("/api/threads/latest", async (req, res) => {
       };
     });
 
-    // Fallback image search for items missing hero images
-    await Promise.all(result.map(async (t) => {
-      if (t.hero_image_url) return;
-      try {
-        const url = await findFallbackImage(t);
-        if (url) t.hero_image_url = url;
-      } catch (e) { /* silent */ }
-    }));
+    // Fallback image search for items missing hero images (capped + timeout)
+    const _noImg = result.filter(t => !t.hero_image_url).slice(0, 10);
+    if (_noImg.length) {
+      await Promise.race([
+        Promise.all(_noImg.map(async (t) => {
+          try {
+            const url = await findFallbackImage(t);
+            if (url) t.hero_image_url = url;
+          } catch (e) { /* silent */ }
+        })),
+        new Promise(r => setTimeout(r, 6000))  // 6s max for fallback batch
+      ]);
+    }
 
     // Apply title-based country boost reranking
     result.forEach(t => { t._titleBoost = getTitleCountryBoost(t); });
