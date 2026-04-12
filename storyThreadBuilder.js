@@ -28,6 +28,16 @@ const { deepAnalyzeArticle } = require("./deepAnalyzer");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// Detect garbled/mojibake text (e.g. Cyrillic stored as Latin-1)
+function isGarbledText(str) {
+  if (!str) return false;
+  // Contains Unicode replacement characters
+  if (str.includes('\uFFFD')) return true;
+  // High ratio of non-ASCII non-letter characters suggests encoding corruption
+  const nonPrintable = str.replace(/[\x20-\x7E\u00A0-\u024F\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3000-\u303F\uAC00-\uD7AF\u0E00-\u0E7F]/g, '');
+  return nonPrintable.length > str.length * 0.3;
+}
+
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
 const CLAUDE_BATCH    = 30;    // articles per Claude call
 const MIN_CLUSTER     = 2;     // min articles to form a cluster (Claude sees singletons too)
@@ -206,9 +216,11 @@ function chunkSingletons(singletons, size) {
 // ─── Claude Evaluation ────────────────────────────────────────────────────────
 
 async function evaluateWithClaude(articles, existingThreads) {
-  const articleData = articles.map(a => ({
+  const articleData = articles
+    .filter(a => !isGarbledText(a.translated_title || a.title))
+    .map(a => ({
     id:           a.id,
-    title:        a.title,
+    title:        a.translated_title || a.title,
     summary:      (a.translated_summary || a.summary || "").slice(0, 250),
     keywords:     (a.keywords || []).slice(0, 12),
     country:      a.country_name || null,
@@ -824,9 +836,9 @@ ${JSON.stringify({
 }, null, 2)}
 
 MOST RECENT ARTICLES:
-${JSON.stringify(thread.articles.map(a => ({
+${JSON.stringify(thread.articles.filter(a => !isGarbledText(a.translated_title || a.title)).map(a => ({
   id: a.id,
-  title: a.title,
+  title: a.translated_title || a.title,
   summary: (a.translated_summary || a.summary || "").slice(0, 250),
   published_at: a.published_at,
   source: a.source_name || null,
@@ -1068,7 +1080,7 @@ async function getUnthreadedArticles(hours) {
     const { rows: baseRows } = await client.query(`
     WITH ranked AS (
       SELECT
-        a.id, a.title, a.summary, a.translated_summary,
+        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
         co.name AS country_name,
@@ -1089,7 +1101,7 @@ async function getUnthreadedArticles(hours) {
         AND sta.article_id IS NULL
     ),
     fresh AS (
-      SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
+      SELECT id, title, translated_title, summary, translated_summary, published_at, source_name, country_name, city_name
       FROM ranked
       WHERE source_rank <= 5
         AND published_at > NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
@@ -1097,7 +1109,7 @@ async function getUnthreadedArticles(hours) {
       LIMIT ${FRESH_PRIORITY_LIMIT}
     ),
     backlog AS (
-      SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
+      SELECT id, title, translated_title, summary, translated_summary, published_at, source_name, country_name, city_name
       FROM ranked
       WHERE source_rank <= 5
         AND published_at <= NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
