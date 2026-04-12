@@ -5378,7 +5378,8 @@ app.get("/api/keywords/trending", async (req, res) => {
       return result.rows;
     });
 
-    _sendWithPrefetchRefs(req, res, rows, "[keywords/trending]");
+    // Non-cached path: return keywords without prefetch (cron handles prefetch)
+    res.json(rows);
   } catch (err) {
     console.error("[keywords/trending]", err.message);
     res.status(500).json({ error: "trending failed" });
@@ -5493,7 +5494,8 @@ app.get("/api/keywords/rising", async (req, res) => {
 
     const filtered = rows.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
 
-    _sendWithPrefetchRefs(req, res, filtered, "[keywords/rising]");
+    // Non-cached path: return keywords without prefetch (cron handles prefetch)
+    res.json(filtered);
   } catch (err) {
     console.error("[keywords/rising]", err.message);
     res.status(500).json({ error: "rising failed" });

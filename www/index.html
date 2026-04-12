@@ -12778,6 +12778,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           else { el.src = flagUrl; }
         }
 
+        // Global handler for broken thread/timeline card images
+        window._threadImgFail = function(el) {
+          el.style.display = 'none';
+          if (el.parentElement) {
+            const ph = document.createElement('div');
+            ph.className = 'nfThreadCardImgPh';
+            ph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg>';
+            el.parentElement.insertBefore(ph, el);
+          }
+        };
+
         window.sourceBiasBadgeHTML = window.sourceBiasBadgeHTML || function sourceBiasBadgeHTML(bias) {
           const raw = String(bias || 'unknown').toLowerCase();
           const normalized = ['left','center_left','center','center_right','right','state','unknown'].includes(raw)
@@ -18157,11 +18168,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const fallbackChain = [scraped, catalogRaw, flag].filter(Boolean);
         const src = fallbackChain[0] || '';
         const nextFallbacks = fallbackChain.slice(1);
-        const _fbFn = nextFallbacks.length
-          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';el.parentElement.insertAdjacentHTML('afterbegin','<div class=nfThreadCardImgPh><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.5&quot;><circle cx=&quot;5&quot; cy=&quot;8&quot; r=&quot;2.5&quot;/><circle cx=&quot;11&quot; cy=&quot;5&quot; r=&quot;2&quot;/><circle cx=&quot;11&quot; cy=&quot;11&quot; r=&quot;2&quot;/><path d=&quot;M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5&quot;/></svg></div>');}})(this)`
-          : `this.style.display='none';this.parentElement.insertAdjacentHTML('afterbegin','<div class=nfThreadCardImgPh><svg viewBox=&quot;0 0 24 24&quot; fill=&quot;none&quot; stroke=&quot;currentColor&quot; stroke-width=&quot;1.5&quot;><circle cx=&quot;5&quot; cy=&quot;8&quot; r=&quot;2.5&quot;/><circle cx=&quot;11&quot; cy=&quot;5&quot; r=&quot;2&quot;/><circle cx=&quot;11&quot; cy=&quot;11&quot; r=&quot;2&quot;/><path d=&quot;M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5&quot;/></svg></div>')`;
-        const onErr = _fbFn;
-        const onLoad = `if(this.naturalWidth<10||this.naturalHeight<10){${_fbFn}}`;
+        const onErr = nextFallbacks.length
+          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{window._threadImgFail(el);}})(this)`
+          : `window._threadImgFail(this)`;
+        const onLoad = `if(this.naturalWidth<10||this.naturalHeight<10){window._threadImgFail(this)}`;
         const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 3) : [];
         const title = esc(t.title || 'Untitled thread');
         const geoNames = _resolveGeoScope(t.geographic_scope);
@@ -22237,9 +22247,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       clearAuthUI();
     } else {
       // Session is null but localStorage still has tokens — transient
-      // network failure during token refresh. Keep the UI as-is so the
-      // user doesn't flash to logged-out state on every slow reload.
+      // network failure during token refresh. Keep the UI as-is and
+      // restore the access token so API calls still work.
       console.warn('[auth] session null but persisted tokens exist — keeping UI');
+      try {
+        const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.access_token) window.__authToken = parsed.access_token;
+          if (parsed?.user) updateAccountUI(parsed.user);
+        }
+      } catch (_) {}
     }
   }
 
@@ -22252,17 +22270,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try {
       const { data, error } = await sb.auth.getSession();
       if (error) throw error;
-      await applySession(data?.session || null, 'INITIAL_SESSION');
-    } catch (err) {
-      console.warn('[auth] initial session load failed:', err.message);
-      // Network error on refresh — if tokens exist, keep UI logged in
-      if (hasPersistedSession()) {
-        console.warn('[auth] keeping UI logged in — persisted tokens exist');
-        // Try to parse user info from stored token for UI
+
+      if (data?.session) {
+        await applySession(data.session, 'INITIAL_SESSION');
+      } else if (hasPersistedSession()) {
+        // getSession returned null but we have stored tokens — try manual refresh
+        console.warn('[auth] getSession returned null, attempting manual refresh');
         try {
           const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
+            if (parsed?.refresh_token) {
+              const { data: refreshData, error: refreshErr } = await sb.auth.refreshSession({
+                refresh_token: parsed.refresh_token
+              });
+              if (!refreshErr && refreshData?.session) {
+                console.log('[auth] manual refresh succeeded');
+                await applySession(refreshData.session, 'INITIAL_SESSION');
+                return;
+              }
+            }
+            // Refresh failed but tokens exist — keep UI logged in with stored data
+            if (parsed?.access_token) window.__authToken = parsed.access_token;
+            if (parsed?.user) updateAccountUI(parsed.user);
+          }
+        } catch (_) {}
+      } else {
+        await applySession(null, 'INITIAL_SESSION');
+      }
+    } catch (err) {
+      console.warn('[auth] initial session load failed:', err.message);
+      if (hasPersistedSession()) {
+        console.warn('[auth] keeping UI logged in — persisted tokens exist');
+        try {
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed?.access_token) window.__authToken = parsed.access_token;
             if (parsed?.user) updateAccountUI(parsed.user);
           }
         } catch (_) {}
