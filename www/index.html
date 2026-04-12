@@ -20170,7 +20170,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         url += `&about_country=${kwiLocationCountry.iso}`;
       }
 
-      const res = await fetch(url);
+      const _risingSig = AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined;
+      const res = await fetch(url, { signal: _risingSig });
       const risingPayload = await res.json();
       let rising;
       if (risingPayload && risingPayload.keywords) {
@@ -20183,10 +20184,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
 
       renderRisingList(rising);
-      document.getElementById('kwiFooterText').textContent = 
+      document.getElementById('kwiFooterText').textContent =
         `Rapidly rising · last 3 days vs. baseline`;
     } catch (err) {
-      if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
+      if (err.name === 'AbortError' || requestId !== kwiListRequestId || kwiMode !== 'rising') return;
       console.warn('[kwi] rising load error:', err.message);
       document.getElementById('kwiTrendingList').innerHTML = 
         '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">No rising keywords found</div>';
@@ -20456,9 +20457,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         risingUrl += `&about_country=${kwiLocationCountry.iso}`;
       }
 
+      const _trendSig = AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined;
       const [trendingRes, risingRes] = await Promise.all([
-        fetch(trendingUrl),
-        fetch(risingUrl)
+        fetch(trendingUrl, { signal: _trendSig }),
+        fetch(risingUrl, { signal: _trendSig })
       ]);
       const trendingPayload = await trendingRes.json();
       // Handle prefetched refs: response is { keywords, refs } when prefetch_refs > 0
@@ -20479,9 +20481,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       document.getElementById('kwiFooterText').textContent = 
         `${locationLabel} · last ${kwiDays} days`;
     } catch (err) {
-      if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
+      if (err.name === 'AbortError' || requestId !== kwiListRequestId || kwiMode !== 'trending') return;
       console.warn('[kwi] trending load error:', err.message);
-      document.getElementById('kwiTrendingList').innerHTML = 
+      document.getElementById('kwiTrendingList').innerHTML =
         '<div style="color:rgba(255,255,255,0.4);padding:20px;text-align:center;">Failed to load trends</div>';
     } finally {
       if (requestId === kwiListRequestId && kwiMode === 'trending') kwiSetLoading(false);
