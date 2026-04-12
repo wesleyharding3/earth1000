@@ -563,7 +563,7 @@
     /* Panel resize handle */
 #panelResizeHandle {
   position: absolute;
-  top: -14px;
+  top: 0px;
   left: 50%;
   transform: translateX(-50%);
   width: auto;
@@ -586,15 +586,15 @@
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: none;
-  border: none;
-  transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
-  color: rgba(255,255,255,0.85);
-  filter: drop-shadow(0 0 6px rgba(255,255,255,0.5)) drop-shadow(0 0 14px rgba(255,255,255,0.25));
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  transition: background 0.2s, border-color 0.2s, transform 0.35s cubic-bezier(0.32,0.72,0,1);
+  color: rgba(255,255,255,0.45);
 }
 #panelResizeHandle:hover #panelResizeArrow {
-  color: #fff;
-  filter: drop-shadow(0 0 8px rgba(255,255,255,0.7)) drop-shadow(0 0 20px rgba(255,255,255,0.4));
+  background: rgba(255,255,255,0.12);
+  border-color: rgba(255,255,255,0.28);
+  color: rgba(255,255,255,0.9);
 }
 #panelResizeArrow svg {
   width: 12px; height: 12px;
@@ -4105,12 +4105,12 @@ body.ticker-active #flowControls {
     .stats-row {
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 8px;
       width: 100%;
       flex: 1 1 0;
       min-height: 0;
       overflow: hidden;
-      padding: 8px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      padding: 4px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       box-sizing: border-box;
     }
     .stats-row > * {
@@ -4212,7 +4212,7 @@ body.ticker-active #flowControls {
     }
     #cdResizeHandle {
       position: absolute;
-      top: 10px;
+      top: 0px;
       left: 50%;
       transform: translateX(-50%);
       width: auto;
@@ -6837,18 +6837,20 @@ body.ticker-active #flowControls {
       /* ── Remove mid-right mobile zoom/recenter controls ── */
       #globeNavControls { display: none !important; }
 
-      /* ── Pricing / auth modals — compact for mobile viewport ── */
-      #pricingCard  { padding: 18px 14px 14px; }
+      /* ── Pricing / auth modals — fit single mobile viewport ── */
+      #pricingCard  { padding: 12px 10px 10px; overflow-y: hidden; }
       #authCard     { padding: 28px 20px 22px; }
-      .pricingTitle { font-size: 17px; margin-bottom: 2px; }
-      .pricingSubtitle { font-size: 12px; margin-bottom: 10px; }
-      .pricingTierCard { padding: 10px 12px 10px; border-radius: 12px; }
-      .pricingTierName { font-size: 10px; margin-bottom: 4px; }
-      .pricingTierPrice { font-size: 22px; }
-      .pricingTierFeatures { margin: 6px 0 8px; gap: 3px; }
-      .pricingTierFeatures li { font-size: 11px; }
-      .pricingTierCta { padding: 8px; font-size: 12px; }
-      .pricingNote { margin-top: 10px; font-size: 10px; }
+      .pricingTitle { font-size: 15px; margin-bottom: 0; }
+      .pricingSubtitle { font-size: 11px; margin-bottom: 6px; }
+      .pricingTiers { gap: 6px; }
+      .pricingTierCard { padding: 8px 10px 8px; border-radius: 10px; flex-direction: row; align-items: center; gap: 8px; }
+      .pricingTierName { font-size: 9px; margin-bottom: 0; letter-spacing: 1px; }
+      .pricingTierPrice { font-size: 18px; }
+      .pricingTierPrice span { font-size: 11px; }
+      .pricingTierFeatures { display: none; }
+      .pricingTierCta { padding: 7px 12px; font-size: 11px; width: auto; flex-shrink: 0; }
+      .pricingNote { margin-top: 6px; font-size: 9px; }
+      #pricingClose { top: 8px; right: 10px; font-size: 16px; }
 
       /* ── News feed — single column on very narrow ── */
       #nfGrid { grid-template-columns: 1fr; gap: 12px; }
@@ -7072,10 +7074,10 @@ body.ticker-active #flowControls {
 
       /* ── Stats page — safe area insets for top bar & bottom nav ── */
       #statsHeader {
-        padding-top: calc(env(safe-area-inset-top, 0px) + 20px);
+        padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
       }
       .stats-row {
-        padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 20px);
+        padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       }
     }
 
@@ -20162,15 +20164,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
     kwiSetLoading(true);
     
     try {
-      let url = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=100`;
+      let url = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=100&prefetch_refs=50`;
       if (kwiLocationCountry) {
         url += `&about_country=${kwiLocationCountry.iso}`;
       }
-      
+
       const res = await fetch(url);
-      const rising = normalizeArrayPayload(await res.json());
+      const risingPayload = await res.json();
+      let rising;
+      if (risingPayload && risingPayload.keywords) {
+        rising = normalizeArrayPayload(risingPayload.keywords);
+        // Merge refs into existing prefetch cache
+        Object.assign(_kwiPrefetchedRefs, risingPayload.refs || {});
+      } else {
+        rising = normalizeArrayPayload(risingPayload);
+      }
       if (requestId !== kwiListRequestId || kwiMode !== 'rising') return;
-      
+
       renderRisingList(rising);
       document.getElementById('kwiFooterText').textContent = 
         `Rapidly rising · last 3 days vs. baseline`;
@@ -20239,6 +20249,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // Click on a trending keyword row toggles an inline expandable
   // interpanel with a 30-day sparkline + scrollable article cards.
   let _kwiOpenRefKeyword = null;
+  let _kwiPrefetchedRefs = {}; // { keyword_lower: [articles] } from trending prefetch
   let _kwiExpandEl = null; // currently expanded article card overlay
 
   function _kwiDrawSparkline(canvas, series) {
@@ -20309,6 +20320,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _kwiExpandEl = el;
   }
 
+  function _kwiRenderInterpanel(panel, keyword, series, articles) {
+    panel.innerHTML = '';
+
+    // Sparkline section
+    const sparkSection = document.createElement('div');
+    sparkSection.className = 'kwi-ref-spark';
+    sparkSection.innerHTML = `<div class="kwi-ref-spark-label">30-day mentions</div>`;
+    const sparkCanvas = document.createElement('canvas');
+    sparkSection.appendChild(sparkCanvas);
+    panel.appendChild(sparkSection);
+
+    // Draw sparkline after DOM insertion (may be empty if prefetched — updated later)
+    if (series.length) requestAnimationFrame(() => _kwiDrawSparkline(sparkCanvas, series));
+
+    // Articles section
+    if (!articles.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:11px;';
+      empty.textContent = 'No recent articles found.';
+      panel.appendChild(empty);
+      return;
+    }
+
+    const listEl = document.createElement('div');
+    listEl.className = 'kwi-ref-articles';
+
+    articles.forEach(a => {
+      const card = document.createElement('div');
+      card.className = 'kwi-ref-card';
+      const imgSrc = a.image_url || '';
+      const title = a.title || a.original_title || 'Untitled';
+      const source = a.source_name || '';
+      const date = a.published_at ? new Date(a.published_at).toLocaleDateString() : '';
+      card.innerHTML =
+        (imgSrc ? `<img class="kwi-ref-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.style.display='none'"/>` : `<div class="kwi-ref-card-img" style="background:rgba(255,255,255,0.04);"></div>`) +
+        `<div class="kwi-ref-card-body">` +
+          `<div class="kwi-ref-card-title">${title}</div>` +
+          `<div class="kwi-ref-card-meta">${source}${date ? ' · ' + date : ''}</div>` +
+        `</div>`;
+      card.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _kwiShowExpand(a, panel);
+      });
+      listEl.appendChild(card);
+    });
+
+    panel.appendChild(listEl);
+  }
+
   window.kwiTrendingClick = function(keyword, evt) {
     if (evt) evt.stopPropagation();
     const row = evt && evt.currentTarget;
@@ -20335,69 +20395,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const panel = document.createElement('div');
     panel.className = 'kwi-ref-interpanel';
-    panel.innerHTML = `<div class="kwi-ref-dots"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>`;
     row.insertAdjacentElement('afterend', panel);
 
     const API = window.__API || 'https://earth-wjr6.onrender.com';
     const enc = encodeURIComponent(keyword);
+    const kwLower = keyword.toLowerCase();
 
-    // Fetch trend + articles in parallel
+    // Check if we have prefetched articles for this keyword
+    const prefetched = _kwiPrefetchedRefs[kwLower];
+    if (prefetched) {
+      // Instant render — only fetch trend sparkline in background
+      const articles = prefetched.slice(0, 20);
+      _kwiRenderInterpanel(panel, keyword, [], articles);
+      // Fetch sparkline in background and update
+      fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`)
+        .then(r => r.ok ? r.json() : [])
+        .then(trendRaw => {
+          if (_kwiOpenRefKeyword !== keyword) return;
+          const series = normalizeTrendSeries(trendRaw);
+          const sparkEl = panel.querySelector('.kwi-ref-spark canvas');
+          if (sparkEl && series.length) _kwiDrawSparkline(sparkEl, series);
+        }).catch(() => {});
+      return;
+    }
+
+    // No prefetch — show loading dots and fetch both
+    panel.innerHTML = `<div class="kwi-ref-dots"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>`;
+
     const _sig = AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined;
     Promise.all([
       fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`, { signal: _sig }).then(r => r.ok ? r.json() : []),
       fetch(`${API}/api/keywords/${enc}/references?limit=20&days=14`, { signal: _sig }).then(r => r.ok ? r.json() : { articles: [] })
     ]).then(([trendRaw, refData]) => {
       if (_kwiOpenRefKeyword !== keyword) return;
-
       const series = normalizeTrendSeries(trendRaw);
       const articles = (Array.isArray(refData.articles) ? refData.articles : []).slice(0, 20);
-
-      panel.innerHTML = '';
-
-      // Sparkline section
-      const sparkSection = document.createElement('div');
-      sparkSection.className = 'kwi-ref-spark';
-      sparkSection.innerHTML = `<div class="kwi-ref-spark-label">30-day mentions</div>`;
-      const sparkCanvas = document.createElement('canvas');
-      sparkSection.appendChild(sparkCanvas);
-      panel.appendChild(sparkSection);
-
-      // Draw sparkline after DOM insertion
-      requestAnimationFrame(() => _kwiDrawSparkline(sparkCanvas, series));
-
-      // Articles section
-      if (!articles.length) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'padding:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:11px;';
-        empty.textContent = 'No recent articles found.';
-        panel.appendChild(empty);
-        return;
-      }
-
-      const listEl = document.createElement('div');
-      listEl.className = 'kwi-ref-articles';
-
-      articles.forEach(a => {
-        const card = document.createElement('div');
-        card.className = 'kwi-ref-card';
-        const imgSrc = a.image_url || '';
-        const title = a.title || a.original_title || 'Untitled';
-        const source = a.source_name || '';
-        const date = a.published_at ? new Date(a.published_at).toLocaleDateString() : '';
-        card.innerHTML =
-          (imgSrc ? `<img class="kwi-ref-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.style.display='none'"/>` : `<div class="kwi-ref-card-img" style="background:rgba(255,255,255,0.04);"></div>`) +
-          `<div class="kwi-ref-card-body">` +
-            `<div class="kwi-ref-card-title">${title}</div>` +
-            `<div class="kwi-ref-card-meta">${source}${date ? ' · ' + date : ''}</div>` +
-          `</div>`;
-        card.addEventListener('click', (e) => {
-          e.stopPropagation();
-          _kwiShowExpand(a, panel);
-        });
-        listEl.appendChild(card);
-      });
-
-      panel.appendChild(listEl);
+      _kwiRenderInterpanel(panel, keyword, series, articles);
     }).catch(err => {
       if (err.name === 'AbortError') return;   // timeout / navigation — silent
       console.error('[kwi interpanel]', err);
@@ -20414,22 +20447,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById('kwiChip').classList.remove('visible');
     
     try {
-      let trendingUrl = `https://earth-wjr6.onrender.com/api/keywords/trending?days=${kwiDays}&limit=100`;
+      let trendingUrl = `https://earth-wjr6.onrender.com/api/keywords/trending?days=${kwiDays}&limit=100&prefetch_refs=50`;
       let risingUrl = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=5`;
-      
+
       if (kwiLocationCountry) {
         trendingUrl += `&about_country=${kwiLocationCountry.iso}`;
         risingUrl += `&about_country=${kwiLocationCountry.iso}`;
       }
-      
+
       const [trendingRes, risingRes] = await Promise.all([
         fetch(trendingUrl),
         fetch(risingUrl)
       ]);
-      const trending = normalizeArrayPayload(await trendingRes.json());
+      const trendingPayload = await trendingRes.json();
+      // Handle prefetched refs: response is { keywords, refs } when prefetch_refs > 0
+      let trending;
+      if (trendingPayload && trendingPayload.keywords) {
+        trending = normalizeArrayPayload(trendingPayload.keywords);
+        _kwiPrefetchedRefs = trendingPayload.refs || {};
+      } else {
+        trending = normalizeArrayPayload(trendingPayload);
+        _kwiPrefetchedRefs = {};
+      }
       const rising   = normalizeArrayPayload(await risingRes.json());
       if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
-      
+
       renderTrendingList(trending, rising);
       
       const locationLabel = kwiLocationCountry ? kwiLocationCountry.name : 'Global';
@@ -20939,8 +20981,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     // Client-side tier check — immediate feedback
-    if (!window.__checkTier || !window.__checkTier('enterprise')) {
-      window.__openPricing?.('AI Keyword Context is an Enterprise feature.');
+    if (!window.__checkTier || !window.__checkTier('pro')) {
+      window.__openPricing?.('AI Keyword Context requires a Pro or Enterprise plan.');
       return;
     }
 

@@ -5241,6 +5241,56 @@ async function resolveKeywordCountryFilters(sourceCountry, aboutCountry) {
    Keyword Intelligence API
 ========================================= */
 
+// Shared helper: attach prefetched article refs to keyword responses
+async function _sendWithPrefetchRefs(req, res, rows, logTag) {
+  const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
+  if (prefetchN > 0 && rows.length > 0) {
+    const topKws = rows.slice(0, prefetchN).map(r => r.keyword);
+    try {
+      const refResult = await pool.query(`
+        SELECT DISTINCT ON (a.id, ak.keyword)
+          ak.keyword,
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          a.title AS original_title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at, a.article_url, a.url,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          a.media_type, a.video_id,
+          a.base_priority
+        FROM article_keywords ak
+        JOIN news_articles a ON a.id = ak.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE LOWER(ak.keyword) = ANY($1)
+          AND a.published_at > NOW() - INTERVAL '14 days'
+        ORDER BY ak.keyword, a.id, a.base_priority DESC NULLS LAST
+      `, [topKws.map(k => k.toLowerCase())]);
+
+      const refMap = {};
+      for (const r of refResult.rows) {
+        const kw = r.keyword.toLowerCase();
+        if (!refMap[kw]) refMap[kw] = [];
+        if (refMap[kw].length < 10) {
+          delete r.keyword;
+          refMap[kw].push(r);
+        }
+      }
+      for (const kw of Object.keys(refMap)) {
+        refMap[kw].sort((a, b) => (b.base_priority || 0) - (a.base_priority || 0) || new Date(b.published_at) - new Date(a.published_at));
+      }
+      return res.json({ keywords: rows, refs: refMap });
+    } catch (refErr) {
+      console.warn(`${logTag} prefetch refs failed:`, refErr.message);
+    }
+  }
+  return res.json(rows);
+}
+
 // GET /api/keywords/trending?days=7&limit=20&source_country=us&about_country=cn
 // Returns globally trending keywords (top by total mentions in date range)
 app.get("/api/keywords/trending", async (req, res) => {
@@ -5271,7 +5321,8 @@ app.get("/api/keywords/trending", async (req, res) => {
       const dbCached = await getDbKeywordCache("trending", "global", 1440); // 24h
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
-        return res.json(dbCached.slice(0, limitInt));
+        const rows = dbCached.slice(0, limitInt);
+        return _sendWithPrefetchRefs(req, res, rows, "[keywords/trending]");
       }
     }
 
@@ -5306,7 +5357,7 @@ app.get("/api/keywords/trending", async (req, res) => {
       return result.rows;
     });
 
-    res.json(rows);
+    _sendWithPrefetchRefs(req, res, rows, "[keywords/trending]");
   } catch (err) {
     console.error("[keywords/trending]", err.message);
     res.status(500).json({ error: "trending failed" });
@@ -5346,7 +5397,8 @@ app.get("/api/keywords/rising", async (req, res) => {
       const dbCached = await getDbKeywordCache("rising", "global", 240); // 4h
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
-        return res.json(dbCached.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt));
+        const cachedFiltered = dbCached.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
+        return _sendWithPrefetchRefs(req, res, cachedFiltered, "[keywords/rising]");
       }
     }
 
@@ -5410,7 +5462,9 @@ app.get("/api/keywords/rising", async (req, res) => {
       return result.rows;
     });
 
-    res.json(rows.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt));
+    const filtered = rows.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
+
+    _sendWithPrefetchRefs(req, res, filtered, "[keywords/rising]");
   } catch (err) {
     console.error("[keywords/rising]", err.message);
     res.status(500).json({ error: "rising failed" });
