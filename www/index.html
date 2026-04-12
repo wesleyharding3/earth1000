@@ -13373,19 +13373,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const revealPx = capH + eased * (barH - capH);
               if (barLine) barLine.style.clipPath = `inset(0 0 ${barH - revealPx}px 0)`;
 
-              // Labels fade in sequentially top→bottom, staggered behind the bar edge.
-              // First label starts at 8% progress, last at 85%, evenly spaced between.
-              for (let i = 0; i < labelCount; i++) {
-                const labelPos = labelCount > 1
-                  ? 0.08 + (i / (labelCount - 1)) * 0.77
-                  : 0.5;
-                if (!labelRevealed[i] && eased >= labelPos) {
-                  labelRevealed[i] = true;
-                  labels[i].style.opacity = "1";
-                  labels[i].style.transform = "translateX(0)";
-                }
-              }
-
               // Ticks (nicks) fade in right as the bar edge crosses them
               for (let i = 0; i < tickCount; i++) {
                 const tickPos = tickCount > 1 ? (i + 1) / (tickCount + 1) : 0.5;
@@ -13400,6 +13387,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
             requestAnimationFrame(scaleTick);
           });
+
+          // Labels fade in one by one in quick sequence after bar finishes drawing
+          const labelStagger = 70; // ms between each label
+          for (let i = 0; i < labelCount; i++) {
+            setTimeout(() => {
+              labels[i].style.opacity = "1";
+              labels[i].style.transform = "translateX(0)";
+            }, i * labelStagger);
+          }
+          await wait(labelCount * labelStagger);
 
           // ─── 3e-ii. Bar + bottom cap fully visible — shimmer entire scale ───
           if (barLine) barLine.style.clipPath = "";
