@@ -6516,82 +6516,56 @@ app.get("/api/stats/location", async (req, res) => {
 
 /* =========================================
    Source Intelligence — /api/news/sources-stats
+   Pre-computed by sourcesStatsCron.js (twice daily).
+   Reads from keyword_intelligence_cache; accepts up to 24h staleness.
 ========================================= */
 app.get("/api/news/sources-stats", async (req, res) => {
   try {
     const data = await ttlCached('sources-stats:all', 300_000, async () => {
-      // 1. Country distribution — total articles per country (last 30 days)
-      const countryDistQ = pool.query(`
-        SELECT co.name AS country, co.iso_code, COUNT(*)::int AS articles
-        FROM news_articles a
-        JOIN countries co ON co.id = a.country_id
-        WHERE a.published_at > NOW() - INTERVAL '30 days'
-          AND a.country_id IS NOT NULL
-        GROUP BY co.id, co.name, co.iso_code
-        ORDER BY articles DESC
-        LIMIT 50
-      `);
+      // Read from DB cache (populated by sourcesStatsCron.js)
+      const dbCached = await getDbKeywordCache("sources-stats", "global", 1440); // 24h max staleness
+      if (dbCached) return dbCached;
 
-      // 2. Country rankings — avg articles per day (last 30 days)
-      const countryRankQ = pool.query(`
-        SELECT co.name AS country, co.iso_code,
-               COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
-        FROM news_articles a
-        JOIN countries co ON co.id = a.country_id
-        WHERE a.published_at > NOW() - INTERVAL '30 days'
-          AND a.country_id IS NOT NULL
-        GROUP BY co.id, co.name, co.iso_code
-        HAVING COUNT(*) >= 5
-        ORDER BY "avgPerDay" DESC
-        LIMIT 30
-      `);
-
-      // 3. City rankings — avg articles per day (last 30 days)
-      const cityRankQ = pool.query(`
-        SELECT ci.name AS city, co.name AS country,
-               COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
-        FROM news_articles a
-        JOIN cities ci ON ci.id = a.city_id
-        JOIN countries co ON co.id = ci.country_id
-        WHERE a.published_at > NOW() - INTERVAL '30 days'
-          AND a.city_id IS NOT NULL
-        GROUP BY ci.id, ci.name, co.name
-        HAVING COUNT(*) >= 3
-        ORDER BY "avgPerDay" DESC
-        LIMIT 30
-      `);
-
-      // 4. Source rankings — avg articles per day (last 30 days)
-      const sourceRankQ = pool.query(`
-        SELECT COALESCE(ns.name, ys.name) AS source,
-               COALESCE(ns.site_url, ys.site_url) AS site_url,
-               COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
-        FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        WHERE a.published_at > NOW() - INTERVAL '30 days'
-        GROUP BY COALESCE(ns.name, ys.name), COALESCE(ns.site_url, ys.site_url)
-        HAVING COUNT(*) >= 3
-        ORDER BY "avgPerDay" DESC
-        LIMIT 30
-      `);
-
-      // 5. Countries by distinct source count
-      const sourceCountryQ = pool.query(`
-        SELECT co.name AS country, co.iso_code,
-               COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS "sourceCount"
-        FROM news_articles a
-        JOIN countries co ON co.id = a.country_id
-        WHERE a.published_at > NOW() - INTERVAL '30 days'
-          AND a.country_id IS NOT NULL
-        GROUP BY co.id, co.name, co.iso_code
-        HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1
-        ORDER BY "sourceCount" DESC
-        LIMIT 30
-      `);
-
+      // Fallback: live queries if cron hasn't run yet (first deploy)
+      console.warn('[sources-stats] no cache — running live queries (slow)');
       const [countryDist, countryRank, cityRank, sourceRank, sourceCountry] =
-        await Promise.all([countryDistQ, countryRankQ, cityRankQ, sourceRankQ, sourceCountryQ]);
+        await Promise.all([
+          pool.query(`
+            SELECT co.name AS country, co.iso_code, COUNT(*)::int AS articles
+            FROM news_articles a JOIN countries co ON co.id = a.country_id
+            WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.country_id IS NOT NULL
+            GROUP BY co.id, co.name, co.iso_code ORDER BY articles DESC LIMIT 50
+          `),
+          pool.query(`
+            SELECT co.name AS country, co.iso_code,
+                   COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
+            FROM news_articles a JOIN countries co ON co.id = a.country_id
+            WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.country_id IS NOT NULL
+            GROUP BY co.id, co.name, co.iso_code HAVING COUNT(*) >= 5 ORDER BY "avgPerDay" DESC LIMIT 30
+          `),
+          pool.query(`
+            SELECT ci.name AS city, co.name AS country,
+                   COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
+            FROM news_articles a JOIN cities ci ON ci.id = a.city_id JOIN countries co ON co.id = ci.country_id
+            WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.city_id IS NOT NULL
+            GROUP BY ci.id, ci.name, co.name HAVING COUNT(*) >= 3 ORDER BY "avgPerDay" DESC LIMIT 30
+          `),
+          pool.query(`
+            SELECT COALESCE(ns.name, ys.name) AS source, COALESCE(ns.site_url, ys.site_url) AS site_url,
+                   COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
+            FROM news_articles a LEFT JOIN news_sources ns ON ns.id = a.source_id LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+            WHERE a.published_at > NOW() - INTERVAL '30 days'
+            GROUP BY COALESCE(ns.name, ys.name), COALESCE(ns.site_url, ys.site_url) HAVING COUNT(*) >= 3 ORDER BY "avgPerDay" DESC LIMIT 30
+          `),
+          pool.query(`
+            SELECT co.name AS country, co.iso_code,
+                   COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS "sourceCount"
+            FROM news_articles a JOIN countries co ON co.id = a.country_id
+            WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.country_id IS NOT NULL
+            GROUP BY co.id, co.name, co.iso_code
+            HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1 ORDER BY "sourceCount" DESC LIMIT 30
+          `),
+        ]);
 
       return {
         countryDistribution:    countryDist.rows,
