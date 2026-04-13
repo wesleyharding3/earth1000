@@ -875,13 +875,19 @@ async function selectThreads(profile = null) {
       prefBoost = Math.min(PREFERENCE_WEIGHT, (catAff * 0.4 + regionAff * 0.3 + kwAff * 0.3));
     }
 
+    // Category tier: conflict/politics/military get a boost; environment/economy/climate get a penalty
+    const _cat = (t.primary_category || '').toLowerCase();
+    const catTierBoost = (_cat === 'conflict' || _cat === 'politics' || _cat === 'military') ? 0.15
+                       : (_cat === 'environment' || _cat === 'climate' || _cat === 'economy') ? -0.10
+                       : 0;
+
     return {
       ...t,
       englishRatio,
       sourceCount,
       countryCount,
       languageCount,
-      diversityScore: Number(t.importance) * (1 + diversityBoost + representationBoost + prefBoost),
+      diversityScore: Number(t.importance) * (1 + diversityBoost + representationBoost + prefBoost + catTierBoost),
       hasVideo:       Number(t.video_count) > 0,
     };
   });

@@ -202,7 +202,7 @@
       z-index: 100;
       left: 0;
       width: 100%;
-      height: min(420px, calc(var(--app-height, 100vh) - 24px));
+      height: min(50vh, calc(var(--app-height, 100vh) - 24px));
       background: transparent;
       color: white;
       padding: 20px;
@@ -1946,7 +1946,7 @@ body.ticker-active #flowControls {
 
 .flowFilterRow {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 3fr;
   gap: 8px;
 }
 
@@ -2111,7 +2111,7 @@ body.ticker-active #flowControls {
 /* Close button */
 .flowCloseBtn {
   position: absolute;
-  top: 10px;
+  top: 2px;
   right: 10px;
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
@@ -2136,7 +2136,7 @@ body.ticker-active #flowControls {
 /* Minimize button */
 .flowMinBtn {
   position: absolute;
-  top: 10px;
+  top: 2px;
   right: calc(40px * var(--mobile-control-scale));
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
@@ -2845,49 +2845,55 @@ body.ticker-active #flowControls {
   opacity: 1;
   transform: translateY(0);
 }
+/* ── flowCtxCard pill control bar ── */
+.flowCtxPillBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  align-self: flex-end;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 20px;
+  padding: 0 2px;
+  z-index: 3;
+  height: 24px;
+  margin-bottom: 2px;
+  flex-shrink: 0;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+#flowCtxCard .flowCtxReturn,
+#flowCtxCard .flowCtxMinimize,
 #flowCtxCard .flowCtxClose {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.6);
-  border: 1px solid rgba(255,255,255,0.18);
-  color: rgba(255,255,255,0.85);
+  position: static;
+  width: 28px;
+  height: 20px;
+  border-radius: 14px;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+  font-size: 13px;
   line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  z-index: 3;
 }
-#flowCtxCard .flowCtxClose svg { width: 12px; height: 12px; }
-#flowCtxCard .flowCtxClose:hover {
-  background: rgba(255,80,80,0.24);
-  color: #fff;
-}
-#flowCtxCard .flowCtxReturn {
-  position: absolute;
-  top: 6px;
-  right: 32px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.6);
-  border: 1px solid rgba(255,200,120,0.32);
-  color: rgba(255,200,140,0.92);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  z-index: 3;
-}
-#flowCtxCard .flowCtxReturn svg { width: 12px; height: 12px; }
+#flowCtxCard .flowCtxReturn svg,
+#flowCtxCard .flowCtxClose svg { width: 11px; height: 11px; }
 #flowCtxCard .flowCtxReturn:hover {
   background: rgba(255,180,80,0.24);
+  color: rgba(255,200,140,1);
+}
+#flowCtxCard .flowCtxMinimize:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+#flowCtxCard .flowCtxClose:hover {
+  background: rgba(255,80,80,0.24);
   color: #fff;
 }
 #flowCtxCard .flowCtxKind {
@@ -2896,7 +2902,6 @@ body.ticker-active #flowControls {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255,200,140,0.9);
-  padding-right: 82px;
 }
 #flowCtxCard .flowCtxImg {
   width: 100%;
@@ -2947,34 +2952,7 @@ body.ticker-active #flowControls {
   box-shadow: 0 0 6px rgba(255,180,80,0.85), 0 0 12px rgba(255,170,60,0.5);
   flex: 0 0 auto;
 }
-/* Minimize button for flowCtxCard */
-#flowCtxCard .flowCtxMinimize {
-  position: absolute;
-  top: 6px;
-  right: 32px;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.6);
-  border: 1px solid rgba(255,255,255,0.18);
-  color: rgba(255,255,255,0.85);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  z-index: 3;
-  font-size: 14px;
-  line-height: 1;
-}
-#flowCtxCard .flowCtxMinimize:hover {
-  background: rgba(255,255,255,0.15);
-  color: #fff;
-}
-/* Return button shifts right when minimize is present */
-#flowCtxCard .flowCtxReturn {
-  right: 58px;
-}
+/* (pill bar styles above replace old absolute-positioned buttons) */
 /* Minimized state — hide image and meta, compact card */
 #flowCtxCard.flowCtxMinimized .flowCtxImgWrap { display: none; }
 #flowCtxCard.flowCtxMinimized .flowCtxMeta { display: none; }
@@ -3100,7 +3078,7 @@ body.ticker-active #flowControls {
 }
 @keyframes flowInfoIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 #flowArcInfoCard.visible { display: flex; }
-.faiHead { cursor: pointer; padding-right: 18px; }
+.faiHead { cursor: pointer; }
 .faiHead:hover .faiExpandHint { color: rgba(100,200,255,0.85); }
 #flowArcInfoCard.expanded .faiHead { border-bottom: 1px dashed rgba(255,255,255,0.12); padding-bottom: 8px; margin-bottom: 8px; }
 #flowArcInfoCard.expanded .faiExpandHint::after { content: " (click to collapse)"; }
@@ -3283,24 +3261,41 @@ body.ticker-active #flowControls {
   font-size: 10px;
   color: rgba(255,255,255,0.4);
 }
+/* ── fai pill control bar ── */
+.faiPillBar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  align-self: flex-end;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 18px;
+  padding: 0 2px;
+  height: 22px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+.faiMinimize,
 .faiClose {
-  position: absolute;
-  top: 6px; right: 8px;
-  background: none; border: none;
-  color: rgba(255,255,255,0.3);
-  font-size: 13px; cursor: pointer;
-  padding: 2px 4px; line-height: 1;
+  position: static;
+  width: 26px;
+  height: 18px;
+  border-radius: 12px;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.55);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s;
 }
-.faiClose:hover { color: rgba(255,255,255,0.6); }
-.faiMinimize {
-  position: absolute;
-  top: 6px; right: 28px;
-  background: none; border: none;
-  color: rgba(255,255,255,0.3);
-  font-size: 15px; cursor: pointer;
-  padding: 2px 4px; line-height: 1;
-}
-.faiMinimize:hover { color: rgba(255,255,255,0.6); }
+.faiMinimize:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.faiClose:hover { background: rgba(255,80,80,0.2); color: rgba(255,255,255,0.85); }
 #flowArcInfoCard.faiMinimized .faiHead { display: none; }
 #flowArcInfoCard.faiMinimized .faiArcList { display: none; }
 #flowArcInfoCard.faiMinimized .faiBody { display: none; }
@@ -8986,9 +8981,9 @@ window.sourceBiasBadgeHTML = function(bias) {
 
       <!-- Keyword + dates -->
       <div class="flowPanelRow">
-        <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" style="flex:1;" />
-        <input type="date" class="flowDateInput" id="flowFrom" style="width:105px;" />
-        <input type="date" class="flowDateInput" id="flowTo" style="width:105px;" />
+        <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" style="flex:0 1 90px; min-width:60px;" />
+        <input type="date" class="flowDateInput" id="flowFrom" style="flex:1; min-width:0;" />
+        <input type="date" class="flowDateInput" id="flowTo" style="flex:1; min-width:0;" />
         <button class="flowBtn primary" id="flowLoadBtn">Load</button>
       </div>
 
@@ -9122,8 +9117,10 @@ window.sourceBiasBadgeHTML = function(bias) {
 
   <!-- Flow arc click info card — expandable micro panel -->
   <div id="flowArcInfoCard">
-    <button class="faiClose" onclick="document.getElementById('flowArcInfoCard').classList.remove('visible')">&times;</button>
-    <button class="faiMinimize" onclick="document.getElementById('flowArcInfoCard').classList.toggle('faiMinimized')">&#x2012;</button>
+    <div class="faiPillBar">
+      <button class="faiMinimize" onclick="document.getElementById('flowArcInfoCard').classList.toggle('faiMinimized')">&#x2012;</button>
+      <button class="faiClose" onclick="document.getElementById('flowArcInfoCard').classList.remove('visible')">&times;</button>
+    </div>
     <div class="faiMinLabel" onclick="document.getElementById('flowArcInfoCard').classList.remove('faiMinimized')"></div>
     <div class="faiHead" id="faiHead">
       <div class="faiRoute" id="faiRoute"></div>
@@ -9408,7 +9405,7 @@ const loader = new THREE.TextureLoader();
 
     const SNAP = {
       min: 260,
-      default: 420,
+      default: () => Math.round(getAppViewportHeight() * 0.5),
       max:     () => getAppViewportHeight()
     };
     let snapState = "default";  // "default" | "max"
@@ -12564,7 +12561,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const popMask   = currentViewMode === "country" ? countryPopMask : cityPopMask;
           const gdpMask   = currentViewMode === "country" ? countryGdpMask : cityGdpMask;
           const nodeCount = activeData.length;
-          const HOVER_PX  = 26; // max pixel radius — prevents hover in empty ocean
+          const _hoverBase = _isMobileView ? 38 : 32;
+          const HOVER_PX  = _hoverBase * Math.max(0.7, Math.min(2.5, camera.position.z / (_isMobileView ? 3.6 : 3.0))); // zoom-aware pick radius
           let bestIdx = null, bestPx = Infinity;
           for (let i = 0; i < nodeCount; i++) {
             if (popMask && !popMask[i]) continue;
@@ -12878,7 +12876,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const rect2   = renderer.domElement.getBoundingClientRect();
         const clickX  = event.clientX - rect2.left;
         const clickY  = event.clientY - rect2.top;
-        const CLICK_PX = 18;
+        const _clickBase = _isMobileView ? 34 : 26;
+        const CLICK_PX = _clickBase * Math.max(0.7, Math.min(2.5, camera.position.z / (_isMobileView ? 3.6 : 3.0))); // zoom-aware pick radius
         let bestIdx = null, bestPx = Infinity;
         for (let i = 0; i < activeData.length; i++) {
           if (popMask && !popMask[i]) continue;
@@ -13000,7 +12999,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const rect2   = renderer.domElement.getBoundingClientRect();
         const touchX  = touch.clientX - rect2.left;
         const touchY  = touch.clientY - rect2.top;
-        const TOUCH_PX = 28; // slightly wider than click for fat-finger tolerance
+        const _touchBase = 44; // generous base for fat-finger tolerance
+        const TOUCH_PX = _touchBase * Math.max(0.7, Math.min(2.5, camera.position.z / 3.6)); // zoom-aware pick radius
         let bestIdx = null, bestPx = Infinity;
         for (let i = 0; i < activeData.length; i++) {
           if (popMask && !popMask[i]) continue;
@@ -18614,10 +18614,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const ra = STATUS_RANK[a.status] ?? 1;
           const rb = STATUS_RANK[b.status] ?? 1;
           if (ra !== rb) return ra - rb;
-          // Push "environment" category below other categories
-          const _lowCat = c => { const lc = (c || '').toLowerCase(); return lc === 'environment' || lc === 'climate' ? 1 : 0; };
-          const ea = _lowCat(a.primary_category);
-          const eb = _lowCat(b.primary_category);
+          // Category tier: conflict/politics on top, environment/economy/climate on bottom
+          const _catTier = c => { const lc = (c || '').toLowerCase(); if (lc === 'conflict' || lc === 'politics' || lc === 'military') return 0; if (lc === 'environment' || lc === 'climate' || lc === 'economy') return 2; return 1; };
+          const ea = _catTier(a.primary_category);
+          const eb = _catTier(b.primary_category);
           if (ea !== eb) return ea - eb;
           const da = new Date(a.latest_published_at || 0).getTime();
           const db = new Date(b.latest_published_at || 0).getTime();
@@ -19701,9 +19701,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     el = document.createElement("div");
     el.id = "flowCtxCard";
     el.innerHTML = `
-      <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-      <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
-      <button class="flowCtxReturn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <div class="flowCtxPillBar">
+        <button class="flowCtxReturn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
+        <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
       <div class="flowCtxKind"></div>
       <div class="flowCtxImgWrap"></div>
       <div class="flowCtxTitle"></div>
@@ -25156,6 +25158,8 @@ body.ticker-active .gTickerLabel {
     if (window.__flowClearHighlights) window.__flowClearHighlights();
     const fTimer = document.getElementById('flowBriefingTimer');
     if (fTimer) fTimer.style.display = 'none';
+    // Restore today's episode so launcher shows correct info after closing a past briefing
+    if (_todayEpisode) episode = _todayEpisode;
   }
 
   // ── Location Briefing Options + Request ──────────────────────────────────
@@ -27123,6 +27127,8 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bLauncherX')?.addEventListener('click', closeBriefingLauncher);
 
   document.getElementById('bLauncherStartToday')?.addEventListener('click', () => {
+    // Restore today's episode before opening (in case a past briefing was viewed)
+    if (_todayEpisode) episode = _todayEpisode;
     closeBriefingLauncher();
     openBriefing();
   });

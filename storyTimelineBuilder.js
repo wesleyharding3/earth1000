@@ -6,8 +6,8 @@
  * Timelines vs Threads:
  *   • Threads  — 48h tight meta-story, built by storyThreadBuilder.js
  *   • Timelines — 30-day broad umbrella arcs ("NATO", "Iran Israel War",
- *                 "US-China Trade War"), built by this file. Runs once
- *                 per day. Ties together threads (active, cooling, and
+ *                 "US-China Trade War"), built by this file. Runs every
+ *                 12 hours. Ties together threads (active, cooling, and
  *                 dormant) plus old and new articles under overarching
  *                 geopolitical narratives.
  *
@@ -17,20 +17,22 @@
  *      toward articles from the last day while still letting older
  *      references anchor a timeline as historical context.
  *
- *   2. Article pool gated by `fetch_tier IN (2,3,4) OR base_priority >= 0.7`.
- *      (base_priority p90 ≈ 0.665 in production, so 0.7 keeps the top
- *      decile regardless of tier; tier 2-4 opens the long-tail/grassroots
- *      voice.) Tier 1 wires-only sources need to earn their way in via
- *      score.
+ *   2. Article pool gated by `fetch_tier IN (2,3,4) OR base_priority >= 0.55`.
+ *      Opens up to ~top 25% of articles instead of top decile. Tier 1
+ *      wires-only sources now also contribute via the lowered floor.
  *
- *   3. Broad grouping: MIN_SHARED_KW = 1 (vs 2 for threads) PLUS an
- *      entity-overlap boost — two articles that share a `subject` or
- *      `actor` entity from article_entity_mentions are linked even if
- *      their keyword vectors diverge. This is what lets three different
- *      "Iran" angles or four Venezuela/Maduro sub-stories collapse into
- *      a single umbrella timeline.
+ *   3. Thread-informed pipeline: active threads (importance ≥ 5) are queried
+ *      and their articles are injected into the pool. This guarantees that
+ *      any breaking story already tracked by the thread builder will be
+ *      considered for umbrella grouping — even if it wouldn't pass the
+ *      article-level gate on its own.
  *
- *   4. Historical anchors: when referenced dates exist for articles in
+ *   4. Broad grouping: MIN_SHARED_KW = 1 (vs 2 for threads) PLUS an
+ *      entity-overlap boost AND a country+category co-location boost.
+ *      Two articles from the same country in the same category get a
+ *      linking bonus even without keyword overlap.
+ *
+ *   5. Historical anchors: when referenced dates exist for articles in
  *      a timeline via `article_referenced_dates`, the top N are written
  *      to `story_timelines.historical_anchors` JSONB so the timeline
  *      panel can render them as pinned historical markers.
@@ -48,14 +50,15 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS       = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "720");
 const PARABOLIC_PEAK_HOURS = 24;        // the age we weight heaviest
-const CLAUDE_BATCH         = 28;
+const CLAUDE_BATCH         = 36;        // more articles per Claude call for better context
 const MIN_CLUSTER          = 2;
 const MIN_SHARED_KW        = 1;         // broader than threads (2)
 const MIN_SHARED_KW_FALLBACK = 2;       // for generic keyword pairs
-const MAX_PER_SOURCE       = 10;        // wider per-source allowance for 30d window
-const TOTAL_ARTICLE_LIMIT  = 800;       // larger pool for monthly lookback
-const BASE_PRIORITY_FLOOR  = 0.7;       // top decile
+const MAX_PER_SOURCE       = 18;        // wider per-source allowance for 30d window
+const TOTAL_ARTICLE_LIMIT  = 1500;      // larger pool for monthly lookback
+const BASE_PRIORITY_FLOOR  = 0.55;      // ~top 25% (was 0.7 = top decile)
 const ENTITY_LINK_BOOST    = true;
+const COUNTRY_CAT_BOOST    = true;      // NEW: boost pairs sharing country+category
 
 const SKIP_KEYWORDS = new Set([
   "government","minister","president","official","said","year","people",
@@ -89,6 +92,24 @@ async function run() {
   console.log(`   [${elapsed()}] Querying gated article pool...`);
   const articles = await getTimelineArticlePool(LOOKBACK_HOURS);
   console.log(`   [${elapsed()}] Pool: ${articles.length} articles`);
+
+  // ── Thread-informed injection ──────────────────────────────────────────────
+  // Pull articles from active/cooling threads that may not have passed the
+  // article-level gate. This ensures breaking stories tracked by the thread
+  // builder always contribute to umbrella timelines.
+  console.log(`   [${elapsed()}] Injecting thread-sourced articles...`);
+  const threadArticles = await getThreadArticles();
+  const existingIds = new Set(articles.map(a => a.id));
+  let injected = 0;
+  for (const ta of threadArticles) {
+    if (!existingIds.has(ta.id)) {
+      articles.push(ta);
+      existingIds.add(ta.id);
+      injected++;
+    }
+  }
+  console.log(`   [${elapsed()}] Injected ${injected} thread-sourced articles (${threadArticles.length} total from threads)`);
+
   if (!articles.length) { console.log("   Nothing to timeline. Done."); await pool.end(); return; }
 
   console.log(`   [${elapsed()}] Loading entity mentions for pool...`);
@@ -96,19 +117,33 @@ async function run() {
   const entityBoostCount = [...entityMap.values()].filter(v => v.length).length;
   console.log(`   [${elapsed()}] Articles with entity mentions: ${entityBoostCount}`);
 
-  console.log(`   [${elapsed()}] Clustering (kw + entity + parabolic weight)...`);
+  console.log(`   [${elapsed()}] Clustering (kw + entity + country/cat + parabolic weight)...`);
   const clusters = clusterBroad(articles, entityMap);
   const assigned = new Set(clusters.flat().map(a => a.id));
   const singletons = articles.filter(a => !assigned.has(a.id));
   console.log(`   [${elapsed()}] Clusters: ${clusters.length} | Singletons: ${singletons.length}`);
 
-  console.log(`   [${elapsed()}] Loading existing active timelines...`);
+  console.log(`   [${elapsed()}] Loading existing timelines (active + cooling + dormant)...`);
   const existingTimelines = await getActiveTimelines();
   const existingMap = new Map(existingTimelines.map(t => [Number(t.id), { ...t }]));
-  console.log(`   [${elapsed()}] Active timelines: ${existingTimelines.length}`);
+  console.log(`   [${elapsed()}] Loaded timelines: ${existingTimelines.length}`);
+
+  // ── Thread gap audit: find active threads with no matching timeline ────────
+  console.log(`   [${elapsed()}] Auditing threads for timeline coverage gaps...`);
+  const gapThreads = await findThreadsWithoutTimelines(existingTimelines);
+  console.log(`   [${elapsed()}] Threads without timelines: ${gapThreads.length}`);
 
   let created = 0, updated = 0;
   const allGroups = [...clusters, ...chunkArray(singletons, 20)];
+
+  // If there are gap threads, add them as priority batches at the front
+  if (gapThreads.length) {
+    const gapBatches = chunkArray(gapThreads, CLAUDE_BATCH);
+    for (const batch of gapBatches) {
+      allGroups.unshift(batch);
+    }
+  }
+
   const totalBatches = Math.ceil(allGroups.length / 3);
   console.log(`   [${elapsed()}] Sending ${totalBatches} batch(es) to Claude...\n`);
 
@@ -155,6 +190,7 @@ async function getTimelineArticlePool(hours) {
         COALESCE(ns.fetch_tier, 1) AS fetch_tier,
         co.name AS country_name,
         ci.name AS city_name,
+        a.primary_category,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
           ORDER BY a.published_at DESC
@@ -173,7 +209,7 @@ async function getTimelineArticlePool(hours) {
         )
     )
     SELECT id, title, summary, translated_summary, published_at, base_priority,
-           source_name, source_key, fetch_tier, country_name, city_name
+           source_name, source_key, fetch_tier, country_name, city_name, primary_category
     FROM ranked
     WHERE source_rank <= ${MAX_PER_SOURCE}
     ORDER BY base_priority DESC NULLS LAST, published_at DESC
@@ -190,6 +226,8 @@ async function getTimelineArticlePool(hours) {
   `, [ids]);
   const kwMap = new Map(kwRows.map(r => [r.article_id, r.keywords]));
 
+  // Don't drop articles with no keywords — they can still be linked via
+  // entity overlap or country+category co-location
   return rows.map(a => {
     const ageHours = (Date.now() - new Date(a.published_at).getTime()) / 3600000;
     return {
@@ -198,7 +236,151 @@ async function getTimelineArticlePool(hours) {
       age_hours: ageHours,
       parabolic_weight: parabolicWeight(ageHours)
     };
-  }).filter(a => a.keywords.length > 0);
+  });
+}
+
+// ─── Thread-sourced articles ─────────────────────────────────────────────────
+// Pull articles belonging to active/cooling threads with importance ≥ 5.
+// These represent the strongest breaking-story signal and guarantee that
+// ongoing conflicts (Iran war, Ukraine, etc.) feed into timelines even if
+// individual articles have low base_priority.
+async function getThreadArticles() {
+  try {
+    const { rows } = await pool.query(`
+      SELECT DISTINCT
+        a.id, a.title, a.summary, a.translated_summary,
+        a.published_at, a.base_priority,
+        COALESCE(ns.name, ys.name) AS source_name,
+        COALESCE(ns.id::text, 'y'||ys.id::text) AS source_key,
+        COALESCE(ns.fetch_tier, 1) AS fetch_tier,
+        co.name AS country_name,
+        ci.name AS city_name,
+        a.primary_category,
+        st.importance AS thread_importance
+      FROM story_threads st
+      JOIN story_thread_articles sta ON sta.thread_id = st.id
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN countries     co ON co.id = a.country_id
+      LEFT JOIN cities        ci ON ci.id = a.city_id
+      LEFT JOIN news_sources  ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE st.status IN ('active', 'cooling')
+        AND st.importance >= 5
+        AND a.published_at > NOW() - INTERVAL '${LOOKBACK_HOURS} hours'
+        AND a.title IS NOT NULL
+      ORDER BY st.importance DESC, a.published_at DESC
+      LIMIT 600
+    `);
+    if (!rows.length) return [];
+
+    const ids = rows.map(r => r.id);
+    const { rows: kwRows } = await pool.query(`
+      SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
+      FROM article_keywords
+      WHERE article_id = ANY($1::int[])
+      GROUP BY article_id
+    `, [ids]);
+    const kwMap = new Map(kwRows.map(r => [r.article_id, r.keywords]));
+
+    return rows.map(a => {
+      const ageHours = (Date.now() - new Date(a.published_at).getTime()) / 3600000;
+      return {
+        ...a,
+        keywords: kwMap.get(a.id) || [],
+        age_hours: ageHours,
+        parabolic_weight: parabolicWeight(ageHours),
+        _from_thread: true
+      };
+    });
+  } catch (e) {
+    console.warn(`   ⚠ Thread article injection skipped: ${e.message}`);
+    return [];
+  }
+}
+
+// ─── Thread gap audit ────────────────────────────────────────────────────────
+// Find active threads (importance ≥ 6) whose keywords/title don't match any
+// existing timeline. Return their articles as a synthetic cluster so Claude
+// can create the missing timeline.
+async function findThreadsWithoutTimelines(existingTimelines) {
+  try {
+    const { rows: threads } = await pool.query(`
+      SELECT st.id, st.title, st.keywords, st.importance, st.primary_category
+      FROM story_threads st
+      WHERE st.status IN ('active', 'cooling')
+        AND st.importance >= 6
+      ORDER BY st.importance DESC
+      LIMIT 50
+    `);
+    if (!threads.length) return [];
+
+    // Build a lookup of existing timeline scopes + keywords for matching
+    const tlKeywords = new Set();
+    const tlScopes = new Set();
+    for (const tl of existingTimelines) {
+      if (tl.scope) tlScopes.add(tl.scope.toLowerCase());
+      for (const kw of (tl.keywords || [])) {
+        tlKeywords.add(normalizeKeyword(kw));
+      }
+    }
+
+    // A thread is "uncovered" if fewer than 2 of its keywords appear in any timeline
+    const uncoveredThreadIds = [];
+    for (const t of threads) {
+      const threadKws = (t.keywords || []).map(k => normalizeKeyword(k));
+      const overlap = threadKws.filter(k => tlKeywords.has(k)).length;
+      if (overlap < 2) {
+        uncoveredThreadIds.push(t.id);
+      }
+    }
+    if (!uncoveredThreadIds.length) return [];
+
+    // Pull articles from uncovered threads
+    const { rows: articles } = await pool.query(`
+      SELECT DISTINCT
+        a.id, a.title, a.summary, a.translated_summary,
+        a.published_at, a.base_priority,
+        COALESCE(ns.name, ys.name) AS source_name,
+        co.name AS country_name,
+        ci.name AS city_name,
+        a.primary_category
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN countries     co ON co.id = a.country_id
+      LEFT JOIN cities        ci ON ci.id = a.city_id
+      LEFT JOIN news_sources  ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE sta.thread_id = ANY($1::int[])
+        AND a.title IS NOT NULL
+      ORDER BY a.published_at DESC
+      LIMIT 80
+    `, [uncoveredThreadIds]);
+
+    if (!articles.length) return [];
+
+    const ids = articles.map(r => r.id);
+    const { rows: kwRows } = await pool.query(`
+      SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
+      FROM article_keywords
+      WHERE article_id = ANY($1::int[])
+      GROUP BY article_id
+    `, [ids]);
+    const kwMap = new Map(kwRows.map(r => [r.article_id, r.keywords]));
+
+    return articles.map(a => {
+      const ageHours = (Date.now() - new Date(a.published_at).getTime()) / 3600000;
+      return {
+        ...a,
+        keywords: kwMap.get(a.id) || [],
+        age_hours: ageHours,
+        parabolic_weight: parabolicWeight(ageHours),
+        _gap_thread: true
+      };
+    });
+  } catch (e) {
+    console.warn(`   ⚠ Thread gap audit skipped: ${e.message}`);
+    return [];
+  }
 }
 
 async function loadEntityMentionsForArticles(articleIds) {
@@ -224,18 +406,18 @@ async function loadEntityMentionsForArticles(articleIds) {
 
 // ─── Broad clustering ────────────────────────────────────────────────────────
 function clusterBroad(articles, entityMap) {
-  // 1. Keyword index
+  // 1. Keyword index — allow 3-char keywords for important short terms (war, oil, etc.)
   const kwIndex = new Map();
   for (const a of articles) {
     for (const kw of (a.keywords || [])) {
       const k = normalizeKeyword(kw);
-      if (k.length < 4 || SKIP_KEYWORDS.has(k)) continue;
+      if (k.length < 3 || SKIP_KEYWORDS.has(k)) continue;
       if (!kwIndex.has(k)) kwIndex.set(k, []);
       kwIndex.get(k).push(a);
     }
   }
 
-  // 2. Pair scoring — keyword overlap + entity overlap boost
+  // 2. Pair scoring — keyword overlap + entity overlap boost + country/cat boost
   const pairScore = new Map();
   const addPair = (idA, idB, weight) => {
     const key = idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
@@ -243,7 +425,7 @@ function clusterBroad(articles, entityMap) {
   };
 
   for (const [, arts] of kwIndex) {
-    if (arts.length < 2 || arts.length > 100) continue;
+    if (arts.length < 2 || arts.length > 120) continue;
     for (let i = 0; i < arts.length; i++) {
       for (let j = i + 1; j < arts.length; j++) {
         addPair(arts[i].id, arts[j].id, 1);
@@ -262,10 +444,35 @@ function clusterBroad(articles, entityMap) {
       }
     }
     for (const [, arts] of entIndex) {
-      if (arts.length < 2 || arts.length > 60) continue;
+      if (arts.length < 2 || arts.length > 80) continue;
       for (let i = 0; i < arts.length; i++) {
         for (let j = i + 1; j < arts.length; j++) {
           addPair(arts[i].id, arts[j].id, 1.5);  // entity overlap worth more than a single kw
+        }
+      }
+    }
+  }
+
+  // Country + category co-location boost: articles from the same country
+  // in the same hard-news category get a linking bonus. This catches stories
+  // about the same conflict/crisis that use different keywords (e.g. "nuclear"
+  // vs "strait of hormuz" for Iran).
+  if (COUNTRY_CAT_BOOST) {
+    const HARD_CATS = new Set(['politics', 'military', 'diplomacy', 'conflict']);
+    const ccIndex = new Map(); // "country::category" → [articles]
+    for (const a of articles) {
+      if (!a.country_name) continue;
+      const cat = (a.primary_category || '').toLowerCase();
+      if (!HARD_CATS.has(cat)) continue;
+      const key = `${a.country_name.toLowerCase()}::${cat}`;
+      if (!ccIndex.has(key)) ccIndex.set(key, []);
+      ccIndex.get(key).push(a);
+    }
+    for (const [, arts] of ccIndex) {
+      if (arts.length < 2 || arts.length > 80) continue;
+      for (let i = 0; i < arts.length; i++) {
+        for (let j = i + 1; j < arts.length; j++) {
+          addPair(arts[i].id, arts[j].id, 0.8); // weaker than entity but still meaningful
         }
       }
     }
@@ -314,15 +521,19 @@ async function evaluateWithClaude(articles, existingTimelines) {
     tier:         a.fetch_tier,
     age_h:        Math.round(a.age_hours),
     weight:       a.parabolic_weight,
+    category:     a.primary_category || null,
     published_at: a.published_at
   }));
 
-  const existingData = existingTimelines.slice(0, 120).map(t => ({
-    id:    t.id,
-    title: t.title,
-    scope: t.scope,
-    kw:    (t.keywords || []).slice(0, 5),
-    cat:   t.primary_category
+  // Send ALL existing timelines (up to 300) so Claude can match dormant ones too
+  const existingData = existingTimelines.slice(0, 300).map(t => ({
+    id:     t.id,
+    title:  t.title,
+    scope:  t.scope,
+    status: t.status,
+    kw:     (t.keywords || []).slice(0, 8),
+    cat:    t.primary_category,
+    art_ct: t.article_count
   }));
 
   const prompt = `You are the editor of a GLOBAL TIMELINE — the UMBRELLA ARCS view of world geopolitics. Your job is the OPPOSITE of a breaking-news ticker: your job is to group all stories touching the same ongoing arc into ONE broad timeline, even when keywords diverge and sub-stories look distinct. This is a 30-DAY lookback — you are building MONTH-SCALE narratives, not daily news cycles.
@@ -366,6 +577,11 @@ A single "Venezuela" timeline should absorb:
 
 The one exception: if a sub-story has clearly escaped its parent arc and become its own multi-country crisis (e.g. the Houthi Red Sea shipping campaign arguably becomes its own arc). In that case you can create a sibling timeline and link scope.
 
+═══ CRITICAL: PREFER ATTACHING TO EXISTING TIMELINES ═══
+Before creating ANY new timeline, scan the full existing timelines list carefully. Many of these are dormant or cooling — REACTIVATE them by attaching articles via existing_timeline_id. It is MUCH better to reactivate a dormant timeline than to create a duplicate.
+
+Check by: scope slug, title, keywords, AND topic/country overlap. If an article is about Iran and there's an existing "Iran Israel War" timeline (even if dormant), attach to it.
+
 ═══ SCOPE SLUG ═══
 Every timeline has a "scope" — a stable slug that names the umbrella. Keep scopes BROAD and stable: "nato", "iran_israel", "ukraine_russia", "gaza", "venezuela", "us_china", "sahel", "sudan", "north_korea", "eu_migration". Reuse scopes across runs so timelines persist. Invent a new scope only when an arc is genuinely new. NEVER make scopes event-specific.
 
@@ -382,7 +598,7 @@ Do NOT spawn timelines for:
   • Chamber-of-commerce / local party / regional cabinet stories
   • "Policy discussions" / "sectoral overviews" without a concrete arc
 
-EXISTING ACTIVE TIMELINES (attach to these whenever possible):
+EXISTING TIMELINES (${existingData.length} total — attach to these whenever possible, even dormant/cooling ones):
 ${JSON.stringify(existingData, null, 2)}
 
 ARTICLES TO ANALYZE:
@@ -406,7 +622,7 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable.
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
-    max_tokens: 3500,
+    max_tokens: 4500,
     messages:   [{ role: "user", content: prompt }]
   });
 
@@ -420,7 +636,7 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable.
 async function persistTimelineDefs(defs, validIdSet, existingMap) {
   let created = 0, updated = 0;
 
-  const ALLOWED_CATS = new Set(['politics','economy','military','diplomacy','environment','technology']);
+  const ALLOWED_CATS = new Set(['politics','economy','military','diplomacy','environment','technology','conflict']);
 
   for (const def of defs) {
     if (!def.article_ids?.length) continue;
@@ -633,14 +849,16 @@ async function coolDownTimelines() {
 async function getActiveTimelines() {
   // Include active, cooling, AND dormant timelines so the builder can
   // reactivate dormant arcs when new articles touch them.
+  // Expanded limit from 300→500 to ensure dormant timelines aren't excluded.
   const { rows } = await pool.query(`
-    SELECT id, title, description, scope, keywords, primary_category, geographic_scope, importance, article_count, status
+    SELECT id, title, description, scope, keywords, primary_category, geographic_scope,
+           importance, article_count, status
     FROM story_timelines
-    WHERE last_updated_at > NOW() - INTERVAL '90 days'
+    WHERE last_updated_at > NOW() - INTERVAL '120 days'
     ORDER BY
       CASE status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
       importance DESC, last_updated_at DESC
-    LIMIT 300
+    LIMIT 500
   `);
   return rows;
 }
@@ -653,7 +871,7 @@ function normalizeKeyword(keyword) {
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replace(/[“”"'`]/g, "")
+    .replace(/["""'`]/g, "")
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
