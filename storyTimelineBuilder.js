@@ -346,6 +346,15 @@ async function run() {
 //  ARTICLE POOL — articles NOT yet in any timeline
 // ═════════════════════════════════════════════════════════════════════════════
 async function getArticlePool(hours) {
+  // Disable statement timeout for these heavy queries
+  await pool.query('SET statement_timeout = 0');
+
+  // Pre-fetch the set of article IDs already in timelines (fast hash join)
+  const { rows: existingRows } = await pool.query(
+    'SELECT DISTINCT article_id FROM story_timeline_articles'
+  );
+  const inTimeline = new Set(existingRows.map(r => r.article_id));
+
   const { rows } = await pool.query(`
     WITH ranked AS (
       SELECT
@@ -356,10 +365,6 @@ async function getArticlePool(hours) {
         COALESCE(ns.fetch_tier, 1) AS fetch_tier,
         co.name AS country_name,
         ci.name AS city_name,
-        (SELECT st.primary_category FROM story_thread_articles sta2
-         JOIN story_threads st ON st.id = sta2.thread_id
-         WHERE sta2.article_id = a.id
-         ORDER BY st.importance DESC LIMIT 1) AS primary_category,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
           ORDER BY a.published_at DESC
@@ -376,18 +381,35 @@ async function getArticlePool(hours) {
           COALESCE(ns.fetch_tier, 1) IN (2, 3, 4)
           OR COALESCE(a.base_priority, 0) >= ${BASE_PRIORITY_FLOOR}
         )
-        AND a.id NOT IN (SELECT article_id FROM story_timeline_articles)
     )
     SELECT id, title, summary, translated_summary, published_at, base_priority,
-           source_name, source_key, fetch_tier, country_name, city_name, primary_category
+           source_name, source_key, fetch_tier, country_name, city_name
     FROM ranked
     WHERE source_rank <= ${MAX_PER_SOURCE}
     ORDER BY base_priority DESC NULLS LAST, published_at DESC
-    LIMIT ${TOTAL_ARTICLE_LIMIT}
+    LIMIT ${TOTAL_ARTICLE_LIMIT * 2}
   `);
-  if (!rows.length) return [];
 
-  // Also inject articles from active/cooling threads that aren't yet in timelines
+  // Filter out articles already in timelines (in JS — avoids slow NOT IN subquery)
+  const filtered = rows.filter(r => !inTimeline.has(r.id)).slice(0, TOTAL_ARTICLE_LIMIT);
+  if (!filtered.length) return [];
+
+  // Batch-fetch categories from thread associations
+  const allIds = filtered.map(r => r.id);
+  const { rows: catRows } = await pool.query(`
+    SELECT DISTINCT ON (sta.article_id)
+      sta.article_id, st.primary_category
+    FROM story_thread_articles sta
+    JOIN story_threads st ON st.id = sta.thread_id
+    WHERE sta.article_id = ANY($1::int[])
+    ORDER BY sta.article_id, st.importance DESC
+  `, [allIds]);
+  const catMap = new Map(catRows.map(r => [r.article_id, r.primary_category]));
+  for (const r of filtered) {
+    r.primary_category = catMap.get(r.id) || null;
+  }
+
+  // Also inject articles from active/cooling threads not yet in timelines
   const { rows: threadRows } = await pool.query(`
     SELECT DISTINCT ON (a.id)
       a.id, a.title, a.summary, a.translated_summary,
@@ -409,16 +431,15 @@ async function getArticlePool(hours) {
       AND st.importance >= 4
       AND a.published_at > NOW() - INTERVAL '${hours} hours'
       AND a.title IS NOT NULL
-      AND a.id NOT IN (SELECT article_id FROM story_timeline_articles)
     ORDER BY a.id, st.importance DESC, a.published_at DESC
     LIMIT 800
   `);
 
-  // Merge, dedup
-  const allRows = [...rows];
-  const existingIds = new Set(rows.map(r => r.id));
+  // Merge, dedup — also filter thread rows through inTimeline set
+  const allRows = [...filtered];
+  const existingIds = new Set(filtered.map(r => r.id));
   for (const tr of threadRows) {
-    if (!existingIds.has(tr.id)) {
+    if (!existingIds.has(tr.id) && !inTimeline.has(tr.id)) {
       allRows.push(tr);
       existingIds.add(tr.id);
     }
