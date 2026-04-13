@@ -2678,6 +2678,65 @@ app.put('/api/admin/briefing-editor/segments/:episodeId', requireAdmin, async (r
   }
 });
 
+// Upload background music for a briefing episode (raw binary body)
+app.put('/api/admin/briefing-editor/music/:episodeId', requireAdmin, express.raw({ type: ['audio/*', 'video/mp4'], limit: '25mb' }), async (req, res) => {
+  try {
+    const { episodeId } = req.params;
+    const filename = decodeURIComponent(req.headers['x-music-filename'] || 'music.mp3');
+    const contentType = req.headers['content-type'] || 'audio/mpeg';
+
+    if (!req.body || !req.body.length) {
+      return res.status(400).json({ error: 'No music data received' });
+    }
+
+    await pool.query(
+      `UPDATE briefing_episodes
+       SET music_data = $1, music_meta = $2
+       WHERE id = $3`,
+      [req.body, JSON.stringify({ filename, content_type: contentType, size: req.body.length }), episodeId]
+    );
+
+    console.log(`[briefing-editor] music uploaded for episode ${episodeId}: ${filename} (${(req.body.length / 1024 / 1024).toFixed(1)} MB)`);
+    res.json({ ok: true, size: req.body.length });
+  } catch (err) {
+    console.error('[briefing-editor] music upload error:', err.message);
+    res.status(500).json({ error: 'Failed to upload music' });
+  }
+});
+
+// Delete background music from episode
+app.delete('/api/admin/briefing-editor/music/:episodeId', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE briefing_episodes SET music_data = NULL, music_meta = NULL WHERE id = $1`,
+      [req.params.episodeId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete music' });
+  }
+});
+
+// Serve background music for playback
+app.get('/api/briefing/music/:episodeId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT music_data, music_meta FROM briefing_episodes WHERE id = $1 AND music_data IS NOT NULL`,
+      [req.params.episodeId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No music for this episode' });
+
+    const meta = rows[0].music_meta || {};
+    res.set('Content-Type', meta.content_type || 'audio/mpeg');
+    res.set('Content-Length', rows[0].music_data.length);
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(rows[0].music_data);
+  } catch (err) {
+    console.error('[briefing] music serve error:', err.message);
+    res.status(500).json({ error: 'Failed to serve music' });
+  }
+});
+
 // Generate audio for edited segments — streams logs via SSE
 app.post('/api/admin/briefing-editor/generate-audio/:episodeId', requireAdmin, async (req, res) => {
   try {
@@ -4692,7 +4751,8 @@ app.get("/api/briefing/today", async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const { rows } = await pool.query(`
       SELECT id, target_date, headline, voiceover_script, segments, status, generated_at,
-             (audio_data IS NOT NULL) AS has_audio
+             (audio_data IS NOT NULL) AS has_audio,
+             (music_data IS NOT NULL) AS has_music
       FROM briefing_episodes
       WHERE user_id IS NULL AND target_date = $1 AND status = 'ready'
       ORDER BY id DESC
@@ -4821,7 +4881,8 @@ app.get("/api/briefing/episode/:id", async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT id, target_date, headline, voiceover_script, segments, status, generated_at,
-             (audio_data IS NOT NULL) AS has_audio
+             (audio_data IS NOT NULL) AS has_audio,
+             (music_data IS NOT NULL) AS has_music
       FROM briefing_episodes
       WHERE id = $1 AND status = 'ready'
       LIMIT 1
@@ -6888,6 +6949,19 @@ app.get('/health', (req, res) => {
     }
   });
 });
+
+// ── Ensure briefing_episodes has music columns ────────────────────────────
+(async () => {
+  try {
+    await pool.query(`
+      ALTER TABLE briefing_episodes ADD COLUMN IF NOT EXISTS music_data bytea;
+      ALTER TABLE briefing_episodes ADD COLUMN IF NOT EXISTS music_meta jsonb;
+    `);
+    console.log('[migration] briefing_episodes music columns ensured');
+  } catch (e) {
+    console.warn('[migration] music columns:', e.message);
+  }
+})();
 
 // ── Start server with graceful shutdown ───────────────────────────────────
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

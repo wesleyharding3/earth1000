@@ -24725,6 +24725,94 @@ body.ticker-active .gTickerLabel {
   let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
+  // ── Background Music Engine ──────────────────────────────────────────
+  // Context-aware ducking: music swells between narrator segments,
+  // fades when narrator speaks or a YouTube video plays.
+  let _bgMusic      = null;    // Audio element for background music
+  let _bgMusicCtx   = null;    // AudioContext for gain control
+  let _bgMusicGain  = null;    // GainNode for smooth volume ducking
+  let _bgMusicSrc   = null;    // MediaElementSourceNode
+  const BG_VOL_FULL = 0.35;   // volume during gaps (between segments)
+  const BG_VOL_LOW  = 0.08;   // volume when narrator is speaking
+  const BG_VOL_MUTE = 0.0;    // volume when YouTube video is playing
+  const BG_FADE_IN  = 1.2;    // seconds to fade up
+  const BG_FADE_OUT = 0.6;    // seconds to duck down
+  let _bgMusicLoaded = false;
+
+  function initBgMusic(episodeId) {
+    if (!episodeId) return;
+    // Clean up previous instance
+    destroyBgMusic();
+    _bgMusic = new Audio(`${API}/api/briefing/music/${episodeId}`);
+    _bgMusic.preload = 'auto';
+    _bgMusic.loop = true;
+    _bgMusic.volume = 1; // volume controlled via GainNode
+    _bgMusicLoaded = false;
+
+    _bgMusic.addEventListener('canplaythrough', () => {
+      if (_bgMusicLoaded) return;
+      _bgMusicLoaded = true;
+      try {
+        _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+        _bgMusicSrc = _bgMusicCtx.createMediaElementSource(_bgMusic);
+        _bgMusicGain = _bgMusicCtx.createGain();
+        _bgMusicGain.gain.value = BG_VOL_FULL;
+        _bgMusicSrc.connect(_bgMusicGain);
+        _bgMusicGain.connect(_bgMusicCtx.destination);
+      } catch (e) {
+        console.warn('[bgMusic] AudioContext init failed, using volume fallback:', e.message);
+        _bgMusic.volume = BG_VOL_FULL;
+      }
+      console.log('[bgMusic] loaded and ready');
+    }, { once: true });
+
+    _bgMusic.addEventListener('error', () => {
+      console.warn('[bgMusic] failed to load — briefing will play without music');
+      _bgMusic = null;
+    });
+  }
+
+  function startBgMusic() {
+    if (!_bgMusic) return;
+    if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') {
+      _bgMusicCtx.resume();
+    }
+    _bgMusic.play().catch(e => console.warn('[bgMusic] play blocked:', e.message));
+  }
+
+  function destroyBgMusic() {
+    if (_bgMusic) { try { _bgMusic.pause(); _bgMusic.src = ''; } catch (_) {} }
+    if (_bgMusicCtx && _bgMusicCtx.state !== 'closed') {
+      try { _bgMusicCtx.close(); } catch (_) {}
+    }
+    _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
+    _bgMusicLoaded = false;
+  }
+
+  // Smooth volume transitions via exponential ramp
+  function duckBgMusic(targetVol, fadeSec) {
+    if (!_bgMusic) return;
+    if (_bgMusicGain && _bgMusicCtx) {
+      const now = _bgMusicCtx.currentTime;
+      _bgMusicGain.gain.cancelScheduledValues(now);
+      _bgMusicGain.gain.setValueAtTime(_bgMusicGain.gain.value, now);
+      _bgMusicGain.gain.exponentialRampToValueAtTime(Math.max(targetVol, 0.001), now + fadeSec);
+    } else {
+      // Fallback: direct volume (no smooth ramp)
+      _bgMusic.volume = targetVol;
+    }
+  }
+
+  // Called when narrator audio STARTS playing
+  function bgMusicNarratorStart() { duckBgMusic(BG_VOL_LOW, BG_FADE_OUT); }
+  // Called when narrator audio ENDS (gap between segments)
+  function bgMusicNarratorEnd()   { duckBgMusic(BG_VOL_FULL, BG_FADE_IN); }
+  // Called when YouTube focal video STARTS
+  function bgMusicVideoStart()    { duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT); }
+  // Called when YouTube focal video ENDS
+  function bgMusicVideoEnd()      { duckBgMusic(BG_VOL_LOW, BG_FADE_IN); }
+  // ── End Background Music Engine ──────────────────────────────────────
+
   function addBTimer(t) { briefingTimers.push(t); return t; }
   function clearBTimers() {
     briefingTimers.forEach(clearTimeout);
@@ -24870,6 +24958,10 @@ body.ticker-active .gTickerLabel {
     updatePlayBtn();
     updateSpeedBtn();
     startSeekLoop();
+    // Init background music if episode has it
+    if (episode.has_music) {
+      initBgMusic(episode.id);
+    }
     // Seed briefing ticker immediately with all episode article IDs
     const allIds = (episode.segments || []).flatMap(s => s.article_ids || []);
     if (allIds.length) {
@@ -24896,6 +24988,7 @@ body.ticker-active .gTickerLabel {
     if (window._globeResetZoom) window._globeResetZoom();
     if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
     if (audioNext) { try { audioNext.pause(); } catch (_) {} audioNext = null; }
+    destroyBgMusic();
     segIdx = 0;
     document.getElementById('briefingOverlay').classList.remove('open');
     document.getElementById('bRecap').classList.remove('open');
@@ -25519,6 +25612,8 @@ body.ticker-active .gTickerLabel {
     if (audioNext) { try { audioNext.pause(); }                        catch (_) {} }
     // Stop story-detail panel audio if open
     if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
+    // Swell background music during segment transition gap
+    bgMusicNarratorEnd();
 
     // ── Per-segment audio ──────────────────────────────────────────────────
     // Hide hover card from previous segment immediately
@@ -25551,6 +25646,9 @@ body.ticker-active .gTickerLabel {
         const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
         clearBTimers();  // clear any stale timers before setting new ones
         startGlobeTimers(curIdx, seg, realDur / playbackRate);
+        // Start background music on first segment, duck for narrator
+        startBgMusic();
+        bgMusicNarratorStart();
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
 
         // Advance to the next segment AFTER the audio finishes plus a short
@@ -25605,6 +25703,7 @@ body.ticker-active .gTickerLabel {
       // regular segments use SEGMENT_BUFFER_MS for a breathing room gap.
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
+        bgMusicNarratorEnd(); // swell music during gap
         clearTimeout(segTimer);
         const pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
@@ -26114,8 +26213,9 @@ body.ticker-active .gTickerLabel {
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
 
-    // Pause narrator audio
+    // Pause narrator audio and mute background music for video
     if (audio) { try { audio.pause(); } catch (_) {} }
+    bgMusicVideoStart();
 
     // Enlarge media card to focal mode
     card.classList.add('bFocalVideo');
@@ -26182,8 +26282,10 @@ body.ticker-active .gTickerLabel {
     }
     if (scrim) scrim.classList.remove('visible');
 
-    // Resume narrator audio
+    // Resume narrator audio and restore bg music to narrator-ducked level
+    bgMusicVideoEnd();
     if (audio && playing) {
+      bgMusicNarratorStart();
       try { audio.play().catch(() => {}); } catch (_) {}
     }
   }
@@ -26254,6 +26356,11 @@ body.ticker-active .gTickerLabel {
     clearTimeout(segTimer);
     clearBTimers();
     clearArcMeshes();
+    // Fade out background music at end of briefing
+    if (_bgMusic) {
+      duckBgMusic(0.001, 2.0);
+      setTimeout(() => { if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} } }, 2500);
+    }
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
     const grid = document.getElementById('bRecapGrid');
@@ -26423,7 +26530,9 @@ body.ticker-active .gTickerLabel {
       clearTimeout(segTimer);
       clearBTimers();
       if (audio) { try { audio.pause(); } catch (_) {} }
+      if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} }
     } else {
+      if (_bgMusic && _bgMusicLoaded) { try { _bgMusic.play().catch(() => {}); } catch (_) {} }
       // Resume audio if it hasn't ended; otherwise advance to next segment
       if (audio) {
         const atEnd = isFinite(audio.duration) && audio.currentTime >= audio.duration - 0.1;

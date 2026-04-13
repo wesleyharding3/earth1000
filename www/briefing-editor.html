@@ -633,6 +633,63 @@
     .step-desc { color: #94a3b8; font-size: 0.85rem; margin-bottom: 16px; }
     .step-actions { display: flex; justify-content: space-between; margin-top: 24px; gap: 12px; }
 
+    /* Music upload */
+    .music-upload-card {
+      background: #111827;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .music-upload-card .seg-label { margin-bottom: 8px; }
+    .music-upload-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .music-upload-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #1e293b;
+      border: 1px dashed #334155;
+      color: #94a3b8;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .music-upload-btn:hover { border-color: #00d4ff; color: #00d4ff; }
+    .music-upload-btn.has-file { border-style: solid; border-color: #22c55e; color: #22c55e; background: rgba(34,197,94,0.08); }
+    .music-file-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: #e2e8f0;
+    }
+    .music-file-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .music-preview-btn, .music-remove-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 6px;
+    }
+    .music-preview-btn { color: #00d4ff; }
+    .music-preview-btn:hover { color: #00b8d9; }
+    .music-remove-btn { color: #ef4444; }
+    .music-remove-btn:hover { color: #f87171; }
+    .music-cached-tag {
+      font-size: 10px;
+      background: rgba(0,212,255,0.12);
+      color: #00d4ff;
+      padding: 2px 8px;
+      border-radius: 3px;
+    }
+
     /* Responsive */
     @media (max-width: 600px) {
       .editor-wrap { padding: 16px 12px 60px; }
@@ -709,6 +766,25 @@
     <div id="step-3" class="hidden">
       <h2>Edit Segments</h2>
       <p class="step-desc">Review and customize each segment's content, locations, arcs, and media.</p>
+
+      <!-- Background Music Upload -->
+      <div class="music-upload-card" id="music-upload-card">
+        <div class="seg-label">&#9835; Background Music <span style="text-transform:none;color:#475569;letter-spacing:0;">(optional — plays between narrator segments)</span></div>
+        <div class="music-upload-row">
+          <label class="music-upload-btn" id="music-upload-btn">
+            <span>&#8682; Upload Music</span>
+            <input type="file" id="music-file-input" accept=".mp3,.wav,.mp4,.m4a,.ogg" style="display:none;" onchange="handleMusicUpload(this)" />
+          </label>
+          <div class="music-file-info" id="music-file-info" style="display:none;">
+            <span class="music-file-name" id="music-file-name"></span>
+            <button class="music-preview-btn" id="music-preview-btn" onclick="toggleMusicPreview()" title="Preview">&#9654;</button>
+            <button class="music-remove-btn" onclick="removeMusicFile()" title="Remove">&times;</button>
+          </div>
+          <span class="music-cached-tag" id="music-cached-tag" style="display:none;">cached</span>
+        </div>
+        <audio id="music-preview-audio" style="display:none;"></audio>
+      </div>
+
       <div id="segments-container"></div>
       <div class="step-actions">
         <button class="btn-secondary" onclick="goToStep(2)">&larr; Back</button>
@@ -1316,8 +1392,9 @@
     async function generateAudio() {
       if (!currentEpisodeId) return;
 
-      // Save segments before generating audio
+      // Save segments and upload background music before generating audio
       await saveEditedSegments();
+      await uploadMusicIfPresent(currentEpisodeId);
 
       showProgressOverlay('Generating audio...', 'Streaming logs from audio generator');
       document.getElementById('generate-audio-btn').disabled = true;
@@ -1940,6 +2017,148 @@
       d.textContent = String(s);
       return d.innerHTML;
     }
+
+    // ---- Background Music ----
+    const MUSIC_DB_NAME = 'earth_briefing_music';
+    const MUSIC_DB_VERSION = 1;
+    const MUSIC_STORE = 'files';
+    let _musicFile = null;       // { name, type, size, data: ArrayBuffer }
+    let _musicPreviewPlaying = false;
+
+    function openMusicDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(MUSIC_DB_NAME, MUSIC_DB_VERSION);
+        req.onupgradeneeded = () => req.result.createObjectStore(MUSIC_STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function cacheMusicFile(file) {
+      try {
+        const db = await openMusicDB();
+        const tx = db.transaction(MUSIC_STORE, 'readwrite');
+        tx.objectStore(MUSIC_STORE).put({
+          name: file.name, type: file.type, size: file.size, data: file.data
+        }, 'current');
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+        db.close();
+      } catch (e) { console.warn('[music] cache write failed:', e); }
+    }
+
+    async function loadCachedMusic() {
+      try {
+        const db = await openMusicDB();
+        const tx = db.transaction(MUSIC_STORE, 'readonly');
+        const req = tx.objectStore(MUSIC_STORE).get('current');
+        const result = await new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = rej; });
+        db.close();
+        if (result && result.data) {
+          _musicFile = result;
+          updateMusicUI(true);
+        }
+      } catch (e) { console.warn('[music] cache load failed:', e); }
+    }
+
+    async function clearCachedMusic() {
+      try {
+        const db = await openMusicDB();
+        const tx = db.transaction(MUSIC_STORE, 'readwrite');
+        tx.objectStore(MUSIC_STORE).delete('current');
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+        db.close();
+      } catch (e) { console.warn('[music] cache clear failed:', e); }
+    }
+
+    function updateMusicUI(fromCache = false) {
+      const btn = document.getElementById('music-upload-btn');
+      const info = document.getElementById('music-file-info');
+      const nameEl = document.getElementById('music-file-name');
+      const cachedTag = document.getElementById('music-cached-tag');
+      if (_musicFile) {
+        btn.classList.add('has-file');
+        btn.querySelector('span').textContent = '↻ Replace';
+        info.style.display = 'flex';
+        nameEl.textContent = _musicFile.name;
+        nameEl.title = `${_musicFile.name} (${((_musicFile.size || 0) / 1024 / 1024).toFixed(1)} MB)`;
+        cachedTag.style.display = fromCache ? '' : 'none';
+      } else {
+        btn.classList.remove('has-file');
+        btn.querySelector('span').textContent = '⇪ Upload Music';
+        info.style.display = 'none';
+        cachedTag.style.display = 'none';
+      }
+    }
+
+    async function handleMusicUpload(input) {
+      const file = input.files[0];
+      if (!file) return;
+      // Validate type
+      const allowed = ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/x-m4a', 'audio/ogg', 'video/mp4'];
+      if (!allowed.includes(file.type) && !file.name.match(/\.(mp3|wav|mp4|m4a|ogg)$/i)) {
+        alert('Please upload an MP3, WAV, MP4, M4A, or OGG file.');
+        input.value = '';
+        return;
+      }
+      // Read into ArrayBuffer
+      const data = await file.arrayBuffer();
+      _musicFile = { name: file.name, type: file.type, size: file.size, data };
+      await cacheMusicFile(_musicFile);
+      updateMusicUI(false);
+      input.value = '';
+    }
+
+    function toggleMusicPreview() {
+      const audioEl = document.getElementById('music-preview-audio');
+      const btn = document.getElementById('music-preview-btn');
+      if (_musicPreviewPlaying) {
+        audioEl.pause();
+        audioEl.currentTime = 0;
+        btn.innerHTML = '&#9654;';
+        _musicPreviewPlaying = false;
+        return;
+      }
+      if (!_musicFile || !_musicFile.data) return;
+      const blob = new Blob([_musicFile.data], { type: _musicFile.type || 'audio/mpeg' });
+      audioEl.src = URL.createObjectURL(blob);
+      audioEl.volume = 0.5;
+      audioEl.play().catch(() => {});
+      btn.innerHTML = '&#9724;';
+      _musicPreviewPlaying = true;
+      audioEl.onended = () => {
+        btn.innerHTML = '&#9654;';
+        _musicPreviewPlaying = false;
+      };
+    }
+
+    function removeMusicFile() {
+      const audioEl = document.getElementById('music-preview-audio');
+      if (_musicPreviewPlaying) { audioEl.pause(); _musicPreviewPlaying = false; }
+      _musicFile = null;
+      clearCachedMusic();
+      updateMusicUI(false);
+    }
+
+    // Upload music to server alongside audio generation
+    async function uploadMusicIfPresent(episodeId) {
+      if (!_musicFile || !_musicFile.data || !episodeId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/briefing-editor/music/${episodeId}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': _musicFile.type || 'audio/mpeg',
+            'X-Music-Filename': encodeURIComponent(_musicFile.name)
+          },
+          body: _musicFile.data
+        });
+        if (!res.ok) console.warn('[music] upload failed:', res.status);
+        else console.log('[music] uploaded successfully');
+      } catch (e) { console.warn('[music] upload error:', e); }
+    }
+
+    // Load cached music on page load
+    loadCachedMusic();
 
     // ---- Enter key on token input ----
     document.getElementById('token-input').addEventListener('keydown', e => {

@@ -22465,15 +22465,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // synchronous and persist across WKWebView restarts, so Supabase can
   // read them immediately on init (unlike IndexedDB which is async).
   const _AUTH_STORAGE_KEY = 'sb-hqzabwjwuszupxwookgx-auth-token';
+  const _BACKUP_KEY = '_earth_session_backup'; // independent key Supabase can't touch
+  let _allowStorageRemoval = false; // only true during user-initiated sign-out
   const _authStorage = (() => {
     const COOKIE_KEY = 'earth_auth_backup';
     const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
 
     function setCookie(val) {
       try {
-        // Encode to base64 to avoid cookie special-char issues
         const encoded = btoa(unescape(encodeURIComponent(val)));
-        document.cookie = `${COOKIE_KEY}=${encoded}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
+        if (encoded.length < 3800) {
+          document.cookie = `${COOKIE_KEY}=${encoded}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
+        }
       } catch (_) {}
     }
     function getCookie() {
@@ -22487,12 +22490,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
       document.cookie = `${COOKIE_KEY}=; max-age=0; path=/; SameSite=Lax`;
     }
 
-    // On startup: restore from cookie if localStorage is empty (synchronous!)
+    // On startup: diagnose what's in each storage layer
+    console.log('[auth-storage] === STARTUP DIAGNOSTICS ===');
+    const _lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
+    const _bakVal = localStorage.getItem(_BACKUP_KEY);
+    const _ssVal = sessionStorage.getItem(_AUTH_STORAGE_KEY);
+    const _ckVal = getCookie();
+    console.log('[auth-storage] localStorage main key:', _lsVal ? `FOUND (${_lsVal.length} chars)` : 'EMPTY');
+    console.log('[auth-storage] localStorage backup key:', _bakVal ? `FOUND (${_bakVal.length} chars)` : 'EMPTY');
+    console.log('[auth-storage] sessionStorage:', _ssVal ? `FOUND (${_ssVal.length} chars)` : 'EMPTY');
+    console.log('[auth-storage] cookie:', _ckVal ? `FOUND (${_ckVal.length} chars)` : 'EMPTY');
+
+    // Restore from best available source if main key is empty
     try {
-      const lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
-      if (!lsVal) {
-        const cookieVal = getCookie();
-        if (cookieVal) localStorage.setItem(_AUTH_STORAGE_KEY, cookieVal);
+      if (!_lsVal) {
+        const restoreFrom = _bakVal || _ssVal || _ckVal;
+        if (restoreFrom) {
+          console.log('[auth-storage] Restoring main key from', _bakVal ? 'backup' : _ssVal ? 'sessionStorage' : 'cookie');
+          localStorage.setItem(_AUTH_STORAGE_KEY, restoreFrom);
+        } else {
+          console.log('[auth-storage] No session found in any storage layer');
+        }
       }
     } catch (_) {}
 
@@ -22500,23 +22518,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
       getItem(key) {
         const val = localStorage.getItem(key);
         if (val) return val;
-        // Fallback: try cookie
+        if (key === _AUTH_STORAGE_KEY) {
+          const bak = localStorage.getItem(_BACKUP_KEY);
+          if (bak) { console.log('[auth-storage] getItem: restored from backup key'); localStorage.setItem(key, bak); return bak; }
+        }
+        try {
+          const ssVal = sessionStorage.getItem(key);
+          if (ssVal) { console.log('[auth-storage] getItem: restored from sessionStorage'); return ssVal; }
+        } catch (_) {}
         if (key === _AUTH_STORAGE_KEY) {
           const cookieVal = getCookie();
-          if (cookieVal) {
-            localStorage.setItem(key, cookieVal);
-            return cookieVal;
-          }
+          if (cookieVal) { console.log('[auth-storage] getItem: restored from cookie'); localStorage.setItem(key, cookieVal); return cookieVal; }
         }
         return null;
       },
       setItem(key, value) {
+        console.log('[auth-storage] setItem called for', key, '(' + (value ? value.length : 0) + ' chars)');
         localStorage.setItem(key, value);
-        if (key === _AUTH_STORAGE_KEY) setCookie(value);
+        if (key === _AUTH_STORAGE_KEY) {
+          localStorage.setItem(_BACKUP_KEY, value);
+          setCookie(value);
+        }
       },
       removeItem(key) {
+        if (!_allowStorageRemoval) {
+          console.warn('[auth-storage] BLOCKED removeItem for', key, '(not user-initiated sign-out)');
+          return;
+        }
+        console.log('[auth-storage] removeItem ALLOWED for', key);
         localStorage.removeItem(key);
-        if (key === _AUTH_STORAGE_KEY) clearCookie();
+        sessionStorage.removeItem(key);
+        if (key === _AUTH_STORAGE_KEY) {
+          localStorage.removeItem(_BACKUP_KEY);
+          clearCookie();
+        }
       }
     };
   })();
@@ -22827,7 +22862,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const raw = localStorage.getItem(key);
       if (raw) {
         sessionStorage.setItem(key, raw);
-        _authStorage.removeItem(key);  // clears both localStorage + IndexedDB
+        _allowStorageRemoval = true;
+        _authStorage.removeItem(key);
+        _allowStorageRemoval = false;
       }
     }
     // Apply session directly — don't rely solely on onAuthStateChange
@@ -22849,12 +22886,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _userInitiatedSignOut = false;
   async function signOut() {
     _userInitiatedSignOut = true;
+    _allowStorageRemoval = true;
     try {
       await sb.auth.signOut({ scope: 'local' });
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
-    // Also clear IndexedDB backup
+    // Also clear all storage backups
     _authStorage.removeItem(_AUTH_STORAGE_KEY);
     clearAuthUI();
     accountDropdown.classList.remove('open');
@@ -22913,9 +22951,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
 
   /* ── Library (Saved / History) ── */
-  const libraryPanel = document.getElementById('libraryPanel');
-  const libContent   = document.getElementById('libContent');
-  const libClose     = document.getElementById('libClose');
+  // Lazy lookups — these DOM elements appear later in the HTML
+  function getLibPanel()   { return document.getElementById('libraryPanel'); }
+  function getLibContent() { return document.getElementById('libContent'); }
+  function getLibClose()   { return document.getElementById('libClose'); }
   let _libTab = 'saved';
   let _savedItems  = JSON.parse(localStorage.getItem('earth00_saved') || '[]');
   let _historyItems = JSON.parse(localStorage.getItem('earth00_history') || '[]');
@@ -22939,16 +22978,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   function _renderLib() {
+    const lc = getLibContent();
+    if (!lc) return;
     const items = _libTab === 'saved' ? _savedItems : _historyItems;
     if (!items.length) {
-      libContent.innerHTML = _libEmpty(
+      lc.innerHTML = _libEmpty(
         _libTab === 'saved'
           ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
           : 'No browsing history yet.'
       );
       return;
     }
-    libContent.innerHTML = items.map((it, i) => `
+    lc.innerHTML = items.map((it, i) => `
       <div class="libItem" data-idx="${i}" data-url="${it.url || ''}">
         <div class="libItemBody">
           <div class="libItemTitle">${it.title || 'Untitled'}</div>
@@ -22957,14 +22998,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}
       </div>`).join('');
 
-    libContent.querySelectorAll('.libItem').forEach(el => {
+    lc.querySelectorAll('.libItem').forEach(el => {
       el.addEventListener('click', e => {
         if (e.target.closest('.libItemRemove')) return;
         const url = el.dataset.url;
         if (url) window.open(url, '_blank');
       });
     });
-    libContent.querySelectorAll('.libItemRemove').forEach(btn => {
+    lc.querySelectorAll('.libItemRemove').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.rm);
@@ -22975,16 +23016,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   function openLibrary(tab) {
+    const lp = getLibPanel();
     _libTab = tab || 'saved';
-    libraryPanel.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
+    if (lp) lp.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
     _renderLib();
     accountDropdown.classList.remove('open');
-    requestAnimationFrame(() => libraryPanel.classList.add('open'));
+    if (lp) requestAnimationFrame(() => lp.classList.add('open'));
   }
 
-  libClose.addEventListener('click', () => libraryPanel.classList.remove('open'));
-  libraryPanel.querySelectorAll('.libTab').forEach(t => {
-    t.addEventListener('click', () => { _libTab = t.dataset.lib; libraryPanel.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
+  // Defer library panel event binding until DOM is ready
+  document.addEventListener('DOMContentLoaded', () => {
+    const lp = getLibPanel();
+    const lc2 = getLibClose();
+    if (lc2) lc2.addEventListener('click', () => lp && lp.classList.remove('open'));
+    if (lp) lp.querySelectorAll('.libTab').forEach(t => {
+      t.addEventListener('click', () => { _libTab = t.dataset.lib; lp.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
+    });
   });
   document.getElementById('acctDpSaved').addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
   document.getElementById('acctDpHistory').addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
@@ -22998,7 +23045,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
   window.__libraryUnsave = function(id) {
     _savedItems = _savedItems.filter(s => s.id !== id);
-    _persistSaved(); _updateSavedCount(); if (libraryPanel.classList.contains('open') && _libTab === 'saved') _renderLib();
+    const lp = getLibPanel();
+    _persistSaved(); _updateSavedCount(); if (lp && lp.classList.contains('open') && _libTab === 'saved') _renderLib();
   };
   window.__libraryIsSaved = function(id) { return _savedItems.some(s => s.id === id); };
   window.__libraryTrackView = function(item) {
@@ -23021,7 +23069,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function hasPersistedSession() {
     try {
       const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
-      const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
+      const raw = localStorage.getItem(key) || localStorage.getItem(_BACKUP_KEY) || sessionStorage.getItem(key);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
       return !!(parsed?.access_token || parsed?.refresh_token);
@@ -23069,13 +23117,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Auth state — fires on load + every sign-in/out ───────────
   sb.auth.onAuthStateChange(async (_event, session) => {
+    console.log('[auth] onAuthStateChange:', _event, session ? 'HAS SESSION' : 'NO SESSION');
     await applySession(session, _event);
   });
 
   (async function initAuth() {
+    console.log('[auth] === initAuth START ===');
+    console.log('[auth] hasPersistedSession:', hasPersistedSession());
     try {
       const { data, error } = await sb.auth.getSession();
-      if (error) throw error;
+      console.log('[auth] getSession result:', error ? `ERROR: ${error.message}` : data?.session ? 'HAS SESSION' : 'NO SESSION');
 
       if (data?.session) {
         await applySession(data.session, 'INITIAL_SESSION');
@@ -23083,15 +23134,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // getSession returned null but we have stored tokens — try manual refresh
         console.warn('[auth] getSession returned null, attempting manual refresh');
         try {
-          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || localStorage.getItem(_BACKUP_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
+            console.log('[auth] parsed tokens — has refresh_token:', !!parsed?.refresh_token, 'has access_token:', !!parsed?.access_token);
             if (parsed?.refresh_token) {
               const { data: refreshData, error: refreshErr } = await sb.auth.refreshSession({
                 refresh_token: parsed.refresh_token
               });
+              console.log('[auth] manual refresh result:', refreshErr ? `ERROR: ${refreshErr.message}` : refreshData?.session ? 'SUCCESS' : 'NO SESSION');
               if (!refreshErr && refreshData?.session) {
-                console.log('[auth] manual refresh succeeded');
                 await applySession(refreshData.session, 'INITIAL_SESSION');
                 return;
               }
@@ -23100,8 +23152,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (parsed?.access_token) window.__authToken = parsed.access_token;
             if (parsed?.user) updateAccountUI(parsed.user);
           }
-        } catch (_) {}
+        } catch (refreshErr) { console.error('[auth] manual refresh exception:', refreshErr); }
       } else {
+        console.log('[auth] no persisted session, applying null');
         await applySession(null, 'INITIAL_SESSION');
       }
     } catch (err) {
@@ -23109,7 +23162,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (hasPersistedSession()) {
         console.warn('[auth] keeping UI logged in — persisted tokens exist');
         try {
-          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || localStorage.getItem(_BACKUP_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed?.access_token) window.__authToken = parsed.access_token;
@@ -24827,6 +24880,67 @@ body.ticker-active .gTickerLabel {
   let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
+  // ── Background Music Engine ──────────────────────────────────────────
+  let _bgMusic      = null;
+  let _bgMusicCtx   = null;
+  let _bgMusicGain  = null;
+  let _bgMusicSrc   = null;
+  const BG_VOL_FULL = 0.35;
+  const BG_VOL_LOW  = 0.08;
+  const BG_VOL_MUTE = 0.0;
+  const BG_FADE_IN  = 1.2;
+  const BG_FADE_OUT = 0.6;
+  let _bgMusicLoaded = false;
+
+  function initBgMusic(episodeId) {
+    if (!episodeId) return;
+    destroyBgMusic();
+    _bgMusic = new Audio(`${API}/api/briefing/music/${episodeId}`);
+    _bgMusic.preload = 'auto';
+    _bgMusic.loop = true;
+    _bgMusic.volume = 1;
+    _bgMusicLoaded = false;
+    _bgMusic.addEventListener('canplaythrough', () => {
+      if (_bgMusicLoaded) return;
+      _bgMusicLoaded = true;
+      try {
+        _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+        _bgMusicSrc = _bgMusicCtx.createMediaElementSource(_bgMusic);
+        _bgMusicGain = _bgMusicCtx.createGain();
+        _bgMusicGain.gain.value = BG_VOL_FULL;
+        _bgMusicSrc.connect(_bgMusicGain);
+        _bgMusicGain.connect(_bgMusicCtx.destination);
+      } catch (e) {
+        _bgMusic.volume = BG_VOL_FULL;
+      }
+    }, { once: true });
+    _bgMusic.addEventListener('error', () => { _bgMusic = null; });
+  }
+  function startBgMusic() {
+    if (!_bgMusic) return;
+    if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') _bgMusicCtx.resume();
+    _bgMusic.play().catch(() => {});
+  }
+  function destroyBgMusic() {
+    if (_bgMusic) { try { _bgMusic.pause(); _bgMusic.src = ''; } catch (_) {} }
+    if (_bgMusicCtx && _bgMusicCtx.state !== 'closed') { try { _bgMusicCtx.close(); } catch (_) {} }
+    _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null; _bgMusicLoaded = false;
+  }
+  function duckBgMusic(targetVol, fadeSec) {
+    if (!_bgMusic) return;
+    if (_bgMusicGain && _bgMusicCtx) {
+      const now = _bgMusicCtx.currentTime;
+      _bgMusicGain.gain.cancelScheduledValues(now);
+      _bgMusicGain.gain.setValueAtTime(_bgMusicGain.gain.value, now);
+      _bgMusicGain.gain.exponentialRampToValueAtTime(Math.max(targetVol, 0.001), now + fadeSec);
+    } else { _bgMusic.volume = targetVol; }
+  }
+  function bgMusicNarratorStart() { duckBgMusic(BG_VOL_LOW, BG_FADE_OUT); }
+  function bgMusicNarratorEnd()   { duckBgMusic(BG_VOL_FULL, BG_FADE_IN); }
+  function bgMusicVideoStart()    { duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT); }
+  function bgMusicVideoEnd()      { duckBgMusic(BG_VOL_LOW, BG_FADE_IN); }
+  // ── End Background Music Engine ──────────────────────────────────────
+
   function addBTimer(t) { briefingTimers.push(t); return t; }
   function clearBTimers() {
     briefingTimers.forEach(clearTimeout);
@@ -24972,6 +25086,7 @@ body.ticker-active .gTickerLabel {
     updatePlayBtn();
     updateSpeedBtn();
     startSeekLoop();
+    if (episode.has_music) initBgMusic(episode.id);
     // Seed briefing ticker immediately with all episode article IDs
     const allIds = (episode.segments || []).flatMap(s => s.article_ids || []);
     if (allIds.length) {
@@ -24998,6 +25113,7 @@ body.ticker-active .gTickerLabel {
     if (window._globeResetZoom) window._globeResetZoom();
     if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
     if (audioNext) { try { audioNext.pause(); } catch (_) {} audioNext = null; }
+    destroyBgMusic();
     segIdx = 0;
     document.getElementById('briefingOverlay').classList.remove('open');
     document.getElementById('bRecap').classList.remove('open');
@@ -25620,6 +25736,7 @@ body.ticker-active .gTickerLabel {
     if (audioNext) { try { audioNext.pause(); }                        catch (_) {} }
     // Stop story-detail panel audio if open
     if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
+    bgMusicNarratorEnd();
 
     // ── Per-segment audio ──────────────────────────────────────────────────
     // Hide hover card from previous segment immediately
@@ -25642,16 +25759,14 @@ body.ticker-active .gTickerLabel {
       const estDur = getSegmentDuration(idx);
       let started = false;
 
-      // onReady: called exactly once when metadata (and therefore real duration)
-      // is available. Starts globe timers with REAL duration, then starts playback.
-      // This is the key fix — globe animations are tied to actual audio length,
-      // not a word-count estimate.
       const onReady = () => {
         if (segIdx !== curIdx || !playing || started) return;
         started = true;
         const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
-        clearBTimers();  // clear any stale timers before setting new ones
+        clearBTimers();
         startGlobeTimers(curIdx, seg, realDur / playbackRate);
+        startBgMusic();
+        bgMusicNarratorStart();
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
 
         // Advance to the next segment AFTER the audio finishes plus a short
@@ -25706,6 +25821,7 @@ body.ticker-active .gTickerLabel {
       // regular segments use SEGMENT_BUFFER_MS for a breathing room gap.
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
+        bgMusicNarratorEnd();
         clearTimeout(segTimer);
         const pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
@@ -26207,6 +26323,7 @@ body.ticker-active .gTickerLabel {
     const duration = (endSec - startSec) * 1000;
 
     if (audio) { try { audio.pause(); } catch (_) {} }
+    bgMusicVideoStart();
 
     card.classList.add('bFocalVideo');
     if (scrim) scrim.classList.add('visible');
@@ -26263,7 +26380,9 @@ body.ticker-active .gTickerLabel {
     }
     if (scrim) scrim.classList.remove('visible');
 
+    bgMusicVideoEnd();
     if (audio && playing) {
+      bgMusicNarratorStart();
       try { audio.play().catch(() => {}); } catch (_) {}
     }
   }
@@ -26333,6 +26452,10 @@ body.ticker-active .gTickerLabel {
     updatePlayBtn();
     clearTimeout(segTimer);
     clearBTimers();
+    if (_bgMusic) {
+      duckBgMusic(0.001, 2.0);
+      setTimeout(() => { if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} } }, 2500);
+    }
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
@@ -26503,7 +26626,9 @@ body.ticker-active .gTickerLabel {
       clearTimeout(segTimer);
       clearBTimers();
       if (audio) { try { audio.pause(); } catch (_) {} }
+      if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} }
     } else {
+      if (_bgMusic && _bgMusicLoaded) { try { _bgMusic.play().catch(() => {}); } catch (_) {} }
       // Resume audio if it hasn't ended; otherwise advance to next segment
       if (audio) {
         const atEnd = isFinite(audio.duration) && audio.currentTime >= audio.duration - 0.1;
