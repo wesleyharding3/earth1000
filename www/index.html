@@ -22304,6 +22304,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // synchronous and persist across WKWebView restarts, so Supabase can
   // read them immediately on init (unlike IndexedDB which is async).
   const _AUTH_STORAGE_KEY = 'sb-hqzabwjwuszupxwookgx-auth-token';
+  const _BACKUP_KEY = '_earth_session_backup'; // independent key Supabase can't touch
   let _allowStorageRemoval = false; // only true during user-initiated sign-out
   const _authStorage = (() => {
     const COOKIE_KEY = 'earth_auth_backup';
@@ -22311,9 +22312,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     function setCookie(val) {
       try {
-        // Encode to base64 to avoid cookie special-char issues
         const encoded = btoa(unescape(encodeURIComponent(val)));
-        document.cookie = `${COOKIE_KEY}=${encoded}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
+        // Only set cookie if encoded value fits (4KB limit)
+        if (encoded.length < 3800) {
+          document.cookie = `${COOKIE_KEY}=${encoded}; max-age=${COOKIE_MAX_AGE}; path=/; SameSite=Lax`;
+        }
       } catch (_) {}
     }
     function getCookie() {
@@ -22327,17 +22330,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       document.cookie = `${COOKIE_KEY}=; max-age=0; path=/; SameSite=Lax`;
     }
 
-    // On startup: restore from cookie or sessionStorage if localStorage is empty
+    // On startup: diagnose what's in each storage layer
+    console.log('[auth-storage] === STARTUP DIAGNOSTICS ===');
+    const _lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
+    const _bakVal = localStorage.getItem(_BACKUP_KEY);
+    const _ssVal = sessionStorage.getItem(_AUTH_STORAGE_KEY);
+    const _ckVal = getCookie();
+    console.log('[auth-storage] localStorage main key:', _lsVal ? `FOUND (${_lsVal.length} chars)` : 'EMPTY');
+    console.log('[auth-storage] localStorage backup key:', _bakVal ? `FOUND (${_bakVal.length} chars)` : 'EMPTY');
+    console.log('[auth-storage] sessionStorage:', _ssVal ? `FOUND (${_ssVal.length} chars)` : 'EMPTY');
+    console.log('[auth-storage] cookie:', _ckVal ? `FOUND (${_ckVal.length} chars)` : 'EMPTY');
+
+    // Restore from best available source if main key is empty
     try {
-      const lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
-      if (!lsVal) {
-        // Try sessionStorage first (for "remember me" unchecked sessions)
-        const ssVal = sessionStorage.getItem(_AUTH_STORAGE_KEY);
-        if (ssVal) {
-          localStorage.setItem(_AUTH_STORAGE_KEY, ssVal);
+      if (!_lsVal) {
+        const restoreFrom = _bakVal || _ssVal || _ckVal;
+        if (restoreFrom) {
+          console.log('[auth-storage] Restoring main key from', _bakVal ? 'backup' : _ssVal ? 'sessionStorage' : 'cookie');
+          localStorage.setItem(_AUTH_STORAGE_KEY, restoreFrom);
         } else {
-          const cookieVal = getCookie();
-          if (cookieVal) localStorage.setItem(_AUTH_STORAGE_KEY, cookieVal);
+          console.log('[auth-storage] No session found in any storage layer');
         }
       }
     } catch (_) {}
@@ -22346,36 +22358,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
       getItem(key) {
         const val = localStorage.getItem(key);
         if (val) return val;
-        // Fallback: try sessionStorage (for "remember me" unchecked)
+        // Fallback chain: backup key → sessionStorage → cookie
+        if (key === _AUTH_STORAGE_KEY) {
+          const bak = localStorage.getItem(_BACKUP_KEY);
+          if (bak) { console.log('[auth-storage] getItem: restored from backup key'); localStorage.setItem(key, bak); return bak; }
+        }
         try {
           const ssVal = sessionStorage.getItem(key);
-          if (ssVal) return ssVal;
+          if (ssVal) { console.log('[auth-storage] getItem: restored from sessionStorage'); return ssVal; }
         } catch (_) {}
-        // Fallback: try cookie
         if (key === _AUTH_STORAGE_KEY) {
           const cookieVal = getCookie();
-          if (cookieVal) {
-            localStorage.setItem(key, cookieVal);
-            return cookieVal;
-          }
+          if (cookieVal) { console.log('[auth-storage] getItem: restored from cookie'); localStorage.setItem(key, cookieVal); return cookieVal; }
         }
         return null;
       },
       setItem(key, value) {
+        console.log('[auth-storage] setItem called for', key, '(' + (value ? value.length : 0) + ' chars)');
         localStorage.setItem(key, value);
-        if (key === _AUTH_STORAGE_KEY) setCookie(value);
+        if (key === _AUTH_STORAGE_KEY) {
+          // Always save to independent backup key
+          localStorage.setItem(_BACKUP_KEY, value);
+          setCookie(value);
+        }
       },
       removeItem(key) {
-        // Guard: only allow removal during explicit user sign-out.
-        // Supabase internally calls removeItem() when token refresh fails,
-        // which would wipe the session even though a retry could succeed.
         if (!_allowStorageRemoval) {
-          console.warn('[auth] blocked storage removal (not user-initiated sign-out)');
+          console.warn('[auth-storage] BLOCKED removeItem for', key, '(not user-initiated sign-out)');
           return;
         }
+        console.log('[auth-storage] removeItem ALLOWED for', key);
         localStorage.removeItem(key);
         sessionStorage.removeItem(key);
-        if (key === _AUTH_STORAGE_KEY) clearCookie();
+        if (key === _AUTH_STORAGE_KEY) {
+          localStorage.removeItem(_BACKUP_KEY);
+          clearCookie();
+        }
       }
     };
   })();
@@ -22884,7 +22902,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function hasPersistedSession() {
     try {
       const key = 'sb-hqzabwjwuszupxwookgx-auth-token';
-      const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
+      const raw = localStorage.getItem(key) || localStorage.getItem(_BACKUP_KEY) || sessionStorage.getItem(key);
       if (!raw) return false;
       const parsed = JSON.parse(raw);
       return !!(parsed?.access_token || parsed?.refresh_token);
@@ -22932,13 +22950,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Auth state — fires on load + every sign-in/out ───────────
   sb.auth.onAuthStateChange(async (_event, session) => {
+    console.log('[auth] onAuthStateChange:', _event, session ? 'HAS SESSION' : 'NO SESSION');
     await applySession(session, _event);
   });
 
   (async function initAuth() {
+    console.log('[auth] === initAuth START ===');
+    console.log('[auth] hasPersistedSession:', hasPersistedSession());
     try {
       const { data, error } = await sb.auth.getSession();
-      if (error) throw error;
+      console.log('[auth] getSession result:', error ? `ERROR: ${error.message}` : data?.session ? 'HAS SESSION' : 'NO SESSION');
 
       if (data?.session) {
         await applySession(data.session, 'INITIAL_SESSION');
@@ -22946,15 +22967,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // getSession returned null but we have stored tokens — try manual refresh
         console.warn('[auth] getSession returned null, attempting manual refresh');
         try {
-          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || localStorage.getItem(_BACKUP_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
+            console.log('[auth] parsed tokens — has refresh_token:', !!parsed?.refresh_token, 'has access_token:', !!parsed?.access_token);
             if (parsed?.refresh_token) {
               const { data: refreshData, error: refreshErr } = await sb.auth.refreshSession({
                 refresh_token: parsed.refresh_token
               });
+              console.log('[auth] manual refresh result:', refreshErr ? `ERROR: ${refreshErr.message}` : refreshData?.session ? 'SUCCESS' : 'NO SESSION');
               if (!refreshErr && refreshData?.session) {
-                console.log('[auth] manual refresh succeeded');
                 await applySession(refreshData.session, 'INITIAL_SESSION');
                 return;
               }
@@ -22963,8 +22985,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (parsed?.access_token) window.__authToken = parsed.access_token;
             if (parsed?.user) updateAccountUI(parsed.user);
           }
-        } catch (_) {}
+        } catch (refreshErr) { console.error('[auth] manual refresh exception:', refreshErr); }
       } else {
+        console.log('[auth] no persisted session, applying null');
         await applySession(null, 'INITIAL_SESSION');
       }
     } catch (err) {
@@ -22972,7 +22995,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (hasPersistedSession()) {
         console.warn('[auth] keeping UI logged in — persisted tokens exist');
         try {
-          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
+          const raw = localStorage.getItem(_AUTH_STORAGE_KEY) || localStorage.getItem(_BACKUP_KEY) || sessionStorage.getItem(_AUTH_STORAGE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed?.access_token) window.__authToken = parsed.access_token;
