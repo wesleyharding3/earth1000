@@ -22794,9 +22794,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
 
   /* ── Library (Saved / History) ── */
-  const libraryPanel = document.getElementById('libraryPanel');
-  const libContent   = document.getElementById('libContent');
-  const libClose     = document.getElementById('libClose');
+  // Lazy lookups — these DOM elements appear later in the HTML
+  function getLibPanel()   { return document.getElementById('libraryPanel'); }
+  function getLibContent() { return document.getElementById('libContent'); }
+  function getLibClose()   { return document.getElementById('libClose'); }
   let _libTab = 'saved';
   let _savedItems  = JSON.parse(localStorage.getItem('earth00_saved') || '[]');
   let _historyItems = JSON.parse(localStorage.getItem('earth00_history') || '[]');
@@ -22820,16 +22821,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   function _renderLib() {
+    const lc = getLibContent();
+    if (!lc) return;
     const items = _libTab === 'saved' ? _savedItems : _historyItems;
     if (!items.length) {
-      libContent.innerHTML = _libEmpty(
+      lc.innerHTML = _libEmpty(
         _libTab === 'saved'
           ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
           : 'No browsing history yet.'
       );
       return;
     }
-    libContent.innerHTML = items.map((it, i) => `
+    lc.innerHTML = items.map((it, i) => `
       <div class="libItem" data-idx="${i}" data-url="${it.url || ''}">
         <div class="libItemBody">
           <div class="libItemTitle">${it.title || 'Untitled'}</div>
@@ -22838,14 +22841,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}
       </div>`).join('');
 
-    libContent.querySelectorAll('.libItem').forEach(el => {
+    lc.querySelectorAll('.libItem').forEach(el => {
       el.addEventListener('click', e => {
         if (e.target.closest('.libItemRemove')) return;
         const url = el.dataset.url;
         if (url) window.open(url, '_blank');
       });
     });
-    libContent.querySelectorAll('.libItemRemove').forEach(btn => {
+    lc.querySelectorAll('.libItemRemove').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.rm);
@@ -22856,16 +22859,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   function openLibrary(tab) {
+    const lp = getLibPanel();
     _libTab = tab || 'saved';
-    libraryPanel.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
+    if (lp) lp.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
     _renderLib();
     accountDropdown.classList.remove('open');
-    requestAnimationFrame(() => libraryPanel.classList.add('open'));
+    if (lp) requestAnimationFrame(() => lp.classList.add('open'));
   }
 
-  libClose.addEventListener('click', () => libraryPanel.classList.remove('open'));
-  libraryPanel.querySelectorAll('.libTab').forEach(t => {
-    t.addEventListener('click', () => { _libTab = t.dataset.lib; libraryPanel.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
+  // Defer library panel event binding until DOM is ready
+  document.addEventListener('DOMContentLoaded', () => {
+    const lp = getLibPanel();
+    const lc2 = getLibClose();
+    if (lc2) lc2.addEventListener('click', () => lp && lp.classList.remove('open'));
+    if (lp) lp.querySelectorAll('.libTab').forEach(t => {
+      t.addEventListener('click', () => { _libTab = t.dataset.lib; lp.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
+    });
   });
   document.getElementById('acctDpSaved').addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
   document.getElementById('acctDpHistory').addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
