@@ -22304,6 +22304,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // synchronous and persist across WKWebView restarts, so Supabase can
   // read them immediately on init (unlike IndexedDB which is async).
   const _AUTH_STORAGE_KEY = 'sb-hqzabwjwuszupxwookgx-auth-token';
+  let _allowStorageRemoval = false; // only true during user-initiated sign-out
   const _authStorage = (() => {
     const COOKIE_KEY = 'earth_auth_backup';
     const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 1 year
@@ -22326,12 +22327,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       document.cookie = `${COOKIE_KEY}=; max-age=0; path=/; SameSite=Lax`;
     }
 
-    // On startup: restore from cookie if localStorage is empty (synchronous!)
+    // On startup: restore from cookie or sessionStorage if localStorage is empty
     try {
       const lsVal = localStorage.getItem(_AUTH_STORAGE_KEY);
       if (!lsVal) {
-        const cookieVal = getCookie();
-        if (cookieVal) localStorage.setItem(_AUTH_STORAGE_KEY, cookieVal);
+        // Try sessionStorage first (for "remember me" unchecked sessions)
+        const ssVal = sessionStorage.getItem(_AUTH_STORAGE_KEY);
+        if (ssVal) {
+          localStorage.setItem(_AUTH_STORAGE_KEY, ssVal);
+        } else {
+          const cookieVal = getCookie();
+          if (cookieVal) localStorage.setItem(_AUTH_STORAGE_KEY, cookieVal);
+        }
       }
     } catch (_) {}
 
@@ -22339,6 +22346,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       getItem(key) {
         const val = localStorage.getItem(key);
         if (val) return val;
+        // Fallback: try sessionStorage (for "remember me" unchecked)
+        try {
+          const ssVal = sessionStorage.getItem(key);
+          if (ssVal) return ssVal;
+        } catch (_) {}
         // Fallback: try cookie
         if (key === _AUTH_STORAGE_KEY) {
           const cookieVal = getCookie();
@@ -22354,7 +22366,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (key === _AUTH_STORAGE_KEY) setCookie(value);
       },
       removeItem(key) {
+        // Guard: only allow removal during explicit user sign-out.
+        // Supabase internally calls removeItem() when token refresh fails,
+        // which would wipe the session even though a retry could succeed.
+        if (!_allowStorageRemoval) {
+          console.warn('[auth] blocked storage removal (not user-initiated sign-out)');
+          return;
+        }
         localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
         if (key === _AUTH_STORAGE_KEY) clearCookie();
       }
     };
@@ -22666,7 +22686,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const raw = localStorage.getItem(key);
       if (raw) {
         sessionStorage.setItem(key, raw);
-        _authStorage.removeItem(key);  // clears both localStorage + IndexedDB
+        // Bypass the guard to clear localStorage/cookie — tokens live in sessionStorage now
+        _allowStorageRemoval = true;
+        _authStorage.removeItem(key);
+        _allowStorageRemoval = false;
       }
     }
     // Apply session directly — don't rely solely on onAuthStateChange
@@ -22688,12 +22711,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _userInitiatedSignOut = false;
   async function signOut() {
     _userInitiatedSignOut = true;
+    _allowStorageRemoval = true; // allow Supabase + our code to clear storage
     try {
       await sb.auth.signOut({ scope: 'local' });
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
-    // Also clear IndexedDB backup
+    // Also clear all storage backups
     _authStorage.removeItem(_AUTH_STORAGE_KEY);
     clearAuthUI();
     accountDropdown.classList.remove('open');
