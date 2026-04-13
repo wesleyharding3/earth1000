@@ -5565,13 +5565,10 @@ app.get("/api/keywords/trending", async (req, res) => {
       const dbCached = await getDbKeywordCache("trending", "global", 2880); // 48h max staleness
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.trending);
-        if (dbCached.keywords && dbCached.refs) {
-          const rows = dbCached.keywords.slice(0, limitInt);
-          const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
-          if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
-          return res.json(rows);
+        if (dbCached.keywords && Array.isArray(dbCached.keywords)) {
+          return res.json(dbCached.keywords.slice(0, limitInt));
         }
-        return res.json(Array.isArray(dbCached) ? dbCached.slice(0, limitInt) : dbCached);
+        return res.json(Array.isArray(dbCached) ? dbCached.slice(0, limitInt) : []);
       }
     }
 
@@ -5612,7 +5609,7 @@ app.get("/api/keywords/trending", async (req, res) => {
         pool.query(`
           INSERT INTO keyword_intelligence_cache (mode, filter_key, results)
           VALUES ($1, $2, $3)
-        `, ['trending', 'global', JSON.stringify({ keywords, refs: {} })]).catch(e =>
+        `, ['trending', 'global', JSON.stringify({ keywords })]).catch(e =>
           console.warn('[keywords/trending] write-through cache failed:', e.message)
         );
       }
@@ -5661,14 +5658,10 @@ app.get("/api/keywords/rising", async (req, res) => {
       const dbCached = await getDbKeywordCache("rising", "global", 720); // 12h max staleness
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
-        if (dbCached.keywords && dbCached.refs) {
-          const rows = dbCached.keywords.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
-          const prefetchN = clampQueryInt(req.query.prefetch_refs || 0, 0, 0, 50);
-          if (prefetchN > 0) return res.json({ keywords: rows, refs: dbCached.refs });
-          return res.json(rows);
-        }
-        const cachedFiltered = (Array.isArray(dbCached) ? dbCached : []).filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt);
-        return res.json(cachedFiltered);
+        const cachedArr = (dbCached.keywords && Array.isArray(dbCached.keywords))
+          ? dbCached.keywords
+          : (Array.isArray(dbCached) ? dbCached : []);
+        return res.json(cachedArr.filter((row) => !isDateLikeKeyword(row && row.keyword)).slice(0, limitInt));
       }
     }
 
@@ -5738,7 +5731,7 @@ app.get("/api/keywords/rising", async (req, res) => {
         pool.query(`
           INSERT INTO keyword_intelligence_cache (mode, filter_key, results)
           VALUES ($1, $2, $3)
-        `, ['rising', 'global', JSON.stringify({ keywords, refs: {} })]).catch(e =>
+        `, ['rising', 'global', JSON.stringify({ keywords })]).catch(e =>
           console.warn('[keywords/rising] write-through cache failed:', e.message)
         );
       }

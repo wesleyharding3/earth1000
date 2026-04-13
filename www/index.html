@@ -8535,9 +8535,6 @@ window.sourceBiasBadgeHTML = function(bias) {
           <circle cx="11" cy="11" r="7"/>
           <line x1="16.5" y1="16.5" x2="22" y2="22"/>
         </svg>
-        <div class="btnTooltip">
-          <div class="btnTooltipTitle">Search</div>
-        </div>
       </div>
       <input type="text" id="citySearch" placeholder="Search city or country" autocomplete="off" />
       <div id="searchResults"></div>
@@ -20892,7 +20889,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } else {
         trending = normalizeArrayPayload(trendingPayload);
       }
-      const rising   = normalizeArrayPayload(await risingRes.json());
+      const risingPayloadR = await risingRes.json();
+      const rising = (risingPayloadR && risingPayloadR.keywords)
+        ? normalizeArrayPayload(risingPayloadR.keywords)
+        : normalizeArrayPayload(risingPayloadR);
       if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
 
       renderTrendingList(trending, rising);
@@ -27721,7 +27721,7 @@ body.ticker-active .gTickerLabel {
   function updateToggleBtnVisibility() {
     if (!toggleBtn) return;
     const isGlobe = (window.__currentPage === 1);
-    toggleBtn.style.display = isGlobe ? 'flex' : 'none';
+    toggleBtn.style.display = (isGlobe && !window.__semHeatActive) ? 'flex' : 'none';
   }
   updateToggleBtnVisibility();
   const _origGoTo = window.__goToPage;
