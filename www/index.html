@@ -4142,7 +4142,11 @@ body.ticker-active #flowControls {
       -webkit-backdrop-filter: blur(20px);
       position: relative;
       z-index: 50;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
     }
+    #statsHeader::-webkit-scrollbar { display: none; }
     @media (min-width: 769px) {
       #statsHeader {
         justify-content: flex-start;
@@ -4187,6 +4191,7 @@ body.ticker-active #flowControls {
       cursor: pointer; user-select: none;
       transition: color 0.2s, background 0.2s;
       white-space: nowrap;
+      flex-shrink: 0;
     }
     .statsViewPill:first-child { border-radius: 20px 0 0 20px; }
     .statsViewPill:last-child  { border-radius: 0 20px 20px 0; }
@@ -7527,7 +7532,10 @@ body.ticker-active #flowControls {
   border: 1px solid rgba(139,92,246,0.2);
   border-radius: 10px;
   overflow: hidden;
+  transition: max-height 0.3s ease;
 }
+.kwi-explain-panel.minimized .kwi-explain-body { display: none; }
+.kwi-explain-panel.minimized { margin-bottom: 4px; }
 .kwi-explain-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px 6px;
@@ -7543,7 +7551,7 @@ body.ticker-active #flowControls {
   transition: color 0.15s;
 }
 .kwi-explain-close:hover { color: rgba(255,255,255,0.7); }
-.kwi-explain-body { padding: 10px 12px 12px; max-height: 200px; overflow-y: auto; }
+.kwi-explain-body { padding: 10px 12px 12px; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .kwi-explain-text {
   font-size: 12px; color: rgba(255,255,255,0.72); line-height: 1.65;
 }
@@ -8210,7 +8218,10 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="kwi-explain-panel" id="kwiExplainPanel" style="display:none;">
           <div class="kwi-explain-header">
             <span class="kwi-explain-badge">✦ Keyword Context</span>
-            <button class="kwi-explain-close" onclick="window.kwiCloseExplain()">✕</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button class="kwi-explain-close" id="kwiMinBtn" onclick="window.kwiToggleMinimize()" title="Minimize">─</button>
+              <button class="kwi-explain-close" onclick="window.kwiCloseExplain()" title="Close">✕</button>
+            </div>
           </div>
           <div class="kwi-explain-body">
             <div class="kwi-explain-text" id="kwiExplainText"></div>
@@ -21459,7 +21470,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let kwiExplaining = false;
 
   window.kwiCloseExplain = function() {
-    document.getElementById('kwiExplainPanel').style.display = 'none';
+    const panel = document.getElementById('kwiExplainPanel');
+    panel.style.display = 'none';
+    panel.classList.remove('minimized');
+    const btn = document.getElementById('kwiMinBtn');
+    if (btn) btn.textContent = '─';
+  };
+
+  window.kwiToggleMinimize = function() {
+    const panel = document.getElementById('kwiExplainPanel');
+    const btn = document.getElementById('kwiMinBtn');
+    panel.classList.toggle('minimized');
+    if (btn) btn.textContent = panel.classList.contains('minimized') ? '▢' : '─';
   };
 
   window.kwiExplainKeyword = async function() {
