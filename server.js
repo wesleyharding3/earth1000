@@ -2764,11 +2764,13 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
         st.geographic_scope, st.importance, st.keywords,
         st.article_count, st.status, st.last_updated_at,
         st.distinct_source_count, st.breaking_signal_score,
-        (SELECT a.image_url FROM story_thread_articles sta
-         JOIN news_articles a ON a.id = sta.article_id
-         WHERE sta.thread_id = st.id AND a.image_url IS NOT NULL AND a.image_url <> ''
-         ORDER BY sta.relevance_score DESC, a.published_at DESC LIMIT 1
-        ) AS hero_image_url
+        COALESCE(st.image_url, (
+          SELECT a.image_url FROM story_thread_articles sta
+          JOIN news_articles a ON a.id = sta.article_id
+          WHERE sta.thread_id = st.id AND a.image_url IS NOT NULL AND a.image_url <> ''
+          ORDER BY sta.relevance_score DESC, a.published_at DESC LIMIT 1
+        )) AS hero_image_url,
+        st.image_url AS custom_image_url
       FROM story_threads st
       WHERE ${clauses.join(' AND ')}
       ORDER BY st.last_updated_at DESC NULLS LAST
@@ -2791,7 +2793,7 @@ app.get('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const { rows: threadRows } = await pool.query(`
       SELECT id, title, description, primary_category, geographic_scope,
              importance, keywords, article_count, status, last_updated_at,
-             distinct_source_count, breaking_signal_score
+             distinct_source_count, breaking_signal_score, image_url
       FROM story_threads WHERE id = $1
     `, [id]);
     if (!threadRows.length) return res.status(404).json({ error: 'Thread not found' });
@@ -2824,7 +2826,7 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
-    const { title, description, primary_category, importance, keywords, status, geographic_scope } = req.body;
+    const { title, description, primary_category, importance, keywords, status, geographic_scope, image_url } = req.body;
     const sets = []; const params = [];
     let pi = 1;
 
@@ -2835,6 +2837,7 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     if (keywords !== undefined)         { sets.push(`keywords = $${pi++}`);         params.push(Array.isArray(keywords) ? keywords : keywords.split(',').map(k => k.trim())); }
     if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
     if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
+    if (image_url !== undefined)        { sets.push(`image_url = $${pi++}`);        params.push(image_url || null); }
 
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
