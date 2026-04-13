@@ -4111,10 +4111,18 @@ body.ticker-active #flowControls {
       width: 100%;
       flex: 1 1 0;
       min-height: 0;
-      overflow: hidden;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(74,184,255,0.2) transparent;
       padding: 4px 20px calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       box-sizing: border-box;
     }
+    .stats-row::-webkit-scrollbar { width: 5px; }
+    .stats-row::-webkit-scrollbar-track { background: transparent; }
+    .stats-row::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
     .stats-row > * {
       min-height: 0 !important;
       flex: 1 1 0;
@@ -4186,22 +4194,31 @@ body.ticker-active #flowControls {
       flex-direction: column;
       overflow: hidden;
     }
+    /* Sources panel: natural height, parent .stats-row scrolls */
+    #statsSourcesPanel {
+      flex: 0 0 auto !important;
+      min-height: auto !important;
+      overflow: visible;
+    }
     .stats-panel-scroll {
       display: flex;
       flex-direction: column;
       gap: 16px;
+      padding-bottom: 40px;
+    }
+    /* Globe panel keeps its own scroll since it has different layout needs */
+    #statsGlobePanel .stats-panel-scroll {
       flex: 1 1 0;
       min-height: 0;
       overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
-      padding-bottom: 40px;
       scrollbar-width: thin;
       scrollbar-color: rgba(74,184,255,0.2) transparent;
     }
-    .stats-panel-scroll::-webkit-scrollbar { width: 5px; }
-    .stats-panel-scroll::-webkit-scrollbar-track { background: transparent; }
-    .stats-panel-scroll::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
+    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar { width: 5px; }
+    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar-track { background: transparent; }
+    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
 
     /* Source Intelligence sections */
     .si-section {
@@ -4237,16 +4254,7 @@ body.ticker-active #flowControls {
       padding: 0 16px;
       color: rgba(255,255,255,0.7);
       font-size: 12px;
-      max-height: 420px;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(74,184,255,0.15) transparent;
     }
-    .si-section-body::-webkit-scrollbar { width: 4px; }
-    .si-section-body::-webkit-scrollbar-track { background: transparent; }
-    .si-section-body::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 2px; }
 
     .si-rank-list { list-style: none; margin: 0; padding: 8px 0; }
     .si-rank-item {
