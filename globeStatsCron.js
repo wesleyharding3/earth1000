@@ -122,7 +122,7 @@ async function fetchAll() {
   ] = await Promise.allSettled([
     fredLatest('DCOILWTICO'),              // WTI Crude Oil
     fredLatest('DHHNGSP'),                 // Henry Hub Natural Gas
-    fredLatest('PCOALAUUSDM'),             // Coal
+    fredLatest('PCOALAUUSDM'),             // Coal (may 400 — not all series available)
     goldApiPrice('XAU'),                   // Gold
     goldApiPrice('XAG'),                   // Silver
     goldApiPrice('XPT'),                   // Platinum
@@ -130,11 +130,11 @@ async function fetchAll() {
     fredLatest('PCOPPUSDM'),               // Copper
     fredLatest('PALUMUSDM'),               // Aluminum
     fredLatest('PWHEAMTUSDM'),             // Wheat
-    fredLatest('PCOREUSDM'),               // Corn
+    fredLatest('PMAIZMTUSDM'),             // Corn (maize)
     fredLatest('PSOYBUSDM'),               // Soybeans
     fredLatest('PCOFFOTMUSDM'),            // Coffee
-    fredLatest('PCOCOAUSDM'),              // Cocoa
-    fredLatest('PCOTTUSDM'),               // Cotton
+    fredLatest('PCOCOUSDM'),              // Cocoa
+    fredLatest('PCOTTINDUSDM'),           // Cotton
     fredLatest('WPU081'),                  // Lumber (PPI index)
     fredLatest('PRUBBUSDM'),               // Rubber
   ]);
@@ -177,10 +177,10 @@ async function fetchAll() {
     wbFetch('NY.GDP.MKTP.KD.ZG', ['WLD']),                     // GDP Growth %
     wbFetch('FP.CPI.TOTL.ZG', ['WLD']),                        // Inflation
     wbFetch('SL.UEM.TOTL.ZS', ['WLD']),                        // Unemployment
-    fredLatest('FEDFUNDS'),                                     // Fed Funds Rate
-    fredLatest('GFDEGDQ188S'),                                  // US Debt-to-GDP
+    fredLatest('DFF'),                                           // Fed Funds Effective Rate
+    fredLatest('GFDEGDQ188S', 5),                               // US Debt-to-GDP
     wbFetch('NE.RSB.GNFS.CD', topEconomies),                   // Trade Balance
-    fredLatest('SP500'),                                        // S&P 500
+    fredLatest('NASDAQCOM'),                                    // NASDAQ Composite
     fredLatest('DTWEXBGS'),                                     // USD Trade-Weighted Index
   ]);
 
