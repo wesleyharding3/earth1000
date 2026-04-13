@@ -32,7 +32,7 @@ async function computeCountryDistribution(client) {
       AND a.country_id IS NOT NULL
     GROUP BY co.id, co.name, co.iso_code
     ORDER BY articles DESC
-    LIMIT 50
+    LIMIT 200
   `);
   return rows;
 }
@@ -49,7 +49,7 @@ async function computeCountryRankings(client) {
     GROUP BY co.id, co.name, co.iso_code
     HAVING COUNT(*) >= 5
     ORDER BY "avgPerDay" DESC
-    LIMIT 30
+    LIMIT 200
   `);
   return rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) }));
 }
@@ -67,7 +67,7 @@ async function computeCityRankings(client) {
     GROUP BY ci.id, ci.name, co.name
     HAVING COUNT(*) >= 3
     ORDER BY "avgPerDay" DESC
-    LIMIT 30
+    LIMIT 200
   `);
   return rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) }));
 }
@@ -85,7 +85,7 @@ async function computeSourceRankings(client) {
     GROUP BY COALESCE(ns.name, ys.name), COALESCE(ns.site_url, ys.site_url)
     HAVING COUNT(*) >= 3
     ORDER BY "avgPerDay" DESC
-    LIMIT 30
+    LIMIT 200
   `);
   return rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) }));
 }
@@ -102,7 +102,7 @@ async function computeCountriesBySourceCount(client) {
     GROUP BY co.id, co.name, co.iso_code
     HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1
     ORDER BY "sourceCount" DESC
-    LIMIT 30
+    LIMIT 200
   `);
   return rows;
 }

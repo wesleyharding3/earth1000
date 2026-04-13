@@ -6537,28 +6537,28 @@ app.get("/api/news/sources-stats", async (req, res) => {
             SELECT co.name AS country, co.iso_code, COUNT(*)::int AS articles
             FROM news_articles a JOIN countries co ON co.id = a.country_id
             WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.country_id IS NOT NULL
-            GROUP BY co.id, co.name, co.iso_code ORDER BY articles DESC LIMIT 50
+            GROUP BY co.id, co.name, co.iso_code ORDER BY articles DESC LIMIT 200
           `),
           pool.query(`
             SELECT co.name AS country, co.iso_code,
                    COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
             FROM news_articles a JOIN countries co ON co.id = a.country_id
             WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.country_id IS NOT NULL
-            GROUP BY co.id, co.name, co.iso_code HAVING COUNT(*) >= 5 ORDER BY "avgPerDay" DESC LIMIT 30
+            GROUP BY co.id, co.name, co.iso_code HAVING COUNT(*) >= 5 ORDER BY "avgPerDay" DESC LIMIT 200
           `),
           pool.query(`
             SELECT ci.name AS city, co.name AS country,
                    COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
             FROM news_articles a JOIN cities ci ON ci.id = a.city_id JOIN countries co ON co.id = ci.country_id
             WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.city_id IS NOT NULL
-            GROUP BY ci.id, ci.name, co.name HAVING COUNT(*) >= 3 ORDER BY "avgPerDay" DESC LIMIT 30
+            GROUP BY ci.id, ci.name, co.name HAVING COUNT(*) >= 3 ORDER BY "avgPerDay" DESC LIMIT 200
           `),
           pool.query(`
             SELECT COALESCE(ns.name, ys.name) AS source, COALESCE(ns.site_url, ys.site_url) AS site_url,
                    COUNT(*)::float / GREATEST(1, EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400) AS "avgPerDay"
             FROM news_articles a LEFT JOIN news_sources ns ON ns.id = a.source_id LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
             WHERE a.published_at > NOW() - INTERVAL '30 days'
-            GROUP BY COALESCE(ns.name, ys.name), COALESCE(ns.site_url, ys.site_url) HAVING COUNT(*) >= 3 ORDER BY "avgPerDay" DESC LIMIT 30
+            GROUP BY COALESCE(ns.name, ys.name), COALESCE(ns.site_url, ys.site_url) HAVING COUNT(*) >= 3 ORDER BY "avgPerDay" DESC LIMIT 200
           `),
           pool.query(`
             SELECT co.name AS country, co.iso_code,
@@ -6566,7 +6566,7 @@ app.get("/api/news/sources-stats", async (req, res) => {
             FROM news_articles a JOIN countries co ON co.id = a.country_id
             WHERE a.published_at > NOW() - INTERVAL '30 days' AND a.country_id IS NOT NULL
             GROUP BY co.id, co.name, co.iso_code
-            HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1 ORDER BY "sourceCount" DESC LIMIT 30
+            HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1 ORDER BY "sourceCount" DESC LIMIT 200
           `),
         ]);
 
