@@ -2742,6 +2742,195 @@ app.post('/api/admin/briefing-editor/generate-audio/:episodeId', requireAdmin, a
   }
 });
 
+/* =========================================
+   Thread Admin — CRUD + Merge
+   ========================================= */
+
+// List threads for admin (richer than the briefing-editor endpoint)
+app.get('/api/admin/threads', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+    const status = req.query.status || null; // 'active', 'cooling', 'dormant', or null for all
+    const search = (req.query.search || '').trim().toLowerCase();
+
+    const params = [limit];
+    const clauses = ['st.article_count >= 1'];
+    if (status) { params.push(status); clauses.push(`st.status = $${params.length}`); }
+    if (search) { params.push(`%${search}%`); clauses.push(`(LOWER(st.title) LIKE $${params.length} OR LOWER(st.description) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(st.keywords, ' ')) LIKE $${params.length})`); }
+
+    const { rows } = await pool.query(`
+      SELECT
+        st.id, st.title, st.description, st.primary_category,
+        st.geographic_scope, st.importance, st.keywords,
+        st.article_count, st.status, st.last_updated_at,
+        st.distinct_source_count, st.breaking_signal_score,
+        (SELECT a.image_url FROM story_thread_articles sta
+         JOIN news_articles a ON a.id = sta.article_id
+         WHERE sta.thread_id = st.id AND a.image_url IS NOT NULL AND a.image_url <> ''
+         ORDER BY sta.relevance_score DESC, a.published_at DESC LIMIT 1
+        ) AS hero_image_url
+      FROM story_threads st
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY st.last_updated_at DESC NULLS LAST
+      LIMIT $1
+    `, params);
+
+    res.json({ threads: rows });
+  } catch (err) {
+    console.error('[admin/threads] list error:', err.message);
+    res.status(500).json({ error: 'Failed to list threads' });
+  }
+});
+
+// Get thread detail with articles
+app.get('/api/admin/threads/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const { rows: threadRows } = await pool.query(`
+      SELECT id, title, description, primary_category, geographic_scope,
+             importance, keywords, article_count, status, last_updated_at,
+             distinct_source_count, breaking_signal_score
+      FROM story_threads WHERE id = $1
+    `, [id]);
+    if (!threadRows.length) return res.status(404).json({ error: 'Thread not found' });
+
+    const { rows: articles } = await pool.query(`
+      SELECT a.id, COALESCE(a.translated_title, a.title) AS title,
+             COALESCE(a.translated_summary, a.summary) AS summary,
+             a.image_url, a.article_url, a.published_at,
+             COALESCE(ns.name, ys.name) AS source_name,
+             sta.relevance_score, sta.is_anchor
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE sta.thread_id = $1
+      ORDER BY sta.is_anchor DESC, a.published_at DESC
+      LIMIT 50
+    `, [id]);
+
+    res.json({ thread: threadRows[0], articles });
+  } catch (err) {
+    console.error('[admin/threads] detail error:', err.message);
+    res.status(500).json({ error: 'Failed to get thread' });
+  }
+});
+
+// Update thread fields (title, description, category, importance, keywords, status, image)
+app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const { title, description, primary_category, importance, keywords, status, geographic_scope } = req.body;
+    const sets = []; const params = [];
+    let pi = 1;
+
+    if (title !== undefined)            { sets.push(`title = $${pi++}`);            params.push(title); }
+    if (description !== undefined)      { sets.push(`description = $${pi++}`);      params.push(description); }
+    if (primary_category !== undefined) { sets.push(`primary_category = $${pi++}`); params.push(primary_category); }
+    if (importance !== undefined)       { sets.push(`importance = $${pi++}`);       params.push(parseFloat(importance) || 5); }
+    if (keywords !== undefined)         { sets.push(`keywords = $${pi++}`);         params.push(Array.isArray(keywords) ? keywords : keywords.split(',').map(k => k.trim())); }
+    if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
+    if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
+
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+
+    sets.push(`last_updated_at = NOW()`);
+    params.push(id);
+    await pool.query(`UPDATE story_threads SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin/threads] update error:', err.message);
+    res.status(500).json({ error: 'Failed to update thread' });
+  }
+});
+
+// Merge threads: absorb source threads into a target, optionally create a new combined thread
+app.post('/api/admin/threads/merge', requireAdmin, async (req, res) => {
+  try {
+    const { target_id, source_ids, new_title, new_description, new_category } = req.body;
+    if (!target_id || !source_ids?.length) return res.status(400).json({ error: 'target_id and source_ids[] required' });
+
+    const targetId = parseInt(target_id, 10);
+    const srcIds = source_ids.map(id => parseInt(id, 10)).filter(id => id && id !== targetId);
+    if (!srcIds.length) return res.status(400).json({ error: 'No valid source threads to merge' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Move articles from source threads to target (skip duplicates)
+      for (const srcId of srcIds) {
+        await client.query(`
+          INSERT INTO story_thread_articles (thread_id, article_id, relevance_score, is_anchor, added_at)
+          SELECT $1, article_id, relevance_score, false, added_at
+          FROM story_thread_articles
+          WHERE thread_id = $2
+          ON CONFLICT (thread_id, article_id) DO NOTHING
+        `, [targetId, srcId]);
+      }
+
+      // Merge keywords from sources into target
+      await client.query(`
+        UPDATE story_threads SET
+          keywords = (
+            SELECT ARRAY(SELECT DISTINCT UNNEST(keywords) FROM story_threads WHERE id = ANY($1::int[]))
+          ),
+          article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $2),
+          last_updated_at = NOW()
+        WHERE id = $2
+      `, [[targetId, ...srcIds], targetId]);
+
+      // Apply new metadata if provided
+      if (new_title || new_description || new_category) {
+        const sets = []; const params = []; let pi = 1;
+        if (new_title)       { sets.push(`title = $${pi++}`);            params.push(new_title); }
+        if (new_description) { sets.push(`description = $${pi++}`);      params.push(new_description); }
+        if (new_category)    { sets.push(`primary_category = $${pi++}`); params.push(new_category); }
+        params.push(targetId);
+        await client.query(`UPDATE story_threads SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+      }
+
+      // Mark source threads as dormant
+      await client.query(`UPDATE story_threads SET status = 'dormant' WHERE id = ANY($1::int[])`, [srcIds]);
+
+      await client.query('COMMIT');
+
+      const { rows } = await client.query('SELECT article_count FROM story_threads WHERE id = $1', [targetId]);
+      res.json({ ok: true, target_id: targetId, articles_merged: rows[0]?.article_count || 0, sources_retired: srcIds.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[admin/threads] merge error:', err.message);
+    res.status(500).json({ error: 'Failed to merge threads' });
+  }
+});
+
+// Remove an article from a thread
+app.delete('/api/admin/threads/:threadId/articles/:articleId', requireAdmin, async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.threadId, 10);
+    const articleId = parseInt(req.params.articleId, 10);
+    if (!threadId || !articleId) return res.status(400).json({ error: 'Invalid IDs' });
+
+    await pool.query('DELETE FROM story_thread_articles WHERE thread_id = $1 AND article_id = $2', [threadId, articleId]);
+    await pool.query('UPDATE story_threads SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1) WHERE id = $1', [threadId]);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin/threads] remove article error:', err.message);
+    res.status(500).json({ error: 'Failed to remove article' });
+  }
+});
+
 // Serve briefing editor page
 app.get('/briefing-editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));

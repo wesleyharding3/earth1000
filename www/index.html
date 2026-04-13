@@ -8496,9 +8496,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="viewOption" data-mode="transportation">
           <span class="viewOptionDot"></span>Transportation
         </div>
-        <div class="viewOption" data-mode="environment">
-          <span class="viewOptionDot"></span>Environment
-        </div>
       </div>
     </div>
     <!-- Heatmap toggle button -->
@@ -9786,7 +9783,7 @@ function computeCityTiers(cities) {
 
       function syncSurfaceOverlayVisibility() {
         const mode = window.__currentViewMode || currentViewMode;
-        const allowed = mode === "country" || mode === "city" || mode === "regions";
+        const allowed = mode === "country" || mode === "city" || mode === "regions" || mode === "transportation";
         surfaceOverlayMesh.visible = allowed && !!window.__surfaceOverlayEnabled;
         const userOpacity = window.__surfaceOverlayOpacity ?? 0.30;
         if (window.__globeTheme === "dark") {
@@ -11088,8 +11085,9 @@ function computeCityTiers(cities) {
       }
 
       window.addEventListener("mousedown", e => {
+        if (window.__currentPage !== 1) return;
         if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
-        
+
         // Don't start dragging or clear focus if panel is active - let click handler close it first
         if (isPanelActive()) return;
         
@@ -11174,10 +11172,11 @@ function computeCityTiers(cities) {
       let touchThresholdMet = false;
       
       window.addEventListener("touchstart", e => {
+        if (window.__currentPage !== 1) return;
         if (e.touches.length !== 1) return;
         const touchTarget = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
         if (touchTarget?.tagName === "INPUT" || touchTarget?.tagName === "BUTTON" || touchTarget?.closest("#settingsSidebar") || touchTarget?.closest("#infoPanel")) return;
-        
+
         // Don't start dragging if panel is active - let touch handler close it first
         if (isPanelActive()) return;
         
@@ -20647,7 +20646,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     kwiSetLoading(true);
     
     try {
-      let url = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=100&prefetch_refs=50`;
+      let url = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=100`;
       if (kwiLocationCountry) {
         url += `&about_country=${kwiLocationCountry.iso}`;
       }
@@ -20658,8 +20657,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let rising;
       if (risingPayload && risingPayload.keywords) {
         rising = normalizeArrayPayload(risingPayload.keywords);
-        // Merge refs into existing prefetch cache
-        Object.assign(_kwiPrefetchedRefs, risingPayload.refs || {});
       } else {
         rising = normalizeArrayPayload(risingPayload);
       }
@@ -20733,7 +20730,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // Click on a trending keyword row toggles an inline expandable
   // interpanel with a 30-day sparkline + scrollable article cards.
   let _kwiOpenRefKeyword = null;
-  let _kwiPrefetchedRefs = {}; // { keyword_lower: [articles] } from trending prefetch
   let _kwiExpandEl = null; // currently expanded article card overlay
 
   function _kwiDrawSparkline(canvas, series) {
@@ -20804,7 +20800,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _kwiExpandEl = el;
   }
 
-  function _kwiRenderInterpanel(panel, keyword, series, articles) {
+  function _kwiRenderInterpanel(panel, keyword, series) {
     panel.innerHTML = '';
 
     // Sparkline section
@@ -20817,40 +20813,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Draw sparkline after DOM insertion (may be empty if prefetched — updated later)
     if (series.length) requestAnimationFrame(() => _kwiDrawSparkline(sparkCanvas, series));
-
-    // Articles section
-    if (!articles.length) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'padding:12px;text-align:center;color:rgba(255,255,255,0.3);font-size:11px;';
-      empty.textContent = 'No recent articles found.';
-      panel.appendChild(empty);
-      return;
-    }
-
-    const listEl = document.createElement('div');
-    listEl.className = 'kwi-ref-articles';
-
-    articles.forEach(a => {
-      const card = document.createElement('div');
-      card.className = 'kwi-ref-card';
-      const imgSrc = a.image_url || '';
-      const title = a.title || a.original_title || 'Untitled';
-      const source = a.source_name || '';
-      const date = a.published_at ? new Date(a.published_at).toLocaleDateString() : '';
-      card.innerHTML =
-        (imgSrc ? `<img class="kwi-ref-card-img" src="${imgSrc}" alt="" loading="lazy" onerror="this.style.display='none'"/>` : `<div class="kwi-ref-card-img" style="background:rgba(255,255,255,0.04);"></div>`) +
-        `<div class="kwi-ref-card-body">` +
-          `<div class="kwi-ref-card-title">${title}</div>` +
-          `<div class="kwi-ref-card-meta">${source}${date ? ' · ' + date : ''}</div>` +
-        `</div>`;
-      card.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _kwiShowExpand(a, panel);
-      });
-      listEl.appendChild(card);
-    });
-
-    panel.appendChild(listEl);
   }
 
   window.kwiTrendingClick = function(keyword, evt) {
@@ -20885,43 +20847,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const enc = encodeURIComponent(keyword);
     const kwLower = keyword.toLowerCase();
 
-    // Check if we have prefetched articles for this keyword
-    const prefetched = _kwiPrefetchedRefs[kwLower];
-    if (prefetched) {
-      // Instant render — only fetch trend sparkline in background
-      const articles = prefetched.slice(0, 20);
-      _kwiRenderInterpanel(panel, keyword, [], articles);
-      // Fetch sparkline in background and update
-      fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`)
-        .then(r => r.ok ? r.json() : [])
-        .then(trendRaw => {
-          if (_kwiOpenRefKeyword !== keyword) return;
-          const series = normalizeTrendSeries(trendRaw);
-          const sparkEl = panel.querySelector('.kwi-ref-spark canvas');
-          if (sparkEl && series.length) _kwiDrawSparkline(sparkEl, series);
-        }).catch(() => {});
-      return;
-    }
-
-    // No prefetch — show loading dots and fetch both
+    // Fetch only the trend sparkline — no article refs
     panel.innerHTML = `<div class="kwi-ref-dots"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>`;
 
-    const _sig = AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined;
-    Promise.all([
-      fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`, { signal: _sig }).then(r => r.ok ? r.json() : []),
-      fetch(`${API}/api/keywords/${enc}/references?limit=20&days=14`, { signal: _sig }).then(r => r.ok ? r.json() : { articles: [] })
-    ]).then(([trendRaw, refData]) => {
-      if (_kwiOpenRefKeyword !== keyword) return;
-      const series = normalizeTrendSeries(trendRaw);
-      const articles = (Array.isArray(refData.articles) ? refData.articles : []).slice(0, 20);
-      _kwiRenderInterpanel(panel, keyword, series, articles);
-    }).catch(err => {
-      if (err.name === 'AbortError') return;   // timeout / navigation — silent
-      console.error('[kwi interpanel]', err);
-      if (_kwiOpenRefKeyword === keyword) {
-        panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.35);font-size:11px;">Failed to load data.</div>`;
-      }
-    });
+    fetch(`${API}/api/keywords/trend?keyword=${enc}&days=30`)
+      .then(r => r.ok ? r.json() : [])
+      .then(trendRaw => {
+        if (_kwiOpenRefKeyword !== keyword) return;
+        const series = normalizeTrendSeries(trendRaw);
+        _kwiRenderInterpanel(panel, keyword, series);
+      }).catch(err => {
+        if (err.name === 'AbortError') return;
+        console.error('[kwi interpanel]', err);
+        if (_kwiOpenRefKeyword === keyword) {
+          panel.innerHTML = `<div style="padding:12px;text-align:center;color:rgba(255,255,255,0.35);font-size:11px;">Failed to load data.</div>`;
+        }
+      });
   };
 
   // ── Load trending keywords (default view) ─────────────────────────────────
@@ -20931,7 +20872,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById('kwiChip').classList.remove('visible');
     
     try {
-      let trendingUrl = `https://earth-wjr6.onrender.com/api/keywords/trending?days=${kwiDays}&limit=100&prefetch_refs=50`;
+      let trendingUrl = `https://earth-wjr6.onrender.com/api/keywords/trending?days=${kwiDays}&limit=100`;
       let risingUrl = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=5`;
 
       if (kwiLocationCountry) {
@@ -20945,14 +20886,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         fetch(risingUrl, { signal: _trendSig })
       ]);
       const trendingPayload = await trendingRes.json();
-      // Handle prefetched refs: response is { keywords, refs } when prefetch_refs > 0
       let trending;
       if (trendingPayload && trendingPayload.keywords) {
         trending = normalizeArrayPayload(trendingPayload.keywords);
-        _kwiPrefetchedRefs = trendingPayload.refs || {};
       } else {
         trending = normalizeArrayPayload(trendingPayload);
-        _kwiPrefetchedRefs = {};
       }
       const rising   = normalizeArrayPayload(await risingRes.json());
       if (requestId !== kwiListRequestId || kwiMode !== 'trending') return;
