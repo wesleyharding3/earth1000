@@ -7906,6 +7906,135 @@ window.fmtDate = function(d) {
   };
 })();
 
+/* ── Client-side API response cache ── */
+// Lightweight in-memory cache for GET requests to our API.
+// Serves stale data instantly while revalidating in the background.
+// Prevents redundant fetches when navigating between pages or re-rendering.
+(function() {
+  const _apiCache = new Map(); // url → { data, expires, json }
+  const _apiInflight = new Map(); // url → Promise
+  const MAX_ENTRIES = 120;
+
+  // Default TTLs by endpoint pattern (ms)
+  const TTL_MAP = [
+    ['/api/threads/latest',    180000],  // 3 min
+    ['/api/timelines/latest',  180000],  // 3 min
+    ['/api/news/search',       120000],  // 2 min
+    ['/api/articles/recent',    60000],  // 1 min
+    ['/api/flows',             120000],  // 2 min
+    ['/api/countries/all',     600000],  // 10 min
+    ['/api/cities/all',        600000],  // 10 min
+    ['/api/news/sources-stats',300000],  // 5 min
+    ['/api/threads/by-country', 90000],  // 90s
+    ['/api/sentiment/country',  90000],  // 90s
+    ['/api/articles/by-ids',    90000],  // 90s
+    ['/api/heatmap/',          120000],  // 2 min
+    ['/api/leader-tweets',     120000],  // 2 min
+  ];
+
+  function getTtl(url) {
+    for (const [pattern, ttl] of TTL_MAP) {
+      if (url.includes(pattern)) return ttl;
+    }
+    return 0; // don't cache unknown endpoints
+  }
+
+  // Evict oldest entries when cache is full
+  function evictOldest() {
+    if (_apiCache.size <= MAX_ENTRIES) return;
+    let oldestKey = null, oldestTime = Infinity;
+    for (const [k, v] of _apiCache) {
+      if (v.expires < oldestTime) { oldestTime = v.expires; oldestKey = k; }
+    }
+    if (oldestKey) _apiCache.delete(oldestKey);
+  }
+
+  /**
+   * cachedFetch(url, init?) → Promise<Response-like>
+   * Returns { ok, status, json(), text() } — compatible with fetch() usage.
+   * For GET requests to known API endpoints, serves from cache + revalidates.
+   */
+  window.cachedFetch = function(url, init) {
+    // Only cache GETs with no special headers
+    const method = (init?.method || 'GET').toUpperCase();
+    if (method !== 'GET') return fetch(url, init);
+
+    const ttl = getTtl(typeof url === 'string' ? url : url?.url || '');
+    if (!ttl) return fetch(url, init);
+
+    const cacheKey = typeof url === 'string' ? url : url?.url || '';
+    const now = Date.now();
+    const cached = _apiCache.get(cacheKey);
+
+    // Fresh cache hit — return immediately
+    if (cached && cached.expires > now) {
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(cached.json),
+        text: () => Promise.resolve(cached.data),
+        _cached: true
+      });
+    }
+
+    // Stale cache — return stale data immediately, revalidate in background
+    if (cached && cached.expires > now - ttl * 2) {
+      if (!_apiInflight.has(cacheKey)) {
+        const bg = fetch(url, init)
+          .then(r => r.ok ? r.text() : Promise.reject())
+          .then(text => {
+            try {
+              const json = JSON.parse(text);
+              _apiCache.set(cacheKey, { data: text, json, expires: Date.now() + ttl });
+            } catch (_) {}
+          })
+          .catch(() => {})
+          .finally(() => _apiInflight.delete(cacheKey));
+        _apiInflight.set(cacheKey, bg);
+      }
+      return Promise.resolve({
+        ok: true, status: 200,
+        json: () => Promise.resolve(cached.json),
+        text: () => Promise.resolve(cached.data),
+        _cached: true, _stale: true
+      });
+    }
+
+    // No cache / fully expired — fetch and cache
+    const inflight = _apiInflight.get(cacheKey);
+    if (inflight) {
+      return inflight.then(() => {
+        const c = _apiCache.get(cacheKey);
+        if (c) return { ok: true, status: 200, json: () => Promise.resolve(c.json), text: () => Promise.resolve(c.data), _cached: true };
+        return fetch(url, init);
+      });
+    }
+
+    const p = fetch(url, init).then(response => {
+      if (response.ok) {
+        const cloned = response.clone();
+        cloned.text().then(text => {
+          try {
+            const json = JSON.parse(text);
+            _apiCache.set(cacheKey, { data: text, json, expires: Date.now() + ttl });
+            evictOldest();
+          } catch (_) {}
+        });
+      }
+      return response;
+    });
+    _apiInflight.set(cacheKey, p.catch(() => {}).finally(() => _apiInflight.delete(cacheKey)));
+    return p;
+  };
+
+  // Expose cache invalidation for manual use
+  window.invalidateApiCache = function(pattern) {
+    if (!pattern) { _apiCache.clear(); return; }
+    for (const key of _apiCache.keys()) {
+      if (key.includes(pattern)) _apiCache.delete(key);
+    }
+  };
+})();
+
 /* ── Offline / online detection ── */
 (function() {
   let _offlineBanner = null;
@@ -8111,7 +8240,7 @@ window.sourceBiasBadgeHTML = function(bias) {
     setTimeout(resolve, 4000);
 
     // Threads — limit 10 so the grid has a healthy first paint.
-    fetch(`${API}/api/threads/latest?limit=10`)
+    cachedFetch(`${API}/api/threads/latest?limit=10`)
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         if (Array.isArray(data) && data.length) window.__preloadedThreads = data;
@@ -8120,7 +8249,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       .finally(finish);
 
     // Feed — default search (no filters) to get the most recent articles.
-    fetch(`${API}/api/news/search?limit=25&offset=0`)
+    cachedFetch(`${API}/api/news/search?limit=25&offset=0`)
       .then(r => r.ok ? r.json() : [])
       .then(data => {
         const arts = Array.isArray(data) ? data : (data.articles || []);
@@ -13805,7 +13934,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // ─── 3c. Scale: top cap appears, then vertical line draws down ───
           const labels = labelsEl ? Array.from(labelsEl.querySelectorAll(".scaleBarLabel")) : [];
-          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(6px)"; lbl.style.transition = "opacity 180ms ease-out, transform 180ms ease-out"; });
+          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(8px)"; lbl.style.transition = "opacity 1400ms ease-out, transform 1400ms ease-out"; });
 
           // Get bar height so we can use pixel-based clip (avoids % rounding issues with ::before/::after)
           const barH = barLine ? barLine.offsetHeight : 120;
@@ -13863,8 +13992,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             requestAnimationFrame(scaleTick);
           });
 
-          // Labels fade in one by one in quick sequence after bar finishes drawing
-          const labelStagger = 500; // ms between each label
+          // Labels fade in one by one — slow, visible stagger
+          const labelStagger = 900; // ms between each label
           for (let i = 0; i < labelCount; i++) {
             setTimeout(() => {
               labels[i].style.opacity = "1";
@@ -18694,7 +18823,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           threadsGrid.innerHTML = skels(1);
         }
         try {
-          const res = await fetch(`${API}/api/threads/latest?limit=1000`);
+          const res = await cachedFetch(`${API}/api/threads/latest?limit=1000`);
           if (!res.ok) throw new Error('Failed');
           threadsData = await res.json();
           applyRecencyStatus(threadsData);
@@ -18710,7 +18839,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       async function loadTimelines() {
         if (currentView === 'timelines') threadsGrid.innerHTML = skels(1);
         try {
-          const res = await fetch(`${API}/api/timelines/latest?limit=1000`);
+          const res = await cachedFetch(`${API}/api/timelines/latest?limit=1000`);
           if (!res.ok) throw new Error('Failed');
           const raw = await res.json();
           // Tag each item as a timeline so the card renderer and click handler
@@ -21702,7 +21831,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // ══════════════════════════════════════════════════════════════════
   async function loadSourcesData() {
     try {
-      const res = await fetch(`${API}/api/news/sources-stats`);
+      const res = await cachedFetch(`${API}/api/news/sources-stats`);
       if (!res.ok) throw new Error(res.status);
       const data = await res.json();
 
@@ -27411,9 +27540,7 @@ body.ticker-active .gTickerLabel {
   // ── Fetch and refresh ─────────────────────────────────────────────────────
   async function _fetchAndStart() {
     try {
-      const res = await fetch(`${API}/api/articles/recent?limit=60&hours=48`, {
-        signal: AbortSignal.timeout ? AbortSignal.timeout(12000) : undefined
-      });
+      const res = await cachedFetch(`${API}/api/articles/recent?limit=60&hours=48`);
       if (!res.ok) throw new Error(`ticker_http_${res.status}`);
       const arts = await res.json();
       if (Array.isArray(arts) && arts.length) {
@@ -30091,7 +30218,7 @@ body.ticker-active .gTickerLabel {
       // tiebreak inside __renderSignalBarList.
       const [artRes, thrRes] = await Promise.all([
         fetch(`${API}/api/sentiment/country/${encodeURIComponent(iso)}?limit=150&days=7`),
-        fetch(`${API}/api/threads/by-country/${encodeURIComponent(iso)}?limit=40&days=7`)
+        cachedFetch(`${API}/api/threads/by-country/${encodeURIComponent(iso)}?limit=40&days=7`)
           .catch(() => null)
       ]);
       if (!artRes.ok) throw new Error(`HTTP ${artRes.status}`);

@@ -117,6 +117,34 @@ app.options(/.*/, cors(corsOptions));
 
 app.use(express.json());
 
+// ── Browser caching headers for read-heavy GET endpoints ──
+// Sets Cache-Control with stale-while-revalidate so browsers can serve
+// cached responses instantly while revalidating in the background.
+const SWR_ROUTES = {
+  '/api/threads/latest':   's-maxage=60, stale-while-revalidate=120',
+  '/api/timelines/latest': 's-maxage=60, stale-while-revalidate=120',
+  '/api/news/search':      's-maxage=30, stale-while-revalidate=60',
+  '/api/articles/recent':  's-maxage=30, stale-while-revalidate=60',
+  '/api/flows':            's-maxage=30, stale-while-revalidate=60',
+  '/api/countries/all':    's-maxage=300, stale-while-revalidate=600',
+  '/api/cities/all':       's-maxage=300, stale-while-revalidate=600',
+  '/api/cities':           's-maxage=300, stale-while-revalidate=600',
+  '/api/news/sources-stats': 's-maxage=120, stale-while-revalidate=300',
+  '/api/heatmap/':         's-maxage=60, stale-while-revalidate=120',
+  '/api/leader-tweets':    's-maxage=60, stale-while-revalidate=120',
+};
+app.use('/api', (req, res, next) => {
+  if (req.method === 'GET') {
+    for (const [route, header] of Object.entries(SWR_ROUTES)) {
+      if (req.path.startsWith(route.replace('/api', ''))) {
+        res.set('Cache-Control', `public, ${header}`);
+        break;
+      }
+    }
+  }
+  next();
+});
+
 // Apply general rate limit to all API routes
 app.use('/api', apiLimiter);
 
@@ -200,6 +228,21 @@ async function ttlCached(key, ttlMs, producer) {
   const now = Date.now();
   const hit = _ttlCache.get(key);
   if (hit && hit.expires > now) return hit.value;
+  // Stale-while-revalidate: serve stale data while refreshing in background.
+  // If the cache expired within the last 2× TTL, return stale immediately
+  // and kick off a background refresh so the next request gets fresh data.
+  if (hit && hit.expires > now - ttlMs * 2) {
+    if (!_ttlInflight.has(key)) {
+      const bg = (async () => {
+        try {
+          const value = await producer();
+          _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
+        } catch (_) {} finally { _ttlInflight.delete(key); }
+      })();
+      _ttlInflight.set(key, bg);
+    }
+    return hit.value; // serve stale immediately
+  }
   const inflight = _ttlInflight.get(key);
   if (inflight) return inflight;
   const p = (async () => {
@@ -214,6 +257,15 @@ async function ttlCached(key, ttlMs, producer) {
   _ttlInflight.set(key, p);
   return p;
 }
+
+// Periodic pruning of expired TTL cache entries to prevent memory leaks
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of _ttlCache) {
+    // Evict entries that have been stale for more than 5× their original TTL
+    if (entry.expires < now - 300_000) _ttlCache.delete(key);
+  }
+}, 120_000).unref?.();
 
 // ── Country-name regex, built once at boot ─────────────────────────────────
 //
@@ -4317,7 +4369,7 @@ app.get("/api/threads/latest", async (req, res) => {
     // hammering the DB every 30s. The builder runs once/day and articles
     // trickle in; 2 min is plenty fresh for a feed.
     const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
-    const _cached = await ttlCached(_cacheKey, 120_000, async () => {
+    const _cached = await ttlCached(_cacheKey, 180_000, async () => {  // 3 min (was 2)
 
     // Step 1: get threads — single fast query on story_threads only,
     // no JOINs, no regex, no correlated subqueries.
@@ -4703,7 +4755,7 @@ app.get("/api/articles/recent", async (req, res) => {
     // the DB with ORDER BY RANDOM() across the full recent corpus on every
     // page open. We instead bound the candidate set to the newest few
     // hundred/thousand rows, then shuffle within that smaller pool.
-    const rows = await ttlCached(`articles/recent:${limit}:${hours}`, 20_000, async () => {
+    const rows = await ttlCached(`articles/recent:${limit}:${hours}`, 60_000, async () => {  // 60s (was 20s)
       const { rows } = await pool.query(`
         WITH recent_pool AS (
           SELECT a.id
@@ -6846,8 +6898,14 @@ async function _warmFeedCaches() {
   const urls = [
     `${base}/api/news/search?limit=25&offset=0`,
     `${base}/api/threads/latest?limit=30`,
+    `${base}/api/threads/latest?limit=1000`,  // full thread list (stories page)
     `${base}/api/timelines/latest?limit=30`,
+    `${base}/api/timelines/latest?limit=1000`, // full timeline list
     `${base}/api/flows?mode=aggregate&view_mode=country&limit=500`,
+    `${base}/api/articles/recent?limit=60&hours=48`,  // ticker feed
+    `${base}/api/news/sources-stats`,                  // globe stats
+    `${base}/api/countries/all`,                       // country list
+    `${base}/api/cities/all`,                          // city list
   ];
   for (const url of urls) {
     try {
