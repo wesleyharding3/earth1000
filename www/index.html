@@ -20,6 +20,11 @@
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
   <link rel="shortcut icon" href="/favicon.png">
   <link rel="icon" href="/favicon.png">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Earth00">
+  <meta name="theme-color" content="#000000">
   <!-- Pre-warm GeoJSON used by the globe so view-mode swaps are instant -->
   <link rel="preload" as="fetch" href="ne_50m_land.geojson" crossorigin="anonymous">
   <link rel="preload" as="fetch" href="custom.geo.json" crossorigin="anonymous">
@@ -18904,9 +18909,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const wrapper = tmp.firstChild;
           const inner = wrapper.querySelector?.('.nfThreadCard');
           if (inner) {
-            inner.addEventListener('click', () => {
+            inner.addEventListener('click', function() {
               try {
-                const t = JSON.parse(inner.dataset.thread);
+                const t = JSON.parse(this.dataset.thread);
                 openThreadInPanel(t);
               } catch(e) { console.warn('Failed to open item:', e); }
             });
