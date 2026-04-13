@@ -6700,119 +6700,18 @@ app.get("/api/news/sources-stats", async (req, res) => {
 
 /* =========================================
    Globe Statistics — /api/globe-stats
-   Aggregates data from external adapters (World Bank, FRED, EIA, OWID)
-   with aggressive caching (1 hour) since these are slow external APIs.
+   Pre-computed by globeStatsCron.js (every 6 hours).
+   Reads from keyword_intelligence_cache; accepts up to 24h staleness.
 ========================================= */
 app.get("/api/globe-stats", async (req, res) => {
   try {
-    const data = await ttlCached('globe-stats:all', 3_600_000, async () => {
-      const dataSources = require('./dataSources');
-      const results = {};
+    const data = await ttlCached('globe-stats:all', 600_000, async () => {
+      // Read from DB cache (populated by globeStatsCron.js)
+      const dbCached = await getDbKeywordCache("globe-stats", "global", 1440); // 24h max staleness
+      if (dbCached) return dbCached;
 
-      // Helper: fetch from an adapter, return latest value or null
-      async function latest(adapterName, indicator, opts = {}) {
-        try {
-          const adapter = dataSources.getAdapter(adapterName);
-          if (!adapter) return null;
-          const data = await adapter.fetch({ indicator, ...opts });
-          if (!data || !data.series || !data.series.length) return null;
-          // Get the most recent non-null value
-          const values = data.series[0].values;
-          for (let i = values.length - 1; i >= 0; i--) {
-            if (values[i] != null) return { value: values[i], unit: data.unit, source: data.source_url };
-          }
-          return null;
-        } catch { return null; }
-      }
-
-      // Helper: fetch World Bank for top countries
-      async function wbTopCountries(indicator, countries, years) {
-        try {
-          const adapter = dataSources.getAdapter('worldbank');
-          if (!adapter) return null;
-          const data = await adapter.fetch({ indicator, countries, years });
-          return data;
-        } catch { return null; }
-      }
-
-      // ── Commodities (FRED + EIA) ──
-      const commodityFetches = {
-        oil:       latest('fred', 'DCOILWTICO'),
-        natgas:    latest('eia', 'NG.RNGWHHD.D'),
-        coal:      latest('fred', 'PCOALAUUSDM'),
-        gold:      latest('fred', 'GOLDAMGBD228NLBM'),
-        silver:    latest('fred', 'PSILVERUSDM'),
-        platinum:  latest('fred', 'PPLATINUSDM'),
-        copper:    latest('fred', 'PCOPPUSDM'),
-        aluminum:  latest('fred', 'PALUMUSDM'),
-        wheat:     latest('fred', 'PWHEAMTUSDM'),
-        corn:      latest('fred', 'PCOREUSDM'),
-        soybeans:  latest('fred', 'PSOYBUSDM'),
-        coffee:    latest('fred', 'PCOFFOTMUSDM'),
-        cocoa:     latest('fred', 'PCOCOAUSDM'),
-        cotton:    latest('fred', 'PCOTTUSDM'),
-        lumber:    latest('fred', 'WPU101'),
-      };
-
-      // ── Economic (World Bank — global aggregates) ──
-      const topEconomies = ['United States', 'China', 'Japan', 'Germany', 'India', 'United Kingdom'];
-      const recentYears = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 5 + i);
-      const economicFetches = {
-        gdp:          wbTopCountries('NY.GDP.MKTP.CD', topEconomies, recentYears),
-        gdp_growth:   latest('worldbank', 'NY.GDP.MKTP.KD.ZG', { countries: ['World'], years: recentYears }),
-        inflation:    latest('worldbank', 'FP.CPI.TOTL.ZG', { countries: ['World'], years: recentYears }),
-        unemployment: latest('worldbank', 'SL.UEM.TOTL.ZS', { countries: ['World'], years: recentYears }),
-        interest:     latest('fred', 'FEDFUNDS'),
-        debt_gdp:     latest('fred', 'GFDEBTN'),
-      };
-
-      // ── Demographics (World Bank) ──
-      const demoFetches = {
-        population:  latest('worldbank', 'SP.POP.TOTL', { countries: ['World'], years: recentYears }),
-        pop_growth:  latest('worldbank', 'SP.POP.GROW', { countries: ['World'], years: recentYears }),
-        life_expect: latest('worldbank', 'SP.DYN.LE00.IN', { countries: ['World'], years: recentYears }),
-        internet:    latest('worldbank', 'IT.NET.USER.ZS', { countries: ['World'], years: recentYears }),
-        migration:   wbTopCountries('SM.POP.NETM', ['United States', 'Germany', 'Turkey', 'Russia', 'United Kingdom', 'Canada'], recentYears),
-      };
-
-      // ── Energy (World Bank) ──
-      const energyFetches = {
-        co2_capita:  latest('worldbank', 'EN.ATM.CO2E.PC', { countries: ['World'], years: recentYears }),
-        renewable:   latest('worldbank', 'EG.FEC.RNEW.ZS', { countries: ['World'], years: recentYears }),
-      };
-
-      // ── Military (World Bank) ──
-      const geoFetches = {
-        military: wbTopCountries('MS.MIL.XPND.CD', ['United States', 'China', 'Russia', 'India', 'Saudi Arabia', 'United Kingdom'], recentYears),
-      };
-
-      // Collect all named fetches
-      const allKeys = [];
-      const allPromises = [];
-      for (const group of [commodityFetches, economicFetches, demoFetches, energyFetches, geoFetches]) {
-        for (const [key, promise] of Object.entries(group)) {
-          allKeys.push(key);
-          allPromises.push(promise);
-        }
-      }
-
-      const settled = await Promise.allSettled(allPromises);
-      for (let i = 0; i < allKeys.length; i++) {
-        const r = settled[i];
-        if (r.status === 'fulfilled' && r.value != null) {
-          const v = r.value;
-          // For simple latest-value results
-          if (v.value != null) {
-            results[allKeys[i]] = v.value;
-          }
-          // For multi-country series results (from wbTopCountries)
-          else if (v.series) {
-            results[allKeys[i]] = v;
-          }
-        }
-      }
-
-      return results;
+      console.warn('[globe-stats] no cache available — returning empty');
+      return {};
     });
     res.json(data);
   } catch (err) {
@@ -6887,6 +6786,16 @@ setInterval(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder"),   30 *
 setTimeout(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder startup"), 6 * 60_000);
 setInterval(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder"), 12 * 60 * 60 * 1000).unref?.(); // every 12h
 
+// Globe statistics — external APIs (FRED, World Bank, Gold API). Runs every 6 hours.
+// Staggered 2 min after boot.
+setTimeout(() => spawnBuilder("globeStatsCron.js", "globeStatsCron startup"), 2 * 60_000);
+setInterval(() => spawnBuilder("globeStatsCron.js", "globeStatsCron"), 6 * 60 * 60 * 1000).unref?.(); // every 6h
+
+// Sources statistics — DB aggregation. Runs every 12 hours.
+// Staggered 8 min after boot.
+setTimeout(() => spawnBuilder("sourcesStatsCron.js", "sourcesStatsCron startup"), 8 * 60_000);
+setInterval(() => spawnBuilder("sourcesStatsCron.js", "sourcesStatsCron"), 12 * 60 * 60 * 1000).unref?.(); // every 12h
+
 startArticleListener().catch(console.error);
 
 // ── Cache warming — keep threads & timelines hot so no user hits a cold query ──
@@ -6903,7 +6812,8 @@ async function _warmFeedCaches() {
     `${base}/api/timelines/latest?limit=1000`, // full timeline list
     `${base}/api/flows?mode=aggregate&view_mode=country&limit=500`,
     `${base}/api/articles/recent?limit=60&hours=48`,  // ticker feed
-    `${base}/api/news/sources-stats`,                  // globe stats
+    `${base}/api/news/sources-stats`,                  // source intelligence
+    `${base}/api/globe-stats`,                         // globe stats (commodities, economic, etc.)
     `${base}/api/countries/all`,                       // country list
     `${base}/api/cities/all`,                          // city list
   ];
