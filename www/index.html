@@ -15954,6 +15954,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (document.getElementById("infoPanel")?.classList.contains("active")) return false;
           if (document.getElementById("flowControls")?.classList.contains("visible")) return false;
           if (document.getElementById("settingsSidebar")?.classList.contains("open")) return false;
+          // On mobile, the view settings sidebar takes up enough room that
+          // ambient headlines overlap its controls. Desktop has enough space
+          // to keep them visible alongside, so this guard is mobile-only.
+          if (_isMobileView && document.getElementById("viewSidebar")?.classList.contains("open")) return false;
           if (isFocused)     return false;
           if (ambientPaused) return false;
           if (ambientSpeed === 0) return false;
