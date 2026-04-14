@@ -711,14 +711,23 @@ async function insertArticles(threadId, articleIds, anchorId, importance, validI
 // where recency_factor decays from 1.0 (fresh) toward 0.2 over 48h. Threads
 // with distinct_sources_24h < MIN_SOURCES_FOR_BREAKING still persist but
 // are flagged low-signal; the /api/threads/latest ranking weights by score.
+// Non-English languages whose sources should be weighted 1.5x in convergence
+// scoring to compensate for their systematic underrepresentation.
+const NON_ENGLISH_SIGNAL_LANGS = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
+
 async function recomputeBreakingSignal(threadId) {
   try {
+    // Fetch distinct source count AND non-English source count for weighting
     const { rows } = await pool.query(`
       SELECT
         COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) FILTER (
           WHERE a.published_at > NOW() - INTERVAL '${CONVERGENCE_WINDOW_HOURS} hours'
         )::int AS distinct_sources_24h,
         COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS distinct_sources_total,
+        COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) FILTER (
+          WHERE a.published_at > NOW() - INTERVAL '${CONVERGENCE_WINDOW_HOURS} hours'
+            AND a.language IS NOT NULL AND LOWER(LEFT(a.language, 2)) <> 'en'
+        )::int AS non_english_sources_24h,
         COALESCE(AVG(a.base_priority), 0) AS avg_bp,
         COALESCE(MAX(a.base_priority), 0) AS max_bp,
         MAX(a.published_at) AS last_pub
@@ -729,12 +738,17 @@ async function recomputeBreakingSignal(threadId) {
     const r = rows[0] || {};
     const distinct24 = Number(r.distinct_sources_24h || 0);
     const distinctTotal = Number(r.distinct_sources_total || 0);
+    const nonEnglish24 = Number(r.non_english_sources_24h || 0);
     const avgBp = Number(r.avg_bp || 0);
     const maxBp = Number(r.max_bp || 0);
     const lastPub = r.last_pub ? new Date(r.last_pub).getTime() : Date.now();
     const ageH = Math.max(0, (Date.now() - lastPub) / 3600000);
     const recency = Math.max(0.2, Math.exp(-ageH / 36));
-    const score = Number((distinct24 * recency * (0.4 + avgBp + 0.25 * maxBp)).toFixed(4));
+    // Weighted source count: non-English sources count as 1.5 to compensate
+    // for their lower volume in the system. This helps them reach the
+    // MIN_SOURCES_FOR_BREAKING threshold (3) more easily.
+    const weightedSources24 = distinct24 + (nonEnglish24 * 0.5); // each non-EN source adds 0.5 extra
+    const score = Number((weightedSources24 * recency * (0.4 + avgBp + 0.25 * maxBp)).toFixed(4));
     await pool.query(`
       UPDATE story_threads
       SET distinct_source_count  = $1,
@@ -876,23 +890,71 @@ Return ONLY valid JSON:
 
 // ─── Similarity Dedup ────────────────────────────────────────────────────────
 //
-// Catches near-duplicate active threads (Issues 3 + 6 from the audit).
-// Pure string/keyword similarity — no Claude. Two threads are considered
-// duplicates when EITHER:
-//   • title-token Jaccard ≥ 0.60      (e.g. "Trump Iran nuclear talks" ≈ "Trump Iran negotiations")
-//   • OR keyword Jaccard ≥ 0.70       (e.g. shared core keywords dominate)
-// AND they share the same primary_category (avoids cross-topic false merges).
+// Catches near-duplicate active threads. Three-signal approach:
 //
-// When duplicates are found, the older / higher-importance / larger thread
-// "wins" and the loser's articles are reassigned to the winner. The loser's
-// keywords are merged in and it is marked dormant (not deleted) so historical
-// continuity stays intact.
+// Signal 1 — Title-token Jaccard ≥ 0.50
+// Signal 2 — Keyword Jaccard ≥ 0.55
+// Signal 3 — Entity-anchor overlap: if two threads share ≥2 high-signal
+//            named entities (country names, leader names, conflict terms)
+//            AND moderate keyword overlap (core-kw Jaccard ≥ 0.30), merge.
+//
+// "Core keyword" Jaccard only considers the first 6 keywords per thread,
+// which are typically the most specific/central. This prevents long keyword
+// arrays from diluting the score.
+//
+// All signals require same primary_category to avoid cross-topic false merges.
+//
+// When duplicates are found, the higher-importance / larger thread "wins" and
+// the loser's articles are reassigned. The loser is marked dormant (not deleted)
+// so historical continuity stays intact.
 
 const TITLE_STOPWORDS = new Set([
   "the","a","an","of","in","on","at","to","for","and","or","but","with","from",
   "by","as","is","are","was","were","be","been","being","it","its","this","that",
   "these","those","over","under","after","before","new","says","say","said",
   "amid","into","out","up","down","off","vs","versus"
+]);
+
+// High-signal named entities that anchor a story's identity.
+// Split into two tiers:
+//   TIER 1 (specific): Countries, regions, leaders — these are strong identity signals
+//   TIER 2 (generic): Conflict/crisis terms — these add weight but alone don't identify a story
+//
+// Scoring: tier1 entity = 1 point, tier2 entity = 0.4 points
+// Merge threshold: entity score ≥ 2.0 (i.e., need 2 specific entities, or 1 specific + 3 generic)
+const ENTITY_TIER1 = new Set([
+  // Countries & regions
+  "iran","iraq","israel","gaza","ukraine","russia","china","taiwan",
+  "syria","yemen","lebanon","pakistan","india","kashmir","korea","dprk","pyongyang",
+  "turkey","saudi","qatar","uae","dubai","japan","mexico","venezuela",
+  "cuba","haiti","afghanistan","somalia","sudan","ethiopia","eritrea","libya",
+  "niger","mali","burkina","chad","congo","mozambique","myanmar","bangladesh",
+  "philippines","indonesia","australia","canada","britain","france","germany",
+  "spain","italy","poland","denmark","sweden","norway","finland",
+  "hormuz","mandeb","suez","malacca",
+  // Leaders & key figures
+  "trump","biden","putin","jinping","zelensky","zelenskyy","netanyahu",
+  "khamenei","erdogan","modi","macron","starmer","scholz","milei","vance",
+  "rubio","blinken","sullivan","lavrov","guterres",
+  // Specific organizations
+  "nato","irgc","hamas","hezbollah","houthi","isis","taliban","wagner",
+]);
+
+const ENTITY_TIER2 = new Set([
+  // Generic conflict/crisis terms — common across many unrelated stories
+  // These add 0.4 pts each; need more of them to trigger a merge
+  "war","ceasefire","strikes","siege","genocide",
+  "sanctions","missile","drone","airstrike","airstrikes",
+  "occupation","annexation","coup","famine","pandemic",
+  "tariff","tariffs","inflation","recession",
+  "gulf","persian","baltic","arctic","mediterranean","pacific","atlantic",
+  "eu","uk","pope",
+]);
+
+// Tier 1.5 — semi-specific terms scored at 0.7 pts
+// These are more distinctive than generic "war"/"ceasefire" but less than country names
+const ENTITY_TIER15 = new Set([
+  "blockade","invasion","nuclear","cartel","oil","crude","opec",
 ]);
 
 function tokenizeTitle(title) {
@@ -907,12 +969,66 @@ function tokenizeTitle(title) {
   );
 }
 
+/** Extract entity anchors. Returns a Set of entity strings. */
+function extractEntities(text) {
+  const tokens = String(text || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/);
+  const entities = new Set();
+  for (const t of tokens) {
+    if (ENTITY_TIER1.has(t) || ENTITY_TIER15.has(t) || ENTITY_TIER2.has(t)) {
+      entities.add(t);
+    }
+  }
+  return entities;
+}
+
+/** Score a single entity by tier */
+function entityTierScore(e) {
+  if (ENTITY_TIER1.has(e)) return 1.0;
+  if (ENTITY_TIER15.has(e)) return 0.7;
+  return 0.4; // tier2
+}
+
+/** Compute shared entity score between two entity sets */
+function sharedEntityScore(entitiesA, entitiesB) {
+  let score = 0;
+  for (const e of entitiesA) {
+    if (entitiesB.has(e)) score += entityTierScore(e);
+  }
+  return score;
+}
+
+/** Core-keyword set: first N keywords only (most specific/central) */
+function coreKeywords(keywords, n = 6) {
+  return new Set((keywords || []).slice(0, n).map(normalizeKeyword).filter(Boolean));
+}
+
+/** Tokenize a keyword phrase into individual words for overlap matching */
+function tokenizeKeywords(keywords) {
+  const tokens = new Set();
+  for (const kw of (keywords || [])) {
+    const words = normalizeKeyword(kw).split(/\s+/).filter(w => w.length >= 3 && !TITLE_STOPWORDS.has(w));
+    for (const w of words) tokens.add(w);
+  }
+  return tokens;
+}
+
 function jaccard(setA, setB) {
   if (!setA.size || !setB.size) return 0;
   let intersect = 0;
   for (const x of setA) if (setB.has(x)) intersect++;
   const union = setA.size + setB.size - intersect;
   return union ? intersect / union : 0;
+}
+
+function intersectionCount(setA, setB) {
+  let count = 0;
+  for (const x of setA) if (setB.has(x)) count++;
+  return count;
 }
 
 async function dedupSimilarThreads() {
@@ -926,12 +1042,21 @@ async function dedupSimilarThreads() {
 
   if (threads.length < 2) return 0;
 
-  // Pre-compute token/keyword sets
-  const enriched = threads.map(t => ({
-    ...t,
-    _titleTokens: tokenizeTitle(t.title),
-    _kwSet: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean))
-  }));
+  // Pre-compute token/keyword/entity sets
+  const enriched = threads.map(t => {
+    const titleEnt = extractEntities(t.title);
+    const kwEnt    = extractEntities((t.keywords || []).join(' '));
+    // Combined entities from both title AND keywords
+    const allEntities = new Set([...titleEnt, ...kwEnt]);
+    return {
+      ...t,
+      _titleTokens: tokenizeTitle(t.title),
+      _entities:    allEntities,
+      _kwSet:       new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean)),
+      _coreKwSet:   coreKeywords(t.keywords, 6),
+      _kwTokens:    tokenizeKeywords(t.keywords),
+    };
+  });
 
   // Union-Find: group all transitively-similar threads
   const parent = new Map(enriched.map(t => [t.id, t.id]));
@@ -950,9 +1075,31 @@ async function dedupSimilarThreads() {
       // Require category match to avoid e.g. politics ↔ sports false merges
       if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) continue;
 
-      const titleSim = jaccard(a._titleTokens, b._titleTokens);
-      const kwSim    = jaccard(a._kwSet, b._kwSet);
-      if (titleSim >= 0.50 || kwSim >= 0.55) {
+      const titleSim      = jaccard(a._titleTokens, b._titleTokens);
+      const kwSim         = jaccard(a._kwSet, b._kwSet);
+      const coreKwSim     = jaccard(a._coreKwSet, b._coreKwSet);
+      const entityScore   = sharedEntityScore(a._entities, b._entities);
+      const kwTokenSim    = jaccard(a._kwTokens, b._kwTokens);
+      const kwTokenShared = intersectionCount(a._kwTokens, b._kwTokens);
+
+      let shouldMerge = false;
+
+      // Signal 1: classic title similarity
+      if (titleSim >= 0.50) shouldMerge = true;
+
+      // Signal 2: classic keyword similarity
+      if (kwSim >= 0.55) shouldMerge = true;
+
+      // Signal 3: entity score + keyword word overlap (tiered)
+      // Higher entity scores need less keyword confirmation
+      if (entityScore >= 2.0 && kwTokenShared >= 5) shouldMerge = true;
+      if (entityScore >= 2.5 && kwTokenShared >= 2) shouldMerge = true;  // strong entity identity
+      if (entityScore >= 3.0 && kwTokenShared >= 1) shouldMerge = true;  // very strong
+
+      // Signal 4: strong core-keyword overlap (first 6 keywords)
+      if (coreKwSim >= 0.40) shouldMerge = true;
+
+      if (shouldMerge) {
         union(a.id, b.id);
       }
     }
@@ -966,7 +1113,26 @@ async function dedupSimilarThreads() {
     groups.get(r).push(t);
   }
 
-  // For each group with >1 thread, pick a winner and merge losers into it
+  // ── Anti-chaining: verify each member connects directly to the winner ────
+  // Union-find creates transitive chains (A↔B, B↔C → all one group) which
+  // can merge unrelated stories. Re-verify each member against the winner.
+  function shouldPairDirect(a, b) {
+    if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) return false;
+    const ts = jaccard(a._titleTokens, b._titleTokens);
+    const ks = jaccard(a._kwSet, b._kwSet);
+    const cks = jaccard(a._coreKwSet, b._coreKwSet);
+    const es = sharedEntityScore(a._entities, b._entities);
+    const kts = intersectionCount(a._kwTokens, b._kwTokens);
+    if (ts >= 0.50) return true;
+    if (ks >= 0.55) return true;
+    if (es >= 2.0 && kts >= 5) return true;
+    if (es >= 2.5 && kts >= 2) return true;
+    if (es >= 3.0 && kts >= 1) return true;
+    if (cks >= 0.40) return true;
+    return false;
+  }
+
+  // For each group with >1 thread, pick a winner and merge verified losers
   let merged = 0;
   for (const group of groups.values()) {
     if (group.length < 2) continue;
@@ -980,7 +1146,9 @@ async function dedupSimilarThreads() {
       return new Date(b.last_updated_at).getTime() - new Date(a.last_updated_at).getTime();
     });
     const winner = group[0];
-    const losers = group.slice(1);
+    // Only merge threads that directly match the winner (anti-chaining)
+    const losers = group.slice(1).filter(m => shouldPairDirect(winner, m));
+    if (!losers.length) continue;
 
     for (const loser of losers) {
       try {

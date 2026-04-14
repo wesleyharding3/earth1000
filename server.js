@@ -997,6 +997,26 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   }
 }
 
+// Non-English language boost: articles from underrepresented languages
+// get a scoring multiplier to offset their lower volume in the pipeline.
+// Tier A (major non-English languages): 1.35x — significant representation gap
+// Tier B (other non-English): 1.2x — moderate boost
+const NON_ENGLISH_BOOST_A = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
+const NON_ENGLISH_BOOST_B = new Set([
+  "fr","de","es","pt","it","tr","hi","bn","ur","id","ms","th","vi","pl",
+  "nl","sv","no","da","fi","el","he","ro","hu","cs","sk","bg","hr","sr",
+  "ka","hy","az","kk","uz","tg","ps","sw","am","my","km","lo","mn","ne",
+]);
+
+function getLanguageBoost(lang) {
+  if (!lang) return 1.0;
+  const code = lang.toLowerCase().slice(0, 2);
+  if (code === "en") return 1.0;
+  if (NON_ENGLISH_BOOST_A.has(code)) return 1.35;
+  if (NON_ENGLISH_BOOST_B.has(code)) return 1.2;
+  return 1.15; // any other non-English
+}
+
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
   const hasMore = rows.length > effectiveLimit;
   if (hasMore) rows.pop();
@@ -1005,7 +1025,7 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
     ...r,
     final_priority: (
       (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-    ) * Math.pow(r.country_boost || 1, 2.0)
+    ) * Math.pow(r.country_boost || 1, 2.0) * getLanguageBoost(r.language)
   }));
 
   if (results.length >= 8) {

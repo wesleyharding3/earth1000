@@ -40,6 +40,75 @@ const TITLE_STOPWORDS = new Set([
   "amid","into","out","up","down","off","vs","versus","during","against",
 ]);
 
+// Two-tier entity system — tier1 (specific) = 1pt, tier2 (generic) = 0.4pt
+const ENTITY_TIER1 = new Set([
+  "iran","iraq","israel","gaza","ukraine","russia","china","taiwan",
+  "syria","yemen","lebanon","pakistan","india","kashmir","korea","dprk","pyongyang",
+  "turkey","saudi","qatar","uae","dubai","japan","mexico","venezuela",
+  "cuba","haiti","afghanistan","somalia","sudan","ethiopia","eritrea","libya",
+  "niger","mali","burkina","chad","congo","mozambique","myanmar","bangladesh",
+  "philippines","indonesia","australia","canada","britain","france","germany",
+  "spain","italy","poland","denmark","sweden","norway","finland",
+  "hormuz","mandeb","suez","malacca",
+  "trump","biden","putin","jinping","zelensky","zelenskyy","netanyahu",
+  "khamenei","erdogan","modi","macron","starmer","scholz","milei","vance",
+  "rubio","blinken","sullivan","lavrov","guterres",
+  "nato","irgc","hamas","hezbollah","houthi","isis","taliban","wagner",
+]);
+const ENTITY_TIER15 = new Set([
+  "blockade","invasion","nuclear","cartel","oil","crude","opec",
+]);
+const ENTITY_TIER2 = new Set([
+  "war","ceasefire","strikes","siege","genocide",
+  "sanctions","missile","drone","airstrike","airstrikes",
+  "occupation","annexation","coup","famine","pandemic",
+  "tariff","tariffs","inflation","recession",
+  "gulf","persian","baltic","arctic","mediterranean","pacific","atlantic",
+  "eu","uk","pope",
+]);
+
+function extractEntities(text) {
+  const tokens = String(text || "")
+    .toLowerCase().normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .split(/\s+/);
+  const entities = new Set();
+  for (const t of tokens) {
+    if (ENTITY_TIER1.has(t) || ENTITY_TIER15.has(t) || ENTITY_TIER2.has(t)) entities.add(t);
+  }
+  return entities;
+}
+
+function entityTierScore(e) {
+  if (ENTITY_TIER1.has(e)) return 1.0;
+  if (ENTITY_TIER15.has(e)) return 0.7;
+  return 0.4;
+}
+
+function sharedEntityScore(entitiesA, entitiesB) {
+  let score = 0;
+  for (const e of entitiesA) {
+    if (entitiesB.has(e)) score += entityTierScore(e);
+  }
+  return score;
+}
+
+function tokenizeKeywordsFn(keywords) {
+  const tokens = new Set();
+  for (const kw of (keywords || [])) {
+    const words = String(kw || "").toLowerCase().trim().split(/\s+/).filter(w => w.length >= 3 && !TITLE_STOPWORDS.has(w));
+    for (const w of words) tokens.add(w);
+  }
+  return tokens;
+}
+
+function intersectionCount(setA, setB) {
+  let count = 0;
+  for (const x of setA) if (setB.has(x)) count++;
+  return count;
+}
+
 function tokenizeTitle(title) {
   return new Set(
     String(title || "")
@@ -141,15 +210,21 @@ async function main() {
   `);
   console.log(`📦 Loaded ${threads.length} active/cooling threads\n`);
 
-  // Enrich with tokenized titles
-  const enriched = threads.map(t => ({
-    ...t,
-    _titleTokens: tokenizeTitle(t.title),
-    _kwSet: new Set((t.keywords || []).map(k => String(k || "").toLowerCase().trim()).filter(Boolean))
-  }));
+  // Enrich with tokenized titles, entities, keyword tokens
+  const enriched = threads.map(t => {
+    const titleEntities = extractEntities(t.title);
+    const kwEntities = extractEntities((t.keywords || []).join(' '));
+    const allEntities = new Set([...titleEntities, ...kwEntities]);
+    return {
+      ...t,
+      _titleTokens: tokenizeTitle(t.title),
+      _entities:    allEntities,
+      _kwSet:       new Set((t.keywords || []).map(k => String(k || "").toLowerCase().trim()).filter(Boolean)),
+      _kwTokens:    tokenizeKeywordsFn(t.keywords),
+    };
+  });
 
-  // Build similarity graph: threads are "related" if similarity >= 0.5
-  const SIMILARITY_THRESHOLD = 0.5;
+  // Build similarity graph with entity-aware matching
   const uf = new UnionFind(enriched.length);
 
   console.log("🧮 Computing similarity graph...");
@@ -163,12 +238,20 @@ async function main() {
         continue;
       }
 
-      // Title token Jaccard
-      const titleSim = jaccardSimilarity(a._titleTokens, b._titleTokens);
-      // Keyword overlap
-      const kwSim = keywordOverlap(Array.from(a._kwSet), Array.from(b._kwSet));
-      // Either metric triggers a link
-      if (titleSim >= SIMILARITY_THRESHOLD || kwSim >= 0.4) {
+      const titleSim      = jaccardSimilarity(a._titleTokens, b._titleTokens);
+      const kwSim         = keywordOverlap(Array.from(a._kwSet), Array.from(b._kwSet));
+      const entityScore   = sharedEntityScore(a._entities, b._entities);
+      const kwTokenShared = intersectionCount(a._kwTokens, b._kwTokens);
+
+      let shouldMerge = false;
+      // Classic signals
+      if (titleSim >= 0.50 || kwSim >= 0.40) shouldMerge = true;
+      // Entity-aware signals (tiered — higher entity scores need less kw confirmation)
+      if (entityScore >= 2.0 && kwTokenShared >= 5) shouldMerge = true;
+      if (entityScore >= 2.5 && kwTokenShared >= 2) shouldMerge = true;
+      if (entityScore >= 3.0 && kwTokenShared >= 1) shouldMerge = true;
+
+      if (shouldMerge) {
         uf.union(i, j);
         pairsMatched++;
       }

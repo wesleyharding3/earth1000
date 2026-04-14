@@ -6,7 +6,53 @@ const crypto = require("crypto");
 const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtractor");
 const Anthropic = require("@anthropic-ai/sdk");
 
-const TRANSLATION_ENABLED = false;
+// ── Translation (DeepL) — cost-limited re-enablement ─────────────────────────
+// Translate TITLE ONLY (not summary) to keep DeepL costs low.
+// Only translates for priority non-English languages from tier 2+ sources.
+// Daily character cap prevents runaway costs.
+const TRANSLATION_ENABLED = !!process.env.DEEPL_API_KEY;
+const TRANSLATE_TITLE_ONLY = true;   // skip summary translation to reduce costs
+const TRANSLATE_DAILY_CHAR_CAP = 500_000; // ~500k chars/day ≈ DeepL Free tier limit
+const TRANSLATE_PRIORITY_LANGS = new Set(["ru","zh","fa","uk","ja","ko","ar","tr","hi","pt","es","fr","de"]);
+const TRANSLATE_MIN_TIER = 2;        // only tier 2+ sources get translated
+let _translateCharsToday = 0;
+let _translateCharsDayKey = new Date().toISOString().slice(0, 10);
+
+let _deeplTranslator = null;
+function getDeeplTranslator() {
+  if (!_deeplTranslator && process.env.DEEPL_API_KEY) {
+    try {
+      const deepl = require("deepl-node");
+      _deeplTranslator = new deepl.Translator(process.env.DEEPL_API_KEY);
+      console.log("✅ DeepL translator initialized for title-only translation");
+    } catch (e) {
+      console.warn("⚠️ DeepL init failed:", e.message);
+    }
+  }
+  return _deeplTranslator;
+}
+
+async function translateTitle(text, targetLang = "EN-US") {
+  if (!text) return null;
+  // Reset daily counter at midnight
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== _translateCharsDayKey) {
+    _translateCharsToday = 0;
+    _translateCharsDayKey = today;
+  }
+  // Check daily cap
+  if (_translateCharsToday + text.length > TRANSLATE_DAILY_CHAR_CAP) return null;
+  const translator = getDeeplTranslator();
+  if (!translator) return null;
+  try {
+    const result = await translator.translateText(text, null, targetLang);
+    _translateCharsToday += text.length;
+    return result.text;
+  } catch (e) {
+    console.warn(`⚠️ DeepL translate failed: ${e.message}`);
+    return null;
+  }
+}
 
 // ── Claude Haiku client — used only for CJK keyword extraction ────────────────
 // CJK (Chinese, Japanese, Korean) scripts have no word separators; the regex
@@ -1541,9 +1587,12 @@ async function fetchFeeds(options = {}) {
       }
 
       const isEnglish = !feed.language || feed.language.toUpperCase() === "EN";
+      // Non-English sources get full parity with English at tier 3-4.
+      // Lower tiers get a slight reduction to avoid noise from small sources,
+      // but much less aggressive than before (was 2-15, now 10-20).
       const MAX_ITEMS = isEnglish
         ? 20
-        : ({ 4: 15, 3: 10, 2: 5, 1: 2 }[feed.popularity_tier] ?? 5);
+        : ({ 4: 20, 3: 20, 2: 10, 1: 8 }[feed.popularity_tier] ?? 10);
 
       const candidates = rawItems.slice(0, MAX_ITEMS * 3);
 
@@ -1629,11 +1678,19 @@ async function fetchFeeds(options = {}) {
         let translatedSummary = null;
 
         if (!isEnglish && TRANSLATION_ENABLED) {
-          try {
-            translatedTitle   = await translateWithTimeout(title, "EN-US");
-            translatedSummary = await translateWithTimeout(summary, "EN-US");
-          } catch (translateErr) {
-            console.warn(`${tag} ⚠️ Translation failed, storing null`);
+          const lang = (feed.language || "").toLowerCase().slice(0, 2);
+          const shouldTranslate = TRANSLATE_PRIORITY_LANGS.has(lang)
+            && (feed.popularity_tier || 1) >= TRANSLATE_MIN_TIER;
+          if (shouldTranslate) {
+            try {
+              translatedTitle = await translateTitle(title, "EN-US");
+              // Summary translation disabled by default to reduce costs
+              if (!TRANSLATE_TITLE_ONLY && summary) {
+                translatedSummary = await translateTitle(summary, "EN-US");
+              }
+            } catch (translateErr) {
+              console.warn(`${tag} ⚠️ Translation failed, storing null`);
+            }
           }
         }
 

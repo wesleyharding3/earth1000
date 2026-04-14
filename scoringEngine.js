@@ -185,8 +185,21 @@ async function classifyArticle(articleId) {
 
     // ─────────────────────────────────────────
     // 7. Write base_priority
+    //    Non-English articles get a scoring boost to compensate for their
+    //    systemic underrepresentation. Key languages (ru, zh, fa, uk, ja,
+    //    ko, ar) get 1.3x; other non-English get 1.15x.
     // ─────────────────────────────────────────
-    const topScore = topTags[0]?.combined || 0;
+    const NON_ENG_PRIORITY_A = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
+    let topScore = topTags[0]?.combined || 0;
+
+    // Fetch article language for boost calculation
+    const langRes = await client.query(
+      `SELECT a.language FROM news_articles a WHERE a.id = $1`, [articleId]
+    );
+    const artLang = (langRes.rows[0]?.language || "").toLowerCase().slice(0, 2);
+    if (artLang && artLang !== "en") {
+      topScore *= NON_ENG_PRIORITY_A.has(artLang) ? 1.3 : 1.15;
+    }
 
     await client.query(
       `UPDATE news_articles
