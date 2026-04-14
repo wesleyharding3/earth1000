@@ -230,7 +230,7 @@
       backdrop-filter: blur(18px) saturate(1.3);
       -webkit-backdrop-filter: blur(18px) saturate(1.3);
       border: none;
-      overflow: hidden;
+      overflow: visible;
       border-radius: 26px 26px 0 0;
       box-shadow:
         /* soft outer glow — gives the bubble edge its rounded, diffused feel */
@@ -3963,11 +3963,11 @@ body.ticker-active #flowControls {
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
+  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - 10px);
   max-height: none;
   background: rgb(7, 11, 21);
   border: none;
-  border-radius: 0;
+  border-radius: 20px 20px 0 0;
   z-index: 800;
   transform: translateY(100%);
   transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
@@ -3988,6 +3988,15 @@ body.ticker-active #flowControls {
   border-bottom: none;
   overflow: hidden;
 }
+
+#articleDetailPanel.adp-dragging {
+  transition: none !important;
+}
+
+#articleDetailPanel.adp-minimized {
+  overflow: hidden;
+}
+#articleDetailPanel.adp-minimized .adpContent { overflow: hidden !important; }
 
 .adpHandle {
   width: 36px;
@@ -10255,12 +10264,30 @@ const loader = new THREE.TextureLoader();
       return Number.isFinite(parsed) ? parsed : window.innerHeight;
     }
 
+    // Safe area top inset for notch/status bar (iOS)
+    function getSafeAreaTop() {
+      const v = getComputedStyle(document.documentElement).getPropertyValue('--sat').trim();
+      return parseFloat(v) || 0;
+    }
+    // Keep --sat updated from env(safe-area-inset-top)
+    (function() {
+      const el = document.createElement('div');
+      el.style.cssText = 'position:fixed;top:env(safe-area-inset-top,0px);pointer-events:none;visibility:hidden;';
+      document.body.appendChild(el);
+      function update() { document.documentElement.style.setProperty('--sat', el.getBoundingClientRect().top + 'px'); }
+      update();
+      window.addEventListener('resize', update);
+      screen.orientation?.addEventListener?.('change', update);
+    })();
+
     const SNAP = {
       min: 300,
       default: () => Math.round(getAppViewportHeight() * 0.55),
-      max:     () => getAppViewportHeight()
+      max:     () => getAppViewportHeight() - getSafeAreaTop() - 10
     };
     let snapState = "default";  // "default" | "max"
+    // Expose for article panel close to re-apply current snap
+    window.__reapplySnapHeight = () => applySnapHeight(snapState, true);
     let resizeDragging = false;
     let resizeStartY = 0;
     let resizeStartH = 0;
@@ -23954,8 +23981,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     
     renderArticleDetail(article);
+    // Reset to full height and show
+    if (window.__adpResetSnap) window.__adpResetSnap();
     panel.classList.add('visible');
-    
+    panel.classList.remove('adp-minimized');
+
     // Update back button text based on context
     const backLabel = backBtn.querySelector('span');
     if (context?.type === 'thread') {
@@ -23976,7 +24006,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     stopArticlePlayback();
     panel.classList.remove('visible');
     panel.style.transform = '';
-    
+
     // Restore flow state if returning to flow animation
     if (returnContext?.type === 'flow' && flowStateBeforeOpen) {
       if (window.resumeFlowAnimation) {
@@ -23984,7 +24014,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       flowStateBeforeOpen = null;
     }
-    
+
+    // Restore node panel height — closing the article overlay can leave
+    // the underlying node panel at a stale height if the viewport changed
+    // while the article was open (e.g. keyboard dismiss, rotation).
+    const nodePanel = document.getElementById('infoPanel');
+    if (nodePanel?.classList.contains('active') && window.__reapplySnapHeight) {
+      window.__reapplySnapHeight();
+    }
+
     currentArticle = null;
     returnContext = null;
     if (contentCleanupTimer) clearTimeout(contentCleanupTimer);
@@ -24008,35 +24046,120 @@ const settingsToggle     = document.getElementById("settingsToggle");
     closeArticlePanel();
   });
   
-  // ── Swipe down to close ────────────────────────────────────────────────────
-  let touchStartY = 0;
-  let touchCurrentY = 0;
-  let isDragging = false;
-  
-  panel.addEventListener('touchstart', (e) => {
-    if (e.target.closest('.adpContent') && content.scrollTop > 0) return;
-    touchStartY = e.touches[0].clientY;
-    isDragging = true;
-  }, { passive: true });
-  
-  panel.addEventListener('touchmove', (e) => {
-    if (!isDragging) return;
-    touchCurrentY = e.touches[0].clientY;
-    const diff = touchCurrentY - touchStartY;
-    if (diff > 0) {
-      panel.style.transform = `translateY(${diff}px)`;
+  // ── Article panel snap drag system ──────────────────────────────────────────
+  // Three states: max (full height), default (55%), min (peek, 35%). Swipe down past min → close.
+  const ADP_SNAP = {
+    min: () => Math.round((parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-height')) || window.innerHeight) * 0.35),
+    default: () => Math.round((parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-height')) || window.innerHeight) * 0.55),
+    max: () => {
+      const vh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-height')) || window.innerHeight;
+      const sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0;
+      return vh - sat - 10;
     }
-  }, { passive: true });
-  
-  panel.addEventListener('touchend', () => {
-    if (!isDragging) return;
-    isDragging = false;
-    const diff = touchCurrentY - touchStartY;
-    if (diff > 50) {
-      closeArticlePanel();
+  };
+  let adpSnapState = 'max'; // start full-height when opened
+
+  function adpApplySnap(state, animate) {
+    if (state === 'close') { closeArticlePanel(); return; }
+    adpSnapState = state;
+    const h = ADP_SNAP[state]();
+    panel.style.transition = animate !== false
+      ? 'height 0.4s cubic-bezier(0.22, 1, 0.36, 1), transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)'
+      : 'none';
+    panel.style.height = h + 'px';
+    panel.classList.toggle('adp-minimized', state === 'min');
+    // Ensure visible position
+    panel.style.transform = 'translateY(0)';
+  }
+
+  // Expose so openArticleDetail can reset
+  window.__adpResetSnap = () => adpApplySnap('max', false);
+
+  let _adpDragging = false;
+  let _adpStartY = 0;
+  let _adpStartH = 0;
+  let _adpVelocity = 0;
+  let _adpLastTime = 0;
+  let _adpLastH = 0;
+  let _adpDidDrag = false;
+
+  // Handle touch from the drag handle
+  const adpHandle = panel.querySelector('.adpHandle');
+
+  function _adpTouchStart(e) {
+    // Only intercept from handle or when content is scrolled to top
+    const fromHandle = e.target.closest('.adpHandle') || e.target.closest('.adpHeader');
+    const fromContent = e.target.closest('.adpContent');
+    if (fromContent && content.scrollTop > 5 && !fromHandle) return;
+
+    _adpDragging = true;
+    _adpDidDrag = false;
+    _adpStartY = e.touches[0].clientY;
+    _adpStartH = parseFloat(panel.style.height) || ADP_SNAP.max();
+    _adpVelocity = 0;
+    _adpLastTime = performance.now();
+    _adpLastH = _adpStartH;
+    panel.classList.add('adp-dragging');
+  }
+
+  function _adpTouchMove(e) {
+    if (!_adpDragging) return;
+    _adpDidDrag = true;
+    const clientY = e.touches[0].clientY;
+    const dy = _adpStartY - clientY; // positive = swipe up = grow
+    const newH = Math.max(120, Math.min(ADP_SNAP.max(), _adpStartH + dy));
+    const now = performance.now();
+    const dt = now - _adpLastTime;
+    if (dt > 0) {
+      const instantV = (newH - _adpLastH) / dt;
+      _adpVelocity = _adpVelocity * 0.6 + instantV * 0.4;
     }
-    panel.style.transform = '';
-  });
+    _adpLastTime = now;
+    _adpLastH = newH;
+    panel.style.transition = 'none';
+    panel.style.height = newH + 'px';
+  }
+
+  function _adpTouchEnd() {
+    if (!_adpDragging) return;
+    _adpDragging = false;
+    panel.classList.remove('adp-dragging');
+
+    if (!_adpDidDrag) return;
+
+    const currentH = _adpLastH;
+    const min = ADP_SNAP.min();
+    const def = ADP_SNAP.default();
+    const max = ADP_SNAP.max();
+    const FLICK = 0.4;
+
+    // Close if dragged very small or fast flick down from min
+    if (currentH < min * 0.6 || (_adpVelocity < -FLICK && adpSnapState === 'min')) {
+      adpApplySnap('close'); return;
+    }
+    // Velocity-based snap
+    if (_adpVelocity < -FLICK) {
+      if (adpSnapState === 'max') { adpApplySnap('default'); return; }
+      if (adpSnapState === 'default') { adpApplySnap('min'); return; }
+      adpApplySnap('close'); return;
+    }
+    if (_adpVelocity > FLICK) {
+      if (adpSnapState === 'min') { adpApplySnap('default'); return; }
+      adpApplySnap('max'); return;
+    }
+    // Position-based
+    const snaps = [
+      { s: 'min', v: min },
+      { s: 'default', v: def },
+      { s: 'max', v: max }
+    ];
+    snaps.sort((a, b) => Math.abs(currentH - a.v) - Math.abs(currentH - b.v));
+    adpApplySnap(snaps[0].s);
+  }
+
+  panel.addEventListener('touchstart', _adpTouchStart, { passive: true });
+  panel.addEventListener('touchmove', _adpTouchMove, { passive: true });
+  panel.addEventListener('touchend', _adpTouchEnd);
   
   // ── Stop globe interactions when using panel ─────────────────────────────────
   panel.addEventListener('click', (e) => { e.stopPropagation(); });
