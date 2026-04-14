@@ -922,15 +922,18 @@ app.get("/api/tags", async (req, res) => {
 // Shared helper: executes the default (no-filter) news search query.
 // Used by the endpoint fast-path and by _warmFeedCaches.
 async function _executeNewsSearch({ effectiveLimit, offset }) {
-  const conditions = [`a.city_id IS NULL`, `a.published_at > NOW() - INTERVAL '72 hours'`];
   const params = [effectiveLimit + 1, offset];
+
+  // ── Tier 1: Full ranked query with 8s timeout ──
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query(`
+    await client.query('SET statement_timeout = 8000');
+    const { rows } = await client.query(`
       SELECT * FROM (
         SELECT
           a.id, a.title, a.translated_title, a.url, a.article_url,
           a.summary, a.translated_summary,
-          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          a.image_url,
           img_a.public_url AS catalog_image_url,
           a.published_at, a.sentiment_score,
           l.iso_code_2 AS language, a.base_priority,
@@ -953,7 +956,8 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
         LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-        WHERE ${conditions.join(' AND ')}
+        WHERE a.city_id IS NULL
+          AND a.published_at > NOW() - INTERVAL '72 hours'
       ) sub
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
@@ -961,40 +965,73 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
       ) DESC
       LIMIT $1 OFFSET $2
     `, params);
-
     return _finalizeSearchResults(rows, effectiveLimit, offset);
   } catch (err) {
-    // Fallback: lightweight query when the full query times out under DB pressure
-    console.warn('[news/search] Full query failed, trying lightweight fallback:', err.message);
-    const { rows } = await pool.query(`
+    console.warn('[news/search] Tier 1 timed out (8s), falling back:', err.message);
+  } finally {
+    // Reset timeout to pool default before returning connection
+    await client.query('SET statement_timeout = 45000').catch(() => {});
+    client.release();
+  }
+
+  // ── Tier 2: Lightweight — no image joins, source join only, 6s timeout ──
+  const client2 = await pool.connect();
+  try {
+    await client2.query('SET statement_timeout = 6000');
+    const { rows } = await client2.query(`
       SELECT
         a.id, a.title, a.translated_title, a.url, a.article_url,
         a.summary, a.translated_summary,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
+        a.image_url,
+        NULL AS catalog_image_url,
         a.published_at, a.sentiment_score,
         NULL AS language, a.base_priority,
-        NULL AS source_name, NULL AS source_summary,
-        'unknown' AS source_bias, NULL AS site_url,
+        COALESCE(ns.name, ys.name) AS source_name,
+        NULL AS source_summary,
+        COALESCE(ns.bias, 'unknown') AS source_bias,
+        NULL AS site_url,
         src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
         1.0 AS country_boost,
-        GREATEST(
-          POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
-          0.02
-        ) AS recency_decay,
+        1.0 AS recency_decay,
         a.media_type, a.video_id, a.duration_seconds
       FROM news_articles a
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       JOIN countries src_co ON src_co.id = a.country_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
       WHERE a.city_id IS NULL
-        AND a.published_at > NOW() - INTERVAL '72 hours'
-      ORDER BY a.base_priority DESC NULLS LAST, a.published_at DESC
+        AND a.published_at > NOW() - INTERVAL '48 hours'
+      ORDER BY a.published_at DESC
       LIMIT $1 OFFSET $2
     `, params);
-
     return _finalizeSearchResults(rows, effectiveLimit, offset);
+  } catch (err2) {
+    console.warn('[news/search] Tier 2 timed out (6s), falling back to bare minimum:', err2.message);
+  } finally {
+    await client2.query('SET statement_timeout = 45000').catch(() => {});
+    client2.release();
   }
+
+  // ── Tier 3: Bare minimum — just articles + country, no joins ──
+  const { rows } = await pool.query(`
+    SELECT
+      a.id, a.title, a.translated_title, a.url, a.article_url,
+      a.summary, a.translated_summary, a.image_url,
+      NULL AS catalog_image_url,
+      a.published_at, a.sentiment_score,
+      NULL AS language, a.base_priority,
+      NULL AS source_name, NULL AS source_summary,
+      'unknown' AS source_bias, NULL AS site_url,
+      src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+      1.0 AS country_boost, 1.0 AS recency_decay,
+      a.media_type, a.video_id, a.duration_seconds
+    FROM news_articles a
+    JOIN countries src_co ON src_co.id = a.country_id
+    WHERE a.city_id IS NULL
+      AND a.published_at > NOW() - INTERVAL '24 hours'
+    ORDER BY a.published_at DESC
+    LIMIT $1 OFFSET $2
+  `, params);
+  return _finalizeSearchResults(rows, effectiveLimit, offset);
 }
 
 // Non-English language boost: articles from underrepresented languages
