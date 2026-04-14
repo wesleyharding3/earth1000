@@ -8198,49 +8198,93 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   text-align: center; margin-top: 15px;
   font-size: 12px; color: rgba(255,255,255,0.28);
 }
-/* ─── Onboarding Questionnaire ─────────────────────────────── */
+/* ─── Onboarding Questionnaire v2 — Multi-step with typing animation ── */
 #onboardOverlay {
   display: none; position: fixed; inset: 0; z-index: 9500;
-  background: rgba(0,0,0,0.78); backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0,0,0,0.82); backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   align-items: center; justify-content: center;
 }
 #onboardOverlay.open { display: flex; pointer-events: all; }
 #onboardCard {
   position: relative; background: rgba(8,14,26,0.97);
-  border: 1px solid rgba(255,255,255,0.14); border-radius: 22px;
-  padding: 34px 30px 28px; width: min(460px, calc(100vw - 32px));
+  border: 1px solid rgba(212,168,67,0.22); border-radius: 22px;
+  padding: 34px 30px 28px; width: min(480px, calc(100vw - 32px));
   max-height: 90vh; overflow-y: auto;
-  box-shadow: 0 28px 90px rgba(0,0,0,0.75);
+  box-shadow: 0 28px 90px rgba(0,0,0,0.75), 0 0 60px rgba(212,168,67,0.06);
 }
+/* Pulsing glow animation on card border */
+@keyframes obPulse {
+  0%   { border-color: rgba(212,168,67,0.22); box-shadow: 0 28px 90px rgba(0,0,0,0.75), 0 0 20px rgba(212,168,67,0.04); }
+  50%  { border-color: rgba(212,168,67,0.45); box-shadow: 0 28px 90px rgba(0,0,0,0.75), 0 0 40px rgba(212,168,67,0.12), 0 0 80px rgba(212,168,67,0.06); }
+  100% { border-color: rgba(212,168,67,0.22); box-shadow: 0 28px 90px rgba(0,0,0,0.75), 0 0 20px rgba(212,168,67,0.04); }
+}
+#onboardCard.ob-pulse { animation: obPulse 1.2s ease-in-out 1; }
 .obSkipBtn {
   position: absolute; top: 14px; right: 14px;
   background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
   border-radius: 50%; width: 28px; height: 28px;
   color: rgba(255,255,255,0.55); font-size: 13px;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.2s;
+  cursor: pointer; transition: background 0.2s; z-index: 2;
 }
 .obSkipBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
-.obTitle {
-  color: #fff; font-size: 19px; font-weight: 700;
-  margin: 14px 0 7px; text-align: center;
+.obLogo {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 20px;
 }
-.obSub {
-  color: rgba(255,255,255,0.45); font-size: 13px;
-  text-align: center; margin-bottom: 26px; line-height: 1.55;
+.obLogo .authLogo { margin: 0; }
+.obLogo .obLogoText {
+  font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.35);
+  letter-spacing: 0.04em;
 }
-.obSection { margin-bottom: 22px; }
-.obSectionLabel {
-  font-size: 10px; font-weight: 700; letter-spacing: 0.10em;
-  text-transform: uppercase; color: rgba(255,255,255,0.38);
-  margin-bottom: 12px;
+/* Progress dots */
+.obProgress {
+  display: flex; justify-content: center; gap: 8px; margin-bottom: 24px;
 }
-.obOptional {
-  font-weight: 400; letter-spacing: 0; text-transform: none;
-  color: rgba(255,255,255,0.28); font-size: 10px; margin-left: 4px;
+.obProgressDot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(255,255,255,0.12); transition: background 0.3s, box-shadow 0.3s;
 }
-.obField { margin-bottom: 12px; }
+.obProgressDot.active {
+  background: rgba(212,168,67,0.85);
+  box-shadow: 0 0 8px rgba(212,168,67,0.4);
+}
+.obProgressDot.done {
+  background: rgba(212,168,67,0.35);
+}
+/* Step container */
+.obStepWrap { position: relative; min-height: 200px; }
+.obStep {
+  position: absolute; top: 0; left: 0; right: 0;
+  opacity: 0; transform: translateX(30px);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+  pointer-events: none;
+}
+.obStep.active {
+  position: relative; opacity: 1; transform: translateX(0);
+  pointer-events: auto;
+}
+.obStep.exiting {
+  opacity: 0; transform: translateX(-30px);
+  pointer-events: none;
+}
+/* Typing text */
+.obTyping {
+  font-size: 17px; font-weight: 600; color: rgba(212,168,67,0.95);
+  min-height: 52px; line-height: 1.5; margin-bottom: 20px;
+}
+.obTyping .obCursor {
+  display: inline-block; width: 2px; height: 1em;
+  background: rgba(212,168,67,0.85); margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: obBlink 0.7s step-end infinite;
+}
+@keyframes obBlink { 50% { opacity: 0; } }
+.obStepSub {
+  font-size: 12px; color: rgba(255,255,255,0.35); margin-bottom: 18px; line-height: 1.5;
+}
+/* Input fields */
+.obField { margin-bottom: 14px; }
 .obFieldLabel {
   display: block; font-size: 10px; font-weight: 700;
   letter-spacing: 0.08em; text-transform: uppercase;
@@ -8253,7 +8297,7 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   border-radius: 10px; color: #fff; padding: 11px 14px;
   font-size: 13px; outline: none; transition: border-color 0.2s;
 }
-.obInput:focus { border-color: rgba(255,160,40,0.5); }
+.obInput:focus { border-color: rgba(212,168,67,0.5); }
 .obInput::placeholder { color: rgba(255,255,255,0.18); }
 .obDropList {
   display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 200;
@@ -8271,25 +8315,97 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 .obDropNone { padding: 9px 13px; font-size: 12px; color: rgba(255,255,255,0.3); }
 .obTag {
   display: inline-flex; align-items: center; gap: 6px;
-  margin-top: 8px; background: rgba(255,153,64,0.12);
-  border: 1px solid rgba(255,153,64,0.28); border-radius: 20px;
-  padding: 5px 10px 5px 13px; font-size: 12px; color: #ff9940;
+  background: rgba(212,168,67,0.12);
+  border: 1px solid rgba(212,168,67,0.28); border-radius: 20px;
+  padding: 5px 10px 5px 13px; font-size: 12px; color: rgba(212,168,67,0.95);
 }
 .obTagX {
-  cursor: pointer; font-size: 14px; color: rgba(255,153,64,0.55);
+  cursor: pointer; font-size: 14px; color: rgba(212,168,67,0.55);
   line-height: 1; padding: 0 2px; transition: color 0.15s;
 }
-.obTagX:hover { color: #ff9940; }
+.obTagX:hover { color: rgba(212,168,67,1); }
 .obTagsWrap { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 6px; }
-.obSaveBtn {
-  width: 100%; margin-top: 6px; background: rgba(255,160,40,0.92);
+/* Chip selectors (topics, sectors, languages) */
+.obChipGrid {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;
+}
+.obChip {
+  padding: 7px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.55); background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1); cursor: pointer;
+  transition: all 0.18s; user-select: none;
+}
+.obChip:hover { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.8); }
+.obChip.selected {
+  background: rgba(212,168,67,0.14); border-color: rgba(212,168,67,0.4);
+  color: rgba(212,168,67,1);
+}
+/* Slider (diversity) */
+.obSlider {
+  width: 100%; -webkit-appearance: none; appearance: none;
+  height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1);
+  outline: none; margin: 12px 0;
+}
+.obSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(212,168,67,0.9); cursor: pointer;
+  box-shadow: 0 0 10px rgba(212,168,67,0.3);
+}
+.obSliderLabels {
+  display: flex; justify-content: space-between; font-size: 10px;
+  color: rgba(255,255,255,0.3); margin-top: -4px;
+}
+/* Depth toggle */
+.obDepthRow {
+  display: flex; gap: 8px; margin-top: 8px;
+}
+.obDepthOpt {
+  flex: 1; padding: 12px; border-radius: 10px; text-align: center;
+  font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.5);
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1);
+  cursor: pointer; transition: all 0.18s;
+}
+.obDepthOpt:hover { background: rgba(255,255,255,0.08); }
+.obDepthOpt.selected {
+  background: rgba(212,168,67,0.12); border-color: rgba(212,168,67,0.35);
+  color: rgba(212,168,67,1);
+}
+/* Nav buttons */
+.obBtnRow {
+  display: flex; gap: 10px; margin-top: 20px;
+}
+.obNextBtn {
+  flex: 1; background: rgba(212,168,67,0.9);
   border: none; border-radius: 10px; color: #000;
   padding: 13px; font-size: 14px; font-weight: 700;
   cursor: pointer; transition: background 0.2s, transform 0.1s;
 }
-.obSaveBtn:hover  { background: rgba(255,180,55,1); }
-.obSaveBtn:active { transform: scale(0.98); }
-.obSaveBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+.obNextBtn:hover  { background: rgba(225,185,70,1); }
+.obNextBtn:active { transform: scale(0.98); }
+.obNextBtn:disabled { opacity: 0.45; cursor: not-allowed; }
+.obBackBtn {
+  padding: 13px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1); cursor: pointer;
+  transition: all 0.18s;
+}
+.obBackBtn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
+.obSkipStepBtn {
+  padding: 13px 16px; border-radius: 10px; font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.3); background: none; border: none;
+  cursor: pointer; transition: color 0.15s;
+}
+.obSkipStepBtn:hover { color: rgba(255,255,255,0.6); }
+/* Intro overlay (first screen) */
+.obIntro { text-align: center; padding: 20px 10px; }
+.obIntroTitle {
+  font-size: 20px; font-weight: 700; color: rgba(212,168,67,0.95);
+  margin: 16px 0 12px; line-height: 1.35;
+}
+.obIntroSub {
+  font-size: 13px; color: rgba(255,255,255,0.4); line-height: 1.6;
+  margin-bottom: 28px;
+}
 .authForgot a { color: rgba(255,160,40,0.65); cursor: pointer; text-decoration: none; }
 .authForgot a:hover { color: rgba(255,185,60,1); }
 /* Account dropdown */
@@ -9189,6 +9305,12 @@ window.sourceBiasBadgeHTML = function(bias) {
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
           History
+        </div>
+        <div class="acctDpBtn" id="acctDpPreferences" onclick="window.__openPreferences?.()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+          Preferences
         </div>
         <div class="acctDpBtn signout" id="acctDpSignOut">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -24270,43 +24392,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 <!-- ── Onboarding questionnaire (shown once after first sign-in) ── -->
 <div id="onboardOverlay">
   <div id="onboardCard">
-    <button class="obSkipBtn" id="onboardSkip" title="Skip">✕</button>
-    <div class="authLogo"><span>e</span></div>
-    <h2 class="obTitle">Personalise Your Briefing</h2>
-    <p class="obSub">Tell us where you're from and what regions interest you.<br>This shapes your daily news briefing.</p>
-
-    <!-- Home location -->
-    <div class="obSection">
-      <div class="obSectionLabel">Your home location</div>
-      <div class="obField">
-        <label class="obFieldLabel">Home country</label>
-        <div class="obDropWrap" id="obCountryWrap">
-          <input type="text" id="obCountrySearch" class="obInput" placeholder="Search countries…" autocomplete="off" />
-          <div class="obDropList" id="obCountryList"></div>
-        </div>
-        <div class="obTag" id="obCountryTag" style="display:none"></div>
-      </div>
-      <div class="obField" id="obCityField" style="display:none">
-        <label class="obFieldLabel">Nearest city <span class="obOptional">optional</span></label>
-        <div class="obDropWrap" id="obCityWrap">
-          <input type="text" id="obCitySearch" class="obInput" placeholder="Search cities…" autocomplete="off" />
-          <div class="obDropList" id="obCityList"></div>
-        </div>
-        <div class="obTag" id="obCityTag" style="display:none"></div>
-      </div>
-    </div>
-
-    <!-- Interests -->
-    <div class="obSection">
-      <div class="obSectionLabel">Other regions of interest <span class="obOptional">optional</span></div>
-      <div class="obDropWrap" id="obInterestWrap">
-        <input type="text" id="obInterestSearch" class="obInput" placeholder="Search countries or cities…" autocomplete="off" />
-        <div class="obDropList" id="obInterestList"></div>
-      </div>
-      <div class="obTagsWrap" id="obInterestTags"></div>
-    </div>
-
-    <button class="obSaveBtn" id="onboardSave">Save Preferences</button>
+    <button class="obSkipBtn" id="onboardSkip" title="Skip for now">✕</button>
+    <div class="obLogo"><div class="authLogo"><span>e</span></div><span class="obLogoText">earth</span></div>
+    <div class="obProgress" id="obProgress"></div>
+    <div class="obStepWrap" id="obStepWrap"></div>
   </div>
 </div>
 
@@ -24466,9 +24555,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__earthSupabase = sb;
 
   // ── Onboarding state (must be declared before any function that references them) ──
-  let _obHomeCountry = null;
-  let _obHomeCity    = null;
-  let _obInterests   = [];
+  // (old onboarding vars removed — v2 uses _obData object)
   let _onboardingShownThisSession = false;
 
   // ── DOM refs ─────────────────────────────────────────────────
@@ -25067,193 +25154,252 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Onboarding questionnaire ──────────────────────────────────
   async function maybeShowOnboarding(userId) {
-    const { data } = await sb.from('briefing_preferences')
-      .select('user_id').eq('user_id', userId).maybeSingle();
-    if (data) { _onboardingShownThisSession = true; return; } // already set (or skipped)
+    try {
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const r = await fetch(`${API}/api/user/preferences`, {
+        headers: { 'Authorization': 'Bearer ' + window.__authToken }
+      });
+      const data = await r.json();
+      if (data?.onboarding_completed) { _onboardingShownThisSession = true; return; }
+    } catch (e) { console.warn('[onboarding] check error:', e.message); }
     _onboardingShownThisSession = true;
     showOnboarding();
   }
 
-  function showOnboarding() {
-    const ov = document.getElementById('onboardOverlay');
-    ov.classList.add('open');
-    _buildOnboard();
+  function showOnboarding(startStep) {
+    _obStep = startStep || 0;
+    _obData = { home_country: null, _homeObj: null, interest_regions: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 50, depth_pref: 'both' };
+    document.getElementById('onboardOverlay').classList.add('open');
+    _obRenderProgress(); _obRenderStep();
   }
+
+  window.__openPreferences = async function() {
+    try {
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const r = await fetch(`${API}/api/user/preferences`, { headers: { 'Authorization': 'Bearer ' + window.__authToken } });
+      const d = await r.json();
+      if (d && d.user_id) {
+        _obData.home_country = d.home_country || null;
+        _obData.interest_regions = d.interest_regions || [];
+        _obData.interest_topics = d.interest_topics || [];
+        _obData.interest_sectors = d.interest_sectors || [];
+        _obData.languages = d.languages || [];
+        _obData.diversity_pref = d.diversity_pref ?? 50;
+        _obData.depth_pref = d.depth_pref || 'both';
+        if (_obData.home_country) {
+          const c = (window.__globeCountries || []).find(x => (x.iso_code || '').toUpperCase() === _obData.home_country.toUpperCase());
+          if (c) _obData._homeObj = { id: c.id, name: c.name, flag: c.flag, iso: c.iso_code };
+        }
+      }
+    } catch (e) { console.warn('[prefs] load error:', e.message); }
+    showOnboarding(1);
+  };
 
   function closeOnboarding() {
     document.getElementById('onboardOverlay').classList.remove('open');
-    _obHomeCountry = null; _obHomeCity = null; _obInterests = [];
-    ['obCountrySearch','obCitySearch','obInterestSearch'].forEach(id => {
-      const el = document.getElementById(id); if (el) el.value = '';
-    });
-    ['obCountryList','obCityList','obInterestList'].forEach(id => {
-      document.getElementById(id)?.classList.remove('open');
-    });
-    const cTag = document.getElementById('obCountryTag');
-    const cityTag = document.getElementById('obCityTag');
-    const cityField = document.getElementById('obCityField');
-    if (cTag)      cTag.style.display = 'none';
-    if (cityTag)   cityTag.style.display = 'none';
-    if (cityField) cityField.style.display = 'none';
-    const iTags = document.getElementById('obInterestTags');
-    if (iTags) iTags.innerHTML = '';
+    if (_obTypingTimer) { clearTimeout(_obTypingTimer); _obTypingTimer = null; }
   }
 
-  async function _obUpsert(geoFocus) {
-    if (!currentUser) return;
-    await sb.from('briefing_preferences').upsert({
-      user_id: currentUser.id, geo_focus: geoFocus,
-      topic_weights: {}, updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
+  // ── v2 Onboarding constants ──
+  const OB_TOPICS = ['Climate & Environment','Conflict & Security','Economy & Trade','Technology & AI','Health & Pandemic','Human Rights','Energy & Resources','Elections & Governance','Migration & Refugees','Science & Space','Culture & Society','Corruption & Transparency'];
+  const OB_SECTORS = ['Finance & Banking','Technology','Energy & Utilities','Defense & Aerospace','Healthcare & Pharma','Agriculture & Food','Real Estate','Education','Media & Entertainment','Manufacturing','Transportation','Telecommunications'];
+  const OB_LANGUAGES = [{code:'en',label:'English'},{code:'es',label:'Spanish'},{code:'fr',label:'French'},{code:'de',label:'German'},{code:'pt',label:'Portuguese'},{code:'ar',label:'Arabic'},{code:'zh',label:'Chinese'},{code:'ru',label:'Russian'},{code:'ja',label:'Japanese'},{code:'ko',label:'Korean'},{code:'hi',label:'Hindi'},{code:'tr',label:'Turkish'},{code:'it',label:'Italian'},{code:'nl',label:'Dutch'},{code:'sv',label:'Swedish'},{code:'pl',label:'Polish'},{code:'uk',label:'Ukrainian'},{code:'he',label:'Hebrew'},{code:'fa',label:'Farsi'},{code:'id',label:'Indonesian'},{code:'th',label:'Thai'},{code:'vi',label:'Vietnamese'}];
+  const OB_STEPS = [{id:'intro',question:null},{id:'home',question:'What is your home country?'},{id:'regions',question:'What countries or cities matter to you?'},{id:'topics',question:'What issues matter to you?'},{id:'sectors',question:'What sectors are relevant to your work?'},{id:'langs',question:'What languages do you read?'},{id:'diversity',question:'How diverse should your sources be?'},{id:'depth',question:'How do you prefer your news?'}];
+
+  let _obStep = 0;
+  let _obData = { home_country: null, _homeObj: null, interest_regions: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 50, depth_pref: 'both' };
+  let _obTypingTimer = null;
+
+  function _obRenderProgress() {
+    const el = document.getElementById('obProgress');
+    if (!el) return;
+    if (_obStep === 0) { el.innerHTML = ''; return; }
+    el.innerHTML = OB_STEPS.slice(1).map((s, i) => {
+      const step = i + 1;
+      const cls = step === _obStep ? 'active' : step < _obStep ? 'done' : '';
+      return `<div class="obProgressDot ${cls}"></div>`;
+    }).join('');
   }
 
-  async function saveOnboarding() {
-    const btn = document.getElementById('onboardSave');
-    btn.disabled = true; btn.textContent = 'Saving…';
-    const geo = [];
-    if (_obHomeCountry) geo.push('country:' + _obHomeCountry.name);
-    if (_obHomeCity)    geo.push('city:'    + _obHomeCity.name);
-    _obInterests.forEach(i => geo.push(i.type + ':' + i.name));
-    await _obUpsert(geo);
-    btn.disabled = false; btn.textContent = 'Save Preferences';
-    closeOnboarding();
+  function _obRenderStep() {
+    const wrap = document.getElementById('obStepWrap');
+    if (!wrap) return;
+    const step = OB_STEPS[_obStep];
+    const old = wrap.querySelector('.obStep.active');
+    if (old) { old.classList.remove('active'); old.classList.add('exiting'); setTimeout(() => old.remove(), 400); }
+    const div = document.createElement('div');
+    div.className = 'obStep';
+    div.innerHTML = _obBuildStepHTML(step);
+    wrap.appendChild(div);
+    requestAnimationFrame(() => requestAnimationFrame(() => div.classList.add('active')));
+    _obRenderProgress();
+    setTimeout(() => { _obWireStep(step, div); if (step.question) _obTypeText(div.querySelector('.obTyping'), step.question); }, 50);
   }
 
-  async function skipOnboarding() {
-    await _obUpsert([]); // empty row so we never show again
-    closeOnboarding();
+  function _obTypeText(el, text) {
+    if (!el) return;
+    el.innerHTML = '<span class="obCursor"></span>';
+    let i = 0;
+    const cursor = el.querySelector('.obCursor');
+    function tick() {
+      if (i < text.length) { cursor.before(document.createTextNode(text[i])); i++; _obTypingTimer = setTimeout(tick, 28 + Math.random() * 22); }
+      else { setTimeout(() => { cursor.remove(); _obPulse(); }, 300); }
+    }
+    tick();
   }
 
-  function _buildOnboard() {
+  function _obPulse() {
+    const card = document.getElementById('onboardCard');
+    if (!card) return;
+    card.classList.remove('ob-pulse'); void card.offsetHeight; card.classList.add('ob-pulse');
+  }
+
+  function _obNav(dir) {
+    _obStep += dir;
+    if (_obStep < 0) _obStep = 0;
+    if (_obStep >= OB_STEPS.length) { _obSave(); return; }
+    _obRenderStep();
+  }
+
+  function _obBuildStepHTML(step) {
     const countries = (window.__globeCountries || []).slice().sort((a,b) => a.name.localeCompare(b.name));
-    const cities    = window.__globeCities    || [];
+    const isLast = _obStep === OB_STEPS.length - 1;
+    const nextLabel = isLast ? 'Finish' : 'Next';
+    switch (step.id) {
+      case 'intro': return `<div class="obIntro"><div class="obIntroTitle">Tailor your news feed</div><div class="obIntroSub">Answer a few quick questions so we can surface the stories, regions, and perspectives that matter most to you. You can skip any question or change your answers later in Settings.</div><div class="obBtnRow" style="justify-content:center"><button class="obNextBtn" id="obIntroStart">Get Started</button></div><button class="obSkipStepBtn" id="obIntroSkipAll" style="margin-top:12px;width:100%">Skip for now</button></div>`;
+      case 'home': return `<div class="obTyping"></div><div class="obStepSub">This boosts coverage from your home country.</div><div class="obField"><div class="obDropWrap" id="obHomeCountryWrap"><input type="text" class="obInput" id="obHomeSearch" placeholder="Search countries…" autocomplete="off" /><div class="obDropList" id="obHomeList"></div></div><div class="obTag" id="obHomeTag" style="display:${_obData._homeObj ? 'inline-flex' : 'none'}">${_obData._homeObj ? `<span>${_obData._homeObj.flag||''} ${_obData._homeObj.name}</span><span class="obTagX" id="obHomeClear">✕</span>` : ''}</div></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'regions': return `<div class="obTyping"></div><div class="obStepSub">Pick up to 8 countries or cities you follow closely.</div><div class="obField"><div class="obDropWrap" id="obRegionWrap"><input type="text" class="obInput" id="obRegionSearch" placeholder="Search countries or cities…" autocomplete="off" /><div class="obDropList" id="obRegionList"></div></div><div class="obTagsWrap" id="obRegionTags"></div></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'topics': return `<div class="obTyping"></div><div class="obStepSub">Select the issues you care about most.</div><div class="obChipGrid" id="obTopicChips">${OB_TOPICS.map(t => `<div class="obChip${_obData.interest_topics.includes(t) ? ' selected' : ''}" data-val="${t}">${t}</div>`).join('')}</div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'sectors': return `<div class="obTyping"></div><div class="obStepSub">Optional — helps surface industry-relevant stories.</div><div class="obChipGrid" id="obSectorChips">${OB_SECTORS.map(s => `<div class="obChip${_obData.interest_sectors.includes(s) ? ' selected' : ''}" data-val="${s}">${s}</div>`).join('')}</div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'langs': return `<div class="obTyping"></div><div class="obStepSub">We'll prioritize articles in these languages and translate the rest.</div><div class="obChipGrid" id="obLangChips">${OB_LANGUAGES.map(l => `<div class="obChip${_obData.languages.includes(l.code) ? ' selected' : ''}" data-val="${l.code}">${l.label}</div>`).join('')}</div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'diversity': return `<div class="obTyping"></div><div class="obStepSub">This controls how much we vary the political perspective of your sources.</div><input type="range" class="obSlider" id="obDiversitySlider" min="0" max="100" value="${_obData.diversity_pref}" /><div class="obSliderLabels"><span>Familiar perspectives</span><span>Maximum diversity</span></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'depth': return `<div class="obTyping"></div><div class="obStepSub">Choose how you like to consume news.</div><div class="obDepthRow"><div class="obDepthOpt${_obData.depth_pref === 'brief' ? ' selected' : ''}" data-val="brief">Headlines<br><span style="font-size:10px;opacity:0.5">Quick scan</span></div><div class="obDepthOpt${_obData.depth_pref === 'both' ? ' selected' : ''}" data-val="both">Both<br><span style="font-size:10px;opacity:0.5">Mix of depth</span></div><div class="obDepthOpt${_obData.depth_pref === 'deep' ? ' selected' : ''}" data-val="deep">In-depth<br><span style="font-size:10px;opacity:0.5">Analysis & threads</span></div></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obNextBtn" id="obNext" style="flex:1">Finish</button></div>`;
+      default: return '';
+    }
+  }
+
+  function _obWireStep(step, div) {
+    div.querySelector('#obNext')?.addEventListener('click', () => _obNav(1));
+    div.querySelector('#obBack')?.addEventListener('click', () => _obNav(-1));
+    div.querySelector('#obSkipStep')?.addEventListener('click', () => _obNav(1));
+    div.querySelector('#obIntroStart')?.addEventListener('click', () => _obNav(1));
+    div.querySelector('#obIntroSkipAll')?.addEventListener('click', () => _obSave(true));
+    const countries = (window.__globeCountries || []).slice().sort((a,b) => a.name.localeCompare(b.name));
+    const cities = window.__globeCities || [];
 
     // ── Home country ────────────────────────────────────────
-    const cSearch = document.getElementById('obCountrySearch');
-    const cList   = document.getElementById('obCountryList');
-    const cTag    = document.getElementById('obCountryTag');
-
-    function renderCountryList(q) {
-      const lq = q.toLowerCase();
-      const hits = countries.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 80);
-      cList.innerHTML = hits.length
-        ? hits.map(c =>
-            `<div class="obDropItem" data-id="${c.id}" data-name="${encodeURIComponent(c.name)}" data-flag="${c.flag||''}">
-              <span class="obFlag">${c.flag||''}</span>${c.name}
-            </div>`).join('')
-        : `<div class="obDropNone">No results</div>`;
-      cList.classList.add('open');
-    }
-    cSearch.addEventListener('focus', () => renderCountryList(cSearch.value));
-    cSearch.addEventListener('input', () => renderCountryList(cSearch.value));
-    cList.addEventListener('mousedown', e => {
-      const item = e.target.closest('.obDropItem');
-      if (!item) return;
-      _obHomeCountry = { id: +item.dataset.id, name: decodeURIComponent(item.dataset.name), flag: item.dataset.flag };
-      cSearch.value = ''; cList.classList.remove('open');
-      cTag.style.display = 'inline-flex';
-      cTag.innerHTML = `<span>${_obHomeCountry.flag} ${_obHomeCountry.name}</span><span class="obTagX" id="obClearCountry">✕</span>`;
-      document.getElementById('obClearCountry').onclick = () => {
-        _obHomeCountry = null; _obHomeCity = null;
-        cTag.style.display = 'none';
-        document.getElementById('obCityField').style.display = 'none';
-        document.getElementById('obCityTag').style.display = 'none';
-      };
-      _obHomeCity = null;
-      document.getElementById('obCityField').style.display = 'block';
-      document.getElementById('obCityTag').style.display = 'none';
-      document.getElementById('obCitySearch').value = '';
-    });
-    document.addEventListener('click', e => {
-      if (!document.getElementById('obCountryWrap')?.contains(e.target)) cList.classList.remove('open');
-    });
-
-    // ── Home city ────────────────────────────────────────────
-    const citySearch = document.getElementById('obCitySearch');
-    const cityList   = document.getElementById('obCityList');
-    const cityTag    = document.getElementById('obCityTag');
-
-    function renderCityList(q) {
-      if (!_obHomeCountry) return;
-      const lq = q.toLowerCase();
-      const hits = cities
-        .filter(c => c.country_id === _obHomeCountry.id && c.name.toLowerCase().includes(lq))
-        .slice(0, 80);
-      cityList.innerHTML = hits.length
-        ? hits.map(c =>
-            `<div class="obDropItem" data-id="${c.id}" data-name="${encodeURIComponent(c.name)}">${c.name}</div>`
-          ).join('')
-        : `<div class="obDropNone">No cities found</div>`;
-      cityList.classList.add('open');
-    }
-    citySearch.addEventListener('focus', () => renderCityList(citySearch.value));
-    citySearch.addEventListener('input', () => renderCityList(citySearch.value));
-    cityList.addEventListener('mousedown', e => {
-      const item = e.target.closest('.obDropItem');
-      if (!item) return;
-      _obHomeCity = { id: +item.dataset.id, name: decodeURIComponent(item.dataset.name) };
-      citySearch.value = ''; cityList.classList.remove('open');
-      cityTag.style.display = 'inline-flex';
-      cityTag.innerHTML = `<span>${_obHomeCity.name}</span><span class="obTagX" id="obClearCity">✕</span>`;
-      document.getElementById('obClearCity').onclick = () => {
-        _obHomeCity = null; cityTag.style.display = 'none';
-      };
-    });
-    document.addEventListener('click', e => {
-      if (!document.getElementById('obCityWrap')?.contains(e.target)) cityList.classList.remove('open');
-    });
-
-    // ── Interests multi-select ───────────────────────────────
-    const iSearch = document.getElementById('obInterestSearch');
-    const iList   = document.getElementById('obInterestList');
-    const iTags   = document.getElementById('obInterestTags');
-
-    function renderInterestList(q) {
-      if (!q) { iList.classList.remove('open'); return; }
-      const lq = q.toLowerCase();
-      const cCountries = countries.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 15)
-        .map(c => ({ type:'country', id:c.id, name:c.name, label:`${c.flag||''} ${c.name}` }));
-      const cCities = cities.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 15)
-        .map(c => ({ type:'city', id:c.id, name:c.name, label:`${c.name} · ${c.country}` }));
-      const all = [...cCountries, ...cCities].slice(0, 40);
-      iList.innerHTML = all.length
-        ? all.map(i =>
-            `<div class="obDropItem" data-type="${i.type}" data-id="${i.id}" data-name="${encodeURIComponent(i.name)}">${i.label}</div>`
-          ).join('')
-        : `<div class="obDropNone">No results</div>`;
-      iList.classList.add('open');
-    }
-    iSearch.addEventListener('input', () => renderInterestList(iSearch.value));
-    iList.addEventListener('mousedown', e => {
-      const item = e.target.closest('.obDropItem');
-      if (!item) return;
-      const entry = { type: item.dataset.type, id: +item.dataset.id, name: decodeURIComponent(item.dataset.name) };
-      if (!_obInterests.some(i => i.type === entry.type && i.id === entry.id)) {
-        _obInterests.push(entry);
-        _renderObTags();
+    switch (step.id) {
+      case 'home': {
+        const input = div.querySelector('#obHomeSearch');
+        const list  = div.querySelector('#obHomeList');
+        const tag   = div.querySelector('#obHomeTag');
+        function render(q) {
+          const lq = (q || '').toLowerCase();
+          const hits = countries.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 60);
+          list.innerHTML = hits.length ? hits.map(c => `<div class="obDropItem" data-id="${c.id}" data-name="${encodeURIComponent(c.name)}" data-flag="${c.flag||''}" data-iso="${c.iso_code||''}"><span class="obFlag">${c.flag||''}</span>${c.name}</div>`).join('') : '<div class="obDropNone">No results</div>';
+          list.classList.add('open');
+        }
+        input?.addEventListener('focus', () => render(input.value));
+        input?.addEventListener('input', () => render(input.value));
+        list?.addEventListener('mousedown', e => {
+          const item = e.target.closest('.obDropItem'); if (!item) return;
+          _obData._homeObj = { id: +item.dataset.id, name: decodeURIComponent(item.dataset.name), flag: item.dataset.flag, iso: item.dataset.iso };
+          _obData.home_country = item.dataset.iso || null;
+          input.value = ''; list.classList.remove('open');
+          tag.style.display = 'inline-flex';
+          tag.innerHTML = `<span>${_obData._homeObj.flag||''} ${_obData._homeObj.name}</span><span class="obTagX" id="obHomeClear">✕</span>`;
+          tag.querySelector('#obHomeClear').onclick = () => { _obData._homeObj = null; _obData.home_country = null; tag.style.display = 'none'; };
+        });
+        document.addEventListener('click', e => { if (!div.querySelector('#obHomeCountryWrap')?.contains(e.target)) list?.classList.remove('open'); });
+        break;
       }
-      iSearch.value = ''; iList.classList.remove('open');
-    });
-    document.addEventListener('click', e => {
-      if (!document.getElementById('obInterestWrap')?.contains(e.target)) iList.classList.remove('open');
-    });
-
-    function _renderObTags() {
-      iTags.innerHTML = _obInterests.map((item, idx) =>
-        `<div class="obTag"><span>${item.name}</span><span class="obTagX" data-idx="${idx}">✕</span></div>`
-      ).join('');
-      iTags.querySelectorAll('.obTagX').forEach(x =>
-        x.addEventListener('click', () => {
-          _obInterests.splice(+x.dataset.idx, 1);
-          _renderObTags();
-        })
-      );
+      case 'regions': {
+        const input = div.querySelector('#obRegionSearch');
+        const list  = div.querySelector('#obRegionList');
+        const tags  = div.querySelector('#obRegionTags');
+        _obRenderRegionTags(tags);
+        function render(q) {
+          if (!q) { list.classList.remove('open'); return; }
+          const lq = q.toLowerCase();
+          const cC = countries.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 15).map(c => ({ type:'country', id:c.id, name:c.name, iso:c.iso_code, label:`${c.flag||''} ${c.name}` }));
+          const cCi = cities.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 15).map(c => ({ type:'city', id:c.id, name:c.name, label:`${c.name} · ${c.country}` }));
+          const all = [...cC, ...cCi].slice(0, 30);
+          list.innerHTML = all.length ? all.map(i => `<div class="obDropItem" data-type="${i.type}" data-id="${i.id}" data-name="${encodeURIComponent(i.name)}" data-iso="${i.iso||''}">${i.label}</div>`).join('') : '<div class="obDropNone">No results</div>';
+          list.classList.add('open');
+        }
+        input?.addEventListener('input', () => render(input.value));
+        list?.addEventListener('mousedown', e => {
+          const item = e.target.closest('.obDropItem'); if (!item) return;
+          const entry = { type: item.dataset.type, id: +item.dataset.id, name: decodeURIComponent(item.dataset.name), iso: item.dataset.iso || '' };
+          if (_obData.interest_regions.length >= 8) return;
+          if (!_obData.interest_regions.some(r => r.type === entry.type && r.id === entry.id)) { _obData.interest_regions.push(entry); _obRenderRegionTags(tags); }
+          input.value = ''; list.classList.remove('open');
+        });
+        document.addEventListener('click', e => { if (!div.querySelector('#obRegionWrap')?.contains(e.target)) list?.classList.remove('open'); });
+        break;
+      }
+      case 'topics': {
+        div.querySelectorAll('#obTopicChips .obChip').forEach(chip => {
+          chip.addEventListener('click', () => { const v = chip.dataset.val; chip.classList.toggle('selected'); if (chip.classList.contains('selected')) { if (!_obData.interest_topics.includes(v)) _obData.interest_topics.push(v); } else { _obData.interest_topics = _obData.interest_topics.filter(t => t !== v); } });
+        });
+        break;
+      }
+      case 'sectors': {
+        div.querySelectorAll('#obSectorChips .obChip').forEach(chip => {
+          chip.addEventListener('click', () => { const v = chip.dataset.val; chip.classList.toggle('selected'); if (chip.classList.contains('selected')) { if (!_obData.interest_sectors.includes(v)) _obData.interest_sectors.push(v); } else { _obData.interest_sectors = _obData.interest_sectors.filter(s => s !== v); } });
+        });
+        break;
+      }
+      case 'langs': {
+        div.querySelectorAll('#obLangChips .obChip').forEach(chip => {
+          chip.addEventListener('click', () => { const v = chip.dataset.val; chip.classList.toggle('selected'); if (chip.classList.contains('selected')) { if (!_obData.languages.includes(v)) _obData.languages.push(v); } else { _obData.languages = _obData.languages.filter(l => l !== v); } });
+        });
+        break;
+      }
+      case 'diversity': {
+        const slider = div.querySelector('#obDiversitySlider');
+        slider?.addEventListener('input', () => { _obData.diversity_pref = parseInt(slider.value, 10); });
+        break;
+      }
+      case 'depth': {
+        div.querySelectorAll('.obDepthOpt').forEach(opt => {
+          opt.addEventListener('click', () => { div.querySelectorAll('.obDepthOpt').forEach(o => o.classList.remove('selected')); opt.classList.add('selected'); _obData.depth_pref = opt.dataset.val; });
+        });
+        break;
+      }
     }
-
-    // ── Wire buttons ─────────────────────────────────────────
-    document.getElementById('onboardSave').onclick = saveOnboarding;
-    document.getElementById('onboardSkip').onclick = skipOnboarding;
   }
+
+  function _obRenderRegionTags(container) {
+    if (!container) return;
+    container.innerHTML = _obData.interest_regions.map((r, i) => `<div class="obTag"><span>${r.name}</span><span class="obTagX" data-idx="${i}">✕</span></div>`).join('');
+    container.querySelectorAll('.obTagX').forEach(x => {
+      x.addEventListener('click', () => { _obData.interest_regions.splice(+x.dataset.idx, 1); _obRenderRegionTags(container); });
+    });
+  }
+
+  async function _obSave(skipped) {
+    try {
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      await fetch(`${API}/api/user/preferences`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + window.__authToken },
+        body: JSON.stringify({
+          home_country: _obData.home_country,
+          interest_regions: _obData.interest_regions,
+          interest_topics: _obData.interest_topics,
+          interest_sectors: _obData.interest_sectors,
+          languages: _obData.languages,
+          diversity_pref: _obData.diversity_pref,
+          depth_pref: _obData.depth_pref,
+          onboarding_completed: true
+        })
+      });
+    } catch (e) { console.warn('[onboarding] save error:', e.message); }
+    closeOnboarding();
+  }
+
+  document.getElementById('onboardSkip')?.addEventListener('click', () => _obSave(true));
 })();
 </script>
 

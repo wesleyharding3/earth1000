@@ -3381,6 +3381,112 @@ app.post('/api/admin/backfill-nations', requireAdmin, async (req, res) => {
   }
 });
 
+/* ═══════════════════════════════════════════════════════════════
+   User Preferences — Onboarding questionnaire + feed personalization
+   Stored in Supabase user_preferences table.
+   ═══════════════════════════════════════════════════════════════ */
+
+// Admin: create the user_preferences table in Supabase
+app.post('/api/admin/create-preferences-table', requireAdmin, async (req, res) => {
+  try {
+    const { error } = await sba.rpc('exec_sql', { sql: `
+      CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+        home_country TEXT,
+        interest_regions JSONB NOT NULL DEFAULT '[]',
+        interest_topics JSONB NOT NULL DEFAULT '[]',
+        interest_sectors JSONB NOT NULL DEFAULT '[]',
+        languages JSONB NOT NULL DEFAULT '[]',
+        diversity_pref INTEGER NOT NULL DEFAULT 50,
+        depth_pref TEXT NOT NULL DEFAULT 'both',
+        onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+      DO $$ BEGIN
+        CREATE POLICY "Users can view own preferences" ON user_preferences FOR SELECT USING (auth.uid() = user_id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE POLICY "Users can insert own preferences" ON user_preferences FOR INSERT WITH CHECK (auth.uid() = user_id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE POLICY "Users can update own preferences" ON user_preferences FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `});
+    if (error) {
+      // rpc may not exist — provide SQL for manual execution
+      console.warn('[preferences] Could not auto-create table:', error.message);
+      return res.status(200).json({
+        ok: false,
+        message: 'Table creation via RPC failed. Run the SQL in Supabase SQL Editor manually.',
+        sql_file: 'migrations/20260414_user_preferences.sql'
+      });
+    }
+    res.json({ ok: true, message: 'user_preferences table created' });
+  } catch (err) {
+    console.error('[preferences] create table error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/user/preferences — fetch current user's preferences
+app.get('/api/user/preferences', optionalAuth, async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const { data, error } = await sba
+      .from('user_preferences')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .maybeSingle();
+    if (error) throw error;
+    res.json(data || { onboarding_completed: false });
+  } catch (err) {
+    // Table may not exist yet
+    if (err.code === '42P01' || err.message?.includes('user_preferences')) {
+      return res.json({ onboarding_completed: false, _tableNotFound: true });
+    }
+    console.error('[preferences] GET error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/user/preferences — upsert user preferences
+app.put('/api/user/preferences', optionalAuth, async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+  try {
+    const {
+      home_country, interest_regions, interest_topics,
+      interest_sectors, languages, diversity_pref,
+      depth_pref, onboarding_completed
+    } = req.body;
+
+    const row = {
+      user_id: req.user.id,
+      updated_at: new Date().toISOString()
+    };
+    if (home_country !== undefined)         row.home_country = home_country;
+    if (interest_regions !== undefined)      row.interest_regions = interest_regions;
+    if (interest_topics !== undefined)       row.interest_topics = interest_topics;
+    if (interest_sectors !== undefined)      row.interest_sectors = interest_sectors;
+    if (languages !== undefined)             row.languages = languages;
+    if (diversity_pref !== undefined)        row.diversity_pref = diversity_pref;
+    if (depth_pref !== undefined)            row.depth_pref = depth_pref;
+    if (onboarding_completed !== undefined)  row.onboarding_completed = onboarding_completed;
+
+    const { data, error } = await sba
+      .from('user_preferences')
+      .upsert(row, { onConflict: 'user_id' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('[preferences] PUT error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Remove an article from a thread
 app.delete('/api/admin/threads/:threadId/articles/:articleId', requireAdmin, async (req, res) => {
   try {
