@@ -5,7 +5,8 @@
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id       UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   home_country  TEXT,                          -- ISO code of home country
-  interest_regions JSONB NOT NULL DEFAULT '[]', -- [{type:"country"|"city", id:number, name:string, iso?:string}]
+  interest_regions    JSONB NOT NULL DEFAULT '[]', -- [{type:"country"|"city", id:number, name:string, iso?:string}]
+  excluded_countries  JSONB NOT NULL DEFAULT '[]', -- [{id:number, name:string, flag:string, iso:string}]
   interest_topics  JSONB NOT NULL DEFAULT '[]', -- ["climate","conflict","economy",...]
   interest_sectors JSONB NOT NULL DEFAULT '[]', -- ["technology","finance","energy",...]
   languages        JSONB NOT NULL DEFAULT '[]', -- ["en","fr","ar",...]

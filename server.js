@@ -1125,6 +1125,11 @@ function _buildPrefBoosts(prefs) {
       .filter(r => r.iso)
       .map(r => r.iso.toLowerCase())
   );
+  const excludedIsos = new Set(
+    (prefs.excluded_countries || [])
+      .filter(r => r.iso)
+      .map(r => r.iso.toLowerCase())
+  );
   // Merge topics + sectors into a unified category set
   const prefCategories = new Set();
   for (const t of [...(prefs.interest_topics || []), ...(prefs.interest_sectors || [])]) {
@@ -1134,12 +1139,24 @@ function _buildPrefBoosts(prefs) {
   const prefLangs = new Set(
     (prefs.languages || []).map(l => l.toLowerCase().slice(0, 2))
   );
-  return { homeIso, regionIsos, prefCategories, prefLangs, diversity: prefs.diversity_pref ?? 50 };
+  // diversity: 0 = centrist focus, 100 = full spectrum (left+right boosted)
+  return { homeIso, regionIsos, excludedIsos, prefCategories, prefLangs, diversity: prefs.diversity_pref ?? 100 };
 }
 
 // Apply preference boosts to news articles (modifies final_priority in-place)
+// Also filters out excluded countries and applies diversity/bias weighting.
 function _applyNewsPrefBoosts(articles, boosts) {
   if (!boosts) return articles;
+
+  // Filter out excluded countries first
+  if (boosts.excludedIsos.size) {
+    articles = articles.filter(r => !boosts.excludedIsos.has((r.iso_code || '').toLowerCase()));
+  }
+
+  // Diversity/bias: 100 = full spectrum (boost left+right), 0 = centrist focus (boost center)
+  // source_bias values: 'left', 'left-center', 'center', 'right-center', 'right', 'unknown'
+  const divNorm = boosts.diversity / 100;  // 0..1
+
   for (const r of articles) {
     let mult = 1.0;
     const iso = (r.iso_code || '').toLowerCase();
@@ -1150,6 +1167,22 @@ function _applyNewsPrefBoosts(articles, boosts) {
     // Language preference
     const lang = (r.language || '').toLowerCase().slice(0, 2);
     if (boosts.prefLangs.size && lang && boosts.prefLangs.has(lang)) mult *= 1.15;
+    // Bias-aware diversity boost
+    const bias = (r.source_bias || 'unknown').toLowerCase();
+    if (bias !== 'unknown') {
+      const isEdge = bias === 'left' || bias === 'right';
+      const isCenter = bias === 'center' || bias === 'left-center' || bias === 'right-center';
+      if (divNorm >= 0.6 && isEdge) {
+        // High diversity: boost left/right sources
+        mult *= 1.0 + (divNorm - 0.5) * 0.6; // up to 1.3x at 100
+      } else if (divNorm <= 0.4 && isCenter) {
+        // Low diversity (centrist focus): boost center sources
+        mult *= 1.0 + (0.5 - divNorm) * 0.6; // up to 1.3x at 0
+      } else if (divNorm <= 0.4 && isEdge) {
+        // Low diversity: demote edge sources
+        mult *= 0.7 + divNorm * 0.75; // 0.7 at 0, ~1.0 at 0.4
+      }
+    }
     if (mult !== 1.0) r.final_priority = (r.final_priority || 0) * mult;
   }
   return articles;
@@ -1158,6 +1191,16 @@ function _applyNewsPrefBoosts(articles, boosts) {
 // Apply preference boosts to threads/timelines (returns modified array)
 function _applyThreadPrefBoosts(items, boosts) {
   if (!boosts) return items;
+
+  // Filter out threads/timelines whose ONLY nations are excluded
+  if (boosts.excludedIsos.size) {
+    items = items.filter(t => {
+      const nations = (t.primary_nations || []).map(n => n.toLowerCase());
+      if (!nations.length) return true; // no nation info → keep
+      return !nations.every(n => boosts.excludedIsos.has(n));
+    });
+  }
+
   for (const t of items) {
     let mult = 1.0;
     const nations = (t.primary_nations || []).map(n => n.toLowerCase());
@@ -1254,8 +1297,8 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       const prefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
       if (prefs) {
         const boosts = _buildPrefBoosts(prefs);
-        const personalized = { ...cached, articles: cached.articles.map(a => ({ ...a })) };
-        _applyNewsPrefBoosts(personalized.articles, boosts);
+        const personalized = { ...cached, articles: _applyNewsPrefBoosts(cached.articles.map(a => ({ ...a })), boosts) };
+        personalized.total = personalized.articles.length;
         _prefResort(personalized.articles);
         return res.json(personalized);
       }
@@ -1453,7 +1496,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     // Apply user preference boosts (filtered path)
     const _fPrefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
     if (_fPrefs) {
-      _applyNewsPrefBoosts(results, _buildPrefBoosts(_fPrefs));
+      results = _applyNewsPrefBoosts(results, _buildPrefBoosts(_fPrefs));
     }
 
     // Tiebreak by date within a tight priority band (3%)
@@ -3603,7 +3646,7 @@ app.put('/api/user/preferences', optionalAuth, async (req, res) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
   try {
     const {
-      home_country, interest_regions, interest_topics,
+      home_country, interest_regions, excluded_countries, interest_topics,
       interest_sectors, languages, diversity_pref,
       depth_pref, onboarding_completed
     } = req.body;
@@ -3614,6 +3657,7 @@ app.put('/api/user/preferences', optionalAuth, async (req, res) => {
     };
     if (home_country !== undefined)         row.home_country = home_country;
     if (interest_regions !== undefined)      row.interest_regions = interest_regions;
+    if (excluded_countries !== undefined)    row.excluded_countries = excluded_countries;
     if (interest_topics !== undefined)       row.interest_topics = interest_topics;
     if (interest_sectors !== undefined)      row.interest_sectors = interest_sectors;
     if (languages !== undefined)             row.languages = languages;
@@ -7679,6 +7723,12 @@ setInterval(() => spawnBuilder("globeStatsCron.js", "globeStatsCron"), 6 * 60 * 
 // Staggered 8 min after boot.
 setTimeout(() => spawnBuilder("sourcesStatsCron.js", "sourcesStatsCron startup"), 8 * 60_000);
 setInterval(() => spawnBuilder("sourcesStatsCron.js", "sourcesStatsCron"), 12 * 60 * 60 * 1000).unref?.(); // every 12h
+
+// Database pruning — weekly. Deletes old keyword stats, low-value articles,
+// stale image usage logs, and old error logs. Runs 15 min after boot then
+// every 7 days. Batched deletes + VACUUM ANALYZE.
+setTimeout(() => spawnBuilder("dbPruneCron.js", "dbPrune startup"), 15 * 60_000);
+setInterval(() => spawnBuilder("dbPruneCron.js", "dbPrune"), 7 * 24 * 60 * 60 * 1000).unref?.(); // every 7 days
 
 startArticleListener().catch(console.error);
 

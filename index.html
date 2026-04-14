@@ -25168,7 +25168,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   function showOnboarding(startStep) {
     _obStep = startStep || 0;
-    _obData = { home_country: null, _homeObj: null, interest_regions: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 50, depth_pref: 'both' };
+    _obData = { home_country: null, _homeObj: null, interest_regions: [], excluded_countries: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 100, depth_pref: 'both' };
     document.getElementById('onboardOverlay').classList.add('open');
     _obRenderProgress(); _obRenderStep();
   }
@@ -25181,10 +25181,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (d && d.user_id) {
         _obData.home_country = d.home_country || null;
         _obData.interest_regions = d.interest_regions || [];
+        _obData.excluded_countries = d.excluded_countries || [];
         _obData.interest_topics = d.interest_topics || [];
         _obData.interest_sectors = d.interest_sectors || [];
         _obData.languages = d.languages || [];
-        _obData.diversity_pref = d.diversity_pref ?? 50;
+        _obData.diversity_pref = d.diversity_pref ?? 100;
         _obData.depth_pref = d.depth_pref || 'both';
         if (_obData.home_country) {
           const c = (window.__globeCountries || []).find(x => (x.iso_code || '').toUpperCase() === _obData.home_country.toUpperCase());
@@ -25204,10 +25205,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const OB_TOPICS = ['Climate & Environment','Conflict & Security','Economy & Trade','Technology & AI','Health & Pandemic','Human Rights','Energy & Resources','Elections & Governance','Migration & Refugees','Science & Space','Culture & Society','Corruption & Transparency'];
   const OB_SECTORS = ['Finance & Banking','Technology','Energy & Utilities','Defense & Aerospace','Healthcare & Pharma','Agriculture & Food','Real Estate','Education','Media & Entertainment','Manufacturing','Transportation','Telecommunications'];
   const OB_LANGUAGES = [{code:'en',label:'English'},{code:'es',label:'Spanish'},{code:'fr',label:'French'},{code:'de',label:'German'},{code:'pt',label:'Portuguese'},{code:'ar',label:'Arabic'},{code:'zh',label:'Chinese'},{code:'ru',label:'Russian'},{code:'ja',label:'Japanese'},{code:'ko',label:'Korean'},{code:'hi',label:'Hindi'},{code:'tr',label:'Turkish'},{code:'it',label:'Italian'},{code:'nl',label:'Dutch'},{code:'sv',label:'Swedish'},{code:'pl',label:'Polish'},{code:'uk',label:'Ukrainian'},{code:'he',label:'Hebrew'},{code:'fa',label:'Farsi'},{code:'id',label:'Indonesian'},{code:'th',label:'Thai'},{code:'vi',label:'Vietnamese'}];
-  const OB_STEPS = [{id:'intro',question:null},{id:'home',question:'What is your home country?'},{id:'regions',question:'What countries or cities matter to you?'},{id:'topics',question:'What issues matter to you?'},{id:'sectors',question:'What sectors are relevant to your work?'},{id:'langs',question:'What languages do you read?'},{id:'diversity',question:'How diverse should your sources be?'},{id:'depth',question:'How do you prefer your news?'}];
+  const OB_STEPS = [{id:'intro',question:null},{id:'home',question:'What is your home country?'},{id:'regions',question:'What countries or cities matter to you?'},{id:'excluded',question:'Any countries you want to filter out?'},{id:'topics',question:'What issues matter to you?'},{id:'sectors',question:'What sectors are relevant to your work?'},{id:'langs',question:'What languages do you read?'},{id:'diversity',question:'How diverse should your sources be?'},{id:'depth',question:'How do you prefer your news?'}];
 
   let _obStep = 0;
-  let _obData = { home_country: null, _homeObj: null, interest_regions: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 50, depth_pref: 'both' };
+  let _obData = { home_country: null, _homeObj: null, interest_regions: [], excluded_countries: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 100, depth_pref: 'both' };
   let _obTypingTimer = null;
 
   function _obRenderProgress() {
@@ -25272,7 +25273,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       case 'topics': return `<div class="obTyping"></div><div class="obStepSub">Select the issues you care about most.</div><div class="obChipGrid" id="obTopicChips">${OB_TOPICS.map(t => `<div class="obChip${_obData.interest_topics.includes(t) ? ' selected' : ''}" data-val="${t}">${t}</div>`).join('')}</div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
       case 'sectors': return `<div class="obTyping"></div><div class="obStepSub">Optional — helps surface industry-relevant stories.</div><div class="obChipGrid" id="obSectorChips">${OB_SECTORS.map(s => `<div class="obChip${_obData.interest_sectors.includes(s) ? ' selected' : ''}" data-val="${s}">${s}</div>`).join('')}</div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
       case 'langs': return `<div class="obTyping"></div><div class="obStepSub">We'll prioritize articles in these languages and translate the rest.</div><div class="obChipGrid" id="obLangChips">${OB_LANGUAGES.map(l => `<div class="obChip${_obData.languages.includes(l.code) ? ' selected' : ''}" data-val="${l.code}">${l.label}</div>`).join('')}</div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
-      case 'diversity': return `<div class="obTyping"></div><div class="obStepSub">This controls how much we vary the political perspective of your sources.</div><input type="range" class="obSlider" id="obDiversitySlider" min="0" max="100" value="${_obData.diversity_pref}" /><div class="obSliderLabels"><span>Familiar perspectives</span><span>Maximum diversity</span></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'excluded': return `<div class="obTyping"></div><div class="obStepSub">We'll hide articles originating from these countries.</div><div class="obField"><div class="obDropWrap" id="obExcludedWrap"><input type="text" class="obInput" id="obExcludedSearch" placeholder="Search countries…" autocomplete="off" /><div class="obDropList" id="obExcludedList"></div></div><div class="obTagsWrap" id="obExcludedTags"></div></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
+      case 'diversity': return `<div class="obTyping"></div><div class="obStepSub">At maximum, you'll see a wide range of left and right-leaning sources. At minimum, we prioritize centrist, middle-ground reporting.</div><input type="range" class="obSlider" id="obDiversitySlider" min="0" max="100" value="${_obData.diversity_pref}" /><div class="obSliderLabels"><span>Centrist focus</span><span>Full spectrum</span></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obSkipStepBtn" id="obSkipStep">Skip</button><button class="obNextBtn" id="obNext">${nextLabel}</button></div>`;
       case 'depth': return `<div class="obTyping"></div><div class="obStepSub">Choose how you like to consume news.</div><div class="obDepthRow"><div class="obDepthOpt${_obData.depth_pref === 'brief' ? ' selected' : ''}" data-val="brief">Headlines<br><span style="font-size:10px;opacity:0.5">Quick scan</span></div><div class="obDepthOpt${_obData.depth_pref === 'both' ? ' selected' : ''}" data-val="both">Both<br><span style="font-size:10px;opacity:0.5">Mix of depth</span></div><div class="obDepthOpt${_obData.depth_pref === 'deep' ? ' selected' : ''}" data-val="deep">In-depth<br><span style="font-size:10px;opacity:0.5">Analysis & threads</span></div></div><div class="obBtnRow"><button class="obBackBtn" id="obBack">Back</button><button class="obNextBtn" id="obNext" style="flex:1">Finish</button></div>`;
       default: return '';
     }
@@ -25338,6 +25340,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.addEventListener('click', e => { if (!div.querySelector('#obRegionWrap')?.contains(e.target)) list?.classList.remove('open'); });
         break;
       }
+      case 'excluded': {
+        const input = div.querySelector('#obExcludedSearch');
+        const list  = div.querySelector('#obExcludedList');
+        const tags  = div.querySelector('#obExcludedTags');
+        _obRenderExcludedTags(tags);
+        function render(q) {
+          if (!q) { list.classList.remove('open'); return; }
+          const lq = q.toLowerCase();
+          const hits = countries.filter(c => c.name.toLowerCase().includes(lq)).slice(0, 30);
+          list.innerHTML = hits.length ? hits.map(c => `<div class="obDropItem" data-id="${c.id}" data-name="${encodeURIComponent(c.name)}" data-flag="${c.flag||''}" data-iso="${c.iso_code||''}"><span class="obFlag">${c.flag||''}</span>${c.name}</div>`).join('') : '<div class="obDropNone">No results</div>';
+          list.classList.add('open');
+        }
+        input?.addEventListener('input', () => render(input.value));
+        list?.addEventListener('mousedown', e => {
+          const item = e.target.closest('.obDropItem'); if (!item) return;
+          const entry = { id: +item.dataset.id, name: decodeURIComponent(item.dataset.name), flag: item.dataset.flag, iso: item.dataset.iso || '' };
+          if (!_obData.excluded_countries.some(r => r.iso === entry.iso)) { _obData.excluded_countries.push(entry); _obRenderExcludedTags(tags); }
+          input.value = ''; list.classList.remove('open');
+        });
+        document.addEventListener('click', e => { if (!div.querySelector('#obExcludedWrap')?.contains(e.target)) list?.classList.remove('open'); });
+        break;
+      }
       case 'topics': {
         div.querySelectorAll('#obTopicChips .obChip').forEach(chip => {
           chip.addEventListener('click', () => { const v = chip.dataset.val; chip.classList.toggle('selected'); if (chip.classList.contains('selected')) { if (!_obData.interest_topics.includes(v)) _obData.interest_topics.push(v); } else { _obData.interest_topics = _obData.interest_topics.filter(t => t !== v); } });
@@ -25378,6 +25402,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
   }
 
+  function _obRenderExcludedTags(container) {
+    if (!container) return;
+    container.innerHTML = _obData.excluded_countries.map((r, i) => `<div class="obTag"><span>${r.flag||''} ${r.name}</span><span class="obTagX" data-idx="${i}">✕</span></div>`).join('');
+    container.querySelectorAll('.obTagX').forEach(x => {
+      x.addEventListener('click', () => { _obData.excluded_countries.splice(+x.dataset.idx, 1); _obRenderExcludedTags(container); });
+    });
+  }
+
   async function _obSave(skipped) {
     try {
       const API = window.__API || 'https://earth-wjr6.onrender.com';
@@ -25387,6 +25419,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         body: JSON.stringify({
           home_country: _obData.home_country,
           interest_regions: _obData.interest_regions,
+          excluded_countries: _obData.excluded_countries,
           interest_topics: _obData.interest_topics,
           interest_sectors: _obData.interest_sectors,
           languages: _obData.languages,
