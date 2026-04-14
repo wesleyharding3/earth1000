@@ -1260,31 +1260,30 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
     const results = await ttlCached(`kw-suggest:${q}:${limit}`, 120_000, async () => {
       // Three sources, run in parallel
       const [kwRows, countryRows, cityRows] = await Promise.all([
-        // 1) Keywords from keyword_daily_stats (aggregated, excludes stopwords)
+        // 1) Keywords from keyword_daily_stats (recent 30 days, excludes stopwords)
         pool.query(`
           SELECT keyword AS name, SUM(total_count)::int AS weight, 'keyword' AS type
           FROM keyword_daily_stats
-          WHERE keyword ILIKE $1 || '%'
+          WHERE date >= CURRENT_DATE - INTERVAL '30 days'
+            AND LOWER(keyword) LIKE $1 || '%'
             AND source_country_id IS NULL AND about_country_id IS NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM stopwords sw WHERE sw.word = keyword
-            )
+            AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = LOWER(keyword))
           GROUP BY keyword
           ORDER BY weight DESC
           LIMIT $2
-        `, [q, limit]).catch(() => ({ rows: [] })),
+        `, [q, limit]).catch(e => { console.error("kw-suggest keyword query err:", e.message); return { rows: [] }; }),
         // 2) Country names
         pool.query(`
           SELECT name, population::int AS weight, 'country' AS type
           FROM countries WHERE LOWER(name) LIKE $1 || '%'
           ORDER BY population DESC LIMIT $2
-        `, [q, limit]),
+        `, [q, limit]).catch(e => { console.error("kw-suggest country query err:", e.message); return { rows: [] }; }),
         // 3) City names
         pool.query(`
           SELECT name, COALESCE(population,0)::int AS weight, 'city' AS type
           FROM cities WHERE is_active = true AND LOWER(name) LIKE $1 || '%'
           ORDER BY population DESC NULLS LAST LIMIT $2
-        `, [q, limit]),
+        `, [q, limit]).catch(e => { console.error("kw-suggest city query err:", e.message); return { rows: [] }; }),
       ]);
 
       // Merge, dedup by lowercase name, sort by weight desc
@@ -3177,6 +3176,114 @@ app.post('/api/admin/threads/merge', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[admin/threads] merge error:', err.message);
     res.status(500).json({ error: 'Failed to merge threads' });
+  }
+});
+
+// Backfill primary_nations from text mentions in titles/summaries
+// Scans thread title+description AND article headlines/summaries for country/city name mentions.
+// Cities are mapped to their parent country via cities.country_id.
+app.post('/api/admin/backfill-nations', requireAdmin, async (req, res) => {
+  try {
+    // 1. Load all countries and cities with their parent country ISO
+    const { rows: countries } = await pool.query(`
+      SELECT id, name, iso_code FROM countries WHERE iso_code IS NOT NULL
+    `);
+    const { rows: cities } = await pool.query(`
+      SELECT ci.name AS city_name, co.iso_code
+      FROM cities ci JOIN countries co ON co.id = ci.country_id
+      WHERE ci.is_active = true AND co.iso_code IS NOT NULL
+    `);
+
+    // Build lookup: lowercase name → ISO code (countries first, then cities)
+    const nameToIso = new Map();
+    for (const c of countries) {
+      nameToIso.set(c.name.toLowerCase(), c.iso_code.toUpperCase());
+    }
+    for (const ci of cities) {
+      const iso = ci.iso_code.toUpperCase();
+      const cityName = ci.city_name.toLowerCase();
+      if (!nameToIso.has(cityName)) nameToIso.set(cityName, iso);
+    }
+
+    // Sort by name length descending so longer names match first (e.g., "South Korea" before "Korea")
+    const sortedNames = [...nameToIso.keys()].sort((a, b) => b.length - a.length);
+    // Filter out very short names (< 3 chars) that cause false positives
+    const validNames = sortedNames.filter(n => n.length >= 3);
+
+    function extractNations(text) {
+      if (!text) return new Set();
+      const lower = text.toLowerCase();
+      const found = new Set();
+      for (const name of validNames) {
+        // Word boundary match to avoid partial matches
+        const idx = lower.indexOf(name);
+        if (idx === -1) continue;
+        const before = idx > 0 ? lower[idx - 1] : ' ';
+        const after = idx + name.length < lower.length ? lower[idx + name.length] : ' ';
+        if (/[a-z]/.test(before) || /[a-z]/.test(after)) continue; // part of a longer word
+        found.add(nameToIso.get(name));
+      }
+      return found;
+    }
+
+    // 2. Process all threads
+    const { rows: threads } = await pool.query(`
+      SELECT st.id, st.title, st.description FROM story_threads st WHERE st.status IN ('active','cooling','dormant')
+    `);
+    let threadCount = 0;
+    for (const t of threads) {
+      const nations = extractNations(t.title + ' ' + (t.description || ''));
+
+      // Also scan article titles/summaries for this thread
+      const { rows: articles } = await pool.query(`
+        SELECT COALESCE(a.translated_title, a.title) AS title,
+               COALESCE(a.translated_summary, a.summary) AS summary
+        FROM story_thread_articles sta JOIN news_articles a ON a.id = sta.article_id
+        WHERE sta.thread_id = $1
+        ORDER BY a.published_at DESC LIMIT 20
+      `, [t.id]);
+      for (const art of articles) {
+        for (const iso of extractNations(art.title + ' ' + (art.summary || ''))) {
+          nations.add(iso);
+        }
+      }
+
+      const arr = [...nations].sort();
+      await pool.query('UPDATE story_threads SET primary_nations = $1 WHERE id = $2', [arr, t.id]);
+      threadCount++;
+    }
+
+    // 3. Process all timelines
+    const { rows: timelines } = await pool.query(`
+      SELECT t.id, t.title, t.description FROM story_timelines t WHERE t.status IN ('active','cooling','dormant')
+    `);
+    let timelineCount = 0;
+    for (const t of timelines) {
+      const nations = extractNations(t.title + ' ' + (t.description || ''));
+
+      const { rows: articles } = await pool.query(`
+        SELECT COALESCE(a.translated_title, a.title) AS title,
+               COALESCE(a.translated_summary, a.summary) AS summary
+        FROM story_timeline_articles sta JOIN news_articles a ON a.id = sta.article_id
+        WHERE sta.timeline_id = $1
+        ORDER BY a.published_at DESC LIMIT 20
+      `, [t.id]);
+      for (const art of articles) {
+        for (const iso of extractNations(art.title + ' ' + (art.summary || ''))) {
+          nations.add(iso);
+        }
+      }
+
+      const arr = [...nations].sort();
+      await pool.query('UPDATE story_timelines SET primary_nations = $1 WHERE id = $2', [arr, t.id]);
+      timelineCount++;
+    }
+
+    console.log(`[backfill-nations] Updated ${threadCount} threads, ${timelineCount} timelines`);
+    res.json({ ok: true, threads: threadCount, timelines: timelineCount });
+  } catch (err) {
+    console.error('[backfill-nations] error:', err.message);
+    res.status(500).json({ error: 'Backfill failed: ' + err.message });
   }
 });
 
