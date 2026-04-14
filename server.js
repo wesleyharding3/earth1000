@@ -1054,6 +1054,147 @@ function getLanguageBoost(lang) {
   return 1.15; // any other non-English
 }
 
+// ── User Preference Boost Engine ──────────────────────────────────────────
+// Fetches preferences from Supabase and applies personalized ranking boosts.
+// Operates post-cache so the underlying DB queries remain shared across users.
+
+const _userPrefCache = new Map(); // userId → { prefs, ts }
+const USER_PREF_TTL = 300_000;    // 5 min cache per user
+
+async function _fetchUserPrefs(userId) {
+  if (!userId) return null;
+  const cached = _userPrefCache.get(userId);
+  if (cached && Date.now() - cached.ts < USER_PREF_TTL) return cached.prefs;
+  try {
+    const { data, error } = await sba
+      .from('user_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (error || !data || !data.onboarding_completed) {
+      _userPrefCache.set(userId, { prefs: null, ts: Date.now() });
+      return null;
+    }
+    _userPrefCache.set(userId, { prefs: data, ts: Date.now() });
+    return data;
+  } catch (e) {
+    // Table may not exist yet — silent
+    _userPrefCache.set(userId, { prefs: null, ts: Date.now() });
+    return null;
+  }
+}
+
+// Map user interest topics/sectors to primary_category values used in threads/timelines
+const TOPIC_TO_CATEGORIES = {
+  'climate':        ['environment', 'climate'],
+  'environment':    ['environment', 'climate'],
+  'conflict':       ['conflict', 'military'],
+  'economy':        ['economy', 'finance', 'trade'],
+  'politics':       ['politics', 'diplomacy', 'governance'],
+  'diplomacy':      ['diplomacy', 'politics'],
+  'technology':     ['technology', 'science'],
+  'health':         ['health', 'pandemic'],
+  'energy':         ['energy'],
+  'finance':        ['finance', 'economy'],
+  'human rights':   ['human_rights', 'society'],
+  'migration':      ['migration', 'society'],
+  'trade':          ['trade', 'economy'],
+  'security':       ['security', 'military', 'conflict'],
+  'military':       ['military', 'conflict', 'defense'],
+  'science':        ['science', 'technology'],
+  'culture':        ['culture', 'society'],
+  'society':        ['society', 'culture'],
+  'sports':         ['sports'],
+  'education':      ['education'],
+  'agriculture':    ['agriculture'],
+  'manufacturing':  ['manufacturing', 'industry'],
+  'defense':        ['military', 'defense'],
+  'infrastructure': ['infrastructure'],
+  'media':          ['media'],
+  'real estate':    ['real_estate'],
+  'tourism':        ['tourism'],
+  'transportation': ['transportation'],
+};
+
+// Build a reusable boost config from raw preferences
+function _buildPrefBoosts(prefs) {
+  if (!prefs) return null;
+  const homeIso = (prefs.home_country || '').toLowerCase();
+  const regionIsos = new Set(
+    (prefs.interest_regions || [])
+      .filter(r => r.iso)
+      .map(r => r.iso.toLowerCase())
+  );
+  // Merge topics + sectors into a unified category set
+  const prefCategories = new Set();
+  for (const t of [...(prefs.interest_topics || []), ...(prefs.interest_sectors || [])]) {
+    const mapped = TOPIC_TO_CATEGORIES[t.toLowerCase()] || [t.toLowerCase()];
+    for (const c of mapped) prefCategories.add(c);
+  }
+  const prefLangs = new Set(
+    (prefs.languages || []).map(l => l.toLowerCase().slice(0, 2))
+  );
+  return { homeIso, regionIsos, prefCategories, prefLangs, diversity: prefs.diversity_pref ?? 50 };
+}
+
+// Apply preference boosts to news articles (modifies final_priority in-place)
+function _applyNewsPrefBoosts(articles, boosts) {
+  if (!boosts) return articles;
+  for (const r of articles) {
+    let mult = 1.0;
+    const iso = (r.iso_code || '').toLowerCase();
+    // Home country: strong boost
+    if (boosts.homeIso && iso === boosts.homeIso) mult *= 1.4;
+    // Interest regions
+    else if (boosts.regionIsos.size && boosts.regionIsos.has(iso)) mult *= 1.25;
+    // Language preference
+    const lang = (r.language || '').toLowerCase().slice(0, 2);
+    if (boosts.prefLangs.size && lang && boosts.prefLangs.has(lang)) mult *= 1.15;
+    if (mult !== 1.0) r.final_priority = (r.final_priority || 0) * mult;
+  }
+  return articles;
+}
+
+// Apply preference boosts to threads/timelines (returns modified array)
+function _applyThreadPrefBoosts(items, boosts) {
+  if (!boosts) return items;
+  for (const t of items) {
+    let mult = 1.0;
+    const nations = (t.primary_nations || []).map(n => n.toLowerCase());
+    const cat = (t.primary_category || '').toLowerCase();
+    // Home country in primary_nations
+    if (boosts.homeIso && nations.includes(boosts.homeIso)) mult *= 1.4;
+    // Interest regions overlap
+    else if (boosts.regionIsos.size && nations.some(n => boosts.regionIsos.has(n))) mult *= 1.25;
+    // Topic/sector category match
+    if (boosts.prefCategories.size && boosts.prefCategories.has(cat)) mult *= 1.2;
+    t._prefMult = mult;
+  }
+  // Re-sort within status groups using boosted importance
+  items.sort((a, b) => {
+    const sa = a.status === 'active' ? 0 : a.status === 'cooling' ? 1 : 2;
+    const sb = b.status === 'active' ? 0 : b.status === 'cooling' ? 1 : 2;
+    if (sa !== sb) return sa - sb;
+    return ((b.importance || 0) * (b._prefMult || 1)) - ((a.importance || 0) * (a._prefMult || 1));
+  });
+  items.forEach(t => { delete t._prefMult; });
+  return items;
+}
+
+// Re-sort articles by final_priority with date tiebreak (shared helper)
+function _prefResort(articles) {
+  const PRIORITY_BAND = 0.03;
+  articles.sort((a, b) => {
+    const pa = a.final_priority || 0;
+    const pb = b.final_priority || 0;
+    const maxP = Math.max(pa, pb) || 1;
+    if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
+      return new Date(b.published_at) - new Date(a.published_at);
+    }
+    return pb - pa;
+  });
+}
+
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
   const hasMore = rows.length > effectiveLimit;
   if (hasMore) rows.pop();
@@ -1109,6 +1250,15 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       const cached = await ttlCached(cacheKey, 60_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset: 0 });
       });
+      // Apply user preference boosts (post-cache, per-user)
+      const prefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
+      if (prefs) {
+        const boosts = _buildPrefBoosts(prefs);
+        const personalized = { ...cached, articles: cached.articles.map(a => ({ ...a })) };
+        _applyNewsPrefBoosts(personalized.articles, boosts);
+        _prefResort(personalized.articles);
+        return res.json(personalized);
+      }
       return res.json(cached);
     }
 
@@ -1300,17 +1450,14 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       results = countryVarianceRerank(results);
     }
 
+    // Apply user preference boosts (filtered path)
+    const _fPrefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
+    if (_fPrefs) {
+      _applyNewsPrefBoosts(results, _buildPrefBoosts(_fPrefs));
+    }
+
     // Tiebreak by date within a tight priority band (3%)
-    const PRIORITY_BAND = 0.03;
-    results.sort((a, b) => {
-      const pa = a.final_priority || 0;
-      const pb = b.final_priority || 0;
-      const maxP = Math.max(pa, pb) || 1;
-      if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
-        return new Date(b.published_at) - new Date(a.published_at);
-      }
-      return pb - pa;
-    });
+    _prefResort(results);
 
     res.json({ total: offset + results.length + (hasMore ? 1 : 0), articles: results });
 
@@ -4487,6 +4634,13 @@ app.get("/api/timelines/latest", async (req, res) => {
       mapped.forEach(t => { delete t._titleBoost; });
       return mapped;
     });
+    // Apply user preference boosts (post-cache, per-user)
+    const _tlPrefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
+    if (_tlPrefs) {
+      const personalized = _cached.map(t => ({ ...t }));
+      _applyThreadPrefBoosts(personalized, _buildPrefBoosts(_tlPrefs));
+      return res.json(personalized);
+    }
     res.json(_cached);
   } catch (err) {
     console.error("[timelines/latest]", err.message);
@@ -5290,6 +5444,13 @@ app.get("/api/threads/latest", async (req, res) => {
     return result;
     });
 
+    // Apply user preference boosts (post-cache, per-user)
+    const _thPrefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
+    if (_thPrefs) {
+      const personalized = _cached.map(t => ({ ...t }));
+      _applyThreadPrefBoosts(personalized, _buildPrefBoosts(_thPrefs));
+      return res.json(personalized);
+    }
     res.json(_cached);
   } catch (err) {
     console.error("[threads/latest]", err.message, err.stack);
