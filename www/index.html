@@ -1951,8 +1951,9 @@ body.ticker-active #flowControls {
 
 .flowFilterRow {
   display: grid;
-  grid-template-columns: 2fr 3fr;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
+  min-width: 0;
 }
 
 .flowFilterField {
@@ -1960,6 +1961,8 @@ body.ticker-active #flowControls {
   flex-direction: column;
   gap: 3px;
   position: relative;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .flowFilterLabel {
@@ -1983,6 +1986,10 @@ body.ticker-active #flowControls {
   font-family: inherit;
   transition: border-color 0.2s;
   box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .flowFilterInput:focus { border-color: rgba(0,220,130,0.5); }
 .flowFilterInput::placeholder { color: rgba(255,255,255,0.25); }
@@ -2050,19 +2057,23 @@ body.ticker-active #flowControls {
   border-radius: 8px;
   font-size: 11px;
   color: rgba(80,255,160,0.9);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
 }
 .flowSelectedChip.visible { display: flex; }
 .flowSelectedChip .chipFlag {
   width: 16px;
   height: 12px;
   border-radius: 2px;
+  flex-shrink: 0;
 }
 .flowSelectedChip .chipName {
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 90px;
+  min-width: 0;
 }
 .flowSelectedChip .chipX {
   cursor: pointer;
