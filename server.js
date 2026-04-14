@@ -3069,6 +3069,258 @@ app.delete('/api/admin/threads/:threadId/articles/:articleId', requireAdmin, asy
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RANKING OVERRIDES + PREFERENCE LEARNING
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Get ranked list with overrides applied
+app.get('/api/admin/rankings/:entityType', requireAdmin, async (req, res) => {
+  try {
+    const entityType = req.params.entityType; // 'thread' or 'timeline'
+    if (!['thread', 'timeline'].includes(entityType)) return res.status(400).json({ error: 'Invalid entity type' });
+
+    const table = entityType === 'thread' ? 'story_threads' : 'story_timelines';
+
+    // Load entities
+    const { rows: entities } = await pool.query(`
+      SELECT id, title, primary_category, importance, article_count, status,
+             last_updated_at, ${entityType === 'thread' ? 'distinct_source_count, breaking_signal_score' : 'distinct_source_count, parabolic_weight_sum'}
+      FROM ${table}
+      WHERE status IN ('active', 'cooling')
+        AND article_count >= 2
+      ORDER BY importance DESC, article_count DESC
+      LIMIT 500
+    `);
+
+    // Load overrides
+    const { rows: overrides } = await pool.query(
+      `SELECT entity_id, pinned_rank, boost FROM ranking_overrides WHERE entity_type = $1`,
+      [entityType]
+    );
+    const overrideMap = new Map(overrides.map(o => [o.entity_id, o]));
+
+    // Load learned weights
+    const { rows: weights } = await pool.query(
+      `SELECT feature_name, weight, sample_count FROM ranking_model_weights WHERE entity_type = $1`,
+      [entityType]
+    );
+    const weightMap = new Map(weights.map(w => [w.feature_name, { weight: w.weight, samples: w.sample_count }]));
+
+    // Compute learned score for each entity
+    const now = Date.now();
+    const scored = entities.map(e => {
+      const ageHours = e.last_updated_at ? (now - new Date(e.last_updated_at).getTime()) / 3600000 : 999;
+      const features = {
+        importance:     e.importance || 5,
+        article_count:  e.article_count || 0,
+        source_count:   e.distinct_source_count || 0,
+        breaking_signal: e.breaking_signal_score || 0,
+        recency_hours:  ageHours,
+        is_conflict:    ['conflict', 'military'].includes(e.primary_category) ? 1 : 0,
+        is_politics:    ['politics', 'diplomacy'].includes(e.primary_category) ? 1 : 0,
+        is_economy:     e.primary_category === 'economy' ? 1 : 0,
+      };
+
+      let learnedScore = 0;
+      for (const [feat, val] of Object.entries(features)) {
+        const w = weightMap.get(feat);
+        if (w) learnedScore += w.weight * val;
+      }
+
+      const override = overrideMap.get(e.id);
+      const boost = override?.boost || 0;
+
+      return {
+        ...e,
+        learned_score: +(learnedScore + boost).toFixed(3),
+        pinned_rank: override?.pinned_rank || null,
+        boost: boost,
+        features,
+      };
+    });
+
+    // Sort: pinned items get their exact position, others by learned_score
+    scored.sort((a, b) => b.learned_score - a.learned_score);
+
+    // Insert pinned items at their positions
+    const pinned = scored.filter(e => e.pinned_rank != null).sort((a, b) => a.pinned_rank - b.pinned_rank);
+    const unpinned = scored.filter(e => e.pinned_rank == null);
+
+    const final = [...unpinned];
+    for (const p of pinned) {
+      const idx = Math.max(0, Math.min(final.length, p.pinned_rank - 1));
+      final.splice(idx, 0, p);
+    }
+
+    // Add rank numbers
+    final.forEach((e, i) => { e.rank = i + 1; });
+
+    res.json({
+      entities: final,
+      weights: Object.fromEntries(weights.map(w => [w.feature_name, { weight: w.weight, samples: w.sample_count }])),
+      total_feedback: weights.reduce((s, w) => Math.max(s, w.sample_count), 0),
+    });
+  } catch (err) {
+    console.error('[admin/rankings] error:', err.message);
+    res.status(500).json({ error: 'Failed to load rankings' });
+  }
+});
+
+// Save ranking adjustment (override + feedback log)
+app.post('/api/admin/rankings/:entityType/adjust', requireAdmin, async (req, res) => {
+  try {
+    const entityType = req.params.entityType;
+    if (!['thread', 'timeline'].includes(entityType)) return res.status(400).json({ error: 'Invalid entity type' });
+
+    const { entity_id, old_rank, new_rank, old_importance, new_importance, pinned_rank, boost, features } = req.body;
+    if (!entity_id) return res.status(400).json({ error: 'entity_id required' });
+
+    const table = entityType === 'thread' ? 'story_threads' : 'story_timelines';
+
+    // Upsert override
+    if (pinned_rank != null || boost != null) {
+      await pool.query(`
+        INSERT INTO ranking_overrides (entity_type, entity_id, pinned_rank, boost, pinned_by, pinned_at)
+        VALUES ($1, $2, $3, $4, 'admin', NOW())
+        ON CONFLICT (entity_type, entity_id) DO UPDATE SET
+          pinned_rank = COALESCE($3, ranking_overrides.pinned_rank),
+          boost = COALESCE($4, ranking_overrides.boost),
+          pinned_by = 'admin',
+          pinned_at = NOW()
+      `, [entityType, entity_id, pinned_rank || null, boost || 0]);
+    }
+
+    // Update importance if changed
+    if (new_importance != null && new_importance !== old_importance) {
+      await pool.query(`UPDATE ${table} SET importance = $1 WHERE id = $2`, [new_importance, entity_id]);
+    }
+
+    // Log feedback for learning
+    if (old_rank != null && new_rank != null) {
+      const feat = features || {};
+      await pool.query(`
+        INSERT INTO ranking_feedback
+          (entity_type, entity_id, old_rank, new_rank, old_importance, new_importance,
+           article_count, source_count, breaking_signal, category, status, age_hours, feedback_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'admin')
+      `, [
+        entityType, entity_id, old_rank, new_rank,
+        old_importance || null, new_importance || null,
+        feat.article_count || null, feat.source_count || null,
+        feat.breaking_signal || null, feat.category || null,
+        feat.status || null, feat.age_hours || null,
+      ]);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin/rankings] adjust error:', err.message);
+    res.status(500).json({ error: 'Failed to save adjustment' });
+  }
+});
+
+// Clear override for an entity
+app.delete('/api/admin/rankings/:entityType/:entityId', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      `DELETE FROM ranking_overrides WHERE entity_type = $1 AND entity_id = $2`,
+      [req.params.entityType, parseInt(req.params.entityId, 10)]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to clear override' });
+  }
+});
+
+// Retrain model from feedback
+app.post('/api/admin/rankings/:entityType/retrain', requireAdmin, async (req, res) => {
+  try {
+    const entityType = req.params.entityType;
+    if (!['thread', 'timeline'].includes(entityType)) return res.status(400).json({ error: 'Invalid entity type' });
+
+    // Load all feedback
+    const { rows: feedback } = await pool.query(
+      `SELECT * FROM ranking_feedback WHERE entity_type = $1 ORDER BY created_at`,
+      [entityType]
+    );
+
+    if (feedback.length < 3) {
+      return res.json({ ok: true, message: 'Not enough feedback yet (need 3+)', samples: feedback.length });
+    }
+
+    // Simple online gradient descent on feature weights
+    // Goal: learn weights so that higher-ranked items get higher scores
+    const FEATURES = ['importance', 'article_count', 'source_count', 'breaking_signal', 'recency_hours', 'is_conflict', 'is_politics', 'is_economy'];
+    const LR = 0.001; // learning rate
+    const DECAY = 0.995; // slight regularization
+
+    // Load current weights as starting point
+    const { rows: currentWeights } = await pool.query(
+      `SELECT feature_name, weight FROM ranking_model_weights WHERE entity_type = $1`,
+      [entityType]
+    );
+    const weights = {};
+    for (const feat of FEATURES) weights[feat] = 0;
+    for (const w of currentWeights) weights[w.feature_name] = w.weight;
+
+    // For each feedback: if item moved UP (new_rank < old_rank), its features
+    // should produce a HIGHER score → increase weights for its positive features.
+    // If moved DOWN, decrease weights.
+    let updates = 0;
+    for (const fb of feedback) {
+      if (fb.old_rank == null || fb.new_rank == null) continue;
+      const direction = fb.old_rank - fb.new_rank; // positive = promoted, negative = demoted
+      if (direction === 0) continue;
+
+      const signal = Math.sign(direction) * Math.min(Math.abs(direction), 10) * 0.1;
+      const ageHours = fb.age_hours || 0;
+
+      const featureVals = {
+        importance:      fb.old_importance || 5,
+        article_count:   fb.article_count || 0,
+        source_count:    fb.source_count || 0,
+        breaking_signal: fb.breaking_signal || 0,
+        recency_hours:   ageHours,
+        is_conflict:     ['conflict', 'military'].includes(fb.category) ? 1 : 0,
+        is_politics:     ['politics', 'diplomacy'].includes(fb.category) ? 1 : 0,
+        is_economy:      fb.category === 'economy' ? 1 : 0,
+      };
+
+      for (const feat of FEATURES) {
+        const val = featureVals[feat] || 0;
+        if (val === 0) continue;
+        // Normalize large features
+        const normVal = feat === 'article_count' ? Math.log1p(val) :
+                        feat === 'recency_hours' ? Math.min(val / 100, 1) :
+                        feat === 'source_count' ? Math.log1p(val) :
+                        val;
+        weights[feat] = weights[feat] * DECAY + LR * signal * normVal;
+      }
+      updates++;
+    }
+
+    // Persist updated weights
+    for (const feat of FEATURES) {
+      await pool.query(`
+        INSERT INTO ranking_model_weights (entity_type, feature_name, weight, updated_at, sample_count)
+        VALUES ($1, $2, $3, NOW(), $4)
+        ON CONFLICT (entity_type, feature_name) DO UPDATE SET
+          weight = $3, updated_at = NOW(), sample_count = $4
+      `, [entityType, feat, +weights[feat].toFixed(6), feedback.length]);
+    }
+
+    res.json({
+      ok: true,
+      samples: feedback.length,
+      updates,
+      weights: Object.fromEntries(FEATURES.map(f => [f, +weights[f].toFixed(6)])),
+    });
+  } catch (err) {
+    console.error('[admin/rankings] retrain error:', err.message);
+    res.status(500).json({ error: 'Failed to retrain' });
+  }
+});
+
 // Serve briefing editor page
 app.get('/briefing-editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));

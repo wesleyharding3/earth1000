@@ -554,6 +554,95 @@
     .thd-modal-desc { color: #94a3b8; font-size: 0.82rem; margin-bottom: 20px; }
     .thd-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 
+    /* ── Rankings tab ── */
+    .rank-toolbar {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 10px; margin-bottom: 16px;
+    }
+    .rank-toggle { display: flex; gap: 0; border-radius: 6px; overflow: hidden; border: 1px solid #1e293b; }
+    .rank-toggle-btn {
+      padding: 8px 20px; border: none; background: #111827; color: #94a3b8;
+      font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s;
+    }
+    .rank-toggle-btn.active { background: #00d4ff; color: #0a0e17; }
+    .rank-toggle-btn:hover:not(.active) { background: #1e293b; color: #e2e8f0; }
+    .rank-actions { display: flex; gap: 8px; }
+
+    .rank-weights-panel {
+      background: #111827; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 12px 16px; margin-bottom: 16px; font-size: 0.82rem;
+    }
+    .rank-weights-panel summary {
+      cursor: pointer; color: #94a3b8; font-weight: 600; font-size: 0.82rem;
+      user-select: none;
+    }
+    .rank-weights-panel[open] summary { margin-bottom: 10px; }
+    .rank-weights-body { display: flex; flex-wrap: wrap; gap: 8px; }
+    .rank-weight-chip {
+      display: flex; align-items: center; gap: 6px;
+      background: #0d1117; border: 1px solid #1e293b; border-radius: 6px;
+      padding: 6px 10px; font-size: 0.78rem;
+    }
+    .rank-weight-name { color: #94a3b8; }
+    .rank-weight-val { color: #00d4ff; font-weight: 600; font-family: monospace; }
+    .rank-weight-samples { color: #475569; font-size: 0.68rem; }
+    .rank-weights-empty { color: #475569; font-size: 0.8rem; }
+
+    .rank-info-bar {
+      font-size: 0.78rem; color: #64748b; margin-bottom: 12px;
+      display: flex; gap: 16px; align-items: center;
+    }
+    .rank-info-bar span { display: inline-flex; align-items: center; gap: 4px; }
+
+    .rank-list { display: flex; flex-direction: column; gap: 4px; }
+    .rank-item {
+      display: flex; align-items: center; gap: 12px;
+      background: #111827; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 10px 14px; cursor: pointer; transition: all 0.15s;
+      position: relative;
+    }
+    .rank-item:hover { border-color: #334155; background: #131b33; }
+    .rank-item.pinned { border-color: rgba(245,158,11,0.4); box-shadow: 0 0 6px rgba(245,158,11,0.08); }
+    .rank-item.boosted { border-left: 3px solid #22c55e; }
+
+    .rank-num {
+      width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+      background: #1e293b; border-radius: 6px; font-weight: 700; font-size: 0.9rem;
+      color: #e2e8f0; flex-shrink: 0;
+    }
+    .rank-item.pinned .rank-num { background: rgba(245,158,11,0.2); color: #f59e0b; }
+    .rank-body { flex: 1; min-width: 0; }
+    .rank-title {
+      font-weight: 600; font-size: 0.85rem; margin-bottom: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rank-meta {
+      display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+      font-size: 0.72rem; color: #94a3b8;
+    }
+    .rank-score {
+      font-family: monospace; font-size: 0.78rem; color: #00d4ff;
+      font-weight: 600; flex-shrink: 0; min-width: 60px; text-align: right;
+    }
+    .rank-badges { display: flex; gap: 4px; flex-shrink: 0; }
+    .rank-badge {
+      font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+      padding: 2px 6px; border-radius: 4px;
+    }
+    .rank-badge-pin { background: rgba(245,158,11,0.15); color: #f59e0b; }
+    .rank-badge-boost { background: rgba(34,197,94,0.15); color: #22c55e; }
+    .rank-arrow-btns { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+    .rank-arrow {
+      width: 26px; height: 20px; border: 1px solid #1e293b; border-radius: 4px;
+      background: #0d1117; color: #94a3b8; cursor: pointer; font-size: 0.7rem;
+      display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+    }
+    .rank-arrow:hover { border-color: #00d4ff; color: #00d4ff; background: rgba(0,212,255,0.05); }
+
+    .rank-slider { width: 180px; accent-color: #00d4ff; vertical-align: middle; }
+    .rank-slider-val { font-family: monospace; font-size: 0.85rem; color: #00d4ff; margin-left: 8px; }
+    .rank-adjust-value { font-size: 1.1rem; font-weight: 700; color: #e2e8f0; }
+
     @media (max-width: 600px) {
       .editor-wrap { padding: 16px 12px 60px; }
       h1 { font-size: 1.25rem; }
@@ -587,6 +676,7 @@
       <button class="top-tab" data-tab="tweets" onclick="switchTab('tweets')">Tweets</button>
       <button class="top-tab" data-tab="timelines" onclick="switchTab('timelines')">Timelines</button>
       <button class="top-tab" data-tab="threads" onclick="switchTab('threads')">Threads</button>
+      <button class="top-tab" data-tab="rankings" onclick="switchTab('rankings')">Rankings</button>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════
@@ -821,6 +911,72 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         TAB 5: RANKINGS
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="tab-rankings" class="hidden">
+      <!-- Entity type toggle -->
+      <div class="rank-toolbar">
+        <div class="rank-toggle">
+          <button class="rank-toggle-btn active" data-rtype="thread" onclick="switchRankType('thread')">Threads</button>
+          <button class="rank-toggle-btn" data-rtype="timeline" onclick="switchRankType('timeline')">Timelines</button>
+        </div>
+        <div class="rank-actions">
+          <button class="btn-secondary btn-small" onclick="loadRankings()">↻ Refresh</button>
+          <button class="btn-primary btn-small" onclick="retrainModel()">🧠 Retrain Model</button>
+        </div>
+      </div>
+
+      <!-- Model weights panel -->
+      <details class="rank-weights-panel">
+        <summary>Learned Model Weights</summary>
+        <div id="rank-weights-body" class="rank-weights-body">
+          <p class="rank-weights-empty">Load rankings to see weights.</p>
+        </div>
+      </details>
+
+      <!-- Feedback count -->
+      <div class="rank-info-bar" id="rank-info-bar"></div>
+
+      <!-- Rankings list -->
+      <div id="rank-loading" class="loading-state hidden"><div class="spinner"></div><p>Loading rankings...</p></div>
+      <div id="rank-list" class="rank-list"></div>
+      <div id="rank-empty" class="empty-state hidden">No ranked entities found.</div>
+
+      <!-- Adjust modal -->
+      <div id="rank-adjust-modal" class="thd-modal-overlay hidden" onclick="if(event.target===this)closeRankAdjust()">
+        <div class="thd-modal" style="max-width:480px;">
+          <h2 id="rank-adjust-title">Adjust Ranking</h2>
+          <div class="thd-field">
+            <label>Current Rank</label>
+            <div id="rank-adjust-current" class="rank-adjust-value"></div>
+          </div>
+          <div class="thd-field">
+            <label>Importance (1–10)</label>
+            <input type="range" id="rank-adjust-importance" min="1" max="10" step="0.5" class="rank-slider" oninput="document.getElementById('rank-adj-imp-val').textContent=this.value" />
+            <span id="rank-adj-imp-val" class="rank-slider-val"></span>
+          </div>
+          <div class="thd-field">
+            <label>Pin to Position <span style="color:#64748b;font-weight:400;">(blank = no pin)</span></label>
+            <input type="number" id="rank-adjust-pin" class="seg-input short" min="1" max="500" placeholder="e.g. 1" />
+          </div>
+          <div class="thd-field">
+            <label>Boost <span style="color:#64748b;font-weight:400;">(additive, ±)</span></label>
+            <input type="number" id="rank-adjust-boost" class="seg-input short" step="0.1" placeholder="0" />
+          </div>
+          <div class="thd-field">
+            <label>Move to Rank</label>
+            <input type="number" id="rank-adjust-newrank" class="seg-input short" min="1" max="500" placeholder="New rank position" />
+          </div>
+          <div class="thd-modal-actions">
+            <button class="btn-secondary btn-small" onclick="clearOverride()" id="rank-clear-btn" style="margin-right:auto;">Clear Override</button>
+            <button class="btn-secondary" onclick="closeRankAdjust()">Cancel</button>
+            <button class="btn-primary" onclick="submitRankAdjust()">Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Progress Overlay -->
@@ -906,7 +1062,7 @@
     // TAB SWITCHING
     // ════════════════════════════════════════════════════════════════
     let activeTab = 'briefings';
-    const tabLoaded = { briefings: false, tweets: false, timelines: false, threads: false };
+    const tabLoaded = { briefings: false, tweets: false, timelines: false, threads: false, rankings: false };
 
     function switchTab(tab) {
       activeTab = tab;
@@ -917,6 +1073,7 @@
       if (tab === 'tweets' && !tabLoaded.tweets) { tabLoaded.tweets = true; loadTweets(); }
       if (tab === 'timelines' && !tabLoaded.timelines) { tabLoaded.timelines = true; loadTimelines(); }
       if (tab === 'threads' && !tabLoaded.threads) { tabLoaded.threads = true; loadAdminThreads(); }
+      if (tab === 'rankings' && !tabLoaded.rankings) { tabLoaded.rankings = true; loadRankings(); }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -2538,6 +2695,236 @@
         loadAdminThreads();
       } catch (e) {
         alert('Merge failed: ' + e.message);
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // TAB 5: RANKINGS
+    // ════════════════════════════════════════════════════════════════
+    let rankEntityType = 'thread';
+    let rankData = { entities: [], weights: {}, total_feedback: 0 };
+    let rankAdjustEntity = null;
+
+    function switchRankType(type) {
+      rankEntityType = type;
+      document.querySelectorAll('.rank-toggle-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.rtype === type)
+      );
+      loadRankings();
+    }
+
+    async function loadRankings() {
+      const loading = document.getElementById('rank-loading');
+      const list = document.getElementById('rank-list');
+      const empty = document.getElementById('rank-empty');
+      loading.classList.remove('hidden');
+      list.innerHTML = '';
+      empty.classList.add('hidden');
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/rankings/${rankEntityType}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('Failed to load rankings');
+        rankData = await res.json();
+        loading.classList.add('hidden');
+        renderWeights();
+        renderRankInfo();
+        renderRankings();
+      } catch (e) {
+        loading.innerHTML = `<p style="color:#ef4444;">Failed to load rankings: ${escHtml(e.message)}</p>`;
+      }
+    }
+
+    function renderWeights() {
+      const body = document.getElementById('rank-weights-body');
+      const w = rankData.weights;
+      if (!w || !Object.keys(w).length) {
+        body.innerHTML = '<p class="rank-weights-empty">No weights loaded.</p>';
+        return;
+      }
+      body.innerHTML = Object.entries(w).map(([name, info]) => `
+        <div class="rank-weight-chip">
+          <span class="rank-weight-name">${escHtml(name)}</span>
+          <span class="rank-weight-val">${info.weight.toFixed(4)}</span>
+          <span class="rank-weight-samples">(${info.samples} samples)</span>
+        </div>
+      `).join('');
+    }
+
+    function renderRankInfo() {
+      const bar = document.getElementById('rank-info-bar');
+      const pinned = rankData.entities.filter(e => e.pinned_rank != null).length;
+      const boosted = rankData.entities.filter(e => e.boost && e.boost !== 0).length;
+      bar.innerHTML = `
+        <span>📊 ${rankData.entities.length} ${rankEntityType}s ranked</span>
+        <span>📌 ${pinned} pinned</span>
+        <span>⚡ ${boosted} boosted</span>
+        <span>🧠 ${rankData.total_feedback} feedback samples</span>
+      `;
+    }
+
+    function renderRankings() {
+      const list = document.getElementById('rank-list');
+      const empty = document.getElementById('rank-empty');
+
+      if (!rankData.entities.length) {
+        list.innerHTML = '';
+        empty.classList.remove('hidden');
+        return;
+      }
+      empty.classList.add('hidden');
+
+      list.innerHTML = rankData.entities.map((e, idx) => {
+        const isPinned = e.pinned_rank != null;
+        const isBoosted = e.boost && e.boost !== 0;
+        const classes = ['rank-item'];
+        if (isPinned) classes.push('pinned');
+        if (isBoosted) classes.push('boosted');
+        const catClass = getCategoryClass(e.primary_category);
+        const ageH = e.features?.recency_hours;
+        const ageLabel = ageH != null ? (ageH < 1 ? '<1h ago' : ageH < 24 ? Math.round(ageH) + 'h ago' : Math.round(ageH / 24) + 'd ago') : '';
+
+        return `
+          <div class="${classes.join(' ')}" data-idx="${idx}">
+            <div class="rank-arrow-btns">
+              <button class="rank-arrow" onclick="event.stopPropagation(); quickMove(${idx}, -1)" title="Move up">▲</button>
+              <button class="rank-arrow" onclick="event.stopPropagation(); quickMove(${idx}, 1)" title="Move down">▼</button>
+            </div>
+            <div class="rank-num">${e.rank}</div>
+            <div class="rank-body" onclick="openRankAdjust(${idx})">
+              <div class="rank-title">${escHtml(e.title)}</div>
+              <div class="rank-meta">
+                <span class="thd-status thd-status-${e.status || 'active'}">${escHtml(e.status || 'active')}</span>
+                <span class="category-badge ${catClass}">${escHtml(e.primary_category || 'General')}</span>
+                <span>${e.article_count || 0} articles</span>
+                <span>imp: ${(e.importance || 0).toFixed(1)}</span>
+                ${ageLabel ? `<span>${ageLabel}</span>` : ''}
+              </div>
+            </div>
+            <div class="rank-badges">
+              ${isPinned ? `<span class="rank-badge rank-badge-pin">📌 ${e.pinned_rank}</span>` : ''}
+              ${isBoosted ? `<span class="rank-badge rank-badge-boost">+${e.boost.toFixed(1)}</span>` : ''}
+            </div>
+            <div class="rank-score" title="Learned score">${e.learned_score.toFixed(2)}</div>
+          </div>`;
+      }).join('');
+    }
+
+    async function quickMove(idx, direction) {
+      const entity = rankData.entities[idx];
+      if (!entity) return;
+      const newIdx = idx + direction;
+      if (newIdx < 0 || newIdx >= rankData.entities.length) return;
+
+      const oldRank = entity.rank;
+      const newRank = rankData.entities[newIdx].rank;
+
+      try {
+        await fetch(`${API_BASE}/api/admin/rankings/${rankEntityType}/adjust`, {
+          method: 'POST', headers: authHeaders(),
+          body: JSON.stringify({
+            entity_id: entity.id,
+            old_rank: oldRank,
+            new_rank: newRank,
+            old_importance: entity.importance,
+            new_importance: entity.importance,
+            pinned_rank: newRank,
+            boost: entity.boost || 0,
+            features: entity.features,
+          })
+        });
+        await loadRankings();
+      } catch (e) {
+        alert('Move failed: ' + e.message);
+      }
+    }
+
+    function openRankAdjust(idx) {
+      rankAdjustEntity = rankData.entities[idx];
+      if (!rankAdjustEntity) return;
+
+      document.getElementById('rank-adjust-title').textContent =
+        `Adjust: ${rankAdjustEntity.title.substring(0, 50)}${rankAdjustEntity.title.length > 50 ? '…' : ''}`;
+      document.getElementById('rank-adjust-current').textContent =
+        `#${rankAdjustEntity.rank}  (score: ${rankAdjustEntity.learned_score.toFixed(2)})`;
+
+      const impSlider = document.getElementById('rank-adjust-importance');
+      impSlider.value = rankAdjustEntity.importance || 5;
+      document.getElementById('rank-adj-imp-val').textContent = impSlider.value;
+
+      document.getElementById('rank-adjust-pin').value = rankAdjustEntity.pinned_rank || '';
+      document.getElementById('rank-adjust-boost').value = rankAdjustEntity.boost || '';
+      document.getElementById('rank-adjust-newrank').value = '';
+
+      document.getElementById('rank-clear-btn').style.display =
+        (rankAdjustEntity.pinned_rank != null || (rankAdjustEntity.boost && rankAdjustEntity.boost !== 0))
+          ? 'inline-block' : 'none';
+
+      document.getElementById('rank-adjust-modal').classList.remove('hidden');
+    }
+
+    function closeRankAdjust() {
+      document.getElementById('rank-adjust-modal').classList.add('hidden');
+      rankAdjustEntity = null;
+    }
+
+    async function submitRankAdjust() {
+      if (!rankAdjustEntity) return;
+      const newImportance = parseFloat(document.getElementById('rank-adjust-importance').value);
+      const pinVal = document.getElementById('rank-adjust-pin').value.trim();
+      const boostVal = document.getElementById('rank-adjust-boost').value.trim();
+      const newRankVal = document.getElementById('rank-adjust-newrank').value.trim();
+
+      const body = {
+        entity_id: rankAdjustEntity.id,
+        old_rank: rankAdjustEntity.rank,
+        new_rank: newRankVal ? parseInt(newRankVal, 10) : rankAdjustEntity.rank,
+        old_importance: rankAdjustEntity.importance,
+        new_importance: newImportance,
+        pinned_rank: pinVal ? parseInt(pinVal, 10) : null,
+        boost: boostVal ? parseFloat(boostVal) : 0,
+        features: rankAdjustEntity.features,
+      };
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/rankings/${rankEntityType}/adjust`, {
+          method: 'POST', headers: authHeaders(), body: JSON.stringify(body)
+        });
+        if (!res.ok) throw new Error('Adjust failed');
+        closeRankAdjust();
+        await loadRankings();
+      } catch (e) {
+        alert('Failed to save adjustment: ' + e.message);
+      }
+    }
+
+    async function clearOverride() {
+      if (!rankAdjustEntity) return;
+      if (!confirm(`Clear all overrides for "${rankAdjustEntity.title}"?`)) return;
+
+      try {
+        await fetch(`${API_BASE}/api/admin/rankings/${rankEntityType}/${rankAdjustEntity.id}`, {
+          method: 'DELETE', headers: authHeaders()
+        });
+        closeRankAdjust();
+        await loadRankings();
+      } catch (e) {
+        alert('Failed to clear override: ' + e.message);
+      }
+    }
+
+    async function retrainModel() {
+      if (!confirm(`Retrain the ${rankEntityType} ranking model from feedback data?`)) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/rankings/${rankEntityType}/retrain`, {
+          method: 'POST', headers: authHeaders()
+        });
+        if (!res.ok) throw new Error('Retrain failed');
+        const data = await res.json();
+        alert(data.message || `Model retrained! ${data.samples || 0} samples processed.`);
+        await loadRankings();
+      } catch (e) {
+        alert('Retrain failed: ' + e.message);
       }
     }
 

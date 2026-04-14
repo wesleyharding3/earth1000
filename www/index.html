@@ -2268,6 +2268,30 @@ body.ticker-active #flowControls {
   color: rgba(0,220,130,0.9);
   font-weight: 600;
 }
+.flowMinBar .flowMinPlayBtn {
+  width: calc(28px * var(--mobile-control-scale));
+  height: calc(28px * var(--mobile-control-scale));
+  border-radius: calc(14px * var(--mobile-control-scale));
+  background: rgba(0,220,130,0.15);
+  border: 1px solid rgba(0,220,130,0.3);
+  color: rgba(0,220,130,0.9);
+  font-size: calc(12px * var(--mobile-control-scale));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.flowMinBar .flowMinPlayBtn:hover {
+  background: rgba(0,220,130,0.25);
+  border-color: rgba(0,220,130,0.5);
+  transform: scale(1.05);
+}
+.flowMinBar .flowMinPlayBtn.playing {
+  color: rgba(255,200,50,0.9);
+  background: rgba(255,200,50,0.15);
+  border-color: rgba(255,200,50,0.3);
+}
 .flowMinBar .flowExpandBtn {
   width: calc(28px * var(--mobile-control-scale));
   height: calc(28px * var(--mobile-control-scale));
@@ -3004,9 +3028,66 @@ body.ticker-active #flowControls {
 }
 #semHeatPanel.visible { display: flex; animation: semHeatIn 0.18s ease-out; }
 @keyframes semHeatIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-#semHeatPanel.minimized { max-height: none; overflow: hidden; gap: 0; padding-bottom: 6px; }
+#semHeatPanel.minimized {
+  max-height: none; overflow: hidden; gap: 0;
+  padding: 0; border: none; background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: none; width: auto;
+}
 #semHeatPanel.minimized .semHeatBody { display: none; }
-#semHeatPanel.minimized .semHeatHeader { border-bottom: none; padding-bottom: 0; }
+#semHeatPanel.minimized .semHeatHeader { display: none; }
+#semHeatPanel.minimized .semHeatMinBar { display: flex; }
+
+.semHeatMinBar {
+  display: none;
+  background: rgba(8, 12, 20, 0.52);
+  border: 1px solid rgba(255,160,80,0.25);
+  border-radius: 30px;
+  padding: 8px 16px;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08);
+  animation: semHeatMinPulse 2.9s ease-in-out infinite;
+}
+@keyframes semHeatMinPulse {
+  0%, 100% { box-shadow: 0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 0 1px rgba(255,160,80,0.10), 0 0 10px rgba(255,160,80,0.07); }
+  50% { box-shadow: 0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.12), 0 0 0 1px rgba(255,160,80,0.38), 0 0 22px rgba(255,160,80,0.22); }
+}
+.semHeatMinLabel {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: rgba(255,255,255,0.5);
+}
+.semHeatMinStats {
+  font-size: 12px; color: rgba(255,180,100,0.9); font-weight: 600;
+  animation: semHeatMinStatsBreath 2.9s ease-in-out infinite;
+}
+@keyframes semHeatMinStatsBreath {
+  0%, 100% { color: rgba(255,180,100,0.78); text-shadow: 0 0 5px rgba(255,160,80,0.22); }
+  50% { color: rgba(255,210,150,1.0); text-shadow: 0 0 10px rgba(255,180,100,0.55); }
+}
+.semHeatMinPlayBtn, .semHeatMinExpandBtn, .semHeatMinCloseBtn {
+  width: calc(28px * var(--mobile-control-scale));
+  height: calc(28px * var(--mobile-control-scale));
+  border-radius: calc(14px * var(--mobile-control-scale));
+  font-size: calc(12px * var(--mobile-control-scale));
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.semHeatMinPlayBtn {
+  background: rgba(255,160,80,0.15); border: 1px solid rgba(255,160,80,0.3);
+  color: rgba(255,180,100,0.9);
+}
+.semHeatMinPlayBtn:hover { background: rgba(255,160,80,0.25); border-color: rgba(255,160,80,0.5); transform: scale(1.05); }
+.semHeatMinPlayBtn.playing { color: rgba(255,200,50,0.9); background: rgba(255,200,50,0.15); border-color: rgba(255,200,50,0.3); }
+.semHeatMinExpandBtn {
+  background: rgba(255,160,80,0.15); border: 1px solid rgba(255,160,80,0.3);
+  color: rgba(255,180,100,0.9); font-size: calc(14px * var(--mobile-control-scale));
+}
+.semHeatMinExpandBtn:hover { background: rgba(255,160,80,0.25); border-color: rgba(255,160,80,0.5); transform: scale(1.05); }
+.semHeatMinCloseBtn {
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.4); font-size: calc(11px * var(--mobile-control-scale));
+}
+.semHeatMinCloseBtn:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.12); }
 
 .semHeatHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08); }
 .semHeatTitle { font-size: 13px; font-weight: 700; color: rgba(255,200,140,0.95); letter-spacing: 0.02em; }
@@ -9091,6 +9172,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       </button>
       <span class="flowMinLabel">Flow</span>
       <span class="flowMinStats" id="flowMinStats">0 flows</span>
+      <button class="flowMinPlayBtn" id="flowMinPlayBtn" title="Play / Pause" onclick="window.__flowMinTogglePlay?.()">▶</button>
       <button class="flowExpandBtn" id="flowExpandBtn" title="Expand">↑</button>
       <button class="flowMinCloseBtn" id="flowMinCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
     </div>
@@ -9137,11 +9219,15 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div>
 
-      <!-- Keyword + dates -->
+      <!-- Date range -->
       <div class="flowPanelRow">
-        <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" style="flex:0 1 90px; min-width:60px;" />
         <input type="date" class="flowDateInput" id="flowFrom" style="flex:1; min-width:0;" />
         <input type="date" class="flowDateInput" id="flowTo" style="flex:1; min-width:0;" />
+      </div>
+
+      <!-- Keyword + Load -->
+      <div class="flowPanelRow">
+        <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" style="flex:1; min-width:60px;" />
         <button class="flowBtn primary" id="flowLoadBtn">Load</button>
       </div>
 
@@ -9211,10 +9297,19 @@ window.sourceBiasBadgeHTML = function(bias) {
 
   <!-- Heatmap control panel -->
   <div id="semHeatPanel">
+    <!-- Minimized bar -->
+    <div class="semHeatMinBar" id="semHeatMinBar">
+      <span class="semHeatMinLabel">Heatmap</span>
+      <span class="semHeatMinStats" id="semHeatMinStats"></span>
+      <button class="semHeatMinPlayBtn" id="semHeatMinPlayBtn" title="Play / Pause" onclick="window.__semHeatMinTogglePlay?.()">▶</button>
+      <button class="semHeatMinExpandBtn" id="semHeatMinExpandBtn" title="Expand" onclick="window.__semHeatExpand?.()">↑</button>
+      <button class="semHeatMinCloseBtn" id="semHeatMinCloseBtn" title="Close" onclick="window.__semHeatClose?.()">✕</button>
+    </div>
     <div class="semHeatHeader">
       <div class="semHeatTitle">Heatmap</div>
       <div class="semHeatHeaderActions">
-        <button class="semHeatClose" onclick="window.__semHeatClose?.()">&times;</button>
+        <button class="semHeatMin" onclick="window.__semHeatMinimize?.()" title="Minimize">−</button>
+        <button class="semHeatClose" onclick="window.__semHeatClose?.()" title="Close">&times;</button>
       </div>
     </div>
 
@@ -11370,6 +11465,8 @@ function computeCityTiers(cities) {
       function playSFX(sfx) {
         try { sfx.currentTime = 0; sfx.play(); } catch(e) {}
       }
+      window.playSFX = playSFX;
+      window.SFX = SFX;
 
       // iOS WKWebView blocks audio until the audio context is unlocked by a user gesture.
       // On first touchstart, silently play+pause each track at volume 0 to unlock it.
@@ -16679,13 +16776,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
   document.getElementById("flowPlayBtn").addEventListener("click", (e) => {
     e.stopPropagation();
     if (flowMode === "aggregate") return;  // No playback in aggregate mode
-    if (!flowData.length) { loadFlows().then(() => startPlay()); return; }
+    if (!flowData.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
     if (flowPlaying) {
       flowPlaying = false;
       e.target.textContent = "▶ Play";
     } else {
       startPlay();
     }
+    syncMinPlayBtn();
   });
 
   function startPlay() {
@@ -16703,7 +16801,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (flowPlaying) {
       flowPlaying = false;
       document.getElementById("flowPlayBtn").textContent = "▶ Play";
+      syncMinPlayBtn();
     }
+  };
+
+  // Sync minimized play button state
+  function syncMinPlayBtn() {
+    const btn = document.getElementById("flowMinPlayBtn");
+    if (!btn) return;
+    btn.textContent = flowPlaying ? "⏸" : "▶";
+    btn.classList.toggle("playing", flowPlaying);
+    btn.title = flowPlaying ? "Pause" : "Play";
+  }
+
+  // Minimized bar play/pause
+  window.__flowMinTogglePlay = function() {
+    if (flowMode === "aggregate") return;
+    if (!flowData.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
+    if (flowPlaying) {
+      flowPlaying = false;
+      document.getElementById("flowPlayBtn").textContent = "▶ Play";
+    } else {
+      startPlay();
+    }
+    syncMinPlayBtn();
   };
 
   window.resumeFlowAnimation = function(state) {
@@ -17039,7 +17160,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       .slice(0, FLOW_MAX_FAN)
       .map(([arc]) => arc);
 
-    playSFX(SFX.article);
+    window.playSFX?.(window.SFX?.article);
     showFlowArcCard(ordered, e);
   }
   window.addEventListener("click", handleFlowArcClick);
@@ -20387,8 +20508,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const chk = document.getElementById("flowLabelsToggle");
     if (!chk) return;
     chk.addEventListener("change", () => {
-      if (chk.checked && _flowLabelFlows) {
-        showFlowNodeLabels(_flowLabelFlows);
+      const flows = _flowLabelFlows || (typeof flowData !== 'undefined' && flowData.length ? flowData : null);
+      if (chk.checked && flows) {
+        showFlowNodeLabels(flows);
       } else {
         _clearFlowNodeLabelsImpl();
       }
@@ -30517,6 +30639,35 @@ body.ticker-active .gTickerLabel {
     // heatmap from a news feed article/thread card redirect.
     try { window.hideFlowCtxCard?.(); } catch (_) {}
     window.__flowArcOriginForHeat = null;
+  };
+
+  window.__semHeatMinimize = function() {
+    panel.classList.add('minimized');
+    // Update stats label
+    const statsEl = document.getElementById('semHeatMinStats');
+    if (statsEl) {
+      const mode = state.mode || 'coverage';
+      statsEl.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+    }
+    // Sync play button
+    const pb = document.getElementById('semHeatMinPlayBtn');
+    if (pb) {
+      pb.textContent = state.playing ? '⏸' : '▶';
+      pb.classList.toggle('playing', !!state.playing);
+    }
+  };
+
+  window.__semHeatExpand = function() {
+    panel.classList.remove('minimized');
+  };
+
+  window.__semHeatMinTogglePlay = function() {
+    if (state.playing) stopPlayback(); else startPlayback();
+    const pb = document.getElementById('semHeatMinPlayBtn');
+    if (pb) {
+      pb.textContent = state.playing ? '⏸' : '▶';
+      pb.classList.toggle('playing', !!state.playing);
+    }
   };
 
   // Card-level sentiment openers removed — heatmap accessible via globe toolbar only.
