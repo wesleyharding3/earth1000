@@ -1266,11 +1266,13 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
           FROM keyword_daily_stats
           WHERE keyword ILIKE $1 || '%'
             AND source_country_id IS NULL AND about_country_id IS NULL
-            AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword)
+            AND NOT EXISTS (
+              SELECT 1 FROM stopwords sw WHERE sw.word = keyword
+            )
           GROUP BY keyword
           ORDER BY weight DESC
           LIMIT $2
-        `, [q, limit]),
+        `, [q, limit]).catch(() => ({ rows: [] })),
         // 2) Country names
         pool.query(`
           SELECT name, population::int AS weight, 'country' AS type
