@@ -2357,8 +2357,8 @@ body.ticker-active #flowControls {
   background: rgba(8, 12, 20, 0.52);
   border: 1px solid rgba(255,255,255,0.14);
   border-radius: 30px;
-  padding: 10px 46px 10px 16px;
-  min-height: 36px;
+  padding: 12px 50px 12px 16px;
+  min-height: 44px;
   align-items: center;
   gap: 10px;
   pointer-events: all;
@@ -2375,8 +2375,8 @@ body.ticker-active #flowControls {
   animation: flowMinStatsBreath 2.9s ease-in-out infinite;
 }
 .arcListMinBar .arcListExpandBtn {
-  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-  width: 24px; height: 24px; border-radius: 12px;
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 28px; height: 28px; border-radius: 14px;
   background: rgba(0,220,130,0.15); border: 1px solid rgba(0,220,130,0.3);
   color: rgba(0,220,130,0.9); font-size: 12px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
@@ -2426,7 +2426,7 @@ body.ticker-active #flowControls {
 
 /* Scrollable article list */
 .arcListScroll {
-  overflow-y: auto; height: 220px; padding: 4px 0;
+  overflow-y: auto; height: 110px; padding: 4px 0;
   scrollbar-width: thin; scrollbar-color: rgba(0,220,130,0.15) transparent;
   -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   touch-action: pan-y;
@@ -2519,7 +2519,9 @@ body.ticker-active #flowControls {
   color: rgba(255,255,255,0.5);
 }
 .arcCardBtn.deselect:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
-
+.arcCardTransBtn {
+  position: relative; margin: 4px 0 2px; font-size: 9px; padding: 3px 8px;
+}
 
     /* ===============================
        Swipeable Panel Tabs
@@ -17107,6 +17109,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (flow.summary) {
           html += `<div class="arcCardSummary">${esc(flow.summary)}</div>`;
         }
+        // Translate button
+        const _needsTrans = window.articleNeedsTranslation?.({ title: flow.title, translated_title: flow.translatedTitle });
+        if (_needsTrans && flow.id) {
+          const _tL = window.getUserTargetLang?.() || { short: 'EN', label: 'English' };
+          html += `<button class="articleTranslateBtn arcCardTransBtn" data-id="${flow.id}" data-title="${(flow.title||'').replace(/"/g,'&quot;')}" data-summary="${(flow.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_tL.label}">${_tL.short}</button>`;
+        }
         html += `<div class="arcCardActions">`;
         html += `<button class="arcCardBtn globe" data-action="globe">View on Globe</button>`;
         html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
@@ -17173,6 +17181,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function selectArc(idx) {
       _selectedArcIdx = idx;
       _arcPanelDirty = true;
+
+      // Dismiss the routes-under-cursor info card so it doesn't overlap
+      document.getElementById('flowArcInfoCard')?.classList.remove('visible');
 
       // Pause playback in time-series mode
       if (flowPlaying && flowMode !== 'aggregate') {
