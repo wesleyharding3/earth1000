@@ -3017,7 +3017,7 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT
         st.id, st.title, st.description, st.primary_category,
-        st.geographic_scope, st.importance, st.keywords,
+        st.geographic_scope, st.importance, st.keywords, st.primary_nations,
         st.article_count, st.status, st.last_updated_at,
         st.distinct_source_count, st.breaking_signal_score,
         COALESCE(st.image_url, (
@@ -3050,7 +3050,7 @@ app.get('/api/admin/threads/:id', requireAdmin, async (req, res) => {
 
     const { rows: threadRows } = await pool.query(`
       SELECT id, title, description, primary_category, geographic_scope,
-             importance, keywords, article_count, status, last_updated_at,
+             importance, keywords, primary_nations, article_count, status, last_updated_at,
              distinct_source_count, breaking_signal_score, image_url
       FROM story_threads WHERE id = $1
     `, [id]);
@@ -3086,7 +3086,7 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
-    const { title, description, primary_category, importance, keywords, status, geographic_scope, image_url } = req.body;
+    const { title, description, primary_category, importance, keywords, primary_nations, status, geographic_scope, image_url } = req.body;
     const sets = []; const params = [];
     let pi = 1;
 
@@ -3095,6 +3095,7 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     if (primary_category !== undefined) { sets.push(`primary_category = $${pi++}`); params.push(primary_category); }
     if (importance !== undefined)       { sets.push(`importance = $${pi++}`);       params.push(parseFloat(importance) || 5); }
     if (keywords !== undefined)         { sets.push(`keywords = $${pi++}`);         params.push(Array.isArray(keywords) ? keywords : keywords.split(',').map(k => k.trim())); }
+    if (primary_nations !== undefined)  { sets.push(`primary_nations = $${pi++}`);  params.push(Array.isArray(primary_nations) ? primary_nations : primary_nations.split(',').map(k => k.trim().toUpperCase())); }
     if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
     if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
     if (image_url !== undefined)        { sets.push(`image_url = $${pi++}`);        params.push(image_url || null); }
@@ -4094,7 +4095,7 @@ app.get("/api/timelines/latest", async (req, res) => {
         SELECT
           t.id AS timeline_id, t.title, t.description, t.scope,
           t.primary_category, t.geographic_scope, t.importance, t.keywords,
-          t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
+          t.primary_nations, t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
           t.historical_anchors, t.status, t.last_updated_at
         FROM story_timelines t
         WHERE t.status IN ('active','cooling','dormant')
@@ -4793,8 +4794,8 @@ app.get("/api/threads/latest", async (req, res) => {
     const { rows: threads } = await pool.query(`
       SELECT
         st.id AS thread_id, st.title, st.description, st.primary_category,
-        st.geographic_scope, st.importance, st.keywords, st.article_count,
-        st.status, st.last_updated_at
+        st.geographic_scope, st.importance, st.keywords, st.primary_nations,
+        st.article_count, st.status, st.last_updated_at
       FROM story_threads st
       WHERE st.article_count >= 2
         AND st.status IN ('active', 'cooling', 'dormant')

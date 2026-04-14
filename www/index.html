@@ -1913,21 +1913,7 @@ body.ticker-active #flowControls {
   color: rgba(80,255,160,0.9);
 }
 
-/* Tooltip overlay */
-#flowTooltip {
-  position: fixed;
-  pointer-events: none;
-  z-index: 200;
-  display: none;
-  background: rgba(5,7,10,0.95);
-  border: 1px solid rgba(0,220,130,0.25);
-  border-radius: 12px;
-  padding: 10px 14px;
-  max-width: 260px;
-}
-#flowTooltip .ftTitle  { font-size: 12px; font-weight: 600; color: #fff; margin-bottom: 5px; line-height: 1.35; }
-#flowTooltip .ftMeta   { font-size: 10px; color: rgba(255,255,255,0.45); line-height: 1.6; }
-#flowTooltip .ftRoute  { font-size: 10px; color: rgba(80,255,160,0.75); margin-top: 4px; font-weight: 600; }
+/* flowTooltip removed — redundant with Live Arcs panel */
 
 /* ─── Flow Filter Enhancements ─── */
 .flowModeToggle {
@@ -2371,7 +2357,7 @@ body.ticker-active #flowControls {
   background: rgba(8, 12, 20, 0.52);
   border: 1px solid rgba(255,255,255,0.14);
   border-radius: 30px;
-  padding: 6px 14px;
+  padding: 6px 42px 6px 14px;
   align-items: center;
   gap: 10px;
   pointer-events: all;
@@ -2387,6 +2373,7 @@ body.ticker-active #flowControls {
   animation: flowMinStatsBreath 2.9s ease-in-out infinite;
 }
 .arcListMinBar .arcListExpandBtn {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
   width: 24px; height: 24px; border-radius: 12px;
   background: rgba(0,220,130,0.15); border: 1px solid rgba(0,220,130,0.3);
   color: rgba(0,220,130,0.9); font-size: 12px; cursor: pointer;
@@ -2399,7 +2386,7 @@ body.ticker-active #flowControls {
 
 /* Main panel body */
 .arcListPanel {
-  background: rgba(6, 10, 20, 0.82);
+  background: rgba(6, 10, 20, 0.30);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1px solid rgba(255,255,255,0.12);
@@ -2439,6 +2426,8 @@ body.ticker-active #flowControls {
 .arcListScroll {
   overflow-y: auto; max-height: 380px; padding: 4px 0;
   scrollbar-width: thin; scrollbar-color: rgba(0,220,130,0.15) transparent;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 
 /* Empty state */
@@ -3224,7 +3213,9 @@ body.ticker-active #flowControls {
   pointer-events: auto;
 }
 #semHeatPanel.visible { display: flex; animation: semHeatIn 0.18s ease-out; }
+#semHeatPanel.fading-out { animation: semHeatOut 0.3s ease-in forwards; }
 @keyframes semHeatIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes semHeatOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px); } }
 #semHeatPanel.minimized {
   max-height: none; overflow: hidden; gap: 0;
   padding: 0; border: none; background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
@@ -3377,12 +3368,14 @@ body.ticker-active #flowControls {
 .kwAutoWrap { position: relative; flex: 1; min-width: 60px; }
 .kwAutoWrap input { width: 100%; box-sizing: border-box; }
 .kwAutoList {
-  display: none; position: absolute; left: 0; right: 0; top: 100%;
+  display: none; position: absolute; left: 0; right: 0; bottom: 100%;
   z-index: 9999; max-height: 180px; overflow-y: auto;
   background: rgba(20,22,28,0.97); border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 6px; margin-top: 2px; padding: 2px 0;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  border-radius: 6px; margin-bottom: 4px; padding: 2px 0;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.5);
   scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  touch-action: pan-y;
 }
 .kwAutoList.visible { display: block; }
 .kwAutoItem {
@@ -3445,8 +3438,21 @@ body.ticker-active #flowControls {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   animation: flowInfoIn 0.18s ease-out;
+  transition: left 0.06s ease-out, top 0.06s ease-out, opacity 0.4s ease;
 }
 @keyframes flowInfoIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* SVG connector overlay for globe-aware flow arc cards */
+#faiSvgOverlay {
+  position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+  pointer-events: none; z-index: 649; display: none;
+}
+#faiConnectorLine {
+  stroke: rgba(0,220,130,0.35); stroke-width: 1; stroke-dasharray: 5 3; fill: none;
+  transition: opacity 0.4s ease;
+}
+#faiAnchorDot {
+  fill: rgba(0,220,130,0.6); transition: opacity 0.4s ease;
+}
 #flowArcInfoCard.visible { display: flex; }
 .faiHead { cursor: pointer; }
 .faiHead:hover .faiExpandHint { color: rgba(100,200,255,0.85); }
@@ -6033,14 +6039,15 @@ body.ticker-active #flowControls {
     .nfThreadCardMeta {
       font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
     }
-    .nfThreadCardKws {
-      display: flex; flex-wrap: wrap; gap: 3px;
+    .nfThreadCardNations {
+      display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
     }
-    .nfThreadCardKw {
-      font-size: 8px; font-weight: 600; letter-spacing: 0.06em;
-      padding: 2px 6px; border-radius: 8px;
-      background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.40);
+    .nfThreadCardFlag {
+      width: 16px; height: 11px; border-radius: 2px;
+      object-fit: cover; opacity: 0.7;
+      transition: opacity 0.15s;
     }
+    .nfThreadCardFlag:hover { opacity: 1; }
 
     /* Sort */
     .nfSortSeg {
@@ -9584,11 +9591,7 @@ window.sourceBiasBadgeHTML = function(bias) {
   </div>
 
   <!-- Tooltip -->
-  <div id="flowTooltip">
-    <div class="ftTitle" id="ftTitle"></div>
-    <div class="ftMeta"  id="ftMeta"></div>
-    <div class="ftRoute" id="ftRoute"></div>
-  </div>
+  <!-- flowTooltip removed -->
 
   <!-- Heatmap control panel -->
   <div id="semHeatPanel">
@@ -9677,6 +9680,10 @@ window.sourceBiasBadgeHTML = function(bias) {
   <div id="countryFan"></div>
 
   <!-- Flow arc click info card — expandable micro panel -->
+  <svg id="faiSvgOverlay" xmlns="http://www.w3.org/2000/svg">
+    <line id="faiConnectorLine" x1="0" y1="0" x2="0" y2="0" />
+    <circle id="faiAnchorDot" cx="0" cy="0" r="3" />
+  </svg>
   <div id="flowArcInfoCard">
     <div class="faiPillBar">
       <button class="faiMinimize" onclick="document.getElementById('flowArcInfoCard').classList.toggle('faiMinimized')">&#x2012;</button>
@@ -16893,6 +16900,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const minCount  = document.getElementById('arcListMinCount');
     if (!panel || !scroll) return;
 
+    // Prevent scroll from propagating to globe
+    scroll.addEventListener('wheel', (e) => e.stopPropagation(), { passive: false });
+    scroll.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: false });
+
     let _arcPanelDirty = false;
     let _lastPanelSync = 0;
     let _prevVisibleIds = new Set();
@@ -16960,7 +16971,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const op = arc.tubeMat?.uniforms?.uOpacity?.value || 0;
         const vs = arc.tubeMat?.uniforms?.uVisibleStart?.value || 0;
         const ve = arc.tubeMat?.uniforms?.uVisibleEnd?.value || 0;
-        // Consider visible if opacity > 0 and actually drawing something
         if (op > 0.01 && ve - vs > 0.01) {
           visibleArcs.push({ idx: i, arc, flow: arc.flow });
         }
@@ -16969,8 +16979,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Update minimized count
       minCount.textContent = visibleArcs.length;
 
-      // Check if set changed
+      // Build desired set
       const curIds = new Set(visibleArcs.map(v => v.idx));
+
+      // Quick bail if nothing changed
       if (setsEqual(curIds, _prevVisibleIds) && !_arcPanelDirty) return;
       _prevVisibleIds = curIds;
       _arcPanelDirty = false;
@@ -16980,22 +16992,63 @@ const settingsToggle     = document.getElementById("settingsToggle");
         deselectArc();
       }
 
+      // ── Diff-based DOM update ──
+      const existingEls = scroll.querySelectorAll('[data-idx]');
+      const existingMap = new Map();
+      existingEls.forEach(el => existingMap.set(el.dataset.idx, el));
+
+      // Remove bars no longer visible (animate out)
+      for (const [key, el] of existingMap) {
+        if (!curIds.has(parseInt(key, 10))) {
+          el.classList.add('fading-out');
+          el.addEventListener('transitionend', () => el.remove(), { once: true });
+          // Fallback removal if transition doesn't fire
+          setTimeout(() => { if (el.parentNode) el.remove(); }, 350);
+        }
+      }
+
+      // Remove empty-state if present
+      const emptyEl = scroll.querySelector('.arcListEmpty');
+      if (emptyEl && visibleArcs.length > 0) emptyEl.remove();
+
       if (visibleArcs.length === 0) {
-        scroll.innerHTML = '<div class="arcListEmpty">No arcs visible</div>';
+        if (!scroll.querySelector('.arcListEmpty')) {
+          scroll.innerHTML = '<div class="arcListEmpty">No arcs visible</div>';
+        }
         return;
       }
 
-      // Build DOM — keep selected card expanded
-      const frag = document.createDocumentFragment();
+      // Add/reorder bars
+      let prevEl = null;
       for (const { idx, flow } of visibleArcs) {
-        if (_selectedArcIdx === idx) {
-          frag.appendChild(buildExpandedCard(idx, flow));
+        const key = String(idx);
+        let el = existingMap.get(key);
+        if (el && !el.classList.contains('fading-out')) {
+          // Already present — just ensure correct order
+          if (prevEl) {
+            if (el.previousElementSibling !== prevEl) {
+              prevEl.after(el);
+            }
+          } else {
+            if (el !== scroll.firstElementChild) {
+              scroll.prepend(el);
+            }
+          }
         } else {
-          frag.appendChild(buildBar(idx, flow));
+          // New arc — build and insert
+          if (_selectedArcIdx === idx) {
+            el = buildExpandedCard(idx, flow);
+          } else {
+            el = buildBar(idx, flow);
+          }
+          if (prevEl) {
+            prevEl.after(el);
+          } else {
+            scroll.prepend(el);
+          }
         }
+        prevEl = el;
       }
-      scroll.innerHTML = '';
-      scroll.appendChild(frag);
     }
 
     function buildBar(idx, flow) {
@@ -17118,14 +17171,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById('flowPlayBtn').textContent = '▶ Play';
       }
 
-      // Fade all arcs except selected
+      // Hide all arcs except selected
       for (let i = 0; i < arcObjects.length; i++) {
         const arc = arcObjects[i];
         if (i === idx) {
           arc._frozenOpacity = null; // normal opacity
           arc._frozen = true;        // skip age advancement in tickArcs
         } else {
-          arc._frozenOpacity = 0.06;
+          arc._frozenOpacity = 0;    // fully hidden
         }
       }
 
@@ -17428,14 +17481,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     let _kwAbort = null;
     let _kwActiveIdx = -1;
+    let _kwLastResults = [];  // cache last fetched suggestions for validation
 
     async function fetchSuggestions(q, listEl) {
       if (_kwAbort) _kwAbort.abort();
-      if (q.length < 1) { listEl.classList.remove('visible'); return; }
+      if (q.length < 1) { listEl.classList.remove('visible'); _kwLastResults = []; return; }
       _kwAbort = new AbortController();
       try {
         const r = await fetch(`${API_BASE}/api/keyword-suggestions?q=${encodeURIComponent(q)}&limit=15`, { signal: _kwAbort.signal });
         const data = await r.json();
+        _kwLastResults = data;
         renderList(data, listEl, q);
       } catch (e) {
         if (e.name !== 'AbortError') listEl.classList.remove('visible');
@@ -17514,13 +17569,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       input.addEventListener('focus', () => {
         if (input.value.trim().length >= 1) fetchSuggestions(input.value.trim(), list);
       });
+
+      // Prevent wheel/touch scroll from propagating to globe
+      list.addEventListener('wheel', (e) => e.stopPropagation(), { passive: false });
+      list.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: false });
     });
 
     // Expose validation check for loadFlows / heatmap go
     window.__kwIsValid = function(inputEl) {
       if (!inputEl.value.trim()) return true; // empty is fine
       if (inputEl._kwValid) return true;
-      // Check if typed value matches any suggestion exactly (case-insensitive)
+      // Accept if typed value matches any cached suggestion exactly (case-insensitive)
+      const typed = inputEl.value.trim().toLowerCase();
+      if (_kwLastResults.some(it => it.name.toLowerCase() === typed)) {
+        inputEl._kwValid = true;
+        return true;
+      }
       return false;
     };
     window.__kwShowReject = function(inputEl) {
@@ -17975,56 +18039,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   setupAutocomplete("flowFromLoc", "flowFromAC", "flowFromChip", "from");
   setupAutocomplete("flowAboutLoc", "flowAboutAC", "flowAboutChip", "about");
 
-  /* Tooltip on hover */
-  const tooltip  = document.getElementById("flowTooltip");
-  const ftTitle  = document.getElementById("ftTitle");
-  const ftMeta   = document.getElementById("ftMeta");
-  const ftRoute  = document.getElementById("ftRoute");
+  /* Tooltip removed — Live Arcs panel replaces it */
   const raycasterFlow = new THREE.Raycaster();
   const mousePosFlow  = new THREE.Vector2();
-
-  window.addEventListener("mousemove", (e) => {
-    // Hide tooltip if not on globe page or flow mode not open
-    if (!flowModeOpen || window.__currentPage !== 1) {
-      tooltip.style.display = "none";
-      return;
-    }
-    const hRect = renderer.domElement.getBoundingClientRect();
-    mousePosFlow.x = ((e.clientX - hRect.left) / hRect.width) * 2 - 1;
-    mousePosFlow.y = -((e.clientY - hRect.top) / hRect.height) * 2 + 1;
-    raycasterFlow.setFromCamera(mousePosFlow, camera);
-
-    let hit = false;
-    for (const arc of arcObjects) {
-      arc.mesh.updateMatrixWorld(true);
-      if (!arc.mesh.geometry.boundingSphere) {
-        arc.mesh.geometry.computeBoundingSphere();
-      }
-      const xs = raycasterFlow.intersectObject(arc.mesh);
-      if (xs.length) {
-        const flow = arc.flow;
-        
-        if (flow.count) {
-          // Aggregate mode tooltip
-          ftTitle.textContent = `${flow.count.toLocaleString()} articles`;
-          ftMeta.textContent  = '';
-          ftRoute.textContent = `${flow.src.place} → ${flow.dst.place}`;
-        } else {
-          // Individual mode tooltip
-          ftTitle.textContent = flow.title || "(no title)";
-          ftMeta.textContent  = `${flow.sourceName || ""} · ${fmtDate(flow.publishedAt)}`;
-          ftRoute.textContent = `${flow.src.place || "?"} → ${flow.dst.place || "?"} (${flow.routingType})`;
-        }
-        tooltip.style.left    = (e.clientX + 14) + "px";
-        tooltip.style.top     = (e.clientY - 10) + "px";
-        tooltip.style.display = "block";
-        hit = true;
-        break;
-      }
-    }
-    if (!hit) tooltip.style.display = "none";
-    renderer.domElement.style.cursor = hit ? 'pointer' : '';
-  });
 
   /* Click on flow arc(s). The click radius is deliberately generous so that
      clustered arcs at the same endpoint (e.g. an article/thread panel routed
@@ -18095,6 +18112,97 @@ const settingsToggle     = document.getElementById("settingsToggle");
          __renderSignalBarList renderer as the sentiment/keyword interpanels)
        • Clicking a bar opens the article panel via openArticleDetail
      ─────────────────────────────────────────────────────────────────── */
+  /* ─── Globe-aware card positioning ────────────────────────────────
+     Anchors #flowArcInfoCard to a 3D globe coordinate. The per-frame
+     rAF loop projects the anchor to screen space, positions the card
+     beside it, draws an SVG connector line, and fades the card when
+     the anchor rotates out of view.
+     ─────────────────────────────────────────────────────────────── */
+  let _faiAnchor3D = null;   // THREE.Vector3 on globe surface
+  let _faiRafId    = null;   // current rAF handle
+
+  const _faiSvg  = document.getElementById('faiSvgOverlay');
+  const _faiLine = document.getElementById('faiConnectorLine');
+  const _faiDot  = document.getElementById('faiAnchorDot');
+
+  function _startFaiTracking(lat, lon) {
+    if (_faiRafId) cancelAnimationFrame(_faiRafId);
+    _faiAnchor3D = latLonToV3(lat, lon, GLOBE_RADIUS);
+    if (_faiSvg) _faiSvg.style.display = '';
+    _faiRafLoop();
+  }
+
+  function _faiRafLoop() {
+    const infoCard = document.getElementById('flowArcInfoCard');
+    if (!_faiAnchor3D || !infoCard || !infoCard.classList.contains('visible')) {
+      // Auto-cleanup when card is dismissed
+      _faiAnchor3D = null;
+      _faiRafId = null;
+      if (_faiSvg) _faiSvg.style.display = 'none';
+      if (infoCard) infoCard.style.opacity = '';
+      return;
+    }
+    _faiRafId = requestAnimationFrame(_faiRafLoop);
+
+    // ── Visibility: is anchor on the camera-facing hemisphere? ──
+    const camDir = camera.position.clone().normalize();
+    const ptDir  = _faiAnchor3D.clone().normalize();
+    const dot    = camDir.dot(ptDir);
+
+    const FADE_IN  =  0.10;   // fully visible above this
+    const FADE_OUT = -0.05;   // fully hidden below this
+    let opacity;
+    if (dot > FADE_IN)       opacity = 1;
+    else if (dot < FADE_OUT) opacity = 0;
+    else                     opacity = (dot - FADE_OUT) / (FADE_IN - FADE_OUT);
+
+    infoCard.style.opacity = opacity;
+    infoCard.style.pointerEvents = opacity < 0.1 ? 'none' : '';
+    if (_faiLine) _faiLine.style.opacity = opacity;
+    if (_faiDot)  _faiDot.style.opacity  = opacity;
+
+    if (opacity < 0.01) return;   // off-screen — skip layout work
+
+    // ── Project 3D anchor to screen ──
+    const rect = renderer.domElement.getBoundingClientRect();
+    const projected = _faiAnchor3D.clone().project(camera);
+    const sx = ( projected.x * 0.5 + 0.5) * rect.width  + rect.left;
+    const sy = (-projected.y * 0.5 + 0.5) * rect.height + rect.top;
+
+    // Update anchor dot
+    if (_faiDot) {
+      _faiDot.setAttribute('cx', sx);
+      _faiDot.setAttribute('cy', sy);
+    }
+
+    // ── Position card offset from projected point ──
+    const cardW = infoCard.offsetWidth  || 320;
+    const cardH = infoCard.offsetHeight || 200;
+    let cardX = sx + 24;
+    let cardY = sy - cardH * 0.5;
+
+    // Flip to left side if it would overflow right
+    if (cardX + cardW > window.innerWidth - 10) cardX = sx - cardW - 24;
+    // Vertical clamping
+    if (cardY < 10) cardY = 10;
+    if (cardY + cardH > window.innerHeight - 10) cardY = window.innerHeight - cardH - 10;
+
+    infoCard.style.left = cardX + 'px';
+    infoCard.style.top  = cardY + 'px';
+
+    // ── SVG connector line: nearest card edge → anchor dot ──
+    const cr = infoCard.getBoundingClientRect();
+    const lx = Math.max(cr.left, Math.min(cr.right,  sx));
+    const ly = Math.max(cr.top,  Math.min(cr.bottom, sy));
+
+    if (_faiLine) {
+      _faiLine.setAttribute('x1', lx);
+      _faiLine.setAttribute('y1', ly);
+      _faiLine.setAttribute('x2', sx);
+      _faiLine.setAttribute('y2', sy);
+    }
+  }
+
   function showFlowArcCard(arcs, e) {
     const infoCard = document.getElementById("flowArcInfoCard");
     if (!infoCard || !arcs || !arcs.length) return;
@@ -18112,15 +18220,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     bodyEl.scrollTop = 0;
     barListEl.innerHTML = '';
 
-    // Position card at click point, clamping to viewport.
-    infoCard.style.left = (e.clientX + 14) + "px";
-    infoCard.style.top  = (e.clientY - 10) + "px";
+    // ── Globe-aware anchoring ──
+    // Anchor card to the destination coordinate of the first arc so it
+    // tracks the globe as it rotates and hides when the point is occluded.
+    const _anchorFlow = arcs[0].flow;
+    const _aLat = _anchorFlow.dst?.lat ?? _anchorFlow.src?.lat;
+    const _aLon = _anchorFlow.dst?.lon ?? _anchorFlow.src?.lon;
+    if (_aLat != null && _aLon != null) {
+      _startFaiTracking(_aLat, _aLon);
+    } else {
+      // Fallback: fixed click-point position (no globe data)
+      infoCard.style.left = (e.clientX + 14) + 'px';
+      infoCard.style.top  = (e.clientY - 10) + 'px';
+    }
+    infoCard.style.opacity = '1';
     infoCard.classList.add("visible");
-    requestAnimationFrame(() => {
-      const r = infoCard.getBoundingClientRect();
-      if (r.right  > window.innerWidth  - 8) infoCard.style.left = (window.innerWidth  - r.width  - 8) + "px";
-      if (r.bottom > window.innerHeight - 8) infoCard.style.top  = (window.innerHeight - r.height - 8) + "px";
-    });
 
     // Fan disambiguation when more than one arc was in click range.
     if (arcs.length > 1) {
@@ -18147,6 +18261,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const chosen = arcs[idx];
         if (!chosen) return;
         infoCard.classList.remove("fan");
+        // Re-anchor to chosen arc's destination
+        const cf = chosen.flow;
+        const cLat = cf.dst?.lat ?? cf.src?.lat;
+        const cLon = cf.dst?.lon ?? cf.src?.lon;
+        if (cLat != null && cLon != null) {
+          _faiAnchor3D = latLonToV3(cLat, cLon, GLOBE_RADIUS);
+        }
         _showFlowArcSingle(chosen.flow, e);
       };
       return;
@@ -19866,7 +19987,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{window._threadImgFail(el);}})(this)`
           : `window._threadImgFail(this)`;
         const onLoad = `if(this.naturalWidth<10||this.naturalHeight<10){window._threadImgFail(this)}`;
-        const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 3) : [];
+        const nations = Array.isArray(t.primary_nations) ? t.primary_nations : [];
         const title = esc(t.title || 'Untitled thread');
         const geoNames = _resolveGeoScope(t.geographic_scope);
         const geoLabel = geoNames.length ? geoNames.map(n => esc(n)).join(', ') : '';
@@ -19897,7 +20018,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
             <div class="nfThreadCardFooter">
               <span class="nfThreadCardMeta">${count} article${count !== 1 ? 's' : ''}</span>
-              <div class="nfThreadCardKws">${kws.map(k => `<span class="nfThreadCardKw">${esc(k)}</span>`).join('')}</div>
+              <div class="nfThreadCardNations">${nations.map(iso => `<img class="nfThreadCardFlag" src="https://flagcdn.com/w40/${iso.toLowerCase()}.png" alt="${iso}" title="${iso}">`).join('')}</div>
             </div>
           </div>
         </div></div>`;
@@ -21035,11 +21156,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/article/${articleId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        console.warn("No flows found for article", articleId);
-        // Highlight origin country if available
+        // No flow arcs — single-location story. Keep the context card
+        // visible, highlight the origin country, and rotate the camera.
         const _originIso = _ctxArticle?.iso_code || data.article?.iso_code;
-        if (_originIso) window.__flowHighlightCountries?.(new Set([String(_originIso).toUpperCase()]));
-        hideFlowArcBackBtn();
+        if (_originIso) {
+          const iso = String(_originIso).toUpperCase();
+          window.__flowHighlightCountries?.(new Set([iso]));
+          const _c = (window.__globeCountries || []).find(
+            c => c && (c.iso_code || '').toUpperCase() === iso
+          );
+          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+        }
+        // Show back button so user can return (don't call hideFlowArcBackBtn — it hides the ctx card)
+        const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
+        showFlowArcBackBtn(backLabel);
         return;
       }
 
@@ -21156,11 +21286,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/thread/${threadId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        console.warn("No flows found for thread", threadId);
-        // Highlight origin country if available
+        // No flow arcs — single-location story. Keep context card,
+        // highlight the origin country, and rotate camera.
         const _originIso = _ctxThread?.iso_code || data.thread?.iso_code || _ctxThread?.country_code;
-        if (_originIso) window.__flowHighlightCountries?.(new Set([String(_originIso).toUpperCase()]));
-        hideFlowArcBackBtn();
+        if (_originIso) {
+          const iso = String(_originIso).toUpperCase();
+          window.__flowHighlightCountries?.(new Set([iso]));
+          const _c = (window.__globeCountries || []).find(
+            c => c && (c.iso_code || '').toUpperCase() === iso
+          );
+          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+        }
+        const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
+        showFlowArcBackBtn(backLabel);
         return;
       }
 
@@ -21261,11 +21399,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/timeline/${timelineId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        console.warn("No flows found for timeline", timelineId);
-        // Highlight origin country if available
+        // No flow arcs — single-location story. Keep context card,
+        // highlight the origin country, and rotate camera.
         const _originIso = _ctxTimeline?.iso_code || data.timeline?.iso_code || _ctxTimeline?.country_code;
-        if (_originIso) window.__flowHighlightCountries?.(new Set([String(_originIso).toUpperCase()]));
-        hideFlowArcBackBtn();
+        if (_originIso) {
+          const iso = String(_originIso).toUpperCase();
+          window.__flowHighlightCountries?.(new Set([iso]));
+          const _c = (window.__globeCountries || []).find(
+            c => c && (c.iso_code || '').toUpperCase() === iso
+          );
+          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+        }
+        const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
+        showFlowArcBackBtn(backLabel);
         return;
       }
 
@@ -31548,8 +31694,6 @@ body.ticker-active .gTickerLabel {
   window.__semHeatClose = function () {
     window.__semHeatActive = false;
     document.body.classList.remove('sem-heatmap-active');
-    panel.classList.remove('visible');
-    panel.classList.remove('minimized');
     stopPlayback();
     clearMarkers();
     removeHeatSphere();
@@ -31561,6 +31705,21 @@ body.ticker-active .gTickerLabel {
     // heatmap from a news feed article/thread card redirect.
     try { window.hideFlowCtxCard?.(); } catch (_) {}
     window.__flowArcOriginForHeat = null;
+    // Animate out then hide
+    if (panel.classList.contains('minimized')) {
+      // Minimized bar — just hide immediately (no panel to fade)
+      panel.classList.remove('visible', 'minimized');
+    } else {
+      panel.classList.add('fading-out');
+      panel.addEventListener('animationend', function _onFade() {
+        panel.removeEventListener('animationend', _onFade);
+        panel.classList.remove('visible', 'minimized', 'fading-out');
+      }, { once: true });
+      // Safety fallback
+      setTimeout(() => {
+        panel.classList.remove('visible', 'minimized', 'fading-out');
+      }, 400);
+    }
   };
 
   window.__semHeatMinimize = function() {

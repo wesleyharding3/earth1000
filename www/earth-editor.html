@@ -854,6 +854,13 @@
             <label>Keywords <span style="color:#64748b;font-weight:400;">(comma-separated)</span></label>
             <input type="text" id="thd-edit-keywords" class="seg-input" placeholder="trade, tariffs, economy..." />
           </div>
+          <div class="thd-field">
+            <label>Primary Nations <span style="color:#64748b;font-weight:400;">(comma-separated ISO codes, e.g. US, CN, RU)</span></label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="text" id="thd-edit-nations" class="seg-input" placeholder="US, CN, RU, UA..." style="flex:1;" />
+              <div id="thd-nations-flags" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+            </div>
+          </div>
           <div class="thd-save-row">
             <button class="btn-primary" onclick="saveThreadEdits()">Save Changes</button>
             <span id="thd-save-status" class="thd-save-status"></span>
@@ -2476,6 +2483,19 @@
       }
     }
 
+    function _renderNationFlags(val) {
+      const el = document.getElementById('thd-nations-flags');
+      if (!el) return;
+      const codes = val.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      el.innerHTML = codes.map(iso =>
+        `<img src="https://flagcdn.com/w40/${iso.toLowerCase()}.png" alt="${iso}" title="${iso}" style="width:20px;height:14px;border-radius:2px;object-fit:cover;" onerror="this.style.display='none'">`
+      ).join('');
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      const nInput = document.getElementById('thd-edit-nations');
+      if (nInput) nInput.addEventListener('input', () => _renderNationFlags(nInput.value));
+    });
+
     function populateThreadDetail() {
       const t = currentDetailThread;
       document.getElementById('thd-edit-title').value = t.title || '';
@@ -2485,6 +2505,9 @@
       document.getElementById('thd-edit-importance').value = t.importance || 5;
       document.getElementById('thd-edit-geo').value = t.geographic_scope || '';
       document.getElementById('thd-edit-keywords').value = (t.keywords || []).join(', ');
+      const nationsVal = (t.primary_nations || []).join(', ');
+      document.getElementById('thd-edit-nations').value = nationsVal;
+      _renderNationFlags(nationsVal);
       document.getElementById('thd-save-status').textContent = '';
 
       // Hero image
@@ -2544,6 +2567,7 @@
         importance: parseFloat(document.getElementById('thd-edit-importance').value) || 5,
         geographic_scope: document.getElementById('thd-edit-geo').value.trim(),
         keywords: document.getElementById('thd-edit-keywords').value,
+        primary_nations: document.getElementById('thd-edit-nations').value,
         image_url: document.getElementById('thd-edit-image').value.trim() || null,
       };
 
