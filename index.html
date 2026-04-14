@@ -2452,7 +2452,7 @@ body.ticker-active #flowControls {
 
 /* Scrollable article list */
 .arcListScroll {
-  overflow-y: auto; flex: 1; min-height: 0; padding: 4px 0;
+  overflow-y: auto; flex: 1 1 auto; min-height: 160px; padding: 4px 0;
   scrollbar-width: thin; scrollbar-color: rgba(0,220,130,0.15) transparent;
   -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   touch-action: pan-y;
@@ -2473,14 +2473,14 @@ body.ticker-active #flowControls {
   animation: arcBarEnter 0.3s ease-out;
 }
 @keyframes arcBarEnter {
-  from { opacity: 0; transform: translateX(-10px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .arcBar:hover { background: rgba(0,220,130,0.06); }
 .arcBar.selected { background: rgba(0,220,130,0.12); border-left: 2px solid rgba(0,220,130,0.6); }
-.arcBar.fading-out {
-  opacity: 0; transform: translateX(-10px);
-  transition: opacity 0.3s, transform 0.3s;
+.arcBar.fading-out, .arcCardExpanded.fading-out {
+  opacity: 0; transition: opacity 0.25s;
+  pointer-events: none;
 }
 
 .arcBarRoute {
@@ -16267,6 +16267,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let flowData        = [];
   let arcObjects      = [];
   let arcPool         = [];
+  let _arcNextUid     = 0;  // monotonic UID for stable DOM keying
   let flowPlaying     = false;
   let flowProgress    = 0;
   let flowSpeed       = 1.0;
@@ -16576,6 +16577,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     // Reset arc state
+    arc._uid = _arcNextUid++;
     arc.flow = flow;
     arc.age  = 0;
     arc.isStatic = !!flow.count;  // aggregate arcs don't expire
@@ -16944,8 +16946,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     let _arcPanelDirty = false;
     let _lastPanelSync = 0;
-    let _prevVisibleIds = new Set();
-    let _selectedArcIdx = null;   // index in arcObjects
+    let _prevVisibleUids = new Set();
+    let _selectedArcUid = null;   // stable UID of selected arc
     let _minimized = false;
     const SYNC_INTERVAL = 250; // ms
 
@@ -17004,45 +17006,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!panel.classList.contains('visible') && !minBar.classList.contains('visible')) return;
 
       const visibleArcs = [];
-      for (let i = 0; i < arcObjects.length; i++) {
-        const arc = arcObjects[i];
-        if (!arc.flow) continue;
+      for (const arc of arcObjects) {
+        if (!arc.flow || arc._uid == null) continue;
         const op = arc.tubeMat?.uniforms?.uOpacity?.value || 0;
         const vs = arc.tubeMat?.uniforms?.uVisibleStart?.value || 0;
         const ve = arc.tubeMat?.uniforms?.uVisibleEnd?.value || 0;
-        if (op > 0.01 && ve - vs > 0.01) {
-          visibleArcs.push({ idx: i, arc, flow: arc.flow });
+        // Hysteresis: keep existing bars at a lower threshold than new ones
+        const wasVisible = _prevVisibleUids.has(arc._uid);
+        const threshold = wasVisible ? 0.005 : 0.03;
+        if (op > threshold && ve - vs > 0.01) {
+          visibleArcs.push({ uid: arc._uid, arc, flow: arc.flow });
         }
       }
 
       // Update minimized count
       minCount.textContent = visibleArcs.length;
 
-      // Build desired set
-      const curIds = new Set(visibleArcs.map(v => v.idx));
+      // Build desired set (stable UIDs)
+      const curUids = new Set(visibleArcs.map(v => v.uid));
 
       // Quick bail if nothing changed
-      if (setsEqual(curIds, _prevVisibleIds) && !_arcPanelDirty) return;
-      _prevVisibleIds = curIds;
+      if (setsEqual(curUids, _prevVisibleUids) && !_arcPanelDirty) return;
+      _prevVisibleUids = curUids;
       _arcPanelDirty = false;
 
       // If selected arc is gone, deselect
-      if (_selectedArcIdx !== null && !curIds.has(_selectedArcIdx)) {
+      if (_selectedArcUid !== null && !curUids.has(_selectedArcUid)) {
         deselectArc();
       }
 
-      // ── Diff-based DOM update ──
-      const existingEls = scroll.querySelectorAll('[data-idx]');
+      // ── Diff-based DOM update using stable UIDs ──
+      const existingEls = scroll.querySelectorAll('[data-uid]');
       const existingMap = new Map();
-      existingEls.forEach(el => existingMap.set(el.dataset.idx, el));
+      existingEls.forEach(el => existingMap.set(el.dataset.uid, el));
 
       // Remove bars no longer visible (animate out)
       for (const [key, el] of existingMap) {
-        if (!curIds.has(parseInt(key, 10))) {
-          el.classList.add('fading-out');
-          el.addEventListener('transitionend', () => el.remove(), { once: true });
-          // Fallback removal if transition doesn't fire
-          setTimeout(() => { if (el.parentNode) el.remove(); }, 350);
+        if (!curUids.has(parseInt(key, 10))) {
+          if (!el.classList.contains('fading-out')) {
+            el.classList.add('fading-out');
+            el.addEventListener('transitionend', () => el.remove(), { once: true });
+            setTimeout(() => { if (el.parentNode) el.remove(); }, 350);
+          }
         }
       }
 
@@ -17059,20 +17064,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Add/reorder bars — replace bar↔expanded when selection changes
       let prevEl = null;
-      for (const { idx, flow } of visibleArcs) {
-        const key = String(idx);
+      for (const { uid, flow } of visibleArcs) {
+        const key = String(uid);
         let el = existingMap.get(key);
-        const shouldExpand = (_selectedArcIdx === idx);
+        const shouldExpand = (_selectedArcUid === uid);
 
         if (el && !el.classList.contains('fading-out')) {
           // Check if we need to swap bar↔expanded card
           const isExpanded = el.classList.contains('arcCardExpanded');
           if (shouldExpand && !isExpanded) {
-            const newEl = buildExpandedCard(idx, flow);
+            const newEl = buildExpandedCard(uid, flow);
             el.replaceWith(newEl);
             el = newEl;
           } else if (!shouldExpand && isExpanded) {
-            const newEl = buildBar(idx, flow);
+            const newEl = buildBar(uid, flow);
             el.replaceWith(newEl);
             el = newEl;
           }
@@ -17082,9 +17087,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           } else {
             if (el !== scroll.firstElementChild) scroll.prepend(el);
           }
-        } else {
-          // New arc — build and insert
-          el = shouldExpand ? buildExpandedCard(idx, flow) : buildBar(idx, flow);
+        } else if (!el) {
+          // New arc — build and insert (no animation re-trigger for existing)
+          el = shouldExpand ? buildExpandedCard(uid, flow) : buildBar(uid, flow);
           if (prevEl) {
             prevEl.after(el);
           } else {
@@ -17095,10 +17100,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
-    function buildBar(idx, flow) {
+    function buildBar(uid, flow) {
       const div = document.createElement('div');
       div.className = 'arcBar';
-      div.dataset.idx = idx;
+      div.dataset.uid = uid;
 
       const srcName = flow.src?.place || 'Unknown';
       const dstName = flow.dst?.place || 'Unknown';
@@ -17110,14 +17115,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         (title ? `<div class="arcBarTitle">${esc(title)}</div>` : '') +
         (time ? `<div class="arcBarTime">${time}</div>` : '');
 
-      div.addEventListener('click', () => selectArc(idx));
+      div.addEventListener('click', () => selectArc(uid));
       return div;
     }
 
-    function buildExpandedCard(idx, flow) {
+    function buildExpandedCard(uid, flow) {
       const div = document.createElement('div');
       div.className = 'arcCardExpanded';
-      div.dataset.idx = idx;
+      div.dataset.uid = uid;
 
       const srcName = flow.src?.place || 'Unknown';
       const dstName = flow.dst?.place || 'Unknown';
@@ -17128,7 +17133,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (isAggregate) {
         // Aggregate route — show loading, then fetch articles
         html += `<div class="arcCardOrigin">${esc(srcName)} → ${esc(dstName)} · ${flow.count} articles</div>`;
-        html += `<div class="arcCardSummary" id="arcRouteArticles_${idx}"><span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span></div>`;
+        html += `<div class="arcCardSummary" id="arcRouteArticles_${uid}"><span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span></div>`;
         html += `<div class="arcCardActions">`;
         html += `<button class="arcCardBtn globe" data-action="globe">View on Globe</button>`;
         html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
@@ -17167,13 +17172,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Fetch route articles for aggregate arcs
       if (isAggregate && flow.src?.id && flow.dst?.id) {
-        fetchRouteArticles(flow, idx);
+        fetchRouteArticles(flow, uid);
       }
 
       return div;
     }
 
-    async function fetchRouteArticles(flow, idx) {
+    async function fetchRouteArticles(flow, uid) {
       try {
         const params = new URLSearchParams({
           src_id: flow.src.id, dst_id: flow.dst.id,
@@ -17187,7 +17192,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const r = await fetch(`https://earth-wjr6.onrender.com/api/flows/route-articles?${params}`);
         const articles = await r.json();
-        const container = document.getElementById(`arcRouteArticles_${idx}`);
+        const container = document.getElementById(`arcRouteArticles_${uid}`);
         if (!container) return;
 
         if (!articles.length) {
@@ -17226,14 +17231,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       } catch (e) {
         console.error('Route articles fetch error:', e);
-        const container = document.getElementById(`arcRouteArticles_${idx}`);
+        const container = document.getElementById(`arcRouteArticles_${uid}`);
         if (container) container.textContent = 'Failed to load articles';
       }
     }
 
     // ── Select / Deselect ──
-    function selectArc(idx) {
-      _selectedArcIdx = idx;
+    function selectArc(uid) {
+      _selectedArcUid = uid;
       _arcPanelDirty = true;
 
       // Pause playback in time-series mode
@@ -17242,19 +17247,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById('flowPlayBtn').textContent = '▶ Play';
       }
 
-      // Hide all arcs except selected
-      for (let i = 0; i < arcObjects.length; i++) {
-        const arc = arcObjects[i];
-        if (i === idx) {
+      // Hide all arcs except selected (match by UID)
+      let selectedArc = null;
+      for (const arc of arcObjects) {
+        if (arc._uid === uid) {
           arc._frozenOpacity = null; // normal opacity
           arc._frozen = true;        // skip age advancement in tickArcs
+          selectedArc = arc;
         } else {
           arc._frozenOpacity = 0;    // fully hidden
         }
       }
 
       // Show globe-aware hover card for individual (non-aggregate) arcs
-      const selectedArc = arcObjects[idx];
       const sf = selectedArc?.flow;
       if (sf && !sf.count) {
         // Individual arc — show hover card anchored to destination
@@ -17285,8 +17290,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function deselectArc() {
-      if (_selectedArcIdx === null) return;
-      _selectedArcIdx = null;
+      if (_selectedArcUid === null) return;
+      _selectedArcUid = null;
       _arcPanelDirty = true;
 
       // Hide hover card
