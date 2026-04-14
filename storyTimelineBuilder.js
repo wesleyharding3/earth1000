@@ -52,6 +52,39 @@ const BASE_PRIORITY_FLOOR  = 0.45;       // wider net — top ~35%
 const ATTACH_THRESHOLD     = 2.5;        // min score to attach article to existing timeline
 const STRONG_ATTACH        = 5.0;        // score above this = definite match, skip lower-scored timelines
 
+// ── Generic topic-bucket filter ─────────────────────────────────────────────
+// Catch any abstract "Global X" / "Renewable Y" topic-category titles that
+// Claude sometimes creates despite the prompt. These aren't geopolitical arcs.
+const GENERIC_TOPIC_PATTERNS = [
+  /^global\s+\w+\s+(crisis|policy|security|transition|reform|system|investment|slowdown|negotiation)/i,
+  /^regional\s+\w+\s+(development|cooperation|infrastructure)/i,
+  /^\w+\s+energy\s+(transition|infrastructure|expansion|security)/i,
+  /^(extreme|natural|climate)\s+\w+\s+(response|disaster|impact)/i,
+  /^(cyber|digital|quantum)\s+\w+\s+(standard|breach|development|transition|infrastructure)/i,
+  /^(african|indo-pacific|sub-saharan)\s+\w+\s+(infrastructure|governance|reform|stress)/i,
+  /^(ai|artificial intelligence)\s+(in|for|and)\s+/i,
+  /^global\s+(organized|protest|labor|data|semiconductor|food|health|monetary|economic|hydrogen|energy)/i,
+  /^(renewable|green|clean)\s+energy/i,
+  /^(cultural|heritage)\s+\w+\s+(protection|preservation)/i,
+  /^cost\s+of\s+living/i,
+  /^(faith|religion)\s*[-–]?\s*based/i,
+  /^space\s+exploration$/i,
+  /^(media|press)\s+(freedom|regulation)/i,
+];
+const COUNTRY_SIGNAL_RE = /\b(gaza|palestine|ukraine|russia|iran|israel|china|taiwan|north korea|dprk|venezuela|syria|yemen|myanmar|burma|sudan|ethiopia|libya|haiti|cuba|hungary|turkey|india|pakistan|lebanon|iraq|afghanistan|somalia|congo|drc|niger|mali|burkina|chad|nigeria|brazil|mexico|colombia|peru|chile|argentina|egypt|saudi|qatar|uae|bahrain|jordan|georgia|armenia|azerbaijan|moldova|belarus|poland|romania|serbia|kosovo|bosnia|philippines|indonesia|thailand|vietnam|japan|korea|kenya|tanzania|mozambique|zimbabwe|south africa|morocco|algeria|tunisia)\b/i;
+
+function isGenericTopicBucket(title) {
+  const lower = title.toLowerCase().trim();
+  for (const pat of GENERIC_TOPIC_PATTERNS) {
+    if (pat.test(lower)) {
+      // Rescue if it mentions a specific country
+      if (COUNTRY_SIGNAL_RE.test(lower)) return false;
+      return true;
+    }
+  }
+  return false;
+}
+
 const SKIP_KEYWORDS = new Set([
   "government","minister","president","official","said","year","people",
   "new","first","last","will","also","one","two","three","could","would",
@@ -271,6 +304,12 @@ async function run() {
         const ALLOWED_CATS = new Set(['politics','economy','military','diplomacy','environment','technology','conflict','security']);
         if (cat && !ALLOWED_CATS.has(cat)) {
           console.log(`\n   🚫 Rejected "${def.title}" (category=${cat})`);
+          continue;
+        }
+
+        // Reject generic topic buckets that slipped past the prompt
+        if (isGenericTopicBucket(def.title)) {
+          console.log(`\n   🚫 Rejected generic bucket "${def.title}"`);
           continue;
         }
 
@@ -657,7 +696,7 @@ async function claudeCreateTimelines(articles, existingTimelines) {
     scope: t.scope,
   }));
 
-  const prompt = `You are creating NEW broad geopolitical timeline arcs. These are UMBRELLA-LEVEL multi-month narratives. Articles that match an existing arc have already been attached — these articles are UNMATCHED leftovers.
+  const prompt = `You are creating NEW broad geopolitical timeline arcs for a GEOPOLITICS app. These are UMBRELLA-LEVEL multi-month narratives tracking SPECIFIC ongoing crises, conflicts, and power shifts — NOT abstract global topic categories.
 
 Your job: group these unmatched articles into genuinely NEW timeline arcs that don't already exist.
 
@@ -665,12 +704,29 @@ Your job: group these unmatched articles into genuinely NEW timeline arcs that d
 ${JSON.stringify(existingInfo, null, 1)}
 
 ═══ RULES ═══
-• Title: 2-5 words MAX. Name the ARC: "Gaza War", "NATO", "Sahel Insurgency"
-• Scope: stable snake_case slug: "gaza_war", "nato", "sahel_insurgency"
-• Only create if 3+ articles clearly belong to the same arc
-• REJECT: sports, entertainment, local crime, product launches, lifestyle
-• If articles don't form a coherent arc, return empty array []
-• importance: 5-9 (9 = major global conflict, 5 = regional development)
+• Title: 2-5 words MAX. Name the ARC: "Gaza Genocide", "NATO Expansion", "Sahel Insurgency"
+• Scope: stable snake_case slug: "gaza_genocide", "nato_expansion", "sahel_insurgency"
+• Only create if 3+ articles clearly belong to the same SPECIFIC arc
+• importance: 5-10 (10 = genocide/major war, 9 = major conflict, 5 = regional political shift)
+
+═══ MANDATORY REJECTIONS ═══
+REJECT all of the following — they are NOT valid geopolitical arcs:
+• Sports, entertainment, local crime, product launches, lifestyle
+• Abstract global categories: "Global Energy Transition", "Renewable Energy", "Climate Crisis", "Cost of Living", "Cybersecurity Standards", "Digital Infrastructure", "AI Regulation", "Global Health", "Food Security", "Labor Negotiations"
+• Generic topic buckets that lack a SPECIFIC country, actor, or event: "Cultural Heritage Protection", "Extreme Weather Response", "Global Economic Slowdown"
+• Any title starting with "Global" followed by an abstract noun (policy, transition, security, reform, etc.)
+
+═══ WHAT MAKES A VALID ARC ═══
+A valid arc has a SPECIFIC geopolitical signal:
+  ✅ "Hungary Election Crisis" — specific country, specific event
+  ✅ "US-Iran Blockade" — specific actors, specific action
+  ✅ "Gaza Genocide" — specific location, specific crisis
+  ✅ "DRC-Rwanda Proxy War" — specific countries, specific conflict
+  ❌ "Global Energy Security" — no specific actor or event
+  ❌ "Renewable Energy Transition" — abstract category, not a story arc
+  ❌ "Natural Disasters & Climate Impacts" — vague topic bucket
+
+If articles don't form a SPECIFIC geopolitical arc, return empty array [].
 
 ═══ UNMATCHED ARTICLES ═══
 ${JSON.stringify(articleData, null, 1)}

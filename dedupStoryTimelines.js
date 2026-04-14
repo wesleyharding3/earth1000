@@ -177,20 +177,32 @@ async function askClaudeForMergePlan(timelines) {
     description: (t.description || "").slice(0, 300)
   }));
 
-  const prompt = `You are the timeline editor for a global-news platform. Below is a list of ACTIVE umbrella timelines. Many are duplicates or near-duplicates of each other — the same arc was spawned twice with slightly different titles/scopes. Your job is to find those duplicate clusters and tell me which to merge together.
+  const prompt = `You are the timeline editor for a GEOPOLITICS platform. Below is a list of ACTIVE umbrella timelines. Many are duplicates or near-duplicates of each other — the same arc was spawned twice with slightly different titles/scopes. Your job is to find those duplicate clusters and tell me which to merge together.
 
 ═══ WHAT COUNTS AS A DUPLICATE ═══
 Two timelines should be merged if they cover the SAME UMBRELLA ARC:
   • Same war or conflict theater (e.g. two "Ukraine-Russia war" timelines)
   • Same political crisis in the same country (e.g. two "Trump NATO restructuring" timelines)
-  • Same humanitarian or climate crisis in the same region/window
-  • Same diplomatic process between the same parties
+  • Same diplomatic process between the same parties — TREAT SYNONYMS AS IDENTICAL:
+    "Negotiations" = "Talks" = "Dialogue" = "Discussions"
+    "Ceasefire" = "Truce" = "Armistice"
+    "Escalation" = "Intensification" = "Buildup"
+    "Crisis" = "Turmoil" = "Upheaval" = "Unrest"
+    "Transition" = "Succession" = "Changeover"
+    "Realignment" = "Reset" = "Recalibration"
   • Same named scandal, investigation, or protest movement
+  • Example: "Israel-Lebanon Ceasefire Negotiations" = "Israel-Lebanon Ceasefire Talks" = "Israel-Lebanon Direct Negotiations" → ALL THE SAME ARC
+  • Example: "Iran Leadership Transition Crisis" = "Iran Leadership Succession Crisis" → SAME ARC
+  • Example: "Hungary's Democratic Realignment" = "Hungary's Democratic Reset" → SAME ARC
+
+Also flag for removal any GENERIC TOPIC BUCKET that isn't a real geopolitical arc:
+  • "Global Energy Transition", "Renewable Energy", "Cost of Living Crisis", "Cybersecurity Standards" → these are categories, not story arcs
+  • Propose merging them into the nearest real arc, or if none, add them to merge_ids with keep_id of the most relevant real arc
 
 Sibling arcs that are GENUINELY DISTINCT should NOT be merged:
   • "Iran-Israel war" ≠ "Iran leadership succession" (war vs. domestic succession)
-  • "Ukraine-Russia war" ≠ "Hungarian intel leak to Russia" (different theaters, even if both involve Russia)
-  • "Gaza war" ≠ "Israel-Lebanon conflict" (distinct fronts, even if linked)
+  • "Ukraine-Russia war" ≠ "Hungarian intel leak to Russia" (different theaters)
+  • "Gaza genocide" ≠ "Israel-Lebanon conflict" (distinct fronts, even if linked)
   • Different countries' elections or protests — each is its own arc
 
 ═══ WHICH TIMELINE TO KEEP ═══
