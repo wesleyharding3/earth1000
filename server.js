@@ -2899,7 +2899,7 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
           SELECT COALESCE(img.public_url, '') FROM story_thread_articles sta
           JOIN news_articles a ON a.id = sta.article_id
           LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-          LEFT JOIN image_assets img ON img.id = aia.image_asset_id
+          LEFT JOIN image_assets img ON img.id = aia.image_id
           WHERE sta.thread_id = st.id AND img.public_url IS NOT NULL AND img.public_url <> ''
           ORDER BY sta.relevance_score DESC, a.published_at DESC LIMIT 1
         )) AS hero_image_url,
@@ -2940,7 +2940,7 @@ app.get('/api/admin/threads/:id', requireAdmin, async (req, res) => {
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img ON img.id = aia.image_asset_id
+      LEFT JOIN image_assets img ON img.id = aia.image_id
       LEFT JOIN news_sources ns ON ns.id = a.source_id
       LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       WHERE sta.thread_id = $1
@@ -4283,7 +4283,7 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
         JOIN news_articles a ON a.id = sta.article_id
         LEFT JOIN countries co ON co.id = a.country_id
         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img ON img.id = aia.image_asset_id
+        LEFT JOIN image_assets img ON img.id = aia.image_id
         WHERE sta.thread_id = rt.thread_id
         ORDER BY
           (img.public_url IS NOT NULL AND img.public_url <> '') DESC,
@@ -4349,7 +4349,7 @@ app.get("/api/threads/id/:id", async (req, res) => {
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img ON img.id = aia.image_asset_id
+      LEFT JOIN image_assets img ON img.id = aia.image_id
       WHERE sta.thread_id = $1
       ORDER BY
         (img.public_url IS NOT NULL AND img.public_url <> '') DESC,
@@ -4543,7 +4543,7 @@ app.get("/api/threads/latest", async (req, res) => {
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN countries co ON co.id = a.country_id
       LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img ON img.id = aia.image_asset_id
+      LEFT JOIN image_assets img ON img.id = aia.image_id
       WHERE sta.thread_id = ANY($1)
       ORDER BY sta.thread_id,
         (img.public_url IS NOT NULL AND img.public_url <> '') DESC,
