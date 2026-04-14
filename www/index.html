@@ -15825,6 +15825,99 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const MAX_VISIBLE    = 120;
   const FLAG_CDN       = "https://flagcdn.com/w40/";
 
+  /* ── Flow-contact highlighting state ── */
+  // Tracks which country ISOs have active arcs touching them (src during travel+hold, dst during travel+hold)
+  let _flowContactISOs = new Set();
+  let _flowContactDirty = false;
+
+  /* ── City node ring pulse pool ── */
+  const FLOW_RING_COUNT = 16;        // max simultaneous ring pulses
+  const FLOW_RING_SEGMENTS = 48;
+  const FLOW_RING_START_R = 0.006;
+  const FLOW_RING_THICKNESS = 0.00015;
+  const FLOW_RING_MAX_SCALE = 6;
+  const FLOW_RING_SPEED = 0.6;       // pulses per second
+  const flowRingPool = [];
+  let flowRingGroup = null;
+
+  function initFlowRings() {
+    flowRingGroup = new THREE.Group();
+    flowRingGroup.renderOrder = 4;
+    scene.add(flowRingGroup);
+    for (let i = 0; i < FLOW_RING_COUNT; i++) {
+      const geo = new THREE.RingGeometry(FLOW_RING_START_R, FLOW_RING_START_R + FLOW_RING_THICKNESS * 6, FLOW_RING_SEGMENTS);
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(0.3, 1.0, 0.5),
+        transparent: true, opacity: 0,
+        side: THREE.DoubleSide, depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      flowRingGroup.add(mesh);
+      flowRingPool.push({ mesh, mat, active: false, progress: 0, lat: 0, lon: 0, _arcId: null });
+    }
+  }
+
+  function spawnFlowRing(lat, lon, color, arcId) {
+    // Find inactive ring or oldest
+    let ring = flowRingPool.find(r => !r.active);
+    if (!ring) ring = flowRingPool.reduce((a, b) => a.progress > b.progress ? a : b);
+
+    ring.active = true;
+    ring.progress = 0;
+    ring.lat = lat;
+    ring.lon = lon;
+    ring._arcId = arcId;
+    ring.mat.color.set(color || 0x50ff80);
+    ring.mat.opacity = 0.7;
+    ring.mesh.visible = true;
+    ring.mesh.scale.set(1, 1, 1);
+
+    // Position on globe surface
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lon + 180) * Math.PI / 180;
+    const r = GLOBE_RADIUS * 1.001;
+    ring.mesh.position.set(
+      -r * Math.sin(phi) * Math.cos(theta),
+       r * Math.cos(phi),
+       r * Math.sin(phi) * Math.sin(theta)
+    );
+    ring.mesh.lookAt(0, 0, 0);
+  }
+
+  function tickFlowRings(delta) {
+    if (!flowRingGroup) return;
+    for (const ring of flowRingPool) {
+      if (!ring.active) continue;
+      ring.progress += delta * FLOW_RING_SPEED;
+      if (ring.progress >= 1) {
+        ring.progress = 0; // loop while arc is active
+      }
+      const scale = 1 + ring.progress * (FLOW_RING_MAX_SCALE - 1);
+      ring.mesh.scale.set(scale, scale, scale);
+      ring.mat.opacity = 0.65 * Math.pow(1 - ring.progress, 1.5);
+    }
+  }
+
+  function deactivateFlowRing(arcId) {
+    for (const ring of flowRingPool) {
+      if (ring._arcId === arcId && ring.active) {
+        ring.active = false;
+        ring.mesh.visible = false;
+        ring.mat.opacity = 0;
+      }
+    }
+  }
+
+  function clearAllFlowRings() {
+    for (const ring of flowRingPool) {
+      ring.active = false;
+      ring.mesh.visible = false;
+      ring.mat.opacity = 0;
+    }
+  }
+
   /* ── State ── */
   let flowData        = [];
   let arcObjects      = [];
@@ -15847,6 +15940,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const particleGroup = new THREE.Group();
   scene.add(flowGroup);
   scene.add(particleGroup);
+
+  // Initialize city node ring pulse pool
+  initFlowRings();
 
   /* ── Materials ── */
   function makeArcMaterial(color, opacity) {
@@ -16221,6 +16317,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       recycleArc(arcObjects[i]);
     }
     arcObjects.length = 0;
+    clearAllFlowRings();
+    _flowContactISOs.clear();
+    _flowContactDirty = true;
   }
 
   /* ── Animate individual arcs ── */
@@ -16244,9 +16343,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     delta *= flowSpeed;
     globalPulseTime += delta * PULSE_SPEED;
 
+    // Collect ISOs of countries being touched by active arcs this frame
+    const frameContactISOs = new Set();
+    // Track which arc IDs have active city-node contact for ring pulses
+    const frameActiveRingArcs = new Set();
+
     for (let i = arcObjects.length - 1; i >= 0; i--) {
       const arc = arcObjects[i];
-      
+      const flow = arc.flow;
+
       // Update pulse position for all arcs (including static)
       const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
       if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
@@ -16255,7 +16360,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       if (arc.isStatic) {
         // Phase 1 — one-shot draw-in from origin → destination.
-        // A leading spark rides the wavefront so the eye tracks direction.
         if (!arc.drawInPlayed) {
           arc.drawInElapsed += delta;
           const t = arc.drawInElapsed - arc.drawInDelay;
@@ -16268,30 +16372,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
             continue;
           }
           const rawT = clamp01(t / arc.drawInDuration);
-          // easeOutCubic — fast takeoff, graceful settle at destination.
           const eased = 1 - Math.pow(1 - rawT, 3);
           const visEnd = Math.max(0.001, eased);
           arc.tubeMat.uniforms.uVisibleStart.value = 0;
           arc.tubeMat.uniforms.uVisibleEnd.value = visEnd;
-          // Fade opacity in over the first ~25% so the spawn feels soft.
           const fadeIn = clamp01(rawT * 4);
           arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity * fadeIn;
-          // Leading spark rides the wavefront.
           setArcOrb(arc, visEnd, 0xffffff, fadeIn);
-          if (rawT >= 1) {
-            arc.drawInPlayed = true;
+
+          // Contact: src touched from start, dst touched when visEnd > 0.85
+          if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+          // City ring pulse at dst when arc arriving
+          if (visEnd > 0.85 && flow.dst?.type === 'city') {
+            const arcKey = `static_${i}`;
+            frameActiveRingArcs.add(arcKey);
+            if (!arc._dstRingSpawned) {
+              arc._dstRingSpawned = true;
+              spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), arcKey);
+            }
           }
+
+          if (rawT >= 1) arc.drawInPlayed = true;
           continue;
         }
-        // Phase 2 — held visible with gentle ambient directional pulse.
+        // Phase 2 — held visible: both src and dst actively touched
         arc.tubeMat.uniforms.uVisibleStart.value = 0;
         arc.tubeMat.uniforms.uVisibleEnd.value = 1;
         arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
         arc.orb.material.opacity = 0;
         arc.orb.visible = false;
+
+        if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+        if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+        // Persistent ring for city nodes in aggregate held phase
+        if (flow.src?.type === 'city') {
+          const srcKey = `static_src_${i}`;
+          frameActiveRingArcs.add(srcKey);
+          if (!arc._srcRingSpawned) { arc._srcRingSpawned = true; spawnFlowRing(flow.src.lat, flow.src.lon, pickColor(flow), srcKey); }
+        }
+        if (flow.dst?.type === 'city') {
+          const dstKey = `static_dst_${i}`;
+          frameActiveRingArcs.add(dstKey);
+          if (!arc._dstRingSpawned) { arc._dstRingSpawned = true; spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dstKey); }
+        }
         continue;
       } else if (flowPlaying) {
-        // Only age arcs when playing — freeze in place when paused
         arc.age += delta;
       }
 
@@ -16303,25 +16429,57 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let orbMode = "hidden";
       let orbPosition = 0;
 
+      // Determine phase and contact
+      let srcTouched = false, dstTouched = false;
+
       if (localTime < arc.travelDuration) {
         const travelT = clamp01(localTime / arc.travelDuration);
         visibleStart = 0;
         visibleEnd = Math.max(0.001, travelT);
         orbMode = "incoming";
         orbPosition = visibleEnd;
+        srcTouched = true;           // src is origin, arc extends from it
+        dstTouched = travelT > 0.85; // dst touched when arc nearly arrives
       } else if (localTime < arc.travelDuration + arc.holdDuration) {
         visibleStart = 0;
         visibleEnd = 1;
+        srcTouched = true;  // both endpoints connected during hold
+        dstTouched = true;
       } else if (localTime < arc.travelDuration + arc.holdDuration + arc.eraseDuration) {
         const eraseT = clamp01((localTime - arc.travelDuration - arc.holdDuration) / arc.eraseDuration);
         visibleStart = eraseT;
         visibleEnd = 1;
         orbMode = "outgoing";
         orbPosition = visibleStart;
+        srcTouched = eraseT < 0.15;  // src only briefly while erasing starts
+        dstTouched = true;            // dst still connected until fully erased
       } else {
         visibleStart = 1;
         visibleEnd = 1;
         arcOpacity = 0;
+      }
+
+      // Collect country polygon contacts
+      if (srcTouched && flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+      if (dstTouched && flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+
+      // City node ring pulses
+      const arcKey = `ind_${i}`;
+      if (srcTouched && flow.src?.type === 'city') {
+        const sKey = arcKey + '_s';
+        frameActiveRingArcs.add(sKey);
+        if (!arc._srcRingActive) { arc._srcRingActive = true; spawnFlowRing(flow.src.lat, flow.src.lon, pickColor(flow), sKey); }
+      } else if (arc._srcRingActive) {
+        arc._srcRingActive = false;
+        deactivateFlowRing(arcKey + '_s');
+      }
+      if (dstTouched && flow.dst?.type === 'city') {
+        const dKey = arcKey + '_d';
+        frameActiveRingArcs.add(dKey);
+        if (!arc._dstRingActive) { arc._dstRingActive = true; spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey); }
+      } else if (arc._dstRingActive) {
+        arc._dstRingActive = false;
+        deactivateFlowRing(arcKey + '_d');
       }
 
       arc.tubeMat.uniforms.uVisibleStart.value = visibleStart;
@@ -16340,10 +16498,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Only expire arcs when playing
       if (flowPlaying && arc.age >= arc.totalAge) {
+        deactivateFlowRing(arcKey + '_s');
+        deactivateFlowRing(arcKey + '_d');
         recycleArc(arc);
         arcObjects.splice(i, 1);
       }
     }
+
+    // Deactivate rings for arcs no longer active
+    for (const ring of flowRingPool) {
+      if (ring.active && ring._arcId && !frameActiveRingArcs.has(ring._arcId)) {
+        ring.active = false;
+        ring.mesh.visible = false;
+        ring.mat.opacity = 0;
+      }
+    }
+
+    // Update country polygon highlights dynamically
+    if (!setsEqual(_flowContactISOs, frameContactISOs)) {
+      _flowContactISOs = frameContactISOs;
+      _flowContactDirty = true;
+    }
+  }
+
+  function setsEqual(a, b) {
+    if (a.size !== b.size) return false;
+    for (const v of a) if (!b.has(v)) return false;
+    return true;
   }
 
   /* ── Sequential playback ── */
@@ -16381,6 +16562,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     lastTimestamp = now;
     tickArcs(delta);
     tickPlayback(delta);
+    tickFlowRings(delta);
+
+    // Push dynamic polygon highlights (throttled — only on change)
+    if (_flowContactDirty) {
+      _flowContactDirty = false;
+      if (_flowContactISOs.size > 0) {
+        window.__flowHighlightCountries?.(_flowContactISOs);
+      } else {
+        window.__flowClearHighlights?.();
+      }
+    }
   };
 
   /* ── Load countries for autocomplete ── */
@@ -20098,6 +20290,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 2. Navigate to globe (page index 1)
       window.__goToPage?.(1);
 
+      // 2b. Auto-switch to country view if in city mode
+      if (window.__currentViewMode === 'city') {
+        document.querySelector('.viewOption[data-mode="country"]')?.click();
+      }
+
       // 3. Close existing flow panel if open, then clear arcs
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
@@ -20141,15 +20338,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 8. Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // 8b. Highlight country polygons for all flow arc countries
-      {
-        const isoSet = new Set();
-        flows.forEach(f => {
-          if (f.src?.iso) isoSet.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) isoSet.add(f.dst.iso.toUpperCase());
-        });
-        if (isoSet.size) window.__flowHighlightCountries?.(isoSet);
-      }
+      // 8b. Country polygon highlights now handled dynamically by tickArcs()
 
       // 9. Show back button
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
@@ -20210,6 +20399,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       window.__goToPage?.(1);
+
+      // Auto-switch to country view if in city mode
+      if (window.__currentViewMode === 'city') {
+        document.querySelector('.viewOption[data-mode="country"]')?.click();
+      }
+
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
@@ -20257,15 +20452,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // Highlight country polygons for all flow arc countries
-      {
-        const isoSet = new Set();
-        flows.forEach(f => {
-          if (f.src?.iso) isoSet.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) isoSet.add(f.dst.iso.toUpperCase());
-        });
-        if (isoSet.size) window.__flowHighlightCountries?.(isoSet);
-      }
+      // Country polygon highlights now handled dynamically by tickArcs()
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
@@ -20319,6 +20506,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       window.__goToPage?.(1);
+
+      // Auto-switch to country view if in city mode
+      if (window.__currentViewMode === 'city') {
+        document.querySelector('.viewOption[data-mode="country"]')?.click();
+      }
+
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
@@ -20364,15 +20557,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // Highlight country polygons for all flow arc countries
-      {
-        const isoSet = new Set();
-        flows.forEach(f => {
-          if (f.src?.iso) isoSet.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) isoSet.add(f.dst.iso.toUpperCase());
-        });
-        if (isoSet.size) window.__flowHighlightCountries?.(isoSet);
-      }
+      // Country polygon highlights now handled dynamically by tickArcs()
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
