@@ -1245,6 +1245,66 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
    while high-volume destinations still get more flows (but dampened via sqrt).
    Example: USA with 100 articles → ~10 flows, Luxembourg with 4 → ~2 flows
 ========================================= */
+
+/* =========================================
+   Keyword Suggestions (autocomplete)
+   Draws from: keyword_daily_stats (extracted keywords),
+               countries, cities — unified & deduped.
+========================================= */
+app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
+  try {
+    const q = (req.query.q || "").trim().toLowerCase();
+    const limit = Math.min(parseInt(req.query.limit) || 15, 30);
+    if (q.length < 1) return res.json([]);
+
+    const results = await ttlCached(`kw-suggest:${q}:${limit}`, 120_000, async () => {
+      // Three sources, run in parallel
+      const [kwRows, countryRows, cityRows] = await Promise.all([
+        // 1) Keywords from keyword_daily_stats (aggregated, excludes stopwords)
+        pool.query(`
+          SELECT keyword AS name, SUM(total_count)::int AS weight, 'keyword' AS type
+          FROM keyword_daily_stats
+          WHERE keyword ILIKE $1 || '%'
+            AND source_country_id IS NULL AND about_country_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword)
+          GROUP BY keyword
+          ORDER BY weight DESC
+          LIMIT $2
+        `, [q, limit]),
+        // 2) Country names
+        pool.query(`
+          SELECT name, population::int AS weight, 'country' AS type
+          FROM countries WHERE LOWER(name) LIKE $1 || '%'
+          ORDER BY population DESC LIMIT $2
+        `, [q, limit]),
+        // 3) City names
+        pool.query(`
+          SELECT name, COALESCE(population,0)::int AS weight, 'city' AS type
+          FROM cities WHERE is_active = true AND LOWER(name) LIKE $1 || '%'
+          ORDER BY population DESC NULLS LAST LIMIT $2
+        `, [q, limit]),
+      ]);
+
+      // Merge, dedup by lowercase name, sort by weight desc
+      const seen = new Set();
+      const merged = [];
+      for (const row of [...kwRows.rows, ...countryRows.rows, ...cityRows.rows]) {
+        const key = row.name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push({ name: row.name, type: row.type, weight: row.weight });
+      }
+      merged.sort((a, b) => b.weight - a.weight);
+      return merged.slice(0, limit);
+    });
+
+    res.json(results);
+  } catch (err) {
+    console.error("Keyword suggestions error:", err);
+    res.status(500).json({ error: "Failed to fetch suggestions" });
+  }
+});
+
 app.get("/api/flows", heavyLimiter, async (req, res) => {
   try {
     const mode = req.query.mode || "individual";
@@ -1308,20 +1368,16 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       conditions.push(`al.city_id = $${params.length}`);
     }
 
-    // Keyword filter
+    // Keyword filter — use indexed article_keywords lookup (no ILIKE on text columns)
     if (keyword) {
-      params.push(`%${keyword}%`);
-      const kwParam = params.length;
       params.push(keyword.toLowerCase().trim());
-      const exactKwParam = params.length;
-      conditions.push(`(
-        COALESCE(a.translated_title, a.title) ILIKE $${kwParam}
-        OR COALESCE(a.translated_summary, a.summary) ILIKE $${kwParam}
-        OR EXISTS (
-          SELECT 1 FROM article_keywords ak
-          WHERE ak.article_id = a.id
-          AND (ak.keyword ILIKE $${kwParam} OR ak.normalized_keyword = $${exactKwParam})
-        )
+      const kwExact = params.length;
+      params.push(`${keyword.toLowerCase().trim()}%`);
+      const kwPrefix = params.length;
+      conditions.push(`EXISTS (
+        SELECT 1 FROM article_keywords ak
+        WHERE ak.article_id = a.id
+        AND (ak.normalized_keyword = $${kwExact} OR ak.keyword ILIKE $${kwPrefix})
       )`);
     }
 
@@ -1870,6 +1926,75 @@ app.get("/api/flows/article/:id", async (req, res) => {
   } catch (err) {
     console.error("[flows/article]", err.message);
     res.status(500).json({ error: "Failed to fetch article flows", detail: req.user?.is_admin ? err.message : undefined });
+  }
+});
+
+/* =========================================
+   Route articles — articles on a specific aggregate route
+   Used by the Flow Articles Panel to expand aggregate arc bars
+========================================= */
+app.get("/api/flows/route-articles", searchLimiter, async (req, res) => {
+  try {
+    const srcId = parseInt(req.query.src_id, 10);
+    const dstId = parseInt(req.query.dst_id, 10);
+    const srcType = req.query.src_type || 'country';
+    const dstType = req.query.dst_type || 'country';
+    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
+    const fromDate = req.query.from_date || null;
+    const toDate = req.query.to_date || null;
+
+    if (!srcId || !dstId) return res.status(400).json({ error: "src_id and dst_id required" });
+
+    const cacheKey = `route-articles:${srcType}:${srcId}:${dstType}:${dstId}:${fromDate||''}:${toDate||''}:${limit}`;
+    const result = await ttlCached(cacheKey, 60_000, async () => {
+      const params = [];
+      const where = ['al.routing_type IN (\'content\', \'source\')'];
+
+      // Source filter
+      if (srcType === 'city') {
+        params.push(srcId); where.push(`a.city_id = $${params.length}`);
+      } else {
+        params.push(srcId); where.push(`a.country_id = $${params.length}`);
+      }
+      // Destination filter
+      if (dstType === 'city') {
+        params.push(dstId); where.push(`al.city_id = $${params.length}`);
+      } else {
+        params.push(dstId); where.push(`al.country_id = $${params.length}`);
+      }
+      // Date filters
+      if (fromDate) { params.push(fromDate); where.push(`a.published_at >= $${params.length}::date`); }
+      if (toDate)   { params.push(toDate);   where.push(`a.published_at < $${params.length}::date + interval '1 day'`); }
+
+      params.push(limit);
+      const { rows } = await pool.query(`
+        SELECT
+          a.id,
+          COALESCE(a.translated_title, a.title) AS title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          a.published_at,
+          a.article_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          a.sentiment_score
+        FROM article_locations al
+        JOIN news_articles a ON a.id = al.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY a.published_at DESC
+        LIMIT $${params.length}
+      `, params);
+
+      return rows;
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error("Route articles error:", err);
+    res.status(500).json({ error: "Failed to fetch route articles" });
   }
 });
 
@@ -3656,9 +3781,15 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
       }
 
       if (keyword) {
-        params.push(`%${keyword}%`);
-        const p = `$${params.length}`;
-        where.push(`(a.title ILIKE ${p} OR a.translated_title ILIKE ${p} OR a.summary ILIKE ${p})`);
+        params.push(keyword.toLowerCase().trim());
+        const kwExact = `$${params.length}`;
+        params.push(`${keyword.toLowerCase().trim()}%`);
+        const kwPrefix = `$${params.length}`;
+        where.push(`EXISTS (
+          SELECT 1 FROM article_keywords ak
+          WHERE ak.article_id = a.id
+          AND (ak.normalized_keyword = ${kwExact} OR ak.keyword ILIKE ${kwPrefix})
+        )`);
       }
 
       const whereSql = `WHERE ${where.join(' AND ')}`;

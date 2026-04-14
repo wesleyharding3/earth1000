@@ -2307,6 +2307,7 @@ body.ticker-active #flowControls {
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
+  position: relative;
 }
 .flowMinBar .flowMinPlayBtn:hover {
   background: rgba(0,220,130,0.25);
@@ -2314,10 +2315,21 @@ body.ticker-active #flowControls {
   transform: scale(1.05);
 }
 .flowMinBar .flowMinPlayBtn.playing {
-  color: rgba(255,200,50,0.9);
+  color: transparent;
   background: rgba(255,200,50,0.15);
   border-color: rgba(255,200,50,0.3);
 }
+.flowMinBar .flowMinPlayBtn.playing::before,
+.flowMinBar .flowMinPlayBtn.playing::after {
+  content: '';
+  position: absolute;
+  width: 2.5px; height: 10px;
+  background: rgba(255,200,50,0.9);
+  border-radius: 1px;
+}
+.flowMinBar .flowMinPlayBtn.playing::before { left: calc(50% - 4px); }
+.flowMinBar .flowMinPlayBtn.playing::after  { left: calc(50% + 1.5px); }
+.flowMinBar .flowMinPlayBtn.hidden-mode { display: none; }
 .flowMinBar .flowExpandBtn {
   width: calc(28px * var(--mobile-control-scale));
   height: calc(28px * var(--mobile-control-scale));
@@ -2357,6 +2369,191 @@ body.ticker-active #flowControls {
   color: rgba(255,150,150,0.9);
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Flow Articles Panel — live list of visible arc articles
+   ═══════════════════════════════════════════════════════════════ */
+#flowArcList {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 60px);
+  left: 10px;
+  width: 260px;
+  max-width: calc(100vw - 20px);
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 140px);
+  z-index: 810;
+  display: none;
+  flex-direction: column;
+  pointer-events: all;
+  user-select: none;
+}
+#flowArcList.visible { display: flex; }
+
+/* Minimized bar for the arc list */
+.arcListMinBar {
+  display: none;
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 60px);
+  left: 10px;
+  z-index: 810;
+  background: rgba(8, 12, 20, 0.52);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 30px;
+  padding: 6px 14px;
+  align-items: center;
+  gap: 10px;
+  pointer-events: all;
+  animation: flowMinBarPulse 2.9s ease-in-out infinite;
+}
+.arcListMinBar.visible { display: inline-flex; }
+.arcListMinBar .arcListMinLabel {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: rgba(255,255,255,0.5);
+}
+.arcListMinBar .arcListMinCount {
+  font-size: 11px; color: rgba(0,220,130,0.9); font-weight: 600;
+  animation: flowMinStatsBreath 2.9s ease-in-out infinite;
+}
+.arcListMinBar .arcListExpandBtn {
+  width: 24px; height: 24px; border-radius: 12px;
+  background: rgba(0,220,130,0.15); border: 1px solid rgba(0,220,130,0.3);
+  color: rgba(0,220,130,0.9); font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.arcListMinBar .arcListExpandBtn:hover {
+  background: rgba(0,220,130,0.25); border-color: rgba(0,220,130,0.5);
+}
+
+/* Main panel body */
+.arcListPanel {
+  background: rgba(6, 10, 20, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: flowBorderPulse 2.9s ease-in-out infinite;
+}
+
+/* Header */
+.arcListHeader {
+  display: flex; align-items: center; padding: 10px 12px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06); gap: 8px; flex-shrink: 0;
+}
+.arcListTitle {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: rgba(80,255,160,1);
+  text-shadow: 0 0 10px rgba(0,220,130,0.45);
+  flex: 1;
+  animation: flowTitleBreath 2.9s ease-in-out infinite;
+}
+.arcListHeaderBtn {
+  width: 22px; height: 22px; border-radius: 11px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.4); font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; flex-shrink: 0;
+}
+.arcListHeaderBtn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+.arcListHeaderBtn.close:hover {
+  background: rgba(255,100,100,0.2); border-color: rgba(255,100,100,0.4);
+  color: rgba(255,150,150,0.9);
+}
+
+/* Scrollable article list */
+.arcListScroll {
+  overflow-y: auto; max-height: 380px; padding: 4px 0;
+  scrollbar-width: thin; scrollbar-color: rgba(0,220,130,0.15) transparent;
+}
+
+/* Empty state */
+.arcListEmpty {
+  padding: 20px 12px; text-align: center;
+  font-size: 11px; color: rgba(255,255,255,0.25); font-style: italic;
+}
+
+/* Individual article bar */
+.arcBar {
+  display: flex; flex-direction: column;
+  padding: 8px 12px; cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  transition: background 0.15s, opacity 0.3s;
+  animation: arcBarEnter 0.3s ease-out;
+}
+@keyframes arcBarEnter {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.arcBar:hover { background: rgba(0,220,130,0.06); }
+.arcBar.selected { background: rgba(0,220,130,0.12); border-left: 2px solid rgba(0,220,130,0.6); }
+.arcBar.fading-out {
+  opacity: 0; transform: translateX(-10px);
+  transition: opacity 0.3s, transform 0.3s;
+}
+
+.arcBarRoute {
+  font-size: 10px; font-weight: 600; color: rgba(0,220,130,0.8);
+  letter-spacing: 0.04em; margin-bottom: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.arcBarRoute .arcBarArrow { color: rgba(255,255,255,0.3); margin: 0 4px; }
+.arcBarTitle {
+  font-size: 11px; color: rgba(255,255,255,0.7); line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.arcBarTime {
+  font-size: 9px; color: rgba(255,255,255,0.2); margin-top: 2px;
+}
+
+/* Expanded article card (replaces bar when selected) */
+.arcCardExpanded {
+  padding: 10px 12px; border-left: 2px solid rgba(0,220,130,0.6);
+  background: rgba(0,220,130,0.06); animation: arcCardExpand 0.25s ease-out;
+}
+@keyframes arcCardExpand {
+  from { opacity: 0; max-height: 0; }
+  to   { opacity: 1; max-height: 400px; }
+}
+.arcCardImg {
+  width: 100%; height: 110px; object-fit: cover;
+  border-radius: 8px; margin-bottom: 8px;
+  background: rgba(255,255,255,0.04);
+}
+.arcCardHeadline {
+  font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.9);
+  line-height: 1.35; margin-bottom: 4px;
+}
+.arcCardOrigin {
+  font-size: 10px; color: rgba(0,220,130,0.7); font-weight: 600;
+  letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.arcCardSummary {
+  font-size: 11px; color: rgba(255,255,255,0.55); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden; margin-bottom: 8px;
+}
+.arcCardActions {
+  display: flex; gap: 6px;
+}
+.arcCardBtn {
+  padding: 5px 10px; border-radius: 8px; font-size: 10px;
+  font-weight: 600; cursor: pointer; transition: all 0.15s;
+  border: 1px solid rgba(0,220,130,0.3); background: rgba(0,220,130,0.1);
+  color: rgba(0,220,130,0.9);
+}
+.arcCardBtn:hover { background: rgba(0,220,130,0.2); border-color: rgba(0,220,130,0.5); }
+.arcCardBtn.globe {
+  border-color: rgba(80,160,255,0.3); background: rgba(80,160,255,0.1);
+  color: rgba(100,180,255,0.9);
+}
+.arcCardBtn.globe:hover { background: rgba(80,160,255,0.2); border-color: rgba(80,160,255,0.5); }
+.arcCardBtn.deselect {
+  border-color: rgba(255,255,255,0.15); background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.5);
+}
+.arcCardBtn.deselect:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
 
 
     /* ===============================
@@ -3058,7 +3255,10 @@ body.ticker-active #flowControls {
   max-height: none; overflow: hidden; gap: 0;
   padding: 0; border: none; background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: none; width: auto;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
 }
+.semHeatMinPlayBtn.hidden-mode { display: none; }
 #semHeatPanel.minimized .semHeatBody { display: none; }
 #semHeatPanel.minimized .semHeatHeader { display: none; }
 #semHeatPanel.minimized .semHeatMinBar { display: flex; }
@@ -3100,10 +3300,24 @@ body.ticker-active #flowControls {
 }
 .semHeatMinPlayBtn {
   background: rgba(255,160,80,0.15); border: 1px solid rgba(255,160,80,0.3);
-  color: rgba(255,180,100,0.9);
+  color: rgba(255,180,100,0.9); position: relative;
 }
 .semHeatMinPlayBtn:hover { background: rgba(255,160,80,0.25); border-color: rgba(255,160,80,0.5); transform: scale(1.05); }
-.semHeatMinPlayBtn.playing { color: rgba(255,200,50,0.9); background: rgba(255,200,50,0.15); border-color: rgba(255,200,50,0.3); }
+.semHeatMinPlayBtn.playing {
+  color: transparent;
+  background: rgba(255,200,50,0.15); border-color: rgba(255,200,50,0.3);
+}
+.semHeatMinPlayBtn.playing::before,
+.semHeatMinPlayBtn.playing::after {
+  content: '';
+  position: absolute;
+  width: 2.5px; height: 10px;
+  background: rgba(255,200,50,0.9);
+  border-radius: 1px;
+}
+.semHeatMinPlayBtn.playing::before { left: calc(50% - 4px); }
+.semHeatMinPlayBtn.playing::after  { left: calc(50% + 1.5px); }
+.semHeatMinPlayBtn.hidden-mode { display: none; }
 .semHeatMinExpandBtn {
   background: rgba(255,160,80,0.15); border: 1px solid rgba(255,160,80,0.3);
   color: rgba(255,180,100,0.9); font-size: calc(14px * var(--mobile-control-scale));
@@ -3154,6 +3368,64 @@ body.ticker-active #flowControls {
 .semHeatLegendBar.coverage { background: linear-gradient(to right, rgba(60,140,255,0.2), rgba(60,180,255,0.55), rgba(120,230,255,1)); }
 
 .semHeatLoading { text-align: center; padding: 8px; font-size: 11px; color: rgba(255,200,140,0.7); }
+
+/* ── Loading dots (sequential glow) ── */
+.loadDots { display: inline-flex; gap: 4px; align-items: center; }
+.loadDot {
+  width: 5px; height: 5px; border-radius: 50%;
+  opacity: 0.2; animation: dotPulse 1.2s ease-in-out infinite;
+}
+.loadDot:nth-child(2) { animation-delay: 0.2s; }
+.loadDot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dotPulse {
+  0%, 60%, 100% { opacity: 0.15; transform: scale(0.85); box-shadow: none; }
+  30% { opacity: 1; transform: scale(1.2); }
+}
+.loadDots--green .loadDot {
+  background: rgba(0,220,130,1);
+}
+@keyframes dotPulseGreen {
+  0%, 60%, 100% { opacity: 0.15; transform: scale(0.85); box-shadow: 0 0 2px rgba(0,220,130,0.1); }
+  30% { opacity: 1; transform: scale(1.2); box-shadow: 0 0 8px rgba(0,220,130,0.7); }
+}
+.loadDots--green .loadDot { animation-name: dotPulseGreen; }
+.loadDots--yellow .loadDot {
+  background: rgba(255,200,80,1);
+}
+@keyframes dotPulseYellow {
+  0%, 60%, 100% { opacity: 0.15; transform: scale(0.85); box-shadow: 0 0 2px rgba(255,200,80,0.1); }
+  30% { opacity: 1; transform: scale(1.2); box-shadow: 0 0 8px rgba(255,200,80,0.7); }
+}
+.loadDots--yellow .loadDot { animation-name: dotPulseYellow; }
+
+/* ── Keyword autocomplete ── */
+.kwAutoWrap { position: relative; flex: 1; min-width: 60px; }
+.kwAutoWrap input { width: 100%; box-sizing: border-box; }
+.kwAutoList {
+  display: none; position: absolute; left: 0; right: 0; top: 100%;
+  z-index: 9999; max-height: 180px; overflow-y: auto;
+  background: rgba(20,22,28,0.97); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px; margin-top: 2px; padding: 2px 0;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.15) transparent;
+}
+.kwAutoList.visible { display: block; }
+.kwAutoItem {
+  padding: 6px 10px; font-size: 12px; color: rgba(255,255,255,0.8);
+  cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.kwAutoItem:hover, .kwAutoItem.active { background: rgba(255,255,255,0.08); }
+.kwAutoItem .kwType {
+  font-size: 9px; padding: 1px 5px; border-radius: 3px;
+  text-transform: uppercase; letter-spacing: 0.5px; flex-shrink: 0;
+}
+.kwType--keyword { background: rgba(0,200,120,0.15); color: rgba(0,220,130,0.8); }
+.kwType--country { background: rgba(80,160,255,0.15); color: rgba(100,180,255,0.8); }
+.kwType--city    { background: rgba(255,180,60,0.15); color: rgba(255,200,80,0.8); }
+.kwAutoNone {
+  padding: 8px 10px; font-size: 11px; color: rgba(255,255,255,0.35);
+  text-align: center; font-style: italic;
+}
 
 .semHeatKwRow { display: flex; gap: 6px; align-items: stretch; }
 .semHeatKwRow .semHeatInput { flex: 1; }
@@ -9176,6 +9448,25 @@ window.sourceBiasBadgeHTML = function(bias) {
 
     </div>
   </div>
+  <!-- Flow articles list panel -->
+  <div class="arcListMinBar" id="arcListMinBar">
+    <span class="arcListMinLabel">Arcs</span>
+    <span class="arcListMinCount" id="arcListMinCount">0</span>
+    <button class="arcListExpandBtn" id="arcListExpandBtn" title="Expand" onclick="window.__arcListExpand?.()">↓</button>
+  </div>
+  <div id="flowArcList">
+    <div class="arcListPanel">
+      <div class="arcListHeader">
+        <span class="arcListTitle">Live Arcs</span>
+        <button class="arcListHeaderBtn" id="arcListMinBtn" title="Minimize" onclick="window.__arcListMinimize?.()">−</button>
+        <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
+      </div>
+      <div class="arcListScroll" id="arcListScroll">
+        <div class="arcListEmpty">No arcs visible</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
@@ -9243,7 +9534,10 @@ window.sourceBiasBadgeHTML = function(bias) {
 
       <!-- Keyword + Load -->
       <div class="flowPanelRow">
-        <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" style="flex:1; min-width:60px;" />
+        <div class="kwAutoWrap">
+  <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" autocomplete="off" />
+  <div class="kwAutoList" id="flowKwAutoList"></div>
+</div>
         <button class="flowBtn primary" id="flowLoadBtn">Load</button>
       </div>
 
@@ -9351,7 +9645,10 @@ window.sourceBiasBadgeHTML = function(bias) {
 
         <div class="semHeatCtlPanel active" data-panel="keyword">
           <div class="semHeatKwRow">
-            <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+            <div class="kwAutoWrap">
+  <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+  <div class="kwAutoList" id="heatKwAutoList"></div>
+</div>
             <button type="button" class="semHeatGoBtn" id="semHeatGoBtn">Enter</button>
           </div>
           <div style="display:flex;gap:6px;">
@@ -16317,6 +16614,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     clearAllFlowRings();
     _flowContactISOs.clear();
     _flowContactDirty = true;
+    window.__arcPanelDirty?.();
   }
 
   /* ── Animate individual arcs ── */
@@ -16414,7 +16712,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (!arc._dstRingSpawned) { arc._dstRingSpawned = true; spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dstKey); }
         }
         continue;
-      } else if (flowPlaying) {
+      } else if (flowPlaying && !arc._frozen) {
         arc.age += delta;
       }
 
@@ -16491,6 +16789,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } else {
         arc.orb.material.opacity = 0;
         arc.orb.visible = false;
+      }
+
+      // Apply frozen opacity override (article selection fade)
+      if (arc._frozenOpacity != null) {
+        arc.tubeMat.uniforms.uOpacity.value = arc._frozenOpacity;
+        if (arc._frozenOpacity < 0.1) {
+          arc.orb.visible = false;
+          arc.ptMat.opacity = 0;
+        }
       }
 
       // Only expire arcs when playing
@@ -16571,6 +16878,300 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
   };
+
+  /* ═══════════════════════════════════════════════════════════════
+     Flow Articles Panel — live list of visible arc articles
+     ═══════════════════════════════════════════════════════════════ */
+  (function initArcListPanel() {
+    const panel     = document.getElementById('flowArcList');
+    const minBar    = document.getElementById('arcListMinBar');
+    const scroll    = document.getElementById('arcListScroll');
+    const minCount  = document.getElementById('arcListMinCount');
+    if (!panel || !scroll) return;
+
+    let _arcPanelDirty = false;
+    let _lastPanelSync = 0;
+    let _prevVisibleIds = new Set();
+    let _selectedArcIdx = null;   // index in arcObjects
+    let _minimized = false;
+    const SYNC_INTERVAL = 250; // ms
+
+    // ── Show/hide with flow controls ──
+    function showPanel() {
+      if (_minimized) { minBar.classList.add('visible'); }
+      else { panel.classList.add('visible'); }
+    }
+    function hidePanel() {
+      panel.classList.remove('visible');
+      minBar.classList.remove('visible');
+      deselectArc();
+    }
+
+    // ── Minimize / Expand ──
+    window.__arcListMinimize = function() {
+      _minimized = true;
+      panel.classList.remove('visible');
+      minBar.classList.add('visible');
+    };
+    window.__arcListExpand = function() {
+      _minimized = false;
+      minBar.classList.remove('visible');
+      panel.classList.add('visible');
+    };
+    window.__arcListClose = function() {
+      hidePanel();
+    };
+
+    // Hook into flow lifecycle
+    const _origFlowTick = window.__flowTick;
+    window.__flowTick = function() {
+      _origFlowTick?.();
+      const now = performance.now();
+      if (now - _lastPanelSync > SYNC_INTERVAL) {
+        syncPanel();
+        _lastPanelSync = now;
+      }
+    };
+
+    // Show panel when flows are loaded
+    const origLoadFlows = window.loadFlows;
+    // Observe flowControls visibility to show/hide arc list
+    const flowCtl = document.getElementById('flowControls');
+    if (flowCtl) {
+      const obs = new MutationObserver(() => {
+        if (flowCtl.classList.contains('visible')) showPanel();
+        else hidePanel();
+      });
+      obs.observe(flowCtl, { attributes: true, attributeFilter: ['class'] });
+    }
+
+    // ── Sync panel with visible arcs ──
+    function syncPanel() {
+      if (!panel.classList.contains('visible') && !minBar.classList.contains('visible')) return;
+
+      const visibleArcs = [];
+      for (let i = 0; i < arcObjects.length; i++) {
+        const arc = arcObjects[i];
+        if (!arc.flow) continue;
+        const op = arc.tubeMat?.uniforms?.uOpacity?.value || 0;
+        const vs = arc.tubeMat?.uniforms?.uVisibleStart?.value || 0;
+        const ve = arc.tubeMat?.uniforms?.uVisibleEnd?.value || 0;
+        // Consider visible if opacity > 0 and actually drawing something
+        if (op > 0.01 && ve - vs > 0.01) {
+          visibleArcs.push({ idx: i, arc, flow: arc.flow });
+        }
+      }
+
+      // Update minimized count
+      minCount.textContent = visibleArcs.length;
+
+      // Check if set changed
+      const curIds = new Set(visibleArcs.map(v => v.idx));
+      if (setsEqual(curIds, _prevVisibleIds) && !_arcPanelDirty) return;
+      _prevVisibleIds = curIds;
+      _arcPanelDirty = false;
+
+      // If selected arc is gone, deselect
+      if (_selectedArcIdx !== null && !curIds.has(_selectedArcIdx)) {
+        deselectArc();
+      }
+
+      if (visibleArcs.length === 0) {
+        scroll.innerHTML = '<div class="arcListEmpty">No arcs visible</div>';
+        return;
+      }
+
+      // Build DOM — keep selected card expanded
+      const frag = document.createDocumentFragment();
+      for (const { idx, flow } of visibleArcs) {
+        if (_selectedArcIdx === idx) {
+          frag.appendChild(buildExpandedCard(idx, flow));
+        } else {
+          frag.appendChild(buildBar(idx, flow));
+        }
+      }
+      scroll.innerHTML = '';
+      scroll.appendChild(frag);
+    }
+
+    function buildBar(idx, flow) {
+      const div = document.createElement('div');
+      div.className = 'arcBar';
+      div.dataset.idx = idx;
+
+      const srcName = flow.src?.place || 'Unknown';
+      const dstName = flow.dst?.place || 'Unknown';
+      const title = flow.title || (flow.count ? `${flow.count} articles` : '');
+      const time = flow.publishedAt ? formatRelTime(flow.publishedAt) : '';
+
+      div.innerHTML =
+        `<div class="arcBarRoute">${esc(srcName)}<span class="arcBarArrow">→</span>${esc(dstName)}</div>` +
+        (title ? `<div class="arcBarTitle">${esc(title)}</div>` : '') +
+        (time ? `<div class="arcBarTime">${time}</div>` : '');
+
+      div.addEventListener('click', () => selectArc(idx));
+      return div;
+    }
+
+    function buildExpandedCard(idx, flow) {
+      const div = document.createElement('div');
+      div.className = 'arcCardExpanded';
+      div.dataset.idx = idx;
+
+      const srcName = flow.src?.place || 'Unknown';
+      const dstName = flow.dst?.place || 'Unknown';
+      const isAggregate = !!flow.count;
+
+      let html = '';
+
+      if (isAggregate) {
+        // Aggregate route — show loading, then fetch articles
+        html += `<div class="arcCardOrigin">${esc(srcName)} → ${esc(dstName)} · ${flow.count} articles</div>`;
+        html += `<div class="arcCardSummary" id="arcRouteArticles_${idx}"><span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span></div>`;
+        html += `<div class="arcCardActions">`;
+        html += `<button class="arcCardBtn globe" data-action="globe">View on Globe</button>`;
+        html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
+        html += `</div>`;
+      } else {
+        if (flow.imageUrl) {
+          html += `<img class="arcCardImg" src="${esc(flow.imageUrl)}" alt="" onerror="this.style.display='none'" />`;
+        }
+        html += `<div class="arcCardHeadline">${esc(flow.title || '')}</div>`;
+        html += `<div class="arcCardOrigin">${esc(srcName)} → ${esc(dstName)}</div>`;
+        if (flow.summary) {
+          html += `<div class="arcCardSummary">${esc(flow.summary)}</div>`;
+        }
+        html += `<div class="arcCardActions">`;
+        html += `<button class="arcCardBtn globe" data-action="globe">View on Globe</button>`;
+        html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
+        html += `</div>`;
+      }
+
+      div.innerHTML = html;
+
+      div.querySelector('[data-action="globe"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        viewOnGlobe(flow);
+      });
+      div.querySelector('[data-action="deselect"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deselectArc();
+      });
+
+      // Fetch route articles for aggregate arcs
+      if (isAggregate && flow.src?.id && flow.dst?.id) {
+        fetchRouteArticles(flow, idx);
+      }
+
+      return div;
+    }
+
+    async function fetchRouteArticles(flow, idx) {
+      try {
+        const params = new URLSearchParams({
+          src_id: flow.src.id, dst_id: flow.dst.id,
+          src_type: flow.src.type || 'country', dst_type: flow.dst.type || 'country',
+          limit: '10'
+        });
+        const fromDate = document.getElementById('flowFrom')?.value;
+        const toDate = document.getElementById('flowTo')?.value;
+        if (fromDate) params.set('from_date', fromDate);
+        if (toDate) params.set('to_date', toDate);
+
+        const r = await fetch(`https://earth-wjr6.onrender.com/api/flows/route-articles?${params}`);
+        const articles = await r.json();
+        const container = document.getElementById(`arcRouteArticles_${idx}`);
+        if (!container) return;
+
+        if (!articles.length) {
+          container.textContent = 'No articles found for this route';
+          return;
+        }
+
+        container.innerHTML = articles.map(a =>
+          `<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">` +
+          (a.image_url ? `<img src="${esc(a.image_url)}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:4px;" onerror="this.style.display='none'" />` : '') +
+          `<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85);line-height:1.3;">${esc(a.title)}</div>` +
+          (a.summary ? `<div style="font-size:10px;color:rgba(255,255,255,0.45);line-height:1.3;margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${esc(a.summary)}</div>` : '') +
+          `<div style="font-size:9px;color:rgba(255,255,255,0.2);margin-top:2px;">${a.source_name || ''} · ${formatRelTime(a.published_at)}</div>` +
+          `</div>`
+        ).join('');
+      } catch (e) {
+        console.error('Route articles fetch error:', e);
+        const container = document.getElementById(`arcRouteArticles_${idx}`);
+        if (container) container.textContent = 'Failed to load articles';
+      }
+    }
+
+    // ── Select / Deselect ──
+    function selectArc(idx) {
+      _selectedArcIdx = idx;
+      _arcPanelDirty = true;
+
+      // Pause playback in time-series mode
+      if (flowPlaying && flowMode !== 'aggregate') {
+        flowPlaying = false;
+        document.getElementById('flowPlayBtn').textContent = '▶ Play';
+      }
+
+      // Fade all arcs except selected
+      for (let i = 0; i < arcObjects.length; i++) {
+        const arc = arcObjects[i];
+        if (i === idx) {
+          arc._frozenOpacity = null; // normal opacity
+          arc._frozen = true;        // skip age advancement in tickArcs
+        } else {
+          arc._frozenOpacity = 0.06;
+        }
+      }
+
+      syncPanel();
+    }
+
+    function deselectArc() {
+      if (_selectedArcIdx === null) return;
+      _selectedArcIdx = null;
+      _arcPanelDirty = true;
+
+      // Restore all arc opacities
+      for (const arc of arcObjects) {
+        arc._frozenOpacity = null;
+        arc._frozen = false;
+      }
+
+      syncPanel();
+    }
+
+    // ── View on Globe — rotate camera to arc midpoint ──
+    function viewOnGlobe(flow) {
+      if (!flow.src || !flow.dst) return;
+      const midLat = (flow.src.lat + flow.dst.lat) / 2;
+      const midLon = (flow.src.lon + flow.dst.lon) / 2;
+      if (window.startFocus) {
+        window.startFocus(midLat, midLon);
+      }
+    }
+
+    // ── Helpers ──
+    function esc(s) {
+      if (!s) return '';
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function formatRelTime(dateStr) {
+      const d = new Date(dateStr);
+      const now = Date.now();
+      const diff = now - d.getTime();
+      if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+      if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+      return Math.floor(diff / 86400000) + 'd ago';
+    }
+
+    // Expose for external use
+    window.__arcListShow = showPanel;
+    window.__arcListHide = hidePanel;
+    window.__arcPanelDirty = () => { _arcPanelDirty = true; };
+  })();
 
   /* ── Load countries for autocomplete ── */
   async function loadCountries() {
@@ -16813,18 +17414,142 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   };
 
+  /* ── Keyword autocomplete (shared logic) ── */
+  (function initKwAutocomplete() {
+    const API_BASE = 'https://earth-wjr6.onrender.com';
+    const pairs = [
+      { input: document.getElementById('flowKeyword'), list: document.getElementById('flowKwAutoList') },
+      { input: document.getElementById('semHeatKw'),    list: document.getElementById('heatKwAutoList') },
+    ];
+
+    let _kwAbort = null;
+    let _kwActiveIdx = -1;
+
+    async function fetchSuggestions(q, listEl) {
+      if (_kwAbort) _kwAbort.abort();
+      if (q.length < 1) { listEl.classList.remove('visible'); return; }
+      _kwAbort = new AbortController();
+      try {
+        const r = await fetch(`${API_BASE}/api/keyword-suggestions?q=${encodeURIComponent(q)}&limit=15`, { signal: _kwAbort.signal });
+        const data = await r.json();
+        renderList(data, listEl, q);
+      } catch (e) {
+        if (e.name !== 'AbortError') listEl.classList.remove('visible');
+      }
+    }
+
+    function renderList(items, listEl, q) {
+      _kwActiveIdx = -1;
+      if (!items.length) {
+        listEl.innerHTML = '<div class="kwAutoNone">No matches — try a different term</div>';
+        listEl.classList.add('visible');
+        return;
+      }
+      listEl.innerHTML = items.map((it, i) =>
+        `<div class="kwAutoItem" data-idx="${i}" data-name="${it.name}">` +
+        `<span class="kwType kwType--${it.type}">${it.type}</span>` +
+        `<span>${highlight(it.name, q)}</span></div>`
+      ).join('');
+      listEl.classList.add('visible');
+    }
+
+    function highlight(text, q) {
+      const idx = text.toLowerCase().indexOf(q.toLowerCase());
+      if (idx < 0) return text;
+      return text.slice(0, idx) + '<b>' + text.slice(idx, idx + q.length) + '</b>' + text.slice(idx + q.length);
+    }
+
+    function selectItem(inputEl, listEl, name) {
+      inputEl.value = name;
+      listEl.classList.remove('visible');
+      inputEl._kwValid = true;
+    }
+
+    pairs.forEach(({ input, list }) => {
+      if (!input || !list) return;
+      let debounce = null;
+      input._kwValid = false;
+
+      input.addEventListener('input', () => {
+        input._kwValid = false;
+        clearTimeout(debounce);
+        debounce = setTimeout(() => fetchSuggestions(input.value.trim(), list), 200);
+      });
+
+      input.addEventListener('keydown', (e) => {
+        const items = list.querySelectorAll('.kwAutoItem');
+        if (!items.length || !list.classList.contains('visible')) return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          _kwActiveIdx = Math.min(_kwActiveIdx + 1, items.length - 1);
+          items.forEach((el, i) => el.classList.toggle('active', i === _kwActiveIdx));
+          items[_kwActiveIdx]?.scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          _kwActiveIdx = Math.max(_kwActiveIdx - 1, 0);
+          items.forEach((el, i) => el.classList.toggle('active', i === _kwActiveIdx));
+          items[_kwActiveIdx]?.scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter') {
+          if (_kwActiveIdx >= 0 && items[_kwActiveIdx]) {
+            e.preventDefault();
+            selectItem(input, list, items[_kwActiveIdx].dataset.name);
+          }
+        } else if (e.key === 'Escape') {
+          list.classList.remove('visible');
+        }
+      });
+
+      list.addEventListener('click', (e) => {
+        const item = e.target.closest('.kwAutoItem');
+        if (item) selectItem(input, list, item.dataset.name);
+      });
+
+      input.addEventListener('blur', () => {
+        setTimeout(() => list.classList.remove('visible'), 150);
+      });
+      input.addEventListener('focus', () => {
+        if (input.value.trim().length >= 1) fetchSuggestions(input.value.trim(), list);
+      });
+    });
+
+    // Expose validation check for loadFlows / heatmap go
+    window.__kwIsValid = function(inputEl) {
+      if (!inputEl.value.trim()) return true; // empty is fine
+      if (inputEl._kwValid) return true;
+      // Check if typed value matches any suggestion exactly (case-insensitive)
+      return false;
+    };
+    window.__kwShowReject = function(inputEl) {
+      const list = inputEl.closest('.kwAutoWrap')?.querySelector('.kwAutoList');
+      if (list) {
+        list.innerHTML = '<div class="kwAutoNone">That keyword isn\'t in our index — pick from suggestions above or try a shorter term</div>';
+        list.classList.add('visible');
+        setTimeout(() => list.classList.remove('visible'), 3000);
+      }
+    };
+  })();
+
   /* ── Load flows from API ── */
   async function loadFlows() {
     const fromDate = document.getElementById("flowFrom").value;
     const toDate   = document.getElementById("flowTo").value;
-    const keyword  = document.getElementById("flowKeyword").value.trim();
+    const kwInput  = document.getElementById("flowKeyword");
+    const keyword  = kwInput.value.trim();
     const viewMode = window.__currentViewMode || "country";
+
+    // Validate keyword against autocomplete index
+    if (keyword && !window.__kwIsValid(kwInput)) {
+      window.__kwShowReject(kwInput);
+      return;
+    }
 
     clearArcs();
     seqIndex = 0; seqTimer = 0; flowProgress = 0; flowPlaying = false;
     document.getElementById("flowPlayBtn").textContent = "▶ Play";
     document.getElementById("flowProgressBar").style.width = "0%";
     document.getElementById("flowStats").innerHTML = `<span style="opacity:0.4">Loading…</span>`;
+    const _loadBtn = document.getElementById("flowLoadBtn");
+    if (_loadBtn) _loadBtn.innerHTML = '<span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span>';
 
     // Ensure countries are loaded for view-aware remapping
     await loadCountries();
@@ -16888,6 +17613,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } catch(e) {
       console.error("Flow load error:", e);
       document.getElementById("flowStats").innerHTML = `<span style="color:#ff6b6b">Failed to load</span> — <span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+    } finally {
+      if (_loadBtn) _loadBtn.textContent = 'Load';
     }
   }
 
@@ -16954,6 +17681,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       flowControls.classList.toggle("aggregate-mode", flowMode === "aggregate");
       clearArcs();
       flowData = [];
+      syncMinPlayBtn();
     });
   });
 
@@ -16998,7 +17726,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function syncMinPlayBtn() {
     const btn = document.getElementById("flowMinPlayBtn");
     if (!btn) return;
-    btn.textContent = flowPlaying ? "⏸" : "▶";
+    // Hide play button in aggregate mode (no sequential playback)
+    btn.classList.toggle("hidden-mode", flowMode === "aggregate");
+    btn.textContent = flowPlaying ? "" : "▶";
     btn.classList.toggle("playing", flowPlaying);
     btn.title = flowPlaying ? "Pause" : "Play";
   }
@@ -29452,7 +30182,7 @@ body.ticker-active .gTickerLabel {
 
   async function fetchSnapshot(params) {
     state.loading = true;
-    statsEl.textContent = 'Loading…';
+    statsEl.innerHTML = '<span class="loadDots loadDots--yellow"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span>';
     const q = new URLSearchParams(params);
     try {
       const r = await fetch(`${API}/api/heatmap?` + q.toString());
@@ -29475,12 +30205,18 @@ body.ticker-active .gTickerLabel {
     if (state.ctl === 'keyword') {
       params.days = kwDays.value || '7';
       const kw = (kwInput.value || '').trim();
-      if (kw) params.keyword = kw;
+      if (kw) {
+        if (!window.__kwIsValid(kwInput)) { window.__kwShowReject(kwInput); return; }
+        params.keyword = kw;
+      }
     } else if (state.ctl === 'timeseries') {
       params.days = tsRange.value || '7';
       params.bucket = tsBucket.value || 'day';
       const kw = (kwInput.value || '').trim();
-      if (kw) params.keyword = kw;
+      if (kw) {
+        if (!window.__kwIsValid(kwInput)) { window.__kwShowReject(kwInput); return; }
+        params.keyword = kw;
+      }
     }
 
     const data = await fetchSnapshot(params);
@@ -30902,16 +31638,16 @@ body.ticker-active .gTickerLabel {
 
   window.__semHeatMinimize = function() {
     panel.classList.add('minimized');
-    // Update stats label
     const statsEl = document.getElementById('semHeatMinStats');
     if (statsEl) {
       const mode = state.mode || 'coverage';
       statsEl.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
     }
-    // Sync play button
     const pb = document.getElementById('semHeatMinPlayBtn');
     if (pb) {
-      pb.textContent = state.playing ? '⏸' : '▶';
+      const isTS = state.ctl === 'timeseries';
+      pb.classList.toggle('hidden-mode', !isTS);
+      pb.textContent = state.playing ? '' : '▶';
       pb.classList.toggle('playing', !!state.playing);
     }
   };
@@ -30921,10 +31657,11 @@ body.ticker-active .gTickerLabel {
   };
 
   window.__semHeatMinTogglePlay = function() {
+    if (state.ctl !== 'timeseries') return;
     if (state.playing) stopPlayback(); else startPlayback();
     const pb = document.getElementById('semHeatMinPlayBtn');
     if (pb) {
-      pb.textContent = state.playing ? '⏸' : '▶';
+      pb.textContent = state.playing ? '' : '▶';
       pb.classList.toggle('playing', !!state.playing);
     }
   };
