@@ -1172,7 +1172,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const offsetParam = params.length;
     const limitClause = `LIMIT $${limitParam} OFFSET $${offsetParam}`;
 
-    const { rows } = await pool.query(`
+    const fullQuery = `
       SELECT * FROM (
         SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
           a.id,
@@ -1224,7 +1224,64 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
         * POWER(sub.country_boost, 2.0)
       ) DESC
       ${limitClause}
-    `, params);
+    `;
+
+    // ── Tier 1: Full filtered query, 10s timeout ──
+    let rows;
+    let tier1Ok = false;
+    const filterClient = await pool.connect();
+    try {
+      await filterClient.query('SET statement_timeout = 10000');
+      const result = await filterClient.query(fullQuery, params);
+      rows = result.rows;
+      tier1Ok = true;
+    } catch (filterErr) {
+      console.warn('[news/search] Filtered Tier 1 timed out (10s), falling back:', filterErr.message);
+    } finally {
+      await filterClient.query('SET statement_timeout = 45000').catch(() => {});
+      filterClient.release();
+    }
+
+    if (!tier1Ok) {
+      // ── Tier 2: Strip image joins, shorter timeout ──
+      const liteQuery = `
+        SELECT
+          a.id, a.title, a.translated_title, a.url, a.article_url,
+          a.summary, a.translated_summary, a.image_url,
+          NULL AS catalog_image_url,
+          a.published_at, a.sentiment_score,
+          NULL AS language, a.base_priority,
+          COALESCE(ns.name, ys.name) AS source_name,
+          NULL AS source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          NULL AS site_url,
+          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+          1.0 AS country_boost, 1.0 AS recency_decay,
+          a.media_type, a.video_id, a.duration_seconds
+        FROM news_articles a
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        JOIN countries src_co ON src_co.id = a.country_id
+        ${needsLocJoin ? `
+          JOIN article_locations al ON al.article_id = a.id
+        ` : ""}
+        ${whereClause}
+        ORDER BY a.published_at DESC
+        ${limitClause}
+      `;
+      const client2 = await pool.connect();
+      try {
+        await client2.query('SET statement_timeout = 6000');
+        const result2 = await client2.query(liteQuery, params);
+        rows = result2.rows;
+      } catch (filterErr2) {
+        console.warn('[news/search] Filtered Tier 2 timed out (6s):', filterErr2.message);
+        rows = [];
+      } finally {
+        await client2.query('SET statement_timeout = 45000').catch(() => {});
+        client2.release();
+      }
+    }
 
     // Check if there's a next page, then trim the extra row
     const hasMore = rows.length > effectiveLimit;
