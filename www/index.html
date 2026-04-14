@@ -2336,9 +2336,9 @@ body.ticker-active #flowControls {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 60px);
   left: 10px;
-  width: 260px;
+  width: 280px;
   max-width: calc(100vw - 20px);
-  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 140px);
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 260px);
   z-index: 810;
   display: none;
   flex-direction: column;
@@ -2426,7 +2426,7 @@ body.ticker-active #flowControls {
 
 /* Scrollable article list */
 .arcListScroll {
-  overflow-y: auto; height: 110px; padding: 4px 0;
+  overflow-y: auto; flex: 1; min-height: 0; padding: 4px 0;
   scrollbar-width: thin; scrollbar-color: rgba(0,220,130,0.15) transparent;
   -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   touch-action: pan-y;
@@ -2522,6 +2522,43 @@ body.ticker-active #flowControls {
 .arcCardTransBtn {
   position: relative; margin: 4px 0 2px; font-size: 9px; padding: 3px 8px;
 }
+/* Aggregate drill-down: article mini-cards inside expanded route card */
+.arcRouteArticle {
+  padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+  cursor: pointer; transition: background 0.15s;
+}
+.arcRouteArticle:hover { background: rgba(0,220,130,0.04); }
+.arcRouteArticle:last-child { border-bottom: none; }
+.arcRouteArticle .arcRATitle {
+  font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.85);
+  line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.arcRouteArticle .arcRAMeta {
+  font-size: 9px; color: rgba(255,255,255,0.25); margin-top: 2px;
+}
+/* Expanded state for drill-down article */
+.arcRouteArticle.arcRAExpanded {
+  background: rgba(0,220,130,0.04); border-left: 2px solid rgba(0,220,130,0.4);
+  padding-left: 8px;
+}
+.arcRouteArticle.arcRAExpanded .arcRAImg {
+  width: 100%; height: 90px; object-fit: cover; border-radius: 6px;
+  margin-bottom: 6px; background: rgba(255,255,255,0.04);
+}
+.arcRouteArticle.arcRAExpanded .arcRATitle {
+  -webkit-line-clamp: unset; margin-bottom: 4px;
+}
+.arcRouteArticle.arcRAExpanded .arcRASummary {
+  font-size: 11px; color: rgba(255,255,255,0.5); line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; margin-bottom: 4px;
+}
+.arcRouteArticle:not(.arcRAExpanded) .arcRAImg,
+.arcRouteArticle:not(.arcRAExpanded) .arcRASummary,
+.arcRouteArticle:not(.arcRAExpanded) .arcRAActions { display: none; }
+.arcRAActions { display: flex; gap: 6px; margin-top: 4px; }
+.arcRAActions .arcCardBtn { font-size: 9px; padding: 4px 8px; }
 
     /* ===============================
        Swipeable Panel Tabs
@@ -17162,14 +17199,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
 
-        container.innerHTML = articles.map(a =>
-          `<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);">` +
-          (a.image_url ? `<img src="${esc(a.image_url)}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:4px;" onerror="this.style.display='none'" />` : '') +
-          `<div style="font-size:12px;font-weight:600;color:rgba(255,255,255,0.85);line-height:1.3;">${esc(a.title)}</div>` +
-          (a.summary ? `<div style="font-size:10px;color:rgba(255,255,255,0.45);line-height:1.3;margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${esc(a.summary)}</div>` : '') +
-          `<div style="font-size:9px;color:rgba(255,255,255,0.2);margin-top:2px;">${a.source_name || ''} · ${formatRelTime(a.published_at)}</div>` +
-          `</div>`
-        ).join('');
+        // Render clickable article bars that expand into full cards
+        container.innerHTML = articles.map(a => {
+          const _nt = window.articleNeedsTranslation?.({ title: a.title, translated_title: null });
+          const _tL = window.getUserTargetLang?.() || { short: 'EN', label: 'English' };
+          const transBtn = (_nt && a.id)
+            ? `<button class="articleTranslateBtn arcCardTransBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="event.stopPropagation();window.translateCard(event,this)" title="Translate to ${_tL.label}">${_tL.short}</button>`
+            : '';
+          return `<div class="arcRouteArticle" data-article-id="${a.id}">` +
+            (a.image_url ? `<img class="arcRAImg" src="${esc(a.image_url)}" alt="" onerror="this.style.display='none'" />` : '') +
+            `<div class="arcRATitle">${esc(a.title)}</div>` +
+            (a.summary ? `<div class="arcRASummary">${esc(a.summary)}</div>` : '') +
+            `<div class="arcRAMeta">${a.source_name || ''} · ${formatRelTime(a.published_at)}</div>` +
+            transBtn +
+            `<div class="arcRAActions">` +
+              `<button class="arcCardBtn globe" onclick="event.stopPropagation();window.startFocus?.(${flow.dst?.lat||0},${flow.dst?.lon||0})">View on Globe</button>` +
+            `</div>` +
+          `</div>`;
+        }).join('');
+
+        // Click to toggle expand/collapse
+        container.querySelectorAll('.arcRouteArticle').forEach(el => {
+          el.addEventListener('click', () => {
+            const wasExpanded = el.classList.contains('arcRAExpanded');
+            container.querySelectorAll('.arcRouteArticle.arcRAExpanded').forEach(
+              e => e.classList.remove('arcRAExpanded')
+            );
+            if (!wasExpanded) el.classList.add('arcRAExpanded');
+          });
+        });
       } catch (e) {
         console.error('Route articles fetch error:', e);
         const container = document.getElementById(`arcRouteArticles_${idx}`);
@@ -17181,9 +17239,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function selectArc(idx) {
       _selectedArcIdx = idx;
       _arcPanelDirty = true;
-
-      // Dismiss the routes-under-cursor info card so it doesn't overlap
-      document.getElementById('flowArcInfoCard')?.classList.remove('visible');
 
       // Pause playback in time-series mode
       if (flowPlaying && flowMode !== 'aggregate') {
@@ -17202,6 +17257,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }
 
+      // Show globe-aware hover card for individual (non-aggregate) arcs
+      const selectedArc = arcObjects[idx];
+      const sf = selectedArc?.flow;
+      if (sf && !sf.count) {
+        // Individual arc — show hover card anchored to destination
+        const infoCard = document.getElementById('flowArcInfoCard');
+        const routeEl  = document.getElementById('faiRoute');
+        const titleEl  = document.getElementById('faiTitle');
+        const metaEl   = document.getElementById('faiMeta');
+        const hintEl   = document.getElementById('faiExpandHint');
+        if (infoCard) {
+          infoCard.classList.remove('fan', 'expanded', 'faiMinimized');
+          if (routeEl) routeEl.textContent = `${sf.src?.place || '?'} → ${sf.dst?.place || '?'}`;
+          if (titleEl) titleEl.textContent = sf.title || '';
+          if (metaEl)  metaEl.textContent  = sf.sourceName || '';
+          if (hintEl)  hintEl.textContent  = '';
+          infoCard.style.opacity = '1';
+          infoCard.classList.add('visible');
+          // Anchor to destination coordinate
+          const dLat = sf.dst?.lat ?? sf.src?.lat;
+          const dLon = sf.dst?.lon ?? sf.src?.lon;
+          if (dLat != null && dLon != null) _startFaiTracking(dLat, dLon);
+        }
+      } else {
+        // Aggregate arc — hide hover card, articles shown in panel
+        document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+      }
+
       syncPanel();
     }
 
@@ -17209,6 +17292,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (_selectedArcIdx === null) return;
       _selectedArcIdx = null;
       _arcPanelDirty = true;
+
+      // Hide hover card
+      document.getElementById('flowArcInfoCard')?.classList.remove('visible');
 
       // Restore all arc opacities
       for (const arc of arcObjects) {
@@ -18123,7 +18209,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.playSFX?.(window.SFX?.article);
     showFlowArcCard(ordered, e);
   }
-  window.addEventListener("click", handleFlowArcClick);
+  // Globe click → info card disabled; arc selection handled via live arcs panel
+  // window.addEventListener("click", handleFlowArcClick);
 
   /* ─── Expandable flow arc info card ───────────────────────────────────
      Drives the #flowArcInfoCard micro panel. Supports:
