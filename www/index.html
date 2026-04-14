@@ -4900,9 +4900,10 @@ body.ticker-active #flowControls {
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 0;
       overflow-y: auto;
       scrollbar-width: none;
+      justify-content: stretch;
     }
     .kwi-bars::-webkit-scrollbar { display: none; }
     .kwi-bar-row {
@@ -4910,6 +4911,9 @@ body.ticker-active #flowControls {
       align-items: center;
       gap: 8px;
       cursor: pointer;
+      flex: 1 1 0;
+      min-height: 28px;
+      padding: 4px 0;
     }
     .kwi-bar-row:hover .kwi-bar-label { color: #4a9eff; }
     .kwi-bar-label {
@@ -4924,14 +4928,15 @@ body.ticker-active #flowControls {
     }
     .kwi-bar-track {
       flex: 1;
-      height: 12px;
+      height: 100%;
+      min-height: 18px;
       background: rgba(255,255,255,0.06);
-      border-radius: 3px;
+      border-radius: 5px;
       overflow: hidden;
     }
     .kwi-bar-fill {
       height: 100%;
-      border-radius: 3px;
+      border-radius: 5px;
       background: linear-gradient(90deg, #4a9eff, #7bc8ff);
       transition: width 0.4s cubic-bezier(0.4,0,0.2,1);
     }
