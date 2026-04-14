@@ -9145,6 +9145,16 @@ window.sourceBiasBadgeHTML = function(bias) {
                min="0.2" max="4" step="0.1" value="1" />
       </div>
 
+      <!-- Node labels toggle -->
+      <div class="flowPanelRow" style="align-items:center;gap:6px;">
+        <span class="flowLabel">Labels</span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1;">
+          <input type="checkbox" id="flowLabelsToggle"
+                 style="width:15px;height:15px;accent-color:rgba(80,255,160,1);cursor:pointer;" />
+          <span style="font-size:10px;color:rgba(255,255,255,0.6);">Show origin &amp; destination</span>
+        </label>
+      </div>
+
       <!-- Playback (individual mode only) -->
       <div class="flowPlaybackRow">
         <button class="flowBtn" id="flowPlayBtn">▶ Play</button>
@@ -19991,7 +20001,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
-      // 8. (City labels on flow arcs removed.)
+      // 8. Show node labels (default checked for card triggers)
+      window.__flowShowLabelsForCardTrigger?.(flows);
 
       // 8b. Highlight country polygons for all flow arc countries
       {
@@ -20106,6 +20117,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (arc) window.__flowPushArc?.(arc);
       });
 
+      // Show node labels (default checked for card triggers)
+      window.__flowShowLabelsForCardTrigger?.(flows);
+
       // Highlight country polygons for all flow arc countries
       {
         const isoSet = new Set();
@@ -20210,6 +20224,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (arc) window.__flowPushArc?.(arc);
       });
 
+      // Show node labels (default checked for card triggers)
+      window.__flowShowLabelsForCardTrigger?.(flows);
+
       // Highlight country polygons for all flow arc countries
       {
         const isoSet = new Set();
@@ -20244,17 +20261,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   /* ── Persistent node labels for flow arc visualization ── */
-  function showFlowNodeLabels(flows) {
-    // Remove any previous labels
-    _clearFlowNodeLabelsImpl();
+  let _flowLabelFlows = null;
+  const FLAG_CDN_LABEL = "https://flagcdn.com/w20/";
 
-    // Collect unique nodes by id+type
+  function showFlowNodeLabels(flows) {
+    _clearFlowNodeLabelsImpl();
+    _flowLabelFlows = flows;
+
+    const chk = document.getElementById("flowLabelsToggle");
+    if (chk && !chk.checked) return;
+
     const nodeMap = new Map();
     for (const f of flows) {
       const srcKey = `${f.src.type}:${f.src.id}`;
       const dstKey = `${f.dst.type}:${f.dst.id}`;
-      if (!nodeMap.has(srcKey)) nodeMap.set(srcKey, f.src);
-      if (!nodeMap.has(dstKey)) nodeMap.set(dstKey, f.dst);
+      if (!nodeMap.has(srcKey)) nodeMap.set(srcKey, { ...f.src, _role: "origin" });
+      if (!nodeMap.has(dstKey)) nodeMap.set(dstKey, { ...f.dst, _role: "destination" });
     }
 
     const container = document.createElement("div");
@@ -20262,16 +20284,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     container.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:90;";
     document.body.appendChild(container);
 
-    const nodes = [...nodeMap.values()];
-    nodes.forEach(node => {
+    for (const node of nodeMap.values()) {
       const label = document.createElement("div");
       label.className = "flowNodeLabel";
-      label.textContent = node.place || "?";
+      const iso = (node.iso || "").toLowerCase();
+      const flagImg = iso ? `<img class="fnlFlag" src="${FLAG_CDN_LABEL}${iso}.png" width="14" height="10" alt="" style="vertical-align:middle;">` : "";
+      const typeTxt = node._role === "origin" ? "ORIGIN" : "DEST";
+      label.innerHTML = `<div class="fnlType">${typeTxt}</div><div class="fnlName">${flagImg}${node.place || "?"}</div>`;
       container.appendChild(label);
       label.__flowNode = node;
-    });
+    }
 
-    // Start animation loop for positioning
     window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
   }
 
@@ -20338,7 +20361,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__flowNodeLabelRAF = null;
     }
   }
-  window.clearFlowNodeLabels = _clearFlowNodeLabelsImpl;
+  window.clearFlowNodeLabels = function() {
+    _clearFlowNodeLabelsImpl();
+    _flowLabelFlows = null;
+  };
+
+  // ── Checkbox toggle for flow node labels ──
+  (function wireFlowLabelsToggle() {
+    const chk = document.getElementById("flowLabelsToggle");
+    if (!chk) return;
+    chk.addEventListener("change", () => {
+      if (chk.checked && _flowLabelFlows) {
+        showFlowNodeLabels(_flowLabelFlows);
+      } else {
+        _clearFlowNodeLabelsImpl();
+      }
+    });
+  })();
+
+  window.__flowShowLabelsForCardTrigger = function(flows) {
+    const chk = document.getElementById("flowLabelsToggle");
+    if (chk) chk.checked = true;
+    showFlowNodeLabels(flows);
+  };
 
   /* ── Thread Flow Timeline ── */
   async function loadAndShowFlowTimeline(threadId) {
@@ -20408,22 +20453,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 <style>
 .flowNodeLabel {
-  position: absolute;
-  transform: translate(-50%, -100%);
-  font-size: 10px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.88);
-  background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  border: 1px solid rgba(100,200,255,0.3);
-  border-radius: 4px;
-  padding: 2px 7px;
-  white-space: nowrap;
+  position: fixed;
   pointer-events: none;
-  transition: opacity 0.2s ease;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  z-index: 190;
+  background: rgba(5,7,12,0.88);
+  border: 1px solid rgba(80,255,160,0.3);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 10px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: rgba(255,255,255,0.85);
+  white-space: nowrap;
+  transform: translate(-50%, -100%) translateY(-8px);
+  transition: opacity 0.35s ease;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flowNodeLabel .fnlType {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(80,255,160,0.6);
+  margin-bottom: 1px;
+}
+.flowNodeLabel .fnlName {
+  font-weight: 600;
+  font-size: 10px;
+}
+.flowNodeLabel .fnlFlag {
+  margin-right: 3px;
 }
 
 /* ── Thread Flow Timeline ── */
@@ -28207,7 +28269,7 @@ body.ticker-active .gTickerLabel {
     const mat  = new THREE.MeshBasicMaterial({
       map: heatTexture,
       transparent: true,
-      opacity: 0.62,
+      opacity: 0,          // start invisible — setHeatVisible() fades in
       depthWrite: false,
       side: THREE.FrontSide
     });
@@ -28757,8 +28819,26 @@ body.ticker-active .gTickerLabel {
 
   // Keep the heat sphere hidden when there is nothing to show so the
   // globe's own surface is visible with no dim overlay at all.
+  const HEAT_TARGET_OPACITY = 0.62;
+  const HEAT_FADE_DURATION  = 1200; // ms
+  let _heatFadeRaf = null;
+
   function setHeatVisible(hasCoverage) {
-    if (heatSphere) heatSphere.visible = !!hasCoverage;
+    if (!heatSphere) return;
+    if (!hasCoverage) { heatSphere.visible = false; return; }
+    // Fade in from 0 → target opacity
+    heatSphere.visible = true;
+    if (_heatFadeRaf) cancelAnimationFrame(_heatFadeRaf);
+    const start = performance.now();
+    const from  = heatSphere.material.opacity;
+    if (from >= HEAT_TARGET_OPACITY - 0.01) return; // already at target
+    (function tick() {
+      const t = Math.min(1, (performance.now() - start) / HEAT_FADE_DURATION);
+      const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+      heatSphere.material.opacity = from + (HEAT_TARGET_OPACITY - from) * ease;
+      if (t < 1) _heatFadeRaf = requestAnimationFrame(tick);
+      else _heatFadeRaf = null;
+    })();
   }
 
   // Main render — accepts either the new shape { country_points, city_points }
