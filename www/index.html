@@ -3223,10 +3223,126 @@ body.ticker-active #flowControls {
 /* Minimized state — hide image and meta, compact card */
 #flowCtxCard.flowCtxMinimized .flowCtxImgWrap { display: none; }
 #flowCtxCard.flowCtxMinimized .flowCtxMeta { display: none; }
+#flowCtxCard.flowCtxMinimized .flowCtxViewRoutesBtn { display: none !important; }
 #flowCtxCard.flowCtxMinimized .flowCtxTitle {
   -webkit-line-clamp: 1;
   font-size: 11px;
 }
+.flowCtxInfoView { display: flex; flex-direction: column; gap: 8px; }
+
+/* ── Drill-down: View Routes inside context card (mobile) ── */
+.flowCtxViewRoutesBtn {
+  display: none;
+  width: 100%;
+  padding: 8px 0;
+  margin-top: 4px;
+  border: 1px solid rgba(255,180,80,0.25);
+  border-radius: 8px;
+  background: rgba(255,180,80,0.08);
+  color: rgba(255,200,140,0.95);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.flowCtxViewRoutesBtn:hover { background: rgba(255,180,80,0.18); }
+.flowCtxViewRoutesBtn.visible { display: block; }
+
+.flowCtxRoutesView {
+  display: none;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+#flowCtxCard.ctxRoutesActive { max-height: calc(100vh - env(safe-area-inset-top, 0px) - 100px); }
+#flowCtxCard.ctxRoutesActive .flowCtxInfoView { display: none; }
+#flowCtxCard.ctxRoutesActive .flowCtxRoutesView { display: flex; }
+#flowCtxCard.ctxRoutesActive .flowCtxPillBar { display: none; }
+
+.flowCtxRoutesHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px 0;
+  flex-shrink: 0;
+}
+.flowCtxRoutesBackBtn {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.4);
+  color: rgba(255,255,255,0.8);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.flowCtxRoutesBackBtn:hover { background: rgba(255,180,80,0.2); }
+.flowCtxRoutesBackBtn svg { width: 13px; height: 13px; }
+.flowCtxRoutesTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,200,140,0.9);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flowCtxRoutesScroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 200px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.flowCtxRoutesScroll::-webkit-scrollbar { width: 4px; }
+.flowCtxRoutesScroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+/* Route bars inside context card (reuse arcBar/arcCardExpanded styles) */
+.flowCtxRouteBar {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.flowCtxRouteBar:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); }
+.flowCtxRouteBar .arcBarRoute { font-size: 10px; font-weight: 600; color: rgba(255,255,255,0.85); }
+.flowCtxRouteBar .arcBarArrow { color: rgba(255,180,80,0.7); margin: 0 4px; }
+.flowCtxRouteBar .arcBarTitle { font-size: 10px; color: rgba(255,255,255,0.5); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flowCtxRouteBar .arcBarTime { font-size: 9px; color: rgba(255,255,255,0.3); margin-top: 2px; }
+.flowCtxRouteBar.selected { background: rgba(255,180,80,0.12); border-color: rgba(255,180,80,0.3); }
+
+/* Expanded route detail within context card */
+.flowCtxRouteDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.flowCtxRouteDetail .arcCardImg { width: 100%; height: 120px; object-fit: cover; border-radius: 8px; display: block; }
+.flowCtxRouteDetail .arcCardHeadline { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.9); line-height: 1.35; }
+.flowCtxRouteDetail .arcCardOrigin { font-size: 10px; color: rgba(255,200,120,0.8); }
+.flowCtxRouteDetail .arcCardSummary { font-size: 10px; color: rgba(255,255,255,0.55); line-height: 1.4; }
+.flowCtxRouteDetail .arcRouteArticle { padding: 8px; border-radius: 6px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); cursor: pointer; transition: background 0.12s; }
+.flowCtxRouteDetail .arcRouteArticle:hover { background: rgba(255,255,255,0.06); }
+.flowCtxRouteDetail .arcRATitle { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.85); line-height: 1.3; }
+.flowCtxRouteDetail .arcRASummary { display: none; font-size: 10px; color: rgba(255,255,255,0.5); line-height: 1.35; margin-top: 4px; }
+.flowCtxRouteDetail .arcRAMeta { font-size: 9px; color: rgba(255,255,255,0.35); margin-top: 3px; }
+.flowCtxRouteDetail .arcRAImg { display: none; width: 100%; height: 100px; object-fit: cover; border-radius: 6px; margin-bottom: 6px; }
+.flowCtxRouteDetail .arcRAActions { display: none; }
+.flowCtxRouteDetail .arcRouteArticle.arcRAExpanded .arcRASummary { display: block; }
+.flowCtxRouteDetail .arcRouteArticle.arcRAExpanded .arcRAImg { display: block; }
+.flowCtxRouteDetail .arcRouteArticle.arcRAExpanded .arcRAActions { display: flex; gap: 6px; margin-top: 6px; }
+.flowCtxRouteDetail .arcCardBtn { padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.7); font-size: 10px; font-weight: 600; cursor: pointer; transition: background 0.12s; }
+.flowCtxRouteDetail .arcCardBtn:hover { background: rgba(255,255,255,0.12); }
+.flowCtxRouteDetail .articleTranslateBtn { position: static; margin-top: 4px; font-size: 9px; padding: 3px 8px; border-radius: 4px; background: rgba(255,180,80,0.1); border: 1px solid rgba(255,180,80,0.2); color: rgba(255,200,140,0.8); cursor: pointer; }
 
 /* .cardHeatmapBtn removed — sentiment buttons stripped from cards */
 
@@ -16961,6 +17077,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // ── Show/hide with flow controls ──
     function showPanel() {
+      // On mobile, suppress standalone arc list when drill-down is active
+      // (routes are embedded inside flowCtxCard instead)
+      if (window.__flowCtxDrillDown) return;
       if (_minimized) { minBar.classList.add('visible'); }
       else { panel.classList.add('visible'); }
     }
@@ -17340,6 +17459,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__arcListShow = showPanel;
     window.__arcListHide = hidePanel;
     window.__arcPanelDirty = () => { _arcPanelDirty = true; };
+    window.formatRelTime = formatRelTime;
   })();
 
   /* ── Load countries for autocomplete ── */
@@ -21081,10 +21201,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
         <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       </div>
-      <div class="flowCtxKind"></div>
-      <div class="flowCtxImgWrap"></div>
-      <div class="flowCtxTitle"></div>
-      <div class="flowCtxMeta"></div>
+      <div class="flowCtxInfoView">
+        <div class="flowCtxKind"></div>
+        <div class="flowCtxImgWrap"></div>
+        <div class="flowCtxTitle"></div>
+        <div class="flowCtxMeta"></div>
+        <button class="flowCtxViewRoutesBtn" onclick="window.__flowCtxViewRoutes?.()">View Routes</button>
+      </div>
+      <div class="flowCtxRoutesView">
+        <div class="flowCtxRoutesHeader">
+          <button class="flowCtxRoutesBackBtn" onclick="window.__flowCtxBackToInfo?.()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+          <span class="flowCtxRoutesTitle">Routes</span>
+        </div>
+        <div class="flowCtxRoutesScroll"></div>
+      </div>
     `;
     document.body.appendChild(el);
     el.querySelector(".flowCtxClose").addEventListener("click", (e) => {
@@ -21104,6 +21234,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } catch (_) {}
       try { window.hideFlowArcBackBtn?.(); } catch (_) {}
       window.__flowClearHighlights?.();
+      window.__flowCtxDrillDown = false;
       _flowArcOrigin = null;
       window.__flowArcOriginForHeat = null;
       hideFlowCtxCard();
@@ -21120,7 +21251,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
     return el;
   }
-  function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta }) {
+  function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta, hasRoutes }) {
     const el = _ensureFlowCtxCard();
     el.querySelector(".flowCtxKind").textContent = kind || "";
     el.querySelector(".flowCtxTitle").textContent = title || "";
@@ -21137,6 +21268,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } else {
       wrap.innerHTML = `<div class="flowCtxImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
     }
+    // Reset drill-down state
+    el.classList.remove("ctxRoutesActive");
+    // Show "View Routes" button if routes are available
+    const vrBtn = el.querySelector(".flowCtxViewRoutesBtn");
+    if (vrBtn) {
+      if (hasRoutes) vrBtn.classList.add("visible");
+      else vrBtn.classList.remove("visible");
+    }
     // force reflow so the transition fires reliably
     el.classList.remove("visible", "flowCtxMinimized");
     void el.offsetHeight;
@@ -21144,10 +21283,229 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   function hideFlowCtxCard() {
     const el = document.getElementById("flowCtxCard");
-    if (el) el.classList.remove("visible");
+    if (el) {
+      el.classList.remove("visible", "ctxRoutesActive");
+      window.__flowCtxDrillDown = false;
+    }
   }
   window.showFlowCtxCard = showFlowCtxCard;
   window.hideFlowCtxCard = hideFlowCtxCard;
+
+  // ── Drill-down: "View Routes" inside context card (mobile only) ──
+  // When arcs are triggered from a card on mobile, this flag suppresses
+  // the standalone arc list panel and drives drill-down inside flowCtxCard.
+  window.__flowCtxDrillDown = false;
+
+  window.__flowCtxViewRoutes = function() {
+    const el = document.getElementById("flowCtxCard");
+    if (!el) return;
+    el.classList.add("ctxRoutesActive");
+
+    const scrollEl = el.querySelector(".flowCtxRoutesScroll");
+    if (!scrollEl) return;
+    scrollEl.innerHTML = '';
+
+    // Build route bars from current arcObjects
+    const bars = [];
+    for (const arc of arcObjects) {
+      if (!arc.flow || arc._uid == null) continue;
+      bars.push({ uid: arc._uid, flow: arc.flow });
+    }
+
+    if (!bars.length) {
+      scrollEl.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,0.4);padding:12px 0;text-align:center;">No routes found</div>';
+      return;
+    }
+
+    const _esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+    const _relTime = window.formatRelTime || ((t) => t ? new Date(t).toLocaleString() : '');
+
+    bars.forEach(({ uid, flow }) => {
+      const bar = document.createElement('div');
+      bar.className = 'flowCtxRouteBar';
+      bar.dataset.uid = uid;
+      const srcName = flow.src?.place || 'Unknown';
+      const dstName = flow.dst?.place || 'Unknown';
+      const title = flow.title || (flow.count ? `${flow.count} articles` : '');
+      const time = flow.publishedAt ? _relTime(flow.publishedAt) : '';
+      bar.innerHTML =
+        `<div class="arcBarRoute">${_esc(srcName)}<span class="arcBarArrow">→</span>${_esc(dstName)}</div>` +
+        (title ? `<div class="arcBarTitle">${_esc(title)}</div>` : '') +
+        (time ? `<div class="arcBarTime">${time}</div>` : '');
+      bar.addEventListener('click', () => _flowCtxSelectRoute(uid, flow, scrollEl));
+      scrollEl.appendChild(bar);
+    });
+  };
+
+  window.__flowCtxBackToInfo = function() {
+    const el = document.getElementById("flowCtxCard");
+    if (!el) return;
+    el.classList.remove("ctxRoutesActive");
+
+    // Restore all arc opacities (deselect)
+    for (const arc of arcObjects) {
+      arc._frozenOpacity = null;
+      arc._frozen = false;
+    }
+    // Hide hover card
+    document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+  };
+
+  function _flowCtxSelectRoute(uid, flow, scrollEl) {
+    // Isolate this arc on the globe
+    let selectedArc = null;
+    for (const arc of arcObjects) {
+      if (arc._uid === uid) {
+        arc._frozenOpacity = null;
+        arc._frozen = true;
+        selectedArc = arc;
+      } else {
+        arc._frozenOpacity = 0;
+      }
+    }
+
+    // Show globe-aware hover card for individual arcs
+    const sf = selectedArc?.flow;
+    if (sf && !sf.count) {
+      const infoCard = document.getElementById('flowArcInfoCard');
+      if (infoCard) {
+        infoCard.classList.remove('fan', 'expanded', 'faiMinimized');
+        const routeEl = document.getElementById('faiRoute');
+        const titleEl = document.getElementById('faiTitle');
+        const metaEl  = document.getElementById('faiMeta');
+        if (routeEl) routeEl.textContent = `${sf.src?.place || '?'} → ${sf.dst?.place || '?'}`;
+        if (titleEl) titleEl.textContent = sf.title || '';
+        if (metaEl)  metaEl.textContent  = sf.sourceName || '';
+        infoCard.style.opacity = '1';
+        infoCard.classList.add('visible');
+        const dLat = sf.dst?.lat ?? sf.src?.lat;
+        const dLon = sf.dst?.lon ?? sf.src?.lon;
+        if (dLat != null && dLon != null && typeof _startFaiTracking === 'function') {
+          _startFaiTracking(dLat, dLon);
+        }
+      }
+    }
+
+    // Highlight selected bar, show detail
+    scrollEl.querySelectorAll('.flowCtxRouteBar').forEach(b => b.classList.remove('selected'));
+    const barEl = scrollEl.querySelector(`[data-uid="${uid}"]`);
+    if (barEl) barEl.classList.add('selected');
+
+    // Build/show detail below the bars
+    let detailEl = scrollEl.querySelector('.flowCtxRouteDetail');
+    if (!detailEl) {
+      detailEl = document.createElement('div');
+      detailEl.className = 'flowCtxRouteDetail';
+      scrollEl.appendChild(detailEl);
+    }
+
+    const _esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+    const srcName = flow.src?.place || 'Unknown';
+    const dstName = flow.dst?.place || 'Unknown';
+    const isAggregate = !!flow.count;
+
+    let html = '';
+    if (isAggregate) {
+      html += `<div class="arcCardOrigin">${_esc(srcName)} → ${_esc(dstName)} · ${flow.count} articles</div>`;
+      html += `<div id="flowCtxRouteArticles"><span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span></div>`;
+    } else {
+      if (flow.imageUrl) html += `<img class="arcCardImg" src="${_esc(flow.imageUrl)}" alt="" onerror="this.style.display='none'" />`;
+      html += `<div class="arcCardHeadline">${_esc(flow.title || '')}</div>`;
+      html += `<div class="arcCardOrigin">${_esc(srcName)} → ${_esc(dstName)}</div>`;
+      if (flow.summary) html += `<div class="arcCardSummary">${_esc(flow.summary)}</div>`;
+      // Translate button
+      const _nt = window.articleNeedsTranslation?.({ title: flow.title, translated_title: flow.translatedTitle });
+      if (_nt && flow.id) {
+        const _tL = window.getUserTargetLang?.() || { short: 'EN', label: 'English' };
+        html += `<button class="articleTranslateBtn" data-id="${flow.id}" data-title="${(flow.title||'').replace(/"/g,'&quot;')}" data-summary="${(flow.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_tL.label}">${_tL.short}</button>`;
+      }
+    }
+
+    // Back to routes list button
+    html += `<button class="arcCardBtn" style="margin-top:8px;width:100%;" onclick="window.__flowCtxDeselectRoute?.()">Back to Routes</button>`;
+
+    detailEl.innerHTML = html;
+    detailEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    // Fetch articles for aggregate routes
+    if (isAggregate && flow.src?.id && flow.dst?.id) {
+      _flowCtxFetchRouteArticles(flow);
+    }
+  }
+
+  async function _flowCtxFetchRouteArticles(flow) {
+    try {
+      const params = new URLSearchParams({
+        src_id: flow.src.id, dst_id: flow.dst.id,
+        src_type: flow.src.type || 'country', dst_type: flow.dst.type || 'country',
+        limit: '10'
+      });
+      const fromDate = document.getElementById('flowFrom')?.value;
+      const toDate = document.getElementById('flowTo')?.value;
+      if (fromDate) params.set('from_date', fromDate);
+      if (toDate) params.set('to_date', toDate);
+
+      const API = window.__API || "https://earth-wjr6.onrender.com";
+      const r = await fetch(`${API}/api/flows/route-articles?${params}`);
+      const articles = await r.json();
+      const container = document.getElementById('flowCtxRouteArticles');
+      if (!container) return;
+
+      if (!articles.length) {
+        container.textContent = 'No articles found for this route';
+        return;
+      }
+
+      const _esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+      const _relTime = window.formatRelTime || ((t) => t ? new Date(t).toLocaleString() : '');
+
+      container.innerHTML = articles.map(a => {
+        const _nt = window.articleNeedsTranslation?.({ title: a.title, translated_title: null });
+        const _tL = window.getUserTargetLang?.() || { short: 'EN', label: 'English' };
+        const transBtn = (_nt && a.id)
+          ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="event.stopPropagation();window.translateCard(event,this)" title="Translate to ${_tL.label}">${_tL.short}</button>`
+          : '';
+        return `<div class="arcRouteArticle" data-article-id="${a.id}">` +
+          (a.image_url ? `<img class="arcRAImg" src="${_esc(a.image_url)}" alt="" onerror="this.style.display='none'" />` : '') +
+          `<div class="arcRATitle">${_esc(a.title)}</div>` +
+          (a.summary ? `<div class="arcRASummary">${_esc(a.summary)}</div>` : '') +
+          `<div class="arcRAMeta">${a.source_name || ''} · ${_relTime(a.published_at)}</div>` +
+          transBtn +
+          `<div class="arcRAActions">` +
+            `<button class="arcCardBtn" onclick="event.stopPropagation();window.startFocus?.(${flow.dst?.lat||0},${flow.dst?.lon||0})">View on Globe</button>` +
+          `</div>` +
+        `</div>`;
+      }).join('');
+
+      container.querySelectorAll('.arcRouteArticle').forEach(el => {
+        el.addEventListener('click', () => {
+          const wasExpanded = el.classList.contains('arcRAExpanded');
+          container.querySelectorAll('.arcRouteArticle.arcRAExpanded').forEach(e => e.classList.remove('arcRAExpanded'));
+          if (!wasExpanded) el.classList.add('arcRAExpanded');
+        });
+      });
+    } catch (e) {
+      console.error('flowCtx route articles fetch error:', e);
+      const container = document.getElementById('flowCtxRouteArticles');
+      if (container) container.textContent = 'Failed to load articles';
+    }
+  }
+
+  window.__flowCtxDeselectRoute = function() {
+    // Restore all arc opacities
+    for (const arc of arcObjects) {
+      arc._frozenOpacity = null;
+      arc._frozen = false;
+    }
+    // Hide hover card
+    document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+
+    // Remove detail, deselect bar
+    const el = document.getElementById("flowCtxCard");
+    if (!el) return;
+    el.querySelector('.flowCtxRouteDetail')?.remove();
+    el.querySelectorAll('.flowCtxRouteBar.selected').forEach(b => b.classList.remove('selected'));
+  };
 
   function showFlowArcBackBtn(label) {
     const btn = document.getElementById("flowArcBackBtn");
@@ -21168,6 +21526,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowArcGoBack = function() {
     if (!_flowArcOrigin) return;
     const origin = _flowArcOrigin;
+
+    // Reset drill-down state
+    window.__flowCtxDrillDown = false;
 
     // Close flow arcs, labels, timeline, and info card
     window.__flowClosePanel?.();
@@ -21318,10 +21679,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // 10. Re-surface the compact floating card using the (possibly
-      //     richer) data returned from the API, falling back to whatever
-      //     we captured from the originating card. This overwrites the
-      //     early-render pass from step 0 with better meta if available.
+      // 10. Suppress standalone arc list — drill-down lives inside context card
+      window.__flowCtxDrillDown = true;
+      document.getElementById('flowArcList')?.classList.remove('visible');
+      document.getElementById('arcListMinBar')?.classList.remove('visible');
+
+      // 11. Re-surface the compact floating card with "View Routes" button
       const _finalArt = articleObj || _ctxArticle;
       if (_finalArt) {
         const _parts = [];
@@ -21334,6 +21697,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           imageUrl: _finalArt.image_url || null,
           isoCode: _finalArt.iso_code || null,
           meta: _parts.join(", ") || (_finalArt.source_name || ""),
+          hasRoutes: true,
         });
       }
 
@@ -21442,7 +21806,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // Surface compact floating card for the originating thread.
+      // Suppress standalone arc list — drill-down lives inside context card
+      window.__flowCtxDrillDown = true;
+      document.getElementById('flowArcList')?.classList.remove('visible');
+      document.getElementById('arcListMinBar')?.classList.remove('visible');
+
+      // Surface compact floating card with "View Routes" button
       const _t = _ctxThread || data.thread || null;
       if (_t) {
         showFlowCtxCard({
@@ -21451,6 +21820,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           imageUrl: _t.hero_image_url || _t.image_url || _t.thumbnail_url || null,
           isoCode: _t.hero_iso_code || null,
           meta: _t.category || _t.status || `${flows.length} route${flows.length !== 1 ? "s" : ""}`,
+          hasRoutes: true,
         });
       }
 
@@ -21555,7 +21925,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // Surface compact floating card for the originating timeline.
+      // Suppress standalone arc list — drill-down lives inside context card
+      window.__flowCtxDrillDown = true;
+      document.getElementById('flowArcList')?.classList.remove('visible');
+      document.getElementById('arcListMinBar')?.classList.remove('visible');
+
+      // Surface compact floating card with "View Routes" button
       const _tl = _ctxTimeline || data.timeline || null;
       if (_tl) {
         showFlowCtxCard({
@@ -21564,6 +21939,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           imageUrl: _tl.hero_image_url || _tl.image_url || _tl.thumbnail_url || null,
           isoCode: _tl.hero_iso_code || null,
           meta: _tl.category || _tl.status || `${flows.length} route${flows.length !== 1 ? "s" : ""}`,
+          hasRoutes: true,
         });
       }
 
