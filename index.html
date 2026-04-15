@@ -1589,7 +1589,8 @@
   gap: 10px;
   pointer-events: all;
   user-select: none;
-  min-width: 520px;
+  min-width: 416px;
+  max-width: 416px;
 }
 #flowControls.visible { display: flex; }
 body.ticker-active #flowControls {
@@ -7833,7 +7834,12 @@ body.ticker-active #flowControls {
       .flowMinBar {
         max-width: 100%;
         box-sizing: border-box;
+        padding: 10px 18px;
+        gap: 14px;
+        border-radius: 34px;
       }
+      .flowMinBar .flowMinLabel { font-size: 12px; }
+      .flowMinBar .flowMinStats { font-size: 13px; }
       .flowMinBtn,
       .flowCloseBtn {
         background: none !important;
@@ -15930,6 +15936,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         function canShow() {
           if (document.getElementById("infoPanel")?.classList.contains("active")) return false;
           if (document.getElementById("flowControls")?.classList.contains("visible")) return false;
+          // On mobile, the view settings sidebar takes up enough room that
+          // ambient headlines overlap its controls. Desktop has enough space
+          // to keep them visible alongside, so this guard is mobile-only.
+          if (_isMobileView && document.getElementById("viewSidebar")?.classList.contains("open")) return false;
           if (isFocused)     return false;
           if (ambientPaused) return false;
           if (ambientSpeed === 0) return false;
@@ -16422,6 +16432,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _flowContactISOs = new Set();
   let _flowContactDirty = false;
 
+  /* ── Flow clock ──
+     A pauseable wall-clock used by article-card and thread arc modes so
+     that pausing playback (e.g. when the user opens an article from the
+     live-arcs list) actually freezes those animations. The time-series
+     flow lifecycle stays on its existing flowPlaying flag. */
+  let _flowClockAccumSec  = 0;
+  let _flowClockRunning   = true;
+  let _flowClockLastTick  = performance.now() / 1000;
+  function nowFlowSec() {
+    return _flowClockRunning
+      ? _flowClockAccumSec + (performance.now() / 1000 - _flowClockLastTick)
+      : _flowClockAccumSec;
+  }
+  function setFlowClockRunning(run) {
+    if (run === _flowClockRunning) return;
+    if (run) {
+      _flowClockLastTick = performance.now() / 1000;
+      _flowClockRunning  = true;
+    } else {
+      _flowClockAccumSec += performance.now() / 1000 - _flowClockLastTick;
+      _flowClockRunning  = false;
+    }
+  }
+
   /* ── City node ring pulse pool ── */
   const FLOW_RING_COUNT = 16;
   const FLOW_RING_SEGMENTS = 48;
@@ -16538,6 +16572,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uPulsePos: { value: 0.0 },  // 0-1 position along arc
         uPulseWidth: { value: 0.12 }, // width of pulse glow
         uPulseIntensity: { value: 1.2 }, // extra brightness at pulse
+        uSinglePulse: { value: 0.0 }, // 1.0 = one streak (article-card flows); 0.0 = triple pulse
         uVisibleStart: { value: 0.0 },
         uVisibleEnd: { value: 1.0 },
         uEdgeSoftness: { value: ARC_EDGE_SOFTNESS }
@@ -16555,26 +16590,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uniform float uPulsePos;
         uniform float uPulseWidth;
         uniform float uPulseIntensity;
+        uniform float uSinglePulse;
         uniform float uVisibleStart;
         uniform float uVisibleEnd;
         uniform float uEdgeSoftness;
         varying vec2 vUv;
-        
-        float getPulse(float pos, float center) {
+
+        float getPulse(float pos, float center, float wrap) {
           float dist = abs(pos - center);
-          dist = min(dist, 1.0 - dist);
+          // Multi-pulse mode wraps toroidally so trailing pulses can drift
+          // past the seam; single-streak mode doesn't wrap so the head
+          // cleanly vanishes at the destination before restarting.
+          dist = mix(dist, min(dist, 1.0 - dist), wrap);
           return exp(-dist * dist / (uPulseWidth * uPulseWidth * 0.5));
         }
-        
+
         void main() {
           // vUv.x goes along the tube length (0 = start, 1 = end)
-          // Multiple pulses for clearer direction
-          float pulse1 = getPulse(vUv.x, uPulsePos);
-          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33));
-          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66));
-          
-          // Combine pulses with slight falloff for trailing ones
-          float pulse = pulse1 + pulse2 * 0.6 + pulse3 * 0.3;
+          // Article-card flows render a single streak pulse; other arcs
+          // layer three trailing pulses for a richer flow look.
+          float wrap = 1.0 - uSinglePulse;
+          float pulse1 = getPulse(vUv.x, uPulsePos, wrap);
+          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33), wrap);
+          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66), wrap);
+
+          float pulse = mix(pulse1 + pulse2 * 0.6 + pulse3 * 0.3, pulse1, uSinglePulse);
 
           float startMask = smoothstep(uVisibleStart - uEdgeSoftness, uVisibleStart, vUv.x);
           float endMask = 1.0 - smoothstep(uVisibleEnd, uVisibleEnd + uEdgeSoftness, vUv.x);
@@ -16821,7 +16861,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc._uid = _arcNextUid++;
     arc.flow = flow;
     arc.age  = 0;
-    arc.isStatic = !!flow.count;  // aggregate arcs don't expire
+    // Article-card flows get their own persistent lifecycle: a synchronized
+    // draw-in pulse followed by a looping streak. Thread flows daisy-chain
+    // outward from the most-connected entity and then loop their pulses in
+    // the same wave order.
+    const _isArticleCard = flow._sourceType === 'article' && flow._cardTriggered;
+    const _isThread      = flow._sourceType === 'thread'  && flow._cardTriggered;
+    arc.mode = _isArticleCard ? 'articleCard' : (_isThread ? 'thread' : null);
+    arc._elapsed = 0;
+    arc.wave = null;          // filled in by the thread scheduler on first tick
+    arc.isStatic = (arc.mode === 'articleCard' || arc.mode === 'thread') ? false : !!flow.count;  // aggregate arcs don't expire
     arc.laneOffset = laneOffset;
     arc.travelDuration = arc.isStatic
       ? AGGREGATE_TRAVEL * (0.92 + Math.random() * 0.18)
@@ -16849,8 +16898,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.tubeMat.uniforms.uColor.value.copy(color);
     arc.tubeMat.uniforms.uVisibleStart.value = 0.0;
     arc.tubeMat.uniforms.uVisibleEnd.value = arc.isStatic ? 0.001 : 0.001;
+    // Default to triple-pulse; article-card arcs flip to single-streak below.
+    arc.tubeMat.uniforms.uSinglePulse.value = 0.0;
 
-    if (arc.isStatic) {
+    if (arc.mode === 'articleCard') {
+      arc.drawDuration = 2.5;         // fixed, equal across all article arcs
+      arc.loopPeriod   = 2.5;         // same for looping streak — sync sources & destinations
+      // Wall-clock seconds (pauseable via nowFlowSec) so flowSpeed can't
+      // desync pulses between arcs, and so pausing the flow freezes the
+      // animation. Every arc in the same article batch is created in a
+      // single synchronous loop, so they share a common _createdAt.
+      arc._createdAt   = nowFlowSec();
+      arc._srcRingSpawned = false;
+      arc._dstRingSpawned = false;
+      arc.baseOpacity  = 0.62;
+      arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+      arc.tubeMat.uniforms.uSinglePulse.value = 1.0;
+      arc.tubeMat.uniforms.uPulseWidth.value = 0.16; // uv-space → world-space length scales with arc length
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
+      arc.tubeMat.uniforms.uPulsePos.value = 0.0;
+      arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
+    } else if (arc.mode === 'thread') {
+      // Per-wave draw-in duration; the scheduler assigns arc.wave on the
+      // first tick after a batch is created, so the actual start offset
+      // is wave * waveDuration.
+      arc.waveDuration = 1.5;
+      arc._srcRingSpawned = false;
+      arc._dstRingSpawned = false;
+      arc.baseOpacity = 0.62;
+      // Start fully hidden; setup reveals once the arc's wave begins.
+      arc.tubeMat.uniforms.uOpacity.value = 0;
+      arc.tubeMat.uniforms.uVisibleEnd.value = 0.001;
+      arc.tubeMat.uniforms.uSinglePulse.value = 1.0;
+      arc.tubeMat.uniforms.uPulseWidth.value = 0.16;
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
+      arc.tubeMat.uniforms.uPulsePos.value = -2.0; // offscreen until pulse loop activates
+      arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
+    } else if (arc.isStatic) {
       arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
       // Gentle pulse after the draw-in settles — not too flashy.
       arc.tubeMat.uniforms.uPulseIntensity.value = 0.55;
@@ -22195,6 +22279,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const camera = window.__camera;
     const renderer = window.__renderer;
+    const scene = window.scene;
     if (!camera || !renderer) {
       window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
       return;
@@ -22203,6 +22288,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const rect = renderer.domElement.getBoundingClientRect();
     const labels = container.querySelectorAll(".flowNodeLabel");
     const GLOBE_RADIUS = 1.0;
+    // The globe's rotation lives on the scene quaternion — model-space node
+    // positions need this applied before they can be tested against the
+    // camera and projected, otherwise the facing check hides them all once
+    // the user rotates the globe.
+    const sceneQuat = scene?.quaternion;
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir).normalize();
 
     labels.forEach(label => {
       const node = label.__flowNode;
@@ -22215,10 +22307,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         GLOBE_RADIUS * Math.sin(lat),
         GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
       );
+      if (sceneQuat) pos.applyQuaternion(sceneQuat);
 
-      // Check if point is facing camera
-      const camDir = camera.position.clone().normalize();
-      const dot = pos.clone().normalize().dot(camDir);
+      // Dot of the surface normal with the camera forward direction.
+      // camera.getWorldDirection points away from the camera into the
+      // scene, so a front-facing node has -camDir · n > 0.
+      const dot = -camDir.dot(pos.clone().normalize());
 
       if (dot < 0.05) {
         label.style.opacity = "0";
