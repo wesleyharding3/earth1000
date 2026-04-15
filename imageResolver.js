@@ -249,8 +249,6 @@ async function findBestCandidate(context, client) {
     if (!sat.saturated && sat.poolSize > 0) {
       poolRows = await queryPool(`ia.city_id = $2`, [cityId], {}, tagIds, client);
       if (poolRows.length) usedTier = "city";
-    } else if (sat.poolSize > 0) {
-      console.log(`  🔄 City pool saturated (city:${cityId}, pool:${sat.poolSize}, minUse:${sat.minUsage}) → overflow to country`);
     }
   }
 
@@ -265,8 +263,6 @@ async function findBestCandidate(context, client) {
         `ia.country_id = $2 AND ia.city_id IS NULL`, [countryId], {}, tagIds, client
       );
       if (poolRows.length) usedTier = "country";
-    } else if (sat.poolSize > 0) {
-      console.log(`  🔄 Country pool saturated (country:${countryId}, pool:${sat.poolSize}) → overflow to tags`);
     }
   }
 
@@ -321,9 +317,6 @@ async function findBestCandidate(context, client) {
 }
 
 async function persistAssignment(articleId, candidate, context, surface, client) {
-  if (candidate._tier) {
-    console.log(`  📍 [${articleId}] assigned from ${candidate._tier} pool (score: ${candidate.score?.toFixed(2)})`);
-  }
   const matchedTagId = context.tags[0]?.id || null;
   const matchedKeyword = context.keywords[0] || null;
   const matchedCategory =
