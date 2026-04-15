@@ -1661,6 +1661,15 @@ body.ticker-active #flowControls {
   -webkit-  position: relative;
   overflow: hidden;
   animation: flowBorderPulse 2.9s ease-in-out infinite;
+  /* Animate collapse/expand so the arc list can glide into the freed space
+     instead of the panel snapping away via display:none. */
+  max-height: 800px;
+  opacity: 1;
+  transition:
+    max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity   0.28s ease-out,
+    padding   0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 0.28s ease-out;
 }
 
 .flowPanelRow {
@@ -2161,9 +2170,15 @@ body.ticker-active #flowControls {
   color: rgba(255,220,100,0.9);
 }
 
-/* Minimized state */
+/* Minimized state — collapse the panel smoothly instead of display:none so
+   the live-arc list animates into the freed space. */
 #flowControls.minimized .flowPanel {
-  display: none;
+  max-height: 0;
+  opacity: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-color: transparent;
+  pointer-events: none;
 }
 #flowControls.minimized .flowMinBar {
   display: flex;
