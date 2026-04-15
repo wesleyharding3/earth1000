@@ -2372,6 +2372,20 @@ body.flow-maximized #flowArcList {
 }
 #flowArcList.visible { display: flex; }
 
+/* Desktop: drop the panel below the top nav cluster so it doesn't crowd
+   the nav buttons. Mobile keeps the 60px offset (plenty of room there). */
+@media (min-width: 601px) and (pointer: fine) {
+  #flowArcList, .arcListMinBar {
+    top: calc(env(safe-area-inset-top, 0px) + 108px);
+  }
+  #flowArcList {
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - 198px);
+  }
+  body.flow-maximized #flowArcList {
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - 388px);
+  }
+}
+
 /* Minimized bar for the arc list */
 .arcListMinBar {
   display: none;
