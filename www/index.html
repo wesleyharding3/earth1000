@@ -22771,13 +22771,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // article bar (which pauses flow playback) also pauses the timeline's
   // auto-advance timer. When the user resumes, the timer is re-scheduled
   // only if playback was still on.
+  let _timelinePlayingBeforeSelection = null;
   window.__timelinePauseForSelection = function() {
     _cancelTimelineAdvance();
+    if (_timelinePlayingBeforeSelection === null) {
+      _timelinePlayingBeforeSelection = _timelinePlaying;
+    }
+    _timelinePlaying = false;
+    _refreshTimelineUI();
   };
   window.__timelineResumeAfterSelection = function() {
-    if (_timelineSegments.length && _timelinePlaying) {
+    const wasPlaying = _timelinePlayingBeforeSelection;
+    _timelinePlayingBeforeSelection = null;
+    if (_timelineSegments.length && wasPlaying) {
+      _timelinePlaying = true;
       _scheduleTimelineAutoAdvance();
     }
+    _refreshTimelineUI();
   };
 
   // Wire the timeline control buttons once.
