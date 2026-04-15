@@ -2684,24 +2684,38 @@ body.flow-maximized #flowArcList {
   display: flex; flex-direction: column;
   padding: 8px 12px; cursor: pointer;
   border-bottom: 1px solid rgba(255,255,255,0.04);
-  /* Background and transform use the same easing so hover + list-shuffle
-     animations feel consistent. arcBarEnter handles the new-bar slide-up
-     and fade-in; fading-out handles the exit. */
-  transition: background 0.15s, opacity 0.28s ease-out, transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
-  animation: arcBarEnter 0.32s cubic-bezier(0.32, 0.72, 0, 1) both;
-  will-change: opacity, transform;
+  overflow: hidden;
+  /* max-height, padding, and margin all transition so exiting bars
+     collapse smoothly — the neighbours above/below flow into the
+     reclaimed space like a vertical ticker instead of jumping. */
+  transition:
+    background 0.15s,
+    opacity 0.32s ease-in,
+    transform 0.38s cubic-bezier(0.32, 0.72, 0, 1),
+    max-height 0.38s cubic-bezier(0.32, 0.72, 0, 1),
+    padding 0.38s cubic-bezier(0.32, 0.72, 0, 1),
+    margin 0.38s cubic-bezier(0.32, 0.72, 0, 1),
+    border-color 0.2s ease-out;
+  animation: arcBarEnter 0.36s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: opacity, transform, max-height;
 }
 @keyframes arcBarEnter {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(12px); max-height: 0;   padding-top: 0; padding-bottom: 0; }
+  to   { opacity: 1; transform: translateY(0);    max-height: 180px; padding-top: 8px; padding-bottom: 8px; }
 }
 .arcBar:hover { background: rgba(0,220,130,0.06); }
 .arcBar.selected { background: rgba(0,220,130,0.12); border-left: 2px solid rgba(0,220,130,0.6); }
 .arcBar.fading-out, .arcCardExpanded.fading-out {
   opacity: 0;
   transform: translateY(-10px);
-  transition: opacity 0.28s ease-in, transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-bottom-color: transparent;
   pointer-events: none;
+  /* max-height is locked to measured value via JS before the class is
+     added, then set inline to 0 so this transition ticks correctly. */
 }
 
 .arcBarRoute {
@@ -18257,15 +18271,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const existingMap = new Map();
       existingEls.forEach(el => existingMap.set(el.dataset.uid, el));
 
-      // Remove bars no longer visible (animate out). Track the removal timer
-      // on the element so we can cancel it if the arc reappears mid-fade.
+      // Remove bars no longer visible (animate out). Lock the current
+      // measured height inline, flush a reflow, then apply the fading-out
+      // class + collapse max-height to 0 so the exit reads as a vertical-
+      // ticker slide: the departing bar shrinks while neighbours slide up
+      // into the reclaimed space.
       for (const [key, el] of existingMap) {
         if (!curUids.has(parseInt(key, 10))) {
           if (!el.classList.contains('fading-out')) {
+            const h = el.offsetHeight;
+            el.style.maxHeight = h + 'px';
+            void el.offsetHeight; // flush layout so the transition has a
+                                  // defined starting value
             el.classList.add('fading-out');
+            requestAnimationFrame(() => {
+              el.style.maxHeight = '0px';
+            });
             el._removeTimer = setTimeout(() => {
               if (el.parentNode) el.remove();
-            }, 320);
+            }, 420);
           }
         }
       }
@@ -18289,11 +18313,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const shouldExpand = (_selectedArcUid === uid);
 
         // Revive a fading-out element if the arc reappeared — cancel its
-        // removal and drop the fade class so it stays put instead of being
-        // killed and re-added (which caused the sporadic blink).
+        // removal, drop the fade class, and clear the inline max-height
+        // so CSS takes over again. Prevents the blink-then-reenter bug.
         if (el && el.classList.contains('fading-out')) {
           if (el._removeTimer) { clearTimeout(el._removeTimer); el._removeTimer = null; }
           el.classList.remove('fading-out');
+          el.style.maxHeight = '';
         }
 
         if (el) {
