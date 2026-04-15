@@ -5286,16 +5286,16 @@ body.flow-maximized #flowArcList {
       box-shadow: 0 -8px 48px rgba(0,0,0,0.65);
       opacity: 0;
       pointer-events: none;
-      transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.18s ease;
+      transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.32s ease;
     }
     #clusterDetail.open {
-      bottom: env(safe-area-inset-bottom);
+      bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       opacity: 1;
       pointer-events: all;
       z-index: 200;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - var(--page-nav-height, 0px) - var(--global-ticker-height, 0px) - var(--global-ticker-gap, 0px) - var(--app-bottom-inset, 0px));
       border-radius: 20px 20px 0 0;
     }
     /* Minimized state — collapsed to just the header bar */
@@ -5324,7 +5324,7 @@ body.flow-maximized #flowArcList {
       #clusterDetail.cdMaximized {
         width: 100%;
         left: 0;
-        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - var(--page-nav-height, 0px) - var(--global-ticker-height, 0px) - var(--global-ticker-gap, 0px) - var(--app-bottom-inset, 0px));
         border-radius: 16px 16px 0 0;
       }
     }
@@ -5373,6 +5373,11 @@ body.flow-maximized #flowArcList {
     .cdHeaderTop {
       display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 2px;
     }
+    .cdHeaderImg {
+      width: 56px; height: 56px; object-fit: cover; border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03);
+      flex-shrink: 0; display: block;
+    }
     .cdType {
       font-size: 9px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--grm-gold); margin-bottom: 6px;
     }
@@ -5397,6 +5402,7 @@ body.flow-maximized #flowArcList {
     }
     .cdSections {
       flex: 1; overflow-y: auto; scroll-behavior: smooth;
+      padding-bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 24px);
     }
     .cdSections::-webkit-scrollbar { width: 4px; }
     .cdSections::-webkit-scrollbar-track { background: transparent; }
@@ -5480,6 +5486,10 @@ body.flow-maximized #flowArcList {
     .cdCardSource { font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--grm-gold); }
     .cdCardDate { font-size: 9px; color: rgba(255,255,255,0.3); margin-left: auto; }
     .cdCardTitle { font-size: 12px; font-weight: 600; line-height: 1.45; color: rgba(255,255,255,0.88); }
+    .cdCardLoc {
+      font-size: 9.5px; color: rgba(255,255,255,0.5); margin-top: 4px;
+      letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .cdCardVideo {
       display: inline-block; font-size: 8px; font-weight: 700; letter-spacing: 0.1em;
       text-transform: uppercase; color: rgba(255,255,255,0.5); background: rgba(255,255,255,0.08);
@@ -21668,6 +21678,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           feature_keywords: t.keywords || [],
           top_article_ids: [],
           article_ids: [],
+          hero_image_url: t.hero_image_url || '',
+          hero_catalog_image_url: t.hero_catalog_image_url || '',
+          hero_iso_code: t.hero_iso_code || '',
           __kind: t.__kind || 'thread'
         };
       }
@@ -25515,8 +25528,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // ── Close article detail panel ─────────────────────────────────────────────
   function closeArticlePanel() {
     stopArticlePlayback();
+    // If a swipe left an inline transform, snap the element back to its
+    // current rendered position before the slide-out so the transition has
+    // a defined starting point. Then explicitly animate to translateY(100%).
+    const inlineT = panel.style.transform;
+    if (inlineT && inlineT !== 'translateY(0px)' && inlineT !== 'translateY(0)') {
+      panel.style.transform = inlineT;
+    } else {
+      panel.style.transform = 'translateY(0)';
+    }
+    // Force a layout flush so the next assignment transitions.
+    void panel.offsetHeight;
     panel.classList.remove('visible');
-    panel.style.transform = '';
+    panel.style.transform = 'translateY(100%)';
+    // Clear the inline transform after the slide completes so future
+    // opens rely on the CSS cascade.
+    setTimeout(() => {
+      if (!panel.classList.contains('visible')) {
+        panel.style.transform = '';
+      }
+    }, 380);
 
     // Restore flow state if returning to flow animation
     if (returnContext?.type === 'flow' && flowStateBeforeOpen) {
@@ -25618,7 +25649,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _adpDidDrag = true;
     const clientY = e.touches[0].clientY;
     const dy = _adpStartY - clientY; // positive = swipe up = grow
-    const newH = Math.max(120, Math.min(ADP_SNAP.max(), _adpStartH + dy));
+    // Lower bound keeps the panel's first line (~100px from top) visible
+    // above the nav/ticker. Read the same vars the rest of the app uses.
+    const cs = getComputedStyle(document.documentElement);
+    const navTicker = (parseFloat(cs.getPropertyValue('--page-nav-height')) || 39)
+                    + (parseFloat(cs.getPropertyValue('--global-ticker-height')) || 36)
+                    + (parseFloat(cs.getPropertyValue('--global-ticker-gap')) || 8)
+                    + (parseFloat(cs.getPropertyValue('--app-bottom-inset')) || 0);
+    const floor = navTicker + 100;
+    const newH = Math.max(floor, Math.min(ADP_SNAP.max(), _adpStartH + dy));
     const now = performance.now();
     const dt = now - _adpLastTime;
     if (dt > 0) {
@@ -31288,6 +31327,13 @@ body.ticker-active .gTickerLabel {
           ${date ? `<span class="cdCardDate">${date}</span>` : ""}
         </div>
         <div class="cdCardTitle">${title}</div>
+        ${(() => {
+          const p = [];
+          if (a.city_name) p.push(a.city_name);
+          if (a.country_name) p.push(a.country_name);
+          const loc = esc(p.join(", "));
+          return loc ? `<div class="cdCardLoc">${loc}</div>` : "";
+        })()}
       </div>
     </div></div>`;
   }
@@ -31297,13 +31343,18 @@ body.ticker-active .gTickerLabel {
     const isAnchor = !!a.is_anchor;
     const title = esc(a.translated_title || a.title || "Untitled");
     const source = esc(a.source_name || "");
+    const locParts = [];
+    if (a.city_name) locParts.push(a.city_name);
+    if (a.country_name) locParts.push(a.country_name);
+    const location = esc(locParts.join(", "));
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
     const date = a.published_at ? fmtDate(a.published_at) : "";
+    const sourceLoc = [source, location].filter(Boolean).join(' <span style="opacity:0.45">\u00b7</span> ');
     return `<div class="cdTimelineItem" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
       <div class="cdTimelineDot${isVideo ? " video" : ""}"></div>
       <div class="cdTimelineDate">${date}${isAnchor ? '<span class="cdTimelineTag anchor">Anchor</span>' : ""}${isVideo ? '<span class="cdTimelineTag video">Video</span>' : ""}</div>
       <div class="cdTimelineTitle">${title}</div>
-      ${source ? `<div class="cdTimelineSource">${source}</div>` : ""}
+      ${sourceLoc ? `<div class="cdTimelineSource">${sourceLoc}</div>` : ""}
     </div>`;
   }
 
@@ -31362,6 +31413,21 @@ body.ticker-active .gTickerLabel {
     const keywords = keywordList(node.feature_keywords, 12);
     const catColor = CATEGORY_COLORS[node.primary_category] || CATEGORY_COLORS.default;
 
+    // Image cascade mirrors threadCardHTML: scraped -> catalog -> flag.
+    const _heroRaw = (node.hero_image_url || '').trim();
+    const _catalogRaw = (node.hero_catalog_image_url || '').trim();
+    const _scraped = (_heroRaw && _heroRaw !== _catalogRaw) ? _heroRaw : '';
+    const _flag = node.hero_iso_code ? `https://flagcdn.com/w160/${node.hero_iso_code.toLowerCase()}.png` : '';
+    const _imgChain = [_scraped, _catalogRaw, _flag].filter(Boolean);
+    const _imgSrc = _imgChain[0] || '';
+    const _imgRest = _imgChain.slice(1);
+    const _imgOnErr = _imgRest.length
+      ? `(function(el){var f=${JSON.stringify(_imgRest)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';}})(this)`
+      : `this.style.display='none'`;
+    const _imgHTML = _imgSrc
+      ? `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
+      : '';
+
     detailEl.innerHTML = `
       <button id="cdResizeHandle" aria-label="Resize panel">
         <div id="cdResizeArrow">
@@ -31372,6 +31438,7 @@ body.ticker-active .gTickerLabel {
       </button>
       <div class="cdHeader">
         <div class="cdHeaderTop">
+          ${_imgHTML}
           <div style="flex:1;min-width:0;">
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
@@ -31454,7 +31521,8 @@ body.ticker-active .gTickerLabel {
       _cdDidDrag = true;
       const now = performance.now();
       const dt = now - _cdLastMoveT;
-      const newH = Math.max(120, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
+      // Lower bound keeps title bar + first line (~190px tall) fully visible.
+      const newH = Math.max(190, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
       if (dt > 0) { _cdVelocity = _cdVelocity * 0.6 + ((newH - _cdRafH) / dt) * 0.4; }
       _cdLastMoveT = now;
       _cdScheduleH(newH);
@@ -31485,7 +31553,7 @@ body.ticker-active .gTickerLabel {
         cdApplySnap(cdSnapState); return;
       } else {
         if (curH > defH + (maxH - defH) * 0.2) { cdApplySnap("max"); return; }
-        if (curH > 120 + (defH - 120) * 0.3) { cdApplySnap("default"); return; }
+        if (curH > 190 + (defH - 190) * 0.3) { cdApplySnap("default"); return; }
         cdApplySnap(cdSnapState);
       }
     }

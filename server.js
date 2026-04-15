@@ -4547,12 +4547,17 @@ app.get("/api/timelines/latest", async (req, res) => {
 
       if (!timelines.length) return [];
 
-      // Hero images: prefer scraped publisher image on the highest-weighted article
+      // Hero images: native-first, most-recent wins within each tier.
+      //   1. Most recent article with a native (publisher-scraped) image.
+      //   2. Otherwise, most recent article with a catalog-assigned image.
+      //   3. Otherwise, null → findFallbackImage() below.
+      // Parabolic weight is kept only as a final tiebreaker when two
+      // articles share a published_at to the second.
       const timelineIds = timelines.map(t => t.timeline_id);
       const { rows: heroes } = await pool.query(`
         SELECT DISTINCT ON (sta.timeline_id)
           sta.timeline_id,
-          COALESCE(a.image_url, img_a.public_url) AS hero_image_url,
+          COALESCE(NULLIF(a.image_url, ''), img_a.public_url) AS hero_image_url,
           img_a.public_url AS hero_catalog_image_url,
           COALESCE(ns.name, ys.name) AS hero_source_name,
           co.iso_code AS hero_iso_code
@@ -4566,10 +4571,13 @@ app.get("/api/timelines/latest", async (req, res) => {
         WHERE sta.timeline_id = ANY($1)
         ORDER BY
           sta.timeline_id,
-          (a.image_url IS NOT NULL AND a.image_url <> '') DESC,
-          (img_a.public_url IS NOT NULL) DESC,
-          sta.parabolic_weight DESC,
-          a.published_at DESC
+          CASE
+            WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
+            WHEN img_a.public_url IS NOT NULL THEN 2
+            ELSE 3
+          END,
+          a.published_at DESC,
+          sta.parabolic_weight DESC
       `, [timelineIds]);
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
@@ -5355,14 +5363,21 @@ app.get("/api/threads/latest", async (req, res) => {
 
     if (!threads.length) return [];
 
-    // Step 2: batch-fetch hero images — lightweight: just grab the best
-    // image_url per thread from the article with the highest relevance.
-    // Stripped source name / iso / catalog lookups to eliminate 4 LEFT JOINs.
+    // Step 2: batch-fetch hero images. Rule:
+    //   1. If any constituent article has a native (publisher-scraped) image
+    //      in a.image_url, pick the MOST RECENT such article.
+    //   2. Otherwise, pick the most recent article that has a catalog image
+    //      assigned (article_image_assignments → image_assets).
+    //   3. Otherwise, leave hero_image_url null — findFallbackImage() below
+    //      will resolve a default.
+    // The CASE expression collapses the priority into three tiers so
+    // a.published_at acts as the tiebreaker inside each tier.
     const threadIds = threads.map(t => t.thread_id);
     const { rows: heroes } = await pool.query(`
       SELECT DISTINCT ON (sta.thread_id)
         sta.thread_id,
-        COALESCE(img.public_url, '') AS hero_image_url,
+        COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
+        img.public_url AS hero_catalog_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
@@ -5371,9 +5386,13 @@ app.get("/api/threads/latest", async (req, res) => {
       LEFT JOIN image_assets img ON img.id = aia.image_id
       WHERE sta.thread_id = ANY($1)
       ORDER BY sta.thread_id,
-        (img.public_url IS NOT NULL AND img.public_url <> '') DESC,
-        sta.relevance_score DESC,
-        a.published_at DESC
+        CASE
+          WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
+          WHEN img.public_url IS NOT NULL THEN 2
+          ELSE 3
+        END,
+        a.published_at DESC,
+        sta.relevance_score DESC
     `, [threadIds]);
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
@@ -5389,7 +5408,7 @@ app.get("/api/threads/latest", async (req, res) => {
         ...t,
         latest_published_at: t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
-        hero_catalog_image_url: null,
+        hero_catalog_image_url: h?.hero_catalog_image_url || null,
         hero_source_name: null,
         hero_iso_code: subjectIso || h?.hero_iso_code || null
       };

@@ -5288,13 +5288,13 @@ body.flow-maximized #flowArcList {
       transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.32s ease;
     }
     #clusterDetail.open {
-      bottom: env(safe-area-inset-bottom);
+      bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
       opacity: 1;
       pointer-events: all;
       z-index: 200;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - var(--page-nav-height, 0px) - var(--global-ticker-height, 0px) - var(--global-ticker-gap, 0px) - var(--app-bottom-inset, 0px));
       border-radius: 20px 20px 0 0;
     }
     /* Minimized state — collapsed to just the header bar */
@@ -5323,7 +5323,7 @@ body.flow-maximized #flowArcList {
       #clusterDetail.cdMaximized {
         width: 100%;
         left: 0;
-        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - var(--page-nav-height, 0px) - var(--global-ticker-height, 0px) - var(--global-ticker-gap, 0px) - var(--app-bottom-inset, 0px));
         border-radius: 16px 16px 0 0;
       }
     }
@@ -25670,19 +25670,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let touchStartY = 0;
   let touchCurrentY = 0;
   let isDragging = false;
-  
+
+  // Read nav/ticker heights from CSS vars so the swipe cap tracks the same
+  // layout the thread panel uses. Fallbacks keep it reasonable if the vars
+  // haven't been written yet.
+  function _adpNavTickerPx() {
+    const cs = getComputedStyle(document.documentElement);
+    return (parseFloat(cs.getPropertyValue('--page-nav-height')) || 39)
+         + (parseFloat(cs.getPropertyValue('--global-ticker-height')) || 36)
+         + (parseFloat(cs.getPropertyValue('--global-ticker-gap')) || 8)
+         + (parseFloat(cs.getPropertyValue('--app-bottom-inset')) || 0);
+  }
+
   panel.addEventListener('touchstart', (e) => {
     if (e.target.closest('.adpContent') && content.scrollTop > 0) return;
     touchStartY = e.touches[0].clientY;
     isDragging = true;
   }, { passive: true });
-  
+
   panel.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
     touchCurrentY = e.touches[0].clientY;
     const diff = touchCurrentY - touchStartY;
     if (diff > 0) {
-      panel.style.transform = `translateY(${diff}px)`;
+      // Cap so the panel's first line (~100px below panel top) stays
+      // above the nav/ticker. Further finger travel is absorbed.
+      const maxDown = Math.max(0, window.innerHeight - _adpNavTickerPx() - 100);
+      panel.style.transform = `translateY(${Math.min(diff, maxDown)}px)`;
     }
   }, { passive: true });
   
@@ -31440,7 +31454,8 @@ body.ticker-active .gTickerLabel {
       _cdDidDrag = true;
       const now = performance.now();
       const dt = now - _cdLastMoveT;
-      const newH = Math.max(120, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
+      // Lower bound keeps title bar + first line (~190px tall) fully visible.
+      const newH = Math.max(190, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
       if (dt > 0) { _cdVelocity = _cdVelocity * 0.6 + ((newH - _cdRafH) / dt) * 0.4; }
       _cdLastMoveT = now;
       _cdScheduleH(newH);
@@ -31469,7 +31484,7 @@ body.ticker-active .gTickerLabel {
         cdApplySnap(cdSnapState); return;
       } else {
         if (curH > defH + (maxH - defH) * 0.2) { cdApplySnap("max"); return; }
-        if (curH > 120 + (defH - 120) * 0.3) { cdApplySnap("default"); return; }
+        if (curH > 190 + (defH - 190) * 0.3) { cdApplySnap("default"); return; }
         cdApplySnap(cdSnapState);
       }
     }
