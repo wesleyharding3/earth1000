@@ -2448,6 +2448,153 @@ body.flow-maximized #flowArcList {
   background: rgba(255,100,100,0.2); border-color: rgba(255,100,100,0.4);
   color: rgba(255,150,150,0.9);
 }
+.arcListHeaderBtn.aiCtx {
+  background: rgba(180,120,255,0.15);
+  border-color: rgba(180,120,255,0.35);
+  color: rgba(210,170,255,0.95);
+}
+.arcListHeaderBtn.aiCtx:hover {
+  background: rgba(180,120,255,0.25);
+  border-color: rgba(180,120,255,0.55);
+  color: rgba(230,200,255,1);
+}
+.arcListHeaderBtn.aiCtx.active {
+  background: rgba(180,120,255,0.3);
+  border-color: rgba(200,150,255,0.7);
+  color: rgba(240,220,255,1);
+  box-shadow: 0 0 10px rgba(180,120,255,0.35);
+}
+
+/* AI Context interpanel — swapped in over the scroll + timeline bar */
+.arcContextPanel {
+  display: none;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.arcListPanel.ai-context-open .arcListTimelineBar,
+.arcListPanel.ai-context-open .arcListScroll {
+  display: none !important;
+}
+.arcListPanel.ai-context-open .arcContextPanel {
+  display: flex;
+  animation: arcCtxEnter 0.26s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes arcCtxEnter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.arcCtxHeader {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+.arcCtxBackBtn, .arcCtxRefreshBtn {
+  width: 24px; height: 24px; border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.7);
+  font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; flex-shrink: 0; padding: 0;
+}
+.arcCtxBackBtn:hover, .arcCtxRefreshBtn:hover {
+  background: rgba(180,120,255,0.18);
+  border-color: rgba(180,120,255,0.4);
+  color: rgba(230,200,255,1);
+}
+.arcCtxTitle {
+  flex: 1;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: rgba(210,170,255,0.95);
+  text-shadow: 0 0 8px rgba(180,120,255,0.35);
+}
+.arcCtxTabs {
+  display: flex; gap: 4px;
+  padding: 8px 10px 0;
+  flex-shrink: 0;
+}
+.arcCtxTab {
+  flex: 1;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.55);
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 7px 6px; border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.arcCtxTab:hover {
+  background: rgba(180,120,255,0.12);
+  color: rgba(230,200,255,0.9);
+}
+.arcCtxTab.active {
+  background: rgba(180,120,255,0.22);
+  border-color: rgba(180,120,255,0.5);
+  color: rgba(240,220,255,1);
+}
+.arcCtxTab[disabled] {
+  opacity: 0.4; cursor: not-allowed;
+}
+.arcCtxBody {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 10px 12px 14px;
+  font-size: 12px; line-height: 1.55;
+  color: rgba(255,255,255,0.82);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(180,120,255,0.25) transparent;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.arcCtxBody .arcCtxBlock + .arcCtxBlock {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(180,120,255,0.2);
+}
+.arcCtxBody .arcCtxMeta {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: rgba(180,140,220,0.7);
+  margin-bottom: 4px;
+}
+.arcCtxBody .arcCtxText {
+  white-space: pre-wrap; word-wrap: break-word;
+}
+.arcCtxBody .arcCtxCursor {
+  display: inline-block;
+  width: 6px; height: 12px;
+  background: rgba(210,170,255,0.8);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: arcCtxBlink 0.85s steps(1, end) infinite;
+}
+@keyframes arcCtxBlink { 50% { opacity: 0; } }
+.arcCtxBody .arcCtxEmpty {
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  font-style: italic;
+}
+.arcCtxBody .arcCtxError {
+  color: rgba(255,160,160,0.85);
+  font-size: 11px;
+  padding: 10px 0;
+}
+.arcCtxBody .arcCtxLock {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 10px;
+  opacity: 0.78; cursor: pointer;
+  font-size: 11.5px;
+  color: rgba(255,255,255,0.7);
+}
+.arcCtxBody .arcCtxLock:hover { opacity: 1; }
+.arcCtxBody .arcCtxLock strong { color: rgba(255,195,70,1); }
 
 /* Timeline segment controls — only visible for timeline-sourced flows */
 .arcListTimelineBar {
@@ -9831,9 +9978,10 @@ window.sourceBiasBadgeHTML = function(bias) {
     <button class="arcListExpandBtn" id="arcListExpandBtn" title="Expand" onclick="window.__arcListExpand?.()">↓</button>
   </div>
   <div id="flowArcList">
-    <div class="arcListPanel">
+    <div class="arcListPanel" id="arcListPanelRoot">
       <div class="arcListHeader">
         <span class="arcListTitle">Live Arcs</span>
+        <button class="arcListHeaderBtn aiCtx" id="arcListAiBtn" style="display:none" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦</button>
         <button class="arcListHeaderBtn" id="arcListMinBtn" title="Minimize" onclick="window.__arcListMinimize?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
       </div>
@@ -9851,6 +9999,19 @@ window.sourceBiasBadgeHTML = function(bias) {
       </div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
+      </div>
+      <!-- AI Context interpanel — swapped in by window.__arcAiContextOpen() -->
+      <div class="arcContextPanel" id="arcContextPanel">
+        <div class="arcCtxHeader">
+          <button class="arcCtxBackBtn" id="arcCtxBackBtn" title="Back" onclick="window.__arcAiContextClose?.()">←</button>
+          <span class="arcCtxTitle">AI Context</span>
+          <button class="arcCtxRefreshBtn" id="arcCtxRefreshBtn" title="Regenerate" onclick="window.__arcAiContextRefresh?.()">↻</button>
+        </div>
+        <div class="arcCtxTabs">
+          <button class="arcCtxTab active" data-scope="entities">All entities</button>
+          <button class="arcCtxTab" data-scope="flow">Active flow</button>
+        </div>
+        <div class="arcCtxBody" id="arcCtxBody"></div>
       </div>
     </div>
   </div>
@@ -17735,6 +17896,290 @@ const settingsToggle     = document.getElementById("settingsToggle");
       hidePanel();
     };
 
+    /* ── AI Context interpanel ────────────────────────────────────────── */
+    // Session + cache state. cache keys:
+    //   `thread:<id>:entities`, `thread:<id>:flow:<arcUid>`
+    //   `timeline:<id>:entities`, `timeline:<id>:seg:<idx>`
+    // Each value = array of appended text blocks (one per generation).
+    const _arcCtxCache = new Map();
+    let _arcCtxSession = null;   // { mode:'thread'|'timeline', id, theme?, articleIds?, visibleIsos? }
+    let _arcCtxSegment = null;   // { idx, title, date, articleIds }
+    let _arcCtxScope = 'entities';
+    let _arcCtxCurrentKey = null;
+    let _arcCtxStreamAbort = null;
+    let _arcCtxTimelinePaused = false;
+
+    function _arcCtxKey(scope) {
+      if (!_arcCtxSession) return null;
+      const base = `${_arcCtxSession.mode}:${_arcCtxSession.id}`;
+      if (scope === 'entities') return `${base}:entities`;
+      if (_arcCtxSession.mode === 'timeline') {
+        const idx = _arcCtxSegment?.idx ?? 0;
+        return `${base}:seg:${idx}`;
+      }
+      return `${base}:flow:${_selectedArcUid ?? 'current'}`;
+    }
+
+    function _arcCtxRenderBlocks(key) {
+      const body = document.getElementById('arcCtxBody');
+      if (!body) return;
+      const blocks = _arcCtxCache.get(key) || [];
+      if (!blocks.length) {
+        body.innerHTML = '<div class="arcCtxEmpty">Tap ↻ to generate context.</div>';
+        return;
+      }
+      body.innerHTML = blocks.map((b, i) =>
+        `<div class="arcCtxBlock">` +
+          (b.meta ? `<div class="arcCtxMeta">${_esc(b.meta)}</div>` : '') +
+          `<div class="arcCtxText" data-block="${i}">${_esc(b.text)}</div>` +
+        `</div>`
+      ).join('');
+      body.scrollTop = body.scrollHeight;
+    }
+
+    function _esc(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+
+    function _arcCtxShowLock() {
+      const body = document.getElementById('arcCtxBody');
+      if (!body) return;
+      body.innerHTML =
+        `<div class="arcCtxLock" onclick="window.__openPricing?.()">` +
+          `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+          `<span>AI context is available on <strong>Pro</strong></span>` +
+        `</div>`;
+    }
+
+    async function _arcCtxStream(scope) {
+      if (!_arcCtxSession) return;
+      if (!window.__checkTier?.('pro')) { _arcCtxShowLock(); return; }
+
+      if (_arcCtxStreamAbort) { try { _arcCtxStreamAbort.abort(); } catch(_){} }
+      const abort = new AbortController();
+      _arcCtxStreamAbort = abort;
+
+      const key = _arcCtxKey(scope);
+      _arcCtxCurrentKey = key;
+
+      // Append a new block to cache, render it, then stream into it.
+      const meta = scope === 'entities'
+        ? 'All visible entities'
+        : (_arcCtxSession.mode === 'timeline'
+            ? `Segment ${(_arcCtxSegment?.idx ?? 0) + 1}${_arcCtxSegment?.title ? ' · ' + _arcCtxSegment.title : ''}`
+            : `Selected flow`);
+      const blocks = _arcCtxCache.get(key) || [];
+      const newBlock = { meta, text: '' };
+      blocks.push(newBlock);
+      _arcCtxCache.set(key, blocks);
+      _arcCtxRenderBlocks(key);
+
+      // Suspend timeline auto-advance while streaming (dwell extension).
+      if (_arcCtxSession.mode === 'timeline' && !_arcCtxTimelinePaused) {
+        _arcCtxTimelinePaused = true;
+        try { window.__timelinePauseForSelection?.(); } catch(_) {}
+      }
+
+      // Target cursor element
+      const body = document.getElementById('arcCtxBody');
+      const textEl = body?.querySelector(`[data-block="${blocks.length - 1}"]`);
+      if (textEl) {
+        const cur = document.createElement('span');
+        cur.className = 'arcCtxCursor';
+        textEl.after(cur);
+      }
+
+      try {
+        const API = window.__API || 'https://earth-wjr6.onrender.com';
+        const payload = {
+          scope,  // 'entities' | 'flow'
+          mode: _arcCtxSession.mode,  // 'thread' | 'timeline'
+          thread_id:   _arcCtxSession.mode === 'thread'   ? _arcCtxSession.id : undefined,
+          timeline_id: _arcCtxSession.mode === 'timeline' ? _arcCtxSession.id : undefined,
+          segment_idx: _arcCtxSession.mode === 'timeline' ? _arcCtxSegment?.idx : undefined,
+          segment: _arcCtxSegment ? {
+            title: _arcCtxSegment.title,
+            date: _arcCtxSegment.date,
+            article_ids: _arcCtxSegment.articleIds || []
+          } : undefined,
+          theme: _arcCtxSession.theme,
+          article_ids: _arcCtxSession.articleIds || [],
+          visible_entities: Array.from(new Set(
+            (arcObjects || [])
+              .filter(a => a?.flow && (a.tubeMat?.uniforms?.uOpacity?.value || 0) > 0.02)
+              .flatMap(a => [a.flow.src?.iso, a.flow.dst?.iso])
+              .filter(Boolean)
+          )),
+          active_arc: scope === 'flow' && _selectedArcUid != null ? (() => {
+            const arc = (arcObjects || []).find(a => a._uid === _selectedArcUid);
+            const f = arc?.flow;
+            return f ? { src_iso: f.src?.iso, dst_iso: f.dst?.iso, count: f.count || 1 } : null;
+          })() : null,
+        };
+
+        const res = await fetch(`${API}/api/ai/flow-context`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+          body: JSON.stringify(payload),
+          signal: abort.signal,
+          credentials: 'include',
+        });
+
+        if (res.status === 402 || res.status === 403) { _arcCtxShowLock(); return; }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('No stream reader');
+        const dec = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          // Parse SSE frames separated by blank line
+          const frames = buf.split(/\n\n/);
+          buf = frames.pop() || '';
+          for (const frame of frames) {
+            const line = frame.split('\n').find(l => l.startsWith('data:'));
+            if (!line) continue;
+            const data = line.slice(5).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const obj = JSON.parse(data);
+              const delta = obj.delta ?? obj.text ?? '';
+              if (delta) {
+                newBlock.text += delta;
+                if (textEl) textEl.textContent = newBlock.text;
+                if (body) body.scrollTop = body.scrollHeight;
+              }
+            } catch (_) {
+              // Treat as raw text
+              newBlock.text += data;
+              if (textEl) textEl.textContent = newBlock.text;
+            }
+          }
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        console.error('arcCtx stream error:', e);
+        const body2 = document.getElementById('arcCtxBody');
+        if (body2) {
+          const err = document.createElement('div');
+          err.className = 'arcCtxError';
+          err.textContent = 'Context unavailable right now.';
+          body2.appendChild(err);
+        }
+      } finally {
+        if (_arcCtxStreamAbort === abort) _arcCtxStreamAbort = null;
+        // Remove blinking cursor
+        document.querySelectorAll('#arcCtxBody .arcCtxCursor').forEach(n => n.remove());
+        // Resume timeline auto-advance (which re-triggers the 10s dwell) after
+        // stream ends. User can still manually close the interpanel first.
+        if (_arcCtxTimelinePaused) {
+          _arcCtxTimelinePaused = false;
+          try { window.__timelineResumeAfterSelection?.(); } catch(_) {}
+        }
+      }
+    }
+
+    function _arcCtxSwitchScope(scope) {
+      _arcCtxScope = scope;
+      document.querySelectorAll('#arcContextPanel .arcCtxTab').forEach(t => {
+        t.classList.toggle('active', t.dataset.scope === scope);
+      });
+      const key = _arcCtxKey(scope);
+      _arcCtxCurrentKey = key;
+      _arcCtxRenderBlocks(key);
+    }
+
+    // Wire tab clicks once
+    document.querySelectorAll('#arcContextPanel .arcCtxTab').forEach(t => {
+      t.addEventListener('click', () => _arcCtxSwitchScope(t.dataset.scope));
+    });
+
+    function _arcCtxUpdateFlowTabState() {
+      const flowTab = document.querySelector('#arcContextPanel .arcCtxTab[data-scope="flow"]');
+      if (!flowTab) return;
+      const hasFlow = _arcCtxSession?.mode === 'timeline'
+        ? !!_arcCtxSegment
+        : _selectedArcUid != null;
+      flowTab.toggleAttribute('disabled', !hasFlow);
+      if (!hasFlow && _arcCtxScope === 'flow') _arcCtxSwitchScope('entities');
+    }
+
+    function _arcCtxUpdateButtonVisibility() {
+      const btn = document.getElementById('arcListAiBtn');
+      if (!btn) return;
+      btn.style.display = _arcCtxSession ? '' : 'none';
+    }
+
+    window.__arcAiContextOpen = function() {
+      if (!_arcCtxSession) return;
+      const root = document.getElementById('arcListPanelRoot');
+      if (!root) return;
+      root.classList.add('ai-context-open');
+      document.getElementById('arcListAiBtn')?.classList.add('active');
+      _arcCtxUpdateFlowTabState();
+      const key = _arcCtxKey(_arcCtxScope);
+      _arcCtxCurrentKey = key;
+      const blocks = _arcCtxCache.get(key);
+      if (blocks && blocks.length) {
+        _arcCtxRenderBlocks(key);
+      } else {
+        _arcCtxStream(_arcCtxScope);
+      }
+    };
+
+    window.__arcAiContextClose = function() {
+      const root = document.getElementById('arcListPanelRoot');
+      if (!root) return;
+      root.classList.remove('ai-context-open');
+      document.getElementById('arcListAiBtn')?.classList.remove('active');
+      if (_arcCtxStreamAbort) { try { _arcCtxStreamAbort.abort(); } catch(_){} _arcCtxStreamAbort = null; }
+      if (_arcCtxTimelinePaused) {
+        _arcCtxTimelinePaused = false;
+        try { window.__timelineResumeAfterSelection?.(); } catch(_) {}
+      }
+    };
+
+    window.__arcAiContextRefresh = function() {
+      if (!_arcCtxSession) return;
+      _arcCtxStream(_arcCtxScope);
+    };
+
+    // Setters used by flow entry points
+    window.__arcAiSetSession = function(session) {
+      _arcCtxSession = session || null;
+      _arcCtxSegment = null;
+      _arcCtxScope = 'entities';
+      _arcCtxUpdateButtonVisibility();
+    };
+    window.__arcAiSetSegment = function(segInfo) {
+      _arcCtxSegment = segInfo || null;
+      _arcCtxUpdateFlowTabState();
+      // If the interpanel is already open on the flow tab, re-render for the new segment.
+      const root = document.getElementById('arcListPanelRoot');
+      if (root?.classList.contains('ai-context-open') && _arcCtxScope === 'flow') {
+        const key = _arcCtxKey('flow');
+        _arcCtxCurrentKey = key;
+        const blocks = _arcCtxCache.get(key);
+        if (blocks && blocks.length) _arcCtxRenderBlocks(key);
+        else _arcCtxRenderBlocks(key);
+      }
+    };
+    window.__arcAiClearSession = function() {
+      window.__arcAiContextClose?.();
+      _arcCtxSession = null;
+      _arcCtxSegment = null;
+      _arcCtxCache.clear();
+      _arcCtxUpdateButtonVisibility();
+    };
+    // Selection changes update the flow-tab availability
+    window.__arcAiOnSelectArc = function() { _arcCtxUpdateFlowTabState(); };
+
     // Hook into flow lifecycle
     const _origFlowTick = window.__flowTick;
     window.__flowTick = function() {
@@ -18008,6 +18453,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function selectArc(uid) {
       _selectedArcUid = uid;
       _arcPanelDirty = true;
+      try { window.__arcAiOnSelectArc?.(); } catch (_) {}
 
       // Pause every flow animation (time-series, wall-clock modes, and
       // timeline auto-advance) so the user can focus on the article.
@@ -18086,6 +18532,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (_selectedArcUid === null) return;
       _selectedArcUid = null;
       _arcPanelDirty = true;
+      try { window.__arcAiOnSelectArc?.(); } catch (_) {}
 
       // Hide hover card
       document.getElementById('flowArcInfoCard')?.classList.remove('visible');
@@ -18270,6 +18717,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.clearFlowNodeLabels?.();
     window.__flowClearHighlights?.();
     window.__timelineReset?.();
+    window.__arcAiClearSession?.();
     const backBtn = document.getElementById("flowArcBackBtn");
     if (backBtn) backBtn.classList.remove("visible");
     document.getElementById("flowTimeline")?.classList.remove("visible");
@@ -22511,13 +22959,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // Suppress standalone arc list — drill-down lives inside context card
-      window.__flowCtxDrillDown = true;
-      document.getElementById('flowArcList')?.classList.remove('visible');
-      document.getElementById('arcListMinBar')?.classList.remove('visible');
+      // Force-show the live arcs panel (matches timeline behaviour). The
+      // AI Context interpanel lives inside this panel's header, so the
+      // drill-down-only experience would hide it.
+      window.__flowCtxDrillDown = false;
+      document.getElementById('flowArcList')?.classList.add('visible');
+
+      // Register an AI-context session so the ✦ button surfaces.
+      const _t = _ctxThread || data.thread || null;
+      try {
+        window.__arcAiSetSession?.({
+          mode: 'thread',
+          id: threadId,
+          theme: _t?.title || _t?.translated_title || null,
+          articleIds: Array.isArray(_t?.article_ids) ? _t.article_ids
+                      : Array.isArray(data.article_ids) ? data.article_ids
+                      : [],
+        });
+      } catch (_) {}
 
       // Surface compact floating card with "View Routes" button
-      const _t = _ctxThread || data.thread || null;
       if (_t) {
         showFlowCtxCard({
           kind: "Thread · Flow arcs",
@@ -22731,6 +23192,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       }
 
+      try {
+        window.__arcAiSetSegment?.({
+          idx,
+          title: seg.title || '',
+          date: seg.date || null,
+          articleIds: Array.isArray(seg.articleIds) ? seg.articleIds : (seg.article_ids || []),
+        });
+      } catch (_) {}
+
       _scheduleTimelineAutoAdvance();
     }, fadeMs);
   }
@@ -22901,6 +23371,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__flowCtxDrillDown = false;
         document.getElementById('flowArcList')?.classList.add('visible');
         _setTimelineBarVisible(true);
+
+        // Register an AI-context session so the ✦ button surfaces.
+        try {
+          window.__arcAiSetSession?.({
+            mode: 'timeline',
+            id: timelineId,
+            theme: _ctxTimeline?.title || _ctxTimeline?.translated_title || null,
+            articleIds: Array.isArray(tlData?.article_ids) ? tlData.article_ids : [],
+          });
+        } catch (_) {}
 
         _activateTimelineSegment(0);
         showFlowArcBackBtn(backLabel);
