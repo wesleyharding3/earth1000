@@ -15085,7 +15085,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // ─── 3c. Scale: top cap appears, then vertical line draws down ───
           const labels = labelsEl ? Array.from(labelsEl.querySelectorAll(".scaleBarLabel")) : [];
-          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(8px)"; lbl.style.transition = "opacity 1400ms ease-out, transform 1400ms ease-out"; });
+          // Per-label fade duration. The stagger below uses the same value so
+          // each label finishes fading in before the next one starts — a true
+          // sequential reveal (2000 → 1500 → 1000 → 500 → 0), no overlap.
+          const LABEL_FADE_MS = 1200;
+          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(8px)"; lbl.style.transition = `opacity ${LABEL_FADE_MS}ms ease-out, transform ${LABEL_FADE_MS}ms ease-out`; });
 
           // Get bar height so we can use pixel-based clip (avoids % rounding issues with ::before/::after)
           const barH = barLine ? barLine.offsetHeight : 120;
@@ -15143,14 +15147,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             requestAnimationFrame(scaleTick);
           });
 
-          // Labels fade in one by one — slow, visible stagger
-          const labelStagger = 900; // ms between each label
+          // Labels fade in one by one — strictly sequential. Stagger equals
+          // the per-label fade duration so label N finishes at exactly the
+          // moment label N+1 starts. No overlap.
+          const labelStagger = LABEL_FADE_MS;
           for (let i = 0; i < labelCount; i++) {
             setTimeout(() => {
               labels[i].style.opacity = "1";
               labels[i].style.transform = "translateX(0)";
             }, i * labelStagger);
           }
+          // Wait for the last label's fade to finish before moving on.
           await wait(labelCount * labelStagger);
 
           // ─── 3e-ii. Bar + bottom cap fully visible — shimmer entire scale ───
