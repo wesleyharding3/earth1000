@@ -16581,6 +16581,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uPulsePos: { value: 0.0 },  // 0-1 position along arc
         uPulseWidth: { value: 0.12 }, // width of pulse glow
         uPulseIntensity: { value: 1.2 }, // extra brightness at pulse
+        uSinglePulse: { value: 0.0 }, // 1.0 = one streak (article-card flows); 0.0 = triple pulse
         uVisibleStart: { value: 0.0 },
         uVisibleEnd: { value: 1.0 },
         uEdgeSoftness: { value: ARC_EDGE_SOFTNESS }
@@ -16598,37 +16599,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uniform float uPulsePos;
         uniform float uPulseWidth;
         uniform float uPulseIntensity;
+        uniform float uSinglePulse;
         uniform float uVisibleStart;
         uniform float uVisibleEnd;
         uniform float uEdgeSoftness;
         varying vec2 vUv;
-        
-        float getPulse(float pos, float center) {
+
+        float getPulse(float pos, float center, float wrap) {
           float dist = abs(pos - center);
-          dist = min(dist, 1.0 - dist);
+          // Multi-pulse mode wraps toroidally so trailing pulses can drift
+          // past the seam; single-streak mode doesn't wrap so the head
+          // cleanly vanishes at the destination before restarting.
+          dist = mix(dist, min(dist, 1.0 - dist), wrap);
           return exp(-dist * dist / (uPulseWidth * uPulseWidth * 0.5));
         }
-        
+
         void main() {
           // vUv.x goes along the tube length (0 = start, 1 = end)
-          // Multiple pulses for clearer direction
-          float pulse1 = getPulse(vUv.x, uPulsePos);
-          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33));
-          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66));
-          
-          // Combine pulses with slight falloff for trailing ones
-          float pulse = pulse1 + pulse2 * 0.6 + pulse3 * 0.3;
+          // Article-card flows render a single streak pulse; other arcs
+          // layer three trailing pulses for a richer flow look.
+          float wrap = 1.0 - uSinglePulse;
+          float pulse1 = getPulse(vUv.x, uPulsePos, wrap);
+          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33), wrap);
+          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66), wrap);
+
+          float pulse = mix(pulse1 + pulse2 * 0.6 + pulse3 * 0.3, pulse1, uSinglePulse);
 
           float startMask = smoothstep(uVisibleStart - uEdgeSoftness, uVisibleStart, vUv.x);
           float endMask = 1.0 - smoothstep(uVisibleEnd, uVisibleEnd + uEdgeSoftness, vUv.x);
           float visibleMask = clamp(startMask * endMask, 0.0, 1.0);
-          
+
           // Base opacity + pulse boost
           float finalOpacity = uOpacity * visibleMask * (1.0 + pulse * uPulseIntensity);
-          
+
           // Brighter color at pulse
           vec3 finalColor = uColor * (1.0 + pulse * 0.5);
-          
+
           gl_FragColor = vec4(finalColor, finalOpacity);
         }
       `,
@@ -16864,7 +16870,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc._uid = _arcNextUid++;
     arc.flow = flow;
     arc.age  = 0;
-    arc.isStatic = !!flow.count;  // aggregate arcs don't expire
+    // Article-card flows get their own persistent lifecycle: a synchronized
+    // draw-in pulse followed by a looping streak. All arcs sharing an
+    // article use the same fixed durations so their pulses leave and
+    // arrive together regardless of geographic length.
+    arc.mode = (flow._sourceType === 'article' && flow._cardTriggered) ? 'articleCard' : null;
+    arc._elapsed = 0;
+    arc.isStatic = arc.mode === 'articleCard' ? false : !!flow.count;  // aggregate arcs don't expire
     arc.laneOffset = laneOffset;
     arc.travelDuration = arc.isStatic
       ? AGGREGATE_TRAVEL * (0.92 + Math.random() * 0.18)
@@ -16892,8 +16904,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.tubeMat.uniforms.uColor.value.copy(color);
     arc.tubeMat.uniforms.uVisibleStart.value = 0.0;
     arc.tubeMat.uniforms.uVisibleEnd.value = arc.isStatic ? 0.001 : 0.001;
+    // Default to triple-pulse; article-card arcs flip to single-streak below.
+    arc.tubeMat.uniforms.uSinglePulse.value = 0.0;
 
-    if (arc.isStatic) {
+    if (arc.mode === 'articleCard') {
+      arc.drawDuration = 2.5;         // fixed, equal across all article arcs
+      arc.loopPeriod   = 2.5;         // same for looping streak — sync sources & destinations
+      // Use wall-clock seconds so flowSpeed can't desync pulses between
+      // arcs. Every arc in the same article batch is created in a single
+      // synchronous loop, so they share a common _createdAt to the ms.
+      arc._createdAt   = performance.now() / 1000;
+      arc._srcRingSpawned = false;
+      arc._dstRingSpawned = false;
+      arc.baseOpacity  = 0.62;
+      arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+      arc.tubeMat.uniforms.uSinglePulse.value = 1.0;
+      arc.tubeMat.uniforms.uPulseWidth.value = 0.16; // uv-space → world-space length scales with arc length
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
+      arc.tubeMat.uniforms.uPulsePos.value = 0.0;
+      arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
+    } else if (arc.isStatic) {
       arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
       // Gentle pulse after the draw-in settles — not too flashy.
       arc.tubeMat.uniforms.uPulseIntensity.value = 0.55;
@@ -16982,10 +17012,79 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const arc = arcObjects[i];
       const flow = arc.flow;
 
-      // Update pulse position for all arcs (including static)
-      const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
-      if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
-        arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+      // Article-card arcs drive their own pulse from wall-clock time so
+      // flowSpeed can't desync them. Skip the shared globalPulseTime path.
+      if (arc.mode !== 'articleCard') {
+        const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
+        if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
+          arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+        }
+      }
+
+      if (arc.mode === 'articleCard') {
+        const elapsed = (performance.now() / 1000) - arc._createdAt;
+        const flowId = `artc_${arc._uid}`;
+
+        if (elapsed < arc.drawDuration) {
+          // Phase A — synchronized draw-in. The tube head races from the
+          // origin to the destination; all arcs in the article reach the
+          // destination at exactly the same moment because drawDuration
+          // is a fixed 2.5s for every arc.
+          const rawT = clamp01(elapsed / arc.drawDuration);
+          const eased = 1 - Math.pow(1 - rawT, 3);
+          const visEnd = Math.max(0.001, eased);
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = visEnd;
+          const fadeIn = clamp01(rawT * 4);
+          arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity * fadeIn;
+          // Pin the shader pulse at the head during draw-in so the streak
+          // reads as the leading edge, not a delayed ripple.
+          arc.tubeMat.uniforms.uPulsePos.value = visEnd;
+          setArcOrb(arc, visEnd, 0xffffff, fadeIn);
+
+          if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.type === 'city') {
+            const dKey = flowId + '_d';
+            frameActiveRingArcs.add(dKey);
+            if (!arc._dstRingSpawned) {
+              arc._dstRingSpawned = true;
+              spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+            }
+          }
+          continue;
+        }
+
+        // Phase B — looping single-streak pulse. All article arcs share
+        // loopPeriod (2.5s) and the same time origin, so every pulse
+        // leaves the source and arrives at the destination in lockstep.
+        arc.tubeMat.uniforms.uVisibleStart.value = 0;
+        arc.tubeMat.uniforms.uVisibleEnd.value = 1;
+        arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+        arc.orb.material.opacity = 0;
+        arc.orb.visible = false;
+        const loopT = ((elapsed - arc.drawDuration) % arc.loopPeriod) / arc.loopPeriod;
+        arc.tubeMat.uniforms.uPulsePos.value = loopT;
+
+        if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+        if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+        if (flow.src?.type === 'city') {
+          const sKey = flowId + '_s';
+          frameActiveRingArcs.add(sKey);
+          if (!arc._srcRingSpawned) {
+            arc._srcRingSpawned = true;
+            spawnFlowRing(flow.src.lat, flow.src.lon, pickColor(flow), sKey);
+          }
+        }
+        if (flow.dst?.type === 'city') {
+          const dKey = flowId + '_d';
+          frameActiveRingArcs.add(dKey);
+          if (!arc._dstRingSpawned) {
+            arc._dstRingSpawned = true;
+            spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+          }
+        }
+        continue;
       }
 
       if (arc.isStatic) {
