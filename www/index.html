@@ -12260,7 +12260,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const sidebarTab         = document.getElementById("sidebarTab");
       let sidebarOpen          = false;
 
-      function openSidebar()  { sidebarOpen = true;  viewSidebar.classList.add("open");    settingsToggle.classList.add("active"); }
+      function openSidebar()  { sidebarOpen = true;  viewSidebar.classList.add("open");    settingsToggle.classList.add("active"); if (window.__dismissAmbientHeadline) window.__dismissAmbientHeadline(); }
       function closeSidebar() { sidebarOpen = false; viewSidebar.classList.remove("open"); settingsToggle.classList.remove("active"); }
 
       settingsToggle.addEventListener("click", (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
@@ -16170,6 +16170,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           dot.style.opacity = "0";
           if (withGap && ahActive) gapTimer = setTimeout(startCycle, GAP_DURATION);
         }
+        // Expose for settings sidebar to dismiss active headline
+        window.__dismissAmbientHeadline = function() { hideAll(false); };
 
         // ── Detect non-Latin scripts that need translation ──
         function ahNeedsTranslation(text) {
