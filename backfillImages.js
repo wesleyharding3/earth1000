@@ -18,7 +18,28 @@ const { resolveImageForArticle } = require("./imageResolver");
 const BATCH_SIZE   = 100;
 const CONCURRENCY  = 10;
 const DELAY_MS     = 0;    // no delay — saturation cache keeps DB load sane
-const JOB_NAME     = "backfill_images_v2";
+const JOB_NAME     = "backfill_images_v3_tiered";
+
+// Tier/score gate: we only assign fallback images when the source is unreliable
+// enough to warrant it and the article's content signal is strong enough that
+// it might actually surface. Tier 1 sources bring their own good images and
+// mostly never reach the front-end anyway; skip them.
+//   tier 2  →  base_priority ≥ 0.70   (high only)
+//   tier 3  →  base_priority ≥ 0.40   (mid + high)
+//   tier 4  →  any base_priority      (all)
+const TIER_SCORE_GATE_SQL = `(
+     (COALESCE(ns.popularity_tier, ys.popularity_tier) = 2 AND a.base_priority >= 0.70)
+  OR (COALESCE(ns.popularity_tier, ys.popularity_tier) = 3 AND a.base_priority >= 0.40)
+  OR (COALESCE(ns.popularity_tier, ys.popularity_tier) = 4)
+)`;
+const CANDIDATE_JOINS = `
+    LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+    LEFT JOIN news_sources    ns ON ns.id = a.source_id
+    LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id`;
+const CANDIDATE_WHERE = `
+    WHERE aia.article_id IS NULL
+      AND (a.image_url IS NULL OR a.image_url = '')
+      AND ${TIER_SCORE_GATE_SQL}`;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -73,12 +94,12 @@ async function main() {
   let totalDone   = parseInt(checkpoint.done);
   let totalFailed = parseInt(checkpoint.failed);
 
-  // Count articles that need catalog assignments — no assignment yet (regardless of article image_url)
+  // Count articles that need catalog assignments, gated by source tier + base_priority
   const { rows: countRows } = await pool.query(`
     SELECT COUNT(*) AS total
     FROM news_articles a
-    LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-    WHERE aia.article_id IS NULL
+    ${CANDIDATE_JOINS}
+    ${CANDIDATE_WHERE}
       AND a.id > $1
   `, [lastId]);
   const remaining = parseInt(countRows[0].total);
@@ -97,12 +118,12 @@ async function main() {
   const startTime = Date.now();
 
   while (true) {
-    // Fetch next batch of unassigned articles using ID cursor
+    // Fetch next batch of gated candidates using ID cursor
     const { rows: articles } = await pool.query(`
       SELECT a.id
       FROM news_articles a
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      WHERE aia.article_id IS NULL
+      ${CANDIDATE_JOINS}
+      ${CANDIDATE_WHERE}
         AND a.id > $1
       ORDER BY a.id ASC
       LIMIT $2

@@ -12,9 +12,27 @@ function normalizeStringList(values) {
   )];
 }
 
+// Curated image keywords include multi-word phrases (e.g. "street interview",
+// "ejection seat"). Article keywords are typically single tokens, so we expand
+// the asset side to also include individual words from each phrase — this lets
+// a phrase match on any of its component tokens without losing exact-phrase hits.
+function expandKeywordSet(keywords) {
+  const set = new Set();
+  for (const kw of keywords) {
+    if (!kw) continue;
+    set.add(kw);
+    if (kw.includes(" ")) {
+      for (const tok of kw.split(/\s+/)) {
+        if (tok.length >= 3) set.add(tok);
+      }
+    }
+  }
+  return set;
+}
+
 function computeKeywordOverlap(assetKeywords, articleKeywords) {
   if (!assetKeywords.length || !articleKeywords.length) return 0;
-  const assetSet = new Set(assetKeywords);
+  const assetSet = expandKeywordSet(assetKeywords);
   return articleKeywords.reduce((count, keyword) => count + (assetSet.has(keyword) ? 1 : 0), 0);
 }
 
