@@ -17,7 +17,7 @@ const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 const { extractArticleSignals } = require("./sentimentLexicon");
-const { findFallbackImage } = require("./imageFallback");
+const { findFallbackImage, findBucketImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
 
 const app = express();
@@ -3307,20 +3307,12 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
         st.article_count, st.status, st.last_updated_at,
         st.distinct_source_count, st.breaking_signal_score,
         COALESCE(st.image_url, (
-          SELECT COALESCE(NULLIF(a.image_url, ''), img.public_url) FROM story_thread_articles sta
+          SELECT a.image_url FROM story_thread_articles sta
           JOIN news_articles a ON a.id = sta.article_id
-          LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-          LEFT JOIN image_assets img ON img.id = aia.image_id
           WHERE sta.thread_id = st.id
-            AND (a.image_url IS NOT NULL AND a.image_url <> '' OR img.public_url IS NOT NULL)
-          ORDER BY
-            CASE
-              WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
-              WHEN img.public_url IS NOT NULL THEN 2
-              ELSE 3
-            END,
-            a.published_at DESC,
-            sta.relevance_score DESC
+            AND a.image_url IS NOT NULL
+            AND a.image_url <> ''
+          ORDER BY a.published_at DESC
           LIMIT 1
         )) AS hero_image_url,
         st.image_url AS custom_image_url
@@ -4556,37 +4548,29 @@ app.get("/api/timelines/latest", async (req, res) => {
 
       if (!timelines.length) return [];
 
-      // Hero images: native-first, most-recent wins within each tier.
-      //   1. Most recent article with a native (publisher-scraped) image.
-      //   2. Otherwise, most recent article with a catalog-assigned image.
-      //   3. Otherwise, null → findFallbackImage() below.
-      // Parabolic weight is kept only as a final tiebreaker when two
-      // articles share a published_at to the second.
+      // Hero images for timelines: native publisher scrape only.
+      //   1. Most recent constituent article with a.image_url.
+      //   2. Otherwise null → findBucketImage() below matches directly on
+      //      primary_nations / keywords / category in image_assets.
+      // The old article_image_assignments path was removed — the bucket
+      // lookup is more on-topic than whatever fallback happened to be
+      // assigned to a single article in the timeline.
       const timelineIds = timelines.map(t => t.timeline_id);
       const { rows: heroes } = await pool.query(`
         SELECT DISTINCT ON (sta.timeline_id)
           sta.timeline_id,
-          COALESCE(NULLIF(a.image_url, ''), img_a.public_url) AS hero_image_url,
-          img_a.public_url AS hero_catalog_image_url,
+          a.image_url AS hero_image_url,
           COALESCE(ns.name, ys.name) AS hero_source_name,
           co.iso_code AS hero_iso_code
         FROM story_timeline_articles sta
         JOIN news_articles a ON a.id = sta.article_id
-        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.timeline_id = ANY($1)
-        ORDER BY
-          sta.timeline_id,
-          CASE
-            WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
-            WHEN img_a.public_url IS NOT NULL THEN 2
-            ELSE 3
-          END,
-          a.published_at DESC,
-          sta.parabolic_weight DESC
+          AND a.image_url IS NOT NULL
+          AND a.image_url <> ''
+        ORDER BY sta.timeline_id, a.published_at DESC
       `, [timelineIds]);
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
@@ -4599,19 +4583,22 @@ app.get("/api/timelines/latest", async (req, res) => {
           thread_id: t.timeline_id,
           latest_published_at: t.last_updated_at,
           hero_image_url: h?.hero_image_url || null,
-          hero_catalog_image_url: h?.hero_catalog_image_url || null,
+          hero_catalog_image_url: null,
           hero_source_name: h?.hero_source_name || null,
           hero_iso_code: subjectIso || h?.hero_iso_code || null
         };
       });
-      // Fallback image search for items missing hero images (capped + timeout)
-      const _noImgTl = mapped.filter(t => !t.hero_image_url && !t.hero_catalog_image_url).slice(0, 10);
+      // Fallback image search for timelines missing hero images.
+      // Bucket-first (country → keyword → category) before Wikimedia.
+      const _noImgTl = mapped.filter(t => !t.hero_image_url).slice(0, 20);
       if (_noImgTl.length) {
         await Promise.race([
           Promise.all(_noImgTl.map(async (t) => {
             try {
-              const url = await findFallbackImage(t);
-              if (url) t.hero_image_url = url;
+              const bucketUrl = await findBucketImage(t, pool);
+              if (bucketUrl) { t.hero_image_url = bucketUrl; return; }
+              const wikiUrl = await findFallbackImage(t);
+              if (wikiUrl) t.hero_image_url = wikiUrl;
             } catch (e) { /* silent */ }
           })),
           new Promise(r => setTimeout(r, 6000))
@@ -5115,28 +5102,19 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       SELECT
         rt.*,
         h.hero_image_url,
-        h.hero_catalog_image_url,
         h.hero_iso_code
       FROM ranked_threads rt
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
-          img.public_url AS hero_catalog_image_url,
+          a.image_url AS hero_image_url,
           co.iso_code AS hero_iso_code
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
         LEFT JOIN countries co ON co.id = a.country_id
-        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img ON img.id = aia.image_id
         WHERE sta.thread_id = rt.thread_id
-        ORDER BY
-          CASE
-            WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
-            WHEN img.public_url IS NOT NULL THEN 2
-            ELSE 3
-          END,
-          a.published_at DESC,
-          sta.relevance_score DESC
+          AND a.image_url IS NOT NULL
+          AND a.image_url <> ''
+        ORDER BY a.published_at DESC
         LIMIT 1
       ) h ON TRUE
       ORDER BY rt.importance DESC NULLS LAST,
@@ -5191,23 +5169,15 @@ app.get("/api/threads/id/:id", async (req, res) => {
     const thread = rows[0];
     const { rows: heroRows } = await pool.query(`
       SELECT
-        COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
-        img.public_url AS hero_catalog_image_url,
+        a.image_url AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img ON img.id = aia.image_id
       WHERE sta.thread_id = $1
-      ORDER BY
-        CASE
-          WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
-          WHEN img.public_url IS NOT NULL THEN 2
-          ELSE 3
-        END,
-        a.published_at DESC,
-        sta.relevance_score DESC
+        AND a.image_url IS NOT NULL
+        AND a.image_url <> ''
+      ORDER BY a.published_at DESC
       LIMIT 1
     `, [threadId]);
 
@@ -5218,7 +5188,7 @@ app.get("/api/threads/id/:id", async (req, res) => {
       ...thread,
       latest_published_at: thread.last_updated_at,
       hero_image_url: hero.hero_image_url || null,
-      hero_catalog_image_url: hero.hero_catalog_image_url || null,
+      hero_catalog_image_url: null,
       hero_source_name: null,
       hero_iso_code: subjectIso || hero.hero_iso_code || null
     });
@@ -5383,36 +5353,29 @@ app.get("/api/threads/latest", async (req, res) => {
 
     if (!threads.length) return [];
 
-    // Step 2: batch-fetch hero images. Rule:
+    // Step 2: batch-fetch hero images. Rule for threads:
     //   1. If any constituent article has a native (publisher-scraped) image
     //      in a.image_url, pick the MOST RECENT such article.
-    //   2. Otherwise, pick the most recent article that has a catalog image
-    //      assigned (article_image_assignments → image_assets).
-    //   3. Otherwise, leave hero_image_url null — findFallbackImage() below
-    //      will resolve a default.
-    // The CASE expression collapses the priority into three tiers so
-    // a.published_at acts as the tiebreaker inside each tier.
+    //   2. Otherwise, leave hero_image_url null — findBucketImage() below
+    //      resolves a thematic image directly from image_assets (country,
+    //      keyword, or category match). We deliberately skip the old
+    //      article_image_assignments path here: the bucket lookup does a
+    //      better job of finding an on-topic image for the thread itself
+    //      than picking whatever fallback happened to be assigned to one
+    //      of its articles.
     const threadIds = threads.map(t => t.thread_id);
     const { rows: heroes } = await pool.query(`
       SELECT DISTINCT ON (sta.thread_id)
         sta.thread_id,
-        COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
-        img.public_url AS hero_catalog_image_url,
+        a.image_url AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img ON img.id = aia.image_id
       WHERE sta.thread_id = ANY($1)
-      ORDER BY sta.thread_id,
-        CASE
-          WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
-          WHEN img.public_url IS NOT NULL THEN 2
-          ELSE 3
-        END,
-        a.published_at DESC,
-        sta.relevance_score DESC
+        AND a.image_url IS NOT NULL
+        AND a.image_url <> ''
+      ORDER BY sta.thread_id, a.published_at DESC
     `, [threadIds]);
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));
@@ -5428,23 +5391,31 @@ app.get("/api/threads/latest", async (req, res) => {
         ...t,
         latest_published_at: t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
-        hero_catalog_image_url: h?.hero_catalog_image_url || null,
+        hero_catalog_image_url: null,
         hero_source_name: null,
         hero_iso_code: subjectIso || h?.hero_iso_code || null
       };
     });
 
-    // Fallback image search for items missing hero images (capped + timeout)
-    const _noImg = result.filter(t => !t.hero_image_url).slice(0, 10);
+    // Fallback image search for items missing hero images.
+    //
+    // Rule: prefer an image from our own bucket (image_assets) that is
+    // explicitly tagged with a country from the thread's primary_nations,
+    // a keyword from its keywords, or its primary_category. Only fall
+    // back to Wikimedia Commons if nothing matches in the bucket — that
+    // path is slow (external fetch) and usually less thematic.
+    const _noImg = result.filter(t => !t.hero_image_url).slice(0, 20);
     if (_noImg.length) {
       await Promise.race([
         Promise.all(_noImg.map(async (t) => {
           try {
-            const url = await findFallbackImage(t);
-            if (url) t.hero_image_url = url;
+            const bucketUrl = await findBucketImage(t, pool);
+            if (bucketUrl) { t.hero_image_url = bucketUrl; return; }
+            const wikiUrl = await findFallbackImage(t);
+            if (wikiUrl) t.hero_image_url = wikiUrl;
           } catch (e) { /* silent */ }
         })),
-        new Promise(r => setTimeout(r, 6000))  // 6s max for fallback batch
+        new Promise(r => setTimeout(r, 6000))
       ]);
     }
 
