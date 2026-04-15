@@ -2508,17 +2508,23 @@ body.flow-maximized #flowArcList {
   display: flex; flex-direction: column;
   padding: 8px 12px; cursor: pointer;
   border-bottom: 1px solid rgba(255,255,255,0.04);
-  transition: background 0.15s, opacity 0.3s;
-  animation: arcBarEnter 0.25s ease-out;
+  /* Background and transform use the same easing so hover + list-shuffle
+     animations feel consistent. arcBarEnter handles the new-bar slide-up
+     and fade-in; fading-out handles the exit. */
+  transition: background 0.15s, opacity 0.28s ease-out, transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  animation: arcBarEnter 0.32s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: opacity, transform;
 }
 @keyframes arcBarEnter {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .arcBar:hover { background: rgba(0,220,130,0.06); }
 .arcBar.selected { background: rgba(0,220,130,0.12); border-left: 2px solid rgba(0,220,130,0.6); }
 .arcBar.fading-out, .arcCardExpanded.fading-out {
-  opacity: 0; transition: opacity 0.25s;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.28s ease-in, transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   pointer-events: none;
 }
 
