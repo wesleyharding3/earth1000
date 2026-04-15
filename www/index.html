@@ -16871,12 +16871,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.flow = flow;
     arc.age  = 0;
     // Article-card flows get their own persistent lifecycle: a synchronized
-    // draw-in pulse followed by a looping streak. All arcs sharing an
-    // article use the same fixed durations so their pulses leave and
-    // arrive together regardless of geographic length.
-    arc.mode = (flow._sourceType === 'article' && flow._cardTriggered) ? 'articleCard' : null;
+    // draw-in pulse followed by a looping streak. Thread flows daisy-chain
+    // outward from the most-connected entity and then loop their pulses in
+    // the same wave order.
+    const _isArticleCard = flow._sourceType === 'article' && flow._cardTriggered;
+    const _isThread      = flow._sourceType === 'thread'  && flow._cardTriggered;
+    arc.mode = _isArticleCard ? 'articleCard' : (_isThread ? 'thread' : null);
     arc._elapsed = 0;
-    arc.isStatic = arc.mode === 'articleCard' ? false : !!flow.count;  // aggregate arcs don't expire
+    arc.wave = null;          // filled in by the thread scheduler on first tick
+    arc.isStatic = (arc.mode === 'articleCard' || arc.mode === 'thread') ? false : !!flow.count;  // aggregate arcs don't expire
     arc.laneOffset = laneOffset;
     arc.travelDuration = arc.isStatic
       ? AGGREGATE_TRAVEL * (0.92 + Math.random() * 0.18)
@@ -16922,6 +16925,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       arc.tubeMat.uniforms.uPulseWidth.value = 0.16; // uv-space → world-space length scales with arc length
       arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
       arc.tubeMat.uniforms.uPulsePos.value = 0.0;
+      arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
+    } else if (arc.mode === 'thread') {
+      // Per-wave draw-in duration; the scheduler assigns arc.wave on the
+      // first tick after a batch is created, so the actual start offset
+      // is wave * waveDuration.
+      arc.waveDuration = 1.5;
+      arc._srcRingSpawned = false;
+      arc._dstRingSpawned = false;
+      arc.baseOpacity = 0.62;
+      // Start fully hidden; setup reveals once the arc's wave begins.
+      arc.tubeMat.uniforms.uOpacity.value = 0;
+      arc.tubeMat.uniforms.uVisibleEnd.value = 0.001;
+      arc.tubeMat.uniforms.uSinglePulse.value = 1.0;
+      arc.tubeMat.uniforms.uPulseWidth.value = 0.16;
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
+      arc.tubeMat.uniforms.uPulsePos.value = -2.0; // offscreen until pulse loop activates
       arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
     } else if (arc.isStatic) {
       arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
@@ -16971,7 +16990,121 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arcPool.push(arc);
   }
 
+  /* ── Thread flow scheduler ──────────────────────────────────────
+     Thread flows emanate from the most-connected entity and daisy-chain
+     outward in BFS waves. Wave 0 is a single seed arc from that entity
+     (plus one seed per disconnected component so isolated arcs don't
+     sit idle); each subsequent wave fires every remaining arc that
+     touches the known frontier. All arcs in a wave draw in simultaneously
+     over waveDuration seconds; the next wave begins only once the
+     current wave has fully landed. Once the whole graph has drawn,
+     the arcs persist and looping pulses replay the same wave sequence
+     continuously. ------------------------------------------------ */
+  let _threadBatchStart = null;
+  let _threadTotalWaves = 0;
+  function _threadNodeKey(n) {
+    return n ? `${n.type || 'x'}:${n.iso || n.id || n.place || n.lat + ',' + n.lon}` : '__null__';
+  }
+  function scheduleThreadWaves() {
+    const threadArcs = arcObjects.filter(a => a.mode === 'thread');
+    if (!threadArcs.length) { _threadTotalWaves = 0; _threadBatchStart = null; return; }
+
+    const eps = threadArcs.map(arc => ({
+      arc,
+      a: _threadNodeKey(arc.flow.src),
+      b: _threadNodeKey(arc.flow.dst),
+    }));
+
+    // Union-find to partition arcs into connected components.
+    const parent = new Map();
+    const find = (x) => {
+      if (!parent.has(x)) parent.set(x, x);
+      while (parent.get(x) !== x) {
+        parent.set(x, parent.get(parent.get(x)));
+        x = parent.get(x);
+      }
+      return x;
+    };
+    const union = (a, b) => {
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    };
+    eps.forEach(({ a, b }) => union(a, b));
+
+    const components = new Map();
+    eps.forEach((ep, i) => {
+      const root = find(ep.a);
+      if (!components.has(root)) components.set(root, []);
+      components.get(root).push(i);
+    });
+
+    // BFS within each component → array of waves (each an array of eps idx).
+    const perComponentWaves = [];
+    for (const idxs of components.values()) {
+      const degree = new Map();
+      idxs.forEach(i => {
+        degree.set(eps[i].a, (degree.get(eps[i].a) || 0) + 1);
+        degree.set(eps[i].b, (degree.get(eps[i].b) || 0) + 1);
+      });
+      let startNode = null, maxDeg = -1;
+      for (const [k, d] of degree) {
+        if (d > maxDeg) { maxDeg = d; startNode = k; }
+      }
+
+      const undrawn = new Set(idxs);
+      const frontier = new Set([startNode]);
+      const waves = [];
+
+      // Wave 0 seed: single arc touching startNode (or any arc for a
+      // singleton component).
+      let seed = -1;
+      for (const idx of undrawn) {
+        const { a, b } = eps[idx];
+        if (a === startNode || b === startNode) { seed = idx; break; }
+      }
+      if (seed === -1) seed = undrawn.values().next().value;
+      undrawn.delete(seed);
+      frontier.add(eps[seed].a);
+      frontier.add(eps[seed].b);
+      waves.push([seed]);
+
+      // Subsequent waves: every remaining arc touching frontier.
+      let guard = 0;
+      while (undrawn.size && guard++ < 1000) {
+        const wave = [];
+        for (const idx of undrawn) {
+          if (frontier.has(eps[idx].a) || frontier.has(eps[idx].b)) wave.push(idx);
+        }
+        if (!wave.length) wave.push(undrawn.values().next().value); // defensive
+        for (const idx of wave) {
+          undrawn.delete(idx);
+          frontier.add(eps[idx].a);
+          frontier.add(eps[idx].b);
+        }
+        waves.push(wave);
+      }
+      perComponentWaves.push(waves);
+    }
+
+    // Merge components by lining up wave index: component A's wave 0 fires
+    // with component B's wave 0, etc. Isolated/disconnected arcs therefore
+    // fire alongside the main component's seed.
+    const maxDepth = perComponentWaves.reduce((m, w) => Math.max(m, w.length), 0);
+    for (let w = 0; w < maxDepth; w++) {
+      for (const compWaves of perComponentWaves) {
+        const wave = compWaves[w];
+        if (!wave) continue;
+        for (const idx of wave) eps[idx].arc.wave = w;
+      }
+    }
+
+    _threadTotalWaves = maxDepth;
+    _threadBatchStart = performance.now() / 1000;
+  }
+
   function clearArcs() {
+    _threadBatchStart = null;
+    _threadTotalWaves = 0;
     for (let i = 0; i < arcObjects.length; i++) {
       recycleArc(arcObjects[i]);
     }
@@ -17012,9 +17145,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const arc = arcObjects[i];
       const flow = arc.flow;
 
-      // Article-card arcs drive their own pulse from wall-clock time so
-      // flowSpeed can't desync them. Skip the shared globalPulseTime path.
-      if (arc.mode !== 'articleCard') {
+      // Article-card and thread arcs drive their own pulse from wall-clock
+      // time so flowSpeed can't desync them. Skip the shared
+      // globalPulseTime path.
+      if (arc.mode !== 'articleCard' && arc.mode !== 'thread') {
         const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
         if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
           arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
@@ -17065,6 +17199,107 @@ const settingsToggle     = document.getElementById("settingsToggle");
         arc.orb.visible = false;
         const loopT = ((elapsed - arc.drawDuration) % arc.loopPeriod) / arc.loopPeriod;
         arc.tubeMat.uniforms.uPulsePos.value = loopT;
+
+        if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+        if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+        if (flow.src?.type === 'city') {
+          const sKey = flowId + '_s';
+          frameActiveRingArcs.add(sKey);
+          if (!arc._srcRingSpawned) {
+            arc._srcRingSpawned = true;
+            spawnFlowRing(flow.src.lat, flow.src.lon, pickColor(flow), sKey);
+          }
+        }
+        if (flow.dst?.type === 'city') {
+          const dKey = flowId + '_d';
+          frameActiveRingArcs.add(dKey);
+          if (!arc._dstRingSpawned) {
+            arc._dstRingSpawned = true;
+            spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+          }
+        }
+        continue;
+      }
+
+      if (arc.mode === 'thread') {
+        // Lazy schedule: on the first tick after a thread batch is
+        // created, every arc still has wave === null. Run the BFS
+        // scheduler once to assign waves and anchor the batch start.
+        if (arc.wave == null) {
+          scheduleThreadWaves();
+          if (arc.wave == null) { continue; } // scheduling bailed (no thread arcs?)
+        }
+
+        const waveDuration  = arc.waveDuration || 1.5;
+        const totalWaves    = _threadTotalWaves;
+        const totalDraw     = totalWaves * waveDuration;
+        const batchStart    = _threadBatchStart ?? (performance.now() / 1000);
+        const elapsed       = (performance.now() / 1000) - batchStart;
+        const waveStart     = arc.wave * waveDuration;
+        const waveEnd       = waveStart + waveDuration;
+        const flowId        = `thr_${arc._uid}`;
+
+        if (elapsed < waveStart) {
+          // Not our turn yet — keep the tube invisible.
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = 0.001;
+          arc.tubeMat.uniforms.uOpacity.value = 0;
+          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+          arc.orb.material.opacity = 0;
+          arc.orb.visible = false;
+          continue;
+        }
+
+        if (elapsed < waveEnd) {
+          // Phase A — this arc is drawing in during its wave.
+          const rawT = clamp01((elapsed - waveStart) / waveDuration);
+          const eased = 1 - Math.pow(1 - rawT, 3);
+          const visEnd = Math.max(0.001, eased);
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = visEnd;
+          const fadeIn = clamp01(rawT * 4);
+          arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity * fadeIn;
+          arc.tubeMat.uniforms.uPulsePos.value = visEnd;
+          setArcOrb(arc, visEnd, 0xffffff, fadeIn);
+
+          if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.type === 'city') {
+            const dKey = flowId + '_d';
+            frameActiveRingArcs.add(dKey);
+            if (!arc._dstRingSpawned) {
+              arc._dstRingSpawned = true;
+              spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+            }
+          }
+          continue;
+        }
+
+        // Phase B — arc is fully drawn. While other waves are still drawing
+        // in, sit fully visible and idle. Once all waves have finished, the
+        // looping-pulse phase begins.
+        arc.tubeMat.uniforms.uVisibleStart.value = 0;
+        arc.tubeMat.uniforms.uVisibleEnd.value = 1;
+        arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+        arc.orb.material.opacity = 0;
+        arc.orb.visible = false;
+
+        if (elapsed < totalDraw) {
+          // Still waiting for the other waves to finish their draw-in.
+          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+        } else {
+          // Looping pulse: replay the wave sequence continuously. Pulse
+          // is active only while it's this arc's wave turn inside the
+          // cycle; otherwise the arc rests, still fully drawn.
+          const cycleLen = totalDraw;
+          const cycleT   = (elapsed - totalDraw) % cycleLen;
+          if (cycleT >= waveStart && cycleT < waveEnd) {
+            const localT = clamp01((cycleT - waveStart) / waveDuration);
+            arc.tubeMat.uniforms.uPulsePos.value = localT;
+          } else {
+            arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+          }
+        }
 
         if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
         if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
