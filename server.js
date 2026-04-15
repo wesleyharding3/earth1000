@@ -5569,6 +5569,255 @@ app.post("/api/cluster-node/summary", async (req, res) => {
   }
 });
 
+// POST /api/ai/flow-context — streaming AI explanation for thread/timeline
+// flow arcs. Two scopes: "entities" (relationship across all on-screen ISOs)
+// and "flow" (specific arc or current timeline segment). Pro-gated.
+//
+// Request body:
+//   scope:            "entities" | "flow"
+//   mode:             "thread"   | "timeline"
+//   thread_id?:       number (when mode === "thread")
+//   timeline_id?:     number (when mode === "timeline"; currently a thread id)
+//   segment_idx?:     number (timeline only)
+//   segment?:         { title, date, article_ids[] }
+//   theme?:           string (thread/timeline title)
+//   article_ids?:     number[] (explicit scoping)
+//   visible_entities: string[] (ISO codes currently lit on screen)
+//   active_arc?:      { src_iso, dst_iso, count } (flow scope only)
+//
+// Streams Server-Sent Events: `data: {"delta":"..."}\n\n`, terminates
+// with `data: [DONE]\n\n`.
+app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
+  const {
+    scope,
+    mode,
+    thread_id,
+    timeline_id,
+    segment_idx,
+    segment,
+    theme,
+    article_ids,
+    visible_entities,
+    active_arc,
+  } = req.body || {};
+
+  if (scope !== "entities" && scope !== "flow") {
+    return res.status(400).json({ error: "scope must be 'entities' or 'flow'" });
+  }
+  if (mode !== "thread" && mode !== "timeline") {
+    return res.status(400).json({ error: "mode must be 'thread' or 'timeline'" });
+  }
+
+  const entityId = mode === "thread" ? parseInt(thread_id, 10) : parseInt(timeline_id, 10);
+  if (!entityId) {
+    return res.status(400).json({ error: `${mode}_id required` });
+  }
+
+  try {
+    // Resolve theme + description from story_threads (timelines in this app
+    // also key into the story_threads table via the /api/threads/:id/timeline
+    // endpoint, so the same lookup works for both modes).
+    const { rows: threadRows } = await pool.query(
+      `SELECT title, description, primary_category, keywords
+       FROM story_threads WHERE id = $1`,
+      [entityId]
+    );
+    const threadMeta = threadRows[0] || null;
+
+    // Scope article selection. For a timeline segment, prefer the exact
+    // article_ids attached to that event. For a specific arc, fetch the
+    // subset that mention both endpoints. Otherwise grab a chronological
+    // window of the thread's articles.
+    const scopedArticleIds = Array.isArray(segment?.article_ids) && segment.article_ids.length
+      ? segment.article_ids.map(x => parseInt(x, 10)).filter(Boolean)
+      : (Array.isArray(article_ids) ? article_ids.map(x => parseInt(x, 10)).filter(Boolean) : []);
+
+    let articles = [];
+    if (scope === "flow" && active_arc?.src_iso && active_arc?.dst_iso) {
+      // Arc-specific articles — join article_locations twice to find pieces
+      // that mention both the source and destination ISOs in this thread.
+      const { rows } = await pool.query(`
+        SELECT DISTINCT
+          a.id, COALESCE(a.translated_title, a.title) AS title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.published_at,
+          COALESCE(ns.name, ys.name) AS source_name,
+          co.name AS country_name
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        JOIN article_locations al1 ON al1.article_id = a.id
+        JOIN countries c1 ON c1.id = al1.country_id
+        JOIN article_locations al2 ON al2.article_id = a.id
+        JOIN countries c2 ON c2.id = al2.country_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.thread_id = $1
+          AND c1.iso_code = $2
+          AND c2.iso_code = $3
+        ORDER BY a.published_at ASC
+        LIMIT 12
+      `, [entityId, active_arc.src_iso, active_arc.dst_iso]);
+      articles = rows;
+    }
+
+    if (!articles.length && scopedArticleIds.length) {
+      const { rows } = await pool.query(`
+        SELECT a.id, COALESCE(a.translated_title, a.title) AS title,
+               COALESCE(a.translated_summary, a.summary) AS summary,
+               a.published_at,
+               COALESCE(ns.name, ys.name) AS source_name,
+               co.name AS country_name
+        FROM news_articles a
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE a.id = ANY($1::int[])
+        ORDER BY a.published_at ASC
+        LIMIT 20
+      `, [scopedArticleIds]);
+      articles = rows;
+    }
+
+    if (!articles.length) {
+      const { rows } = await pool.query(`
+        SELECT a.id, COALESCE(a.translated_title, a.title) AS title,
+               COALESCE(a.translated_summary, a.summary) AS summary,
+               a.published_at,
+               COALESCE(ns.name, ys.name) AS source_name,
+               co.name AS country_name
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.thread_id = $1
+        ORDER BY sta.is_anchor DESC, a.published_at ASC
+        LIMIT 20
+      `, [entityId]);
+      articles = rows;
+    }
+
+    // Map visible ISO codes to country names for the prompt.
+    let visibleNames = [];
+    const isoList = Array.isArray(visible_entities) ? visible_entities.filter(Boolean) : [];
+    if (isoList.length) {
+      const { rows: nameRows } = await pool.query(
+        `SELECT iso_code, name FROM countries WHERE iso_code = ANY($1::text[])`,
+        [isoList]
+      );
+      const isoToName = new Map(nameRows.map(r => [r.iso_code, r.name]));
+      visibleNames = isoList.map(iso => isoToName.get(iso) || iso);
+    }
+
+    // Resolve arc endpoint country names (if arc scope).
+    let arcNames = null;
+    if (scope === "flow" && active_arc?.src_iso && active_arc?.dst_iso) {
+      const { rows: arcRows } = await pool.query(
+        `SELECT iso_code, name FROM countries WHERE iso_code = ANY($1::text[])`,
+        [[active_arc.src_iso, active_arc.dst_iso]]
+      );
+      const map = new Map(arcRows.map(r => [r.iso_code, r.name]));
+      arcNames = {
+        src: map.get(active_arc.src_iso) || active_arc.src_iso,
+        dst: map.get(active_arc.dst_iso) || active_arc.dst_iso,
+      };
+    }
+
+    // Build the article context block.
+    const articleContext = articles.slice(0, 20).map((a, i) => {
+      const date = a.published_at ? new Date(a.published_at).toISOString().slice(0, 10) : "";
+      const source = a.source_name || "Unknown";
+      const country = a.country_name || "";
+      const summary = (a.summary || "").slice(0, 260).replace(/\s+/g, " ");
+      return `${i + 1}. "${a.title || "Untitled"}" — ${source}${country ? `, ${country}` : ""}${date ? ` (${date})` : ""}\n   ${summary}`;
+    }).join("\n");
+
+    const themeLine = theme || threadMeta?.title || "Untitled story";
+    const descLine = threadMeta?.description ? `Story description: ${threadMeta.description}` : "";
+    const keywordsLine = Array.isArray(threadMeta?.keywords) && threadMeta.keywords.length
+      ? `Story keywords: ${threadMeta.keywords.slice(0, 15).join(", ")}`
+      : "";
+
+    let taskLine = "";
+    if (scope === "entities") {
+      taskLine = [
+        `Explain the relationship between the countries currently on screen — ${visibleNames.join(", ") || "(none)"} — in the context of this ${mode === "timeline" ? "timeline" : "thread"}.`,
+        `Ground the explanation in the story's theme and the articles listed. Focus on how these entities interact in this story, not their general geopolitical relationship.`,
+      ].join(" ");
+    } else {
+      if (mode === "timeline" && Number.isInteger(segment_idx)) {
+        const segTitle = segment?.title ? ` "${segment.title}"` : "";
+        const segDate = segment?.date ? ` (${segment.date})` : "";
+        taskLine = `Explain what is happening in segment ${segment_idx + 1}${segTitle}${segDate} of this timeline. Draw from the articles that make up this segment and situate the event in the arc of the broader story.`;
+      } else if (arcNames) {
+        taskLine = `Explain the specific relationship between ${arcNames.src} and ${arcNames.dst} within this ${mode}. Use the article evidence to describe how these two entities are linked in this story.`;
+      } else {
+        taskLine = `Explain the most important active flow in this ${mode} using the article evidence.`;
+      }
+    }
+
+    const prompt = `You are an impartial geopolitical analyst. Write 3–5 concise, plain-prose sentences (no markdown, no bullets, no introductory phrases, no speculation, no opinions). Be factual and specific.
+
+Story theme: ${themeLine}
+${descLine}
+${keywordsLine}
+
+${taskLine}
+
+Articles backing this story:
+${articleContext || "(no article context available)"}`;
+
+    // Open the SSE stream.
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    const sendDelta = (delta) => res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+    const sendDone = () => res.write(`data: [DONE]\n\n`);
+
+    let streamClosed = false;
+    req.on("close", () => { streamClosed = true; });
+
+    const stream = await Anthropic.messages.stream({
+      model: "claude-haiku-4-5",
+      max_tokens: 450,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    stream.on("text", (text) => {
+      if (streamClosed) return;
+      if (text) sendDelta(text);
+    });
+    stream.on("error", (err) => {
+      console.error("[ai/flow-context stream error]", err?.message || err);
+      if (!streamClosed) {
+        try { res.write(`data: ${JSON.stringify({ error: "stream error" })}\n\n`); } catch (_) {}
+      }
+    });
+
+    await stream.finalMessage().catch((err) => {
+      console.error("[ai/flow-context finalMessage]", err?.message || err);
+    });
+
+    if (!streamClosed) {
+      sendDone();
+      res.end();
+    }
+  } catch (err) {
+    console.error("[ai/flow-context]", err.message);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "AI context generation failed" });
+    }
+    try {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    } catch (_) {}
+  }
+});
+
 // GET /api/clusters/related?thread_id=X&run_id=Y — related clusters for a given thread's cluster
 app.get("/api/clusters/related", async (req, res) => {
   const threadId = parseInt(req.query.thread_id, 10);
