@@ -17718,9 +17718,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const op = arc.tubeMat?.uniforms?.uOpacity?.value || 0;
         const vs = arc.tubeMat?.uniforms?.uVisibleStart?.value || 0;
         const ve = arc.tubeMat?.uniforms?.uVisibleEnd?.value || 0;
-        // Hysteresis: keep existing bars at a lower threshold than new ones
+        // Hysteresis: keep existing bars at a much lower threshold than new
+        // ones so arcs whose opacity briefly dips don't flicker the bar list.
         const wasVisible = _prevVisibleUids.has(arc._uid);
-        const threshold = wasVisible ? 0.005 : 0.03;
+        const threshold = wasVisible ? 0.002 : 0.06;
         if (op > threshold && ve - vs > 0.01) {
           visibleArcs.push({ uid: arc._uid, arc, flow: arc.flow });
         }
@@ -17747,13 +17748,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const existingMap = new Map();
       existingEls.forEach(el => existingMap.set(el.dataset.uid, el));
 
-      // Remove bars no longer visible (animate out)
+      // Remove bars no longer visible (animate out). Track the removal timer
+      // on the element so we can cancel it if the arc reappears mid-fade.
       for (const [key, el] of existingMap) {
         if (!curUids.has(parseInt(key, 10))) {
           if (!el.classList.contains('fading-out')) {
             el.classList.add('fading-out');
-            el.addEventListener('transitionend', () => el.remove(), { once: true });
-            setTimeout(() => { if (el.parentNode) el.remove(); }, 350);
+            el._removeTimer = setTimeout(() => {
+              if (el.parentNode) el.remove();
+            }, 320);
           }
         }
       }
@@ -17776,7 +17779,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         let el = existingMap.get(key);
         const shouldExpand = (_selectedArcUid === uid);
 
-        if (el && !el.classList.contains('fading-out')) {
+        // Revive a fading-out element if the arc reappeared — cancel its
+        // removal and drop the fade class so it stays put instead of being
+        // killed and re-added (which caused the sporadic blink).
+        if (el && el.classList.contains('fading-out')) {
+          if (el._removeTimer) { clearTimeout(el._removeTimer); el._removeTimer = null; }
+          el.classList.remove('fading-out');
+        }
+
+        if (el) {
           // Check if we need to swap bar↔expanded card
           const isExpanded = el.classList.contains('arcCardExpanded');
           if (shouldExpand && !isExpanded) {
@@ -17794,7 +17805,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           } else {
             if (el !== scroll.firstElementChild) scroll.prepend(el);
           }
-        } else if (!el) {
+        } else {
           // New arc — build and insert (no animation re-trigger for existing)
           el = shouldExpand ? buildExpandedCard(uid, flow) : buildBar(uid, flow);
           if (prevEl) {
