@@ -3545,7 +3545,91 @@ body.flow-maximized #flowArcList {
 #flowCtxCard.ctxRoutesActive { max-height: calc(100vh - env(safe-area-inset-top, 0px) - 100px); }
 #flowCtxCard.ctxRoutesActive .flowCtxInfoView { display: none; }
 #flowCtxCard.ctxRoutesActive .flowCtxRoutesView { display: flex; }
-#flowCtxCard.ctxRoutesActive .flowCtxPillBar { display: none; }
+/* Persistent pill bar across info/routes/ai views — user explicitly
+   asked for the top header to stay visible in both. */
+#flowCtxCard.ctxRoutesActive .flowCtxPillBar { display: flex; }
+/* When the panel was opened with no originating article/thread/timeline
+   card, the Back button in the pill bar has nowhere to return to. */
+#flowCtxCard.noInfoOrigin .flowCtxReturn { display: none; }
+
+/* ── Live arcs list, embedded inside flowCtxCard ─────────────────── */
+.flowCtxLiveArcsSlot {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+#flowCtxCard.ctxRoutesActive .flowCtxLiveArcsSlot { display: flex; }
+
+#flowCtxCard #flowArcList {
+  position: static !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  z-index: auto;
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#flowCtxCard #flowArcList.visible { display: flex; }
+#flowCtxCard #flowArcList .arcListPanel {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  border-radius: 0;
+  animation: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+#flowCtxCard #flowArcList .arcListHeader { display: none; }
+
+/* ── AI Context pill button in the flowCtxCard pillbar ───────────── */
+.flowCtxAiBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  margin: 0 2px;
+  border-radius: 10px;
+  background: rgba(139,92,246,0.16);
+  border: 1px solid rgba(139,92,246,0.35);
+  color: rgba(210,180,255,0.95);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  animation: flowCtxAiPulse 2.4s ease-in-out infinite;
+}
+.flowCtxAiBtn:hover {
+  background: rgba(139,92,246,0.28);
+  border-color: rgba(170,130,255,0.6);
+  color: #d8c6ff;
+}
+.flowCtxAiBtn.active {
+  background: rgba(139,92,246,0.36);
+  border-color: rgba(200,160,255,0.75);
+  color: #ecdbff;
+  box-shadow: 0 0 10px rgba(139,92,246,0.4);
+  animation: none;
+}
+@keyframes flowCtxAiPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 rgba(139,92,246,0);
+    border-color: rgba(139,92,246,0.35);
+    color: rgba(210,180,255,0.82);
+  }
+  50% {
+    box-shadow: 0 0 10px rgba(139,92,246,0.35);
+    border-color: rgba(180,140,255,0.65);
+    color: rgba(230,205,255,1);
+  }
+}
 
 .flowCtxRoutesHeader {
   display: flex;
@@ -17861,16 +17945,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // ── Show/hide with flow controls ──
     function showPanel() {
-      // On mobile, suppress standalone arc list when drill-down is active
-      // (routes are embedded inside flowCtxCard instead)
       if (window.__flowCtxDrillDown) return;
       if (_minimized) { minBar.classList.add('visible'); }
       else { panel.classList.add('visible'); }
+      // The arc list is now embedded inside #flowCtxCard. If the user opened
+      // News Flows directly (no article/thread/timeline card triggered), the
+      // outer card isn't visible yet — open it straight in routes view.
+      const ctxCard = document.getElementById('flowCtxCard');
+      if (!ctxCard || !ctxCard.classList.contains('visible')) {
+        try { window.showFlowPanelRoutesOnly?.(); } catch (_) {}
+      }
     }
     function hidePanel() {
       panel.classList.remove('visible');
       minBar.classList.remove('visible');
       deselectArc();
+      const ctxCard = document.getElementById('flowCtxCard');
+      if (ctxCard?.classList.contains('noInfoOrigin')) {
+        try { window.hideFlowCtxCard?.(); } catch (_) {}
+      }
     }
 
     // ── Minimize / Expand ──
@@ -18091,9 +18184,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     function _arcCtxUpdateButtonVisibility() {
-      const btn = document.getElementById('arcListAiBtn');
-      if (!btn) return;
-      btn.style.display = _arcCtxSession ? '' : 'none';
+      const legacyBtn = document.getElementById('arcListAiBtn');
+      const pillBtn = document.getElementById('flowCtxAiBtn');
+      const visible = !!_arcCtxSession;
+      if (legacyBtn) legacyBtn.style.display = visible ? '' : 'none';
+      if (pillBtn)   pillBtn.style.display   = visible ? '' : 'none';
     }
 
     window.__arcAiContextOpen = function() {
@@ -18102,6 +18197,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!root) return;
       root.classList.add('ai-context-open');
       document.getElementById('arcListAiBtn')?.classList.add('active');
+      document.getElementById('flowCtxAiBtn')?.classList.add('active');
       _arcCtxUpdateFlowTabState();
       const key = _arcCtxKey(_arcCtxScope);
       _arcCtxCurrentKey = key;
@@ -18118,6 +18214,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!root) return;
       root.classList.remove('ai-context-open');
       document.getElementById('arcListAiBtn')?.classList.remove('active');
+      document.getElementById('flowCtxAiBtn')?.classList.remove('active');
       if (_arcCtxStreamAbort) { try { _arcCtxStreamAbort.abort(); } catch(_){} _arcCtxStreamAbort = null; }
       if (_arcCtxTimelinePaused) {
         _arcCtxTimelinePaused = false;
@@ -22416,9 +22513,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (el) return el;
     el = document.createElement("div");
     el.id = "flowCtxCard";
+    // The pill bar is the persistent top header across all views
+    // (info, routes, AI). The ✦ Context button slowly blinks to signal
+    // the Pro AI feature; style cribbed from the keyword intelligence
+    // ".kwi-ai-btn" pill.
     el.innerHTML = `
       <div class="flowCtxPillBar">
         <button class="flowCtxReturn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <button class="flowCtxAiBtn" id="flowCtxAiBtn" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦ Context</button>
         <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
         <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       </div>
@@ -22429,15 +22531,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="flowCtxMeta"></div>
         <button class="flowCtxViewRoutesBtn" onclick="window.__flowCtxViewRoutes?.()">View Routes</button>
       </div>
-      <div class="flowCtxRoutesView">
-        <div class="flowCtxRoutesHeader">
-          <button class="flowCtxRoutesBackBtn" onclick="window.__flowCtxBackToInfo?.()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
-          <span class="flowCtxRoutesTitle">Routes</span>
-        </div>
-        <div class="flowCtxRoutesScroll"></div>
-      </div>
+      <div class="flowCtxLiveArcsSlot"></div>
     `;
     document.body.appendChild(el);
+    // Reparent the live arcs DOM into the card. Keeps all existing IDs +
+    // sync/timeline logic intact; we just change the frame they live in.
+    try {
+      const slot = el.querySelector('.flowCtxLiveArcsSlot');
+      const arcListRoot = document.getElementById('flowArcList');
+      if (slot && arcListRoot && arcListRoot.parentElement !== slot) {
+        slot.appendChild(arcListRoot);
+      }
+    } catch (_) {}
     el.querySelector(".flowCtxClose").addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -22490,7 +22595,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       wrap.innerHTML = `<div class="flowCtxImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
     }
     // Reset drill-down state
-    el.classList.remove("ctxRoutesActive");
+    el.classList.remove("ctxRoutesActive", "noInfoOrigin");
     // Show "View Routes" button if routes are available
     const vrBtn = el.querySelector(".flowCtxViewRoutesBtn");
     if (vrBtn) {
@@ -22511,6 +22616,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   window.showFlowCtxCard = showFlowCtxCard;
   window.hideFlowCtxCard = hideFlowCtxCard;
+  // Eagerly build the card + reparent #flowArcList into it so the merged
+  // panel is ready before any arc list sync fires. The card stays hidden
+  // (no .visible class) until something explicitly shows it.
+  try { _ensureFlowCtxCard(); } catch (_) {}
 
   // ── Drill-down: "View Routes" inside context card (mobile) ──
   // When arcs are triggered from a card on mobile, this flag suppresses
@@ -22521,47 +22630,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const el = document.getElementById("flowCtxCard");
     if (!el) return;
     el.classList.add("ctxRoutesActive");
-
-    const scrollEl = el.querySelector(".flowCtxRoutesScroll");
-    if (!scrollEl) return;
-    scrollEl.innerHTML = '';
-
-    // Build route bars from current arcObjects
-    const bars = [];
-    for (const arc of arcObjects) {
-      if (!arc.flow || arc._uid == null) continue;
-      bars.push({ uid: arc._uid, flow: arc.flow });
-    }
-
-    if (!bars.length) {
-      scrollEl.innerHTML = '<div style="font-size:10px;color:rgba(255,255,255,0.4);padding:12px 0;text-align:center;">No routes found</div>';
-      return;
-    }
-
-    const _esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
-    const _relTime = window.formatRelTime || ((t) => t ? new Date(t).toLocaleString() : '');
-
-    bars.forEach(({ uid, flow }) => {
-      const bar = document.createElement('div');
-      bar.className = 'flowCtxRouteBar';
-      bar.dataset.uid = uid;
-      const srcName = flow.src?.place || 'Unknown';
-      const dstName = flow.dst?.place || 'Unknown';
-      const title = flow.title || (flow.count ? `${flow.count} articles` : '');
-      const time = flow.publishedAt ? _relTime(flow.publishedAt) : '';
-      bar.innerHTML =
-        `<div class="arcBarRoute">${_esc(srcName)}<span class="arcBarArrow">→</span>${_esc(dstName)}</div>` +
-        (title ? `<div class="arcBarTitle">${_esc(title)}</div>` : '') +
-        (time ? `<div class="arcBarTime">${time}</div>` : '');
-      bar.addEventListener('click', () => _flowCtxSelectRoute(uid, flow, scrollEl));
-      scrollEl.appendChild(bar);
-    });
+    // Ensure the embedded arc list is visible; its sync loop already
+    // populates it from arcObjects so there's nothing to hand-render.
+    document.getElementById('flowArcList')?.classList.add('visible');
+    window.__flowCtxDrillDown = false;
   };
 
   window.__flowCtxBackToInfo = function() {
     const el = document.getElementById("flowCtxCard");
     if (!el) return;
     el.classList.remove("ctxRoutesActive");
+
+    // Close the AI interpanel if it was open inside the live arcs view
+    try { window.__arcAiContextClose?.(); } catch (_) {}
 
     // Restore all arc opacities (deselect)
     for (const arc of arcObjects) {
@@ -22570,6 +22651,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     // Hide hover card
     document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+  };
+
+  // Unified entry when News Flows activates without an originating card —
+  // opens the combined panel straight in Routes view.
+  window.showFlowPanelRoutesOnly = function() {
+    const el = _ensureFlowCtxCard();
+    el.querySelector(".flowCtxKind").textContent = "";
+    el.querySelector(".flowCtxTitle").textContent = "";
+    el.querySelector(".flowCtxMeta").textContent = "";
+    const wrap = el.querySelector(".flowCtxImgWrap");
+    if (wrap) wrap.innerHTML = '';
+    const vrBtn = el.querySelector(".flowCtxViewRoutesBtn");
+    if (vrBtn) vrBtn.classList.remove("visible");
+    el.classList.remove("visible", "flowCtxMinimized");
+    void el.offsetHeight;
+    el.classList.add("visible", "ctxRoutesActive", "noInfoOrigin");
+    document.getElementById('flowArcList')?.classList.add('visible');
   };
 
   function _flowCtxSelectRoute(uid, flow, scrollEl) {
@@ -23441,6 +23539,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__flowCtxDrillDown = false;
         document.getElementById('flowArcList')?.classList.add('visible');
         _setTimelineBarVisible(true);
+        // Timeline flows are about playback — jump straight into the
+        // routes view so the ⏮▶⏭ controls are immediately reachable.
+        // User can still ← back to the info view from the pill bar.
+        document.getElementById('flowCtxCard')?.classList.add('ctxRoutesActive');
 
         // Register an AI-context session so the ✦ button surfaces.
         try {
