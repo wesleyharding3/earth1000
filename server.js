@@ -1494,10 +1494,13 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ) * Math.pow(r.country_boost || 1, 2.0)
     }));
 
-    // Light reranking only when we have enough rows to benefit
+    // Light reranking only when we have enough rows to benefit.
+    // Three passes so the feed has publisher variance, country variance,
+    // AND priority order — see comment in _finalizeSearchResults for why.
     if (results.length >= 8) {
       results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
       results = countryVarianceRerank(results);
+      results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
     }
 
     // Apply user preference boosts (filtered path)
@@ -1506,7 +1509,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       results = _applyNewsPrefBoosts(results, _buildPrefBoosts(_fPrefs));
     }
 
-    // Tiebreak by date within a tight priority band (3%)
+    // Re-rank by boosted final_priority while preserving publisher variance.
     _prefResort(results);
 
     res.json({ total: offset + results.length + (hasMore ? 1 : 0), articles: results });
