@@ -5297,12 +5297,9 @@ body.flow-maximized #flowArcList {
       height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
       border-radius: 20px 20px 0 0;
     }
-    /* Minimized state — collapsed to just the header bar */
-    #clusterDetail.cdMinimized {
-      height: auto !important;
-    }
-    #clusterDetail.cdMinimized .cdSections { display: none; }
-    #clusterDetail.cdMinimized .cdMeta { display: none; }
+    /* Minimized state — capped to title bar + first line above the nav.
+       Height is set inline from JS (getNavTickerHeight() + 190) so it
+       tracks device chrome dynamically. */
     /* Minimize button */
     .cdMinimize {
       width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
@@ -31228,7 +31225,9 @@ body.ticker-active .gTickerLabel {
     if (s === "max") {
       detailEl.style.height = "";
     } else if (s === "min") {
-      detailEl.style.height = "";  /* auto via CSS */
+      // Keep title bar + first line above the nav/ticker at the lowest
+      // drag-down position (matches the drag floor in _cdMoveDrag).
+      detailEl.style.height = (getNavTickerHeight() + 190) + "px";
     } else {
       detailEl.style.height = CD_DEFAULT_H() + "px";
     }
