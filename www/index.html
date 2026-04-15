@@ -2425,6 +2425,61 @@ body.ticker-active #flowControls {
   color: rgba(255,150,150,0.9);
 }
 
+/* Timeline segment controls — only visible for timeline-sourced flows */
+.arcListTimelineBar {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+  background: rgba(6,10,20,0.24);
+}
+.arcListTimelineBar .tlcMeta {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+}
+.arcListTimelineBar .tlcSegLabel {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: rgba(255,200,100,0.85);
+  flex-shrink: 0;
+}
+.arcListTimelineBar .tlcSegTitle {
+  font-size: 10.5px; color: rgba(255,255,255,0.68);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1; min-width: 0;
+}
+.arcListTimelineBar .tlcControls {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+}
+.arcListTimelineBar .tlcBtn {
+  width: 26px; height: 26px; border-radius: 13px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.72);
+  font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; flex-shrink: 0;
+  padding: 0;
+}
+.arcListTimelineBar .tlcBtn:hover {
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.95);
+}
+.arcListTimelineBar .tlcBtn.tlcPlayBtn {
+  width: 32px; height: 32px; border-radius: 16px;
+  background: rgba(0,220,130,0.15);
+  border-color: rgba(0,220,130,0.35);
+  color: rgba(120,255,180,0.95);
+  font-size: 13px;
+}
+.arcListTimelineBar .tlcBtn.tlcPlayBtn:hover {
+  background: rgba(0,220,130,0.25);
+  border-color: rgba(0,220,130,0.55);
+}
+.arcListTimelineBar .tlcBtn.reversed {
+  background: rgba(100,180,255,0.15);
+  border-color: rgba(100,180,255,0.35);
+  color: rgba(150,210,255,0.95);
+}
+
 /* Scrollable article list */
 .arcListScroll {
   overflow-y: auto; flex: 1 1 auto; min-height: 160px; padding: 4px 0;
@@ -9751,6 +9806,18 @@ window.sourceBiasBadgeHTML = function(bias) {
         <span class="arcListTitle">Live Arcs</span>
         <button class="arcListHeaderBtn" id="arcListMinBtn" title="Minimize" onclick="window.__arcListMinimize?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
+      </div>
+      <div class="arcListTimelineBar" id="arcListTimelineBar" style="display:none;">
+        <div class="tlcMeta">
+          <span class="tlcSegLabel" id="tlcSegLabel">— / —</span>
+          <span class="tlcSegTitle" id="tlcSegTitle"></span>
+        </div>
+        <div class="tlcControls">
+          <button class="tlcBtn" id="tlcReverseBtn" title="Toggle direction">↻</button>
+          <button class="tlcBtn" id="tlcPrevBtn" title="Previous segment">⏮</button>
+          <button class="tlcBtn tlcPlayBtn" id="tlcPlayBtn" title="Play">▶</button>
+          <button class="tlcBtn" id="tlcNextBtn" title="Next segment">⏭</button>
+        </div>
       </div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
@@ -17222,6 +17289,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       if (arc.mode === 'thread') {
+        // Timeline segment transitions: previous-segment arcs get flagged
+        // for a short fade-out before they're recycled. Handle that first
+        // so the thread scheduler can't overwrite the fading opacity.
+        if (arc._fadingOut) {
+          const ft = clamp01((performance.now() - arc._fadeStart) / (arc._fadeDuration || 400));
+          const base = arc.baseOpacity || 0.62;
+          arc.tubeMat.uniforms.uOpacity.value = base * (1 - ft);
+          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+          arc.orb.material.opacity = 0;
+          arc.orb.visible = false;
+          continue;
+        }
         // Lazy schedule: on the first tick after a thread batch is
         // created, every arc still has wave === null. Run the BFS
         // scheduler once to assign waves and anchor the batch start.
@@ -18088,6 +18167,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Clear persistent node labels, back button, timeline, and info card from card flow arc button
     window.clearFlowNodeLabels?.();
     window.__flowClearHighlights?.();
+    window.__timelineReset?.();
     const backBtn = document.getElementById("flowArcBackBtn");
     if (backBtn) backBtn.classList.remove("visible");
     document.getElementById("flowTimeline")?.classList.remove("visible");
@@ -19462,6 +19542,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowAssignLaneOffsets = assignFlowLaneOffsets;
   window.__flowRemapForView = remapFlowForView;
   window.__flowIsOpen = function() { return flowModeOpen; };
+  // Expose thread-wave scheduler state so the timeline segment controller
+  // can compute when a segment's draw-in will finish and schedule the
+  // post-drawdown auto-advance timer accordingly.
+  window.__flowGetThreadTotalWaves = function() { return _threadTotalWaves || 0; };
+  window.__flowGetThreadWaveDuration = function() { return 1.5; };
+  window.__flowGetCountryCoordsByIso = getCountryCoordsByIso;
 
 })();
 
@@ -22119,6 +22205,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
+      window.__timelineReset?.();
 
       // 4. Fetch flows for this article
       const res = await fetch(`${API}/api/flows/article/${articleId}`);
@@ -22240,6 +22327,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
+      window.__timelineReset?.();
 
       // Early-render the compact floating card from the thread data we
       // captured BEFORE the API returns — guarantees the card is visible
@@ -22323,6 +22411,268 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   };
 
+  /* ────────────────────────────────────────────────────────────────
+     Timeline segment controller
+     ────────────────────────────────────────────────────────────────
+     Timeline flows play back as a sequence of time-indexed segments
+     derived from the thread-timeline endpoint. Each segment is a
+     single event: source entity → every mentioned entity. Segments
+     with no clear source are skipped (no arcs to draw).
+
+     Playback lifecycle per segment:
+       1. Clear currently-visible arcs (fade via opacity → recycle).
+       2. Push fresh arcs tagged _sourceType='thread' so the existing
+          BFS wave scheduler animates the daisy-chain draw-in.
+       3. After draw-in finishes, the looping single-streak pulses keep
+          running for a 10s dwell (extended later for AI context).
+       4. If playing, auto-advance to the next segment (direction-aware).
+     ---------------------------------------------------------------- */
+  const TIMELINE_DWELL_MS        = 10000;
+  const TIMELINE_WAVE_ESTIMATE_S = 1.5; // per-wave draw-in duration
+  let _timelineSegments       = [];
+  let _timelineCurrentIdx     = 0;
+  let _timelineDirection      = 1;    // +1 forward, -1 reverse
+  let _timelinePlaying        = false;
+  let _timelineAdvanceTimer   = null;
+  let _timelineCtxMeta        = null; // for floating card refresh per segment
+  let _timelineBackLabel      = "Back to Lines";
+
+  function _cancelTimelineAdvance() {
+    if (_timelineAdvanceTimer) {
+      clearTimeout(_timelineAdvanceTimer);
+      _timelineAdvanceTimer = null;
+    }
+  }
+
+  function _getCountryCoordsSafe(iso) {
+    const fn = window.__flowGetCountryCoordsByIso;
+    if (typeof fn === 'function') return fn(iso);
+    return null;
+  }
+
+  function _buildSegmentsFromTimeline(data, timelineId) {
+    const events = Array.isArray(data.timeline) ? data.timeline : [];
+    const segments = [];
+    events.forEach((ev, eventIdx) => {
+      const srcIso = (ev.sourceIso || '').toUpperCase();
+      if (!srcIso) return;                 // no clear source → skip, per Q1
+      const srcCoords = _getCountryCoordsSafe(srcIso);
+      if (!srcCoords) return;
+      const mentioned = Array.isArray(ev.mentionedIsos) ? ev.mentionedIsos : [];
+      const mentionedNames = Array.isArray(ev.mentionedCountries) ? ev.mentionedCountries : [];
+      const flows = [];
+      mentioned.forEach((rawIso, i) => {
+        const dstIso = (rawIso || '').toUpperCase();
+        if (!dstIso || dstIso === srcIso) return;
+        const dstCoords = _getCountryCoordsSafe(dstIso);
+        if (!dstCoords) return;
+        flows.push({
+          src: { type: 'country', iso: srcIso, id: srcIso, place: ev.sourceCountry || srcCoords.place || srcIso, lat: srcCoords.lat, lon: srcCoords.lon },
+          dst: { type: 'country', iso: dstIso, id: dstIso, place: mentionedNames[i] || dstCoords.place || dstIso, lat: dstCoords.lat, lon: dstCoords.lon },
+          count: 1,
+          _cardTriggered: true,
+          _sourceType: 'thread',        // reuse thread daisy-chain path
+          _timelineId: timelineId,
+          _segmentIndex: eventIdx,
+        });
+      });
+      if (!flows.length) return;
+      segments.push({
+        eventIndex: eventIdx,
+        title: ev.title || '',
+        date: ev.publishedAt || null,
+        sentiment: ev.sentiment ?? null,
+        flows,
+      });
+    });
+    return segments;
+  }
+
+  function _setTimelineBarVisible(visible) {
+    const bar = document.getElementById('arcListTimelineBar');
+    if (bar) bar.style.display = visible ? 'flex' : 'none';
+  }
+
+  function _formatSegDate(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+    } catch (_) { return ''; }
+  }
+
+  function _refreshTimelineUI() {
+    const labelEl = document.getElementById('tlcSegLabel');
+    const titleEl = document.getElementById('tlcSegTitle');
+    const playBtn = document.getElementById('tlcPlayBtn');
+    const revBtn  = document.getElementById('tlcReverseBtn');
+    const total = _timelineSegments.length;
+    const seg = _timelineSegments[_timelineCurrentIdx];
+    if (labelEl) {
+      const datePart = seg ? _formatSegDate(seg.date) : '';
+      labelEl.textContent = total
+        ? `${_timelineCurrentIdx + 1} / ${total}${datePart ? ' · ' + datePart : ''}`
+        : '— / —';
+    }
+    if (titleEl) titleEl.textContent = seg?.title || '';
+    if (playBtn) {
+      playBtn.textContent = _timelinePlaying ? '⏸' : '▶';
+      playBtn.title = _timelinePlaying ? 'Pause' : 'Play';
+    }
+    if (revBtn) {
+      revBtn.classList.toggle('reversed', _timelineDirection < 0);
+      revBtn.title = _timelineDirection < 0 ? 'Reverse (on)' : 'Reverse (off)';
+    }
+  }
+
+  function _scheduleTimelineAutoAdvance() {
+    _cancelTimelineAdvance();
+    if (!_timelinePlaying) return;
+    // Wait for the wave scheduler to assign waves (runs on next tick) so
+    // we can compute total draw-in duration precisely.
+    requestAnimationFrame(() => {
+      if (!_timelinePlaying) return;
+      const waves = window.__flowGetThreadTotalWaves?.() || 1;
+      const drawMs = waves * TIMELINE_WAVE_ESTIMATE_S * 1000;
+      _timelineAdvanceTimer = setTimeout(() => {
+        _timelineAdvanceTimer = null;
+        _timelineAdvance();
+      }, drawMs + TIMELINE_DWELL_MS);
+    });
+  }
+
+  const TIMELINE_FADE_MS = 400;
+  let _timelineFadeTimer = null;
+  function _cancelTimelineFade() {
+    if (_timelineFadeTimer) { clearTimeout(_timelineFadeTimer); _timelineFadeTimer = null; }
+  }
+
+  function _activateTimelineSegment(idx) {
+    _cancelTimelineAdvance();
+    _cancelTimelineFade();
+    if (!_timelineSegments.length) return;
+    if (idx < 0 || idx >= _timelineSegments.length) {
+      _timelinePlaying = false;
+      _refreshTimelineUI();
+      return;
+    }
+    _timelineCurrentIdx = idx;
+    _refreshTimelineUI();
+
+    // Fade out any currently-showing arcs (from a previous segment) before
+    // recycling them and drawing in the new segment. First-segment activation
+    // has nothing to fade so the build-in starts immediately.
+    const existing = window.__flowGetArcObjects?.() || [];
+    const hasExisting = existing.some(a => a.mode === 'thread' && !a._fadingOut);
+    const fadeMs = hasExisting ? TIMELINE_FADE_MS : 0;
+    if (fadeMs) {
+      const now = performance.now();
+      existing.forEach(a => {
+        if (a.mode === 'thread') {
+          a._fadingOut = true;
+          a._fadeStart = now;
+          a._fadeDuration = TIMELINE_FADE_MS;
+        }
+      });
+    }
+
+    _timelineFadeTimer = setTimeout(() => {
+      _timelineFadeTimer = null;
+      window.__flowClearArcs?.();
+
+      const seg = _timelineSegments[idx];
+      const flows = seg.flows.map(f => {
+        const remapped = window.__flowRemapForView?.(f) || f;
+        return remapped;
+      });
+      window.__flowAssignLaneOffsets?.(flows);
+      const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
+      flows.forEach(flow => {
+        const arc = window.__flowCreateArc?.(flow, maxCount);
+        if (arc) window.__flowPushArc?.(arc);
+      });
+      window.__flowShowLabelsForCardTrigger?.(flows);
+
+      const statsEl = document.getElementById('flowMinStats');
+      if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? 's' : ''}`;
+
+      if (_timelineCtxMeta) {
+        const datePart = _formatSegDate(seg.date);
+        const metaExtra = `Seg ${idx + 1}/${_timelineSegments.length}${datePart ? ' · ' + datePart : ''}`;
+        showFlowCtxCard({
+          ..._timelineCtxMeta,
+          meta: _timelineCtxMeta.baseMeta
+            ? `${_timelineCtxMeta.baseMeta} · ${metaExtra}`
+            : metaExtra,
+        });
+      }
+
+      _scheduleTimelineAutoAdvance();
+    }, fadeMs);
+  }
+
+  function _timelineAdvance() {
+    const nextIdx = _timelineCurrentIdx + _timelineDirection;
+    if (nextIdx < 0 || nextIdx >= _timelineSegments.length) {
+      // Reached the boundary — stop autoplay, keep last segment on screen.
+      _timelinePlaying = false;
+      _refreshTimelineUI();
+      return;
+    }
+    _activateTimelineSegment(nextIdx);
+  }
+
+  // Public window hooks used by the timeline control buttons.
+  window.__timelinePlayToggle = function() {
+    if (!_timelineSegments.length) return;
+    _timelinePlaying = !_timelinePlaying;
+    _refreshTimelineUI();
+    if (_timelinePlaying) _scheduleTimelineAutoAdvance();
+    else _cancelTimelineAdvance();
+  };
+  window.__timelineNext = function() {
+    if (!_timelineSegments.length) return;
+    const nextIdx = _timelineCurrentIdx + 1;
+    if (nextIdx >= _timelineSegments.length) return;
+    _activateTimelineSegment(nextIdx);
+  };
+  window.__timelinePrev = function() {
+    if (!_timelineSegments.length) return;
+    const prevIdx = _timelineCurrentIdx - 1;
+    if (prevIdx < 0) return;
+    _activateTimelineSegment(prevIdx);
+  };
+  window.__timelineToggleDirection = function() {
+    _timelineDirection = _timelineDirection < 0 ? 1 : -1;
+    _refreshTimelineUI();
+  };
+  window.__timelineReset = function() {
+    _cancelTimelineAdvance();
+    _cancelTimelineFade();
+    _timelineSegments = [];
+    _timelineCurrentIdx = 0;
+    _timelineDirection = 1;
+    _timelinePlaying = false;
+    _timelineCtxMeta = null;
+    _setTimelineBarVisible(false);
+    _refreshTimelineUI();
+  };
+
+  // Wire the timeline control buttons once.
+  (function wireTimelineControls() {
+    const map = {
+      tlcPlayBtn: () => window.__timelinePlayToggle?.(),
+      tlcNextBtn: () => window.__timelineNext?.(),
+      tlcPrevBtn: () => window.__timelinePrev?.(),
+      tlcReverseBtn: () => window.__timelineToggleDirection?.(),
+    };
+    Object.entries(map).forEach(([id, fn]) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    });
+  })();
+
   window.showTimelineFlows = async function(timelineId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
@@ -22353,7 +22703,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__goToPage?.(1);
 
-      // Auto-switch to country view if in city mode
       if (window.__currentViewMode === 'city') {
         document.querySelector('.viewOption[data-mode="country"]')?.click();
       }
@@ -22361,8 +22710,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
+      window.__timelineReset?.();
 
-      // Early-render compact floating card from the captured timeline data.
       if (_ctxTimeline) {
         showFlowCtxCard({
           kind: "Timeline · Flow arcs",
@@ -22373,11 +22722,49 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       }
 
+      // 1. Try the thread-timeline endpoint first; segmentation lives here.
+      let segments = [];
+      let tlData = null;
+      try {
+        const tlRes = await fetch(`${API}/api/threads/${timelineId}/timeline`);
+        tlData = await tlRes.json();
+        segments = _buildSegmentsFromTimeline(tlData, timelineId);
+      } catch (e) {
+        console.warn('Timeline endpoint failed, falling back to flat flows:', e);
+      }
+
+      const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
+
+      if (segments.length) {
+        // Segmented playback path.
+        window.__flowSetOpen?.(true);
+        _timelineSegments   = segments;
+        _timelineCurrentIdx = 0;
+        _timelineDirection  = 1;
+        _timelinePlaying    = false; // user selects direction + hits play
+        _timelineBackLabel  = backLabel;
+        _timelineCtxMeta    = _ctxTimeline ? {
+          kind: "Timeline · Flow arcs",
+          title: _ctxTimeline.title || _ctxTimeline.translated_title || "Untitled timeline",
+          imageUrl: _ctxTimeline.hero_image_url || _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || null,
+          isoCode: _ctxTimeline.hero_iso_code || null,
+          baseMeta: _ctxTimeline.category || _ctxTimeline.status || "",
+        } : null;
+
+        // Force the live-arcs panel open so the timeline controls surface.
+        window.__flowCtxDrillDown = false;
+        document.getElementById('flowArcList')?.classList.add('visible');
+        _setTimelineBarVisible(true);
+
+        _activateTimelineSegment(0);
+        showFlowArcBackBtn(backLabel);
+        return;
+      }
+
+      // 2. Fallback: flat /api/flows/timeline/:id endpoint (legacy path).
       const res = await fetch(`${API}/api/flows/timeline/${timelineId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        // No flow arcs — single-location story. Keep context card,
-        // highlight the origin country, and rotate camera.
         const _originIso = _ctxTimeline?.iso_code || data.timeline?.iso_code || _ctxTimeline?.country_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
@@ -22387,7 +22774,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           );
           if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
         }
-        const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
         showFlowArcBackBtn(backLabel);
         return;
       }
@@ -22408,23 +22794,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (arc) window.__flowPushArc?.(arc);
       });
 
-      // Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
-
-      // Country polygon highlights now handled dynamically by tickArcs()
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
-      const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // Suppress standalone arc list — drill-down lives inside context card
       window.__flowCtxDrillDown = true;
       document.getElementById('flowArcList')?.classList.remove('visible');
       document.getElementById('arcListMinBar')?.classList.remove('visible');
 
-      // Surface compact floating card with "View Routes" button
       const _tl = _ctxTimeline || data.timeline || null;
       if (_tl) {
         showFlowCtxCard({
