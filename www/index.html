@@ -16533,6 +16533,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _flowContactISOs = new Set();
   let _flowContactDirty = false;
 
+  /* ── Flow clock ──
+     A pauseable wall-clock used by article-card and thread arc modes so
+     that pausing playback (e.g. when the user opens an article from the
+     live-arcs list) actually freezes those animations. The time-series
+     flow lifecycle stays on its existing flowPlaying flag. */
+  let _flowClockAccumSec  = 0;
+  let _flowClockRunning   = true;
+  let _flowClockLastTick  = performance.now() / 1000;
+  function nowFlowSec() {
+    return _flowClockRunning
+      ? _flowClockAccumSec + (performance.now() / 1000 - _flowClockLastTick)
+      : _flowClockAccumSec;
+  }
+  function setFlowClockRunning(run) {
+    if (run === _flowClockRunning) return;
+    if (run) {
+      _flowClockLastTick = performance.now() / 1000;
+      _flowClockRunning  = true;
+    } else {
+      _flowClockAccumSec += performance.now() / 1000 - _flowClockLastTick;
+      _flowClockRunning  = false;
+    }
+  }
+
   /* ── City node ring pulse pool ── */
   const FLOW_RING_COUNT = 16;        // max simultaneous ring pulses
   const FLOW_RING_SEGMENTS = 48;
@@ -16989,10 +17013,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (arc.mode === 'articleCard') {
       arc.drawDuration = 2.5;         // fixed, equal across all article arcs
       arc.loopPeriod   = 2.5;         // same for looping streak — sync sources & destinations
-      // Use wall-clock seconds so flowSpeed can't desync pulses between
-      // arcs. Every arc in the same article batch is created in a single
-      // synchronous loop, so they share a common _createdAt to the ms.
-      arc._createdAt   = performance.now() / 1000;
+      // Wall-clock seconds (pauseable via nowFlowSec) so flowSpeed can't
+      // desync pulses between arcs, and so pausing the flow freezes the
+      // animation. Every arc in the same article batch is created in a
+      // single synchronous loop, so they share a common _createdAt.
+      arc._createdAt   = nowFlowSec();
       arc._srcRingSpawned = false;
       arc._dstRingSpawned = false;
       arc.baseOpacity  = 0.62;
@@ -17175,7 +17200,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     _threadTotalWaves = maxDepth;
-    _threadBatchStart = performance.now() / 1000;
+    _threadBatchStart = nowFlowSec();
   }
 
   function clearArcs() {
@@ -17232,7 +17257,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       if (arc.mode === 'articleCard') {
-        const elapsed = (performance.now() / 1000) - arc._createdAt;
+        const elapsed = nowFlowSec() - arc._createdAt;
         const flowId = `artc_${arc._uid}`;
 
         if (elapsed < arc.drawDuration) {
@@ -17321,8 +17346,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const waveDuration  = arc.waveDuration || 1.5;
         const totalWaves    = _threadTotalWaves;
         const totalDraw     = totalWaves * waveDuration;
-        const batchStart    = _threadBatchStart ?? (performance.now() / 1000);
-        const elapsed       = (performance.now() / 1000) - batchStart;
+        const batchStart    = _threadBatchStart ?? nowFlowSec();
+        const elapsed       = nowFlowSec() - batchStart;
         const waveStart     = arc.wave * waveDuration;
         const waveEnd       = waveStart + waveDuration;
         const flowId        = `thr_${arc._uid}`;
@@ -17950,8 +17975,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _selectedArcUid = uid;
       _arcPanelDirty = true;
 
-      // Pause playback in time-series mode
-      if (flowPlaying && flowMode !== 'aggregate') {
+      // Pause every flow animation (time-series, wall-clock modes, and
+      // timeline auto-advance) so the user can focus on the article.
+      // pauseFlowAnimation also syncs the flow play/pause buttons to ▶.
+      if (typeof window.pauseFlowAnimation === 'function') {
+        window.pauseFlowAnimation();
+      } else if (flowPlaying && flowMode !== 'aggregate') {
         flowPlaying = false;
         document.getElementById('flowPlayBtn').textContent = '▶ Play';
       }
@@ -17992,6 +18021,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById('flowArcInfoCard')?.classList.remove('visible');
       }
 
+      // Open the full article detail panel if this individual arc has an
+      // article payload (either pre-attached via _article or constructable
+      // from the flat flow shape). Aggregate arcs have no single article —
+      // their expanded arc card surfaces the list separately.
+      if (sf && !sf.count && typeof window.openArticleDetail === 'function') {
+        const article = sf._article || (sf.id ? {
+          id: sf.id,
+          title: sf.title,
+          translated_title: sf.translatedTitle || sf.translated_title,
+          summary: sf.summary,
+          image_url: sf.imageUrl || sf.image_url,
+          url: sf.url,
+          source_name: sf.sourceName || sf.source_name,
+          published_at: sf.publishedAt || sf.published_at,
+          iso_code: sf.src?.iso || null,
+          country_name: sf.src?.place || null,
+        } : null);
+        if (article) {
+          // Close the floating info card so the article panel is unobstructed.
+          document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+          window.openArticleDetail(article, { type: 'flow' });
+        }
+      }
+
       syncPanel();
     }
 
@@ -18008,6 +18061,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         arc._frozenOpacity = null;
         arc._frozen = false;
       }
+
+      // Resume the wall-clock flow animations + timeline auto-advance.
+      // Time-series flowPlaying stays off; the user explicitly resumes it
+      // via the ▶ play button.
+      setFlowClockRunning(true);
+      try { window.__timelineResumeAfterSelection?.(); } catch (_) {}
 
       syncPanel();
     }
@@ -18596,13 +18655,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowPlayBtn").textContent = "⏸ Pause";
   }
 
-  // Expose pause/resume for article detail panel
+  // Expose pause/resume for article detail panel. Also freezes the flow
+  // clock (article-card + thread modes) and pauses timeline auto-advance
+  // so everything stops together, not just time-series playback.
   window.pauseFlowAnimation = function() {
     if (flowPlaying) {
       flowPlaying = false;
       document.getElementById("flowPlayBtn").textContent = "▶ Play";
       syncMinPlayBtn();
     }
+    setFlowClockRunning(false);
+    try { window.__timelinePauseForSelection?.(); } catch (_) {}
   };
 
   // Sync minimized play button state
@@ -18630,6 +18693,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   window.resumeFlowAnimation = function(state) {
+    setFlowClockRunning(true);
+    try { window.__timelineResumeAfterSelection?.(); } catch (_) {}
     if (state) {
       seqIndex = state.seqIndex || seqIndex;
       flowProgress = state.flowProgress || flowProgress;
@@ -22681,6 +22746,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _timelineCtxMeta = null;
     _setTimelineBarVisible(false);
     _refreshTimelineUI();
+  };
+
+  // Called by pauseFlowAnimation / resumeFlowAnimation so selecting an
+  // article bar (which pauses flow playback) also pauses the timeline's
+  // auto-advance timer. When the user resumes, the timer is re-scheduled
+  // only if playback was still on.
+  window.__timelinePauseForSelection = function() {
+    _cancelTimelineAdvance();
+  };
+  window.__timelineResumeAfterSelection = function() {
+    if (_timelineSegments.length && _timelinePlaying) {
+      _scheduleTimelineAutoAdvance();
+    }
   };
 
   // Wire the timeline control buttons once.
