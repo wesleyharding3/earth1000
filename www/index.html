@@ -1589,7 +1589,8 @@
   gap: 10px;
   pointer-events: all;
   user-select: none;
-  min-width: 520px;
+  min-width: 416px;
+  max-width: 416px;
 }
 #flowControls.visible { display: flex; }
 body.ticker-active #flowControls {
@@ -22151,6 +22152,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const camera = window.__camera;
     const renderer = window.__renderer;
+    const scene = window.scene;
     if (!camera || !renderer) {
       window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
       return;
@@ -22159,6 +22161,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const rect = renderer.domElement.getBoundingClientRect();
     const labels = container.querySelectorAll(".flowNodeLabel");
     const GLOBE_RADIUS = 1.0;
+    // The globe's rotation lives on the scene quaternion — model-space node
+    // positions need this applied before they can be tested against the
+    // camera and projected, otherwise the facing check hides them all once
+    // the user rotates the globe.
+    const sceneQuat = scene?.quaternion;
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir).normalize();
 
     labels.forEach(label => {
       const node = label.__flowNode;
@@ -22171,10 +22180,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         GLOBE_RADIUS * Math.sin(lat),
         GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
       );
+      if (sceneQuat) pos.applyQuaternion(sceneQuat);
 
-      // Check if point is facing camera
-      const camDir = camera.position.clone().normalize();
-      const dot = pos.clone().normalize().dot(camDir);
+      // Dot of the surface normal with the camera forward direction.
+      // camera.getWorldDirection points away from the camera into the
+      // scene, so a front-facing node has -camDir · n > 0.
+      const dot = -camDir.dot(pos.clone().normalize());
 
       if (dot < 0.05) {
         label.style.opacity = "0";
