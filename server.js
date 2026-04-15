@@ -3307,12 +3307,21 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
         st.article_count, st.status, st.last_updated_at,
         st.distinct_source_count, st.breaking_signal_score,
         COALESCE(st.image_url, (
-          SELECT COALESCE(img.public_url, '') FROM story_thread_articles sta
+          SELECT COALESCE(NULLIF(a.image_url, ''), img.public_url) FROM story_thread_articles sta
           JOIN news_articles a ON a.id = sta.article_id
           LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
           LEFT JOIN image_assets img ON img.id = aia.image_id
-          WHERE sta.thread_id = st.id AND img.public_url IS NOT NULL AND img.public_url <> ''
-          ORDER BY sta.relevance_score DESC, a.published_at DESC LIMIT 1
+          WHERE sta.thread_id = st.id
+            AND (a.image_url IS NOT NULL AND a.image_url <> '' OR img.public_url IS NOT NULL)
+          ORDER BY
+            CASE
+              WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
+              WHEN img.public_url IS NOT NULL THEN 2
+              ELSE 3
+            END,
+            a.published_at DESC,
+            sta.relevance_score DESC
+          LIMIT 1
         )) AS hero_image_url,
         st.image_url AS custom_image_url
       FROM story_threads st
@@ -5106,11 +5115,13 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       SELECT
         rt.*,
         h.hero_image_url,
+        h.hero_catalog_image_url,
         h.hero_iso_code
       FROM ranked_threads rt
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(img.public_url, '') AS hero_image_url,
+          COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
+          img.public_url AS hero_catalog_image_url,
           co.iso_code AS hero_iso_code
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
@@ -5119,9 +5130,13 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
         LEFT JOIN image_assets img ON img.id = aia.image_id
         WHERE sta.thread_id = rt.thread_id
         ORDER BY
-          (img.public_url IS NOT NULL AND img.public_url <> '') DESC,
-          sta.relevance_score DESC,
-          a.published_at DESC
+          CASE
+            WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
+            WHEN img.public_url IS NOT NULL THEN 2
+            ELSE 3
+          END,
+          a.published_at DESC,
+          sta.relevance_score DESC
         LIMIT 1
       ) h ON TRUE
       ORDER BY rt.importance DESC NULLS LAST,
@@ -5176,7 +5191,8 @@ app.get("/api/threads/id/:id", async (req, res) => {
     const thread = rows[0];
     const { rows: heroRows } = await pool.query(`
       SELECT
-        COALESCE(img.public_url, '') AS hero_image_url,
+        COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
+        img.public_url AS hero_catalog_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
@@ -5185,9 +5201,13 @@ app.get("/api/threads/id/:id", async (req, res) => {
       LEFT JOIN image_assets img ON img.id = aia.image_id
       WHERE sta.thread_id = $1
       ORDER BY
-        (img.public_url IS NOT NULL AND img.public_url <> '') DESC,
-        sta.relevance_score DESC,
-        a.published_at DESC
+        CASE
+          WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 1
+          WHEN img.public_url IS NOT NULL THEN 2
+          ELSE 3
+        END,
+        a.published_at DESC,
+        sta.relevance_score DESC
       LIMIT 1
     `, [threadId]);
 
@@ -5198,7 +5218,7 @@ app.get("/api/threads/id/:id", async (req, res) => {
       ...thread,
       latest_published_at: thread.last_updated_at,
       hero_image_url: hero.hero_image_url || null,
-      hero_catalog_image_url: null,
+      hero_catalog_image_url: hero.hero_catalog_image_url || null,
       hero_source_name: null,
       hero_iso_code: subjectIso || hero.hero_iso_code || null
     });

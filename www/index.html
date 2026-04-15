@@ -5289,13 +5289,13 @@ body.flow-maximized #flowArcList {
       transition: bottom 0.38s cubic-bezier(0.22,1,0.36,1), height 0.35s cubic-bezier(0.22,1,0.36,1), opacity 0.32s ease;
     }
     #clusterDetail.open {
-      bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+      bottom: env(safe-area-inset-bottom);
       opacity: 1;
       pointer-events: all;
       z-index: 200;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - var(--page-nav-height, 0px) - var(--global-ticker-height, 0px) - var(--global-ticker-gap, 0px) - var(--app-bottom-inset, 0px));
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
       border-radius: 20px 20px 0 0;
     }
     /* Minimized state — collapsed to just the header bar */
@@ -5324,7 +5324,7 @@ body.flow-maximized #flowArcList {
       #clusterDetail.cdMaximized {
         width: 100%;
         left: 0;
-        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - var(--page-nav-height, 0px) - var(--global-ticker-height, 0px) - var(--global-ticker-gap, 0px) - var(--app-bottom-inset, 0px));
+        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
         border-radius: 16px 16px 0 0;
       }
     }
@@ -31521,8 +31521,12 @@ body.ticker-active .gTickerLabel {
       _cdDidDrag = true;
       const now = performance.now();
       const dt = now - _cdLastMoveT;
-      // Lower bound keeps title bar + first line (~190px tall) fully visible.
-      const newH = Math.max(190, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
+      // Panel bottom sits at safe-area-inset-bottom and the nav/ticker
+      // overlay covers that region, so the visible portion above the nav
+      // equals (height − navTickerHeight). We want at least ~190px of that
+      // visible portion to keep the title bar + first line on-screen.
+      const minH = getNavTickerHeight() + 190;
+      const newH = Math.max(minH, Math.min(CD_MAX_H(), _cdDragH + (_cdDragY - clientY)));
       if (dt > 0) { _cdVelocity = _cdVelocity * 0.6 + ((newH - _cdRafH) / dt) * 0.4; }
       _cdLastMoveT = now;
       _cdScheduleH(newH);
@@ -31553,7 +31557,8 @@ body.ticker-active .gTickerLabel {
         cdApplySnap(cdSnapState); return;
       } else {
         if (curH > defH + (maxH - defH) * 0.2) { cdApplySnap("max"); return; }
-        if (curH > 190 + (defH - 190) * 0.3) { cdApplySnap("default"); return; }
+        const _minH = getNavTickerHeight() + 190;
+        if (curH > _minH + (defH - _minH) * 0.3) { cdApplySnap("default"); return; }
         cdApplySnap(cdSnapState);
       }
     }
