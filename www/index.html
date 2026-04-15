@@ -2339,12 +2339,21 @@ body.ticker-active #flowControls {
   left: 10px;
   width: 280px;
   max-width: calc(100vw - 20px);
-  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 260px);
+  /* Default reserves space for the minimized #flowControls bar (or a
+     closed panel). When the news-flows panel is maximized, body.flow-
+     maximized lowers the reservation so the list doesn't collide with
+     the expanded controls. max-height transitions so the resize reads
+     as a fluid slide rather than a jump. */
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 150px);
+  transition: max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1);
   z-index: 810;
   display: none;
   flex-direction: column;
   pointer-events: all;
   user-select: none;
+}
+body.flow-maximized #flowArcList {
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 340px);
 }
 #flowArcList.visible { display: flex; }
 
@@ -19542,6 +19551,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowAssignLaneOffsets = assignFlowLaneOffsets;
   window.__flowRemapForView = remapFlowForView;
   window.__flowIsOpen = function() { return flowModeOpen; };
+  // Mirror #flowControls minimized/visible state onto body so the live-arcs
+  // list can fluidly resize via CSS (body.flow-maximized tightens the
+  // list's max-height to leave room for the expanded panel). We watch the
+  // class attribute rather than hooking every toggle call-site.
+  (function watchFlowPanelStateForArcList() {
+    const fc = document.getElementById('flowControls');
+    if (!fc) return;
+    const sync = () => {
+      const isMax = fc.classList.contains('visible') && !fc.classList.contains('minimized');
+      document.body.classList.toggle('flow-maximized', isMax);
+    };
+    const mo = new MutationObserver(sync);
+    mo.observe(fc, { attributes: true, attributeFilter: ['class'] });
+    sync();
+  })();
   // Expose thread-wave scheduler state so the timeline segment controller
   // can compute when a segment's draw-in will finish and schedule the
   // post-drawdown auto-advance timer accordingly.
