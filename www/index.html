@@ -1589,7 +1589,8 @@
   gap: 10px;
   pointer-events: all;
   user-select: none;
-  min-width: 520px;
+  min-width: 416px;
+  max-width: 416px;
 }
 #flowControls.visible { display: flex; }
 body.ticker-active #flowControls {
@@ -2338,12 +2339,21 @@ body.ticker-active #flowControls {
   left: 10px;
   width: 280px;
   max-width: calc(100vw - 20px);
-  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 260px);
+  /* Default reserves space for the minimized #flowControls bar (or a
+     closed panel). When the news-flows panel is maximized, body.flow-
+     maximized lowers the reservation so the list doesn't collide with
+     the expanded controls. max-height transitions so the resize reads
+     as a fluid slide rather than a jump. */
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 150px);
+  transition: max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1);
   z-index: 810;
   display: none;
   flex-direction: column;
   pointer-events: all;
   user-select: none;
+}
+body.flow-maximized #flowArcList {
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 340px);
 }
 #flowArcList.visible { display: flex; }
 
@@ -2424,6 +2434,61 @@ body.ticker-active #flowControls {
   color: rgba(255,150,150,0.9);
 }
 
+/* Timeline segment controls — only visible for timeline-sourced flows */
+.arcListTimelineBar {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+  background: rgba(6,10,20,0.24);
+}
+.arcListTimelineBar .tlcMeta {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+}
+.arcListTimelineBar .tlcSegLabel {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: rgba(255,200,100,0.85);
+  flex-shrink: 0;
+}
+.arcListTimelineBar .tlcSegTitle {
+  font-size: 10.5px; color: rgba(255,255,255,0.68);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1; min-width: 0;
+}
+.arcListTimelineBar .tlcControls {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+}
+.arcListTimelineBar .tlcBtn {
+  width: 26px; height: 26px; border-radius: 13px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.72);
+  font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; flex-shrink: 0;
+  padding: 0;
+}
+.arcListTimelineBar .tlcBtn:hover {
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.95);
+}
+.arcListTimelineBar .tlcBtn.tlcPlayBtn {
+  width: 32px; height: 32px; border-radius: 16px;
+  background: rgba(0,220,130,0.15);
+  border-color: rgba(0,220,130,0.35);
+  color: rgba(120,255,180,0.95);
+  font-size: 13px;
+}
+.arcListTimelineBar .tlcBtn.tlcPlayBtn:hover {
+  background: rgba(0,220,130,0.25);
+  border-color: rgba(0,220,130,0.55);
+}
+.arcListTimelineBar .tlcBtn.reversed {
+  background: rgba(100,180,255,0.15);
+  border-color: rgba(100,180,255,0.35);
+  color: rgba(150,210,255,0.95);
+}
+
 /* Scrollable article list */
 .arcListScroll {
   overflow-y: auto; flex: 1 1 auto; min-height: 160px; padding: 4px 0;
@@ -2443,17 +2508,23 @@ body.ticker-active #flowControls {
   display: flex; flex-direction: column;
   padding: 8px 12px; cursor: pointer;
   border-bottom: 1px solid rgba(255,255,255,0.04);
-  transition: background 0.15s, opacity 0.3s;
-  animation: arcBarEnter 0.25s ease-out;
+  /* Background and transform use the same easing so hover + list-shuffle
+     animations feel consistent. arcBarEnter handles the new-bar slide-up
+     and fade-in; fading-out handles the exit. */
+  transition: background 0.15s, opacity 0.28s ease-out, transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  animation: arcBarEnter 0.32s cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: opacity, transform;
 }
 @keyframes arcBarEnter {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .arcBar:hover { background: rgba(0,220,130,0.06); }
 .arcBar.selected { background: rgba(0,220,130,0.12); border-left: 2px solid rgba(0,220,130,0.6); }
 .arcBar.fading-out, .arcCardExpanded.fading-out {
-  opacity: 0; transition: opacity 0.25s;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.28s ease-in, transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
   pointer-events: none;
 }
 
@@ -7841,7 +7912,12 @@ body.ticker-active #flowControls {
       .flowMinBar {
         max-width: 100%;
         box-sizing: border-box;
+        padding: 10px 18px;
+        gap: 14px;
+        border-radius: 34px;
       }
+      .flowMinBar .flowMinLabel { font-size: 12px; }
+      .flowMinBar .flowMinStats { font-size: 13px; }
       .flowMinBtn,
       .flowCloseBtn {
         background: none !important;
@@ -9745,6 +9821,18 @@ window.sourceBiasBadgeHTML = function(bias) {
         <span class="arcListTitle">Live Arcs</span>
         <button class="arcListHeaderBtn" id="arcListMinBtn" title="Minimize" onclick="window.__arcListMinimize?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
+      </div>
+      <div class="arcListTimelineBar" id="arcListTimelineBar" style="display:none;">
+        <div class="tlcMeta">
+          <span class="tlcSegLabel" id="tlcSegLabel">— / —</span>
+          <span class="tlcSegTitle" id="tlcSegTitle"></span>
+        </div>
+        <div class="tlcControls">
+          <button class="tlcBtn" id="tlcReverseBtn" title="Toggle direction">↻</button>
+          <button class="tlcBtn" id="tlcPrevBtn" title="Previous segment">⏮</button>
+          <button class="tlcBtn tlcPlayBtn" id="tlcPlayBtn" title="Play">▶</button>
+          <button class="tlcBtn" id="tlcNextBtn" title="Next segment">⏭</button>
+        </div>
       </div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
@@ -15954,6 +16042,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (document.getElementById("infoPanel")?.classList.contains("active")) return false;
           if (document.getElementById("flowControls")?.classList.contains("visible")) return false;
           if (document.getElementById("settingsSidebar")?.classList.contains("open")) return false;
+          // On mobile, the view settings sidebar takes up enough room that
+          // ambient headlines overlap its controls. Desktop has enough space
+          // to keep them visible alongside, so this guard is mobile-only.
+          if (_isMobileView && document.getElementById("viewSidebar")?.classList.contains("open")) return false;
           if (isFocused)     return false;
           if (ambientPaused) return false;
           if (ambientSpeed === 0) return false;
@@ -16449,6 +16541,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _flowContactISOs = new Set();
   let _flowContactDirty = false;
 
+  /* ── Flow clock ──
+     A pauseable wall-clock used by article-card and thread arc modes so
+     that pausing playback (e.g. when the user opens an article from the
+     live-arcs list) actually freezes those animations. The time-series
+     flow lifecycle stays on its existing flowPlaying flag. */
+  let _flowClockAccumSec  = 0;
+  let _flowClockRunning   = true;
+  let _flowClockLastTick  = performance.now() / 1000;
+  function nowFlowSec() {
+    return _flowClockRunning
+      ? _flowClockAccumSec + (performance.now() / 1000 - _flowClockLastTick)
+      : _flowClockAccumSec;
+  }
+  function setFlowClockRunning(run) {
+    if (run === _flowClockRunning) return;
+    if (run) {
+      _flowClockLastTick = performance.now() / 1000;
+      _flowClockRunning  = true;
+    } else {
+      _flowClockAccumSec += performance.now() / 1000 - _flowClockLastTick;
+      _flowClockRunning  = false;
+    }
+  }
+
   /* ── City node ring pulse pool ── */
   const FLOW_RING_COUNT = 16;        // max simultaneous ring pulses
   const FLOW_RING_SEGMENTS = 48;
@@ -16573,6 +16689,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uPulsePos: { value: 0.0 },  // 0-1 position along arc
         uPulseWidth: { value: 0.12 }, // width of pulse glow
         uPulseIntensity: { value: 1.2 }, // extra brightness at pulse
+        uSinglePulse: { value: 0.0 }, // 1.0 = one streak (article-card flows); 0.0 = triple pulse
         uVisibleStart: { value: 0.0 },
         uVisibleEnd: { value: 1.0 },
         uEdgeSoftness: { value: ARC_EDGE_SOFTNESS }
@@ -16590,37 +16707,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
         uniform float uPulsePos;
         uniform float uPulseWidth;
         uniform float uPulseIntensity;
+        uniform float uSinglePulse;
         uniform float uVisibleStart;
         uniform float uVisibleEnd;
         uniform float uEdgeSoftness;
         varying vec2 vUv;
-        
-        float getPulse(float pos, float center) {
+
+        float getPulse(float pos, float center, float wrap) {
           float dist = abs(pos - center);
-          dist = min(dist, 1.0 - dist);
+          // Multi-pulse mode wraps toroidally so trailing pulses can drift
+          // past the seam; single-streak mode doesn't wrap so the head
+          // cleanly vanishes at the destination before restarting.
+          dist = mix(dist, min(dist, 1.0 - dist), wrap);
           return exp(-dist * dist / (uPulseWidth * uPulseWidth * 0.5));
         }
-        
+
         void main() {
           // vUv.x goes along the tube length (0 = start, 1 = end)
-          // Multiple pulses for clearer direction
-          float pulse1 = getPulse(vUv.x, uPulsePos);
-          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33));
-          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66));
-          
-          // Combine pulses with slight falloff for trailing ones
-          float pulse = pulse1 + pulse2 * 0.6 + pulse3 * 0.3;
+          // Article-card flows render a single streak pulse; other arcs
+          // layer three trailing pulses for a richer flow look.
+          float wrap = 1.0 - uSinglePulse;
+          float pulse1 = getPulse(vUv.x, uPulsePos, wrap);
+          float pulse2 = getPulse(vUv.x, fract(uPulsePos + 0.33), wrap);
+          float pulse3 = getPulse(vUv.x, fract(uPulsePos + 0.66), wrap);
+
+          float pulse = mix(pulse1 + pulse2 * 0.6 + pulse3 * 0.3, pulse1, uSinglePulse);
 
           float startMask = smoothstep(uVisibleStart - uEdgeSoftness, uVisibleStart, vUv.x);
           float endMask = 1.0 - smoothstep(uVisibleEnd, uVisibleEnd + uEdgeSoftness, vUv.x);
           float visibleMask = clamp(startMask * endMask, 0.0, 1.0);
-          
+
           // Base opacity + pulse boost
           float finalOpacity = uOpacity * visibleMask * (1.0 + pulse * uPulseIntensity);
-          
+
           // Brighter color at pulse
           vec3 finalColor = uColor * (1.0 + pulse * 0.5);
-          
+
           gl_FragColor = vec4(finalColor, finalOpacity);
         }
       `,
@@ -16856,7 +16978,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc._uid = _arcNextUid++;
     arc.flow = flow;
     arc.age  = 0;
-    arc.isStatic = !!flow.count;  // aggregate arcs don't expire
+    // Article-card flows get their own persistent lifecycle: a synchronized
+    // draw-in pulse followed by a looping streak. Thread flows daisy-chain
+    // outward from the most-connected entity and then loop their pulses in
+    // the same wave order.
+    const _isArticleCard = flow._sourceType === 'article' && flow._cardTriggered;
+    const _isThread      = flow._sourceType === 'thread'  && flow._cardTriggered;
+    arc.mode = _isArticleCard ? 'articleCard' : (_isThread ? 'thread' : null);
+    arc._elapsed = 0;
+    arc.wave = null;          // filled in by the thread scheduler on first tick
+    arc.isStatic = (arc.mode === 'articleCard' || arc.mode === 'thread') ? false : !!flow.count;  // aggregate arcs don't expire
     arc.laneOffset = laneOffset;
     arc.travelDuration = arc.isStatic
       ? AGGREGATE_TRAVEL * (0.92 + Math.random() * 0.18)
@@ -16884,8 +17015,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arc.tubeMat.uniforms.uColor.value.copy(color);
     arc.tubeMat.uniforms.uVisibleStart.value = 0.0;
     arc.tubeMat.uniforms.uVisibleEnd.value = arc.isStatic ? 0.001 : 0.001;
+    // Default to triple-pulse; article-card arcs flip to single-streak below.
+    arc.tubeMat.uniforms.uSinglePulse.value = 0.0;
 
-    if (arc.isStatic) {
+    if (arc.mode === 'articleCard') {
+      arc.drawDuration = 2.5;         // fixed, equal across all article arcs
+      arc.loopPeriod   = 2.5;         // same for looping streak — sync sources & destinations
+      // Wall-clock seconds (pauseable via nowFlowSec) so flowSpeed can't
+      // desync pulses between arcs, and so pausing the flow freezes the
+      // animation. Every arc in the same article batch is created in a
+      // single synchronous loop, so they share a common _createdAt.
+      arc._createdAt   = nowFlowSec();
+      arc._srcRingSpawned = false;
+      arc._dstRingSpawned = false;
+      arc.baseOpacity  = 0.62;
+      arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+      arc.tubeMat.uniforms.uSinglePulse.value = 1.0;
+      arc.tubeMat.uniforms.uPulseWidth.value = 0.16; // uv-space → world-space length scales with arc length
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
+      arc.tubeMat.uniforms.uPulsePos.value = 0.0;
+      arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
+    } else if (arc.mode === 'thread') {
+      // Per-wave draw-in duration; the scheduler assigns arc.wave on the
+      // first tick after a batch is created, so the actual start offset
+      // is wave * waveDuration.
+      arc.waveDuration = 1.5;
+      arc._srcRingSpawned = false;
+      arc._dstRingSpawned = false;
+      arc.baseOpacity = 0.62;
+      // Start fully hidden; setup reveals once the arc's wave begins.
+      arc.tubeMat.uniforms.uOpacity.value = 0;
+      arc.tubeMat.uniforms.uVisibleEnd.value = 0.001;
+      arc.tubeMat.uniforms.uSinglePulse.value = 1.0;
+      arc.tubeMat.uniforms.uPulseWidth.value = 0.16;
+      arc.tubeMat.uniforms.uPulseIntensity.value = 1.1;
+      arc.tubeMat.uniforms.uPulsePos.value = -2.0; // offscreen until pulse loop activates
+      arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.9, tubeRadius * 3.8);
+    } else if (arc.isStatic) {
       arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
       // Gentle pulse after the draw-in settles — not too flashy.
       arc.tubeMat.uniforms.uPulseIntensity.value = 0.55;
@@ -16933,7 +17099,121 @@ const settingsToggle     = document.getElementById("settingsToggle");
     arcPool.push(arc);
   }
 
+  /* ── Thread flow scheduler ──────────────────────────────────────
+     Thread flows emanate from the most-connected entity and daisy-chain
+     outward in BFS waves. Wave 0 is a single seed arc from that entity
+     (plus one seed per disconnected component so isolated arcs don't
+     sit idle); each subsequent wave fires every remaining arc that
+     touches the known frontier. All arcs in a wave draw in simultaneously
+     over waveDuration seconds; the next wave begins only once the
+     current wave has fully landed. Once the whole graph has drawn,
+     the arcs persist and looping pulses replay the same wave sequence
+     continuously. ------------------------------------------------ */
+  let _threadBatchStart = null;
+  let _threadTotalWaves = 0;
+  function _threadNodeKey(n) {
+    return n ? `${n.type || 'x'}:${n.iso || n.id || n.place || n.lat + ',' + n.lon}` : '__null__';
+  }
+  function scheduleThreadWaves() {
+    const threadArcs = arcObjects.filter(a => a.mode === 'thread');
+    if (!threadArcs.length) { _threadTotalWaves = 0; _threadBatchStart = null; return; }
+
+    const eps = threadArcs.map(arc => ({
+      arc,
+      a: _threadNodeKey(arc.flow.src),
+      b: _threadNodeKey(arc.flow.dst),
+    }));
+
+    // Union-find to partition arcs into connected components.
+    const parent = new Map();
+    const find = (x) => {
+      if (!parent.has(x)) parent.set(x, x);
+      while (parent.get(x) !== x) {
+        parent.set(x, parent.get(parent.get(x)));
+        x = parent.get(x);
+      }
+      return x;
+    };
+    const union = (a, b) => {
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    };
+    eps.forEach(({ a, b }) => union(a, b));
+
+    const components = new Map();
+    eps.forEach((ep, i) => {
+      const root = find(ep.a);
+      if (!components.has(root)) components.set(root, []);
+      components.get(root).push(i);
+    });
+
+    // BFS within each component → array of waves (each an array of eps idx).
+    const perComponentWaves = [];
+    for (const idxs of components.values()) {
+      const degree = new Map();
+      idxs.forEach(i => {
+        degree.set(eps[i].a, (degree.get(eps[i].a) || 0) + 1);
+        degree.set(eps[i].b, (degree.get(eps[i].b) || 0) + 1);
+      });
+      let startNode = null, maxDeg = -1;
+      for (const [k, d] of degree) {
+        if (d > maxDeg) { maxDeg = d; startNode = k; }
+      }
+
+      const undrawn = new Set(idxs);
+      const frontier = new Set([startNode]);
+      const waves = [];
+
+      // Wave 0 seed: single arc touching startNode (or any arc for a
+      // singleton component).
+      let seed = -1;
+      for (const idx of undrawn) {
+        const { a, b } = eps[idx];
+        if (a === startNode || b === startNode) { seed = idx; break; }
+      }
+      if (seed === -1) seed = undrawn.values().next().value;
+      undrawn.delete(seed);
+      frontier.add(eps[seed].a);
+      frontier.add(eps[seed].b);
+      waves.push([seed]);
+
+      // Subsequent waves: every remaining arc touching frontier.
+      let guard = 0;
+      while (undrawn.size && guard++ < 1000) {
+        const wave = [];
+        for (const idx of undrawn) {
+          if (frontier.has(eps[idx].a) || frontier.has(eps[idx].b)) wave.push(idx);
+        }
+        if (!wave.length) wave.push(undrawn.values().next().value); // defensive
+        for (const idx of wave) {
+          undrawn.delete(idx);
+          frontier.add(eps[idx].a);
+          frontier.add(eps[idx].b);
+        }
+        waves.push(wave);
+      }
+      perComponentWaves.push(waves);
+    }
+
+    // Merge components by lining up wave index: component A's wave 0 fires
+    // with component B's wave 0, etc. Isolated/disconnected arcs therefore
+    // fire alongside the main component's seed.
+    const maxDepth = perComponentWaves.reduce((m, w) => Math.max(m, w.length), 0);
+    for (let w = 0; w < maxDepth; w++) {
+      for (const compWaves of perComponentWaves) {
+        const wave = compWaves[w];
+        if (!wave) continue;
+        for (const idx of wave) eps[idx].arc.wave = w;
+      }
+    }
+
+    _threadTotalWaves = maxDepth;
+    _threadBatchStart = nowFlowSec();
+  }
+
   function clearArcs() {
+    _threadBatchStart = null;
+    _threadTotalWaves = 0;
     for (let i = 0; i < arcObjects.length; i++) {
       recycleArc(arcObjects[i]);
     }
@@ -16974,10 +17254,193 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const arc = arcObjects[i];
       const flow = arc.flow;
 
-      // Update pulse position for all arcs (including static)
-      const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
-      if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
-        arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+      // Article-card and thread arcs drive their own pulse from wall-clock
+      // time so flowSpeed can't desync them. Skip the shared
+      // globalPulseTime path.
+      if (arc.mode !== 'articleCard' && arc.mode !== 'thread') {
+        const pulsePos = (globalPulseTime + (arc.pulsePhase || 0)) % 1.0;
+        if (arc.tubeMat.uniforms && arc.tubeMat.uniforms.uPulsePos) {
+          arc.tubeMat.uniforms.uPulsePos.value = pulsePos;
+        }
+      }
+
+      if (arc.mode === 'articleCard') {
+        const elapsed = nowFlowSec() - arc._createdAt;
+        const flowId = `artc_${arc._uid}`;
+
+        if (elapsed < arc.drawDuration) {
+          // Phase A — synchronized draw-in. The tube head races from the
+          // origin to the destination; all arcs in the article reach the
+          // destination at exactly the same moment because drawDuration
+          // is a fixed 2.5s for every arc.
+          const rawT = clamp01(elapsed / arc.drawDuration);
+          const eased = 1 - Math.pow(1 - rawT, 3);
+          const visEnd = Math.max(0.001, eased);
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = visEnd;
+          const fadeIn = clamp01(rawT * 4);
+          arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity * fadeIn;
+          // Pin the shader pulse at the head during draw-in so the streak
+          // reads as the leading edge, not a delayed ripple.
+          arc.tubeMat.uniforms.uPulsePos.value = visEnd;
+          setArcOrb(arc, visEnd, 0xffffff, fadeIn);
+
+          if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.type === 'city') {
+            const dKey = flowId + '_d';
+            frameActiveRingArcs.add(dKey);
+            if (!arc._dstRingSpawned) {
+              arc._dstRingSpawned = true;
+              spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+            }
+          }
+          continue;
+        }
+
+        // Phase B — looping single-streak pulse. All article arcs share
+        // loopPeriod (2.5s) and the same time origin, so every pulse
+        // leaves the source and arrives at the destination in lockstep.
+        arc.tubeMat.uniforms.uVisibleStart.value = 0;
+        arc.tubeMat.uniforms.uVisibleEnd.value = 1;
+        arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+        arc.orb.material.opacity = 0;
+        arc.orb.visible = false;
+        const loopT = ((elapsed - arc.drawDuration) % arc.loopPeriod) / arc.loopPeriod;
+        arc.tubeMat.uniforms.uPulsePos.value = loopT;
+
+        if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+        if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+        if (flow.src?.type === 'city') {
+          const sKey = flowId + '_s';
+          frameActiveRingArcs.add(sKey);
+          if (!arc._srcRingSpawned) {
+            arc._srcRingSpawned = true;
+            spawnFlowRing(flow.src.lat, flow.src.lon, pickColor(flow), sKey);
+          }
+        }
+        if (flow.dst?.type === 'city') {
+          const dKey = flowId + '_d';
+          frameActiveRingArcs.add(dKey);
+          if (!arc._dstRingSpawned) {
+            arc._dstRingSpawned = true;
+            spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+          }
+        }
+        continue;
+      }
+
+      if (arc.mode === 'thread') {
+        // Timeline segment transitions: previous-segment arcs get flagged
+        // for a short fade-out before they're recycled. Handle that first
+        // so the thread scheduler can't overwrite the fading opacity.
+        if (arc._fadingOut) {
+          const ft = clamp01((performance.now() - arc._fadeStart) / (arc._fadeDuration || 400));
+          const base = arc.baseOpacity || 0.62;
+          arc.tubeMat.uniforms.uOpacity.value = base * (1 - ft);
+          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+          arc.orb.material.opacity = 0;
+          arc.orb.visible = false;
+          continue;
+        }
+        // Lazy schedule: on the first tick after a thread batch is
+        // created, every arc still has wave === null. Run the BFS
+        // scheduler once to assign waves and anchor the batch start.
+        if (arc.wave == null) {
+          scheduleThreadWaves();
+          if (arc.wave == null) { continue; } // scheduling bailed (no thread arcs?)
+        }
+
+        const waveDuration  = arc.waveDuration || 1.5;
+        const totalWaves    = _threadTotalWaves;
+        const totalDraw     = totalWaves * waveDuration;
+        const batchStart    = _threadBatchStart ?? nowFlowSec();
+        const elapsed       = nowFlowSec() - batchStart;
+        const waveStart     = arc.wave * waveDuration;
+        const waveEnd       = waveStart + waveDuration;
+        const flowId        = `thr_${arc._uid}`;
+
+        if (elapsed < waveStart) {
+          // Not our turn yet — keep the tube invisible.
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = 0.001;
+          arc.tubeMat.uniforms.uOpacity.value = 0;
+          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+          arc.orb.material.opacity = 0;
+          arc.orb.visible = false;
+          continue;
+        }
+
+        if (elapsed < waveEnd) {
+          // Phase A — this arc is drawing in during its wave.
+          const rawT = clamp01((elapsed - waveStart) / waveDuration);
+          const eased = 1 - Math.pow(1 - rawT, 3);
+          const visEnd = Math.max(0.001, eased);
+          arc.tubeMat.uniforms.uVisibleStart.value = 0;
+          arc.tubeMat.uniforms.uVisibleEnd.value = visEnd;
+          const fadeIn = clamp01(rawT * 4);
+          arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity * fadeIn;
+          arc.tubeMat.uniforms.uPulsePos.value = visEnd;
+          setArcOrb(arc, visEnd, 0xffffff, fadeIn);
+
+          if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+          if (visEnd > 0.85 && flow.dst?.type === 'city') {
+            const dKey = flowId + '_d';
+            frameActiveRingArcs.add(dKey);
+            if (!arc._dstRingSpawned) {
+              arc._dstRingSpawned = true;
+              spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+            }
+          }
+          continue;
+        }
+
+        // Phase B — arc is fully drawn. While other waves are still drawing
+        // in, sit fully visible and idle. Once all waves have finished, the
+        // looping-pulse phase begins.
+        arc.tubeMat.uniforms.uVisibleStart.value = 0;
+        arc.tubeMat.uniforms.uVisibleEnd.value = 1;
+        arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
+        arc.orb.material.opacity = 0;
+        arc.orb.visible = false;
+
+        if (elapsed < totalDraw) {
+          // Still waiting for the other waves to finish their draw-in.
+          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+        } else {
+          // Looping pulse: replay the wave sequence continuously. Pulse
+          // is active only while it's this arc's wave turn inside the
+          // cycle; otherwise the arc rests, still fully drawn.
+          const cycleLen = totalDraw;
+          const cycleT   = (elapsed - totalDraw) % cycleLen;
+          if (cycleT >= waveStart && cycleT < waveEnd) {
+            const localT = clamp01((cycleT - waveStart) / waveDuration);
+            arc.tubeMat.uniforms.uPulsePos.value = localT;
+          } else {
+            arc.tubeMat.uniforms.uPulsePos.value = -2.0;
+          }
+        }
+
+        if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
+        if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
+        if (flow.src?.type === 'city') {
+          const sKey = flowId + '_s';
+          frameActiveRingArcs.add(sKey);
+          if (!arc._srcRingSpawned) {
+            arc._srcRingSpawned = true;
+            spawnFlowRing(flow.src.lat, flow.src.lon, pickColor(flow), sKey);
+          }
+        }
+        if (flow.dst?.type === 'city') {
+          const dKey = flowId + '_d';
+          frameActiveRingArcs.add(dKey);
+          if (!arc._dstRingSpawned) {
+            arc._dstRingSpawned = true;
+            spawnFlowRing(flow.dst.lat, flow.dst.lon, pickColor(flow), dKey);
+          }
+        }
+        continue;
       }
 
       if (arc.isStatic) {
@@ -17520,8 +17983,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _selectedArcUid = uid;
       _arcPanelDirty = true;
 
-      // Pause playback in time-series mode
-      if (flowPlaying && flowMode !== 'aggregate') {
+      // Pause every flow animation (time-series, wall-clock modes, and
+      // timeline auto-advance) so the user can focus on the article.
+      // pauseFlowAnimation also syncs the flow play/pause buttons to ▶.
+      if (typeof window.pauseFlowAnimation === 'function') {
+        window.pauseFlowAnimation();
+      } else if (flowPlaying && flowMode !== 'aggregate') {
         flowPlaying = false;
         document.getElementById('flowPlayBtn').textContent = '▶ Play';
       }
@@ -17562,6 +18029,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById('flowArcInfoCard')?.classList.remove('visible');
       }
 
+      // Open the full article detail panel if this individual arc has an
+      // article payload (either pre-attached via _article or constructable
+      // from the flat flow shape). Aggregate arcs have no single article —
+      // their expanded arc card surfaces the list separately.
+      if (sf && !sf.count && typeof window.openArticleDetail === 'function') {
+        const article = sf._article || (sf.id ? {
+          id: sf.id,
+          title: sf.title,
+          translated_title: sf.translatedTitle || sf.translated_title,
+          summary: sf.summary,
+          image_url: sf.imageUrl || sf.image_url,
+          url: sf.url,
+          source_name: sf.sourceName || sf.source_name,
+          published_at: sf.publishedAt || sf.published_at,
+          iso_code: sf.src?.iso || null,
+          country_name: sf.src?.place || null,
+        } : null);
+        if (article) {
+          // Close the floating info card so the article panel is unobstructed.
+          document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+          window.openArticleDetail(article, { type: 'flow' });
+        }
+      }
+
       syncPanel();
     }
 
@@ -17578,6 +18069,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         arc._frozenOpacity = null;
         arc._frozen = false;
       }
+
+      // Resume the wall-clock flow animations + timeline auto-advance.
+      // Time-series flowPlaying stays off; the user explicitly resumes it
+      // via the ▶ play button.
+      setFlowClockRunning(true);
+      try { window.__timelineResumeAfterSelection?.(); } catch (_) {}
 
       syncPanel();
     }
@@ -17746,6 +18243,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Clear persistent node labels, back button, timeline, and info card from card flow arc button
     window.clearFlowNodeLabels?.();
     window.__flowClearHighlights?.();
+    window.__timelineReset?.();
     const backBtn = document.getElementById("flowArcBackBtn");
     if (backBtn) backBtn.classList.remove("visible");
     document.getElementById("flowTimeline")?.classList.remove("visible");
@@ -18165,13 +18663,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowPlayBtn").textContent = "⏸ Pause";
   }
 
-  // Expose pause/resume for article detail panel
+  // Expose pause/resume for article detail panel. Also freezes the flow
+  // clock (article-card + thread modes) and pauses timeline auto-advance
+  // so everything stops together, not just time-series playback.
   window.pauseFlowAnimation = function() {
     if (flowPlaying) {
       flowPlaying = false;
       document.getElementById("flowPlayBtn").textContent = "▶ Play";
       syncMinPlayBtn();
     }
+    setFlowClockRunning(false);
+    try { window.__timelinePauseForSelection?.(); } catch (_) {}
   };
 
   // Sync minimized play button state
@@ -18199,6 +18701,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   window.resumeFlowAnimation = function(state) {
+    setFlowClockRunning(true);
+    try { window.__timelineResumeAfterSelection?.(); } catch (_) {}
     if (state) {
       seqIndex = state.seqIndex || seqIndex;
       flowProgress = state.flowProgress || flowProgress;
@@ -19120,6 +19624,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowAssignLaneOffsets = assignFlowLaneOffsets;
   window.__flowRemapForView = remapFlowForView;
   window.__flowIsOpen = function() { return flowModeOpen; };
+  // Mirror #flowControls minimized/visible state onto body so the live-arcs
+  // list can fluidly resize via CSS (body.flow-maximized tightens the
+  // list's max-height to leave room for the expanded panel). We watch the
+  // class attribute rather than hooking every toggle call-site.
+  (function watchFlowPanelStateForArcList() {
+    const fc = document.getElementById('flowControls');
+    if (!fc) return;
+    const sync = () => {
+      const isMax = fc.classList.contains('visible') && !fc.classList.contains('minimized');
+      document.body.classList.toggle('flow-maximized', isMax);
+    };
+    const mo = new MutationObserver(sync);
+    mo.observe(fc, { attributes: true, attributeFilter: ['class'] });
+    sync();
+  })();
+  // Expose thread-wave scheduler state so the timeline segment controller
+  // can compute when a segment's draw-in will finish and schedule the
+  // post-drawdown auto-advance timer accordingly.
+  window.__flowGetThreadTotalWaves = function() { return _threadTotalWaves || 0; };
+  window.__flowGetThreadWaveDuration = function() { return 1.5; };
+  window.__flowGetCountryCoordsByIso = getCountryCoordsByIso;
 
 })();
 
@@ -21777,6 +22302,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
+      window.__timelineReset?.();
 
       // 4. Fetch flows for this article
       const res = await fetch(`${API}/api/flows/article/${articleId}`);
@@ -21898,6 +22424,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
+      window.__timelineReset?.();
 
       // Early-render the compact floating card from the thread data we
       // captured BEFORE the API returns — guarantees the card is visible
@@ -21981,6 +22508,281 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   };
 
+  /* ────────────────────────────────────────────────────────────────
+     Timeline segment controller
+     ────────────────────────────────────────────────────────────────
+     Timeline flows play back as a sequence of time-indexed segments
+     derived from the thread-timeline endpoint. Each segment is a
+     single event: source entity → every mentioned entity. Segments
+     with no clear source are skipped (no arcs to draw).
+
+     Playback lifecycle per segment:
+       1. Clear currently-visible arcs (fade via opacity → recycle).
+       2. Push fresh arcs tagged _sourceType='thread' so the existing
+          BFS wave scheduler animates the daisy-chain draw-in.
+       3. After draw-in finishes, the looping single-streak pulses keep
+          running for a 10s dwell (extended later for AI context).
+       4. If playing, auto-advance to the next segment (direction-aware).
+     ---------------------------------------------------------------- */
+  const TIMELINE_DWELL_MS        = 10000;
+  const TIMELINE_WAVE_ESTIMATE_S = 1.5; // per-wave draw-in duration
+  let _timelineSegments       = [];
+  let _timelineCurrentIdx     = 0;
+  let _timelineDirection      = 1;    // +1 forward, -1 reverse
+  let _timelinePlaying        = false;
+  let _timelineAdvanceTimer   = null;
+  let _timelineCtxMeta        = null; // for floating card refresh per segment
+  let _timelineBackLabel      = "Back to Lines";
+
+  function _cancelTimelineAdvance() {
+    if (_timelineAdvanceTimer) {
+      clearTimeout(_timelineAdvanceTimer);
+      _timelineAdvanceTimer = null;
+    }
+  }
+
+  function _getCountryCoordsSafe(iso) {
+    const fn = window.__flowGetCountryCoordsByIso;
+    if (typeof fn === 'function') return fn(iso);
+    return null;
+  }
+
+  function _buildSegmentsFromTimeline(data, timelineId) {
+    const events = Array.isArray(data.timeline) ? data.timeline : [];
+    const segments = [];
+    events.forEach((ev, eventIdx) => {
+      const srcIso = (ev.sourceIso || '').toUpperCase();
+      if (!srcIso) return;                 // no clear source → skip, per Q1
+      const srcCoords = _getCountryCoordsSafe(srcIso);
+      if (!srcCoords) return;
+      const mentioned = Array.isArray(ev.mentionedIsos) ? ev.mentionedIsos : [];
+      const mentionedNames = Array.isArray(ev.mentionedCountries) ? ev.mentionedCountries : [];
+      const flows = [];
+      mentioned.forEach((rawIso, i) => {
+        const dstIso = (rawIso || '').toUpperCase();
+        if (!dstIso || dstIso === srcIso) return;
+        const dstCoords = _getCountryCoordsSafe(dstIso);
+        if (!dstCoords) return;
+        flows.push({
+          src: { type: 'country', iso: srcIso, id: srcIso, place: ev.sourceCountry || srcCoords.place || srcIso, lat: srcCoords.lat, lon: srcCoords.lon },
+          dst: { type: 'country', iso: dstIso, id: dstIso, place: mentionedNames[i] || dstCoords.place || dstIso, lat: dstCoords.lat, lon: dstCoords.lon },
+          count: 1,
+          _cardTriggered: true,
+          _sourceType: 'thread',        // reuse thread daisy-chain path
+          _timelineId: timelineId,
+          _segmentIndex: eventIdx,
+        });
+      });
+      if (!flows.length) return;
+      segments.push({
+        eventIndex: eventIdx,
+        title: ev.title || '',
+        date: ev.publishedAt || null,
+        sentiment: ev.sentiment ?? null,
+        flows,
+      });
+    });
+    return segments;
+  }
+
+  function _setTimelineBarVisible(visible) {
+    const bar = document.getElementById('arcListTimelineBar');
+    if (bar) bar.style.display = visible ? 'flex' : 'none';
+  }
+
+  function _formatSegDate(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+    } catch (_) { return ''; }
+  }
+
+  function _refreshTimelineUI() {
+    const labelEl = document.getElementById('tlcSegLabel');
+    const titleEl = document.getElementById('tlcSegTitle');
+    const playBtn = document.getElementById('tlcPlayBtn');
+    const revBtn  = document.getElementById('tlcReverseBtn');
+    const total = _timelineSegments.length;
+    const seg = _timelineSegments[_timelineCurrentIdx];
+    if (labelEl) {
+      const datePart = seg ? _formatSegDate(seg.date) : '';
+      labelEl.textContent = total
+        ? `${_timelineCurrentIdx + 1} / ${total}${datePart ? ' · ' + datePart : ''}`
+        : '— / —';
+    }
+    if (titleEl) titleEl.textContent = seg?.title || '';
+    if (playBtn) {
+      playBtn.textContent = _timelinePlaying ? '⏸' : '▶';
+      playBtn.title = _timelinePlaying ? 'Pause' : 'Play';
+    }
+    if (revBtn) {
+      revBtn.classList.toggle('reversed', _timelineDirection < 0);
+      revBtn.title = _timelineDirection < 0 ? 'Reverse (on)' : 'Reverse (off)';
+    }
+  }
+
+  function _scheduleTimelineAutoAdvance() {
+    _cancelTimelineAdvance();
+    if (!_timelinePlaying) return;
+    // Wait for the wave scheduler to assign waves (runs on next tick) so
+    // we can compute total draw-in duration precisely.
+    requestAnimationFrame(() => {
+      if (!_timelinePlaying) return;
+      const waves = window.__flowGetThreadTotalWaves?.() || 1;
+      const drawMs = waves * TIMELINE_WAVE_ESTIMATE_S * 1000;
+      _timelineAdvanceTimer = setTimeout(() => {
+        _timelineAdvanceTimer = null;
+        _timelineAdvance();
+      }, drawMs + TIMELINE_DWELL_MS);
+    });
+  }
+
+  const TIMELINE_FADE_MS = 400;
+  let _timelineFadeTimer = null;
+  function _cancelTimelineFade() {
+    if (_timelineFadeTimer) { clearTimeout(_timelineFadeTimer); _timelineFadeTimer = null; }
+  }
+
+  function _activateTimelineSegment(idx) {
+    _cancelTimelineAdvance();
+    _cancelTimelineFade();
+    if (!_timelineSegments.length) return;
+    if (idx < 0 || idx >= _timelineSegments.length) {
+      _timelinePlaying = false;
+      _refreshTimelineUI();
+      return;
+    }
+    _timelineCurrentIdx = idx;
+    _refreshTimelineUI();
+
+    // Fade out any currently-showing arcs (from a previous segment) before
+    // recycling them and drawing in the new segment. First-segment activation
+    // has nothing to fade so the build-in starts immediately.
+    const existing = window.__flowGetArcObjects?.() || [];
+    const hasExisting = existing.some(a => a.mode === 'thread' && !a._fadingOut);
+    const fadeMs = hasExisting ? TIMELINE_FADE_MS : 0;
+    if (fadeMs) {
+      const now = performance.now();
+      existing.forEach(a => {
+        if (a.mode === 'thread') {
+          a._fadingOut = true;
+          a._fadeStart = now;
+          a._fadeDuration = TIMELINE_FADE_MS;
+        }
+      });
+    }
+
+    _timelineFadeTimer = setTimeout(() => {
+      _timelineFadeTimer = null;
+      window.__flowClearArcs?.();
+
+      const seg = _timelineSegments[idx];
+      const flows = seg.flows.map(f => {
+        const remapped = window.__flowRemapForView?.(f) || f;
+        return remapped;
+      });
+      window.__flowAssignLaneOffsets?.(flows);
+      const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
+      flows.forEach(flow => {
+        const arc = window.__flowCreateArc?.(flow, maxCount);
+        if (arc) window.__flowPushArc?.(arc);
+      });
+      window.__flowShowLabelsForCardTrigger?.(flows);
+
+      const statsEl = document.getElementById('flowMinStats');
+      if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? 's' : ''}`;
+
+      if (_timelineCtxMeta) {
+        const datePart = _formatSegDate(seg.date);
+        const metaExtra = `Seg ${idx + 1}/${_timelineSegments.length}${datePart ? ' · ' + datePart : ''}`;
+        showFlowCtxCard({
+          ..._timelineCtxMeta,
+          meta: _timelineCtxMeta.baseMeta
+            ? `${_timelineCtxMeta.baseMeta} · ${metaExtra}`
+            : metaExtra,
+        });
+      }
+
+      _scheduleTimelineAutoAdvance();
+    }, fadeMs);
+  }
+
+  function _timelineAdvance() {
+    const nextIdx = _timelineCurrentIdx + _timelineDirection;
+    if (nextIdx < 0 || nextIdx >= _timelineSegments.length) {
+      // Reached the boundary — stop autoplay, keep last segment on screen.
+      _timelinePlaying = false;
+      _refreshTimelineUI();
+      return;
+    }
+    _activateTimelineSegment(nextIdx);
+  }
+
+  // Public window hooks used by the timeline control buttons.
+  window.__timelinePlayToggle = function() {
+    if (!_timelineSegments.length) return;
+    _timelinePlaying = !_timelinePlaying;
+    _refreshTimelineUI();
+    if (_timelinePlaying) _scheduleTimelineAutoAdvance();
+    else _cancelTimelineAdvance();
+  };
+  window.__timelineNext = function() {
+    if (!_timelineSegments.length) return;
+    const nextIdx = _timelineCurrentIdx + 1;
+    if (nextIdx >= _timelineSegments.length) return;
+    _activateTimelineSegment(nextIdx);
+  };
+  window.__timelinePrev = function() {
+    if (!_timelineSegments.length) return;
+    const prevIdx = _timelineCurrentIdx - 1;
+    if (prevIdx < 0) return;
+    _activateTimelineSegment(prevIdx);
+  };
+  window.__timelineToggleDirection = function() {
+    _timelineDirection = _timelineDirection < 0 ? 1 : -1;
+    _refreshTimelineUI();
+  };
+  window.__timelineReset = function() {
+    _cancelTimelineAdvance();
+    _cancelTimelineFade();
+    _timelineSegments = [];
+    _timelineCurrentIdx = 0;
+    _timelineDirection = 1;
+    _timelinePlaying = false;
+    _timelineCtxMeta = null;
+    _setTimelineBarVisible(false);
+    _refreshTimelineUI();
+  };
+
+  // Called by pauseFlowAnimation / resumeFlowAnimation so selecting an
+  // article bar (which pauses flow playback) also pauses the timeline's
+  // auto-advance timer. When the user resumes, the timer is re-scheduled
+  // only if playback was still on.
+  window.__timelinePauseForSelection = function() {
+    _cancelTimelineAdvance();
+  };
+  window.__timelineResumeAfterSelection = function() {
+    if (_timelineSegments.length && _timelinePlaying) {
+      _scheduleTimelineAutoAdvance();
+    }
+  };
+
+  // Wire the timeline control buttons once.
+  (function wireTimelineControls() {
+    const map = {
+      tlcPlayBtn: () => window.__timelinePlayToggle?.(),
+      tlcNextBtn: () => window.__timelineNext?.(),
+      tlcPrevBtn: () => window.__timelinePrev?.(),
+      tlcReverseBtn: () => window.__timelineToggleDirection?.(),
+    };
+    Object.entries(map).forEach(([id, fn]) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    });
+  })();
+
   window.showTimelineFlows = async function(timelineId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
@@ -22011,7 +22813,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__goToPage?.(1);
 
-      // Auto-switch to country view if in city mode
       if (window.__currentViewMode === 'city') {
         document.querySelector('.viewOption[data-mode="country"]')?.click();
       }
@@ -22019,8 +22820,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__flowIsOpen?.()) {
         window.__flowClearArcs?.();
       }
+      window.__timelineReset?.();
 
-      // Early-render compact floating card from the captured timeline data.
       if (_ctxTimeline) {
         showFlowCtxCard({
           kind: "Timeline · Flow arcs",
@@ -22031,11 +22832,49 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       }
 
+      // 1. Try the thread-timeline endpoint first; segmentation lives here.
+      let segments = [];
+      let tlData = null;
+      try {
+        const tlRes = await fetch(`${API}/api/threads/${timelineId}/timeline`);
+        tlData = await tlRes.json();
+        segments = _buildSegmentsFromTimeline(tlData, timelineId);
+      } catch (e) {
+        console.warn('Timeline endpoint failed, falling back to flat flows:', e);
+      }
+
+      const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
+
+      if (segments.length) {
+        // Segmented playback path.
+        window.__flowSetOpen?.(true);
+        _timelineSegments   = segments;
+        _timelineCurrentIdx = 0;
+        _timelineDirection  = 1;
+        _timelinePlaying    = false; // user selects direction + hits play
+        _timelineBackLabel  = backLabel;
+        _timelineCtxMeta    = _ctxTimeline ? {
+          kind: "Timeline · Flow arcs",
+          title: _ctxTimeline.title || _ctxTimeline.translated_title || "Untitled timeline",
+          imageUrl: _ctxTimeline.hero_image_url || _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || null,
+          isoCode: _ctxTimeline.hero_iso_code || null,
+          baseMeta: _ctxTimeline.category || _ctxTimeline.status || "",
+        } : null;
+
+        // Force the live-arcs panel open so the timeline controls surface.
+        window.__flowCtxDrillDown = false;
+        document.getElementById('flowArcList')?.classList.add('visible');
+        _setTimelineBarVisible(true);
+
+        _activateTimelineSegment(0);
+        showFlowArcBackBtn(backLabel);
+        return;
+      }
+
+      // 2. Fallback: flat /api/flows/timeline/:id endpoint (legacy path).
       const res = await fetch(`${API}/api/flows/timeline/${timelineId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        // No flow arcs — single-location story. Keep context card,
-        // highlight the origin country, and rotate camera.
         const _originIso = _ctxTimeline?.iso_code || data.timeline?.iso_code || _ctxTimeline?.country_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
@@ -22045,7 +22884,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           );
           if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
         }
-        const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
         showFlowArcBackBtn(backLabel);
         return;
       }
@@ -22066,23 +22904,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (arc) window.__flowPushArc?.(arc);
       });
 
-      // Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
-
-      // Country polygon highlights now handled dynamically by tickArcs()
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
 
-      const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
       showFlowArcBackBtn(backLabel);
 
-      // Suppress standalone arc list — drill-down lives inside context card
       window.__flowCtxDrillDown = true;
       document.getElementById('flowArcList')?.classList.remove('visible');
       document.getElementById('arcListMinBar')?.classList.remove('visible');
 
-      // Surface compact floating card with "View Routes" button
       const _tl = _ctxTimeline || data.timeline || null;
       if (_tl) {
         showFlowCtxCard({
@@ -22144,6 +22976,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const camera = window.__camera;
     const renderer = window.__renderer;
+    const scene = window.scene;
     if (!camera || !renderer) {
       window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
       return;
@@ -22152,6 +22985,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const rect = renderer.domElement.getBoundingClientRect();
     const labels = container.querySelectorAll(".flowNodeLabel");
     const GLOBE_RADIUS = 1.0;
+    // The globe's rotation lives on the scene quaternion — model-space node
+    // positions need this applied before they can be tested against the
+    // camera and projected, otherwise the facing check hides them all once
+    // the user rotates the globe.
+    const sceneQuat = scene?.quaternion;
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir).normalize();
 
     labels.forEach(label => {
       const node = label.__flowNode;
@@ -22164,10 +23004,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         GLOBE_RADIUS * Math.sin(lat),
         GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
       );
+      if (sceneQuat) pos.applyQuaternion(sceneQuat);
 
-      // Check if point is facing camera
-      const camDir = camera.position.clone().normalize();
-      const dot = pos.clone().normalize().dot(camDir);
+      // Dot of the surface normal with the camera forward direction.
+      // camera.getWorldDirection points away from the camera into the
+      // scene, so a front-facing node has -camDir · n > 0.
+      const dot = -camDir.dot(pos.clone().normalize());
 
       if (dot < 0.05) {
         label.style.opacity = "0";
