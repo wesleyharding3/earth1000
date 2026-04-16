@@ -45,7 +45,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const LOOKBACK_HOURS       = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "720");
 const PARABOLIC_PEAK_HOURS = 24;
 const CLAUDE_BATCH         = 40;
-const MIN_CLUSTER          = 3;          // need at least 3 articles for a new timeline
+const MIN_CLUSTER          = 5;          // need at least 5 articles for a new timeline (raised from 3)
 const MAX_PER_SOURCE       = 20;
 const TOTAL_ARTICLE_LIMIT  = 2000;
 const BASE_PRIORITY_FLOOR  = 0.45;       // wider net — top ~35%
@@ -70,6 +70,16 @@ const GENERIC_TOPIC_PATTERNS = [
   /^(faith|religion)\s*[-–]?\s*based/i,
   /^space\s+exploration$/i,
   /^(media|press)\s+(freedom|regulation)/i,
+  // ── Additional bucket patterns (catches "AI in Newsrooms", "Cybersecurity Data Breaches", etc.) ──
+  /^cybersecurity\s+(data\s+)?breaches?$/i,
+  /^\w+\s+airport\s+disruptions?$/i,
+  /^\w+\s+politics$/i,                     // "Nepal Politics", "Canadian Politics"
+  /^\w+\s+(in\s+)?(newsrooms?|education|healthcare|classrooms?)/i,
+  /^\w+\s+data\s+breaches?/i,
+  // Abstract [Topic] and [Topic] patterns — "AI in Newsrooms and Education"
+  /^[\w\s]+\band\b\s+(education|development|reform|infrastructure|governance|society|innovation)$/i,
+  // Bare country + abstract noun — "Nepal Politics", "Canadian Liberal Majority Government"
+  /^(canadian|american|british|french|german|japanese|chinese|indian|brazilian|mexican|australian|african|european|asian)\s+(liberal|conservative|labor|labour)?\s*(majority\s+)?(government|politics|policy|reform|economy)$/i,
 ];
 const COUNTRY_SIGNAL_RE = /\b(gaza|palestine|ukraine|russia|iran|israel|china|taiwan|north korea|dprk|venezuela|syria|yemen|myanmar|burma|sudan|ethiopia|libya|haiti|cuba|hungary|turkey|india|pakistan|lebanon|iraq|afghanistan|somalia|congo|drc|niger|mali|burkina|chad|nigeria|brazil|mexico|colombia|peru|chile|argentina|egypt|saudi|qatar|uae|bahrain|jordan|georgia|armenia|azerbaijan|moldova|belarus|poland|romania|serbia|kosovo|bosnia|philippines|indonesia|thailand|vietnam|japan|korea|kenya|tanzania|mozambique|zimbabwe|south africa|morocco|algeria|tunisia)\b/i;
 
@@ -310,6 +320,12 @@ async function run() {
         // Reject generic topic buckets that slipped past the prompt
         if (isGenericTopicBucket(def.title)) {
           console.log(`\n   🚫 Rejected generic bucket "${def.title}"`);
+          continue;
+        }
+
+        // Entity/geography gate: title must contain a country signal or proper noun
+        if (!COUNTRY_SIGNAL_RE.test(def.title) && !hasProperNoun(def.title)) {
+          console.log(`\n   🚫 Rejected (no entity anchor): "${def.title}"`);
           continue;
         }
 
@@ -747,156 +763,188 @@ Return ONLY valid JSON array, no explanation:
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  THREAD-INFORMED SEEDING
+//  THREAD-INFORMED SEEDING — PRIMARY source of new timelines
+//
+//  A thread graduates to a timeline ONLY when it proves sustained activity:
+//    • status = 'active' AND created_at ≤ NOW() - 7 days
+//    • article_count ≥ 5
+//    • distinct_source_count ≥ 3 (multi-source coverage)
+//    • has at least one primary_nation (entity/geography anchor)
+//
+//  Title comes directly from the thread — no Claude umbrella invention.
+//  Before creating, we check article overlap against existing timelines
+//  and merge if ≥ 30% overlap.
 // ═════════════════════════════════════════════════════════════════════════════
 async function seedFromThreads(existingTimelines, existingScopeSet) {
   try {
-    // Find active threads with importance >= 6 that have no timeline coverage
+    // ── Gate: threads active for ≥ 7 days, with geographic anchor ──
     const { rows: threads } = await pool.query(`
-      SELECT st.id, st.title, st.keywords, st.importance, st.primary_category,
-             st.article_count
+      SELECT st.id, st.title, st.description, st.keywords, st.importance,
+             st.primary_category, st.article_count, st.distinct_source_count,
+             st.primary_nations, st.created_at
       FROM story_threads st
-      WHERE st.status IN ('active', 'cooling')
-        AND st.importance >= 5
+      WHERE st.status = 'active'
+        AND st.created_at <= NOW() - INTERVAL '7 days'
         AND st.article_count >= 5
+        AND st.distinct_source_count >= 3
+        AND ARRAY_LENGTH(st.primary_nations, 1) >= 1
       ORDER BY st.importance DESC, st.article_count DESC
-      LIMIT 60
+      LIMIT 80
     `);
     if (!threads.length) return 0;
+    console.log(`   [seedFromThreads] ${threads.length} threads pass 7-day gate`);
 
-    // Build keyword sets for existing timelines
-    const allTlKws = new Set();
-    const allTlTitleWords = new Set();
-    for (const tl of existingTimelines) {
-      for (const kw of (tl.keywords || [])) allTlKws.add(normalizeKeyword(kw));
-      for (const w of (tl.title || '').toLowerCase().split(/[\s\-_,]+/)) {
-        if (w.length >= 3) allTlTitleWords.add(w);
+    // ── Reject generic topic buckets ──
+    const qualified = threads.filter(t => {
+      if (isGenericTopicBucket(t.title)) {
+        console.log(`   🚫 Rejected generic: "${t.title}"`);
+        return false;
       }
-    }
-
-    // A thread is "uncovered" if it has low overlap with ALL existing timelines
-    const uncoveredThreads = [];
-    for (const t of threads) {
-      const threadKws = (t.keywords || []).map(k => normalizeKeyword(k));
-      const threadTitleWords = (t.title || '').toLowerCase().split(/[\s\-_,]+/).filter(w => w.length >= 3);
-
-      // Count matches against ALL existing timeline keywords
-      let kwOverlap = threadKws.filter(k => allTlKws.has(k)).length;
-      let titleOverlap = threadTitleWords.filter(w => allTlTitleWords.has(w)).length;
-
-      // Also check scope-level match
-      let scopeMatch = false;
-      for (const tl of existingTimelines) {
-        const scopeWords = (tl.scope || '').split(/[_\-]+/);
-        const titleHit = threadTitleWords.some(w => scopeWords.includes(w));
-        if (titleHit) { scopeMatch = true; break; }
+      // Must have a proper noun / country signal in title
+      if (!COUNTRY_SIGNAL_RE.test(t.title) && !hasProperNoun(t.title)) {
+        console.log(`   🚫 Rejected (no entity anchor): "${t.title}"`);
+        return false;
       }
-
-      if (kwOverlap < 3 && titleOverlap < 2 && !scopeMatch) {
-        uncoveredThreads.push(t);
-      }
-    }
-
-    if (!uncoveredThreads.length) return 0;
-    console.log(`   [seedFromThreads] ${uncoveredThreads.length} uncovered threads found`);
-
-    // Pull articles from uncovered threads
-    const threadIds = uncoveredThreads.map(t => t.id);
-    const { rows: articles } = await pool.query(`
-      SELECT DISTINCT
-        a.id, a.title, a.summary, a.translated_summary,
-        a.published_at, a.base_priority,
-        co.name AS country_name,
-        st2.primary_category
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      JOIN story_threads st2 ON st2.id = sta.thread_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      WHERE sta.thread_id = ANY($1::int[])
-        AND a.title IS NOT NULL
-      ORDER BY a.published_at DESC
-      LIMIT 100
-    `, [threadIds]);
-
-    if (articles.length < MIN_CLUSTER) return 0;
-
-    // Ask Claude to create timelines from these thread-sourced articles
-    const articleData = articles.map(a => ({
-      id:       a.id,
-      title:    a.title,
-      summary:  (a.translated_summary || a.summary || "").slice(0, 200),
-      country:  a.country_name || null,
-      category: a.primary_category || null,
-    }));
-
-    const resp = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 3000,
-      messages: [{ role: "user", content: `Create broad geopolitical timeline arcs from these articles. These come from active news threads that have no existing timeline coverage.
-
-EXISTING SCOPES (DO NOT DUPLICATE): ${[...existingScopeSet].join(', ')}
-
-RULES:
-• Title: 2-5 words MAX, name the ARC not the event
-• Scope: stable snake_case slug
-• Only create if 3+ articles belong
-• importance: 5-9
-
-ARTICLES:
-${JSON.stringify(articleData, null, 1)}
-
-Return ONLY valid JSON array:
-[{"title":"...", "description":"Two sentences.", "scope":"snake_slug", "article_ids":[ids], "anchor_article_id":id, "primary_category":"politics|economy|military|diplomacy|conflict|technology", "geographic_scope":"global|regional", "importance":7, "keywords":["5-10 keywords"]}]` }]
+      return true;
     });
+    if (!qualified.length) return 0;
+    console.log(`   [seedFromThreads] ${qualified.length} threads pass entity/quality gate`);
 
-    const text = resp.content[0].text.trim();
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return 0;
-    const defs = JSON.parse(jsonMatch[0]);
+    // ── Load article IDs for each qualifying thread ──
+    const threadIds = qualified.map(t => t.id);
+    const { rows: threadArticleRows } = await pool.query(`
+      SELECT sta.thread_id, ARRAY_AGG(sta.article_id) AS article_ids
+      FROM story_thread_articles sta
+      WHERE sta.thread_id = ANY($1::int[])
+      GROUP BY sta.thread_id
+    `, [threadIds]);
+    const threadArticleMap = new Map(threadArticleRows.map(r => [r.thread_id, new Set(r.article_ids)]));
+
+    // ── Load article IDs for existing timelines (for overlap check) ──
+    const tlIds = existingTimelines.map(t => Number(t.id));
+    const tlArticleMap = new Map();
+    if (tlIds.length) {
+      const { rows: tlArtRows } = await pool.query(`
+        SELECT timeline_id, ARRAY_AGG(article_id) AS article_ids
+        FROM story_timeline_articles
+        WHERE timeline_id = ANY($1::int[])
+        GROUP BY timeline_id
+      `, [tlIds]);
+      for (const r of tlArtRows) {
+        tlArticleMap.set(Number(r.timeline_id), new Set(r.article_ids));
+      }
+    }
 
     let seeded = 0;
-    for (const def of defs) {
-      if (!def.article_ids?.length || def.article_ids.length < MIN_CLUSTER) continue;
-      const scope = (def.scope || '').toLowerCase().replace(/\s+/g, '_').slice(0, 80);
-      if (scope && existingScopeSet.has(scope)) continue;
+    for (const thread of qualified) {
+      const threadArts = threadArticleMap.get(thread.id);
+      if (!threadArts || threadArts.size < 5) continue;
 
+      // ── Article-overlap check against existing timelines ──
+      let bestOverlap = 0;
+      let bestTl = null;
+      for (const tl of existingTimelines) {
+        const tlArts = tlArticleMap.get(Number(tl.id));
+        if (!tlArts || !tlArts.size) continue;
+        let shared = 0;
+        for (const aid of threadArts) { if (tlArts.has(aid)) shared++; }
+        const overlapRatio = shared / Math.min(threadArts.size, tlArts.size);
+        if (overlapRatio > bestOverlap) {
+          bestOverlap = overlapRatio;
+          bestTl = tl;
+        }
+      }
+
+      if (bestOverlap >= 0.30 && bestTl) {
+        // ── Merge into existing timeline ──
+        console.log(`   ⤵ Thread "${thread.title}" → merge into "${bestTl.title}" (${(bestOverlap*100).toFixed(0)}% overlap)`);
+        // Add thread's articles to the existing timeline
+        const artIds = [...threadArts];
+        for (const artId of artIds) {
+          await pool.query(`
+            INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
+            VALUES ($1, $2, 0.5, 0.5, false)
+            ON CONFLICT DO NOTHING
+          `, [bestTl.id, artId]);
+        }
+        await pool.query(`UPDATE story_timelines SET last_updated_at = NOW(), status = 'active' WHERE id = $1`, [bestTl.id]);
+        continue;
+      }
+
+      // ── Check scope/title duplicate ──
+      const scope = (thread.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 80);
+      if (existingScopeSet.has(scope)) {
+        console.log(`   ⚠ Scope collision: "${scope}" — skipped`);
+        continue;
+      }
+
+      // ── Also check title-word overlap with existing timelines ──
+      const threadTitleWords = new Set(
+        (thread.title || '').toLowerCase().split(/[\s\-_,.:;'"]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
+      );
+      let titleDupe = false;
+      for (const tl of existingTimelines) {
+        const tlWords = new Set(
+          (tl.title || '').toLowerCase().split(/[\s\-_,.:;'"]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
+        );
+        if (!tlWords.size || !threadTitleWords.size) continue;
+        let shared = 0;
+        for (const w of threadTitleWords) { if (tlWords.has(w)) shared++; }
+        const jaccard = shared / (new Set([...threadTitleWords, ...tlWords])).size;
+        if (jaccard >= 0.50) {
+          console.log(`   ⚠ Title overlap with "${tl.title}" (jaccard ${jaccard.toFixed(2)}) — skipped`);
+          titleDupe = true;
+          break;
+        }
+      }
+      if (titleDupe) continue;
+
+      // ── Create new timeline from thread ──
       try {
-        const validIds = def.article_ids.map(Number);
         const { rows } = await pool.query(`
           INSERT INTO story_timelines
             (title, description, scope, primary_category, geographic_scope,
-             importance, keywords, article_count, lookback_days, parabolic_peak_hours)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             importance, keywords, primary_nations, article_count,
+             lookback_days, parabolic_peak_hours)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
           RETURNING id
         `, [
-          def.title,
-          def.description || '',
-          scope || null,
-          def.primary_category || 'politics',
-          def.geographic_scope || 'global',
-          def.importance || 6,
-          def.keywords || [],
-          validIds.length,
+          thread.title,
+          thread.description || '',
+          scope,
+          thread.primary_category || 'politics',
+          'regional',
+          thread.importance || 6,
+          thread.keywords || [],
+          thread.primary_nations || [],
+          threadArts.size,
           Math.ceil(LOOKBACK_HOURS / 24),
           PARABOLIC_PEAK_HOURS
         ]);
-        const timelineId = rows[0].id;
 
-        // Insert articles
-        for (const artId of validIds) {
+        const timelineId = rows[0].id;
+        const artIds = [...threadArts];
+        for (const artId of artIds) {
           await pool.query(`
             INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $2, 0.5, 0.5, false)
             ON CONFLICT DO NOTHING
-          `, [timelineId, artId, 0.5, 0.5, artId === Number(def.anchor_article_id)]);
+          `, [timelineId, artId]);
         }
 
         existingScopeSet.add(scope);
+        // Also add to existingTimelines so subsequent threads can overlap-check
+        existingTimelines.push({
+          id: timelineId, title: thread.title, scope, keywords: thread.keywords || [],
+          primary_category: thread.primary_category, _countries: thread.primary_nations || [],
+          importance: thread.importance, article_count: threadArts.size, status: 'active'
+        });
+        tlArticleMap.set(timelineId, threadArts);
         seeded++;
-        console.log(`   ✓ Seeded: "${def.title}" (${validIds.length} articles)`);
+        console.log(`   ✓ Graduated: "${thread.title}" (${threadArts.size} articles, ${thread.distinct_source_count} sources, ${Math.round((Date.now() - new Date(thread.created_at).getTime()) / 86400000)}d active)`);
       } catch (err) {
         if (err.code !== '23505') {
-          console.error(`   ⚠ Seed failed "${def.title}": ${err.message}`);
+          console.error(`   ⚠ Seed failed "${thread.title}": ${err.message}`);
         }
       }
     }
@@ -906,6 +954,15 @@ Return ONLY valid JSON array:
     console.warn(`   ⚠ Thread seeding skipped: ${e.message}`);
     return 0;
   }
+}
+
+// Simple proper-noun check: title contains at least one capitalized word
+// that isn't at the start and isn't a common English word.
+function hasProperNoun(title) {
+  if (!title) return false;
+  const words = title.split(/\s+/).slice(1); // skip first word (always capitalized)
+  const COMMON = new Set(['the','and','for','with','from','into','over','after','before','during','against','between','under','about','through']);
+  return words.some(w => /^[A-Z]/.test(w) && !COMMON.has(w.toLowerCase()));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -976,7 +1033,9 @@ async function coolDownTimelines() {
 }
 
 async function detectAndMergeDuplicates() {
-  // Find timelines with identical or near-identical scopes and merge them
+  let merged = 0;
+
+  // ── Pass 1: Exact scope-slug duplicates ──────────────────────────────────
   try {
     const { rows } = await pool.query(`
       SELECT scope, ARRAY_AGG(id ORDER BY article_count DESC) AS ids,
@@ -987,36 +1046,104 @@ async function detectAndMergeDuplicates() {
       HAVING COUNT(*) > 1
     `);
 
-    let merged = 0;
     for (const row of rows) {
       const [keepId, ...dupeIds] = row.ids;
       for (const dupeId of dupeIds) {
-        // Move articles from dupe to keeper
-        await pool.query(`
-          UPDATE story_timeline_articles SET timeline_id = $1
-          WHERE timeline_id = $2
-            AND article_id NOT IN (SELECT article_id FROM story_timeline_articles WHERE timeline_id = $1)
-        `, [keepId, dupeId]);
-
-        // Delete remaining conflicting article links
-        await pool.query(`DELETE FROM story_timeline_articles WHERE timeline_id = $1`, [dupeId]);
-
-        // Merge keywords
-        await pool.query(`
-          UPDATE story_timelines
-          SET keywords = (SELECT ARRAY(SELECT DISTINCT unnest(keywords || (SELECT keywords FROM story_timelines WHERE id = $2))))
-          WHERE id = $1
-        `, [keepId, dupeId]);
-
-        // Delete duplicate timeline
-        await pool.query(`DELETE FROM story_timelines WHERE id = $1`, [dupeId]);
+        await mergeTimelineInto(keepId, dupeId);
         merged++;
       }
     }
-    if (merged) console.log(`   Merged ${merged} duplicate timeline(s)`);
+    if (merged) console.log(`   Merged ${merged} scope-slug duplicate(s)`);
   } catch (e) {
-    console.warn(`   ⚠ Duplicate merge skipped: ${e.message}`);
+    console.warn(`   ⚠ Scope-slug dedup skipped: ${e.message}`);
   }
+
+  // ── Pass 2: Article-overlap dedup ────────────────────────────────────────
+  // Any two active timelines sharing ≥ 30% of their articles are the same
+  // story. Keep the one with higher importance (tiebreak: more articles).
+  try {
+    const { rows: activeTls } = await pool.query(`
+      SELECT id, title, importance, article_count
+      FROM story_timelines
+      WHERE status IN ('active', 'cooling')
+      ORDER BY importance DESC, article_count DESC
+    `);
+    if (activeTls.length < 2) return;
+
+    // Load article sets for each timeline
+    const { rows: artRows } = await pool.query(`
+      SELECT timeline_id, ARRAY_AGG(article_id) AS aids
+      FROM story_timeline_articles
+      WHERE timeline_id = ANY($1::int[])
+      GROUP BY timeline_id
+    `, [activeTls.map(t => t.id)]);
+    const artSets = new Map(artRows.map(r => [Number(r.timeline_id), new Set(r.aids)]));
+
+    const absorbed = new Set(); // timelines already merged away
+    let overlapMerged = 0;
+
+    for (let i = 0; i < activeTls.length; i++) {
+      const a = activeTls[i];
+      if (absorbed.has(a.id)) continue;
+      const setA = artSets.get(a.id);
+      if (!setA || !setA.size) continue;
+
+      for (let j = i + 1; j < activeTls.length; j++) {
+        const b = activeTls[j];
+        if (absorbed.has(b.id)) continue;
+        const setB = artSets.get(b.id);
+        if (!setB || !setB.size) continue;
+
+        let shared = 0;
+        for (const aid of setA) { if (setB.has(aid)) shared++; }
+        const overlapRatio = shared / Math.min(setA.size, setB.size);
+
+        if (overlapRatio >= 0.30) {
+          // Keep the one with higher importance; tiebreak by article count
+          const keepHigher = (a.importance > b.importance) ||
+            (a.importance === b.importance && a.article_count >= b.article_count);
+          const [keepId, loserId] = keepHigher ? [a.id, b.id] : [b.id, a.id];
+          const keepTitle = keepHigher ? a.title : b.title;
+          const loserTitle = keepHigher ? b.title : a.title;
+
+          console.log(`   ⤵ Overlap merge (${(overlapRatio*100).toFixed(0)}%): "${loserTitle}" → "${keepTitle}"`);
+          await mergeTimelineInto(keepId, loserId);
+          absorbed.add(loserId);
+          // Update the surviving set
+          if (setB) for (const aid of setB) setA.add(aid);
+          overlapMerged++;
+        }
+      }
+    }
+    if (overlapMerged) console.log(`   Merged ${overlapMerged} article-overlap duplicate(s)`);
+  } catch (e) {
+    console.warn(`   ⚠ Article-overlap dedup skipped: ${e.message}`);
+  }
+}
+
+// Shared merge helper: move articles from loser into keeper, union keywords, delete loser
+async function mergeTimelineInto(keepId, loserId) {
+  // Move articles from loser to keeper
+  await pool.query(`
+    INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
+    SELECT $1, article_id, parabolic_weight, relevance_score, is_anchor
+    FROM story_timeline_articles
+    WHERE timeline_id = $2
+    ON CONFLICT DO NOTHING
+  `, [keepId, loserId]);
+
+  // Delete loser's article links
+  await pool.query(`DELETE FROM story_timeline_articles WHERE timeline_id = $1`, [loserId]);
+
+  // Merge keywords
+  await pool.query(`
+    UPDATE story_timelines
+    SET keywords = (SELECT ARRAY(SELECT DISTINCT unnest(keywords || (SELECT keywords FROM story_timelines WHERE id = $2))))
+    WHERE id = $1
+  `, [keepId, loserId]);
+
+  // Delete loser timeline
+  await pool.query(`DELETE FROM story_timelines WHERE id = $1`, [loserId]);
 }
 
 async function getActiveTimelines() {
