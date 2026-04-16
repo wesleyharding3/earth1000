@@ -5,7 +5,7 @@ const fs = require("fs");
 const { spawn } = require("child_process");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
-const { getRankedArticles, getRankedCityArticles } = require("./rankingService");
+const { getRankedArticles, getRankedCityArticles, getRankedFeedArticles } = require("./rankingService");
 const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 const { generateLocationBriefing } = require("./locationBriefingGenerator");
@@ -1318,12 +1318,48 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const toDate   = req.query.to_date?.trim()   || null;
 
     // ── Fast path: default query (no filters, page 0) → serve from TTL cache ──
+    // Routes through rankingService.getRankedFeedArticles so the Feed tab
+    // uses the same pipeline as the country/city drawers:
+    //   calculatePriority → diversityRerank (publisher cooldown) →
+    //   in-thread boost → city-cap → country_feed_boost → language boost
+    //   → countryVarianceRerank (terminal country spread).
+    // Previously this path ran its own SQL and bypassed nearly all of the
+    // intelligence in rankingService/priorityEngine, which is why the feed
+    // looked like 3 Balkan outlets on repeat.
     const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag && offset === 0;
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
-      const cacheKey = `news/search:default:${effectiveLimit}`;
+      // Cache key bumped (-v2) so old-pipeline results don't linger.
+      const cacheKey = `news/search:default:v2:${effectiveLimit}`;
       const cached = await ttlCached(cacheKey, 60_000, async () => {
-        return await _executeNewsSearch({ effectiveLimit, offset: 0 });
+        // Pull a generous pool so diversityRerank + countryVarianceRerank
+        // have real variety to work with. 5× keeps parity with the previous
+        // _executeNewsSearch POOL_MULTIPLIER.
+        const POOL_MULTIPLIER = 5;
+        const poolLimit = (effectiveLimit + 1) * POOL_MULTIPLIER;
+
+        let articles = await getRankedFeedArticles({ limit: poolLimit, offset: 0 });
+
+        // Apply language boost on top of the ranking priority. country_boost
+        // was already folded in inside getRankedFeedArticles.
+        for (const a of articles) {
+          a.priority = (a.priority || 0) * getLanguageBoost(a.language);
+          a.final_priority = a.priority; // legacy field used by _prefResort
+        }
+        // Priority changed — re-sort before the terminal country-spread pass.
+        articles.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+        // Terminal country-spread pass. Must be last: any subsequent
+        // priority-based sort would clobber the spacing.
+        if (articles.length >= 8) {
+          articles = countryVarianceRerank(articles);
+        }
+
+        // Trim to the requested limit
+        const hasMore = articles.length > effectiveLimit;
+        if (hasMore) articles.splice(effectiveLimit);
+
+        return { total: articles.length + (hasMore ? 1 : 0), articles };
       });
       // Apply user preference boosts (post-cache, per-user)
       const prefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;

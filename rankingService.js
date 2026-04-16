@@ -217,4 +217,90 @@ async function getRankedCityArticles(cityId, options = {}) {
   return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
 }
 
-module.exports = { getRankedArticles, getRankedCityArticles };
+// ─────────────────────────────────────────────────────────────
+// GLOBAL FEED
+// Same pipeline as getRankedArticles but with no country filter.
+// This is what powers the "Feed" tab (default, no-filter query on
+// /api/news/search). Previously that endpoint ran its own SQL; this
+// restores it to the shared ranking pipeline so calculatePriority +
+// diversityRerank + in-thread boost + city-cap all apply.
+//
+// Selects country_boost and catalog_image_url so the caller can apply
+// country-feed boosts and the frontend gets the image field it expects
+// for parity with the old SQL response shape.
+// ─────────────────────────────────────────────────────────────
+
+async function getRankedFeedArticles(options = {}) {
+  const limit   = parseOptionalPositiveInt(options.limit);
+  const offset  = Math.max(parseInt(options.offset, 10) || 0, 0);
+  const ambient = !!options.ambient;
+  const hours   = Number.isFinite(options.hours) && options.hours > 0
+    ? options.hours
+    : CANDIDATE_WINDOW_HOURS;
+
+  const ambientJoin  = ambient ? `LEFT JOIN news_sources ns_amb ON ns_amb.id = a.source_id` : "";
+  const ambientWhere = ambient
+    ? `AND COALESCE(ns_amb.fetch_tier, 1) IN (2, 3, 4) AND COALESCE(a.base_priority, 0) >= ${AMBIENT_MIN_BASE_PRIORITY}`
+    : "";
+
+  const { rows } = await pool.query(`
+    WITH ranked_by_source AS (
+      SELECT a.id,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
+          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+        ) AS source_rank
+      FROM news_articles a
+      ${ambientJoin}
+      WHERE a.city_id IS NULL
+        AND a.published_at > NOW() - INTERVAL '${hours} hours'
+        ${ambientWhere}
+    ),
+    candidate_articles AS (
+      SELECT id FROM ranked_by_source
+      WHERE source_rank <= $1
+    )
+    SELECT ${ARTICLE_FIELDS},
+      COALESCE(cfb.boost_score, 1.0) AS country_boost,
+      img_a.public_url AS catalog_image_url,
+      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread,
+      (
+        SELECT CASE
+          WHEN bool_or(t.status = 'active')  THEN 'active'
+          WHEN bool_or(t.status = 'cooling') THEN 'cooling'
+          WHEN bool_or(t.status = 'dormant') THEN 'dormant'
+          ELSE NULL
+        END
+        FROM story_thread_articles sta2
+        JOIN story_threads t ON t.id = sta2.thread_id
+        WHERE sta2.article_id = a.id
+      ) AS thread_status
+    FROM candidate_articles ca
+    JOIN news_articles a ON a.id = ca.id
+    ${ARTICLE_JOINS}
+    LEFT JOIN country_feed_boost      cfb   ON cfb.country_id = a.country_id
+    LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+    LEFT JOIN image_assets              img_a ON img_a.id      = aia.image_id
+    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+  `, [MAX_PER_SOURCE]);
+
+  const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
+  const ranked = rankArticles(rows, maxIntensity);
+
+  // Apply country_boost as a terminal multiplier on priority, then
+  // stable-resort (insertion-style) by boosted priority. We don't
+  // full-sort because rankArticles already ran diversityRerank and the
+  // boost should nudge within equivalence classes, not blow up the
+  // diversity arrangement. A simple multiply + re-sort is close enough
+  // in practice and the caller's countryVarianceRerank runs as the
+  // terminal pass anyway.
+  for (const a of ranked) {
+    const boost = parseFloat(a.country_boost) || 1;
+    a.priority = (a.priority || 0) * boost;
+  }
+  ranked.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+  return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
+}
+
+module.exports = { getRankedArticles, getRankedCityArticles, getRankedFeedArticles };
