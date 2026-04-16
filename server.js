@@ -3323,12 +3323,13 @@ app.post('/api/admin/briefing-editor/generate-audio/:episodeId', requireAdmin, a
 app.get('/api/admin/threads', requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
-    const status = req.query.status || null; // 'active', 'cooling', 'dormant', or null for all
+    // Editor only ever shows active threads — cooling/dormant are excluded
+    // to keep the dataset small, the query fast, and the UI focused on
+    // current work. Ignore any status query param.
     const search = (req.query.search || '').trim().toLowerCase();
 
     const params = [limit];
-    const clauses = ['st.article_count >= 1'];
-    if (status) { params.push(status); clauses.push(`st.status = $${params.length}`); }
+    const clauses = ["st.status = 'active'", 'st.article_count >= 1'];
     if (search) { params.push(`%${search}%`); clauses.push(`(LOWER(st.title) LIKE $${params.length} OR LOWER(st.description) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(st.keywords, ' ')) LIKE $${params.length})`); }
 
     // Paginate first, THEN fetch hero images only for the page we return.
