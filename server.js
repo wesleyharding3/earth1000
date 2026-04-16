@@ -923,7 +923,15 @@ app.get("/api/tags", async (req, res) => {
 // Shared helper: executes the default (no-filter) news search query.
 // Used by the endpoint fast-path and by _warmFeedCaches.
 async function _executeNewsSearch({ effectiveLimit, offset }) {
-  const params = [effectiveLimit + 1, offset];
+  // MAX_PER_SOURCE caps how many articles any single publisher can
+  // contribute to the candidate pool BEFORE priority ordering + diversity
+  // passes. Without this, a burst-publishing outlet (one source dropping
+  // ~20 articles in an hour) floods the priority-sorted top of the pool,
+  // leaving diversityRerank nothing else to pick from — fallback fills
+  // remaining slots with the same source and the feed clusters.
+  // 5 aligns with the diversityRerank cooldown (5 slots → 1 in 6).
+  const MAX_PER_SOURCE = 5;
+  const params = [effectiveLimit + 1, offset, MAX_PER_SOURCE];
 
   // ── Tier 1: Full ranked query with 8s timeout ──
   const client = await pool.connect();
@@ -932,7 +940,8 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     const { rows } = await client.query(`
       SELECT * FROM (
         SELECT
-          a.id, a.title, a.translated_title, a.url, a.article_url,
+          a.id, a.source_id, a.youtube_source_id,
+          a.title, a.translated_title, a.url, a.article_url,
           a.summary, a.translated_summary,
           a.image_url,
           img_a.public_url AS catalog_image_url,
@@ -948,7 +957,11 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
             POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
             0.02
           ) AS recency_decay,
-          a.media_type, a.video_id, a.duration_seconds
+          a.media_type, a.video_id, a.duration_seconds,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
+            ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+          ) AS _source_rank
         FROM news_articles a
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
@@ -960,6 +973,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
         WHERE a.city_id IS NULL
           AND a.published_at > NOW() - INTERVAL '72 hours'
       ) sub
+      WHERE sub._source_rank <= $3
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
         * POWER(sub.country_boost, 2.0)
@@ -980,28 +994,36 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   try {
     await client2.query('SET statement_timeout = 6000');
     const { rows } = await client2.query(`
-      SELECT
-        a.id, a.title, a.translated_title, a.url, a.article_url,
-        a.summary, a.translated_summary,
-        a.image_url,
-        NULL AS catalog_image_url,
-        a.published_at, a.sentiment_score,
-        NULL AS language, a.base_priority,
-        COALESCE(ns.name, ys.name) AS source_name,
-        NULL AS source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        NULL AS site_url,
-        src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-        1.0 AS country_boost,
-        1.0 AS recency_decay,
-        a.media_type, a.video_id, a.duration_seconds
-      FROM news_articles a
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      JOIN countries src_co ON src_co.id = a.country_id
-      WHERE a.city_id IS NULL
-        AND a.published_at > NOW() - INTERVAL '48 hours'
-      ORDER BY a.published_at DESC
+      SELECT * FROM (
+        SELECT
+          a.id, a.source_id, a.youtube_source_id,
+          a.title, a.translated_title, a.url, a.article_url,
+          a.summary, a.translated_summary,
+          a.image_url,
+          NULL AS catalog_image_url,
+          a.published_at, a.sentiment_score,
+          NULL AS language, a.base_priority,
+          COALESCE(ns.name, ys.name) AS source_name,
+          NULL AS source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          NULL AS site_url,
+          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+          1.0 AS country_boost,
+          1.0 AS recency_decay,
+          a.media_type, a.video_id, a.duration_seconds,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
+            ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+          ) AS _source_rank
+        FROM news_articles a
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        JOIN countries src_co ON src_co.id = a.country_id
+        WHERE a.city_id IS NULL
+          AND a.published_at > NOW() - INTERVAL '48 hours'
+      ) sub
+      WHERE sub._source_rank <= $3
+      ORDER BY sub.published_at DESC
       LIMIT $1 OFFSET $2
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
@@ -1014,22 +1036,30 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
 
   // ── Tier 3: Bare minimum — just articles + country, no joins ──
   const { rows } = await pool.query(`
-    SELECT
-      a.id, a.title, a.translated_title, a.url, a.article_url,
-      a.summary, a.translated_summary, a.image_url,
-      NULL AS catalog_image_url,
-      a.published_at, a.sentiment_score,
-      NULL AS language, a.base_priority,
-      NULL AS source_name, NULL AS source_summary,
-      'unknown' AS source_bias, NULL AS site_url,
-      src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-      1.0 AS country_boost, 1.0 AS recency_decay,
-      a.media_type, a.video_id, a.duration_seconds
-    FROM news_articles a
-    JOIN countries src_co ON src_co.id = a.country_id
-    WHERE a.city_id IS NULL
-      AND a.published_at > NOW() - INTERVAL '24 hours'
-    ORDER BY a.published_at DESC
+    SELECT * FROM (
+      SELECT
+        a.id, a.source_id, a.youtube_source_id,
+        a.title, a.translated_title, a.url, a.article_url,
+        a.summary, a.translated_summary, a.image_url,
+        NULL AS catalog_image_url,
+        a.published_at, a.sentiment_score,
+        NULL AS language, a.base_priority,
+        NULL AS source_name, NULL AS source_summary,
+        'unknown' AS source_bias, NULL AS site_url,
+        src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+        1.0 AS country_boost, 1.0 AS recency_decay,
+        a.media_type, a.video_id, a.duration_seconds,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
+          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+        ) AS _source_rank
+      FROM news_articles a
+      JOIN countries src_co ON src_co.id = a.country_id
+      WHERE a.city_id IS NULL
+        AND a.published_at > NOW() - INTERVAL '24 hours'
+    ) sub
+    WHERE sub._source_rank <= $3
+    ORDER BY sub.published_at DESC
     LIMIT $1 OFFSET $2
   `, params);
   return _finalizeSearchResults(rows, effectiveLimit, offset);
@@ -1366,59 +1396,76 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
 
     const needsLocJoin = !!aboutIds?.length;
 
+    // MAX_PER_SOURCE caps how many articles any single publisher can
+    // contribute to the candidate pool (same rationale as the default
+    // feed path above). Wrapped in an outer subquery that adds a
+    // ROW_NUMBER window function so we don't fight the existing
+    // DISTINCT ON / ORDER BY logic in the innermost query.
+    const MAX_PER_SOURCE = 5;
+
     // Fetch 1 extra row to know if there are more pages (avoids expensive COUNT)
-    params.push(effectiveLimit + 1, offset);
-    const limitParam  = params.length - 1;
-    const offsetParam = params.length;
+    params.push(effectiveLimit + 1, offset, MAX_PER_SOURCE);
+    const limitParam   = params.length - 2;
+    const offsetParam  = params.length - 1;
+    const srcRankParam = params.length;
     const limitClause = `LIMIT $${limitParam} OFFSET $${offsetParam}`;
 
     const fullQuery = `
-      SELECT * FROM (
-        SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
-          a.id,
-          a.title,
-          a.translated_title,
-          a.url,
-          a.article_url,
-          a.summary,
-          a.translated_summary,
-          COALESCE(a.image_url, img_a.public_url) AS image_url,
-          img_a.public_url AS catalog_image_url,
-          a.published_at,
-          a.sentiment_score,
-          l.iso_code_2 AS language,
-          a.base_priority,
-          COALESCE(ns.name, ys.name) AS source_name,
-          ns.source_summary,
-          COALESCE(ns.bias, 'unknown') AS source_bias,
-          COALESCE(ns.site_url, ys.site_url) AS site_url,
-          src_co.iso_code,
-          src_co.name        AS country_name,
-          src_co.flag        AS country_flag,
-          COALESCE(cfb.boost_score, 1.0) AS country_boost,
-          GREATEST(
-            POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
-            0.02
-          ) AS recency_decay,
-          a.media_type,
-          a.video_id,
-          a.duration_seconds
-          ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
-        FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        LEFT JOIN languages  l  ON l.id = ns.language_id
-        JOIN countries src_co    ON src_co.id   = a.country_id
-        LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
-        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-        ${needsLocJoin ? `
-          JOIN article_locations al  ON al.article_id = a.id
-          JOIN countries about_co    ON about_co.id   = al.country_id
-        ` : ""}
-        ${whereClause}
-        ${needsLocJoin ? "ORDER BY a.id" : ""}
+      SELECT sub.* FROM (
+        SELECT inner_q.*, ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(inner_q.source_id::text, 'yt:' || inner_q.youtube_source_id::text)
+          ORDER BY inner_q.published_at DESC NULLS LAST, inner_q.id DESC
+        ) AS _source_rank
+        FROM (
+          SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
+            a.id,
+            a.source_id,
+            a.youtube_source_id,
+            a.title,
+            a.translated_title,
+            a.url,
+            a.article_url,
+            a.summary,
+            a.translated_summary,
+            COALESCE(a.image_url, img_a.public_url) AS image_url,
+            img_a.public_url AS catalog_image_url,
+            a.published_at,
+            a.sentiment_score,
+            l.iso_code_2 AS language,
+            a.base_priority,
+            COALESCE(ns.name, ys.name) AS source_name,
+            ns.source_summary,
+            COALESCE(ns.bias, 'unknown') AS source_bias,
+            COALESCE(ns.site_url, ys.site_url) AS site_url,
+            src_co.iso_code,
+            src_co.name        AS country_name,
+            src_co.flag        AS country_flag,
+            COALESCE(cfb.boost_score, 1.0) AS country_boost,
+            GREATEST(
+              POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+              0.02
+            ) AS recency_decay,
+            a.media_type,
+            a.video_id,
+            a.duration_seconds
+            ${needsLocJoin ? ", about_co.name AS about_country_name" : ""}
+          FROM news_articles a
+          LEFT JOIN news_sources ns ON ns.id = a.source_id
+          LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+          LEFT JOIN languages  l  ON l.id = ns.language_id
+          JOIN countries src_co    ON src_co.id   = a.country_id
+          LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
+          LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+          LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+          ${needsLocJoin ? `
+            JOIN article_locations al  ON al.article_id = a.id
+            JOIN countries about_co    ON about_co.id   = al.country_id
+          ` : ""}
+          ${whereClause}
+          ${needsLocJoin ? "ORDER BY a.id" : ""}
+        ) inner_q
       ) sub
+      WHERE sub._source_rank <= $${srcRankParam}
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
         * POWER(sub.country_boost, 2.0)
@@ -1445,28 +1492,38 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     if (!tier1Ok) {
       // ── Tier 2: Strip image joins, shorter timeout ──
       const liteQuery = `
-        SELECT
-          a.id, a.title, a.translated_title, a.url, a.article_url,
-          a.summary, a.translated_summary, a.image_url,
-          NULL AS catalog_image_url,
-          a.published_at, a.sentiment_score,
-          NULL AS language, a.base_priority,
-          COALESCE(ns.name, ys.name) AS source_name,
-          NULL AS source_summary,
-          COALESCE(ns.bias, 'unknown') AS source_bias,
-          NULL AS site_url,
-          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-          1.0 AS country_boost, 1.0 AS recency_decay,
-          a.media_type, a.video_id, a.duration_seconds
-        FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        JOIN countries src_co ON src_co.id = a.country_id
-        ${needsLocJoin ? `
-          JOIN article_locations al ON al.article_id = a.id
-        ` : ""}
-        ${whereClause}
-        ORDER BY a.published_at DESC
+        SELECT sub.* FROM (
+          SELECT inner_q.*, ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(inner_q.source_id::text, 'yt:' || inner_q.youtube_source_id::text)
+            ORDER BY inner_q.published_at DESC NULLS LAST, inner_q.id DESC
+          ) AS _source_rank
+          FROM (
+            SELECT
+              a.id, a.source_id, a.youtube_source_id,
+              a.title, a.translated_title, a.url, a.article_url,
+              a.summary, a.translated_summary, a.image_url,
+              NULL AS catalog_image_url,
+              a.published_at, a.sentiment_score,
+              NULL AS language, a.base_priority,
+              COALESCE(ns.name, ys.name) AS source_name,
+              NULL AS source_summary,
+              COALESCE(ns.bias, 'unknown') AS source_bias,
+              NULL AS site_url,
+              src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+              1.0 AS country_boost, 1.0 AS recency_decay,
+              a.media_type, a.video_id, a.duration_seconds
+            FROM news_articles a
+            LEFT JOIN news_sources ns ON ns.id = a.source_id
+            LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+            JOIN countries src_co ON src_co.id = a.country_id
+            ${needsLocJoin ? `
+              JOIN article_locations al ON al.article_id = a.id
+            ` : ""}
+            ${whereClause}
+          ) inner_q
+        ) sub
+        WHERE sub._source_rank <= $${srcRankParam}
+        ORDER BY sub.published_at DESC
         ${limitClause}
       `;
       const client2 = await pool.connect();
