@@ -5294,7 +5294,7 @@ body.flow-maximized #flowArcList {
       z-index: 200;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - 80px);
       border-radius: 20px 20px 0 0;
     }
     /* Minimized state — capped to title bar + first line above the nav.
@@ -5320,7 +5320,7 @@ body.flow-maximized #flowArcList {
       #clusterDetail.cdMaximized {
         width: 100%;
         left: 0;
-        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
+        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - 60px);
         border-radius: 16px 16px 0 0;
       }
     }
@@ -31292,7 +31292,7 @@ body.ticker-active .gTickerLabel {
          + (parseFloat(cs.getPropertyValue('--app-bottom-inset')) || 0);
   }
   const CD_DEFAULT_H = () => Math.min(480, (window.innerHeight || screen.height) - 24 - getNavTickerHeight());
-  const CD_MAX_H = () => (window.innerHeight || screen.height) - getNavTickerHeight();
+  const CD_MAX_H = () => (window.innerHeight || screen.height) - getNavTickerHeight() - 80;
 
   let cdSnapState = "default";
   function cdApplySnap(s, animate) {
