@@ -7967,10 +7967,9 @@ function spawnBuilder(scriptName, label) {
   proc.on("error", err => console.error(`${tag} spawn error: ${err.message}`));
 }
 
-// Breaking threads — 48h window, cross-source convergence. Staggered 3 min
-// after boot so keywordCron gets first dibs on the DB pool.
-setTimeout(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder startup"), 3 * 60_000);
-setInterval(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder"),   60 * 60 * 1000).unref?.(); // every 60m
+// storyThreadBuilder is scheduled as a Render cron — the web service
+// does NOT spawn it. Running it from both places would double-fire
+// Claude calls and collide on the DB. Keep the cron, not this.
 
 // Umbrella timelines — 30d window, parabolic weighting. Runs every 12 hours.
 // Staggered 6 min after boot so it doesn't collide with threadBuilder startup.
