@@ -15020,7 +15020,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           await wait(120);
 
           // ═══════════════════════════════════════════════════════════════
-          // PHASE 1: Bottom ticker + page nav slide up from below
+          // PHASE 1: Bottom ticker + page nav slide up, compass + scale
+          //          start simultaneously (don't wait for ticker to finish)
           // ═══════════════════════════════════════════════════════════════
           const pageNav = document.getElementById("pageNav");
           const globalTicker = document.getElementById("globalTicker");
@@ -15043,7 +15044,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               globalTicker.style.opacity = "1";
             }
           }, 80);
-          await wait(280);
+          // Don't wait for ticker — start compass/scale in parallel
+          await wait(100);
 
           // ═══════════════════════════════════════════════════════════════
           // PHASE 2: Top nav buttons fade in quick sequence
@@ -15087,7 +15089,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // Per-label fade duration. The stagger below uses the same value so
           // each label finishes fading in before the next one starts — a true
           // sequential reveal (2000 → 1500 → 1000 → 500 → 0), no overlap.
-          const LABEL_FADE_MS = 1200;
+          const LABEL_FADE_MS = 2000;
           labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(8px)"; lbl.style.transition = `opacity ${LABEL_FADE_MS}ms ease-out, transform ${LABEL_FADE_MS}ms ease-out`; });
 
           // Get bar height so we can use pixel-based clip (avoids % rounding issues with ::before/::after)
@@ -27781,6 +27783,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
 }
+/* Initial entry: text slides in from offscreen right, then loops normally */
+@keyframes gTickerEntry {
+  from { transform: translateX(100vw); }
+  to   { transform: translateX(0); }
+}
 #globalTicker {
   position: fixed; bottom: calc(var(--page-nav-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom)); left: 0; right: 0; height: var(--global-ticker-height);
   background: rgba(0,0,6,0.94);
@@ -31120,6 +31127,7 @@ body.ticker-active .gTickerLabel {
     return style.display !== 'none' && style.visibility !== 'hidden';
   }
 
+  let _tickerFirstRender = true;
   function _renderTicker(articles) {
     const el = document.getElementById('gTickerTrack');
     if (!el) return null;
@@ -31128,7 +31136,22 @@ body.ticker-active .gTickerLabel {
     const half = _buildHTML(articles);
     el.innerHTML = half + '<span class="gTickerDiv">◆</span>' + half;
     void el.offsetWidth;
-    el.classList.remove('reset');
+
+    if (_tickerFirstRender) {
+      _tickerFirstRender = false;
+      // First load: slide in from offscreen right, then switch to normal loop
+      el.classList.remove('reset');
+      el.style.animation = 'gTickerEntry 4s cubic-bezier(0.22, 1, 0.36, 1) forwards';
+      const handler = () => {
+        el.removeEventListener('animationend', handler);
+        el.style.animation = '';
+        // Kick into normal looping scroll
+        void el.offsetWidth;
+      };
+      el.addEventListener('animationend', handler);
+    } else {
+      el.classList.remove('reset');
+    }
     return el;
   }
 
