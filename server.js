@@ -7970,7 +7970,7 @@ function spawnBuilder(scriptName, label) {
 // Breaking threads — 48h window, cross-source convergence. Staggered 3 min
 // after boot so keywordCron gets first dibs on the DB pool.
 setTimeout(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder startup"), 3 * 60_000);
-setInterval(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder"),   30 * 60 * 1000).unref?.(); // every 30m
+setInterval(() => spawnBuilder("storyThreadBuilder.js", "threadBuilder"),   60 * 60 * 1000).unref?.(); // every 60m
 
 // Umbrella timelines — 30d window, parabolic weighting. Runs every 12 hours.
 // Staggered 6 min after boot so it doesn't collide with threadBuilder startup.

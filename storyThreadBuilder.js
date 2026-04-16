@@ -141,7 +141,7 @@ async function run() {
   console.log(`\n   [${elapsed()}] Cooling down inactive threads...`);
   await coolDownInactiveThreads();
 
-  // ── Deep-analyze top 3 articles per active thread ──────────────────────
+  // ── Deep-analyze top 2 articles per active thread ──────────────────────
   // Replaces the old per-article fire-and-forget in articleListener.js.
   // Only analyzes the highest-relevance articles that haven't been analyzed
   // yet, cutting Haiku costs ~90%.
@@ -1376,11 +1376,11 @@ function computeArticleRelevanceScore(importance, publishedAt) {
   return Number((base * recencyFactor).toFixed(4));
 }
 
-// ─── Post-threading deep analysis: top 3 per thread ─────────────────────────
-// For each active/cooling thread, find the top 3 articles (by relevance_score)
+// ─── Post-threading deep analysis: top 2 per thread ─────────────────────────
+// For each active/cooling thread, find the top 2 articles (by relevance_score)
 // that haven't been deep-analyzed yet and run deepAnalyzeArticle on them.
 // This replaces the old fire-and-forget per-article approach, cutting costs ~90%.
-const TOP_PER_THREAD = 3;
+const TOP_PER_THREAD = 2;
 const DEEP_CONCURRENCY = 3;
 
 async function deepAnalyzeTopPerThread() {
