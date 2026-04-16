@@ -1228,25 +1228,18 @@ function _applyThreadPrefBoosts(items, boosts) {
   return items;
 }
 
-// Re-rank articles by final_priority while preserving publisher variance.
-//
-// Was: global sort by final_priority with a 3% recency tiebreak. That sort
-// ran AFTER diversityRerank, and because recent articles have very similar
-// final_priority values, the 3% band almost always fired → recency sort →
-// publisher clustering. When a user's pref boost (home/region 1.4×/1.25×)
-// bumped e.g. Bosnia + Philippines articles to the top, the burst-publish
-// pattern from those countries' sources flooded the feed in recency order.
-//
-// Now: another diversityRerank pass on the boosted priorities. Higher-
-// priority articles still surface first (the algorithm picks the best
-// eligible at every slot), but a COOLDOWN_SLOTS=5 gap is enforced between
-// repeat publishers so the feed can't cluster.
+// Re-sort articles by final_priority with date tiebreak (shared helper)
 function _prefResort(articles) {
-  if (articles.length < 2) return;
-  const diversified = diversityRerank(
-    articles.map(a => ({ ...a, priority: a.final_priority || 0 }))
-  );
-  articles.splice(0, articles.length, ...diversified);
+  const PRIORITY_BAND = 0.03;
+  articles.sort((a, b) => {
+    const pa = a.final_priority || 0;
+    const pb = b.final_priority || 0;
+    const maxP = Math.max(pa, pb) || 1;
+    if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
+      return new Date(b.published_at) - new Date(a.published_at);
+    }
+    return pb - pa;
+  });
 }
 
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
@@ -1261,19 +1254,20 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
   }));
 
   if (results.length >= 8) {
-    // Pass 1: order by final_priority with publisher cooldown.
     results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
-    // Pass 2: spread out same-country clusters. Internally this biases
-    // toward recent articles via a +50% recency bonus when picking, which
-    // is fine for country spacing but would leave the feed skewed hard
-    // toward "only recent publishers" if left as the terminal order.
     results = countryVarianceRerank(results);
-    // Pass 3: re-rank by pure final_priority (no recency inflation) while
-    // keeping publisher variance. This restores priority-dominant order
-    // without sacrificing the country spacing pass 2 just did, and
-    // replaces the old global sort that used to clobber diversityRerank.
-    results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
   }
+
+  const PRIORITY_BAND = 0.03;
+  results.sort((a, b) => {
+    const pa = a.final_priority || 0;
+    const pb = b.final_priority || 0;
+    const maxP = Math.max(pa, pb) || 1;
+    if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
+      return new Date(b.published_at) - new Date(a.published_at);
+    }
+    return pb - pa;
+  });
 
   return { total: offset + results.length + (hasMore ? 1 : 0), articles: results };
 }
@@ -1500,13 +1494,10 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ) * Math.pow(r.country_boost || 1, 2.0)
     }));
 
-    // Light reranking only when we have enough rows to benefit.
-    // Three passes so the feed has publisher variance, country variance,
-    // AND priority order — see comment in _finalizeSearchResults for why.
+    // Light reranking only when we have enough rows to benefit
     if (results.length >= 8) {
       results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
       results = countryVarianceRerank(results);
-      results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
     }
 
     // Apply user preference boosts (filtered path)
@@ -1515,7 +1506,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       results = _applyNewsPrefBoosts(results, _buildPrefBoosts(_fPrefs));
     }
 
-    // Re-rank by boosted final_priority while preserving publisher variance.
+    // Tiebreak by date within a tight priority band (3%)
     _prefResort(results);
 
     res.json({ total: offset + results.length + (hasMore ? 1 : 0), articles: results });
