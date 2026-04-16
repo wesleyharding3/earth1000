@@ -7971,20 +7971,9 @@ function spawnBuilder(scriptName, label) {
 // does NOT spawn it. Running it from both places would double-fire
 // Claude calls and collide on the DB. Keep the cron, not this.
 
-// Umbrella timelines — 30d window, parabolic weighting. Runs every 12 hours.
-// Staggered 6 min after boot so it doesn't collide with threadBuilder startup.
-setTimeout(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder startup"), 6 * 60_000);
-setInterval(() => spawnBuilder("storyTimelineBuilder.js", "timelineBuilder"), 12 * 60 * 60 * 1000).unref?.(); // every 12h
-
-// Globe statistics — external APIs (FRED, World Bank, Gold API). Runs every 6 hours.
-// Staggered 2 min after boot.
-setTimeout(() => spawnBuilder("globeStatsCron.js", "globeStatsCron startup"), 2 * 60_000);
-setInterval(() => spawnBuilder("globeStatsCron.js", "globeStatsCron"), 6 * 60 * 60 * 1000).unref?.(); // every 6h
-
-// Sources statistics — DB aggregation. Runs every 12 hours.
-// Staggered 8 min after boot.
-setTimeout(() => spawnBuilder("sourcesStatsCron.js", "sourcesStatsCron startup"), 8 * 60_000);
-setInterval(() => spawnBuilder("sourcesStatsCron.js", "sourcesStatsCron"), 12 * 60 * 60 * 1000).unref?.(); // every 12h
+// storyTimelineBuilder, globeStatsCron, and sourcesStatsCron are all
+// scheduled as Render crons. Web service does NOT spawn them to avoid
+// double-firing and DB contention.
 
 // Database pruning — weekly. Deletes old keyword stats, low-value articles,
 // stale image usage logs, and old error logs. Runs 15 min after boot then
