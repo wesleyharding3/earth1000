@@ -807,7 +807,6 @@ async function seedFromThreads(existingTimelines, existingScopeSet) {
       ) span ON span.thread_id = st.id
       WHERE st.article_count >= 5
         AND st.distinct_source_count >= 3
-        AND ARRAY_LENGTH(st.primary_nations, 1) >= 1
       ORDER BY st.importance DESC, span.span_days DESC, st.article_count DESC
       LIMIT 120
     `);
@@ -829,6 +828,47 @@ async function seedFromThreads(existingTimelines, existingScopeSet) {
     });
     if (!qualified.length) return 0;
     console.log(`   [seedFromThreads] ${qualified.length} threads pass entity/quality gate`);
+
+    // ── Title-cluster dedup: prevent 10 Iran variants from all graduating ──
+    // Sort best-first, then absorb any subsequent thread whose title signal
+    // words have containment similarity ≥ 0.50 with an already-kept thread.
+    // Containment = shared / size_of_smaller_set (more aggressive than Jaccard).
+    {
+      const sorted = [...qualified].sort((a, b) =>
+        (b.importance - a.importance) || (b.span_days - a.span_days) || (b.article_count - a.article_count));
+
+      const sigs = sorted.map(t => ({
+        thread: t,
+        sig: new Set(
+          (t.title || '').toLowerCase()
+            .split(/[\s\-_,.:;'"&+/]+/)
+            .filter(w => w.length >= 4 && !SKIP_KEYWORDS.has(w))
+        )
+      }));
+
+      const absorbed = new Set();
+      const kept = [];
+      for (let i = 0; i < sigs.length; i++) {
+        if (absorbed.has(i)) continue;
+        kept.push(sorted[i]);
+        for (let j = i + 1; j < sigs.length; j++) {
+          if (absorbed.has(j)) continue;
+          const sigA = sigs[i].sig;
+          const sigB = sigs[j].sig;
+          if (!sigA.size || !sigB.size) continue;
+          let shared = 0;
+          for (const w of sigA) { if (sigB.has(w)) shared++; }
+          const containment = shared / Math.min(sigA.size, sigB.size);
+          if (containment >= 0.50) {
+            console.log(`   ⟳ Title-cluster: "${sorted[j].title}" absorbed by "${sorted[i].title}" (${(containment*100).toFixed(0)}%)`);
+            absorbed.add(j);
+          }
+        }
+      }
+      qualified.length = 0;
+      kept.forEach(t => qualified.push(t));
+      console.log(`   [seedFromThreads] After title-cluster dedup: ${qualified.length} threads`);
+    }
 
     // ── Load article IDs for each qualifying thread ──
     const threadIds = qualified.map(t => t.id);
@@ -875,7 +915,7 @@ async function seedFromThreads(existingTimelines, existingScopeSet) {
         }
       }
 
-      if (bestOverlap >= 0.30 && bestTl) {
+      if (bestOverlap >= 0.20 && bestTl) {
         // ── Merge into existing timeline ──
         console.log(`   ⤵ Thread "${thread.title}" → merge into "${bestTl.title}" (${(bestOverlap*100).toFixed(0)}% overlap)`);
         // Add thread's articles to the existing timeline
@@ -911,7 +951,7 @@ async function seedFromThreads(existingTimelines, existingScopeSet) {
         let shared = 0;
         for (const w of threadTitleWords) { if (tlWords.has(w)) shared++; }
         const jaccard = shared / (new Set([...threadTitleWords, ...tlWords])).size;
-        if (jaccard >= 0.50) {
+        if (jaccard >= 0.30) {
           console.log(`   ⚠ Title overlap with "${tl.title}" (jaccard ${jaccard.toFixed(2)}) — skipped`);
           titleDupe = true;
           break;
@@ -1055,6 +1095,54 @@ async function coolDownTimelines() {
 async function detectAndMergeDuplicates() {
   let merged = 0;
 
+  // ── Pass 0: Title-similarity dedup ───────────────────────────────────────
+  // Two active timelines with title-signal containment ≥ 0.50 are the same
+  // story. Catches "US-Iran Military Escalation" vs "Iran-US Escalation Crisis"
+  // even when they share < 30% article overlap (different articles, same arc).
+  try {
+    const { rows: allTls } = await pool.query(`
+      SELECT id, title, importance, article_count
+      FROM story_timelines
+      WHERE status IN ('active', 'cooling')
+      ORDER BY importance DESC, article_count DESC
+    `);
+
+    const sigs = allTls.map(t => ({
+      tl: t,
+      sig: new Set(
+        (t.title || '').toLowerCase()
+          .split(/[\s\-_,.:;'"&+/]+/)
+          .filter(w => w.length >= 4 && !SKIP_KEYWORDS.has(w))
+      )
+    }));
+
+    const titleAbsorbed = new Set();
+    let titleMerged = 0;
+    for (let i = 0; i < sigs.length; i++) {
+      if (titleAbsorbed.has(sigs[i].tl.id)) continue;
+      for (let j = i + 1; j < sigs.length; j++) {
+        if (titleAbsorbed.has(sigs[j].tl.id)) continue;
+        const sigA = sigs[i].sig;
+        const sigB = sigs[j].sig;
+        if (!sigA.size || !sigB.size) continue;
+        let shared = 0;
+        for (const w of sigA) { if (sigB.has(w)) shared++; }
+        const containment = shared / Math.min(sigA.size, sigB.size);
+        if (containment >= 0.50) {
+          const keepTl = sigs[i].tl;
+          const loseTl = sigs[j].tl;
+          console.log(`   ⤵ Title merge (${(containment*100).toFixed(0)}%): "${loseTl.title}" → "${keepTl.title}"`);
+          await mergeTimelineInto(keepTl.id, loseTl.id);
+          titleAbsorbed.add(loseTl.id);
+          titleMerged++;
+        }
+      }
+    }
+    if (titleMerged) console.log(`   Merged ${titleMerged} title-similarity duplicate(s)`);
+  } catch (e) {
+    console.warn(`   ⚠ Title-similarity dedup skipped: ${e.message}`);
+  }
+
   // ── Pass 1: Exact scope-slug duplicates ──────────────────────────────────
   try {
     const { rows } = await pool.query(`
@@ -1118,7 +1206,7 @@ async function detectAndMergeDuplicates() {
         for (const aid of setA) { if (setB.has(aid)) shared++; }
         const overlapRatio = shared / Math.min(setA.size, setB.size);
 
-        if (overlapRatio >= 0.30) {
+        if (overlapRatio >= 0.20) {
           // Keep the one with higher importance; tiebreak by article count
           const keepHigher = (a.importance > b.importance) ||
             (a.importance === b.importance && a.article_count >= b.article_count);
