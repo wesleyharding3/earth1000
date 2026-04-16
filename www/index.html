@@ -13749,15 +13749,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let ambientPulseTime = 0;  // Global ambient pulse for all nodes
 
       const compass = document.getElementById("compass");
-      let compassSnapActive = false;
-      let compassSnapTarget = null;
-
-      compass.addEventListener("click", () => {
-        const { yaw } = extractYawPitchFromQuat(globeQuat);
-        compassSnapTarget = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, "YXZ"));
-        compassSnapActive = true;
-        isFocused = false; focusTargetQuat = null; selectedNodeIndex = null; ambientPaused = false;
-      });
+      if (compass) compass.style.pointerEvents = "none";
 
       const hoverMouse = new THREE.Vector2();
         window.addEventListener("mousemove", (event) => {
@@ -16113,18 +16105,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
 
-        if (compassSnapActive && compassSnapTarget) {
-          globeQuat.slerp(compassSnapTarget, 0.06);
-          if (globeQuat.angleTo(compassSnapTarget) < 0.0005) {
-            globeQuat.copy(compassSnapTarget);
-            compassSnapActive = false; compassSnapTarget = null; isFocused = false; focusTargetQuat = null;
-            const { yaw, pitch } = extractYawPitchFromQuat(globeQuat);
-            globePitch = pitch;
-            globeYaw = yaw;
-            if (ambientResumeTimer) clearTimeout(ambientResumeTimer);
-            ambientResumeTimer = setTimeout(() => { ambientPaused = false; }, 400);
-          }
-        }
+        // (compass snap logic removed — compass is now display-only)
 
         scene.quaternion.copy(globeQuat);
         scene.updateMatrixWorld(true);
