@@ -94,15 +94,19 @@ async function main() {
   let totalDone   = parseInt(checkpoint.done);
   let totalFailed = parseInt(checkpoint.failed);
 
-  // Count articles that need catalog assignments, gated by source tier + base_priority
-  const { rows: countRows } = await pool.query(`
-    SELECT COUNT(*) AS total
-    FROM news_articles a
-    ${CANDIDATE_JOINS}
-    ${CANDIDATE_WHERE}
-      AND a.id > $1
-  `, [lastId]);
-  const remaining = parseInt(countRows[0].total);
+  let remaining = "?";
+  try {
+    const { rows: countRows } = await pool.query(`
+      SELECT COUNT(*) AS total
+      FROM news_articles a
+      ${CANDIDATE_JOINS}
+      ${CANDIDATE_WHERE}
+        AND a.id > $1
+    `, [lastId]);
+    remaining = parseInt(countRows[0].total);
+  } catch (e) {
+    console.warn(`   ⚠️ Count query timed out — continuing anyway`);
+  }
 
   console.log(`\n${dryRun ? "🔍 DRY RUN — " : ""}🖼️  Image backfill — ${new Date().toISOString()}`);
   console.log(`   Resuming from ID > ${lastId}`);
@@ -118,16 +122,38 @@ async function main() {
   const startTime = Date.now();
 
   while (true) {
-    // Fetch next batch of gated candidates using ID cursor
-    const { rows: articles } = await pool.query(`
-      SELECT a.id
-      FROM news_articles a
-      ${CANDIDATE_JOINS}
-      ${CANDIDATE_WHERE}
-        AND a.id > $1
-      ORDER BY a.id ASC
-      LIMIT $2
-    `, [lastId, BATCH_SIZE]);
+    let articles;
+    try {
+      const { rows } = await pool.query(`
+        SELECT a.id
+        FROM news_articles a
+        ${CANDIDATE_JOINS}
+        ${CANDIDATE_WHERE}
+          AND a.id > $1
+        ORDER BY a.id ASC
+        LIMIT $2
+      `, [lastId, BATCH_SIZE]);
+      articles = rows;
+    } catch (e) {
+      console.warn(`  ⚠️ Batch fetch failed (last_id=${lastId}): ${e.message} — retrying in 5s`);
+      await sleep(5000);
+      try {
+        const { rows } = await pool.query(`
+          SELECT a.id
+          FROM news_articles a
+          ${CANDIDATE_JOINS}
+          ${CANDIDATE_WHERE}
+            AND a.id > $1
+          ORDER BY a.id ASC
+          LIMIT $2
+        `, [lastId, BATCH_SIZE]);
+        articles = rows;
+      } catch (e2) {
+        console.warn(`  ❌ Batch fetch retry failed — skipping ahead by 1000 IDs`);
+        lastId += 1000;
+        continue;
+      }
+    }
 
     if (!articles.length) break;
 
