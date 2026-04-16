@@ -765,11 +765,17 @@ Return ONLY valid JSON array, no explanation:
 // ═════════════════════════════════════════════════════════════════════════════
 //  THREAD-INFORMED SEEDING — PRIMARY source of new timelines
 //
-//  A thread graduates to a timeline ONLY when it proves sustained activity:
-//    • status = 'active' AND created_at ≤ NOW() - 7 days
+//  A thread graduates to a timeline ONLY when it proves sustained coverage:
+//    • article coverage span ≥ 7 days (measured from actual article dates,
+//      not thread created_at — so a thread with articles on day 1 and day 30
+//      but nothing in between still counts, but one with articles only on a
+//      single day does not)
 //    • article_count ≥ 5
 //    • distinct_source_count ≥ 3 (multi-source coverage)
 //    • has at least one primary_nation (entity/geography anchor)
+//    • ANY status qualifies (active, cooling, OR dormant) — a thread that
+//      tracked the Ukraine-Russia war for months and went dormant should
+//      still become a timeline
 //
 //  Title comes directly from the thread — no Claude umbrella invention.
 //  Before creating, we check article overlap against existing timelines
@@ -777,19 +783,33 @@ Return ONLY valid JSON array, no explanation:
 // ═════════════════════════════════════════════════════════════════════════════
 async function seedFromThreads(existingTimelines, existingScopeSet) {
   try {
-    // ── Gate: threads active for ≥ 7 days, with geographic anchor ──
+    // ── Gate: threads with ≥ 7 days of article coverage span ──
+    // We join story_thread_articles → news_articles to compute the actual
+    // date range of articles in each thread. A thread qualifies if
+    // MAX(published_at) - MIN(published_at) ≥ 7 days.
+    // ALL statuses included: active threads still developing, cooling ones
+    // winding down, and dormant ones that tracked a long-running story.
     const { rows: threads } = await pool.query(`
       SELECT st.id, st.title, st.description, st.keywords, st.importance,
              st.primary_category, st.article_count, st.distinct_source_count,
-             st.primary_nations, st.created_at
+             st.primary_nations, st.created_at, st.status,
+             span.first_article, span.last_article, span.span_days
       FROM story_threads st
-      WHERE st.status = 'active'
-        AND st.created_at <= NOW() - INTERVAL '7 days'
-        AND st.article_count >= 5
+      JOIN (
+        SELECT sta.thread_id,
+               MIN(a.published_at) AS first_article,
+               MAX(a.published_at) AS last_article,
+               EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400.0 AS span_days
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        GROUP BY sta.thread_id
+        HAVING EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400.0 >= 7
+      ) span ON span.thread_id = st.id
+      WHERE st.article_count >= 5
         AND st.distinct_source_count >= 3
         AND ARRAY_LENGTH(st.primary_nations, 1) >= 1
-      ORDER BY st.importance DESC, st.article_count DESC
-      LIMIT 80
+      ORDER BY st.importance DESC, span.span_days DESC, st.article_count DESC
+      LIMIT 120
     `);
     if (!threads.length) return 0;
     console.log(`   [seedFromThreads] ${threads.length} threads pass 7-day gate`);
@@ -941,7 +961,7 @@ async function seedFromThreads(existingTimelines, existingScopeSet) {
         });
         tlArticleMap.set(timelineId, threadArts);
         seeded++;
-        console.log(`   ✓ Graduated: "${thread.title}" (${threadArts.size} articles, ${thread.distinct_source_count} sources, ${Math.round((Date.now() - new Date(thread.created_at).getTime()) / 86400000)}d active)`);
+        console.log(`   ✓ Graduated: "${thread.title}" (${threadArts.size} articles, ${thread.distinct_source_count} sources, ${Math.round(thread.span_days)}d coverage span, status=${thread.status || 'unknown'})`);
       } catch (err) {
         if (err.code !== '23505') {
           console.error(`   ⚠ Seed failed "${thread.title}": ${err.message}`);
