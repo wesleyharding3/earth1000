@@ -816,6 +816,7 @@
         <div class="thd-detail-header">
           <button class="btn-secondary btn-small" onclick="closeThreadDetail()">&larr; Back to list</button>
           <span class="thd-detail-id" id="thd-detail-id"></span>
+          <button class="btn-danger btn-small" style="margin-left:auto;" onclick="deleteCurrentThread()" title="Permanently delete this thread">Delete thread</button>
         </div>
         <div class="thd-detail-body">
           <div class="thd-field">
@@ -2586,6 +2587,42 @@
             adminThreads[idx].keywords = body.keywords.split(',').map(k => k.trim());
           }
         }
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+      }
+    }
+
+    async function deleteCurrentThread() {
+      if (!currentDetailThreadId) return;
+      const t = currentDetailThread || {};
+      const title = t.title || `Thread #${currentDetailThreadId}`;
+      const artCount = (currentDetailArticles || []).length;
+      if (!confirm(`Permanently delete "${title}"?\n\nThis will detach ${artCount} article${artCount === 1 ? '' : 's'} from the thread. Articles themselves are NOT deleted. This cannot be undone.`)) return;
+
+      const statusEl = document.getElementById('thd-save-status');
+      statusEl.textContent = 'Deleting...';
+      statusEl.style.color = '#94a3b8';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/threads/${currentDetailThreadId}`, {
+          method: 'DELETE', headers: authHeaders()
+        });
+        if (!res.ok) {
+          let msg = 'Delete failed';
+          try { const e = await res.json(); msg = e.error || msg; } catch {}
+          throw new Error(msg);
+        }
+        // Drop from local cache, close detail, re-render list
+        const deletedId = currentDetailThreadId;
+        adminThreads = adminThreads.filter(th => th.id !== deletedId);
+        if (typeof selectedThreadIds !== 'undefined' && selectedThreadIds && selectedThreadIds.delete) {
+          selectedThreadIds.delete(deletedId);
+        }
+        currentDetailThreadId = null;
+        currentDetailThread = null;
+        currentDetailArticles = [];
+        closeThreadDetail();
       } catch (e) {
         statusEl.textContent = 'Error: ' + e.message;
         statusEl.style.color = '#ef4444';

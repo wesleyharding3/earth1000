@@ -30,7 +30,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = "claude-haiku-4-5";
 
 // ── Config ─────────────────────────────────────────────────────
-const BATCH_SIZE       = 30;            // threads per Claude call (50 overflows 4k tokens)
+const BATCH_SIZE       = 50;            // threads per Claude call; max_tokens=8192 accommodates this
 const MIN_IMPORTANCE   = 3;             // lowered from 5 to catch more stories
 const MIN_ARTICLES     = 1;             // lowered from 2 — many real stories fragmented to 1-article threads
 const MIN_CLUSTER_SIZE = 1;             // allow single-thread umbrellas for

@@ -12,28 +12,17 @@ function normalizeStringList(values) {
   )];
 }
 
-// Curated image keywords include multi-word phrases (e.g. "street interview",
-// "ejection seat"). Article keywords are typically single tokens, so we expand
-// the asset side to also include individual words from each phrase — this lets
-// a phrase match on any of its component tokens without losing exact-phrase hits.
-function expandKeywordSet(keywords) {
-  const set = new Set();
-  for (const kw of keywords) {
-    if (!kw) continue;
-    set.add(kw);
-    if (kw.includes(" ")) {
-      for (const tok of kw.split(/\s+/)) {
-        if (tok.length >= 3) set.add(tok);
-      }
-    }
-  }
-  return set;
-}
-
+// Exact-phrase match only. Previously we token-split multi-word asset keywords
+// (e.g. "ejection seat" → ["ejection","seat"]) which caused dumb collisions —
+// any article mentioning "seat" would match an "ejection seat" asset. Dropped
+// because the false-positive rate swamped the recall gain.
 function computeKeywordOverlap(assetKeywords, articleKeywords) {
   if (!assetKeywords.length || !articleKeywords.length) return 0;
-  const assetSet = expandKeywordSet(assetKeywords);
-  return articleKeywords.reduce((count, keyword) => count + (assetSet.has(keyword) ? 1 : 0), 0);
+  const assetSet = new Set(assetKeywords.filter(Boolean).map(k => k.toLowerCase()));
+  return articleKeywords.reduce(
+    (count, keyword) => count + (assetSet.has(String(keyword).toLowerCase()) ? 1 : 0),
+    0
+  );
 }
 
 function scoreCandidate(candidate, context) {
@@ -41,6 +30,18 @@ function scoreCandidate(candidate, context) {
 
   if (context.cityId && candidate.city_id === context.cityId) score += 40;
   if (context.countryId && candidate.country_id === context.countryId) score += 22;
+
+  // Country-mismatch penalty: if both sides know their country and they differ,
+  // heavily penalize. This is the second line of defense behind the Tier 3 SQL
+  // hard-gate — catches anything that slips through on Tier 1/2 overflow.
+  if (
+    context.countryId &&
+    candidate.country_id &&
+    candidate.country_id !== context.countryId
+  ) {
+    score -= 50;
+  }
+
   score += (candidate.tag_weight || 0) * 14;
 
   if (context.primaryCategories.includes(candidate.primary_category)) score += 10;
@@ -241,32 +242,33 @@ async function findBestCandidate(context, client) {
   const countryId = context.article.country_id;
 
   // ── Tier 1: city pool ────────────────────────────────────────
+  //
+  // Saturation check DISABLED by design: we'd rather repeat a correct
+  // city/country image than overflow to a cross-country generic match
+  // (e.g. Iranian mosque on a Brazil article). Repeats beat wrong.
+  // The only skip condition is poolSize === 0.
   let usedTier = "generic";
   let poolRows  = [];
 
   if (cityId) {
-    const sat = await getPoolSaturation(`ia.city_id = $1`, [cityId], client, _satCacheKey("city", cityId));
-    if (!sat.saturated && sat.poolSize > 0) {
-      poolRows = await queryPool(`ia.city_id = $2`, [cityId], {}, tagIds, client);
-      if (poolRows.length) usedTier = "city";
-    }
+    poolRows = await queryPool(`ia.city_id = $2`, [cityId], {}, tagIds, client);
+    if (poolRows.length) usedTier = "city";
   }
 
-  // ── Tier 2: country pool (if city saturated or no city) ──────
+  // ── Tier 2: country pool (if no city or city pool empty) ─────
   if (!poolRows.length && countryId) {
-    const sat = await getPoolSaturation(
-      `ia.country_id = $1 AND ia.city_id IS NULL`, [countryId], client,
-      _satCacheKey("country", countryId)
+    poolRows = await queryPool(
+      `ia.country_id = $2 AND ia.city_id IS NULL`, [countryId], {}, tagIds, client
     );
-    if (!sat.saturated && sat.poolSize > 0) {
-      poolRows = await queryPool(
-        `ia.country_id = $2 AND ia.city_id IS NULL`, [countryId], {}, tagIds, client
-      );
-      if (poolRows.length) usedTier = "country";
-    }
+    if (poolRows.length) usedTier = "country";
   }
 
   // ── Tier 3: tag/keyword/generic (final fallback) ─────────────
+  //
+  // Hard country-gate: when the article has a country_id, any candidate
+  // whose country_id is non-null MUST match. Location-agnostic assets
+  // (country_id IS NULL) are still eligible. This SQL filter is the
+  // first line of defense; scoreCandidate adds a -50 penalty as backup.
   if (!poolRows.length) {
     const { rows } = await client.query(
       `SELECT
@@ -278,6 +280,11 @@ async function findBestCandidate(context, client) {
        LEFT JOIN image_asset_tags iat ON iat.image_id = ia.id
        WHERE ia.is_active = TRUE
          AND (
+           $6::int IS NULL
+           OR ia.country_id IS NULL
+           OR ia.country_id = $6::int
+         )
+         AND (
            (COALESCE(array_length($1::int[], 1), 0) > 0 AND iat.tag_id = ANY($1::int[]))
            OR (COALESCE(array_length($2::text[], 1), 0) > 0 AND ia.keywords && $2::text[])
            OR (COALESCE(array_length($3::text[], 1), 0) > 0 AND ia.primary_category = ANY($3::text[]))
@@ -287,7 +294,7 @@ async function findBestCandidate(context, client) {
        GROUP BY ia.id
        ORDER BY ia.priority DESC, ia.usage_count ASC, ia.last_used_at ASC NULLS FIRST, RANDOM()
        LIMIT 250`,
-      [tagIds, keywords, primaryCategories, genericCategories, defaultGenericCategories]
+      [tagIds, keywords, primaryCategories, genericCategories, defaultGenericCategories, countryId || null]
     );
     poolRows = rows;
     usedTier = "generic";

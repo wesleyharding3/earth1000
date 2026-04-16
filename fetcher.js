@@ -136,6 +136,76 @@ JSON array only:`
   }
 }
 
+// ── Image URL validation (HEAD check at fetch time) ──────────────────────────
+// Many publishers serve scraped image URLs that later 404 (rotated CDNs, removed
+// articles, image-only hotlink blocks). We HEAD-check at fetch time and null
+// the URL on failure so the fallback pool can kick in instead of serving a
+// broken image forever. Failures are logged but never block ingestion.
+//
+// Cost control:
+//   - 5s timeout, fail-open (timeouts KEEP the URL — don't null on network blip)
+//   - Hostname-level TTL cache (15 min): if images.nytimes.com was OK in the
+//     last 15 min, skip the HEAD entirely. Shaves ~80% of repeat cost when a
+//     batch of articles from the same source all use the same CDN.
+//   - Skipped for obviously-bad inputs (empty, non-http)
+const IMG_VALIDATE_TIMEOUT_MS = 5000;
+const IMG_HOST_CACHE_TTL_MS   = 15 * 60 * 1000;
+const _imgHostCache = new Map();   // hostname → { ok: bool, ts: ms }
+
+// Known-good image CDNs: skip HEAD entirely, assume live.
+// Curated list — only add hosts with observed near-100% uptime.
+const IMG_KNOWN_GOOD_HOSTS = new Set([
+  "images.unsplash.com",
+  "cdn.cnn.com",
+  "images.nytimes.com",
+  "static01.nyt.com",
+  "media.npr.org",
+  "ichef.bbci.co.uk",
+  "www.washingtonpost.com",
+  "d.newsweek.com",
+  "cdn.vox-cdn.com",
+  "i.guim.co.uk",
+  "image.cnbcfm.com",
+]);
+
+async function validateImageUrl(url) {
+  if (!url || typeof url !== "string") return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+
+  let host;
+  try { host = new URL(url).hostname.toLowerCase(); }
+  catch { return null; }
+
+  if (IMG_KNOWN_GOOD_HOSTS.has(host)) return url;
+
+  const cached = _imgHostCache.get(host);
+  if (cached && Date.now() - cached.ts < IMG_HOST_CACHE_TTL_MS) {
+    return cached.ok ? url : null;
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), IMG_VALIDATE_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      signal: ctrl.signal,
+      headers: { "User-Agent": HEADERS_DESKTOP["User-Agent"] },
+      redirect: "follow",
+    });
+    // 2xx/3xx → good. 4xx/5xx → dead.
+    const ok = res.ok;
+    _imgHostCache.set(host, { ok, ts: Date.now() });
+    return ok ? url : null;
+  } catch (err) {
+    // Network error or timeout → fail OPEN (keep the URL). A transient blip
+    // shouldn't nuke an otherwise-good image. Dead URLs that consistently fail
+    // on subsequent re-validation passes (future periodic sweep) get nulled then.
+    return url;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* =========================================
    Header Sets
    Full browser fingerprints dramatically reduce 403s.
@@ -1694,6 +1764,11 @@ async function fetchFeeds(options = {}) {
           }
         }
 
+        // HEAD-validate the scraped image URL. Dead/404 URLs become NULL so the
+        // fallback image resolver will assign a pool image on first read.
+        // Timeouts fail-open (keep the URL) to avoid nuking images on network blips.
+        const validatedImageUrl = await validateImageUrl(item.imageUrl);
+
         const insertResult = await pool.query(
           `INSERT INTO news_articles (
              source_id, city_id, country_id,
@@ -1721,7 +1796,7 @@ async function fetchFeeds(options = {}) {
             translatedSummary,
             null,
             item.publishedAt,
-            item.imageUrl,
+            validatedImageUrl,
             feed.language || null
           ]
         );

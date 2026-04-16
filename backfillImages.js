@@ -18,28 +18,20 @@ const { resolveImageForArticle } = require("./imageResolver");
 const BATCH_SIZE   = 100;
 const CONCURRENCY  = 10;
 const DELAY_MS     = 0;    // no delay — saturation cache keeps DB load sane
-const JOB_NAME     = "backfill_images_v3_tiered";
+const JOB_NAME     = "backfill_images_v4_all_tiers";
 
-// Tier/score gate: we only assign fallback images when the source is unreliable
-// enough to warrant it and the article's content signal is strong enough that
-// it might actually surface. Tier 1 sources bring their own good images and
-// mostly never reach the front-end anyway; skip them.
-//   tier 2  →  base_priority ≥ 0.70   (high only)
-//   tier 3  →  base_priority ≥ 0.40   (mid + high)
-//   tier 4  →  any base_priority      (all)
-const TIER_SCORE_GATE_SQL = `(
-     (COALESCE(ns.popularity_tier, ys.popularity_tier) = 2 AND a.base_priority >= 0.70)
-  OR (COALESCE(ns.popularity_tier, ys.popularity_tier) = 3 AND a.base_priority >= 0.40)
-  OR (COALESCE(ns.popularity_tier, ys.popularity_tier) = 4)
-)`;
+// Tier gate REMOVED. Previous versions excluded tier-1 sources and required
+// high base_priority on tiers 2-3 based on the assumption that popular sources
+// bring their own good images and low-priority articles never surface. Both
+// assumptions were wrong: (a) top-tier outlets routinely serve URLs that 404
+// later (rotated CDNs, dead hotlinks), and (b) there's no content signal that
+// reliably predicts which articles won't surface. Everything with a missing
+// image_url and no existing assignment gets a fallback now.
 const CANDIDATE_JOINS = `
-    LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-    LEFT JOIN news_sources    ns ON ns.id = a.source_id
-    LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id`;
+    LEFT JOIN article_image_assignments aia ON aia.article_id = a.id`;
 const CANDIDATE_WHERE = `
     WHERE aia.article_id IS NULL
-      AND (a.image_url IS NULL OR a.image_url = '')
-      AND ${TIER_SCORE_GATE_SQL}`;
+      AND (a.image_url IS NULL OR a.image_url = '')`;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function withTimeout(promise, ms) {
