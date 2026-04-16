@@ -31560,8 +31560,10 @@ body.ticker-active .gTickerLabel {
     const _imgOnErr = _imgRest.length
       ? `(function(el){var f=${JSON.stringify(_imgRest)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';}})(this)`
       : `this.style.display='none'`;
-    const _heroHTML = _imgSrc
-      ? `<img class="cdHero" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
+    // Small square thumbnail next to the title (replaces the old full-width
+    // hero banner that sat above the header).
+    const _thumbHTML = _imgSrc
+      ? `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
       : '';
 
     detailEl.innerHTML = `
@@ -31572,9 +31574,9 @@ body.ticker-active .gTickerLabel {
           </svg>
         </div>
       </button>
-      ${_heroHTML}
       <div class="cdHeader">
         <div class="cdHeaderTop">
+          ${_thumbHTML}
           <div style="flex:1;min-width:0;">
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
