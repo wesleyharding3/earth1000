@@ -2816,9 +2816,17 @@ async function refreshHeatmapTsSnapshots() {
   return results;
 }
 
-// GET|POST /api/admin/refresh-heatmap — triggered by Render cron every 10-15 min
+// GET|POST /api/admin/refresh-heatmap — triggered by Render cron every 30 min
 // Accepts both GET (Render cron jobs hit URLs via GET) and POST.
 // Auth: pass secret as query param ?key= or Authorization header.
+//
+// ACKNOWLEDGE-AND-WORK pattern: respond 200 immediately, then do the
+// heavy aggregation asynchronously. The cron just needs confirmation it
+// kicked off a refresh — it doesn't need to wait for the 4 presets ×
+// 2 aggregations × flat+ts (potentially 15+ min under DB pressure).
+// Previously the curl timed out waiting, marking the cron as failed
+// even though the DB work was completing fine in the background.
+let _heatmapRefreshInFlight = false;
 app.all("/api/admin/refresh-heatmap", async (req, res) => {
   const secret = process.env.CRON_SECRET;
   const auth = req.headers.authorization;
@@ -2826,28 +2834,40 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
   if (!secret || (auth !== `Bearer ${secret}` && queryKey !== secret)) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-  try {
-    const t0 = Date.now();
-    const flatResults = await refreshHeatmapSnapshots();
-    // Time-series snapshots run after flat — if they fail, flat results are still saved
-    let tsResults = [];
-    try {
-      tsResults = await refreshHeatmapTsSnapshots();
-    } catch (e) {
-      console.error('[heatmap-ts-refresh] failed:', e.message);
-      tsResults = [{ ok: false, error: e.message }];
-    }
-    const elapsed = Date.now() - t0;
-    console.log(`[heatmap-refresh] completed in ${elapsed}ms (flat + ts)`);
-    // Bust in-memory TTL cache so next request picks up fresh snapshot
-    for (const k of _ttlCache.keys()) {
-      if (k.startsWith('heatmap:')) _ttlCache.delete(k);
-    }
-    res.json({ ok: true, elapsed_ms: elapsed, presets: flatResults, ts_presets: tsResults });
-  } catch (err) {
-    console.error("[heatmap-refresh] failed:", err.message, err.stack);
-    res.status(500).json({ error: "Refresh failed", detail: req.user?.is_admin ? err.message : undefined });
+
+  // Prevent overlapping runs — if a previous invocation is still working
+  // (because the DB is slow under backfill load), ack but skip a new one.
+  if (_heatmapRefreshInFlight) {
+    return res.json({ ok: true, status: "already_running", skipped: true });
   }
+
+  // Ack the cron immediately — it just needs "yes I got it"
+  res.json({ ok: true, status: "accepted", note: "running in background" });
+
+  // Do the actual work async. Never throws out of here — all errors logged.
+  _heatmapRefreshInFlight = true;
+  const t0 = Date.now();
+  (async () => {
+    try {
+      const flatResults = await refreshHeatmapSnapshots();
+      let tsResults = [];
+      try {
+        tsResults = await refreshHeatmapTsSnapshots();
+      } catch (e) {
+        console.error('[heatmap-ts-refresh] failed:', e.message);
+        tsResults = [{ ok: false, error: e.message }];
+      }
+      const elapsed = Date.now() - t0;
+      console.log(`[heatmap-refresh] completed in ${elapsed}ms (flat + ts)`);
+      for (const k of _ttlCache.keys()) {
+        if (k.startsWith('heatmap:')) _ttlCache.delete(k);
+      }
+    } catch (err) {
+      console.error("[heatmap-refresh] background error:", err.message, err.stack);
+    } finally {
+      _heatmapRefreshInFlight = false;
+    }
+  })();
 });
 
 // ── Briefing Editor Admin Routes ──────────────────────────────────────────
@@ -3532,6 +3552,465 @@ app.post('/api/admin/threads/merge', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('[admin/threads] merge error:', err.message);
     res.status(500).json({ error: 'Failed to merge threads' });
+  }
+});
+
+// Split a thread: move a subset of its articles into a NEW thread and
+// leave the rest on the original. Editor uses this when a thread has
+// drifted to cover two distinct stories.
+app.post('/api/admin/threads/:id/split', requireAdmin, async (req, res) => {
+  try {
+    const srcId = parseInt(req.params.id, 10);
+    if (!srcId) return res.status(400).json({ error: 'Invalid ID' });
+
+    const {
+      article_ids,                   // articles to move into the new thread
+      new_title,
+      new_description,
+      new_category,
+      new_importance,
+      new_keywords,
+      new_primary_nations,
+      new_geographic_scope,
+      new_status,                    // default 'active'
+    } = req.body || {};
+
+    if (!Array.isArray(article_ids) || !article_ids.length) {
+      return res.status(400).json({ error: 'article_ids[] required' });
+    }
+    if (!new_title) return res.status(400).json({ error: 'new_title required' });
+
+    const moveIds = article_ids.map(x => parseInt(x, 10)).filter(Boolean);
+    if (!moveIds.length) return res.status(400).json({ error: 'No valid article_ids' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Load source thread for metadata defaults
+      const { rows: srcRows } = await client.query(
+        `SELECT id, primary_category, importance, keywords, primary_nations, geographic_scope
+         FROM story_threads WHERE id = $1`, [srcId]);
+      if (!srcRows.length) throw new Error('Source thread not found');
+      const src = srcRows[0];
+
+      // Create new thread
+      const { rows: newRows } = await client.query(`
+        INSERT INTO story_threads
+          (title, description, primary_category, importance, keywords,
+           primary_nations, geographic_scope, status, article_count,
+           first_seen_at, last_updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,NOW(),NOW())
+        RETURNING id
+      `, [
+        new_title,
+        new_description || null,
+        new_category || src.primary_category,
+        new_importance != null ? parseFloat(new_importance) : (src.importance || 5),
+        Array.isArray(new_keywords) ? new_keywords
+          : (typeof new_keywords === 'string' ? new_keywords.split(',').map(s=>s.trim()) : src.keywords || []),
+        Array.isArray(new_primary_nations) ? new_primary_nations
+          : (typeof new_primary_nations === 'string' ? new_primary_nations.split(',').map(s=>s.trim().toUpperCase()) : src.primary_nations || []),
+        new_geographic_scope || src.geographic_scope || 'global',
+        new_status || 'active'
+      ]);
+      const newId = newRows[0].id;
+
+      // Move the requested articles to the new thread. Delete from source
+      // first, then insert into new so we keep the (thread_id, article_id)
+      // primary key uniqueness contract.
+      const { rows: movedRows } = await client.query(`
+        DELETE FROM story_thread_articles
+        WHERE thread_id = $1 AND article_id = ANY($2::int[])
+        RETURNING article_id, relevance_score, is_anchor, added_at
+      `, [srcId, moveIds]);
+
+      for (const r of movedRows) {
+        await client.query(`
+          INSERT INTO story_thread_articles
+            (thread_id, article_id, relevance_score, is_anchor, added_at)
+          VALUES ($1,$2,$3,$4,$5)
+          ON CONFLICT (thread_id, article_id) DO NOTHING
+        `, [newId, r.article_id, r.relevance_score, r.is_anchor, r.added_at]);
+      }
+
+      // Refresh article_count on both threads
+      await client.query(
+        `UPDATE story_threads SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1),
+                                  last_updated_at = NOW()
+         WHERE id = $1`, [srcId]);
+      await client.query(
+        `UPDATE story_threads SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1),
+                                  last_updated_at = NOW()
+         WHERE id = $1`, [newId]);
+
+      await client.query('COMMIT');
+      res.json({ ok: true, new_thread_id: newId, moved_articles: movedRows.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[admin/threads] split error:', err.message);
+    res.status(500).json({ error: 'Failed to split thread: ' + err.message });
+  }
+});
+
+// Hard-delete a thread and its junction rows. The articles themselves are
+// NOT deleted — only the thread grouping and its article memberships.
+app.delete('/api/admin/threads/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM story_thread_articles WHERE thread_id = $1', [id]);
+      const { rowCount } = await client.query('DELETE FROM story_threads WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      if (!rowCount) return res.status(404).json({ error: 'Thread not found' });
+      res.json({ ok: true, deleted_id: id });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[admin/threads] delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete thread: ' + err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Timeline admin CRUD — parallel to threads (Layer 1 of editor completeness)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// List timelines for the editor
+app.get('/api/admin/timelines', requireAdmin, async (req, res) => {
+  try {
+    const status = req.query.status || 'active';
+    const { rows } = await pool.query(`
+      SELECT id, title, description, scope, status, importance, primary_category,
+             geographic_scope, keywords, primary_nations, article_count,
+             distinct_source_count, last_updated_at
+      FROM story_timelines
+      WHERE ($1 = 'all' OR status = $1)
+      ORDER BY importance DESC, last_updated_at DESC
+      LIMIT 500
+    `, [status]);
+    res.json({ timelines: rows });
+  } catch (err) {
+    console.error('[admin/timelines] list error:', err.message);
+    res.status(500).json({ error: 'Failed to list timelines' });
+  }
+});
+
+// Update a timeline's editable fields
+app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const {
+      title, description, scope, primary_category, importance,
+      keywords, primary_nations, status, geographic_scope
+    } = req.body || {};
+
+    const sets = []; const params = [];
+    let pi = 1;
+
+    if (title !== undefined)            { sets.push(`title = $${pi++}`);            params.push(title); }
+    if (description !== undefined)      { sets.push(`description = $${pi++}`);      params.push(description); }
+    if (scope !== undefined)            { sets.push(`scope = $${pi++}`);            params.push(scope || null); }
+    if (primary_category !== undefined) { sets.push(`primary_category = $${pi++}`); params.push(primary_category); }
+    if (importance !== undefined)       { sets.push(`importance = $${pi++}`);       params.push(parseFloat(importance) || 5); }
+    if (keywords !== undefined)         {
+      sets.push(`keywords = $${pi++}`);
+      params.push(Array.isArray(keywords) ? keywords : String(keywords || '').split(',').map(k=>k.trim()).filter(Boolean));
+    }
+    if (primary_nations !== undefined) {
+      sets.push(`primary_nations = $${pi++}`);
+      params.push(Array.isArray(primary_nations) ? primary_nations : String(primary_nations || '').split(',').map(k=>k.trim().toUpperCase()).filter(Boolean));
+    }
+    if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
+    if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
+
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+
+    sets.push(`last_updated_at = NOW()`);
+    params.push(id);
+
+    try {
+      await pool.query(`UPDATE story_timelines SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+    } catch (err) {
+      // story_timelines_scope_unique violation → surface a clean 409
+      if (err.code === '23505') return res.status(409).json({ error: 'Scope already in use by another timeline' });
+      throw err;
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin/timelines] update error:', err.message);
+    res.status(500).json({ error: 'Failed to update timeline' });
+  }
+});
+
+// Merge timelines into a target (mirrors /api/admin/threads/merge)
+app.post('/api/admin/timelines/merge', requireAdmin, async (req, res) => {
+  try {
+    const { target_id, source_ids, new_title, new_description, new_category, new_scope } = req.body || {};
+    if (!target_id || !source_ids?.length) return res.status(400).json({ error: 'target_id and source_ids[] required' });
+
+    const targetId = parseInt(target_id, 10);
+    const srcIds = source_ids.map(x => parseInt(x, 10)).filter(x => x && x !== targetId);
+    if (!srcIds.length) return res.status(400).json({ error: 'No valid source timelines to merge' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Move articles from source timelines into target, skipping duplicates
+      for (const srcId of srcIds) {
+        await client.query(`
+          INSERT INTO story_timeline_articles
+            (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor, added_at)
+          SELECT $1, article_id, parabolic_weight, relevance_score, false, added_at
+          FROM story_timeline_articles
+          WHERE timeline_id = $2
+          ON CONFLICT (timeline_id, article_id) DO NOTHING
+        `, [targetId, srcId]);
+      }
+
+      // Union keywords, recompute counts
+      await client.query(`
+        UPDATE story_timelines SET
+          keywords = (
+            SELECT ARRAY(SELECT DISTINCT UNNEST(keywords) FROM story_timelines WHERE id = ANY($1::int[]))
+          ),
+          article_count = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $2),
+          distinct_source_count = (
+            SELECT COUNT(DISTINCT COALESCE(a.source_id::text, a.youtube_source_id::text))
+            FROM story_timeline_articles sta
+            JOIN news_articles a ON a.id = sta.article_id
+            WHERE sta.timeline_id = $2
+          ),
+          last_updated_at = NOW()
+        WHERE id = $2
+      `, [[targetId, ...srcIds], targetId]);
+
+      // Apply overrides if provided. `new_scope` may collide with the
+      // unique constraint — handle that with a clean 409.
+      if (new_title || new_description || new_category || new_scope) {
+        const sets = []; const params = []; let pi = 1;
+        if (new_title)       { sets.push(`title = $${pi++}`);            params.push(new_title); }
+        if (new_description) { sets.push(`description = $${pi++}`);      params.push(new_description); }
+        if (new_category)    { sets.push(`primary_category = $${pi++}`); params.push(new_category); }
+        if (new_scope)       { sets.push(`scope = $${pi++}`);            params.push(new_scope); }
+        params.push(targetId);
+        try {
+          await client.query(`UPDATE story_timelines SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+        } catch (err) {
+          if (err.code === '23505') {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'new_scope already in use by another timeline' });
+          }
+          throw err;
+        }
+      }
+
+      // Retire source timelines. We null out their scope so the unique
+      // constraint doesn't block a future timeline from claiming the same
+      // slug, and mark status='merged' so they're excluded from editor
+      // lists and builder re-use.
+      await client.query(
+        `UPDATE story_timelines SET status = 'merged', scope = NULL, last_updated_at = NOW()
+         WHERE id = ANY($1::int[])`, [srcIds]);
+
+      await client.query('COMMIT');
+
+      const { rows } = await client.query(
+        'SELECT article_count FROM story_timelines WHERE id = $1', [targetId]);
+      res.json({
+        ok: true,
+        target_id: targetId,
+        articles_merged: rows[0]?.article_count || 0,
+        sources_retired: srcIds.length
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[admin/timelines] merge error:', err.message);
+    res.status(500).json({ error: 'Failed to merge timelines: ' + err.message });
+  }
+});
+
+// Split a timeline (mirrors thread split)
+app.post('/api/admin/timelines/:id/split', requireAdmin, async (req, res) => {
+  try {
+    const srcId = parseInt(req.params.id, 10);
+    if (!srcId) return res.status(400).json({ error: 'Invalid ID' });
+
+    const {
+      article_ids,
+      new_title,
+      new_description,
+      new_scope,
+      new_category,
+      new_importance,
+      new_keywords,
+      new_primary_nations,
+      new_geographic_scope,
+      new_status,
+    } = req.body || {};
+
+    if (!Array.isArray(article_ids) || !article_ids.length) {
+      return res.status(400).json({ error: 'article_ids[] required' });
+    }
+    if (!new_title) return res.status(400).json({ error: 'new_title required' });
+
+    const moveIds = article_ids.map(x => parseInt(x, 10)).filter(Boolean);
+    if (!moveIds.length) return res.status(400).json({ error: 'No valid article_ids' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: srcRows } = await client.query(
+        `SELECT id, primary_category, importance, keywords, primary_nations,
+                geographic_scope, lookback_days, parabolic_peak_hours
+         FROM story_timelines WHERE id = $1`, [srcId]);
+      if (!srcRows.length) throw new Error('Source timeline not found');
+      const src = srcRows[0];
+
+      let newId;
+      try {
+        const { rows: newRows } = await client.query(`
+          INSERT INTO story_timelines
+            (title, description, scope, primary_category, importance, keywords,
+             primary_nations, geographic_scope, status, article_count,
+             lookback_days, parabolic_peak_hours,
+             first_seen_at, last_updated_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,NOW(),NOW())
+          RETURNING id
+        `, [
+          new_title,
+          new_description || null,
+          new_scope || null,
+          new_category || src.primary_category,
+          new_importance != null ? parseFloat(new_importance) : (src.importance || 5),
+          Array.isArray(new_keywords) ? new_keywords
+            : (typeof new_keywords === 'string' ? new_keywords.split(',').map(s=>s.trim()) : src.keywords || []),
+          Array.isArray(new_primary_nations) ? new_primary_nations
+            : (typeof new_primary_nations === 'string' ? new_primary_nations.split(',').map(s=>s.trim().toUpperCase()) : src.primary_nations || []),
+          new_geographic_scope || src.geographic_scope || 'global',
+          new_status || 'active',
+          src.lookback_days || 7,
+          src.parabolic_peak_hours || 24,
+        ]);
+        newId = newRows[0].id;
+      } catch (err) {
+        if (err.code === '23505') {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'new_scope already in use' });
+        }
+        throw err;
+      }
+
+      const { rows: movedRows } = await client.query(`
+        DELETE FROM story_timeline_articles
+        WHERE timeline_id = $1 AND article_id = ANY($2::int[])
+        RETURNING article_id, parabolic_weight, relevance_score, is_anchor, added_at
+      `, [srcId, moveIds]);
+
+      for (const r of movedRows) {
+        await client.query(`
+          INSERT INTO story_timeline_articles
+            (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor, added_at)
+          VALUES ($1,$2,$3,$4,$5,$6)
+          ON CONFLICT (timeline_id, article_id) DO NOTHING
+        `, [newId, r.article_id, r.parabolic_weight, r.relevance_score, r.is_anchor, r.added_at]);
+      }
+
+      // Refresh article_count on both sides
+      for (const tid of [srcId, newId]) {
+        await client.query(`
+          UPDATE story_timelines
+          SET article_count = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1),
+              last_updated_at = NOW()
+          WHERE id = $1
+        `, [tid]);
+      }
+
+      await client.query('COMMIT');
+      res.json({ ok: true, new_timeline_id: newId, moved_articles: movedRows.length });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[admin/timelines] split error:', err.message);
+    res.status(500).json({ error: 'Failed to split timeline: ' + err.message });
+  }
+});
+
+// Remove a single article from a timeline
+app.delete('/api/admin/timelines/:timelineId/articles/:articleId', requireAdmin, async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.timelineId, 10);
+    const articleId  = parseInt(req.params.articleId, 10);
+    if (!timelineId || !articleId) return res.status(400).json({ error: 'Invalid IDs' });
+
+    await pool.query('DELETE FROM story_timeline_articles WHERE timeline_id = $1 AND article_id = $2', [timelineId, articleId]);
+    await pool.query(`
+      UPDATE story_timelines
+      SET article_count = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1),
+          last_updated_at = NOW()
+      WHERE id = $1
+    `, [timelineId]);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin/timelines] remove article error:', err.message);
+    res.status(500).json({ error: 'Failed to remove article' });
+  }
+});
+
+// Hard-delete a timeline. Junction rows cascade via FK (ON DELETE CASCADE)
+// on story_timeline_articles; data panels are scoped differently (no FK)
+// so we clear them explicitly.
+app.delete('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`DELETE FROM data_panels WHERE scope_type = 'timeline' AND scope_id = $1`, [id]);
+      await client.query('DELETE FROM story_timeline_articles WHERE timeline_id = $1', [id]);
+      const { rowCount } = await client.query('DELETE FROM story_timelines WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      if (!rowCount) return res.status(404).json({ error: 'Timeline not found' });
+      res.json({ ok: true, deleted_id: id });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[admin/timelines] delete error:', err.message);
+    res.status(500).json({ error: 'Failed to delete timeline: ' + err.message });
   }
 });
 
