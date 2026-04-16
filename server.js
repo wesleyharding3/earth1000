@@ -19,6 +19,11 @@ const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAcc
 const { extractArticleSignals } = require("./sentimentLexicon");
 const { findFallbackImage, findBucketImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
+const {
+  logEditorEvent,
+  snapshotThread: snapshotThreadRow,
+  snapshotTimeline: snapshotTimelineRow,
+} = require("./editorEventLogger");
 
 const app = express();
 console.log("Node version:", process.version);
@@ -3479,9 +3484,20 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
 
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
+    const before = await snapshotThreadRow(pool, id);
+
     sets.push(`last_updated_at = NOW()`);
     params.push(id);
     await pool.query(`UPDATE story_threads SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+
+    const after = await snapshotThreadRow(pool, id);
+    logEditorEvent(pool, {
+      eventType: 'thread.update',
+      entityType: 'thread',
+      entityId: id,
+      editorId: req.user?.id || null,
+      before, after,
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -3499,6 +3515,10 @@ app.post('/api/admin/threads/merge', requireAdmin, async (req, res) => {
     const targetId = parseInt(target_id, 10);
     const srcIds = source_ids.map(id => parseInt(id, 10)).filter(id => id && id !== targetId);
     if (!srcIds.length) return res.status(400).json({ error: 'No valid source threads to merge' });
+
+    const beforeTarget = await snapshotThreadRow(pool, targetId);
+    const beforeSources = {};
+    for (const sid of srcIds) beforeSources[sid] = await snapshotThreadRow(pool, sid);
 
     const client = await pool.connect();
     try {
@@ -3542,6 +3562,24 @@ app.post('/api/admin/threads/merge', requireAdmin, async (req, res) => {
       await client.query('COMMIT');
 
       const { rows } = await client.query('SELECT article_count FROM story_threads WHERE id = $1', [targetId]);
+
+      const afterTarget = await snapshotThreadRow(pool, targetId);
+      logEditorEvent(pool, {
+        eventType: 'thread.merge',
+        entityType: 'thread',
+        entityId: targetId,
+        editorId: req.user?.id || null,
+        before: beforeTarget,
+        after: afterTarget,
+        context: {
+          source_ids: srcIds,
+          sources_before: beforeSources,
+          new_title: new_title || null,
+          new_description: new_description || null,
+          new_category: new_category || null,
+        },
+      });
+
       res.json({ ok: true, target_id: targetId, articles_merged: rows[0]?.article_count || 0, sources_retired: srcIds.length });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -3582,6 +3620,8 @@ app.post('/api/admin/threads/:id/split', requireAdmin, async (req, res) => {
 
     const moveIds = article_ids.map(x => parseInt(x, 10)).filter(Boolean);
     if (!moveIds.length) return res.status(400).json({ error: 'No valid article_ids' });
+
+    const beforeSrc = await snapshotThreadRow(pool, srcId);
 
     const client = await pool.connect();
     try {
@@ -3645,6 +3685,29 @@ app.post('/api/admin/threads/:id/split', requireAdmin, async (req, res) => {
          WHERE id = $1`, [newId]);
 
       await client.query('COMMIT');
+
+      const afterSrc = await snapshotThreadRow(pool, srcId);
+      const afterNew = await snapshotThreadRow(pool, newId);
+      logEditorEvent(pool, {
+        eventType: 'thread.split',
+        entityType: 'thread',
+        entityId: srcId,
+        editorId: req.user?.id || null,
+        before: beforeSrc,
+        after: afterSrc,
+        context: {
+          new_thread_id: newId,
+          new_thread_snapshot: afterNew,
+          moved_article_ids: movedRows.map(r => r.article_id),
+          new_title, new_description: new_description || null,
+          new_category: new_category || null,
+          new_importance: new_importance ?? null,
+          new_keywords: new_keywords ?? null,
+          new_primary_nations: new_primary_nations ?? null,
+          new_geographic_scope: new_geographic_scope || null,
+        },
+      });
+
       res.json({ ok: true, new_thread_id: newId, moved_articles: movedRows.length });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -3665,6 +3728,12 @@ app.delete('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
+    const before = await snapshotThreadRow(pool, id);
+    // Capture which articles were attached so the miner can learn
+    // "editor tends to delete threads with this pattern of sources".
+    const { rows: articleRows } = await pool.query(
+      `SELECT article_id FROM story_thread_articles WHERE thread_id = $1`, [id]);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -3672,6 +3741,17 @@ app.delete('/api/admin/threads/:id', requireAdmin, async (req, res) => {
       const { rowCount } = await client.query('DELETE FROM story_threads WHERE id = $1', [id]);
       await client.query('COMMIT');
       if (!rowCount) return res.status(404).json({ error: 'Thread not found' });
+
+      logEditorEvent(pool, {
+        eventType: 'thread.delete',
+        entityType: 'thread',
+        entityId: id,
+        editorId: req.user?.id || null,
+        before,
+        after: null,
+        context: { attached_article_ids: articleRows.map(r => r.article_id) },
+      });
+
       res.json({ ok: true, deleted_id: id });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -3741,6 +3821,8 @@ app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
 
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
+    const before = await snapshotTimelineRow(pool, id);
+
     sets.push(`last_updated_at = NOW()`);
     params.push(id);
 
@@ -3751,6 +3833,15 @@ app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
       if (err.code === '23505') return res.status(409).json({ error: 'Scope already in use by another timeline' });
       throw err;
     }
+
+    const after = await snapshotTimelineRow(pool, id);
+    logEditorEvent(pool, {
+      eventType: 'timeline.update',
+      entityType: 'timeline',
+      entityId: id,
+      editorId: req.user?.id || null,
+      before, after,
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -3768,6 +3859,10 @@ app.post('/api/admin/timelines/merge', requireAdmin, async (req, res) => {
     const targetId = parseInt(target_id, 10);
     const srcIds = source_ids.map(x => parseInt(x, 10)).filter(x => x && x !== targetId);
     if (!srcIds.length) return res.status(400).json({ error: 'No valid source timelines to merge' });
+
+    const beforeTarget = await snapshotTimelineRow(pool, targetId);
+    const beforeSources = {};
+    for (const sid of srcIds) beforeSources[sid] = await snapshotTimelineRow(pool, sid);
 
     const client = await pool.connect();
     try {
@@ -3834,6 +3929,25 @@ app.post('/api/admin/timelines/merge', requireAdmin, async (req, res) => {
 
       const { rows } = await client.query(
         'SELECT article_count FROM story_timelines WHERE id = $1', [targetId]);
+
+      const afterTarget = await snapshotTimelineRow(pool, targetId);
+      logEditorEvent(pool, {
+        eventType: 'timeline.merge',
+        entityType: 'timeline',
+        entityId: targetId,
+        editorId: req.user?.id || null,
+        before: beforeTarget,
+        after: afterTarget,
+        context: {
+          source_ids: srcIds,
+          sources_before: beforeSources,
+          new_title: new_title || null,
+          new_description: new_description || null,
+          new_category: new_category || null,
+          new_scope: new_scope || null,
+        },
+      });
+
       res.json({
         ok: true,
         target_id: targetId,
@@ -3878,6 +3992,8 @@ app.post('/api/admin/timelines/:id/split', requireAdmin, async (req, res) => {
 
     const moveIds = article_ids.map(x => parseInt(x, 10)).filter(Boolean);
     if (!moveIds.length) return res.status(400).json({ error: 'No valid article_ids' });
+
+    const beforeSrc = await snapshotTimelineRow(pool, srcId);
 
     const client = await pool.connect();
     try {
@@ -3950,6 +4066,30 @@ app.post('/api/admin/timelines/:id/split', requireAdmin, async (req, res) => {
       }
 
       await client.query('COMMIT');
+
+      const afterSrc = await snapshotTimelineRow(pool, srcId);
+      const afterNew = await snapshotTimelineRow(pool, newId);
+      logEditorEvent(pool, {
+        eventType: 'timeline.split',
+        entityType: 'timeline',
+        entityId: srcId,
+        editorId: req.user?.id || null,
+        before: beforeSrc,
+        after: afterSrc,
+        context: {
+          new_timeline_id: newId,
+          new_timeline_snapshot: afterNew,
+          moved_article_ids: movedRows.map(r => r.article_id),
+          new_title, new_description: new_description || null,
+          new_scope: new_scope || null,
+          new_category: new_category || null,
+          new_importance: new_importance ?? null,
+          new_keywords: new_keywords ?? null,
+          new_primary_nations: new_primary_nations ?? null,
+          new_geographic_scope: new_geographic_scope || null,
+        },
+      });
+
       res.json({ ok: true, new_timeline_id: newId, moved_articles: movedRows.length });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -3970,6 +4110,8 @@ app.delete('/api/admin/timelines/:timelineId/articles/:articleId', requireAdmin,
     const articleId  = parseInt(req.params.articleId, 10);
     if (!timelineId || !articleId) return res.status(400).json({ error: 'Invalid IDs' });
 
+    const before = await snapshotTimelineRow(pool, timelineId);
+
     await pool.query('DELETE FROM story_timeline_articles WHERE timeline_id = $1 AND article_id = $2', [timelineId, articleId]);
     await pool.query(`
       UPDATE story_timelines
@@ -3977,6 +4119,16 @@ app.delete('/api/admin/timelines/:timelineId/articles/:articleId', requireAdmin,
           last_updated_at = NOW()
       WHERE id = $1
     `, [timelineId]);
+
+    const after = await snapshotTimelineRow(pool, timelineId);
+    logEditorEvent(pool, {
+      eventType: 'timeline.remove_article',
+      entityType: 'timeline',
+      entityId: timelineId,
+      editorId: req.user?.id || null,
+      before, after,
+      context: { article_id: articleId },
+    });
 
     res.json({ ok: true });
   } catch (err) {
@@ -3993,6 +4145,12 @@ app.delete('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
+    const before = await snapshotTimelineRow(pool, id);
+    const { rows: articleRows } = await pool.query(
+      `SELECT article_id FROM story_timeline_articles WHERE timeline_id = $1`, [id]);
+    const { rows: panelRows } = await pool.query(
+      `SELECT id FROM data_panels WHERE scope_type = 'timeline' AND scope_id = $1`, [id]);
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -4001,6 +4159,20 @@ app.delete('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
       const { rowCount } = await client.query('DELETE FROM story_timelines WHERE id = $1', [id]);
       await client.query('COMMIT');
       if (!rowCount) return res.status(404).json({ error: 'Timeline not found' });
+
+      logEditorEvent(pool, {
+        eventType: 'timeline.delete',
+        entityType: 'timeline',
+        entityId: id,
+        editorId: req.user?.id || null,
+        before,
+        after: null,
+        context: {
+          attached_article_ids: articleRows.map(r => r.article_id),
+          deleted_panel_ids: panelRows.map(r => r.id),
+        },
+      });
+
       res.json({ ok: true, deleted_id: id });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -4169,8 +4341,20 @@ app.delete('/api/admin/threads/:threadId/articles/:articleId', requireAdmin, asy
     const articleId = parseInt(req.params.articleId, 10);
     if (!threadId || !articleId) return res.status(400).json({ error: 'Invalid IDs' });
 
+    const before = await snapshotThreadRow(pool, threadId);
+
     await pool.query('DELETE FROM story_thread_articles WHERE thread_id = $1 AND article_id = $2', [threadId, articleId]);
     await pool.query('UPDATE story_threads SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1) WHERE id = $1', [threadId]);
+
+    const after = await snapshotThreadRow(pool, threadId);
+    logEditorEvent(pool, {
+      eventType: 'thread.remove_article',
+      entityType: 'thread',
+      entityId: threadId,
+      editorId: req.user?.id || null,
+      before, after,
+      context: { article_id: articleId },
+    });
 
     res.json({ ok: true });
   } catch (err) {
