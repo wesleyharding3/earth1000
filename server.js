@@ -3331,27 +3331,44 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
     if (status) { params.push(status); clauses.push(`st.status = $${params.length}`); }
     if (search) { params.push(`%${search}%`); clauses.push(`(LOWER(st.title) LIKE $${params.length} OR LOWER(st.description) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(st.keywords, ' ')) LIKE $${params.length})`); }
 
-    const { rows } = await pool.query(`
+    // Paginate first, THEN fetch hero images only for the page we return.
+    // The previous correlated subquery ran a story_thread_articles +
+    // news_articles join for every thread row in the DB, which timed out
+    // once dormant threads accumulated (~3k rows × N+1 subqueries).
+    const { rows: pageRows } = await pool.query(`
       SELECT
         st.id, st.title, st.description, st.primary_category,
         st.geographic_scope, st.importance, st.keywords, st.primary_nations,
         st.article_count, st.status, st.last_updated_at,
         st.distinct_source_count, st.breaking_signal_score,
-        COALESCE(st.image_url, (
-          SELECT a.image_url FROM story_thread_articles sta
-          JOIN news_articles a ON a.id = sta.article_id
-          WHERE sta.thread_id = st.id
-            AND a.image_url IS NOT NULL
-            AND a.image_url <> ''
-          ORDER BY a.published_at DESC
-          LIMIT 1
-        )) AS hero_image_url,
         st.image_url AS custom_image_url
       FROM story_threads st
       WHERE ${clauses.join(' AND ')}
       ORDER BY st.last_updated_at DESC NULLS LAST
       LIMIT $1
     `, params);
+
+    // Batched hero-image lookup using DISTINCT ON — one query for all
+    // threads on this page instead of one subquery per row.
+    let rows = pageRows;
+    if (pageRows.length) {
+      const pageIds = pageRows.map(r => r.id);
+      const { rows: heroRows } = await pool.query(`
+        SELECT DISTINCT ON (sta.thread_id)
+          sta.thread_id, a.image_url
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE sta.thread_id = ANY($1)
+          AND a.image_url IS NOT NULL
+          AND a.image_url <> ''
+        ORDER BY sta.thread_id, a.published_at DESC
+      `, [pageIds]);
+      const heroMap = new Map(heroRows.map(r => [r.thread_id, r.image_url]));
+      rows = pageRows.map(r => ({
+        ...r,
+        hero_image_url: r.custom_image_url || heroMap.get(r.id) || null
+      }));
+    }
 
     res.json({ threads: rows });
   } catch (err) {
