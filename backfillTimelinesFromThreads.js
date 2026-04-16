@@ -100,7 +100,7 @@ TYPES OF STORIES THAT SHOULD BECOME UMBRELLAS:
   - Active wars and armed conflicts (Gaza, Lebanon, Ukraine, Sudan, Myanmar, DRC, etc.)
   - Humanitarian crises and displacement (refugee flows, famine, ethnic cleansing)
   - Territorial disputes and occupations (West Bank settlements, Crimea, Kashmir)
-  - Political crises and regime instability (Venezuela, Haiti, coups, contested elections)
+  - Political crises and government instability (Venezuela, Haiti, coups, contested elections)
   - Nuclear/WMD tensions (North Korea, Iran nuclear program)
   - Sanctions and economic warfare (Russia sanctions, Venezuela oil embargo)
   - Genocide and mass atrocities (even if article count is low — these MUST be captured)
@@ -440,7 +440,7 @@ const COUNTRY_UMBRELLAS = [
   {
     scope: "venezuela_crisis",
     title: "Venezuela Crisis and US Confrontation",
-    description: "Venezuela's Maduro regime, confrontation with the US, sanctions, domestic political and economic turmoil, and diaspora impact.",
+    description: "Venezuela's Maduro government, confrontation with the US, sanctions, domestic political and economic turmoil, and diaspora impact.",
     primary_category: "politics",
     geographic_scope: "national",
     importance: 8,
@@ -448,8 +448,8 @@ const COUNTRY_UMBRELLAS = [
   },
   {
     scope: "north_korea_crisis",
-    title: "North Korea Nuclear Tensions and Regime",
-    description: "North Korea's nuclear and missile programs, regime consolidation, diplomatic standoffs, and alliance deepening with Russia and Belarus.",
+    title: "North Korea Nuclear Tensions and Leadership",
+    description: "North Korea's nuclear and missile programs, leadership consolidation, diplomatic standoffs, and alliance deepening with Russia and Belarus.",
     primary_category: "conflict",
     geographic_scope: "regional",
     importance: 8,

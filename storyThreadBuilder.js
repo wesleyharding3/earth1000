@@ -262,7 +262,7 @@ A thread is NOT:
   • A news-of-news meta story ("US Election Coverage and Political Communication Strategy")
 
 ═══ REGIONAL ≠ GLOBAL ═══
-If the story deals with a country's INTERNAL politics at a REGIONAL / subnational scale — skip it. Regional cabinet formations, state-level party activities, provincial assembly elections, chamber-of-commerce leadership, youth council recruitment — all REJECT. Exceptions: presidential elections, regime changes, coups, major national political shifts with international implications.
+If the story deals with a country's INTERNAL politics at a REGIONAL / subnational scale — skip it. Regional cabinet formations, state-level party activities, provincial assembly elections, chamber-of-commerce leadership, youth council recruitment — all REJECT. Exceptions: presidential elections, government changes, coups, major national political shifts with international implications.
 
 ═══ GLOBAL-SCALE REGIONAL EVENTS ARE OK ═══
 A regional event CAN be a thread if it has global scope:
@@ -270,7 +270,7 @@ A regional event CAN be a thread if it has global scope:
   • An armed conflict or insurgency, even if geographically contained
   • A refugee crisis
   • A major epidemic outbreak
-  • A national political shift (regime change, coup, constitutional crisis)
+  • A national political shift (government change, coup, constitutional crisis)
   • A cross-border dispute or incident
 
 ═══ MANUFACTURING / COMMERCIAL NEWS ═══
@@ -286,7 +286,7 @@ ${JSON.stringify(articleData, null, 2)}
 A thread MUST be about at least one of:
 - Armed conflict, military operations, terrorism, insurgency, weapons programs
 - Diplomacy, treaties, summits, sanctions, alliances, state-to-state disputes
-- Elections, coups, governance crises, protests with political stakes, regime changes
+- Elections, coups, governance crises, protests with political stakes, government changes
 - Cross-border economics with geopolitical weight (trade wars, tariffs, energy supply, currency crises, critical-mineral disputes)
 - Espionage, cyberattacks attributable to states, information warfare
 - Major natural disasters, disease outbreaks, or humanitarian crises with state-level response
@@ -322,7 +322,7 @@ The most common failure mode is creating a thread that is just "a summary of dev
 
 These all share the same shape: [Country] + [Abstract Topic A] + (and) + [Abstract Topic B]. They name no actor, no event, no decision, no date. They are TOPIC LABELS for "stuff happening in country X right now." That is not what this platform indexes.
 
-A thread is a STORY ARC: a specific event or development unfolding over time, with named actors and verifiable actions. Routine government news from a single country is not an arc — at most it should attach to an existing arc (e.g. an ongoing election, an active conflict, an active sanctions regime).
+A thread is a STORY ARC: a specific event or development unfolding over time, with named actors and verifiable actions. Routine government news from a single country is not an arc — at most it should attach to an existing arc (e.g. an ongoing election, an active conflict, an active sanctions program).
 
 ═══ TITLE FORMAT REQUIREMENTS (CRITICAL) ═══
 A valid thread title MUST contain at least ONE of:
@@ -382,7 +382,7 @@ If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not
 - Check existing threads first — strongly prefer extending them over creating duplicates
 - Detect semantic connections SQL keyword matching would miss (e.g. "tariffs" + "trade war" + "WTO dispute" = same story)
 - A thread should have a sharp, specific title naming the actors/place/event — never a generic category label like "Sports and Entertainment Coverage" or "Higher Education Trends"
-- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
+- Importance 1-10: 10 = major global event (war, summit, government change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
 
 Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and often correct:
 [

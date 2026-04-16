@@ -102,7 +102,7 @@ TRIGGER PHRASES — when you see any of these, you should be looking for entitie
   - any specific year, decade, or century earlier than the publication year
 
 WHEN A TRIGGER APPEARS:
-  - Mark the relevant entities (the IRGC, the cartel, the regime, etc.) with role='referenced_historical' if they are being discussed in the historical sense.
+  - Mark the relevant entities (the IRGC, the cartel, the government, etc.) with role='referenced_historical' if they are being discussed in the historical sense.
   - Emit a referenced_date for the implied era. If the article says "since the revolution" and you can identify which revolution from context, emit a referenced_date for it (decade or year precision is fine).
   - If a phrase like "the Cold War" or "the colonial era" appears, emit a referenced_date with the start of that era and appropriate date_precision (decade/century).
 

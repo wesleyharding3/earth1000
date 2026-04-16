@@ -190,15 +190,15 @@ VALUES
 ('军售', 'arms deal', 1.0),
 ('武器取引', 'arms deal', 1.0),
 
--- regime change
-('cambio de régimen', 'regime change', 1.0),
-('changement de régime', 'regime change', 1.0),
-('تغيير النظام', 'regime change', 1.0),
-('смена режима', 'regime change', 1.0),
-('regimewechsel', 'regime change', 1.0),
-('mudança de regime', 'regime change', 1.0),
-('rejim değişikliği', 'regime change', 1.0),
-('政权更迭', 'regime change', 1.0),
+-- government change
+('cambio de régimen', 'government change', 1.0),
+('changement de régime', 'government change', 1.0),
+('تغيير النظام', 'government change', 1.0),
+('смена режима', 'government change', 1.0),
+('regimewechsel', 'government change', 1.0),
+('mudança de regime', 'government change', 1.0),
+('rejim değişikliği', 'government change', 1.0),
+('政权更迭', 'government change', 1.0),
 
 -- ═══════════════════════════════════════════════════════════════
 -- 3. GEOPOLITICAL ENTITIES
