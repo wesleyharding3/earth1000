@@ -238,28 +238,34 @@ async function getRankedFeedArticles(options = {}) {
     ? options.hours
     : CANDIDATE_WINDOW_HOURS;
 
+  // Bound the candidate pool pushed into JS rank. Before this cap the query
+  // was returning 70k+ rows (full 72h × all sources), each carrying two
+  // correlated subqueries and three LEFT JOINs — caused multi-second
+  // response times and mobile timeouts. 1500 is generous enough that
+  // diversityRerank/countryVarianceRerank still have room to work, while
+  // letting Postgres pre-filter by base_priority before the expensive joins.
+  const POOL_LIMIT = Math.max(
+    500,
+    Math.min(2000, (parseOptionalPositiveInt(options.poolLimit) || 1500))
+  );
+
   const ambientJoin  = ambient ? `LEFT JOIN news_sources ns_amb ON ns_amb.id = a.source_id` : "";
   const ambientWhere = ambient
     ? `AND COALESCE(ns_amb.fetch_tier, 1) IN (2, 3, 4) AND COALESCE(a.base_priority, 0) >= ${AMBIENT_MIN_BASE_PRIORITY}`
     : "";
 
-  const { rows } = await pool.query(`
-    WITH ranked_by_source AS (
-      SELECT a.id,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
-          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-        ) AS source_rank
-      FROM news_articles a
-      ${ambientJoin}
-      WHERE a.city_id IS NULL
-        AND a.published_at > NOW() - INTERVAL '${hours} hours'
-        ${ambientWhere}
-    ),
-    candidate_articles AS (
-      SELECT id FROM ranked_by_source
-      WHERE source_rank <= $1
-    )
+  // Pull a wider prelim pool (poolMultiplier × POOL_LIMIT) ordered by
+  // base_priority using the dedicated (base_priority DESC, published_at DESC)
+  // partial index. This avoids the expensive ROW_NUMBER window function
+  // that was the prior bottleneck (sorted the entire 70k-row candidate set
+  // just to compute per-source ranks).
+  //
+  // After the SQL returns, we apply the per-source cap in JavaScript, which
+  // is trivially fast on a few-thousand-row array.
+  const PRELIM_MULTIPLIER = 3;
+  const prelimLimit = POOL_LIMIT * PRELIM_MULTIPLIER;
+
+  const { rows: prelimRows } = await pool.query(`
     SELECT ${ARTICLE_FIELDS},
       COALESCE(cfb.boost_score, 1.0) AS country_boost,
       img_a.public_url AS catalog_image_url,
@@ -275,14 +281,38 @@ async function getRankedFeedArticles(options = {}) {
         JOIN story_threads t ON t.id = sta2.thread_id
         WHERE sta2.article_id = a.id
       ) AS thread_status
-    FROM candidate_articles ca
-    JOIN news_articles a ON a.id = ca.id
+    FROM news_articles a
+    ${ambientJoin}
     ${ARTICLE_JOINS}
-    LEFT JOIN country_feed_boost      cfb   ON cfb.country_id = a.country_id
-    LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-    LEFT JOIN image_assets              img_a ON img_a.id      = aia.image_id
-    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [MAX_PER_SOURCE]);
+    LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
+    LEFT JOIN LATERAL (
+      SELECT img.public_url
+      FROM article_image_assignments aia
+      JOIN image_assets img ON img.id = aia.image_id
+      WHERE aia.article_id = a.id
+      ORDER BY COALESCE(aia.refreshed_at, aia.assigned_at) DESC NULLS LAST
+      LIMIT 1
+    ) img_a ON true
+    WHERE a.city_id IS NULL
+      AND a.published_at > NOW() - INTERVAL '${hours} hours'
+      AND a.published_at <= NOW()
+      ${ambientWhere}
+    ORDER BY a.base_priority DESC NULLS LAST, a.published_at DESC NULLS LAST
+    LIMIT $1
+  `, [prelimLimit]);
+
+  // JS-side per-source cap: preserves priority ordering while ensuring no
+  // single outlet floods the pool. Runs in O(n) on ≤ POOL_LIMIT * 3 rows.
+  const perSourceCount = new Map();
+  const rows = [];
+  for (const r of prelimRows) {
+    const key = r.source_key || (r.source_id ? `news:${r.source_id}` : `yt:${r.youtube_source_id}`);
+    const n = perSourceCount.get(key) || 0;
+    if (n >= MAX_PER_SOURCE) continue;
+    perSourceCount.set(key, n + 1);
+    rows.push(r);
+    if (rows.length >= POOL_LIMIT) break;
+  }
 
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);

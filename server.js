@@ -1048,10 +1048,15 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   return _finalizeSearchResults(rows, effectiveLimit, offset);
 }
 
-// Non-English language boost: articles from underrepresented languages
-// get a scoring multiplier to offset their lower volume in the pipeline.
-// Tier A (major non-English languages): 1.35x — significant representation gap
-// Tier B (other non-English): 1.2x — moderate boost
+// Language boost: NEUTRALIZED.
+// Previously non-English languages got 1.2–1.35x multipliers on priority,
+// intended to offset lower pipeline volume. In practice this systematically
+// buried English wire copy (CBS, ABC, NBC, Bloomberg, Fox, Reuters, AP,
+// BBC, Guardian) beneath small non-English regional outlets — e.g. a Bolivia
+// ABI article at raw priority 4.5 became 6.08 and outranked a CBS piece at
+// 5.0. Diversity is handled downstream by countryVarianceRerank, which is
+// the correct layer for that concern. Keeping the kept sets + function
+// signature so call sites don't need to change.
 const NON_ENGLISH_BOOST_A = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
 const NON_ENGLISH_BOOST_B = new Set([
   "fr","de","es","pt","it","tr","hi","bn","ur","id","ms","th","vi","pl",
@@ -1059,13 +1064,8 @@ const NON_ENGLISH_BOOST_B = new Set([
   "ka","hy","az","kk","uz","tg","ps","sw","am","my","km","lo","mn","ne",
 ]);
 
-function getLanguageBoost(lang) {
-  if (!lang) return 1.0;
-  const code = lang.toLowerCase().slice(0, 2);
-  if (code === "en") return 1.0;
-  if (NON_ENGLISH_BOOST_A.has(code)) return 1.35;
-  if (NON_ENGLISH_BOOST_B.has(code)) return 1.2;
-  return 1.15; // any other non-English
+function getLanguageBoost(_lang) {
+  return 1.0;
 }
 
 // ── User Preference Boost Engine ──────────────────────────────────────────
