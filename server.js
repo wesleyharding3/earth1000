@@ -968,7 +968,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
       ) sub
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
-        * POWER(sub.country_boost, 2.0)
+        * COALESCE(sub.country_boost, 1.0)
       ) DESC
       LIMIT $1 OFFSET $2
     `, params);
@@ -1278,22 +1278,18 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
     ...r,
     final_priority: (
       (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-    ) * Math.pow(r.country_boost || 1, 2.0) * getLanguageBoost(r.language)
+    ) * (r.country_boost || 1) * getLanguageBoost(r.language)
   }));
 
   if (results.length >= 8) {
     // Pass 1: order by final_priority with publisher cooldown.
     results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
-    // Pass 2: spread out same-country clusters. Internally this biases
-    // toward recent articles via a +50% recency bonus when picking, which
-    // is fine for country spacing but would leave the feed skewed hard
-    // toward "only recent publishers" if left as the terminal order.
+    // Pass 2: spread out same-country clusters. This MUST be the terminal
+    // pass — any subsequent diversityRerank would re-sort by priority and
+    // clobber the country spacing (e.g. 26 Indonesia articles float back
+    // up because they're from different publishers). Country diversity is
+    // the hardest constraint to satisfy and must be enforced last.
     results = countryVarianceRerank(results);
-    // Pass 3: re-rank by pure final_priority (no recency inflation) while
-    // keeping publisher variance. This restores priority-dominant order
-    // without sacrificing the country spacing pass 2 just did, and
-    // replaces the old global sort that used to clobber diversityRerank.
-    results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
   }
 
   return { total: offset + results.length + (hasMore ? 1 : 0), articles: results };
@@ -1447,7 +1443,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ) sub
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
-        * POWER(sub.country_boost, 2.0)
+        * COALESCE(sub.country_boost, 1.0)
       ) DESC
       ${limitClause}
     `;
@@ -1518,16 +1514,15 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ...r,
       final_priority: (
         (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-      ) * Math.pow(r.country_boost || 1, 2.0)
+      ) * (r.country_boost || 1)
     }));
 
     // Light reranking only when we have enough rows to benefit.
-    // Three passes so the feed has publisher variance, country variance,
+    // Two passes: publisher variance then country variance (terminal).
     // AND priority order — see comment in _finalizeSearchResults for why.
     if (results.length >= 8) {
       results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
       results = countryVarianceRerank(results);
-      results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
     }
 
     // Apply user preference boosts (filtered path)
