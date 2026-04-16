@@ -5374,6 +5374,14 @@ body.flow-maximized #flowArcList {
       border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03);
       flex-shrink: 0; display: block;
     }
+    .cdHero {
+      width: 100%; height: 180px; object-fit: cover; display: block;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.02);
+    }
+    @media (max-width: 768px) {
+      .cdHero { height: 140px; }
+    }
     .cdType {
       font-size: 9px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--grm-gold); margin-bottom: 6px;
     }
@@ -31429,8 +31437,8 @@ body.ticker-active .gTickerLabel {
     const _imgOnErr = _imgRest.length
       ? `(function(el){var f=${JSON.stringify(_imgRest)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';}})(this)`
       : `this.style.display='none'`;
-    const _imgHTML = _imgSrc
-      ? `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
+    const _heroHTML = _imgSrc
+      ? `<img class="cdHero" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
       : '';
 
     detailEl.innerHTML = `
@@ -31441,9 +31449,9 @@ body.ticker-active .gTickerLabel {
           </svg>
         </div>
       </button>
+      ${_heroHTML}
       <div class="cdHeader">
         <div class="cdHeaderTop">
-          ${_imgHTML}
           <div style="flex:1;min-width:0;">
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
