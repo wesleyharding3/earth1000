@@ -209,7 +209,15 @@ const CONFIG = {
   MAX_POPULARITY:      1.60,
   YOUTUBE_POPULARITY_FLOOR: 1.25,
   YOUTUBE_PRIORITY_BOOST:   1.18,
-  THREAD_BOOST:             1.55,   // Articles in story threads rank higher in node feeds
+  // Articles in story threads rank higher in node feeds. The boost is
+  // tiered by the parent thread's lifecycle status: active threads get
+  // a much larger multiplier so they surface at the top of country/city
+  // panels, cooling threads a smaller boost, dormant essentially no
+  // boost (they're archived).
+  THREAD_BOOST:             1.55,   // back-compat alias (= cooling tier)
+  THREAD_BOOST_ACTIVE:      3.00,
+  THREAD_BOOST_COOLING:     1.55,
+  THREAD_BOOST_DORMANT:     1.05,
   MAX_TAG_MULTIPLIER:  1.20,
   MIN_TAG_MULTIPLIER:  1.00,
   CITY_SOURCE_PENALTY: 0.01,
@@ -300,7 +308,8 @@ function calculatePriority({
   isYouTube,
   isCitySource,
   cityPenaltyOverride,
-  inThread
+  inThread,
+  threadStatus
 }) {
   // Recency: exponential decay score, 0→1 (fresh = 1.0, old = MIN_DECAY)
   const recencyScore = computeDecay(publishedAt);
@@ -326,7 +335,15 @@ function calculatePriority({
     : 1.0;
 
   const surfaceBoost = isYouTube ? CONFIG.YOUTUBE_PRIORITY_BOOST : 1.0;
-  const threadBoost  = inThread ? CONFIG.THREAD_BOOST : 1.0;
+  // Thread boost tiered by parent thread status: active threads
+  // surface at the top, cooling threads get a moderate lift, dormant
+  // threads barely boost at all. Falls back to the uniform THREAD_BOOST
+  // when threadStatus isn't provided (e.g. search feed).
+  const threadBoost = !inThread ? 1.0
+    : threadStatus === 'active'  ? CONFIG.THREAD_BOOST_ACTIVE
+    : threadStatus === 'cooling' ? CONFIG.THREAD_BOOST_COOLING
+    : threadStatus === 'dormant' ? CONFIG.THREAD_BOOST_DORMANT
+    : CONFIG.THREAD_BOOST;   // legacy fallback (1.55)
   const finalScore = blended * tierBonus * cityPenalty * surfaceBoost * threadBoost;
 
   return parseFloat(finalScore.toFixed(8));
@@ -481,7 +498,8 @@ function rankArticles(articles = [], maxIntensity, options = {}) {
       publishedAt:     article.published_at,
       isYouTube:       article.youtube_source_id != null,
       isCitySource:    skipCityPenalty ? false : !!article.city_id,
-      inThread:        !!article.in_thread
+      inThread:        !!article.in_thread,
+      threadStatus:    article.thread_status || null
     })
   }));
 

@@ -133,7 +133,18 @@ async function getRankedArticles(countryId, options = {}) {
       ORDER BY id DESC
     )
     SELECT ${ARTICLE_FIELDS},
-      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread
+      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread,
+      (
+        SELECT CASE
+          WHEN bool_or(t.status = 'active')  THEN 'active'
+          WHEN bool_or(t.status = 'cooling') THEN 'cooling'
+          WHEN bool_or(t.status = 'dormant') THEN 'dormant'
+          ELSE NULL
+        END
+        FROM story_thread_articles sta2
+        JOIN story_threads t ON t.id = sta2.thread_id
+        WHERE sta2.article_id = a.id
+      ) AS thread_status
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
@@ -183,7 +194,18 @@ async function getRankedCityArticles(cityId, options = {}) {
       ORDER BY id DESC
     )
     SELECT ${ARTICLE_FIELDS},
-      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread
+      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread,
+      (
+        SELECT CASE
+          WHEN bool_or(t.status = 'active')  THEN 'active'
+          WHEN bool_or(t.status = 'cooling') THEN 'cooling'
+          WHEN bool_or(t.status = 'dormant') THEN 'dormant'
+          ELSE NULL
+        END
+        FROM story_thread_articles sta2
+        JOIN story_threads t ON t.id = sta2.thread_id
+        WHERE sta2.article_id = a.id
+      ) AS thread_status
     FROM candidate_articles ca
     JOIN news_articles a ON a.id = ca.id
     ${ARTICLE_JOINS}
