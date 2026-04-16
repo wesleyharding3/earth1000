@@ -4186,6 +4186,60 @@ app.delete('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Editorial rule miner — Layer 3
+// Trigger a fresh mine of editor_events → editorial_rules.
+// Also expose a read endpoint so the admin UI can inspect / toggle rules.
+// ═══════════════════════════════════════════════════════════════════════════
+app.post('/api/admin/mine-rules', requireAdmin, async (req, res) => {
+  try {
+    const { run: runMiner } = require('./editorialRuleMiner');
+    const result = await runMiner({ db: pool });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[admin/mine-rules] error:', err.message);
+    res.status(500).json({ error: 'Mine failed: ' + err.message });
+  }
+});
+
+app.get('/api/admin/editorial-rules', requireAdmin, async (req, res) => {
+  try {
+    const entityType = req.query.entity_type || null;
+    const { rows } = await pool.query(`
+      SELECT id, rule_key, entity_type, scope, rule_text, override_text,
+             pattern, confidence, sample_count, last_seen_at, last_mined_at,
+             enabled
+      FROM editorial_rules
+      WHERE ($1::text IS NULL OR entity_type = $1 OR entity_type = 'both')
+      ORDER BY enabled DESC, confidence DESC, sample_count DESC
+      LIMIT 200
+    `, [entityType]);
+    res.json({ rules: rows });
+  } catch (err) {
+    console.error('[admin/editorial-rules] list error:', err.message);
+    res.status(500).json({ error: 'List failed' });
+  }
+});
+
+// Toggle / edit a rule (enabled flag + optional override_text)
+app.put('/api/admin/editorial-rules/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+    const { enabled, override_text } = req.body || {};
+    const sets = []; const params = []; let pi = 1;
+    if (enabled !== undefined)       { sets.push(`enabled = $${pi++}`);       params.push(!!enabled); }
+    if (override_text !== undefined) { sets.push(`override_text = $${pi++}`); params.push(override_text || null); }
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+    params.push(id);
+    await pool.query(`UPDATE editorial_rules SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[admin/editorial-rules] update error:', err.message);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
 // Backfill primary_nations from explicit mentions in thread/timeline
 // title + description ONLY. We deliberately do NOT scan article bodies
 // here — that pulled in any country a publisher happened to name in a
