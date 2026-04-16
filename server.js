@@ -3429,7 +3429,7 @@ app.get('/api/admin/threads', requireAdmin, async (req, res) => {
             st.geographic_scope, st.importance, st.keywords, st.primary_nations,
             st.article_count, st.status, st.last_updated_at,
             st.distinct_source_count, st.breaking_signal_score,
-            st.image_url AS custom_image_url
+            NULL::text AS custom_image_url   -- story_threads has no image_url column; hero is resolved from constituent articles below
           FROM story_threads st
           WHERE ${clauses.join(' AND ')}
           ORDER BY st.last_updated_at DESC NULLS LAST
@@ -3490,7 +3490,8 @@ app.get('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const { rows: threadRows } = await pool.query(`
       SELECT id, title, description, primary_category, geographic_scope,
              importance, keywords, primary_nations, article_count, status, last_updated_at,
-             distinct_source_count, breaking_signal_score, image_url
+             distinct_source_count, breaking_signal_score,
+             NULL::text AS image_url   -- column doesn't exist on story_threads
       FROM story_threads WHERE id = $1
     `, [id]);
     if (!threadRows.length) return res.status(404).json({ error: 'Thread not found' });
@@ -3537,7 +3538,9 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     if (primary_nations !== undefined)  { sets.push(`primary_nations = $${pi++}`);  params.push(Array.isArray(primary_nations) ? primary_nations : primary_nations.split(',').map(k => k.trim().toUpperCase())); }
     if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
     if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
-    if (image_url !== undefined)        { sets.push(`image_url = $${pi++}`);        params.push(image_url || null); }
+    // image_url intentionally skipped — story_threads has no image_url column.
+    // Setting it blew up the whole UPDATE with a 500. Hero images live on
+    // constituent articles; a per-thread override column would need a migration.
 
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
 
