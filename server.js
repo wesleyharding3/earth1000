@@ -1317,69 +1317,72 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const fromDate = req.query.from_date?.trim() || null;
     const toDate   = req.query.to_date?.trim()   || null;
 
-    // ── Fast path: default query (no filters, page 0) → serve from TTL cache ──
-    // Routes through rankingService.getRankedFeedArticles so the Feed tab
-    // uses the same pipeline as the country/city drawers:
+    // ── Fast path: default query (no filters) → serve from a cached ranked pool ──
+    // Any page (offset ≥ 0) of the no-filter Feed routes through the same
+    // ranked pool, so pagination stays consistent with page 1. Previously
+    // this path only triggered on offset === 0 — scrolling past the first
+    // 25 articles fell through to _executeNewsSearch, which ordered by
+    // recency (NOT priority) and is what produced the "most recently
+    // fetched articles" dumps (Annahar/Infobae/Balkan regional flood).
+    //
+    // Pipeline:
     //   calculatePriority → diversityRerank (publisher cooldown) →
     //   in-thread boost → city-cap → country_feed_boost → language boost
     //   → countryVarianceRerank (terminal country spread).
-    // Previously this path ran its own SQL and bypassed nearly all of the
-    // intelligence in rankingService/priorityEngine, which is why the feed
-    // looked like 3 Balkan outlets on repeat.
-    const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag && offset === 0;
+    const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag;
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
-      // Cache key bumped (-v2) so old-pipeline results don't linger.
-      const cacheKey = `news/search:default:v2:${effectiveLimit}`;
-      const cached = await ttlCached(cacheKey, 60_000, async () => {
-        // Pull a generous pool so diversityRerank + countryVarianceRerank
-        // have real variety to work with. 5× keeps parity with the previous
-        // _executeNewsSearch POOL_MULTIPLIER.
-        const POOL_MULTIPLIER = 5;
-        const poolLimit = (effectiveLimit + 1) * POOL_MULTIPLIER;
-
-        let articles = await getRankedFeedArticles({ limit: poolLimit, offset: 0 });
-
+      // Pool is large enough to cover ~20 pages of 25. Building and caching
+      // it once per 60s means page N is just an O(1) Array.slice, no extra
+      // DB hit. Shared across all unauthenticated callers.
+      const POOL_SIZE = 500;
+      const cacheKey = `news/search:default:v2:pool:${POOL_SIZE}`;
+      const pool = await ttlCached(cacheKey, 60_000, async () => {
+        let articles = await getRankedFeedArticles({ limit: POOL_SIZE, offset: 0 });
         // Apply language boost on top of the ranking priority. country_boost
-        // was already folded in inside getRankedFeedArticles.
+        // is already folded in inside getRankedFeedArticles.
         for (const a of articles) {
           a.priority = (a.priority || 0) * getLanguageBoost(a.language);
           a.final_priority = a.priority; // legacy field used by _prefResort
         }
         // Priority changed — re-sort before the terminal country-spread pass.
         articles.sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
         // Terminal country-spread pass. Must be last: any subsequent
         // priority-based sort would clobber the spacing.
         if (articles.length >= 8) {
           articles = countryVarianceRerank(articles);
         }
-
-        // Trim to the requested limit
-        const hasMore = articles.length > effectiveLimit;
-        if (hasMore) articles.splice(effectiveLimit);
-
-        return { total: articles.length + (hasMore ? 1 : 0), articles };
+        return articles;
       });
-      // Apply user preference boosts (post-cache, per-user)
+
+      // Per-user preference pass re-orders the cached pool for logged-in
+      // callers. Runs over the full pool (not just the current slice) so
+      // that a user-boosted article on page 3 can move to page 1.
       const prefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
+      let ordered;
       if (prefs) {
-        // Personalized → must not be cached at the edge (each user sees
-        // a different ordering).
-        res.set("Cache-Control", "private, max-age=30");
         const boosts = _buildPrefBoosts(prefs);
-        const personalized = { ...cached, articles: _applyNewsPrefBoosts(cached.articles.map(a => ({ ...a })), boosts) };
-        personalized.total = personalized.articles.length;
-        _prefResort(personalized.articles);
-        return res.json(personalized);
+        ordered = _applyNewsPrefBoosts(pool.map(a => ({ ...a })), boosts);
+        _prefResort(ordered);
+      } else {
+        ordered = pool;
       }
-      // Shared default feed → safe to cache at Cloudflare edge for 60s.
-      // stale-while-revalidate lets CF return the slightly-stale copy while
-      // it refreshes in the background, which eliminates cold-start tail
-      // latency for mobile users on the next minute's first request.
-      // Mirrors the 60_000ms TTL of the in-Node ttlCached() above.
-      res.set("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
-      return res.json(cached);
+
+      const slice   = ordered.slice(offset, offset + effectiveLimit);
+      const hasMore = offset + slice.length < ordered.length;
+
+      if (prefs) {
+        // Personalized → never edge-cache, varies per user.
+        res.set("Cache-Control", "private, max-age=30");
+      } else {
+        // Shared default → safe for Cloudflare edge cache (60s, mirrors
+        // ttlCached TTL). stale-while-revalidate=120 smooths expiry.
+        res.set("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
+      }
+      return res.json({
+        total:    ordered.length + (hasMore ? 1 : 0),
+        articles: slice
+      });
     }
 
     const conditions = [];
