@@ -932,7 +932,8 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     const { rows } = await client.query(`
       SELECT * FROM (
         SELECT
-          a.id, a.title, a.translated_title, a.url, a.article_url,
+          a.id, a.source_id, a.youtube_source_id,
+          a.title, a.translated_title, a.url, a.article_url,
           a.summary, a.translated_summary,
           a.image_url,
           img_a.public_url AS catalog_image_url,
@@ -981,7 +982,8 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     await client2.query('SET statement_timeout = 6000');
     const { rows } = await client2.query(`
       SELECT
-        a.id, a.title, a.translated_title, a.url, a.article_url,
+        a.id, a.source_id, a.youtube_source_id,
+        a.title, a.translated_title, a.url, a.article_url,
         a.summary, a.translated_summary,
         a.image_url,
         NULL AS catalog_image_url,
@@ -1015,7 +1017,8 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   // ── Tier 3: Bare minimum — just articles + country, no joins ──
   const { rows } = await pool.query(`
     SELECT
-      a.id, a.title, a.translated_title, a.url, a.article_url,
+      a.id, a.source_id, a.youtube_source_id,
+      a.title, a.translated_title, a.url, a.article_url,
       a.summary, a.translated_summary, a.image_url,
       NULL AS catalog_image_url,
       a.published_at, a.sentiment_score,
@@ -1376,6 +1379,8 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       SELECT * FROM (
         SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
           a.id,
+          a.source_id,
+          a.youtube_source_id,
           a.title,
           a.translated_title,
           a.url,
@@ -1446,7 +1451,8 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       // ── Tier 2: Strip image joins, shorter timeout ──
       const liteQuery = `
         SELECT
-          a.id, a.title, a.translated_title, a.url, a.article_url,
+          a.id, a.source_id, a.youtube_source_id,
+          a.title, a.translated_title, a.url, a.article_url,
           a.summary, a.translated_summary, a.image_url,
           NULL AS catalog_image_url,
           a.published_at, a.sentiment_score,
