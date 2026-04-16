@@ -301,7 +301,6 @@
       height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
       border-radius: 26px 26px 0 0;
       padding-top: max(24px, calc(env(safe-area-inset-top, 0px) + 12px));
-      top: env(safe-area-inset-top, 0px);
     }
 
     .panelHeader {
@@ -10672,7 +10671,7 @@ const loader = new THREE.TextureLoader();
     const SNAP = {
       min: 300,
       default: () => Math.round(getAppViewportHeight() * 0.55),
-      max:     () => getAppViewportHeight() - getSafeAreaTop() - 10
+      max:     () => getAppViewportHeight() - getSafeAreaTop()
     };
     let snapState = "default";  // "default" | "max"
     // Expose for article panel close to re-apply current snap
