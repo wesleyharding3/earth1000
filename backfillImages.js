@@ -42,6 +42,13 @@ const CANDIDATE_WHERE = `
       AND ${TIER_SCORE_GATE_SQL}`;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("resolve timeout")), ms))
+  ]);
+}
+const RESOLVE_TIMEOUT_MS = 30000;
 
 // ─── Checkpoint ────────────────────────────────────────────────
 async function ensureCheckpointTable() {
@@ -162,7 +169,7 @@ async function main() {
       const chunk = articles.slice(i, i + CONCURRENCY);
 
       const settled = await Promise.allSettled(
-        chunk.map(a => resolveImageForArticle(a.id, { surface: "feed" }))
+        chunk.map(a => withTimeout(resolveImageForArticle(a.id, { surface: "feed" }), RESOLVE_TIMEOUT_MS))
       );
 
       for (let j = 0; j < settled.length; j++) {
