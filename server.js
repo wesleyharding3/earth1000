@@ -3323,55 +3323,76 @@ app.post('/api/admin/briefing-editor/generate-audio/:episodeId', requireAdmin, a
 app.get('/api/admin/threads', requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
-    // Editor only ever shows active threads — cooling/dormant are excluded
-    // to keep the dataset small, the query fast, and the UI focused on
-    // current work. Ignore any status query param.
     const search = (req.query.search || '').trim().toLowerCase();
+    const cacheKey = `admin/threads:${limit}:${search}`;
 
-    const params = [limit];
-    const clauses = ["st.status = 'active'", 'st.article_count >= 1'];
-    if (search) { params.push(`%${search}%`); clauses.push(`(LOWER(st.title) LIKE $${params.length} OR LOWER(st.description) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(st.keywords, ' ')) LIKE $${params.length})`); }
+    // 60s TTL cache matches the timelines endpoint. Admin edits invalidate
+    // cache via the mutation endpoints below if needed; otherwise the
+    // editor sees fresh data within a minute.
+    const payload = await ttlCached(cacheKey, 60_000, async () => {
+      const params = [limit];
+      const clauses = ["st.status = 'active'", 'st.article_count >= 1'];
+      if (search) { params.push(`%${search}%`); clauses.push(`(LOWER(st.title) LIKE $${params.length} OR LOWER(st.description) LIKE $${params.length} OR LOWER(ARRAY_TO_STRING(st.keywords, ' ')) LIKE $${params.length})`); }
 
-    // Paginate first, THEN fetch hero images only for the page we return.
-    // The previous correlated subquery ran a story_thread_articles +
-    // news_articles join for every thread row in the DB, which timed out
-    // once dormant threads accumulated (~3k rows × N+1 subqueries).
-    const { rows: pageRows } = await pool.query(`
-      SELECT
-        st.id, st.title, st.description, st.primary_category,
-        st.geographic_scope, st.importance, st.keywords, st.primary_nations,
-        st.article_count, st.status, st.last_updated_at,
-        st.distinct_source_count, st.breaking_signal_score,
-        st.image_url AS custom_image_url
-      FROM story_threads st
-      WHERE ${clauses.join(' AND ')}
-      ORDER BY st.last_updated_at DESC NULLS LAST
-      LIMIT $1
-    `, params);
+      // Use a dedicated client with a short statement_timeout so the hero
+      // image lookup can't block the response indefinitely when the DB is
+      // under write pressure (e.g. image backfill running).
+      const client = await pool.connect();
+      try {
+        await client.query("SET statement_timeout = 3000");
 
-    // Batched hero-image lookup using DISTINCT ON — one query for all
-    // threads on this page instead of one subquery per row.
-    let rows = pageRows;
-    if (pageRows.length) {
-      const pageIds = pageRows.map(r => r.id);
-      const { rows: heroRows } = await pool.query(`
-        SELECT DISTINCT ON (sta.thread_id)
-          sta.thread_id, a.image_url
-        FROM story_thread_articles sta
-        JOIN news_articles a ON a.id = sta.article_id
-        WHERE sta.thread_id = ANY($1)
-          AND a.image_url IS NOT NULL
-          AND a.image_url <> ''
-        ORDER BY sta.thread_id, a.published_at DESC
-      `, [pageIds]);
-      const heroMap = new Map(heroRows.map(r => [r.thread_id, r.image_url]));
-      rows = pageRows.map(r => ({
-        ...r,
-        hero_image_url: r.custom_image_url || heroMap.get(r.id) || null
-      }));
-    }
+        const { rows: pageRows } = await client.query(`
+          SELECT
+            st.id, st.title, st.description, st.primary_category,
+            st.geographic_scope, st.importance, st.keywords, st.primary_nations,
+            st.article_count, st.status, st.last_updated_at,
+            st.distinct_source_count, st.breaking_signal_score,
+            st.image_url AS custom_image_url
+          FROM story_threads st
+          WHERE ${clauses.join(' AND ')}
+          ORDER BY st.last_updated_at DESC NULLS LAST
+          LIMIT $1
+        `, params);
 
-    res.json({ threads: rows });
+        // Hero images are best-effort: if the join times out (e.g. DB under
+        // write load), we still return thread metadata and leave hero_image_url
+        // null. The editor will just render placeholders for affected rows.
+        let rows = pageRows;
+        if (pageRows.length) {
+          const pageIds = pageRows.map(r => r.id);
+          try {
+            await client.query("SET statement_timeout = 2500");
+            const { rows: heroRows } = await client.query(`
+              SELECT DISTINCT ON (sta.thread_id)
+                sta.thread_id, a.image_url
+              FROM story_thread_articles sta
+              JOIN news_articles a ON a.id = sta.article_id
+              WHERE sta.thread_id = ANY($1)
+                AND a.image_url IS NOT NULL
+                AND a.image_url <> ''
+              ORDER BY sta.thread_id, a.published_at DESC
+            `, [pageIds]);
+            const heroMap = new Map(heroRows.map(r => [r.thread_id, r.image_url]));
+            rows = pageRows.map(r => ({
+              ...r,
+              hero_image_url: r.custom_image_url || heroMap.get(r.id) || null
+            }));
+          } catch (heroErr) {
+            console.warn('[admin/threads] hero image lookup skipped:', heroErr.message);
+            rows = pageRows.map(r => ({
+              ...r,
+              hero_image_url: r.custom_image_url || null
+            }));
+          }
+        }
+
+        return { threads: rows };
+      } finally {
+        client.release();
+      }
+    });
+
+    res.json(payload);
   } catch (err) {
     console.error('[admin/threads] list error:', err.message);
     res.status(500).json({ error: 'Failed to list threads' });
