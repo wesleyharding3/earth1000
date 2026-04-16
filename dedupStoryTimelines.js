@@ -231,7 +231,7 @@ ${JSON.stringify(data, null, 2)}`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
-    max_tokens: 4500,
+    max_tokens: 8192,
     messages:   [{ role: "user", content: prompt }]
   });
 

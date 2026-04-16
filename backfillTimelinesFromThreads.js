@@ -20,19 +20,24 @@
 // ON CONFLICT DO NOTHING. Threads that don't fit any big umbrella are
 // left untouched — no forced clustering.
 
+require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { execFileSync } = require("child_process");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const MODEL = "claude-haiku-4-5";
 
 // ── Config ─────────────────────────────────────────────────────
-const BATCH_SIZE       = 35;            // threads per Claude call
-const MIN_IMPORTANCE   = 5;
-const MIN_ARTICLES     = 2;
+const BATCH_SIZE       = 30;            // threads per Claude call (50 overflows 4k tokens)
+const MIN_IMPORTANCE   = 3;             // lowered from 5 to catch more stories
+const MIN_ARTICLES     = 1;             // lowered from 2 — many real stories fragmented to 1-article threads
 const MIN_CLUSTER_SIZE = 1;             // allow single-thread umbrellas for
                                         // distinct ongoing narratives (e.g.
                                         // Venezuela/Maduro, Myanmar civil war)
+// Dormant threads: include if high-importance (stories that went quiet but are still real)
+const DORMANT_MIN_IMPORTANCE = 5;
+const DORMANT_MIN_ARTICLES   = 2;
 const PARABOLIC_PEAK_H = 24;
 
 // Parabolic weighting identical to storyTimelineBuilder so the seeded
@@ -53,14 +58,20 @@ async function fetchCandidateThreads() {
       t.article_count, t.status,
       t.first_seen_at, t.last_updated_at
     FROM story_threads t
-    WHERE t.status IN ('active','cooling')
-      AND COALESCE(t.importance, 0) >= $1
-      AND COALESCE(t.article_count, 0) >= $2
+    WHERE (
+      (t.status IN ('active','cooling')
+        AND COALESCE(t.importance, 0) >= $1
+        AND COALESCE(t.article_count, 0) >= $2)
+      OR
+      (t.status = 'dormant'
+        AND COALESCE(t.importance, 0) >= $3
+        AND COALESCE(t.article_count, 0) >= $4)
+    )
     ORDER BY
-      CASE t.status WHEN 'active' THEN 0 ELSE 1 END,
+      CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
       t.importance DESC NULLS LAST,
       t.article_count DESC
-  `, [MIN_IMPORTANCE, MIN_ARTICLES]);
+  `, [MIN_IMPORTANCE, MIN_ARTICLES, DORMANT_MIN_IMPORTANCE, DORMANT_MIN_ARTICLES]);
   return rows;
 }
 
@@ -83,13 +94,24 @@ ${knownUmbrellas.map(u => `  • ${u.scope} — ${u.title}`).join("\n")}
 
   return `You are auditing a corpus of news "story threads" and merging them into broad UMBRELLA TIMELINES — the long-running, durable narratives that span weeks or months.
 
-A good umbrella is a macro-story that would remain legible as a coherent arc for weeks: "Iran–Israel war 2025", "Russia–Ukraine war", "Venezuela crisis and US pressure", "Israel–Lebanon conflict", "Gaza ceasefire aftermath", "Trump second-term foreign policy shift", "Sudan civil war". Umbrellas should be BROAD — it's correct to fold 15 threads about different Iran war developments (Hormuz, strikes, ceasefire talks, journalist prosecution, oil markets) into ONE umbrella.
+A good umbrella is a macro-story that would remain legible as a coherent arc for weeks. Umbrellas should be BROAD — it's correct to fold 15 threads about different Iran war developments (Hormuz, strikes, ceasefire talks, journalist prosecution, oil markets) into ONE umbrella.
 
-STRICT RULES — THIS IS CRITICAL:
-  1. Only emit an umbrella if it represents a DURABLE, multi-week story arc. Single-event news items, daily market moves, isolated crimes, one-off corporate announcements, local elections → DO NOT emit. Leave them out entirely.
-  2. Prefer FEW, BIG umbrellas over many small ones. If in doubt, leave it out.
+TYPES OF STORIES THAT SHOULD BECOME UMBRELLAS:
+  - Active wars and armed conflicts (Gaza, Lebanon, Ukraine, Sudan, Myanmar, DRC, etc.)
+  - Humanitarian crises and displacement (refugee flows, famine, ethnic cleansing)
+  - Territorial disputes and occupations (West Bank settlements, Crimea, Kashmir)
+  - Political crises and regime instability (Venezuela, Haiti, coups, contested elections)
+  - Nuclear/WMD tensions (North Korea, Iran nuclear program)
+  - Sanctions and economic warfare (Russia sanctions, Venezuela oil embargo)
+  - Genocide and mass atrocities (even if article count is low — these MUST be captured)
+  - Major diplomatic negotiations (peace talks, ceasefire efforts)
+
+STRICT RULES:
+  1. Capture EVERY ongoing armed conflict and humanitarian crisis, even if only 1-2 threads mention it. Low article volume does NOT mean the story isn't important — it often means the story is underreported.
+  2. Prefer FEW, BIG umbrellas over many small ones. Fold related threads together aggressively.
   3. If a thread fits an umbrella listed in KNOWN UMBRELLAS below, RE-USE that exact scope slug — do NOT invent a variation.
   4. Year-anchor only when the event started in a specific year (e.g. "iran_israel_war_2025"). Otherwise no dates in the slug.
+  5. Single-event news items, daily market moves, isolated crimes, one-off corporate announcements, local elections → DO NOT emit. But ongoing crises with even a single thread → DO emit.
 ${knownBlock}
 For each umbrella return:
   - scope: stable lowercase slug, underscores, e.g. "iran_israel_war_2025", "russia_ukraine_war", "venezuela_us_pressure_2026", "myanmar_civil_war"
@@ -112,7 +134,7 @@ async function classifyBatch(batch, batchNum, totalBatches, knownUmbrellas = [])
   try {
     const resp = await client.messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: "user", content: buildPrompt(batch, knownUmbrellas) }]
     });
     const text = resp.content?.[0]?.text || "";
@@ -191,7 +213,7 @@ ${listing}`;
   try {
     const resp = await client.messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{ role: "user", content: prompt }]
     });
     const text = resp.content?.[0]?.text || "";
@@ -362,6 +384,42 @@ async function persistUmbrella(u) {
 // pass and force-merges all matching threads into one canonical row.
 const COUNTRY_UMBRELLAS = [
   {
+    scope: "iran_us_israel_war_2025",
+    title: "Iran-US-Israel War 2025",
+    description: "The Iran-US-Israel military conflict including strikes, Strait of Hormuz tensions, ceasefire negotiations, and regional fallout.",
+    primary_category: "conflict",
+    geographic_scope: "regional",
+    importance: 10,
+    match: ["iran", "tehran", "irgc", "hormuz", "khamenei", "strait of hormuz"]
+  },
+  {
+    scope: "israel_lebanon_war",
+    title: "Israel-Lebanon War and Hezbollah Conflict",
+    description: "Israel's military campaign in Lebanon, Hezbollah involvement, displacement crisis, ceasefire efforts, and cross-border escalation.",
+    primary_category: "conflict",
+    geographic_scope: "regional",
+    importance: 9,
+    match: ["lebanon", "hezbollah", "beirut", "nasrallah", "litani", "lebanese"]
+  },
+  {
+    scope: "gaza_war",
+    title: "Gaza War and Humanitarian Crisis",
+    description: "Israel's military campaign in Gaza, civilian casualties, humanitarian crisis, ceasefire negotiations, and international response.",
+    primary_category: "conflict",
+    geographic_scope: "regional",
+    importance: 10,
+    match: ["gaza", "palestinian", "hamas", "rafah", "khan younis", "genocide"]
+  },
+  {
+    scope: "west_bank_settler_violence",
+    title: "West Bank Occupation and Settler Violence",
+    description: "Israeli settler violence, military raids, land seizures, and Palestinian resistance in the occupied West Bank.",
+    primary_category: "conflict",
+    geographic_scope: "national",
+    importance: 8,
+    match: ["west bank", "settler", "settlements", "nablus", "jenin", "hebron", "ramallah"]
+  },
+  {
     scope: "sudan_crisis",
     title: "Sudan Civil War and National Crisis",
     description: "Ongoing Sudanese civil war, regional spillover, and domestic political, humanitarian, and economic crises.",
@@ -387,11 +445,48 @@ const COUNTRY_UMBRELLAS = [
     geographic_scope: "national",
     importance: 8,
     match: ["venezuela", "maduro", "caracas", "pdvsa"]
+  },
+  {
+    scope: "north_korea_crisis",
+    title: "North Korea Nuclear Tensions and Regime",
+    description: "North Korea's nuclear and missile programs, regime consolidation, diplomatic standoffs, and alliance deepening with Russia and Belarus.",
+    primary_category: "conflict",
+    geographic_scope: "regional",
+    importance: 8,
+    match: ["north korea", "pyongyang", "kim jong", "dprk", "icbm"]
+  },
+  {
+    scope: "drc_conflict",
+    title: "DRC Congo Conflict and M23 War",
+    description: "Armed conflict in eastern DRC, M23 rebel advances, regional involvement of Rwanda and Uganda, and humanitarian crisis.",
+    primary_category: "conflict",
+    geographic_scope: "regional",
+    importance: 8,
+    match: ["congo", "drc", "m23", "goma", "kivu", "congolese"]
+  },
+  {
+    scope: "ethiopia_crisis",
+    title: "Ethiopia Internal Conflicts and Regional Tensions",
+    description: "Ethiopia's internal armed conflicts including Tigray aftermath, Amhara insurgency, Eritrea tensions, and political instability.",
+    primary_category: "conflict",
+    geographic_scope: "national",
+    importance: 7,
+    match: ["ethiopia", "tigray", "amhara", "eritrea", "addis ababa"]
+  },
+  {
+    scope: "somalia_conflict",
+    title: "Somalia Al-Shabaab War and State Building",
+    description: "Somalia's war against Al-Shabaab, state-building efforts, regional security dynamics, and humanitarian crises.",
+    primary_category: "conflict",
+    geographic_scope: "national",
+    importance: 7,
+    match: ["somalia", "al-shabaab", "mogadishu", "somali"]
   }
 ];
 
 async function runCountrySweep(t0) {
-  console.log(`\n   [+${((Date.now()-t0)/1000).toFixed(1)}s] Country sweep (sudan, myanmar, venezuela)...`);
+  const countryNames = COUNTRY_UMBRELLAS.map(cu => cu.scope.replace(/_/g, ' ')).join(', ');
+  console.log(`\n   [+${((Date.now()-t0)/1000).toFixed(1)}s] Country sweep (${COUNTRY_UMBRELLAS.length} umbrellas: ${countryNames})...`);
 
   // First, drop any main-pass timelines whose scope contains a country
   // keyword but is NOT the canonical country scope. This prevents the
@@ -411,12 +506,12 @@ async function runCountrySweep(t0) {
   }
 
   for (const cu of COUNTRY_UMBRELLAS) {
-    // Find every active/cooling thread that matches this country
+    // Find every active/cooling/dormant thread that matches this country
     const patterns = cu.match.map(w => `%${w}%`);
     const { rows: threads } = await pool.query(`
       SELECT DISTINCT t.id, t.title, t.article_count
       FROM story_threads t
-      WHERE t.status IN ('active','cooling')
+      WHERE t.status IN ('active','cooling','dormant')
         AND (
           ${patterns.map((_, i) => `LOWER(t.title) LIKE $${i + 1}`).join(" OR ")}
           OR EXISTS (
@@ -450,7 +545,7 @@ async function runCountrySweep(t0) {
 async function run() {
   const t0 = Date.now();
   console.log(`📚 Timeline Backfill Audit — ${new Date().toISOString()}`);
-  console.log(`   min_importance=${MIN_IMPORTANCE} min_articles=${MIN_ARTICLES} batch=${BATCH_SIZE}\n`);
+  console.log(`   active/cooling: imp>=${MIN_IMPORTANCE} arts>=${MIN_ARTICLES} | dormant: imp>=${DORMANT_MIN_IMPORTANCE} arts>=${DORMANT_MIN_ARTICLES} | batch=${BATCH_SIZE}\n`);
 
   const threads = await fetchCandidateThreads();
   console.log(`   [+${((Date.now()-t0)/1000).toFixed(1)}s] Candidate threads: ${threads.length}`);
@@ -504,8 +599,22 @@ async function run() {
   // national umbrella covering both external conflicts and domestic issues.
   await runCountrySweep(t0);
 
-  console.log(`\n✅ Backfill done in ${((Date.now()-t0)/1000).toFixed(1)}s.`);
+  // Run dedup to merge obvious duplicates (e.g. iran_us_israel_war + us_iran_conflict)
+  console.log(`\n   [+${((Date.now()-t0)/1000).toFixed(1)}s] Running timeline dedup (--commit)...`);
   await pool.end();
+  try {
+    const out = execFileSync("node", ["dedupStoryTimelines.js", "--commit"], {
+      cwd: __dirname,
+      env: process.env,
+      stdio: "pipe",
+      timeout: 120_000
+    });
+    console.log(out.toString());
+  } catch (err) {
+    console.warn(`   ⚠ Dedup error: ${err.message}`);
+  }
+
+  console.log(`\n✅ Backfill done in ${((Date.now()-t0)/1000).toFixed(1)}s.`);
 }
 
 if (require.main === module) {
