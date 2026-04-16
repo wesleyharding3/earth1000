@@ -2944,29 +2944,38 @@ async function requireAdmin(req, res, next) {
 // List candidate threads for briefing editor (mirrors listCandidateThreads from briefingGenerator)
 app.get('/api/admin/briefing-editor/threads', requireAdmin, async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT
-        st.id, st.title, st.primary_category, st.importance, st.keywords,
-        st.geographic_scope,
-        COUNT(sta.article_id)::int AS recent_articles,
-        COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)::int AS video_count
-      FROM story_threads st
-      JOIN story_thread_articles sta ON sta.thread_id = st.id
-      JOIN news_articles a ON a.id = sta.article_id
-      WHERE st.status = 'active'
-        AND st.last_updated_at > NOW() - INTERVAL '3 days'
-        AND a.published_at > NOW() - INTERVAL '3 days'
-      GROUP BY st.id
-      HAVING COUNT(sta.article_id) >= 1
-      ORDER BY st.importance DESC, COUNT(sta.article_id) DESC
-      LIMIT 100
-    `);
-    res.json({ threads: rows.map(r => ({
-      ...r,
-      hasVideo: r.video_count > 0,
-      keywords: Array.isArray(r.keywords) ? r.keywords : (r.keywords ? [r.keywords] : []),
-      geographic_scope: Array.isArray(r.geographic_scope) ? r.geographic_scope : (r.geographic_scope ? [r.geographic_scope] : [])
-    })) });
+    // Single indexed read off story_threads — no join to story_thread_articles
+    // or news_articles. The previous query did ~7700 primary-key lookups into
+    // news_articles to check each article's published_at, which ran ~30s on
+    // cold cache and routinely tripped the 45s pool statement_timeout (→ 500).
+    //
+    // We use st.article_count (denormalized on story_threads) as the recent-
+    // article count. It's close enough for the editor's "thread has content"
+    // check and is free. hasVideo was computed but never consumed by the
+    // editor UI, so it's gone. 60s TTL coalesces concurrent editor reloads.
+    const payload = await ttlCached('briefing-editor/threads:v3', 60_000, async () => {
+      const { rows } = await pool.query(`
+        SELECT id, title, primary_category, importance, keywords,
+               geographic_scope, article_count
+        FROM story_threads
+        WHERE status = 'active'
+          AND last_updated_at > NOW() - INTERVAL '3 days'
+          AND COALESCE(article_count, 0) >= 1
+        ORDER BY importance DESC, article_count DESC
+        LIMIT 100
+      `);
+      return {
+        threads: rows.map(r => ({
+          ...r,
+          recent_articles: r.article_count || 0,
+          video_count: 0,
+          hasVideo: false,
+          keywords: Array.isArray(r.keywords) ? r.keywords : (r.keywords ? [r.keywords] : []),
+          geographic_scope: Array.isArray(r.geographic_scope) ? r.geographic_scope : (r.geographic_scope ? [r.geographic_scope] : [])
+        }))
+      };
+    });
+    res.json(payload);
   } catch (err) {
     console.error('[briefing-editor] threads error:', err.message);
     res.status(500).json({ error: 'Failed to load threads' });
