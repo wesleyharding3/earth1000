@@ -7771,7 +7771,7 @@ app.get("/api/news/sources-stats", async (req, res) => {
 
       // Fallback: live queries if cron hasn't run yet (first deploy)
       console.warn('[sources-stats] no cache — running live queries (slow)');
-      const [countryDist, countryRank, cityRank, sourceRank, sourceCountry] =
+      const [countryDist, countryRank, cityRank, sourceRank, sourceCountry, dayOfWeek] =
         await Promise.all([
           pool.query(`
             SELECT co.name AS country, co.iso_code, COUNT(*)::int AS articles
@@ -7808,14 +7808,30 @@ app.get("/api/news/sources-stats", async (req, res) => {
             GROUP BY co.id, co.name, co.iso_code
             HAVING COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) >= 1 ORDER BY "sourceCount" DESC LIMIT 200
           `),
+          pool.query(`
+            SELECT EXTRACT(DOW FROM a.published_at)::int AS dow,
+                   COUNT(*)::float / GREATEST(1, COUNT(DISTINCT DATE(a.published_at))) AS "avgArticles",
+                   COUNT(*)::int AS "totalArticles"
+            FROM news_articles a
+            WHERE a.published_at > NOW() - INTERVAL '90 days'
+            GROUP BY EXTRACT(DOW FROM a.published_at)
+            ORDER BY "avgArticles" DESC
+          `),
         ]);
 
+      const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
       return {
         countryDistribution:    countryDist.rows,
         countryRankings:        countryRank.rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) })),
         cityRankings:           cityRank.rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) })),
         sourceRankings:         sourceRank.rows.map(r => ({ ...r, avgPerDay: parseFloat(r.avgPerDay) })),
         countriesBySourceCount: sourceCountry.rows,
+        dayOfWeek:              dayOfWeek.rows.map(r => ({
+          dow: r.dow,
+          day: DOW_NAMES[r.dow] || `Day ${r.dow}`,
+          avgArticles: parseFloat(r.avgArticles),
+          totalArticles: r.totalArticles,
+        })),
       };
     });
     res.json(data);

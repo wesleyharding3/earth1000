@@ -107,6 +107,29 @@ async function computeCountriesBySourceCount(client) {
   return rows;
 }
 
+// ── Query 6: Day-of-week ingestion — avg articles per weekday (last 90 days)
+// Uses 90 days so each weekday has ~13 samples for a meaningful average.
+// EXTRACT(DOW): 0=Sunday .. 6=Saturday.
+const DOW_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+async function computeDayOfWeek(client) {
+  const { rows } = await client.query(`
+    SELECT
+      EXTRACT(DOW FROM a.published_at)::int AS dow,
+      COUNT(*)::float / GREATEST(1, COUNT(DISTINCT DATE(a.published_at))) AS "avgArticles",
+      COUNT(*)::int AS "totalArticles"
+    FROM news_articles a
+    WHERE a.published_at > NOW() - INTERVAL '90 days'
+    GROUP BY EXTRACT(DOW FROM a.published_at)
+    ORDER BY "avgArticles" DESC
+  `);
+  return rows.map(r => ({
+    dow: r.dow,
+    day: DOW_NAMES[r.dow] || `Day ${r.dow}`,
+    avgArticles: parseFloat(r.avgArticles),
+    totalArticles: r.totalArticles,
+  }));
+}
+
 // ── Cache writer (reuses keyword_intelligence_cache table) ──────────────────
 async function writeCache(mode, filterKey, results) {
   await pool.query(`
@@ -137,18 +160,19 @@ async function run() {
     // Disable statement_timeout for these heavy aggregation queries
     await client.query('SET statement_timeout = 0');
 
-    console.log(`[sourcesStatsCron] running 5 aggregation queries in parallel...`);
+    console.log(`[sourcesStatsCron] running 6 aggregation queries in parallel...`);
 
-    const [countryDist, countryRank, cityRank, sourceRank, sourceCountry] =
+    const [countryDist, countryRank, cityRank, sourceRank, sourceCountry, dayOfWeek] =
       await Promise.all([
         computeCountryDistribution(client),
         computeCountryRankings(client),
         computeCityRankings(client),
         computeSourceRankings(client),
         computeCountriesBySourceCount(client),
+        computeDayOfWeek(client),
       ]);
 
-    console.log(`[sourcesStatsCron] queries done (${elapsed(t0)}) — countries: ${countryDist.length}, countryRank: ${countryRank.length}, cityRank: ${cityRank.length}, sourceRank: ${sourceRank.length}, sourceCountry: ${sourceCountry.length}`);
+    console.log(`[sourcesStatsCron] queries done (${elapsed(t0)}) — countries: ${countryDist.length}, countryRank: ${countryRank.length}, cityRank: ${cityRank.length}, sourceRank: ${sourceRank.length}, sourceCountry: ${sourceCountry.length}, dayOfWeek: ${dayOfWeek.length}`);
 
     const payload = {
       countryDistribution: countryDist,
@@ -156,6 +180,7 @@ async function run() {
       cityRankings: cityRank,
       sourceRankings: sourceRank,
       countriesBySourceCount: sourceCountry,
+      dayOfWeek,
     };
 
     await writeCache('sources-stats', 'global', payload);

@@ -5122,10 +5122,11 @@ body.flow-maximized #flowArcList {
 
     .si-section {
       background: #10141c;
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid rgba(74,184,255,0.22);
       border-radius: 14px;
       overflow: hidden;
-      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(74,184,255,0.10);
+      animation: widgetGlowOrbit 6s ease-in-out infinite;
     }
     .si-section-header {
       padding: 12px 16px;
@@ -5190,10 +5191,11 @@ body.flow-maximized #flowArcList {
 
     .gs-category {
       background: #10141c;
-      border: 1px solid rgba(255,255,255,0.06);
+      border: 1px solid rgba(74,184,255,0.22);
       border-radius: 14px;
       overflow: hidden;
-      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.03);
+      box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(74,184,255,0.10);
+      animation: widgetGlowOrbit 6s ease-in-out infinite;
     }
     .gs-category-header {
       padding: 14px 18px;
@@ -5215,10 +5217,11 @@ body.flow-maximized #flowArcList {
 
     .gs-widget {
       background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.05);
+      border: 1px solid rgba(74,184,255,0.20);
       border-radius: 10px;
       padding: 12px 14px;
       margin-bottom: 10px;
+      animation: widgetGlowOrbit 5s ease-in-out infinite;
     }
     .gs-widget:last-child { margin-bottom: 0; }
     .gs-widget-title {
@@ -5251,6 +5254,72 @@ body.flow-maximized #flowArcList {
       .gs-widget { padding: 10px 12px; }
       .gs-category-body { padding: 10px 12px; }
       .gs-category-header { padding: 12px 14px; font-size: 11px; }
+    }
+
+    /* ── Chaotic blue-glow pulse for stats widgets ─────────────────────
+       Multi-layered box-shadow that orbits around the box while pulsing
+       intensity. nth-child rules below give each box a different
+       duration/delay/direction so the pulses never sync up. */
+    @keyframes widgetGlowOrbit {
+      0% {
+        box-shadow:
+          0 0 60px rgba(0,0,0,0.6),
+          0 0 0 1px rgba(74,184,255,0.22),
+          -8px -8px 18px rgba(74,184,255,0.22),
+          -4px -4px 34px rgba(74,184,255,0.10);
+      }
+      25% {
+        box-shadow:
+          0 0 60px rgba(0,0,0,0.6),
+          0 0 0 1px rgba(74,184,255,0.42),
+           8px -8px 22px rgba(140,215,255,0.32),
+           4px -4px 42px rgba(74,184,255,0.16);
+      }
+      50% {
+        box-shadow:
+          0 0 60px rgba(0,0,0,0.6),
+          0 0 0 1px rgba(74,184,255,0.18),
+           8px  8px 18px rgba(74,184,255,0.24),
+           4px  4px 36px rgba(74,184,255,0.12);
+      }
+      75% {
+        box-shadow:
+          0 0 60px rgba(0,0,0,0.6),
+          0 0 0 1px rgba(74,184,255,0.48),
+          -8px  8px 22px rgba(140,215,255,0.32),
+          -4px  4px 42px rgba(74,184,255,0.16);
+      }
+      100% {
+        box-shadow:
+          0 0 60px rgba(0,0,0,0.6),
+          0 0 0 1px rgba(74,184,255,0.22),
+          -8px -8px 18px rgba(74,184,255,0.22),
+          -4px -4px 34px rgba(74,184,255,0.10);
+      }
+    }
+    /* Stagger si-section pulses */
+    .si-section:nth-child(1) { animation-duration: 5.8s; animation-delay: -0.3s; }
+    .si-section:nth-child(2) { animation-duration: 7.1s; animation-delay: -1.2s; animation-direction: reverse; }
+    .si-section:nth-child(3) { animation-duration: 4.6s; animation-delay: -2.7s; }
+    .si-section:nth-child(4) { animation-duration: 8.2s; animation-delay: -0.6s; animation-direction: reverse; }
+    .si-section:nth-child(5) { animation-duration: 5.3s; animation-delay: -3.4s; }
+    .si-section:nth-child(6) { animation-duration: 6.7s; animation-delay: -1.7s; animation-direction: reverse; }
+    .si-section:nth-child(7) { animation-duration: 4.9s; animation-delay: -2.2s; }
+    /* Stagger gs-category pulses */
+    .gs-category:nth-child(1) { animation-duration: 6.4s; animation-delay: -0.5s; animation-direction: reverse; }
+    .gs-category:nth-child(2) { animation-duration: 5.1s; animation-delay: -1.4s; }
+    .gs-category:nth-child(3) { animation-duration: 7.8s; animation-delay: -2.6s; animation-direction: reverse; }
+    .gs-category:nth-child(4) { animation-duration: 4.7s; animation-delay: -0.8s; }
+    .gs-category:nth-child(5) { animation-duration: 6.1s; animation-delay: -3.1s; animation-direction: reverse; }
+    .gs-category:nth-child(6) { animation-duration: 5.5s; animation-delay: -1.9s; }
+    /* Stagger inner gs-widget cards */
+    .gs-grid > .gs-widget:nth-child(2n)   { animation-duration: 4.3s; animation-delay: -0.9s; animation-direction: reverse; }
+    .gs-grid > .gs-widget:nth-child(3n)   { animation-duration: 5.7s; animation-delay: -1.8s; }
+    .gs-grid > .gs-widget:nth-child(4n+1) { animation-duration: 6.4s; animation-delay: -2.6s; animation-direction: reverse; }
+    .gs-grid > .gs-widget:nth-child(5n)   { animation-duration: 4.8s; animation-delay: -3.4s; }
+    .gs-grid > .gs-widget:nth-child(7n)   { animation-duration: 5.2s; animation-delay: -0.4s; animation-direction: reverse; }
+    @media (prefers-reduced-motion: reduce) {
+      .si-section, .gs-category, .gs-widget { animation: none !important; }
     }
 
     #statsAccentCanvas {
@@ -9529,6 +9598,16 @@ window.sourceBiasBadgeHTML = function(bias) {
               <svg class="si-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
             </div>
             <div class="si-section-body" id="siSourceCountryBody">
+              <div class="si-empty">Loading…</div>
+            </div>
+          </div>
+          <div class="si-section collapsed" id="siDayOfWeek">
+            <div class="si-section-header" onclick="this.parentElement.classList.toggle('collapsed')">
+              <svg class="si-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span class="si-title">Day of Week — Avg Articles / Day</span>
+              <svg class="si-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </div>
+            <div class="si-section-body" id="siDayOfWeekBody">
               <div class="si-empty">Loading…</div>
             </div>
           </div>
@@ -25206,9 +25285,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (data.cityRankings) renderRankList('siCityRankBody', data.cityRankings, 'city', 'avgPerDay', n => n?.toFixed(1) || '—');
       if (data.sourceRankings) renderRankList('siSourceRankBody', data.sourceRankings, 'source', 'avgPerDay', n => n?.toFixed(1) || '—');
       if (data.countriesBySourceCount) renderRankList('siSourceCountryBody', data.countriesBySourceCount, 'country', 'sourceCount', fmtNum);
+      if (data.dayOfWeek) renderRankList('siDayOfWeekBody', data.dayOfWeek, 'day', 'avgArticles', n => n != null ? Math.round(n).toLocaleString() : '—');
     } catch (err) {
       console.warn('Sources stats load failed:', err);
-      ['siCountryDistBody','siCountryRankBody','siCityRankBody','siSourceRankBody','siSourceCountryBody']
+      ['siCountryDistBody','siCountryRankBody','siCityRankBody','siSourceRankBody','siSourceCountryBody','siDayOfWeekBody']
         .forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = '<div class="si-empty">Failed to load — try again later</div>'; });
     }
   }
