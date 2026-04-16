@@ -38,6 +38,7 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { loadRulesBlock } = require("./editorialRuleInjector");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -177,7 +178,8 @@ async function askClaudeForMergePlan(timelines) {
     description: (t.description || "").slice(0, 300)
   }));
 
-  const prompt = `You are the timeline editor for a GEOPOLITICS platform. Below is a list of ACTIVE umbrella timelines. Many are duplicates or near-duplicates of each other — the same arc was spawned twice with slightly different titles/scopes. Your job is to find those duplicate clusters and tell me which to merge together.
+  const rulesBlock = await loadRulesBlock('timeline').catch(() => '');
+  const prompt = `${rulesBlock}You are the timeline editor for a GEOPOLITICS platform. Below is a list of ACTIVE umbrella timelines. Many are duplicates or near-duplicates of each other — the same arc was spawned twice with slightly different titles/scopes. Your job is to find those duplicate clusters and tell me which to merge together.
 
 ═══ WHAT COUNTS AS A DUPLICATE ═══
 Two timelines should be merged if they cover the SAME UMBRELLA ARC:

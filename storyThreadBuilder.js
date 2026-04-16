@@ -25,6 +25,7 @@ const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const { normalizeRecentKeywords } = require("./keywordNormalizer");
 const { deepAnalyzeArticle } = require("./deepAnalyzer");
+const { loadRulesBlock } = require("./editorialRuleInjector");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -239,7 +240,8 @@ async function evaluateWithClaude(articles, existingThreads) {
     cat:      t.primary_category
   }));
 
-  const prompt = `You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
+  const rulesBlock = await loadRulesBlock('thread').catch(() => '');
+  const prompt = `${rulesBlock}You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
 
 ═══ BREAKING META-STORY DEFINITION ═══
 A thread here is a SHARP, RIGHT-NOW story that has broken from a single report into a multi-source moment:
@@ -835,7 +837,8 @@ async function getThreadRefreshContext(threadId) {
 }
 
 async function reevaluateThreadContext(thread) {
-  const prompt = `You are refreshing the framing of an ongoing news story thread.
+  const rulesBlock = await loadRulesBlock('thread').catch(() => '');
+  const prompt = `${rulesBlock}You are refreshing the framing of an ongoing news story thread.
 
 CURRENT THREAD:
 ${JSON.stringify({

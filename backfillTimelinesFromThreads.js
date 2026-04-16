@@ -23,6 +23,7 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { loadRulesBlock } = require("./editorialRuleInjector");
 const { execFileSync } = require("child_process");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -76,7 +77,7 @@ async function fetchCandidateThreads() {
 }
 
 // ── Prompt Claude for umbrella groupings ───────────────────────
-function buildPrompt(batch, knownUmbrellas = []) {
+async function buildPrompt(batch, knownUmbrellas = []) {
   const list = batch.map((t, i) => {
     const kws = Array.isArray(t.keywords) ? t.keywords.slice(0, 6).join(", ") : "";
     return `[${t.id}] ${t.title}
@@ -92,7 +93,8 @@ ${knownUmbrellas.map(u => `  • ${u.scope} — ${u.title}`).join("\n")}
 `
     : "";
 
-  return `You are auditing a corpus of news "story threads" and merging them into broad UMBRELLA TIMELINES — the long-running, durable narratives that span weeks or months.
+  const rulesBlock = await loadRulesBlock('timeline').catch(() => '');
+  return `${rulesBlock}You are auditing a corpus of news "story threads" and merging them into broad UMBRELLA TIMELINES — the long-running, durable narratives that span weeks or months.
 
 A good umbrella is a macro-story that would remain legible as a coherent arc for weeks. Umbrellas should be BROAD — it's correct to fold 15 threads about different Iran war developments (Hormuz, strikes, ceasefire talks, journalist prosecution, oil markets) into ONE umbrella.
 
@@ -135,7 +137,7 @@ async function classifyBatch(batch, batchNum, totalBatches, knownUmbrellas = [])
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 8192,
-      messages: [{ role: "user", content: buildPrompt(batch, knownUmbrellas) }]
+      messages: [{ role: "user", content: await buildPrompt(batch, knownUmbrellas) }]
     });
     const text = resp.content?.[0]?.text || "";
     const match = text.match(/\{[\s\S]*\}/);
@@ -196,7 +198,8 @@ async function semanticDedup(umbrellas) {
     .map(u => `  ${u.scope} (${u.thread_ids.length} threads) — ${u.title}`)
     .join("\n");
 
-  const prompt = `Here is a list of UMBRELLA TIMELINE scope slugs. Some are semantic duplicates (e.g. "nepal_political_turmoil" and "nepal_political_crisis" are the same story). Your job: produce a merge map that collapses duplicates into a single canonical slug.
+  const rulesBlock = await loadRulesBlock('timeline').catch(() => '');
+  const prompt = `${rulesBlock}Here is a list of UMBRELLA TIMELINE scope slugs. Some are semantic duplicates (e.g. "nepal_political_turmoil" and "nepal_political_crisis" are the same story). Your job: produce a merge map that collapses duplicates into a single canonical slug.
 
 Rules:
   - Only merge slugs that are genuinely the same macro-narrative. Do NOT merge distinct stories that happen to share a country or category.

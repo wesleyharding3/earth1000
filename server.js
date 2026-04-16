@@ -4194,7 +4194,9 @@ app.delete('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
 app.post('/api/admin/mine-rules', requireAdmin, async (req, res) => {
   try {
     const { run: runMiner } = require('./editorialRuleMiner');
+    const { invalidateCache } = require('./editorialRuleInjector');
     const result = await runMiner({ db: pool });
+    invalidateCache(); // so the next Claude call picks up fresh rules
     res.json({ ok: true, ...result });
   } catch (err) {
     console.error('[admin/mine-rules] error:', err.message);
@@ -4233,6 +4235,7 @@ app.put('/api/admin/editorial-rules/:id', requireAdmin, async (req, res) => {
     if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
     params.push(id);
     await pool.query(`UPDATE editorial_rules SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+    try { require('./editorialRuleInjector').invalidateCache(); } catch {}
     res.json({ ok: true });
   } catch (err) {
     console.error('[admin/editorial-rules] update error:', err.message);
