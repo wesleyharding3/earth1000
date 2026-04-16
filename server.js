@@ -5418,6 +5418,11 @@ app.get("/api/timelines/latest", async (req, res) => {
         const subjectIso = textIsoMap.get(t.timeline_id);
         return {
           ...t,
+          // Expose `id` alongside `timeline_id` / `thread_id`. The SQL aliases
+          // t.id AS timeline_id, so without this, clients that expect `tl.id`
+          // (e.g. earth-editor.html's loadTlSavedPanels(tl.id)) would fire
+          // requests with literal "undefined" in the URL.
+          id: t.timeline_id,
           thread_id: t.timeline_id,
           latest_published_at: t.last_updated_at,
           hero_image_url: h?.hero_image_url || null,
