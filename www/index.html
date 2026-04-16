@@ -21404,8 +21404,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
       let gridRenderedCount = 0;
       let gridScrollLoading = false;
 
+      // ── Per-tab panel isolation ─────────────────────────────────────
+      // When switching tabs, hide (don't close) any open panel so it
+      // doesn't bleed into the new tab. When switching back, un-hide it.
+      // Each tab owns its panel independently.
+      //
+      // Tracked per-tab: whether clusterDetail (.open) and
+      // articleDetailPanel (.visible) were showing when we left.
+      const _tabPanelState = {};
+      let _prevView = null;
+
+      function _saveAndHidePanels(fromView) {
+        if (!fromView) return;
+        const nodePanel = document.getElementById('clusterDetail');
+        const artPanel  = document.getElementById('articleDetailPanel');
+        const nodeOpen    = nodePanel?.classList.contains('open') || false;
+        const articleOpen = artPanel?.classList.contains('visible') || false;
+        _tabPanelState[fromView] = { node: nodeOpen, article: articleOpen };
+        // Hide without destroying — display:none keeps DOM content intact
+        if (nodeOpen)    nodePanel.style.display = 'none';
+        if (articleOpen) artPanel.style.display  = 'none';
+      }
+
+      function _restorePanels(toView) {
+        const nodePanel = document.getElementById('clusterDetail');
+        const artPanel  = document.getElementById('articleDetailPanel');
+        const s = _tabPanelState[toView];
+        if (s && s.node && nodePanel?.classList.contains('open')) {
+          // This tab had a panel open — un-hide it
+          nodePanel.style.display = '';
+        } else if (nodePanel) {
+          // This tab had no panel, or user closed it — ensure hidden
+          nodePanel.style.display = nodePanel.classList.contains('open') ? 'none' : '';
+        }
+        if (s && s.article && artPanel?.classList.contains('visible')) {
+          artPanel.style.display = '';
+        } else if (artPanel) {
+          artPanel.style.display = artPanel.classList.contains('visible') ? 'none' : '';
+        }
+      }
+
       function setView(view) {
+        // Save and hide panels from the tab we're leaving
+        _saveAndHidePanels(_prevView);
+
         currentView = view;
+        _prevView = view;
         pillTimelines.classList.toggle('active', view === 'timelines');
         pillThreads.classList.toggle('active', view === 'threads');
         pillFeed.classList.toggle('active', view === 'feed');
@@ -21437,6 +21481,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (!feedBootstrapped) { feedBootstrapped = true; runSearch(); }
           fetchLeaderTweets();
         }
+
+        // Restore panels belonging to the tab we're entering
+        _restorePanels(view);
       }
 
       pillTimelines.addEventListener('click', () => setView('timelines'));
