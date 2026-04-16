@@ -1364,12 +1364,21 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       // Apply user preference boosts (post-cache, per-user)
       const prefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
       if (prefs) {
+        // Personalized → must not be cached at the edge (each user sees
+        // a different ordering).
+        res.set("Cache-Control", "private, max-age=30");
         const boosts = _buildPrefBoosts(prefs);
         const personalized = { ...cached, articles: _applyNewsPrefBoosts(cached.articles.map(a => ({ ...a })), boosts) };
         personalized.total = personalized.articles.length;
         _prefResort(personalized.articles);
         return res.json(personalized);
       }
+      // Shared default feed → safe to cache at Cloudflare edge for 60s.
+      // stale-while-revalidate lets CF return the slightly-stale copy while
+      // it refreshes in the background, which eliminates cold-start tail
+      // latency for mobile users on the next minute's first request.
+      // Mirrors the 60_000ms TTL of the in-Node ttlCached() above.
+      res.set("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
       return res.json(cached);
     }
 
