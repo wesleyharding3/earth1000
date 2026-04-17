@@ -8294,13 +8294,22 @@ body.flow-maximized #flowArcList {
         width: 100%;
       }
       /* Row 1 toggles (local/global, article/video) match the Row 2 search
-         pill height (30px) on mobile. Overrides the 44px --tap-min rule
+         pill height (30px) on mobile. Box-sizing: border-box absorbs the
+         1px segment border so total outer height is exactly 30px (segment
+         wrapper was 32px otherwise). Overrides the 44px --tap-min rule
          above via higher specificity. */
+      .panelControlsRow1 .panelSortSegment,
+      .panelControlsRow1 .panelMediaSegment,
+      .panelControlsRow1 .panelMediaRow {
+        height: 30px;
+        box-sizing: border-box;
+      }
       .panelControlsRow1 .panelSortOption,
       .panelControlsRow1 .panelMediaOption {
         min-height: 30px;
         height: 30px;
         padding: 0;
+        box-sizing: border-box;
       }
       .panelControlsRow1 .panelSortLabel,
       .panelControlsRow1 .panelMediaOption {
@@ -8324,10 +8333,11 @@ body.flow-maximized #flowArcList {
         flex-shrink: 0;
       }
       .panelControlsRow2 .tagFilterBtn {
-        height: 34px;
-        font-size: 12px;
-        padding: 0 12px;
-        border-radius: 17px;
+        height: 30px;
+        font-size: 11px;
+        padding: 0 10px;
+        border-radius: 16px;
+        box-sizing: border-box;
       }
 
       /* ── Flow controls — prevent side overflow & nudge up ── */
@@ -14538,6 +14548,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           }
           return;
+        }
+
+        // ── Mobile country polygon hit-test ────────────────────────────
+        // Desktop uses a capture-phase click on the canvas that goes
+        // through the polygon layer's geodesic hit-test; on mobile the
+        // synthetic click (a) may not fire reliably and (b) arrives after
+        // the panel has opened and captured it. So for country view we
+        // ask the polygon layer directly: "what country is under this
+        // tap?" and queue the pick with full polygon illumination. If no
+        // polygon hit (ocean / microstate), fall through to the old
+        // centroid screen-space sweep below.
+        if (currentViewMode === "country" && window.__polygonLayer?.hitTestAt) {
+          const _polyHit = window.__polygonLayer.hitTestAt(touch.clientX, touch.clientY);
+          if (_polyHit?.key) {
+            const _hitKey = String(_polyHit.key).toUpperCase().trim();
+            const _pickedIdx = countries.findIndex(c => (c?.iso_code || '').toUpperCase() === _hitKey);
+            if (_pickedIdx >= 0) {
+              const _pickedData = countries[_pickedIdx];
+              _pendingTouchPick = () => {
+                touchNodeSelectTime = Date.now();
+                lockAmbientRotation();
+                selectedNodeIndex = _pickedIdx; isFocused = true;
+                preFocusZoom = camera.position.z;
+                focusCountry(_pickedData);
+                if (window.__polygonLayer?.selectCountry) {
+                  window.__polygonLayer.selectCountry(_hitKey);
+                }
+                queueFocusPanelOpen(() => openNodePanel(_pickedData, "country"), { immediate: true });
+              };
+              _pendingTouchPickTime = Date.now();
+              return;
+            }
+          }
         }
 
         // Screen-space sweep — same logic as click handler
@@ -35720,10 +35763,32 @@ body.ticker-active .gTickerLabel {
   };
 
   // Expose for console / other modules
+  // Screen-coords hit test: the mobile touchstart handler uses this
+  // instead of the old centroid screen-space sweep, so a tap anywhere
+  // inside a country polygon resolves to that country (not the nearest
+  // centroid). Returns { key, name } on hit, null otherwise.
+  function hitTestAt(clientX, clientY) {
+    if (!_ready) return null;
+    const ll = screenToLatLon(clientX, clientY);
+    if (!ll) return null;
+    const result = window.hitTestGlobe(ll.lat, ll.lon, currentZoomFactor());
+    if (!result) return null;
+    if (result.inside && result.inside.length) {
+      const t = result.inside[0];
+      return { key: t.key, name: t.name };
+    }
+    if (result.fan && result.fan.length) {
+      const t = result.fan[0];
+      return { key: t.key, name: t.name };
+    }
+    return null;
+  }
+
   window.__polygonLayer = {
     selectCountry,
     hideFan,
     repaint,
+    hitTestAt,
     setHoveredKey: (k) => { hoveredKey = k; repaint(); },
     clearSelection: () => {
       hoveredKey = null;
