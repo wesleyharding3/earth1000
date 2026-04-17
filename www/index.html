@@ -15509,11 +15509,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // tap screen-coordinate and open its panel (tapping
               // "Atlanta" → Maldives panel bug on iOS Capacitor).
               e.stopPropagation();
+              e.preventDefault();
+              lockAmbientRotation();
+              preFocusZoom = camera.position.z;
               focusCountry(country);
-              // Also open the country's actual panel — matches what
-              // clicking the globe-node does so search → panel is
-              // consistent across entry points.
-              try { queueFocusPanelOpen(() => openNodePanel(country, "country"), { immediate: true }); } catch (_) {}
+              try { openNodePanel(country, "country"); targetZoom = 2.3; } catch (_) {}
               resultsContainer.style.display = "none";
               searchInput.value = country.name;
             });
@@ -15539,8 +15539,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
               '</div>';
             row.addEventListener("click", (e) => {
               e.stopPropagation();
+              e.preventDefault();
+              lockAmbientRotation();
+              preFocusZoom = camera.position.z;
               focusCity(city);
-              try { queueFocusPanelOpen(() => openNodePanel(city, "city"), { immediate: true }); } catch (_) {}
+              try { openNodePanel(city, "city"); targetZoom = 2.3; } catch (_) {}
               resultsContainer.style.display = "none";
               searchInput.value = city.name;
             });
