@@ -1767,35 +1767,57 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ) DESC
     `;
 
-    let rows;
-    try {
-      const result = await pool.query(filteredQuery, params);
-      rows = result.rows;
-    } catch (err) {
-      console.warn('[news/search] Filtered query failed:', err.message);
-      rows = [];
-    }
+    // Wrap SQL + base-rerank in the in-process TTL cache. Concurrent requests
+    // for the same filter collapse into one DB query; stale-while-revalidate
+    // serves the previous result instantly while a background refresh runs.
+    // Cache key covers every filter that influences the result — if two
+    // callers pass the same filter combo, the pipeline runs once.
+    //
+    // User-preference boosts are NOT cached here: they're per-user and
+    // lightweight, so we re-apply them to a shallow copy after the cache hit.
+    const tagQ = req.query.tag ? String(req.query.tag) : '';
+    const fromKey  = fromIds  ? fromIds.slice().sort((a,b)=>a-b).join(',') : '';
+    const aboutKey = aboutIds ? aboutIds.slice().sort((a,b)=>a-b).join(',') : '';
+    const filterCacheKey =
+      `news/search:filtered:v1:${effectiveLimit}:${offset}` +
+      `:from=${fromKey}:about=${aboutKey}:kw=${keyword || ''}` +
+      `:fd=${fromDate || ''}:td=${toDate || ''}:tag=${tagQ}`;
 
-    // Check if there's a next page, then trim the extra row
-    const hasMore = rows.length > effectiveLimit;
-    if (hasMore) rows.pop();
+    const cachedSlice = await ttlCached(filterCacheKey, 60_000, async () => {
+      let rows;
+      try {
+        const result = await pool.query(filteredQuery, params);
+        rows = result.rows;
+      } catch (err) {
+        console.warn('[news/search] Filtered query failed:', err.message);
+        rows = [];
+      }
 
-    let results = rows.map(r => ({
-      ...r,
-      final_priority: (
-        (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-      ) * (r.country_boost || 1)
-    }));
+      const hasMore = rows.length > effectiveLimit;
+      if (hasMore) rows.pop();
 
-    // Light reranking only when we have enough rows to benefit.
-    // Two passes: publisher variance then country variance (terminal).
-    // AND priority order — see comment in _finalizeSearchResults for why.
-    if (results.length >= 8) {
-      results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
-      results = countryVarianceRerank(results);
-    }
+      let baseResults = rows.map(r => ({
+        ...r,
+        final_priority: (
+          (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
+        ) * (r.country_boost || 1)
+      }));
 
-    // Apply user preference boosts (filtered path)
+      // Light reranking only when we have enough rows to benefit.
+      // Two passes: publisher variance then country variance (terminal).
+      if (baseResults.length >= 8) {
+        baseResults = diversityRerank(baseResults.map(r => ({ ...r, priority: r.final_priority })));
+        baseResults = countryVarianceRerank(baseResults);
+      }
+
+      return { results: baseResults, hasMore };
+    });
+
+    const hasMore = cachedSlice.hasMore;
+    // Shallow-copy so per-user preference boosts don't mutate the cached array
+    let results = cachedSlice.results.map(r => ({ ...r }));
+
+    // Apply user preference boosts (per-user, not cached)
     const _fPrefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
     if (_fPrefs) {
       results = _applyNewsPrefBoosts(results, _buildPrefBoosts(_fPrefs));
