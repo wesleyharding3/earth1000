@@ -1336,25 +1336,49 @@ function _applyThreadPrefBoosts(items, boosts) {
   return items;
 }
 
-// Re-rank articles by final_priority while preserving publisher variance.
+// Re-sort articles by boosted final_priority, then re-apply the same
+// iterative per-source cap that _finalizeSearchResults uses. Previous
+// implementation called `diversityRerank` with COOLDOWN_SLOTS=5, which
+// on a 25-article page dominated by ~5 pref-boosted publishers (home
+// country + region) produced a rigid 5-way rotation: slot 1 UNIMEDIA,
+// 2 NATIONEN, 3 AL KHALEEJ, 4 DIARIO, 5 LA CROIX, 6 UNIMEDIA, … exactly
+// the pattern the user was seeing on the Feed tab when signed in.
 //
-// Was: global sort by final_priority with a 3% recency tiebreak. That sort
-// ran AFTER diversityRerank, and because recent articles have very similar
-// final_priority values, the 3% band almost always fired → recency sort →
-// publisher clustering. When a user's pref boost (home/region 1.4×/1.25×)
-// bumped e.g. Bosnia + Philippines articles to the top, the burst-publish
-// pattern from those countries' sources flooded the feed in recency order.
-//
-// Now: another diversityRerank pass on the boosted priorities. Higher-
-// priority articles still surface first (the algorithm picks the best
-// eligible at every slot), but a COOLDOWN_SLOTS=5 gap is enforced between
-// repeat publishers so the feed can't cluster.
+// The new behavior preserves the intent of the pref system (home/region
+// articles surface first) without the forced rotation artifact.
 function _prefResort(articles) {
   if (articles.length < 2) return;
-  const diversified = diversityRerank(
-    articles.map(a => ({ ...a, priority: a.final_priority || 0 }))
-  );
-  articles.splice(0, articles.length, ...diversified);
+  // Sort strictly by boosted final_priority
+  articles.sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
+  // Apply iterative cap (starts at 2/source, relaxes if pool lacks
+  // diversity) — matches the cap in _finalizeSearchResults so the
+  // personalized slice never shows more than 2 articles per publisher
+  // unless variety is genuinely limited.
+  const keyOf = (r) => r.source_id
+    ? `s:${r.source_id}`
+    : r.youtube_source_id
+      ? `y:${r.youtube_source_id}`
+      : `n:${r.source_name || "unknown"}`;
+  const targetSize = articles.length;
+  let capped = articles;
+  for (let cap = 2; cap <= 10; cap += 1) {
+    const counts = new Map();
+    const picked = [];
+    for (const r of articles) {
+      const k = keyOf(r);
+      const n = counts.get(k) || 0;
+      if (n < cap) {
+        picked.push(r);
+        counts.set(k, n + 1);
+      }
+      if (picked.length >= targetSize) break;
+    }
+    if (picked.length >= targetSize) {
+      capped = picked;
+      break;
+    }
+  }
+  articles.splice(0, articles.length, ...capped);
 }
 
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
