@@ -14990,7 +14990,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           await wait(120);
 
           // ═══════════════════════════════════════════════════════════════
-          // PHASE 1: Bottom ticker + page nav slide up from below
+          // PHASE 1: Bottom ticker + page nav slide up, compass + scale
+          //          start simultaneously (don't wait for ticker to finish)
           // ═══════════════════════════════════════════════════════════════
           const pageNav = document.getElementById("pageNav");
           const globalTicker = document.getElementById("globalTicker");
@@ -15013,7 +15014,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               globalTicker.style.opacity = "1";
             }
           }, 80);
-          await wait(280);
+          // Don't wait for ticker — start compass/scale in parallel
+          await wait(100);
 
           // ═══════════════════════════════════════════════════════════════
           // PHASE 2: Top nav buttons fade in quick sequence
@@ -15045,6 +15047,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // PHASE 3: Compass + Scale animation
           // ═══════════════════════════════════════════════════════════════
 
+          // Prevent render-loop updateScaleBar() from rebuilding labels
+          // while we're animating them.
+          window.__scaleBarIntroActive = true;
+
           // ─── 3a. Point fades in ───
           dot.classList.add("phase1");
           await wait(117);
@@ -15054,17 +15060,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // ─── 3c. Scale: top cap appears, then vertical line draws down ───
           const labels = labelsEl ? Array.from(labelsEl.querySelectorAll(".scaleBarLabel")) : [];
-          // Per-label fade duration. The stagger below uses the same value so
-          // each label finishes fading in before the next one starts — a true
-          // sequential reveal (2000 → 1500 → 1000 → 500 → 0), no overlap.
-          const LABEL_FADE_MS = 1200;
-          labels.forEach(lbl => { lbl.style.opacity = "0"; lbl.style.transform = "translateX(8px)"; lbl.style.transition = `opacity ${LABEL_FADE_MS}ms ease-out, transform ${LABEL_FADE_MS}ms ease-out`; });
+          const LABEL_FADE_MS = 600;
+          labels.forEach(lbl => {
+            lbl.style.opacity = "0";
+            lbl.style.transform = "translateX(6px)";
+            lbl.style.transition = "none";
+          });
 
-          // Get bar height so we can use pixel-based clip (avoids % rounding issues with ::before/::after)
           const barH = barLine ? barLine.offsetHeight : 120;
-          const capH = 2; // height of ::before / ::after caps
+          const capH = 2;
 
-          // Show just the top cap first
           if (barLine) {
             barLine.style.opacity = "1";
             barLine.classList.remove("si-draw");
@@ -15081,14 +15086,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           await wait(83);
           stemLine.style.filter = "";
 
-          // ─── 3e. Vertical line draws down, ticks + labels appear at edge ───
+          // ─── 3e. Scale bar draws down + labels fade in sequentially ───
           const scaleTicks = barLine ? Array.from(barLine.querySelectorAll(".scaleBarTick")) : [];
           scaleTicks.forEach(tk => { tk.style.opacity = "0"; tk.style.transition = "opacity 80ms ease-out"; });
           const scaleDuration = 300;
           const scaleStart = performance.now();
-          const labelCount = labels.length;
           const tickCount = scaleTicks.length;
-          const labelRevealed = new Array(labelCount).fill(false);
           const tickRevealed = new Array(tickCount).fill(false);
 
           await new Promise(resolve => {
@@ -15096,12 +15099,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const elapsed = now - scaleStart;
               const t = Math.min(elapsed / scaleDuration, 1);
               const eased = 1 - Math.pow(1 - t, 2.5);
-
-              // Reveal from top down in pixels: start after top cap, end at full height
               const revealPx = capH + eased * (barH - capH);
               if (barLine) barLine.style.clipPath = `inset(0 0 ${barH - revealPx}px 0)`;
-
-              // Ticks (nicks) fade in right as the bar edge crosses them
               for (let i = 0; i < tickCount; i++) {
                 const tickPos = tickCount > 1 ? (i + 1) / (tickCount + 1) : 0.5;
                 if (!tickRevealed[i] && eased >= tickPos) {
@@ -15109,27 +15108,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   scaleTicks[i].style.opacity = "1";
                 }
               }
-
               if (t < 1) requestAnimationFrame(scaleTick);
               else resolve();
             }
             requestAnimationFrame(scaleTick);
           });
 
-          // Labels fade in one by one — strictly sequential. Stagger equals
-          // the per-label fade duration so label N finishes at exactly the
-          // moment label N+1 starts. No overlap.
-          const labelStagger = LABEL_FADE_MS;
-          for (let i = 0; i < labelCount; i++) {
-            setTimeout(() => {
-              labels[i].style.opacity = "1";
-              labels[i].style.transform = "translateX(0)";
-            }, i * labelStagger);
-          }
-          // Wait for the last label's fade to finish before moving on.
-          await wait(labelCount * labelStagger);
+          // Labels fade in sequentially — each starts after the previous
+          // finishes. Runs concurrently with the compass sweep below.
+          const labelCount = labels.length;
+          const LABEL_STAGGER = LABEL_FADE_MS; // next starts when previous ends
+          const labelsDone = new Promise(resolve => {
+            labels.forEach((lbl, i) => {
+              setTimeout(() => {
+                lbl.style.transition = `opacity ${LABEL_FADE_MS}ms ease-out, transform ${LABEL_FADE_MS}ms ease-out`;
+                void lbl.offsetWidth; // flush
+                lbl.style.opacity = "1";
+                lbl.style.transform = "translateX(0)";
+              }, i * LABEL_STAGGER);
+            });
+            setTimeout(resolve, labelCount * LABEL_STAGGER + LABEL_FADE_MS);
+          });
 
-          // ─── 3e-ii. Bar + bottom cap fully visible — shimmer entire scale ───
+          // ─── 3e-ii. Bar + bottom cap fully visible — shimmer ───
           if (barLine) barLine.style.clipPath = "";
           scaleEl.classList.add("si-shimmer");
 
@@ -15178,8 +15179,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           compassEl.classList.add("ci-outline-build");
 
           // ═══════════════════════════════════════════════════════════════
-          // Cleanup
+          // Cleanup — wait for labels to finish fading, then release guard
           // ═══════════════════════════════════════════════════════════════
+          await labelsDone;
           await wait(200);
           compassEl.classList.remove("ci-pulse", "ci-outline-build");
           scaleEl.classList.remove("hud-intro", "si-shimmer");
@@ -15187,11 +15189,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           compassEl.style.maskImage = "";
           if (barLine) { barLine.style.clipPath = ""; }
           document.querySelectorAll(".compass-tick, .compass-letter, .compass-arrow-line, .compass-arrow-head").forEach(el => { el.style.opacity = ""; });
-          if (labels.length) labels.forEach(l => { l.style.opacity = ""; l.style.transform = ""; l.style.transition = ""; });
+          labels.forEach(l => { l.style.opacity = ""; l.style.transform = ""; l.style.transition = ""; });
           scaleTicks.forEach(t => { t.style.opacity = ""; t.style.transition = ""; });
           navBtns.forEach(btn => { btn.style.opacity = ""; btn.style.transform = ""; btn.style.transition = ""; });
           if (searchBtn) { searchBtn.style.opacity = ""; searchBtn.style.transform = ""; searchBtn.style.transition = ""; }
           [pageNav, globalTicker].forEach(el => { if (!el) return; el.style.transform = ""; el.style.opacity = ""; el.style.transition = ""; });
+          // Release guard — render loop can rebuild labels again
+          window.__scaleBarIntroActive = false;
         }
 
         run();
