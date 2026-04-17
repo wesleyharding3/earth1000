@@ -1641,31 +1641,45 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     }
 
     if (!tier1Ok) {
-      // ── Tier 2: Strip image joins, shorter timeout ──
+      // ── Tier 2: Strip image joins, shorter timeout, but preserve the
+      // priority-weighted ordering so paginated batches stay consistent
+      // with Tier 1. (Previously this fell back to ORDER BY published_at
+      // which mixed in older results on subsequent batches.)
       const liteQuery = `
-        SELECT
-          a.id, a.source_id, a.youtube_source_id,
-          a.title, a.translated_title, a.url, a.article_url,
-          a.summary, a.translated_summary, a.image_url,
-          NULL AS catalog_image_url,
-          a.published_at, a.sentiment_score,
-          NULL AS language, a.base_priority,
-          COALESCE(ns.name, ys.name) AS source_name,
-          NULL AS source_summary,
-          COALESCE(ns.bias, 'unknown') AS source_bias,
-          NULL AS site_url,
-          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-          1.0 AS country_boost, 1.0 AS recency_decay,
-          a.media_type, a.video_id, a.duration_seconds
-        FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        JOIN countries src_co ON src_co.id = a.country_id
-        ${needsLocJoin ? `
-          JOIN article_locations al ON al.article_id = a.id
-        ` : ""}
-        ${whereClause}
-        ORDER BY a.published_at DESC
+        SELECT * FROM (
+          SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""}
+            a.id, a.source_id, a.youtube_source_id,
+            a.title, a.translated_title, a.url, a.article_url,
+            a.summary, a.translated_summary, a.image_url,
+            NULL AS catalog_image_url,
+            a.published_at, a.sentiment_score,
+            NULL AS language, a.base_priority,
+            COALESCE(ns.name, ys.name) AS source_name,
+            NULL AS source_summary,
+            COALESCE(ns.bias, 'unknown') AS source_bias,
+            NULL AS site_url,
+            src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+            COALESCE(cfb.boost_score, 1.0) AS country_boost,
+            GREATEST(
+              POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+              0.02
+            ) AS recency_decay,
+            a.media_type, a.video_id, a.duration_seconds
+          FROM news_articles a
+          LEFT JOIN news_sources ns ON ns.id = a.source_id
+          LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+          JOIN countries src_co ON src_co.id = a.country_id
+          LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
+          ${needsLocJoin ? `
+            JOIN article_locations al ON al.article_id = a.id
+          ` : ""}
+          ${whereClause}
+          ${needsLocJoin ? "ORDER BY a.id" : ""}
+        ) sub
+        ORDER BY (
+          (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
+          * POWER(COALESCE(sub.country_boost, 1.0), 2.0)
+        ) DESC
         ${limitClause}
       `;
       const client2 = await pool.connect();

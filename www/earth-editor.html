@@ -776,10 +776,138 @@
          TAB 3: TIMELINES
          ═══════════════════════════════════════════════════════════════ -->
     <div id="tab-timelines" class="hidden">
-      <input type="text" class="search-input" id="tl-search" placeholder="Search timelines by title, category, keywords..." oninput="filterTimelines()" />
+      <!-- Search & filter bar -->
+      <div class="thd-toolbar">
+        <input type="text" class="search-input" id="tl-search" placeholder="Search timelines by title, keywords..." oninput="filterAdminTimelines()" style="margin-bottom:0;flex:1;" />
+        <select id="tl-status-filter" onchange="loadAdminTimelines()" class="thd-select">
+          <option value="">All statuses</option>
+          <option value="active" selected>Active</option>
+          <option value="cooling">Cooling</option>
+          <option value="dormant">Dormant</option>
+        </select>
+      </div>
+
+      <!-- Merge bar (appears when selecting) -->
+      <div id="tl-merge-bar" class="thd-merge-bar hidden">
+        <span><strong id="tl-merge-count">0</strong> timelines selected for merge</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn-secondary btn-small" onclick="clearTimelineMergeSelection()">Clear</button>
+          <button class="btn-primary btn-small" onclick="openTimelineMergeModal()">Merge Selected</button>
+        </div>
+      </div>
+
+      <!-- Timeline list -->
       <div id="tl-loading" class="loading-state"><div class="spinner"></div><p>Loading timelines...</p></div>
-      <div id="tl-list"></div>
-      <div id="tl-empty" class="empty-state hidden">No timelines match your search.</div>
+      <div id="tl-list" class="thd-list"></div>
+      <div id="tl-empty" class="empty-state hidden">No timelines found.</div>
+
+      <!-- Timeline detail / edit panel (slides in) -->
+      <div id="tl-detail" class="thd-detail hidden">
+        <div class="thd-detail-header">
+          <button class="btn-secondary btn-small" onclick="closeTimelineDetail()">&larr; Back to list</button>
+          <span class="thd-detail-id" id="tl-detail-id"></span>
+          <button class="btn-danger btn-small" style="margin-left:auto;" onclick="deleteCurrentTimeline()" title="Permanently delete this timeline">Delete timeline</button>
+        </div>
+        <div class="thd-detail-body">
+          <div class="thd-field">
+            <label>Title</label>
+            <input type="text" id="tl-edit-title" class="seg-input" />
+          </div>
+          <div class="thd-field">
+            <label>Description</label>
+            <textarea id="tl-edit-desc" class="seg-textarea" rows="3"></textarea>
+          </div>
+          <div class="thd-field-row">
+            <div class="thd-field" style="flex:1;">
+              <label>Category</label>
+              <input type="text" id="tl-edit-category" class="seg-input" />
+            </div>
+            <div class="thd-field" style="flex:1;">
+              <label>Status</label>
+              <select id="tl-edit-status" class="thd-select">
+                <option value="active">Active</option>
+                <option value="cooling">Cooling</option>
+                <option value="dormant">Dormant</option>
+              </select>
+            </div>
+          </div>
+          <div class="thd-field-row">
+            <div class="thd-field" style="flex:1;">
+              <label>Importance (1-10)</label>
+              <input type="number" id="tl-edit-importance" class="seg-input short" min="1" max="10" step="0.1" />
+            </div>
+            <div class="thd-field" style="flex:1;">
+              <label>Geographic Scope</label>
+              <input type="text" id="tl-edit-geo" class="seg-input" placeholder="e.g. global, regional..." />
+            </div>
+          </div>
+          <div class="thd-field">
+            <label>Keywords <span style="color:#64748b;font-weight:400;">(comma-separated)</span></label>
+            <input type="text" id="tl-edit-keywords" class="seg-input" placeholder="trade, tariffs, economy..." />
+          </div>
+          <div class="thd-field">
+            <label>Primary Nations <span style="color:#64748b;font-weight:400;">(comma-separated ISO codes, e.g. US, CN, RU)</span></label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="text" id="tl-edit-nations" class="seg-input" placeholder="US, CN, RU, UA..." style="flex:1;" />
+              <div id="tl-nations-flags" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
+            </div>
+          </div>
+          <div class="thd-save-row">
+            <button class="btn-primary" onclick="saveTimelineEdits()">Save Changes</button>
+            <span id="tl-save-status" class="thd-save-status"></span>
+          </div>
+
+          <!-- Hero image -->
+          <div class="thd-field" id="tl-image-section">
+            <label>Hero Image</label>
+            <div class="thd-image-editor">
+              <div id="tl-image-preview" class="thd-image-preview hidden">
+                <img id="tl-hero-img" src="" alt="Hero" onerror="this.parentElement.classList.add('hidden')" />
+                <button class="thd-image-remove" onclick="clearTimelineImage()" title="Remove custom image">&times;</button>
+              </div>
+              <div class="thd-image-input-row">
+                <input type="text" id="tl-edit-image" class="seg-input" placeholder="Paste image URL..." oninput="previewTimelineImage()" />
+                <button class="btn-secondary btn-small" onclick="pickTimelineArticleImage()">From Article</button>
+              </div>
+              <div id="tl-article-image-picker" class="thd-article-picker hidden"></div>
+            </div>
+          </div>
+
+          <!-- Articles in this timeline -->
+          <div class="thd-articles-section">
+            <h3>Articles <span class="thd-article-count" id="tl-article-count">0</span></h3>
+            <div id="tl-article-list" class="thd-article-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Merge modal -->
+      <div id="tl-merge-modal" class="thd-modal-overlay hidden" onclick="if(event.target===this)closeTimelineMergeModal()">
+        <div class="thd-modal">
+          <h2>Merge Timelines</h2>
+          <p class="thd-modal-desc">Select a target timeline. All articles from other selected timelines will be merged into it. Source timelines will be marked dormant.</p>
+          <div class="thd-field">
+            <label>Target Timeline</label>
+            <select id="tl-merge-target" class="thd-select thd-select-full"></select>
+          </div>
+          <div class="thd-field">
+            <label>New Title <span style="color:#64748b;font-weight:400;">(optional override)</span></label>
+            <input type="text" id="tl-merge-title" class="seg-input" placeholder="Leave empty to keep target title" />
+          </div>
+          <div class="thd-field">
+            <label>New Description <span style="color:#64748b;font-weight:400;">(optional)</span></label>
+            <textarea id="tl-merge-desc" class="seg-textarea" rows="2" placeholder="Leave empty to keep target description"></textarea>
+          </div>
+          <div class="thd-field">
+            <label>New Category <span style="color:#64748b;font-weight:400;">(optional)</span></label>
+            <input type="text" id="tl-merge-category" class="seg-input" placeholder="Leave empty to keep target category" />
+          </div>
+          <div class="thd-modal-actions">
+            <button class="btn-secondary" onclick="closeTimelineMergeModal()">Cancel</button>
+            <button class="btn-primary" onclick="executeTimelineMerge()">Merge Timelines</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════
@@ -1079,7 +1207,7 @@
         el.classList.toggle('hidden', el.id !== `tab-${tab}`);
       });
       if (tab === 'tweets' && !tabLoaded.tweets) { tabLoaded.tweets = true; loadTweets(); }
-      if (tab === 'timelines' && !tabLoaded.timelines) { tabLoaded.timelines = true; loadTimelines(); }
+      if (tab === 'timelines' && !tabLoaded.timelines) { tabLoaded.timelines = true; loadAdminTimelines(); }
       if (tab === 'threads' && !tabLoaded.threads) { tabLoaded.threads = true; loadAdminThreads(); }
       if (tab === 'rankings' && !tabLoaded.rankings) { tabLoaded.rankings = true; loadRankings(); }
     }
@@ -2062,100 +2190,412 @@
     let allTimelines = [];
     let tlPanelState = {}; // timeline_id -> { searchResults, selectedResult, generatedPanel, savedPanels }
 
-    async function loadTimelines() {
-      document.getElementById('tl-loading').classList.remove('hidden');
-      document.getElementById('tl-list').innerHTML = '';
+    // ── Timeline admin (mirrors thread admin) ────────────────────────
+    let filteredAdminTimelines = [];
+    let tlMergeSelectedIds = new Set();
+    let currentDetailTimelineId = null;
+    let currentDetailTimeline = null;
+    let currentDetailTimelineArticles = [];
+
+    async function loadAdminTimelines() {
+      const loading = document.getElementById('tl-loading');
+      const list = document.getElementById('tl-list');
+      const empty = document.getElementById('tl-empty');
+      loading.classList.remove('hidden');
+      list.innerHTML = '';
+      empty.classList.add('hidden');
+
+      const status = document.getElementById('tl-status-filter').value || 'all';
       try {
-        const res = await fetch(`${API_BASE}/api/timelines/latest?limit=100`, { headers: authHeaders() });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const qs = new URLSearchParams({ status });
+        const res = await fetch(`${API_BASE}/api/admin/timelines?${qs}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('Failed to load');
         const data = await res.json();
-        allTimelines = data.timelines || data || [];
-        renderTimelines();
-      } catch (err) {
-        document.getElementById('tl-loading').innerHTML = `<p style="color:#ef4444;">Failed to load timelines: ${err.message}</p>`;
+        allTimelines = data.timelines || [];
+        filteredAdminTimelines = allTimelines;
+        loading.classList.add('hidden');
+        renderAdminTimelines();
+      } catch (e) {
+        loading.innerHTML = '<p style="color:#ef4444;">Failed to load timelines.</p>';
       }
     }
 
-    function filterTimelines() { renderTimelines(); }
+    function filterAdminTimelines() {
+      const q = document.getElementById('tl-search').value.trim().toLowerCase();
+      if (!q) { filteredAdminTimelines = allTimelines; }
+      else {
+        filteredAdminTimelines = allTimelines.filter(t =>
+          (t.title || '').toLowerCase().includes(q) ||
+          (t.description || '').toLowerCase().includes(q) ||
+          (t.primary_category || '').toLowerCase().includes(q) ||
+          (t.keywords || []).some(k => k.toLowerCase().includes(q))
+        );
+      }
+      renderAdminTimelines();
+    }
 
-    function renderTimelines() {
-      document.getElementById('tl-loading').classList.add('hidden');
-      const container = document.getElementById('tl-list');
-      const query = document.getElementById('tl-search').value.toLowerCase().trim();
-      const filtered = allTimelines.filter(tl => {
-        if (!query) return true;
-        const text = [tl.title, tl.description, tl.primary_category, tl.scope, ...(tl.keywords || [])].filter(Boolean).join(' ').toLowerCase();
-        return text.includes(query);
-      });
-      if (!filtered.length) {
-        container.innerHTML = '';
-        document.getElementById('tl-empty').classList.remove('hidden');
+    function renderAdminTimelines() {
+      const list = document.getElementById('tl-list');
+      const empty = document.getElementById('tl-empty');
+
+      if (!filteredAdminTimelines.length) {
+        list.innerHTML = '';
+        empty.classList.remove('hidden');
         return;
       }
-      document.getElementById('tl-empty').classList.add('hidden');
+      empty.classList.add('hidden');
 
-      container.innerHTML = filtered.map(tl => {
-        const id = tl.id;
-        if (!tlPanelState[id]) tlPanelState[id] = { searchResults: [], selectedResult: null, generatedPanel: null, savedPanels: [] };
-        const state = tlPanelState[id];
-        const keywords = (tl.keywords || []).slice(0, 8);
-        const importance = Math.round(tl.importance || 0);
-        const articles = tl.article_count || 0;
+      list.innerHTML = filteredAdminTimelines.map(t => {
+        const statusClass = `thd-status-${t.status || 'active'}`;
+        const catClass = getCategoryClass(t.primary_category);
+        const mergeClass = tlMergeSelectedIds.has(t.id) ? 'merge-selected' : '';
+        const heroImg = t.hero_image_url
+          ? `<img class="thd-card-img" src="${escHtml(t.hero_image_url)}" alt="" onerror="this.style.display='none'" />`
+          : `<div class="thd-card-img" style="display:flex;align-items:center;justify-content:center;font-size:1.2rem;">📈</div>`;
+        const updated = t.last_updated_at ? new Date(t.last_updated_at).toLocaleDateString() : '';
 
-        // Build saved panels HTML
-        const savedHtml = state.savedPanels.length ? `
-          <div class="dp-saved-panels">
-            <div class="seg-label">Saved Panels</div>
-            ${state.savedPanels.map((p, pi) => `
-              <div class="dp-saved-item">
-                <span class="dp-saved-type">${escHtml(p.chart_type)}</span>
-                <span class="dp-saved-title">${escHtml(p.title)}</span>
-                <span class="dp-saved-source">${escHtml(p.source_name || '')}</span>
-                <button class="seg-remove" onclick="event.stopPropagation(); removeTlPanel(${id}, ${pi})">&#10005;</button>
-              </div>
-            `).join('')}
-          </div>` : '';
-
-        return `<div class="tl-card" id="tl-card-${id}">
-          <div class="tl-header" onclick="toggleTlCard(${id})">
-            <div>
-              <div class="tl-title">${escHtml(tl.title)}</div>
-              <div class="tl-meta">
-                <span class="category-badge ${getCategoryClass(tl.primary_category)}">${escHtml(tl.primary_category || 'General')}</span>
-                · ${articles} articles · importance ${importance}
+        return `
+          <div class="thd-card ${mergeClass}" data-id="${t.id}">
+            ${heroImg}
+            <div class="thd-card-body" onclick="openTimelineDetail(${t.id})">
+              <div class="thd-card-title">${escHtml(t.title)}</div>
+              <div class="thd-card-meta">
+                <span class="thd-status ${statusClass}">${escHtml(t.status || 'active')}</span>
+                <span class="category-badge ${catClass}">${escHtml(t.primary_category || 'General')}</span>
+                <span>${t.article_count || 0} articles</span>
+                ${t.distinct_source_count ? `<span>${t.distinct_source_count} sources</span>` : ''}
+                ${updated ? `<span>${updated}</span>` : ''}
               </div>
             </div>
-            <span id="tl-tog-${id}" style="color:#94a3b8;">&#9654;</span>
-          </div>
-          <div class="tl-body">
-            <div class="tl-desc">${escHtml(tl.description || '')}</div>
-            ${keywords.length ? `<div class="tl-keywords">${keywords.map(k => `<span class="tl-kw">${escHtml(k)}</span>`).join('')}</div>` : ''}
-
-            <!-- Data Panel Search -->
-            <div class="dp-search-section">
-              <h4>📊 Data Panels</h4>
-              <div class="dp-search-row">
-                <input type="text" class="search-input" style="margin-bottom:0" id="dp-search-${id}"
-                  placeholder="Search data sources (e.g., oil price, military spending, GDP)..."
-                  onkeydown="if(event.key==='Enter') searchDataSources(${id})" />
-                <button class="btn-primary btn-small" onclick="searchDataSources(${id})">Search</button>
-              </div>
-              <div id="dp-results-${id}" class="dp-results"></div>
-              <div id="dp-panel-edit-${id}"></div>
-              ${savedHtml}
+            <div class="thd-card-actions">
+              <input type="checkbox" class="thd-merge-check" title="Select for merge"
+                ${tlMergeSelectedIds.has(t.id) ? 'checked' : ''}
+                onclick="event.stopPropagation(); toggleTimelineMergeSelect(${t.id})" />
             </div>
-          </div>
-        </div>`;
+          </div>`;
       }).join('');
-
-      // Load saved panels for each timeline
-      filtered.forEach(tl => loadTlSavedPanels(tl.id));
     }
 
-    function toggleTlCard(id) {
-      const card = document.getElementById(`tl-card-${id}`);
-      card.classList.toggle('open');
-      document.getElementById(`tl-tog-${id}`).innerHTML = card.classList.contains('open') ? '&#9660;' : '&#9654;';
+    function toggleTimelineMergeSelect(id) {
+      if (tlMergeSelectedIds.has(id)) tlMergeSelectedIds.delete(id);
+      else tlMergeSelectedIds.add(id);
+      updateTimelineMergeBar();
+      renderAdminTimelines();
+    }
+
+    function clearTimelineMergeSelection() {
+      tlMergeSelectedIds.clear();
+      updateTimelineMergeBar();
+      renderAdminTimelines();
+    }
+
+    function updateTimelineMergeBar() {
+      const bar = document.getElementById('tl-merge-bar');
+      const count = document.getElementById('tl-merge-count');
+      count.textContent = tlMergeSelectedIds.size;
+      bar.classList.toggle('hidden', tlMergeSelectedIds.size < 2);
+    }
+
+    // ── Timeline detail ───────────────────────────────────────────
+    async function openTimelineDetail(id) {
+      const detail = document.getElementById('tl-detail');
+      const list = document.getElementById('tl-list');
+      const toolbar = document.querySelector('#tab-timelines .thd-toolbar');
+      const mergeBar = document.getElementById('tl-merge-bar');
+      const loading = document.getElementById('tl-loading');
+      const empty = document.getElementById('tl-empty');
+
+      list.classList.add('hidden');
+      toolbar.classList.add('hidden');
+      mergeBar.classList.add('hidden');
+      loading.classList.add('hidden');
+      empty.classList.add('hidden');
+      detail.classList.remove('hidden');
+
+      document.getElementById('tl-detail-id').textContent = `Timeline #${id}`;
+      document.getElementById('tl-article-list').innerHTML = '<div class="loading-state"><div class="spinner sm"></div></div>';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/timelines/${id}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('Failed to load timeline');
+        const data = await res.json();
+        currentDetailTimelineId = id;
+        currentDetailTimeline = data.timeline || data;
+        currentDetailTimelineArticles = data.articles || [];
+        populateTimelineDetail();
+      } catch (e) {
+        document.getElementById('tl-article-list').innerHTML = `<p style="color:#ef4444;">Failed to load: ${escHtml(e.message)}</p>`;
+      }
+    }
+
+    function _renderTimelineNationFlags(val) {
+      const el = document.getElementById('tl-nations-flags');
+      if (!el) return;
+      const codes = val.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      el.innerHTML = codes.map(iso =>
+        `<img src="https://flagcdn.com/w40/${iso.toLowerCase()}.png" alt="${iso}" title="${iso}" style="width:20px;height:14px;border-radius:2px;object-fit:cover;" onerror="this.style.display='none'">`
+      ).join('');
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      const nInput = document.getElementById('tl-edit-nations');
+      if (nInput) nInput.addEventListener('input', () => _renderTimelineNationFlags(nInput.value));
+    });
+
+    function populateTimelineDetail() {
+      const t = currentDetailTimeline;
+      document.getElementById('tl-edit-title').value = t.title || '';
+      document.getElementById('tl-edit-desc').value = t.description || '';
+      document.getElementById('tl-edit-category').value = t.primary_category || '';
+      document.getElementById('tl-edit-status').value = t.status || 'active';
+      document.getElementById('tl-edit-importance').value = t.importance || 5;
+      document.getElementById('tl-edit-geo').value = t.geographic_scope || '';
+      document.getElementById('tl-edit-keywords').value = (t.keywords || []).join(', ');
+      const nationsVal = (t.primary_nations || []).join(', ');
+      document.getElementById('tl-edit-nations').value = nationsVal;
+      _renderTimelineNationFlags(nationsVal);
+      document.getElementById('tl-save-status').textContent = '';
+
+      // Hero image
+      const imgInput = document.getElementById('tl-edit-image');
+      const imgPreview = document.getElementById('tl-image-preview');
+      const pickerEl = document.getElementById('tl-article-image-picker');
+      pickerEl.classList.add('hidden');
+      imgInput.value = t.image_url || t.hero_image_url || '';
+      const displayUrl = imgInput.value || (currentDetailTimelineArticles.find(a => a.image_url) || {}).image_url || '';
+      if (displayUrl) {
+        document.getElementById('tl-hero-img').src = displayUrl;
+        imgPreview.classList.remove('hidden');
+      } else {
+        imgPreview.classList.add('hidden');
+      }
+
+      // Articles
+      document.getElementById('tl-article-count').textContent = currentDetailTimelineArticles.length;
+      const listEl = document.getElementById('tl-article-list');
+      if (!currentDetailTimelineArticles.length) {
+        listEl.innerHTML = '<p style="color:#64748b;font-size:0.82rem;">No articles in this timeline.</p>';
+        return;
+      }
+
+      listEl.innerHTML = currentDetailTimelineArticles.map(a => {
+        const img = a.image_url
+          ? `<img src="${escHtml(a.image_url)}" alt="" onerror="this.style.display='none'" />`
+          : '';
+        const pub = a.published_at ? new Date(a.published_at).toLocaleDateString() : '';
+        const anchor = a.is_anchor ? '<span class="thd-article-anchor">ANCHOR</span>' : '';
+        const score = a.relevance_score ? `rel: ${Number(a.relevance_score).toFixed(2)}` : '';
+
+        return `
+          <div class="thd-article-item">
+            ${img}
+            <div class="thd-article-body">
+              <div class="thd-article-title">${escHtml(a.title)}${anchor}</div>
+              <div class="thd-article-meta">
+                ${escHtml(a.source_name || '')} ${pub ? '&middot; ' + pub : ''} ${score ? '&middot; ' + score : ''}
+              </div>
+            </div>
+            <button class="btn-danger btn-small" onclick="removeArticleFromTimeline(${currentDetailTimelineId}, ${a.id})" title="Remove from timeline">&times;</button>
+          </div>`;
+      }).join('');
+    }
+
+    async function saveTimelineEdits() {
+      const statusEl = document.getElementById('tl-save-status');
+      statusEl.textContent = 'Saving...';
+      statusEl.style.color = '#94a3b8';
+
+      const body = {
+        title: document.getElementById('tl-edit-title').value.trim(),
+        description: document.getElementById('tl-edit-desc').value.trim(),
+        primary_category: document.getElementById('tl-edit-category').value.trim(),
+        status: document.getElementById('tl-edit-status').value,
+        importance: parseFloat(document.getElementById('tl-edit-importance').value) || 5,
+        geographic_scope: document.getElementById('tl-edit-geo').value.trim(),
+        keywords: document.getElementById('tl-edit-keywords').value,
+        primary_nations: document.getElementById('tl-edit-nations').value,
+      };
+      const imageUrl = document.getElementById('tl-edit-image').value.trim();
+      if (imageUrl !== (currentDetailTimeline.image_url || currentDetailTimeline.hero_image_url || '')) {
+        body.image_url = imageUrl || null;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/timelines/${currentDetailTimelineId}`, {
+          method: 'PUT', headers: authHeaders(), body: JSON.stringify(body)
+        });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Save failed'); }
+        statusEl.textContent = 'Saved!';
+        statusEl.style.color = '#22c55e';
+        const idx = allTimelines.findIndex(t => t.id === currentDetailTimelineId);
+        if (idx !== -1) {
+          Object.assign(allTimelines[idx], body);
+          if (body.keywords && typeof body.keywords === 'string') {
+            allTimelines[idx].keywords = body.keywords.split(',').map(k => k.trim());
+          }
+        }
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+      }
+    }
+
+    async function deleteCurrentTimeline() {
+      if (!currentDetailTimelineId) return;
+      const t = currentDetailTimeline || {};
+      const title = t.title || `Timeline #${currentDetailTimelineId}`;
+      const artCount = (currentDetailTimelineArticles || []).length;
+      if (!confirm(`Permanently delete "${title}"?\n\nThis will detach ${artCount} article${artCount === 1 ? '' : 's'} from the timeline. Articles themselves are NOT deleted. This cannot be undone.`)) return;
+
+      const statusEl = document.getElementById('tl-save-status');
+      statusEl.textContent = 'Deleting...';
+      statusEl.style.color = '#94a3b8';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/timelines/${currentDetailTimelineId}`, {
+          method: 'DELETE', headers: authHeaders()
+        });
+        if (!res.ok) {
+          let msg = 'Delete failed';
+          try { const e = await res.json(); msg = e.error || msg; } catch {}
+          throw new Error(msg);
+        }
+        const deletedId = currentDetailTimelineId;
+        allTimelines = allTimelines.filter(tl => tl.id !== deletedId);
+        currentDetailTimelineId = null;
+        currentDetailTimeline = null;
+        currentDetailTimelineArticles = [];
+        closeTimelineDetail();
+      } catch (e) {
+        statusEl.textContent = 'Error: ' + e.message;
+        statusEl.style.color = '#ef4444';
+      }
+    }
+
+    async function removeArticleFromTimeline(timelineId, articleId) {
+      if (!confirm('Remove this article from the timeline?')) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/timelines/${timelineId}/articles/${articleId}`, {
+          method: 'DELETE', headers: authHeaders()
+        });
+        if (!res.ok) throw new Error('Failed to remove');
+        currentDetailTimelineArticles = currentDetailTimelineArticles.filter(a => a.id !== articleId);
+        populateTimelineDetail();
+      } catch (e) {
+        alert('Failed to remove article: ' + e.message);
+      }
+    }
+
+    function closeTimelineDetail() {
+      document.getElementById('tl-detail').classList.add('hidden');
+      document.getElementById('tl-list').classList.remove('hidden');
+      document.querySelector('#tab-timelines .thd-toolbar').classList.remove('hidden');
+      updateTimelineMergeBar();
+      renderAdminTimelines();
+    }
+
+    // ── Image helpers (timeline) ────────────────────────────────
+    function previewTimelineImage() {
+      const url = document.getElementById('tl-edit-image').value.trim();
+      const preview = document.getElementById('tl-image-preview');
+      if (url) {
+        document.getElementById('tl-hero-img').src = url;
+        preview.classList.remove('hidden');
+      } else {
+        const fallback = (currentDetailTimelineArticles.find(a => a.image_url) || {}).image_url;
+        if (fallback) {
+          document.getElementById('tl-hero-img').src = fallback;
+          preview.classList.remove('hidden');
+        } else {
+          preview.classList.add('hidden');
+        }
+      }
+    }
+
+    function clearTimelineImage() {
+      document.getElementById('tl-edit-image').value = '';
+      previewTimelineImage();
+    }
+
+    function pickTimelineArticleImage() {
+      const picker = document.getElementById('tl-article-image-picker');
+      const isOpen = !picker.classList.contains('hidden');
+      if (isOpen) { picker.classList.add('hidden'); return; }
+
+      const images = currentDetailTimelineArticles.filter(a => a.image_url).map(a => a.image_url);
+      const unique = [...new Set(images)];
+
+      if (!unique.length) {
+        picker.innerHTML = '<span style="color:#64748b;font-size:0.78rem;">No article images available.</span>';
+      } else {
+        picker.innerHTML = unique.map(url =>
+          `<img class="thd-article-picker-img" src="${escHtml(url)}" alt=""
+                onclick="selectTimelineArticleImage('${escHtml(url).replace(/'/g, "\\'")}')"
+                onerror="this.style.display='none'" />`
+        ).join('');
+      }
+      picker.classList.remove('hidden');
+    }
+
+    function selectTimelineArticleImage(url) {
+      document.getElementById('tl-edit-image').value = url;
+      document.getElementById('tl-article-image-picker').classList.add('hidden');
+      previewTimelineImage();
+    }
+
+    // ── Timeline merge ───────────────────────────────────────────
+    function openTimelineMergeModal() {
+      if (tlMergeSelectedIds.size < 2) return alert('Select at least 2 timelines to merge.');
+      const modal = document.getElementById('tl-merge-modal');
+      const targetSelect = document.getElementById('tl-merge-target');
+      const selected = allTimelines.filter(t => tlMergeSelectedIds.has(t.id));
+
+      targetSelect.innerHTML = selected.map(t =>
+        `<option value="${t.id}">${escHtml(t.title)} (#${t.id}, ${t.article_count || 0} articles)</option>`
+      ).join('');
+
+      document.getElementById('tl-merge-title').value = '';
+      document.getElementById('tl-merge-desc').value = '';
+      document.getElementById('tl-merge-category').value = '';
+      modal.classList.remove('hidden');
+    }
+
+    function closeTimelineMergeModal() {
+      document.getElementById('tl-merge-modal').classList.add('hidden');
+    }
+
+    async function executeTimelineMerge() {
+      const targetId = parseInt(document.getElementById('tl-merge-target').value, 10);
+      const sourceIds = [...tlMergeSelectedIds].filter(id => id !== targetId);
+      const newTitle = document.getElementById('tl-merge-title').value.trim();
+      const newDesc = document.getElementById('tl-merge-desc').value.trim();
+      const newCat = document.getElementById('tl-merge-category').value.trim();
+
+      if (!sourceIds.length) return alert('Select a different target — need at least one source timeline.');
+
+      const confirmMsg = `Merge ${sourceIds.length} timeline(s) into #${targetId}?\n\nSource timelines will be marked dormant. This cannot be undone.`;
+      if (!confirm(confirmMsg)) return;
+
+      try {
+        const body = { target_id: targetId, source_ids: sourceIds };
+        if (newTitle) body.new_title = newTitle;
+        if (newDesc) body.new_description = newDesc;
+        if (newCat) body.new_category = newCat;
+
+        const res = await fetch(`${API_BASE}/api/admin/timelines/merge`, {
+          method: 'POST', headers: authHeaders(), body: JSON.stringify(body)
+        });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Merge failed'); }
+        const result = await res.json();
+
+        closeTimelineMergeModal();
+        tlMergeSelectedIds.clear();
+        updateTimelineMergeBar();
+
+        alert(`Merged! Target #${result.target_id} now has ${result.articles_merged || '?'} articles. ${result.sources_retired || sourceIds.length} source timeline(s) retired.`);
+        loadAdminTimelines();
+      } catch (e) {
+        alert('Merge failed: ' + e.message);
+      }
     }
 
     async function searchDataSources(tlId) {
