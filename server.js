@@ -998,12 +998,12 @@ app.get("/api/tags", async (req, res) => {
 // Shared helper: executes the default (no-filter) news search query.
 // Used by the endpoint fast-path and by _warmFeedCaches.
 async function _executeNewsSearch({ effectiveLimit, offset }) {
-  // Pull a larger pool from SQL (5x the limit) so the JS-side per-source
-  // cap and diversityRerank have enough variety. The SQL itself is kept
-  // simple — no window functions, no CTEs — for maximum query speed.
-  const POOL_MULTIPLIER = 5;
-  const poolLimit = (effectiveLimit + 1) * POOL_MULTIPLIER;
-  const params = [poolLimit, offset];
+  // Fetch exactly effectiveLimit + 1 rows (Apr 14 behavior). A large SQL
+  // pool combined with diversityRerank's 5-slot cooldown produced rigid
+  // round-robin rotations across the top high-volume sources (HINDU →
+  // LE DAKAROIS → TOPWAR → LIVEMINT). With a minimal pool, reranks become
+  // near no-ops and the natural SQL ORDER BY dominates.
+  const params = [effectiveLimit + 1, offset];
 
   // ── Tier 1: Full ranked query with 8s timeout ──
   const client = await pool.connect();
@@ -1043,7 +1043,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
       ) sub
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
-        * COALESCE(sub.country_boost, 1.0)
+        * POWER(COALESCE(sub.country_boost, 1.0), 2.0)
       ) DESC
       LIMIT $1 OFFSET $2
     `, params);
@@ -1118,15 +1118,24 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   return _finalizeSearchResults(rows, effectiveLimit, offset);
 }
 
-// Language boost: NEUTRALIZED.
-// Previously non-English languages got 1.2–1.35x multipliers on priority,
-// intended to offset lower pipeline volume. In practice this systematically
-// buried English wire copy (CBS, ABC, NBC, Bloomberg, Fox, Reuters, AP,
-// BBC, Guardian) beneath small non-English regional outlets — e.g. a Bolivia
-// ABI article at raw priority 4.5 became 6.08 and outranked a CBS piece at
-// 5.0. Diversity is handled downstream by countryVarianceRerank, which is
-// the correct layer for that concern. Keeping the kept sets + function
-// signature so call sites don't need to change.
+// Language boost: restores Apr 14 behavior (tiered non-English multiplier).
+//
+// The earlier neutralization was a band-aid for a different bug — the
+// `getRankedFeedArticles` pipeline with `diversityRerank` + `countryVariance
+// Rerank` on a 1500-row pool was rigidly round-robinning the top few
+// high-volume sources, and the 1.35× boost on non-English amplified the
+// problem by lifting low-base_priority regional outlets into the rotation.
+//
+// With the default-query path restored to `_executeNewsSearch` (small pool,
+// pure SQL ORDER BY), the tiered boost produces the even English / non-
+// English mix from Apr 14 — wire services cluster at top by recency, but
+// non-English stories with real editorial country_boost get meaningful lift
+// so the feed isn't monolingual.
+//
+// Tier A (major non-English with strong global coverage):  1.35×
+// Tier B (broad non-English written Latin/Cyrillic etc.):  1.20×
+// Other non-English:                                       1.15×
+// English:                                                 1.00×
 const NON_ENGLISH_BOOST_A = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
 const NON_ENGLISH_BOOST_B = new Set([
   "fr","de","es","pt","it","tr","hi","bn","ur","id","ms","th","vi","pl",
@@ -1134,8 +1143,13 @@ const NON_ENGLISH_BOOST_B = new Set([
   "ka","hy","az","kk","uz","tg","ps","sw","am","my","km","lo","mn","ne",
 ]);
 
-function getLanguageBoost(_lang) {
-  return 1.0;
+function getLanguageBoost(lang) {
+  if (!lang) return 1.0;
+  const code = lang.toLowerCase().slice(0, 2);
+  if (code === "en") return 1.0;
+  if (NON_ENGLISH_BOOST_A.has(code)) return 1.35;
+  if (NON_ENGLISH_BOOST_B.has(code)) return 1.20;
+  return 1.15;
 }
 
 // ── User Preference Boost Engine ──────────────────────────────────────────
@@ -1330,42 +1344,42 @@ function _prefResort(articles) {
 }
 
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
-  // ── Per-source cap (JS-side) ──────────────────────────────────────────
-  // Cap each publisher at MAX_SEARCH_PER_SOURCE articles in the candidate
-  // pool. Done in JS (not SQL) to avoid expensive window functions that
-  // caused query timeouts. The SQL pulls a larger pool (5x limit) so
-  // there's enough variety after capping.
-  const MAX_SEARCH_PER_SOURCE = 5;
-  const sourceCounts = {};
-  const capped = [];
-  for (const r of rows) {
-    const sk = r.youtube_source_id != null ? `yt:${r.youtube_source_id}`
-             : r.source_id != null         ? `ns:${r.source_id}`
-             : 'unknown';
-    sourceCounts[sk] = (sourceCounts[sk] || 0) + 1;
-    if (sourceCounts[sk] <= MAX_SEARCH_PER_SOURCE) capped.push(r);
-  }
+  // Apr 14 contract — SQL already pulled exactly effectiveLimit + 1 rows in
+  // natural priority order. No JS per-source cap (that was introduced with
+  // the 5× pool and made lock-in worse by hiding high-priority articles).
+  const hasMore = rows.length > effectiveLimit;
+  if (hasMore) rows.pop();
 
-  const hasMore = capped.length > effectiveLimit;
-  if (hasMore) capped.splice(effectiveLimit); // trim to limit
-
-  let results = capped.map(r => ({
+  let results = rows.map(r => ({
     ...r,
     final_priority: (
       (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-    ) * (r.country_boost || 1) * getLanguageBoost(r.language)
+    ) * Math.pow(r.country_boost || 1, 2.0) * getLanguageBoost(r.language)
   }));
 
+  // Rerank passes only run on reasonably-sized pools. On the typical
+  // 25-row pool these are near no-ops (cooldown=5 in 25 slots rarely
+  // triggers, MAX_REPEAT=2 country gate almost never fires), but they
+  // still break up the occasional 3-in-a-row same-publisher or same-
+  // country cluster that recency-dominant sorting produces.
   if (results.length >= 8) {
-    // Pass 1: order by final_priority with publisher cooldown.
     results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
-    // Pass 2: spread out same-country clusters. This MUST be the terminal
-    // pass — any subsequent diversityRerank would re-sort by priority and
-    // clobber the country spacing (e.g. 26 Indonesia articles float back
-    // up because they're from different publishers). Country diversity is
-    // the hardest constraint to satisfy and must be enforced last.
     results = countryVarianceRerank(results);
   }
+
+  // Within a narrow priority band (3%), prefer more recent. Prevents a
+  // 4-hour-old article from sitting one slot ahead of a 30-minute-old
+  // article just because their priorities differ by 0.01.
+  const PRIORITY_BAND = 0.03;
+  results.sort((a, b) => {
+    const pa = a.final_priority || 0;
+    const pb = b.final_priority || 0;
+    const maxP = Math.max(pa, pb) || 1;
+    if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
+      return new Date(b.published_at) - new Date(a.published_at);
+    }
+    return pb - pa;
+  });
 
   return { total: offset + results.length + (hasMore ? 1 : 0), articles: results };
 }
@@ -1387,72 +1401,46 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const fromDate = req.query.from_date?.trim() || null;
     const toDate   = req.query.to_date?.trim()   || null;
 
-    // ── Fast path: default query (no filters) → serve from a cached ranked pool ──
-    // Any page (offset ≥ 0) of the no-filter Feed routes through the same
-    // ranked pool, so pagination stays consistent with page 1. Previously
-    // this path only triggered on offset === 0 — scrolling past the first
-    // 25 articles fell through to _executeNewsSearch, which ordered by
-    // recency (NOT priority) and is what produced the "most recently
-    // fetched articles" dumps (Annahar/Infobae/Balkan regional flood).
+    // ── Fast path: default query (no filters) → serve from TTL cache ──
+    // Restores the Apr 14 contract. `_executeNewsSearch` fetches exactly
+    // effectiveLimit + 1 rows from Postgres in natural priority order:
+    //   (base_priority*0.15 + recency_decay*0.85) * country_boost² (SQL)
+    //   × getLanguageBoost(language)                                 (JS)
+    // No large candidate pool, no diversityRerank dominance, no
+    // countryVarianceRerank forcing round-robin rotation — those were
+    // what produced the rigid HINDU → DAKAROIS → TOPWAR → LIVEMINT lock-in
+    // under the `getRankedFeedArticles` pipeline.
     //
-    // Pipeline:
-    //   calculatePriority → diversityRerank (publisher cooldown) →
-    //   in-thread boost → city-cap → country_feed_boost → language boost
-    //   → countryVarianceRerank (terminal country spread).
+    // Cache key is per (limit, offset) so every page is a distinct cached
+    // query. 60s TTL mirrors the Cloudflare edge cache.
     const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag;
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
-      // Pool is large enough to cover ~20 pages of 25. Building and caching
-      // it once per 60s means page N is just an O(1) Array.slice, no extra
-      // DB hit. Shared across all unauthenticated callers.
-      const POOL_SIZE = 500;
-      const cacheKey = `news/search:default:v2:pool:${POOL_SIZE}`;
-      const pool = await ttlCached(cacheKey, 60_000, async () => {
-        let articles = await getRankedFeedArticles({ limit: POOL_SIZE, offset: 0 });
-        // Apply language boost on top of the ranking priority. country_boost
-        // is already folded in inside getRankedFeedArticles.
-        for (const a of articles) {
-          a.priority = (a.priority || 0) * getLanguageBoost(a.language);
-          a.final_priority = a.priority; // legacy field used by _prefResort
-        }
-        // Priority changed — re-sort before the terminal country-spread pass.
-        articles.sort((a, b) => (b.priority || 0) - (a.priority || 0));
-        // Terminal country-spread pass. Must be last: any subsequent
-        // priority-based sort would clobber the spacing.
-        if (articles.length >= 8) {
-          articles = countryVarianceRerank(articles);
-        }
-        return articles;
+      const cacheKey = `news/search:default:v3:${effectiveLimit}:${offset}`;
+      const cached = await ttlCached(cacheKey, 60_000, async () => {
+        return await _executeNewsSearch({ effectiveLimit, offset });
       });
 
-      // Per-user preference pass re-orders the cached pool for logged-in
-      // callers. Runs over the full pool (not just the current slice) so
-      // that a user-boosted article on page 3 can move to page 1.
+      // Per-user preference pass re-orders the cached slice for logged-in
+      // callers. Only the current slice (not a full 500-row pool) is
+      // re-sorted — pref boosts are multiplicative on final_priority so
+      // an article already near the top still wins after the pass.
       const prefs = req.user?.id ? await _fetchUserPrefs(req.user.id) : null;
-      let ordered;
       if (prefs) {
         const boosts = _buildPrefBoosts(prefs);
-        ordered = _applyNewsPrefBoosts(pool.map(a => ({ ...a })), boosts);
-        _prefResort(ordered);
-      } else {
-        ordered = pool;
-      }
-
-      const slice   = ordered.slice(offset, offset + effectiveLimit);
-      const hasMore = offset + slice.length < ordered.length;
-
-      if (prefs) {
-        // Personalized → never edge-cache, varies per user.
+        const personalized = {
+          ...cached,
+          articles: _applyNewsPrefBoosts(cached.articles.map(a => ({ ...a })), boosts)
+        };
+        _prefResort(personalized.articles);
         res.set("Cache-Control", "private, max-age=30");
-      } else {
-        // Shared default → safe for Cloudflare edge cache (60s, mirrors
-        // ttlCached TTL). stale-while-revalidate=120 smooths expiry.
-        res.set("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
+        return res.json(personalized);
       }
-      return res.json({
-        total:    ordered.length + (hasMore ? 1 : 0),
-        articles: slice
-      });
+
+      // Shared default → safe for Cloudflare edge cache (60s, mirrors
+      // ttlCached TTL). stale-while-revalidate=120 smooths expiry.
+      res.set("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
+      return res.json(cached);
     }
 
     const conditions = [];
@@ -1566,7 +1554,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ) sub
       ORDER BY (
         (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
-        * COALESCE(sub.country_boost, 1.0)
+        * POWER(COALESCE(sub.country_boost, 1.0), 2.0)
       ) DESC
       ${limitClause}
     `;
