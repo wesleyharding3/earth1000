@@ -16250,11 +16250,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           layer.pts.visible = layer.mat.opacity > 0.001;
         });
 
-        const _tCountry = targetCountryOpacity * _semFade * _polyFade;
-        countryMat.opacity += (_tCountry - countryMat.opacity) * 0.08;
-        if (_tCountry === 0 && countryMat.opacity < 0.01) countryMat.opacity = 0;
-        countryPoints.visible = countryMat.opacity > 0.001;
-        if (typeof ringGroup !== 'undefined' && ringGroup) ringGroup.visible = countryPoints.visible;
+        // Country node dots are hard-disabled — the polygon overlay is the
+        // sole country-selection UI on both desktop and iOS. Force opacity
+        // to 0 regardless of polygon module state so nodes never leak
+        // through during load races or if the polygon module fails to init.
+        countryMat.opacity = 0;
+        countryPoints.visible = false;
+        if (typeof ringGroup !== 'undefined' && ringGroup) ringGroup.visible = false;
         earthMat.opacity   += (targetEarthOpacity   - earthMat.opacity)   * 0.018;
 
         if (window.__transTick) window.__transTick(0.016);
