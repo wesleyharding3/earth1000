@@ -1247,9 +1247,14 @@ async function getUnthreadedArticles(hours) {
   // Use a dedicated client with extended timeout for this heavy query.
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = 120000"); // 2 min for heavy query
+    await client.query("SET statement_timeout = 180000"); // 3 min for heavy query
+    const freshHours = Math.min(hours, FRESH_PRIORITY_HOURS);
+    // Two independent scans — each over a smaller window — so ROW_NUMBER's
+    // window doesn't have to cover the full 48h. Anti-join uses NOT EXISTS
+    // (backed by idx_sta_article_id) instead of LEFT JOIN … IS NULL, which
+    // the planner handles more efficiently on a large sta.
     const { rows: baseRows } = await client.query(`
-    WITH ranked AS (
+    WITH fresh_ranked AS (
       SELECT
         a.id, a.title, a.translated_title, a.summary, a.translated_summary,
         a.published_at,
@@ -1265,25 +1270,47 @@ async function getUnthreadedArticles(hours) {
       LEFT JOIN cities    ci       ON ci.id = a.city_id
       LEFT JOIN news_sources ns    ON ns.id = a.source_id
       LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN story_thread_articles sta ON sta.article_id = a.id
-      WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
+      WHERE a.published_at > NOW() - INTERVAL '${freshHours} hours'
         AND a.published_at < NOW()
         AND a.title IS NOT NULL
-        AND sta.article_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
+        )
     ),
     fresh AS (
       SELECT id, title, translated_title, summary, translated_summary, published_at, source_name, country_name, city_name
-      FROM ranked
+      FROM fresh_ranked
       WHERE source_rank <= 5
-        AND published_at > NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
       ORDER BY published_at DESC, RANDOM()
       LIMIT ${FRESH_PRIORITY_LIMIT}
     ),
+    backlog_ranked AS (
+      SELECT
+        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+        a.published_at,
+        COALESCE(ns.name, ys.name) AS source_name,
+        co.name AS country_name,
+        ci.name AS city_name,
+        ROW_NUMBER() OVER (
+          PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
+          ORDER BY a.published_at DESC
+        ) AS source_rank
+      FROM news_articles a
+      LEFT JOIN countries co       ON co.id = a.country_id
+      LEFT JOIN cities    ci       ON ci.id = a.city_id
+      LEFT JOIN news_sources ns    ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
+        AND a.published_at <= NOW() - INTERVAL '${freshHours} hours'
+        AND a.title IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
+        )
+    ),
     backlog AS (
       SELECT id, title, translated_title, summary, translated_summary, published_at, source_name, country_name, city_name
-      FROM ranked
+      FROM backlog_ranked
       WHERE source_rank <= 5
-        AND published_at <= NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
       ORDER BY published_at DESC, RANDOM()
       LIMIT ${TOTAL_ARTICLE_LIMIT - FRESH_PRIORITY_LIMIT}
     )
