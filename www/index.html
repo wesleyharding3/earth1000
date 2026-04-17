@@ -26635,7 +26635,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (_acctSuppressClick) return;
     _acctDoAction(e);
   }, true);
-  document.addEventListener('click', () => {
+  // "Click outside to close" — but NOT when the click originates from the
+  // account button itself (that's the toggle path) or from inside the
+  // dropdown (menu items handle their own actions). Without this guard,
+  // every real tap on the account button was being processed in order:
+  //   (1) pointerup → dropdown opens
+  //   (2) click bubbles to document → THIS listener → dropdown closes
+  // which is why the panel appeared to be "swallowed" — it opened and
+  // closed within the same gesture before any render could land.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && t.closest && (t.closest('#accountBtn') || t.closest('#accountDropdown'))) {
+      return;
+    }
     clearTimeout(_acctDropTimer);
     accountDropdown.classList.remove('open');
     if (_topCluster) _topCluster.style.zIndex = '';
