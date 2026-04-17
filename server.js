@@ -124,20 +124,78 @@ app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 
 // ── Browser caching headers for read-heavy GET endpoints ──
-// Sets Cache-Control with stale-while-revalidate so browsers can serve
-// cached responses instantly while revalidating in the background.
+// Sets Cache-Control with stale-while-revalidate + stale-if-error so
+// Cloudflare serves cached responses instantly, refreshes in background,
+// and falls back to stale content if origin 5xxs (e.g. DB cold-cache
+// timeouts). This is the fix for "first load fails, retry works":
+// after one success the result is cached, and stale-if-error guarantees
+// the next cold-cache slow query never surfaces as a 500 to the client.
+//
+// TTL philosophy:
+//   - Flows, threads, timelines change slowly (new entity mentions trickle
+//     over hours) — prefer longer cache.
+//   - Search / articles / feed are time-sensitive — keep short.
+//   - Static reference data (countries, cities) — cache aggressively.
+const SIE = ', stale-if-error=86400';   // serve stale up to 24h if origin 5xx
+// Order matters: the middleware breaks on first prefix match, so list
+// specific routes BEFORE their broader umbrella (e.g. /api/threads/latest
+// must come before /api/threads/).
 const SWR_ROUTES = {
-  '/api/threads/latest':   's-maxage=60, stale-while-revalidate=120',
-  '/api/timelines/latest': 's-maxage=60, stale-while-revalidate=120',
-  '/api/news/search':      's-maxage=30, stale-while-revalidate=60',
-  '/api/articles/recent':  's-maxage=30, stale-while-revalidate=60',
-  '/api/flows':            's-maxage=30, stale-while-revalidate=60',
-  '/api/countries/all':    's-maxage=300, stale-while-revalidate=600',
-  '/api/cities/all':       's-maxage=300, stale-while-revalidate=600',
-  '/api/cities':           's-maxage=300, stale-while-revalidate=600',
-  '/api/news/sources-stats': 's-maxage=120, stale-while-revalidate=300',
-  '/api/heatmap/':         's-maxage=60, stale-while-revalidate=120',
-  '/api/leader-tweets':    's-maxage=60, stale-while-revalidate=120',
+  // ── Thread surfaces ──────────────────────────────────────────────
+  '/api/threads/latest':      's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/threads/by-country/': 's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/threads/id/':         's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/threads/':            's-maxage=60,  stale-while-revalidate=300' + SIE, // catches /:id/timeline, /:threadId/panels
+  // ── Timeline surfaces ────────────────────────────────────────────
+  '/api/timelines/latest':    's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/timelines/':          's-maxage=60,  stale-while-revalidate=300' + SIE, // catches /:id/articles
+  // ── Search / recent (time-sensitive) ─────────────────────────────
+  '/api/news/search':         's-maxage=30,  stale-while-revalidate=60'  + SIE,
+  '/api/articles/recent':     's-maxage=30,  stale-while-revalidate=60'  + SIE,
+  // ── Flow arcs ────────────────────────────────────────────────────
+  '/api/flows':               's-maxage=300, stale-while-revalidate=900' + SIE,
+  // ── Country / city / region panels (pure public reads) ──────────
+  '/api/news/city/':          's-maxage=60,  stale-while-revalidate=300' + SIE,
+  '/api/news/country/':       's-maxage=60,  stale-while-revalidate=300' + SIE,
+  '/api/news/region/':        's-maxage=60,  stale-while-revalidate=300' + SIE,
+  '/api/sentiment/':          's-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/stats/location':      's-maxage=120, stale-while-revalidate=600' + SIE,
+  '/api/globe-stats':         's-maxage=120, stale-while-revalidate=600' + SIE,
+  '/api/environment':         's-maxage=300, stale-while-revalidate=900' + SIE,
+  // ── Keywords (AI-derived GETs are deterministic by query string) ─
+  '/api/keywords/trending':   's-maxage=600, stale-while-revalidate=1800' + SIE,
+  '/api/keywords/rising':     's-maxage=600, stale-while-revalidate=1800' + SIE,
+  '/api/keywords/autocomplete':'s-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/keywords/cooccurrence':'s-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/keywords/top':        's-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/keywords/trend':      's-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/keywords/articles':   's-maxage=120, stale-while-revalidate=600' + SIE,
+  '/api/keywords/':           's-maxage=120, stale-while-revalidate=600' + SIE, // catches /:keyword/references
+  // ── Clusters ─────────────────────────────────────────────────────
+  '/api/clusters/':           's-maxage=300, stale-while-revalidate=900' + SIE,
+  // ── Briefing (audio/panels/recent — not admin editor) ────────────
+  '/api/briefing/today':      's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/briefing/recent':     's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/briefing/episode/':   's-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/briefing/voices':     's-maxage=3600,stale-while-revalidate=86400'+ SIE,
+  '/api/briefing/music/':     's-maxage=3600,stale-while-revalidate=86400'+ SIE,
+  '/api/briefing/audio/':     's-maxage=86400,stale-while-revalidate=604800'+ SIE, // rendered audio never changes
+  '/api/briefing/':           's-maxage=120, stale-while-revalidate=300' + SIE, // catches /:episodeId/panels
+  // ── Reference data (almost static) ───────────────────────────────
+  '/api/countries/all':       's-maxage=300, stale-while-revalidate=600' + SIE,
+  '/api/countries':           's-maxage=300, stale-while-revalidate=600' + SIE,
+  '/api/cities/all':          's-maxage=300, stale-while-revalidate=600' + SIE,
+  '/api/cities':              's-maxage=300, stale-while-revalidate=600' + SIE,
+  '/api/regions':             's-maxage=600, stale-while-revalidate=3600'+ SIE,
+  '/api/commodities':         's-maxage=3600,stale-while-revalidate=86400'+ SIE,
+  '/api/land/geojson':        's-maxage=86400,stale-while-revalidate=604800'+ SIE,
+  '/api/tags':                's-maxage=300, stale-while-revalidate=900' + SIE,
+  '/api/exports':             's-maxage=600, stale-while-revalidate=3600'+ SIE,
+  '/api/imports':             's-maxage=600, stale-while-revalidate=3600'+ SIE,
+  // ── Stats / heatmap / misc ───────────────────────────────────────
+  '/api/news/sources-stats':  's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/heatmap/':            's-maxage=120, stale-while-revalidate=300' + SIE,
+  '/api/leader-tweets':       's-maxage=120, stale-while-revalidate=300' + SIE,
 };
 app.use('/api', (req, res, next) => {
   if (req.method === 'GET') {
@@ -256,6 +314,18 @@ async function ttlCached(key, ttlMs, producer) {
       const value = await producer();
       _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
       return value;
+    } catch (err) {
+      // App-level stale-if-error: if the producer failed (cold-cache timeout,
+      // transient DB error) and we have ANY previously-cached value — even
+      // long-expired — serve it rather than 500-ing. Cloudflare also has
+      // stale-if-error for CDN-level fallback, but that only helps once CF
+      // has a cached response to fall back to. This covers the in-process
+      // case and gives the user a working page while we log the error.
+      if (hit) {
+        console.warn(`[ttlCached:${key}] producer failed, serving stale: ${err.message}`);
+        return hit.value;
+      }
+      throw err;
     } finally {
       _ttlInflight.delete(key);
     }
@@ -2379,7 +2449,7 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    const _cached = await ttlCached(`flows/thread:${threadId}`, 60_000, async () => {
+    const _cached = await ttlCached(`flows/thread:${threadId}`, 300_000, async () => {
     // Find distinct countries directly involved in this thread's story
     // by looking at entity mentions with active roles (subject/actor/location)
     const { rows: involvedCountries } = await pool.query(`
@@ -2777,15 +2847,23 @@ async function refreshHeatmapSnapshots() {
 }
 
 // ── Time-series (bucketed) snapshot refresh ─────────────────────────────────
-// Pre-computes bucketed aggregates for the most common time-series combos.
-// 7d_hour / 14d_hour are too large to pre-compute; they remain live-query.
+// Pre-computes bucketed aggregates for every time-series combo the client
+// can request. Earlier iterations omitted 7d_hour and 14d_hour with a
+// "too large to pre-compute" note — but the pre-compute query already caps
+// rows at LIMIT 20000 (country) + LIMIT 40000 (city) per preset, so each
+// preset is bounded at ~60k rows regardless of the article volume. Adding
+// these two closes the hole where users switching to hourly bucket on 7d
+// or 14d would fall into the live-query branch and hit the 90s statement
+// timeout on cold buffer cache.
 async function refreshHeatmapTsSnapshots() {
   const tsPresets = [
     { key: '7d_day',   days: 7,  trunc: 'day'  },   // most requested
-    { key: '1d_hour',  days: 1,  trunc: 'hour' },
+    { key: '7d_hour',  days: 7,  trunc: 'hour' },   // was live-only; now pre-computed
     { key: '14d_day',  days: 14, trunc: 'day'  },
+    { key: '14d_hour', days: 14, trunc: 'hour' },   // was live-only; now pre-computed
     { key: '3d_hour',  days: 3,  trunc: 'hour' },
     { key: '3d_day',   days: 3,  trunc: 'day'  },
+    { key: '1d_hour',  days: 1,  trunc: 'hour' },
     { key: '1d_day',   days: 1,  trunc: 'day'  },
   ];
 
@@ -4989,11 +5067,14 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
     const useSnapshot = presetKey && !keyword && !threadId && bucket === 'none' && !fromIso && !toIso;
 
     // ── Time-series snapshot fast-path ─────────────────────────────────
-    // Pre-computed bucketed snapshots for standard combos.
+    // Pre-computed bucketed snapshots covering every UI-reachable combo.
+    // When this lookup table drifts from refreshHeatmapTsSnapshots() above,
+    // cold-cache timeouts reappear — keep them synchronized.
     const TS_SNAPSHOT_PRESETS = {
-      '1_hour': '1d_hour', '1_day': '1d_day',
-      '3_hour': '3d_hour', '3_day': '3d_day',
-      '7_day':  '7d_day',  '14_day': '14d_day',
+      '1_hour':  '1d_hour',  '1_day':  '1d_day',
+      '3_hour':  '3d_hour',  '3_day':  '3d_day',
+      '7_hour':  '7d_hour',  '7_day':  '7d_day',
+      '14_hour': '14d_hour', '14_day': '14d_day',
     };
     const tsPresetKey = TS_SNAPSHOT_PRESETS[`${days}_${bucket}`];
     const useTsSnapshot = tsPresetKey && !keyword && !threadId && !fromIso && !toIso;
@@ -5531,7 +5612,7 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
-    const _cached = await ttlCached(`flows/timeline:${timelineId}`, 60_000, async () => {
+    const _cached = await ttlCached(`flows/timeline:${timelineId}`, 300_000, async () => {
     // Find distinct countries directly involved in this timeline's story
     const { rows: involvedCountries } = await pool.query(`
       SELECT DISTINCT
@@ -6302,12 +6383,17 @@ app.get("/api/threads/latest", async (req, res) => {
 });
 
 // POST /api/cluster-node/summary — 200-word unbiased Claude-generated description using deep article search
+// Cached in-process for 10 min keyed by thread_id: same thread → same summary
+// until new articles materially shift the context. Cloudflare can't cache
+// POSTs, but ttlCached dedups concurrent and near-concurrent requests so a
+// single Claude call serves fan-out from many clients viewing the same node.
 app.post("/api/cluster-node/summary", async (req, res) => {
   const { thread_id } = req.body || {};
   const threadId = parseInt(thread_id, 10);
   if (!threadId) return res.status(400).json({ error: "thread_id required" });
 
   try {
+    const cached = await ttlCached(`cluster-node-summary:${threadId}`, 600_000, async () => {
     // Deep article search: fetch all articles for this thread with full context
     const { rows: articles } = await pool.query(`
       SELECT
@@ -6333,7 +6419,9 @@ app.post("/api/cluster-node/summary", async (req, res) => {
     const thread = threadRows[0];
 
     if (!articles.length && !thread) {
-      return res.status(404).json({ error: "No data found for this thread" });
+      // Signal 404 through the cache by returning a sentinel; the caller
+      // branches on it to preserve the HTTP status code.
+      return { _notFound: true };
     }
 
     // Build deep context from actual article content
@@ -6361,7 +6449,11 @@ app.post("/api/cluster-node/summary", async (req, res) => {
     });
 
     const summary = (response.content[0]?.text || "").trim();
-    res.json({ summary });
+    return { summary };
+    });
+
+    if (cached?._notFound) return res.status(404).json({ error: "No data found for this thread" });
+    res.json(cached);
   } catch (err) {
     console.error("[cluster-node/summary]", err.message);
     res.status(500).json({ error: "Summary generation failed" });
@@ -7152,32 +7244,49 @@ app.post("/api/translate", async (req, res) => {
     const baseTarget = target.split('-')[0].toUpperCase();
     const needsClaudeFallback = DEEPL_UNSUPPORTED.has(baseTarget);
 
-    let translatedTitle = null, translatedSummary = null;
-    if (needsClaudeFallback) {
-      // Claude Haiku fallback for unsupported DeepL languages
-      const langNames = { TL: 'Filipino (Tagalog)', HI: 'Hindi', MS: 'Malay', VI: 'Vietnamese' };
-      const langName = langNames[baseTarget] || target;
-      const pieces = [title, summary].filter(Boolean);
-      const prompt = `Translate each of the following items into ${langName}. Return a JSON array with the same number of elements in the same order. Only return the JSON array, nothing else.\n${JSON.stringify(pieces)}`;
-      const resp = await Anthropic.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: prompt }],
-      });
-      try {
-        const arr = JSON.parse(resp.content[0].text.trim());
-        let i = 0;
-        if (title)   translatedTitle   = arr[i++] || null;
-        if (summary) translatedSummary = arr[i++] || null;
-      } catch (_) {}
-    } else {
-      [translatedTitle, translatedSummary] = await Promise.all([
-        title   ? translateText(title,   target) : Promise.resolve(null),
-        summary ? translateText(summary, target) : Promise.resolve(null),
-      ]);
-    }
+    // ── In-process dedup ────────────────────────────────────────────
+    // Translation output is deterministic for a given (text, target) pair,
+    // so two users translating the same article share one DeepL/Claude
+    // call. Key by a short hash so we don't blow up memory on long bodies.
+    // DB persistence is intentionally OUTSIDE the cache: id is specific
+    // to the calling request, and the UPDATE is idempotent (COALESCE).
+    const _crypto = require('crypto');
+    const _inputHash = _crypto.createHash('sha1')
+      .update(`${title || ''}\u0001${summary || ''}\u0001${target}`)
+      .digest('hex').slice(0, 16);
+    const _cacheKey = `translate:${_inputHash}`;
 
-    // Only persist to DB for English translations (to avoid mixing languages across users)
+    const { translatedTitle, translatedSummary } = await ttlCached(_cacheKey, 600_000, async () => {
+      let tt = null, ts = null;
+      if (needsClaudeFallback) {
+        // Claude Haiku fallback for unsupported DeepL languages
+        const langNames = { TL: 'Filipino (Tagalog)', HI: 'Hindi', MS: 'Malay', VI: 'Vietnamese' };
+        const langName = langNames[baseTarget] || target;
+        const pieces = [title, summary].filter(Boolean);
+        const prompt = `Translate each of the following items into ${langName}. Return a JSON array with the same number of elements in the same order. Only return the JSON array, nothing else.\n${JSON.stringify(pieces)}`;
+        const resp = await Anthropic.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 1024,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        try {
+          const arr = JSON.parse(resp.content[0].text.trim());
+          let i = 0;
+          if (title)   tt = arr[i++] || null;
+          if (summary) ts = arr[i++] || null;
+        } catch (_) {}
+      } else {
+        [tt, ts] = await Promise.all([
+          title   ? translateText(title,   target) : Promise.resolve(null),
+          summary ? translateText(summary, target) : Promise.resolve(null),
+        ]);
+      }
+      return { translatedTitle: tt, translatedSummary: ts };
+    });
+
+    // Only persist to DB for English translations (to avoid mixing languages across users).
+    // Runs on every call (not just cache miss) because id is per-request; the UPDATE
+    // is COALESCE-idempotent so a repeat write for the same id is harmless.
     const isEnglishTarget = target.startsWith('EN');
     if (isEnglishTarget && id && (translatedTitle || translatedSummary)) {
       await pool.query(
@@ -7266,6 +7375,16 @@ app.post("/api/keywords/explain", async (req, res) => {
   }
 
   try {
+    // ttlCached key: normalize inputs so two users hitting the same keyword
+    // (or top-keyword set) within the window share a single Claude call.
+    // Rate-limit accounting already happened above via checkKwExplanation —
+    // the cache only trims redundant model invocations, not user quota.
+    const _kwKey = (keyword || '').toLowerCase().trim();
+    const _topKey = [...topKeywords].map(k => String(k).toLowerCase().trim()).sort().slice(0, 8).join(',');
+    const _locKey = (locationCountry || '').toUpperCase();
+    const _cacheKey = `kw-explain:${_kwKey}|${_topKey}|${_locKey}`;
+
+    const explanation = await ttlCached(_cacheKey, 300_000, async () => {
     let context = "";
 
     if (keyword) {
@@ -7312,7 +7431,9 @@ ${context}`,
       }],
     });
 
-    const explanation = (response.content[0]?.text || "").trim().slice(0, 450);
+    return (response.content[0]?.text || "").trim().slice(0, 450);
+    });
+
     res.json({ explanation, used: access.used, limit: access.limit });
   } catch (err) {
     console.error("[api/keywords/explain]", err.message);
@@ -8804,6 +8925,75 @@ async function _warmFeedCaches() {
 }
 setTimeout(_warmFeedCaches, 5000);
 setInterval(_warmFeedCaches, 90_000).unref?.();
+
+// ── Top-stories pre-warmer ──────────────────────────────────────────────────
+// Per-thread/timeline detail queries (flow arcs, timeline of articles, panels,
+// entity-mention joins) do expensive multi-table joins. On a cold Postgres
+// buffer cache these can exceed the 45s statement timeout, producing the
+// "fails first, works second" pattern. This warmer pulls the top-N active
+// threads and timelines every 4 min, hits each of their hot endpoints over
+// localhost, and populates both the in-process ttlCache and Cloudflare's
+// edge cache. Endpoint TTLs are 60–300s; we refresh every 240s so the
+// cache never fully expires.
+//
+// Endpoints warmed per item:
+//   threads:    /api/flows/thread/:id, /api/threads/:id/timeline, /api/threads/:threadId/panels, /api/threads/id/:id
+//   timelines:  /api/flows/timeline/:id, /api/timelines/:id/articles
+//
+// Cost: ~20 threads × 4 endpoints + 20 timelines × 2 endpoints = ~120 HTTP
+// hits per cycle. Serialized with 45s cap per request, pooled via the single
+// pg Pool. Typically completes in ~60–90s — still well under the 240s cycle.
+async function _warmFlowArcs() {
+  const http = require('http');
+  const base = `http://localhost:${PORT}`;
+  try {
+    const { rows: threads } = await pool.query(`
+      SELECT id FROM story_threads
+      WHERE status IN ('active','cooling')
+      ORDER BY importance DESC NULLS LAST, last_updated_at DESC
+      LIMIT 20
+    `);
+    const { rows: timelines } = await pool.query(`
+      SELECT id FROM story_timelines
+      WHERE status = 'active'
+      ORDER BY importance DESC NULLS LAST, last_updated_at DESC
+      LIMIT 20
+    `);
+    const urls = [
+      // Thread detail: flow arcs + timeline articles + panels + summary row
+      ...threads.flatMap(t => [
+        `${base}/api/flows/thread/${t.id}`,
+        `${base}/api/threads/${t.id}/timeline`,
+        `${base}/api/threads/${t.id}/panels`,
+        `${base}/api/threads/id/${t.id}`,
+      ]),
+      // Timeline detail: flow arcs + articles
+      ...timelines.flatMap(t => [
+        `${base}/api/flows/timeline/${t.id}`,
+        `${base}/api/timelines/${t.id}/articles`,
+      ]),
+    ];
+    // Warm serially with a small gap — DB statement_timeout is 45s, and we'd
+    // rather a single slow warm not cascade into a pool-exhaustion event.
+    for (const url of urls) {
+      try {
+        await new Promise((resolve, reject) => {
+          const r = http.get(url, res => { res.resume(); res.on('end', resolve); });
+          r.on('error', reject);
+          r.setTimeout(45000, () => { r.destroy(); reject(new Error('timeout')); });
+        });
+      } catch (e) {
+        console.warn('[flow-warm]', url, e.message);
+      }
+    }
+  } catch (err) {
+    console.warn('[flow-warm] fetch-top failed:', err.message);
+  }
+}
+// Kick off 20s after boot so the main warmers and article listener have
+// settled, then refresh every 4 min (slightly ahead of the 5-min TTL).
+setTimeout(_warmFlowArcs, 20_000);
+setInterval(_warmFlowArcs, 240_000).unref?.();
 
 // ── World Leaders tweets (oEmbed, admin-curated) ────────────────────────
 const { processTweetUrls } = require('./twitterFetcher');

@@ -3561,16 +3561,27 @@ body.flow-maximized #flowArcList {
 .flowCtxAiBtn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  /* Explicit sizing: iOS Safari and Android Chrome both ignore height on
+     <button> unless appearance is unset and box-sizing/line-height are
+     pinned. Without these three the button inflates past the 24px pill. */
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  line-height: 1;
   height: 20px;
+  min-height: 0;
   padding: 0 8px;
   margin: 0 2px;
+  flex-shrink: 0;
   border-radius: 10px;
   background: rgba(139,92,246,0.16);
   border: 1px solid rgba(139,92,246,0.35);
   color: rgba(210,180,255,0.95);
   font-size: 10px;
   font-weight: 700;
+  font-family: inherit;
   letter-spacing: 0.04em;
   cursor: pointer;
   white-space: nowrap;
@@ -8347,7 +8358,22 @@ body.flow-maximized #flowArcList {
 /* ═══════════════════════════════════════════════════════════════
    AUTH SYSTEM
 ════════════════════════════════════════════════════════════════ */
-#accountBtn { position: relative; }
+/* Hard-guarantee the account button receives clicks. An ancestor
+   (body.auth-modal-open, topLeftCluster with a stale pointer-events,
+   or the _blockGlobePassthrough stopPropagation) could otherwise
+   silently swallow taps, making the button appear dead while the
+   handler is actually bound. pointer-events:auto is higher specificity
+   than any inherited `none` and the z-index keeps it above overlays
+   that collapsed but didn't fully unmount. */
+#accountBtn {
+  position: relative;
+  pointer-events: auto !important;
+  z-index: 600;
+}
+#topLeftCluster { pointer-events: auto !important; }
+/* Tooltip inside the button must not eat the click — the button is
+   the hit target, the tooltip floats above on hover only. */
+#accountBtn > .btnTooltip { pointer-events: none; }
 #accountBtn .acct-avatar {
   width: 22px; height: 22px; border-radius: 50%;
   background: rgba(255,160,40,1); color: #000;
@@ -26180,6 +26206,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // (old onboarding vars removed — v2 uses _obData object)
   let _onboardingShownThisSession = false;
 
+  // ── Safety: clear any stuck modal-lock class from a prior session ──
+  // body.auth-modal-open sets `pointer-events: none !important` on
+  // every direct child of <body> except #authOverlay. If closeModal()
+  // was skipped (exception mid-close, hot-reload, hard nav away from
+  // modal), the class stays and every nav button — including the
+  // account button itself — silently eats clicks. Strip it on boot.
+  document.body.classList.remove('auth-modal-open');
+
   // ── DOM refs ─────────────────────────────────────────────────
   const accountBtn      = document.getElementById('accountBtn');
   const accountBtnIcon  = document.getElementById('accountBtnIcon');
@@ -26556,6 +26590,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (_acctSuppressClick) return;
     _acctDoAction(e);
   });
+  // Belt-and-suspenders: document-level capture-phase delegator.
+  // Catches clicks on the account button even if a descendant (.acct-avatar,
+  // the svg icon, etc.) absorbs the event, or if an intermediate listener
+  // calls stopPropagation before the accountBtn-level handler fires.
+  // Capture phase runs first, before any bubble-phase stopPropagation can
+  // interfere. Guarded by _acctSuppressClick so we don't double-fire after
+  // the pointerup path already opened the dropdown.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    if (!t.closest('#accountBtn')) return;
+    if (t.closest('#accountDropdown')) return;   // don't toggle when clicking dropdown items
+    if (_acctSuppressClick) return;
+    _acctDoAction(e);
+  }, true);
   document.addEventListener('click', () => {
     clearTimeout(_acctDropTimer);
     accountDropdown.classList.remove('open');
