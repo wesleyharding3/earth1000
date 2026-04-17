@@ -932,12 +932,22 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
 ========================================= */
 app.get("/api/news/country/:countryId", async (req, res) => {
   try {
+    const countryId = parseInt(req.params.countryId);
+    if (!Number.isFinite(countryId)) return res.status(400).json({ error: "Invalid countryId" });
+
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
     const ambient = req.query.ambient === "1" || req.query.ambient === "true";
 
-    const ranked = await getRankedArticles(parseInt(req.params.countryId), { limit, offset, tagId, ambient });
+    // TTL cache so concurrent fan-out on the same feed (many clients hitting
+    // the same Cloudflare origin on cache miss) collapses to one DB query.
+    // 60s matches the s-maxage set on this route; stale-while-revalidate in
+    // ttlCached serves stale instantly while a background refresh runs.
+    const cacheKey = `country-feed:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
+    const ranked = await ttlCached(cacheKey, 60_000, () =>
+      getRankedArticles(countryId, { limit, offset, tagId, ambient })
+    );
     res.json(ranked);
   } catch (err) {
     console.error("Country news error:", err.message);
@@ -9143,6 +9153,31 @@ async function _warmFeedCaches() {
     `${base}/api/countries/all`,                       // country list
     `${base}/api/cities/all`,                          // city list
   ];
+
+  // Country feed warming: pull the 20 highest-volume countries by article
+  // count in the last 24h and warm both ambient and standard variants.
+  // /api/news/country/:id?ambient=1 is the per-country headline feed that
+  // was timing out at 20s on cold buffers — keeping those countries in
+  // Postgres' buffer cache + our ttlCached keeps the common case instant.
+  try {
+    const { rows: hotCountries } = await pool.query(`
+      SELECT country_id
+      FROM news_articles
+      WHERE country_id IS NOT NULL
+        AND city_id IS NULL
+        AND published_at > NOW() - INTERVAL '24 hours'
+      GROUP BY country_id
+      ORDER BY COUNT(*) DESC
+      LIMIT 20
+    `);
+    for (const { country_id } of hotCountries) {
+      urls.push(`${base}/api/news/country/${country_id}?limit=20&offset=0&ambient=1`);
+      urls.push(`${base}/api/news/country/${country_id}?limit=20&offset=0`);
+    }
+  } catch (e) {
+    console.warn('[cache-warm] hot-countries fetch failed:', e.message);
+  }
+
   for (const url of urls) {
     try {
       await new Promise((resolve, reject) => {

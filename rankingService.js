@@ -17,6 +17,23 @@ const CANDIDATE_WINDOW_HOURS = 72;
 // At COOLDOWN_SLOTS=5, a source appears every 6 slots max — so 60 is generous.
 const MAX_PER_SOURCE = 60;
 
+// Bound the candidate pool pushed into JS rank. Replaces the old ROW_NUMBER()
+// window function that sorted the full 72h × all-sources candidate set just
+// to cap per-source. Pulling the freshest ~800 rows and capping per-source in
+// JS is equivalent on any realistic feed, and lets Postgres do a single index
+// range scan on (country_id, published_at DESC) instead of a big sort.
+const NATIONAL_POOL_LIMIT = 800;
+const CITY_POOL_LIMIT     = 400;
+
+// Statement timeouts for the tiered fallback. Tier 1 is the full query with
+// the LATERAL thread lookup; Tier 2 drops the thread lookup so articles still
+// render even when the thread-status join is the cold-buffer bottleneck.
+// The pool's default statement_timeout is 45s — we shorten these so a single
+// cold request can't burn a connection for the full 45s window.
+const TIER1_TIMEOUT_MS = 12000;
+const TIER2_TIMEOUT_MS = 4000;
+const POOL_DEFAULT_TIMEOUT_MS = 45000;
+
 // Ambient headline spotlight gate. When callers pass { ambient: true }, the
 // candidate pool is restricted to tier 2/3/4 sources with a minimum
 // base_priority. Rationale: tier 1 is wire-service dominated (AP/Reuters
@@ -95,6 +112,140 @@ const ARTICLE_JOINS = `
 `;
 
 // ─────────────────────────────────────────────────────────────
+// QUERY BUILDER + TIERED EXECUTOR
+// ─────────────────────────────────────────────────────────────
+//
+// Fetches up to `poolLimit` articles matching the scope (country/city filter)
+// ordered by published_at DESC. Thread status (`in_thread`, `thread_status`)
+// is consolidated into a single LATERAL lookup — previously we issued two
+// separate correlated subqueries against story_thread_articles for every row,
+// which on cold buffer cache tipped the whole feed query past our pool's
+// 45s statement_timeout and returned 500s to the client.
+//
+// Two-tier execution with statement timeouts:
+//   Tier 1 (12s): full query incl. thread LATERAL + source/country joins.
+//   Tier 2 ( 4s): drops the thread LATERAL entirely. Articles lose the
+//                 in-thread boost in JS ranking, but the feed still renders.
+//
+// This mirrors the approach used by /api/news/search's _executeNewsSearch.
+
+function _buildAmbientClauses(ambient) {
+  // Inner-join on news_sources is equivalent to the prior
+  //   LEFT JOIN news_sources + COALESCE(fetch_tier, 1) IN (2,3,4)
+  // because COALESCE(NULL,1) IN (2,3,4) is always false — both forms exclude
+  // YouTube-only articles and articles without a news_sources row. INNER JOIN
+  // lets the planner push the filter into the join instead of evaluating a
+  // COALESCE(...) predicate that blocks index use on fetch_tier.
+  return {
+    join: ambient
+      ? `JOIN news_sources ns_amb ON ns_amb.id = a.source_id AND ns_amb.fetch_tier IN (2, 3, 4)`
+      : "",
+    // Dropping COALESCE so the planner can consider any btree index on
+    // base_priority; a NULL base_priority is filtered by this predicate the
+    // same as COALESCE(base_priority, 0) >= 2.0 would (NULL >= 2.0 is NULL).
+    where: ambient ? `AND a.base_priority >= ${AMBIENT_MIN_BASE_PRIORITY}` : "",
+  };
+}
+
+function _buildTagClause(tagId) {
+  return tagId
+    ? `JOIN article_tags at ON at.article_id = a.id AND at.tag_id = ${parseInt(tagId, 10)}`
+    : "";
+}
+
+async function _runWithTimeout(sql, params, timeoutMs) {
+  const client = await pool.connect();
+  try {
+    await client.query(`SET statement_timeout = ${timeoutMs}`);
+    const { rows } = await client.query(sql, params);
+    return rows;
+  } finally {
+    // Restore the pool's default so the next consumer of this physical
+    // connection isn't stuck with our short timeout.
+    await client.query(`SET statement_timeout = ${POOL_DEFAULT_TIMEOUT_MS}`).catch(() => {});
+    client.release();
+  }
+}
+
+async function _loadCandidatePool({ scopeSql, scopeParams, ambient, tagId, poolLimit }) {
+  const { join: ambientJoin, where: ambientWhere } = _buildAmbientClauses(ambient);
+  const tagJoin = _buildTagClause(tagId);
+
+  // ── Tier 1: full query, thread lookup via single LATERAL ────────────
+  const tier1 = `
+    SELECT ${ARTICLE_FIELDS},
+      COALESCE(th.in_thread, false) AS in_thread,
+      th.thread_status
+    FROM news_articles a
+    ${ARTICLE_JOINS}
+    ${ambientJoin}
+    ${tagJoin}
+    LEFT JOIN LATERAL (
+      SELECT true AS in_thread,
+        CASE
+          WHEN bool_or(t.status = 'active')  THEN 'active'
+          WHEN bool_or(t.status = 'cooling') THEN 'cooling'
+          WHEN bool_or(t.status = 'dormant') THEN 'dormant'
+          ELSE NULL
+        END AS thread_status
+      FROM story_thread_articles sta
+      JOIN story_threads t ON t.id = sta.thread_id
+      WHERE sta.article_id = a.id
+    ) th ON TRUE
+    WHERE ${scopeSql}
+      AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
+      ${ambientWhere}
+    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+    LIMIT ${poolLimit}
+  `;
+
+  try {
+    return await _runWithTimeout(tier1, scopeParams, TIER1_TIMEOUT_MS);
+  } catch (err) {
+    console.warn(`[rankingService] tier1 timed out (${TIER1_TIMEOUT_MS}ms): ${err.message}, falling back to tier2`);
+  }
+
+  // ── Tier 2: drop thread lookup entirely ─────────────────────────────
+  // Feed still renders; articles just won't get the in-thread boost from
+  // priorityEngine. Acceptable degradation vs. 500ing the whole request.
+  const tier2 = `
+    SELECT ${ARTICLE_FIELDS},
+      false AS in_thread,
+      NULL::text AS thread_status
+    FROM news_articles a
+    ${ARTICLE_JOINS}
+    ${ambientJoin}
+    ${tagJoin}
+    WHERE ${scopeSql}
+      AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
+      ${ambientWhere}
+    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
+    LIMIT ${poolLimit}
+  `;
+
+  try {
+    return await _runWithTimeout(tier2, scopeParams, TIER2_TIMEOUT_MS);
+  } catch (err2) {
+    console.warn(`[rankingService] tier2 timed out (${TIER2_TIMEOUT_MS}ms): ${err2.message}, returning empty`);
+    return [];
+  }
+}
+
+function _applyPerSourceCap(rows, maxPerSource) {
+  const perSource = new Map();
+  const out = [];
+  for (const r of rows) {
+    const key = r.source_key
+      || (r.source_id != null ? `news:${r.source_id}` : `yt:${r.youtube_source_id}`);
+    const n = perSource.get(key) || 0;
+    if (n >= maxPerSource) continue;
+    perSource.set(key, n + 1);
+    out.push(r);
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────
 // NATIONAL FEED
 // ─────────────────────────────────────────────────────────────
 
@@ -104,53 +255,15 @@ async function getRankedArticles(countryId, options = {}) {
   const tagId  = options.tagId ? parseInt(options.tagId) : null;
   const ambient = !!options.ambient;
 
-  const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
-  const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
-  const ambientJoin = ambient ? `LEFT JOIN news_sources ns_amb ON ns_amb.id = a.source_id` : "";
-  const ambientWhere = ambient
-    ? `AND COALESCE(ns_amb.fetch_tier, 1) IN (2, 3, 4) AND COALESCE(a.base_priority, 0) >= ${AMBIENT_MIN_BASE_PRIORITY}`
-    : "";
+  const prelim = await _loadCandidatePool({
+    scopeSql: `a.country_id = $1 AND a.city_id IS NULL`,
+    scopeParams: [countryId],
+    ambient,
+    tagId,
+    poolLimit: NATIONAL_POOL_LIMIT,
+  });
 
-  const { rows } = await pool.query(`
-    WITH ranked_by_source AS (
-      SELECT a.id,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
-          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-        ) AS source_rank
-      FROM news_articles a
-      ${tagJoin}
-      ${ambientJoin}
-      WHERE a.country_id = $1
-        AND a.city_id IS NULL
-        AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
-        ${tagWhere}
-        ${ambientWhere}
-    ),
-    candidate_articles AS (
-      SELECT id FROM ranked_by_source
-      WHERE source_rank <= $2
-      ORDER BY id DESC
-    )
-    SELECT ${ARTICLE_FIELDS},
-      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread,
-      (
-        SELECT CASE
-          WHEN bool_or(t.status = 'active')  THEN 'active'
-          WHEN bool_or(t.status = 'cooling') THEN 'cooling'
-          WHEN bool_or(t.status = 'dormant') THEN 'dormant'
-          ELSE NULL
-        END
-        FROM story_thread_articles sta2
-        JOIN story_threads t ON t.id = sta2.thread_id
-        WHERE sta2.article_id = a.id
-      ) AS thread_status
-    FROM candidate_articles ca
-    JOIN news_articles a ON a.id = ca.id
-    ${ARTICLE_JOINS}
-    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [countryId, MAX_PER_SOURCE]);
-
+  const rows = _applyPerSourceCap(prelim, MAX_PER_SOURCE);
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
   return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
@@ -166,52 +279,15 @@ async function getRankedCityArticles(cityId, options = {}) {
   const tagId  = options.tagId ? parseInt(options.tagId) : null;
   const ambient = !!options.ambient;
 
-  const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
-  const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
-  const ambientJoin = ambient ? `LEFT JOIN news_sources ns_amb ON ns_amb.id = a.source_id` : "";
-  const ambientWhere = ambient
-    ? `AND COALESCE(ns_amb.fetch_tier, 1) IN (2, 3, 4) AND COALESCE(a.base_priority, 0) >= ${AMBIENT_MIN_BASE_PRIORITY}`
-    : "";
+  const prelim = await _loadCandidatePool({
+    scopeSql: `a.city_id = $1`,
+    scopeParams: [cityId],
+    ambient,
+    tagId,
+    poolLimit: CITY_POOL_LIMIT,
+  });
 
-  const { rows } = await pool.query(`
-    WITH ranked_by_source AS (
-      SELECT a.id,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text)
-          ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-        ) AS source_rank
-      FROM news_articles a
-      ${tagJoin}
-      ${ambientJoin}
-      WHERE a.city_id = $1
-        AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
-        ${tagWhere}
-        ${ambientWhere}
-    ),
-    candidate_articles AS (
-      SELECT id FROM ranked_by_source
-      WHERE source_rank <= $2
-      ORDER BY id DESC
-    )
-    SELECT ${ARTICLE_FIELDS},
-      (EXISTS (SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id)) AS in_thread,
-      (
-        SELECT CASE
-          WHEN bool_or(t.status = 'active')  THEN 'active'
-          WHEN bool_or(t.status = 'cooling') THEN 'cooling'
-          WHEN bool_or(t.status = 'dormant') THEN 'dormant'
-          ELSE NULL
-        END
-        FROM story_thread_articles sta2
-        JOIN story_threads t ON t.id = sta2.thread_id
-        WHERE sta2.article_id = a.id
-      ) AS thread_status
-    FROM candidate_articles ca
-    JOIN news_articles a ON a.id = ca.id
-    ${ARTICLE_JOINS}
-    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-  `, [cityId, MAX_PER_SOURCE]);
-
+  const rows = _applyPerSourceCap(prelim, MAX_PER_SOURCE);
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity, { skipCityPenalty: true });
   return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
