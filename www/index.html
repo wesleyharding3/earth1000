@@ -8873,9 +8873,18 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 }
 .authForgot a { color: rgba(255,160,40,0.65); cursor: pointer; text-decoration: none; }
 .authForgot a:hover { color: rgba(255,185,60,1); }
-/* Account dropdown */
+/* Account dropdown.
+   Reparented to <body> at runtime (so #accountBtn's backdrop-filter
+   can't create a fixed-containing-block trap — see auth IIFE). That
+   means the default CSS must NOT assume the dropdown lives inside
+   accountBtn. Old rule `top: calc(100% + 9px)` became "100% of body
+   height" after reparenting, putting the dropdown below the fold on
+   any scrollable page. New defaults anchor to top-left of viewport
+   and JS `positionAccountDropdown()` moves it to the right spot on
+   every open. If JS fails for any reason, the dropdown is still
+   visible (at 64,10) rather than offscreen. */
 #accountDropdown {
-  display: none; position: absolute; top: calc(100% + 9px); left: 0;
+  display: none; position: fixed; top: 64px; left: 10px;
   width: 238px; background: rgba(8,14,26,0.97);
   border: 1px solid rgba(255,255,255,0.13); border-radius: 15px;
   box-shadow: 0 14px 52px rgba(0,0,0,0.72); z-index: 500; overflow: hidden;
