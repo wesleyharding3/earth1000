@@ -6590,16 +6590,56 @@ body.flow-maximized #flowArcList {
       font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
     }
     .nfThreadCardNations {
-      display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
+      display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
     }
-    .nfNationBubble {
-      display: inline-block; padding: 2px 7px; border-radius: 8px;
-      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1);
-      font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.55);
-      letter-spacing: 0.02em; white-space: nowrap;
-      transition: background 0.15s, color 0.15s;
+    /* Country chip: flag image by default, falls back to iso-code text when
+       flagcdn doesn't serve the code (chip gets .nfNationChip--text set by
+       the img onerror handler). Hover on desktop / tap on mobile reveals
+       the full country name via the label. */
+    .nfNationChip {
+      position: relative;
+      display: inline-flex; align-items: center;
+      padding: 2px; border-radius: 3px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      cursor: default; outline: none;
+      transition: background 0.15s, border-color 0.15s;
     }
-    .nfNationBubble:hover { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.75); }
+    .nfNationChip:hover, .nfNationChip:focus-within {
+      background: rgba(255,255,255,0.14);
+      border-color: rgba(255,255,255,0.22);
+    }
+    .nfNationFlag {
+      width: 18px; height: 13px; object-fit: cover;
+      border-radius: 1px; display: block;
+    }
+    .nfNationCode {
+      display: none; padding: 0 5px;
+      font-size: 9px; font-weight: 600; letter-spacing: 0.04em;
+      color: rgba(255,255,255,0.7); white-space: nowrap;
+    }
+    .nfNationChip--text .nfNationFlag { display: none; }
+    .nfNationChip--text .nfNationCode { display: inline-block; }
+    .nfNationChip--text { padding: 2px 2px; }
+    .nfNationLabel {
+      position: absolute;
+      bottom: calc(100% + 6px); left: 50%;
+      transform: translateX(-50%);
+      padding: 4px 8px;
+      background: rgba(5,7,12,0.95);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 6px;
+      font-size: 10px; font-weight: 500;
+      color: rgba(255,255,255,0.92);
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.12s;
+      z-index: 20;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .nfNationChip:hover .nfNationLabel,
+    .nfNationChip:focus-within .nfNationLabel { opacity: 1; }
 
     /* Sort */
     .nfSortSeg {
@@ -21559,7 +21599,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
             <div class="nfThreadCardFooter">
               <span class="nfThreadCardMeta">${count} article${count !== 1 ? 's' : ''}</span>
-              <div class="nfThreadCardNations">${nations.map(iso => `<span class="nfNationBubble">${esc(_isoToName(iso))}</span>`).join('')}</div>
+              <div class="nfThreadCardNations">${nations.map(iso => {
+                const code = String(iso || '').trim().toLowerCase();
+                if (!code) return '';
+                const up = code.toUpperCase();
+                const name = esc(_isoToName(iso) || up);
+                const flagUrl = `https://flagcdn.com/w40/${code}.png`;
+                // onerror swaps the chip into text-fallback mode (shows iso code)
+                // for codes flagcdn doesn't serve. tabindex makes the chip focusable
+                // so mobile taps reveal the label via :focus-within.
+                return `<span class="nfNationChip" tabindex="0" aria-label="${name}"><img class="nfNationFlag" src="${flagUrl}" alt="" loading="lazy" onerror="this.closest('.nfNationChip').classList.add('nfNationChip--text');this.onerror=null;"><span class="nfNationCode">${up}</span><span class="nfNationLabel">${name}</span></span>`;
+              }).join('')}</div>
             </div>
           </div>
         </div></div>`;
