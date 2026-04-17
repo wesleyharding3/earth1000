@@ -1878,7 +1878,7 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
 
     // ── TTL cache for flows — keyed by all filter params ──────────────
     const _flowCacheKey = `flows:${mode}:${viewMode}:${limit}:${fromDate||''}:${toDate||''}:${fromCountry||''}:${fromCity||''}:${aboutCountry||''}:${aboutCity||''}:${keyword||''}:${normalize}`;
-    const _flowResult = await ttlCached(_flowCacheKey, 45_000, async () => {
+    const _flowResult = await ttlCached(_flowCacheKey, 180_000, async () => {
 
     // Build dynamic WHERE conditions
     const conditions = [];
@@ -2109,7 +2109,16 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
         `;
       }
 
-      const { rows } = await pool.query(aggregateQuery, params);
+      // Dedicated client with per-statement timeout so a slow cold query
+      // fails fast instead of holding the pool and cascading retries.
+      const client = await pool.connect();
+      let rows;
+      try {
+        await client.query("SET LOCAL statement_timeout = 6000");
+        ({ rows } = await client.query(aggregateQuery, params));
+      } finally {
+        client.release();
+      }
 
       const maxCount = rows.length ? parseInt(rows[0].max_count) : 1;
       const totalArticles = rows.length ? parseInt(rows[0].total_articles) : 0;
@@ -2154,8 +2163,8 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       // INDIVIDUAL MODE: Priority-scored, sqrt-normalized
       // ─────────────────────────────────────────
       
-      // Fetch extra articles for normalization (3x limit, capped at 5000)
-      const fetchLimit = normalize ? Math.min(limit * 3, 5000) : limit;
+      // Fetch extra articles for normalization (3x limit, capped at 3000)
+      const fetchLimit = normalize ? Math.min(limit * 3, 3000) : limit;
       params.push(fetchLimit);
       const limitParam = params.length;
 
@@ -2169,7 +2178,11 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
         `;
       }
 
-      const { rows } = await pool.query(`
+      const client = await pool.connect();
+      let rows;
+      try {
+        await client.query("SET LOCAL statement_timeout = 6000");
+        ({ rows } = await client.query(`
         SELECT
           a.id,
           a.title AS "originalTitle",
@@ -2224,7 +2237,10 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
         ${regionExclusionClause}
         ORDER BY a.published_at DESC
         LIMIT $${limitParam}
-      `, params);
+      `, params));
+      } finally {
+        client.release();
+      }
 
       // Calculate priority scores using simplified scoring
       const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
@@ -9099,6 +9115,8 @@ async function _warmFeedCaches() {
     `${base}/api/timelines/latest?limit=30`,
     `${base}/api/timelines/latest?limit=1000`, // full timeline list
     `${base}/api/flows?mode=aggregate&view_mode=country&limit=500`,
+    `${base}/api/flows?mode=aggregate&view_mode=city&limit=500`,
+    `${base}/api/flows?mode=aggregate&view_mode=region&limit=500`,
     `${base}/api/articles/recent?limit=60&hours=48`,  // ticker feed
     `${base}/api/news/sources-stats`,                  // source intelligence
     `${base}/api/globe-stats`,                         // globe stats (commodities, economic, etc.)

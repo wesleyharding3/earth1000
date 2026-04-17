@@ -3402,6 +3402,13 @@ body.flow-maximized #flowArcList {
   transition: background 0.12s, color 0.12s;
   font-size: 13px;
   line-height: 1;
+  /* iOS Safari / WKWebView ignore explicit width/height on <button>
+     unless appearance is unset. Without these the active background
+     inflates past the pill bounds. */
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 #flowCtxCard .flowCtxReturn svg,
 #flowCtxCard .flowCtxClose svg { width: 11px; height: 11px; }
@@ -3544,6 +3551,10 @@ body.flow-maximized #flowArcList {
   transition: background 0.12s, color 0.12s, box-shadow 0.15s;
   font-size: 12px;
   line-height: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 .flowCtxTab svg { width: 12px; height: 12px; }
 .flowCtxTab:hover { background: rgba(255,255,255,0.10); color: #fff; }
@@ -9087,7 +9098,7 @@ window.fmtDate = function(d) {
   const DEFAULT_TIMEOUT = 20000;
   const LONG_TIMEOUT = 45000;
   // Endpoints that hit heavy DB queries under load get a longer leash
-  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest'];
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
@@ -10243,15 +10254,6 @@ window.sourceBiasBadgeHTML = function(bias) {
       </div>
       <!-- AI Context interpanel — swapped in by window.__arcAiContextOpen() -->
       <div class="arcContextPanel" id="arcContextPanel">
-        <div class="arcCtxHeader">
-          <button class="arcCtxBackBtn" id="arcCtxBackBtn" title="Back" onclick="window.__arcAiContextClose?.()">←</button>
-          <span class="arcCtxTitle">AI Context</span>
-          <button class="arcCtxRefreshBtn" id="arcCtxRefreshBtn" title="Regenerate" onclick="window.__arcAiContextRefresh?.()">↻</button>
-        </div>
-        <div class="arcCtxTabs">
-          <button class="arcCtxTab active" data-scope="entities">All entities</button>
-          <button class="arcCtxTab" data-scope="flow">Active flow</button>
-        </div>
         <div class="arcCtxBody" id="arcCtxBody"></div>
       </div>
     </div>
@@ -18303,12 +18305,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!body) return;
       const blocks = _arcCtxCache.get(key) || [];
       if (!blocks.length) {
-        body.innerHTML = '<div class="arcCtxEmpty">Tap ↻ to generate context.</div>';
+        body.innerHTML = '';
         return;
       }
       body.innerHTML = blocks.map((b, i) =>
         `<div class="arcCtxBlock">` +
-          (b.meta ? `<div class="arcCtxMeta">${_esc(b.meta)}</div>` : '') +
           `<div class="arcCtxText" data-block="${i}">${_esc(b.text)}</div>` +
         `</div>`
       ).join('');
@@ -18343,13 +18344,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxCurrentKey = key;
 
       // Append a new block to cache, render it, then stream into it.
-      const meta = scope === 'entities'
-        ? 'All visible entities'
-        : (_arcCtxSession.mode === 'timeline'
-            ? `Segment ${(_arcCtxSegment?.idx ?? 0) + 1}${_arcCtxSegment?.title ? ' · ' + _arcCtxSegment.title : ''}`
-            : `Selected flow`);
+      // Meta is intentionally blank — the panel is headerless now.
       const blocks = _arcCtxCache.get(key) || [];
-      const newBlock = { meta, text: '' };
+      const newBlock = { meta: '', text: '' };
       blocks.push(newBlock);
       _arcCtxCache.set(key, blocks);
       _arcCtxRenderBlocks(key);
@@ -18397,57 +18394,65 @@ const settingsToggle     = document.getElementById("settingsToggle");
           })() : null,
         };
 
-        const res = await fetch(`${API}/api/ai/flow-context`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-          body: JSON.stringify(payload),
-          signal: abort.signal,
-          credentials: 'include',
-        });
-
-        if (res.status === 402 || res.status === 403) { _arcCtxShowLock(); return; }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error('No stream reader');
-        const dec = new TextDecoder();
-        let buf = '';
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          // Parse SSE frames separated by blank line
-          const frames = buf.split(/\n\n/);
-          buf = frames.pop() || '';
-          for (const frame of frames) {
-            const line = frame.split('\n').find(l => l.startsWith('data:'));
-            if (!line) continue;
-            const data = line.slice(5).trim();
-            if (data === '[DONE]') continue;
-            try {
-              const obj = JSON.parse(data);
-              const delta = obj.delta ?? obj.text ?? '';
-              if (delta) {
-                newBlock.text += delta;
+        // XHR-with-onprogress path. iOS WKWebView's fetch+getReader is
+        // unreliable for SSE (throws "TypeError: Load failed" mid-stream),
+        // but XHR exposes responseText incrementally via progress events
+        // on every platform. We parse the same SSE `data: {...}` frames
+        // from the growing responseText.
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', `${API}/api/ai/flow-context`, true);
+          xhr.setRequestHeader('Content-Type', 'application/json');
+          xhr.setRequestHeader('Accept', 'text/event-stream');
+          xhr.withCredentials = true;
+          let consumed = 0;
+          const drain = (final) => {
+            const buf = xhr.responseText.slice(consumed);
+            const frames = buf.split(/\n\n/);
+            if (!final) consumed += buf.length - (frames[frames.length - 1]?.length || 0);
+            else consumed = xhr.responseText.length;
+            const iter = final ? frames : frames.slice(0, -1);
+            for (const frame of iter) {
+              const line = frame.split('\n').find(l => l.startsWith('data:'));
+              if (!line) continue;
+              const data = line.slice(5).trim();
+              if (!data || data === '[DONE]') continue;
+              try {
+                const obj = JSON.parse(data);
+                const delta = obj.delta ?? obj.text ?? '';
+                if (delta) {
+                  newBlock.text += delta;
+                  if (textEl) textEl.textContent = newBlock.text;
+                  if (body) body.scrollTop = body.scrollHeight;
+                }
+              } catch (_) {
+                newBlock.text += data;
                 if (textEl) textEl.textContent = newBlock.text;
-                if (body) body.scrollTop = body.scrollHeight;
               }
-            } catch (_) {
-              // Treat as raw text
-              newBlock.text += data;
-              if (textEl) textEl.textContent = newBlock.text;
             }
-          }
-        }
+          };
+          xhr.onprogress = () => drain(false);
+          xhr.onload = () => {
+            if (xhr.status === 402 || xhr.status === 403) { _arcCtxShowLock(); resolve(); return; }
+            if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(`HTTP ${xhr.status}`)); return; }
+            drain(true);
+            resolve();
+          };
+          xhr.onerror = () => reject(new Error('network error'));
+          xhr.onabort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          abort.signal.addEventListener('abort', () => { try { xhr.abort(); } catch(_) {} });
+          xhr.send(JSON.stringify(payload));
+        });
       } catch (e) {
         if (e.name === 'AbortError') return;
         console.error('arcCtx stream error:', e);
         const body2 = document.getElementById('arcCtxBody');
-        if (body2) {
+        if (body2 && !newBlock.text) {
           const err = document.createElement('div');
           err.className = 'arcCtxError';
-          err.textContent = 'Context unavailable right now.';
+          err.textContent = 'Tap to retry.';
+          err.style.cursor = 'pointer';
+          err.addEventListener('click', () => window.__arcAiContextRefresh?.());
           body2.appendChild(err);
         }
       } finally {
@@ -29282,14 +29287,6 @@ body.ticker-active .gTickerLabel {
     if (episode.has_music) {
       initBgMusic(episode.id);
     }
-    // Seed briefing ticker immediately with all episode article IDs
-    const allIds = (episode.segments || []).flatMap(s => s.article_ids || []);
-    if (allIds.length) {
-      fetch(`${API}/api/articles/by-ids?ids=${allIds.slice(0, 30).join(',')}`)
-        .then(r => r.ok ? r.json() : [])
-        .then(arts => { if (arts.length && segIdx === 0) startTicker(arts); })
-        .catch(() => {});
-    }
     goToSegment(0);
   }
 
@@ -29320,7 +29317,6 @@ body.ticker-active .gTickerLabel {
     if (dp) { dp.innerHTML = ''; dp.classList.remove('visible'); }
     _panelsBySeg = {};
     document.getElementById('bTickerItem').innerHTML = '';
-    stopTicker();
     document.getElementById('bCaptions').classList.remove('visible');
     stopSeekLoop();
     updatePlayBtn();
@@ -30619,7 +30615,6 @@ body.ticker-active .gTickerLabel {
     const hasMedia = videoId || twitterUrl;
     panel.classList.remove('visible');
     if (!ids?.length && !hasMedia) { panel.innerHTML = ''; return; }
-    stopTicker();
     try {
       let articles = [];
       if (ids?.length) {
@@ -30644,13 +30639,11 @@ body.ticker-active .gTickerLabel {
       if (tweetCard?.dataset?.tweetUrl) {
         loadTwitterEmbed(tweetCard.dataset.tweetUrl, 'bTwitterEmbed');
       }
-      // Ticker: all articles, looping
-      if (articles.length) startTicker(articles);
       // Backfill video source name from first article
       const srcEl = document.getElementById('bVideoSource');
       if (srcEl && articles.length) srcEl.textContent = articles[0].source_name || '—';
     } catch (_) {
-      if (segIdx === snapIdx) { panel.innerHTML = ''; stopTicker(); }
+      if (segIdx === snapIdx) { panel.innerHTML = ''; }
     }
   }
 
