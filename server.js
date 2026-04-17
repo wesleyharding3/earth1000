@@ -998,12 +998,16 @@ app.get("/api/tags", async (req, res) => {
 // Shared helper: executes the default (no-filter) news search query.
 // Used by the endpoint fast-path and by _warmFeedCaches.
 async function _executeNewsSearch({ effectiveLimit, offset }) {
-  // Fetch exactly effectiveLimit + 1 rows (Apr 14 behavior). A large SQL
-  // pool combined with diversityRerank's 5-slot cooldown produced rigid
-  // round-robin rotations across the top high-volume sources (HINDU →
-  // LE DAKAROIS → TOPWAR → LIVEMINT). With a minimal pool, reranks become
-  // near no-ops and the natural SQL ORDER BY dominates.
-  const params = [effectiveLimit + 1, offset];
+  // Pull a modest multiple of the limit so the per-source cap in
+  // _finalizeSearchResults has real overflow to push past the top slice.
+  // Without overflow room, concentrated country_boost² sends 6-8 articles
+  // from the same 3 publishers into a 26-row pool, and the cap alone
+  // can't help — there's nothing further down to replace them with.
+  // 4× at default limit=24 → ~97 rows; still small enough that SQL stays
+  // on the hot index path (LIMIT 100 against (published_at, country_id)).
+  const POOL_MULTIPLIER = 4;
+  const poolLimit = (effectiveLimit + 1) * POOL_MULTIPLIER;
+  const params = [poolLimit, offset];
 
   // ── Tier 1: Full ranked query with 8s timeout ──
   const client = await pool.connect();
@@ -1344,44 +1348,66 @@ function _prefResort(articles) {
 }
 
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
-  // Apr 14 contract — SQL already pulled exactly effectiveLimit + 1 rows in
-  // natural priority order. No JS per-source cap (that was introduced with
-  // the 5× pool and made lock-in worse by hiding high-priority articles).
-  const hasMore = rows.length > effectiveLimit;
-  if (hasMore) rows.pop();
-
-  let results = rows.map(r => ({
+  // Compute final_priority with country_boost² + language boost on top
+  // of the SQL priority (which already includes country_boost² in the
+  // ORDER BY). The JS re-apply is needed because the SQL ordering is
+  // LIMIT-truncated before this point; we need final_priority present
+  // on each row for the cap's tie-break sort below.
+  let scored = rows.map(r => ({
     ...r,
     final_priority: (
       (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
     ) * Math.pow(r.country_boost || 1, 2.0) * getLanguageBoost(r.language)
   }));
 
-  // Rerank passes only run on reasonably-sized pools. On the typical
-  // 25-row pool these are near no-ops (cooldown=5 in 25 slots rarely
-  // triggers, MAX_REPEAT=2 country gate almost never fires), but they
-  // still break up the occasional 3-in-a-row same-publisher or same-
-  // country cluster that recency-dominant sorting produces.
-  if (results.length >= 8) {
-    results = diversityRerank(results.map(r => ({ ...r, priority: r.final_priority })));
-    results = countryVarianceRerank(results);
+  // SQL already ordered by the same formula, but defense-in-depth in
+  // case the tier-2/tier-3 fallbacks (ORDER BY published_at DESC) ran
+  // instead — sort the JS-side score so the cap always operates on a
+  // priority-ordered list.
+  scored.sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
+
+  // Per-source cap. The rigid HINDU/CUBA/NIGERIA/UGANDA rotation the
+  // user reported came from diversityRerank's 5-slot cooldown on a
+  // 26-row pool where country_boost² had concentrated 6-8 articles into
+  // each of 3 publishers. Cooldown interleaved them → strict 3-way
+  // rotation.
+  //
+  // This cap replaces both diversityRerank AND countryVarianceRerank.
+  // Max 2 articles per source in the returned slice. Combined with the
+  // 4× SQL pool above, overflow from a dominant source is replaced by
+  // lower-priority articles from other sources — natural diversity
+  // without forced rotation. If overall variety is low (rare), the cap
+  // is relaxed so we never return fewer than effectiveLimit rows.
+  const MAX_PER_SOURCE = 2;
+  const sourceCount = new Map();
+  const primary = [];
+  const overflow = [];
+  for (const r of scored) {
+    const key = r.source_id
+      ? `s:${r.source_id}`
+      : r.youtube_source_id
+        ? `y:${r.youtube_source_id}`
+        : `n:${r.source_name || "unknown"}`;
+    const n = sourceCount.get(key) || 0;
+    if (n < MAX_PER_SOURCE) {
+      primary.push(r);
+      sourceCount.set(key, n + 1);
+    } else {
+      overflow.push(r);
+    }
+  }
+  // If the capped set is short of the requested limit (not enough source
+  // diversity), backfill from overflow in priority order rather than
+  // returning a short page.
+  let combined = primary;
+  if (combined.length < effectiveLimit && overflow.length) {
+    combined = combined.concat(overflow.slice(0, effectiveLimit - combined.length));
   }
 
-  // Within a narrow priority band (3%), prefer more recent. Prevents a
-  // 4-hour-old article from sitting one slot ahead of a 30-minute-old
-  // article just because their priorities differ by 0.01.
-  const PRIORITY_BAND = 0.03;
-  results.sort((a, b) => {
-    const pa = a.final_priority || 0;
-    const pb = b.final_priority || 0;
-    const maxP = Math.max(pa, pb) || 1;
-    if (Math.abs(pa - pb) / maxP < PRIORITY_BAND) {
-      return new Date(b.published_at) - new Date(a.published_at);
-    }
-    return pb - pa;
-  });
+  const hasMore = combined.length > effectiveLimit || overflow.length > 0;
+  const articles = combined.slice(0, effectiveLimit);
 
-  return { total: offset + results.length + (hasMore ? 1 : 0), articles: results };
+  return { total: offset + articles.length + (hasMore ? 1 : 0), articles };
 }
 
 app.get("/api/news/search", searchLimiter, async (req, res) => {
@@ -1402,21 +1428,28 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const toDate   = req.query.to_date?.trim()   || null;
 
     // ── Fast path: default query (no filters) → serve from TTL cache ──
-    // Restores the Apr 14 contract. `_executeNewsSearch` fetches exactly
-    // effectiveLimit + 1 rows from Postgres in natural priority order:
-    //   (base_priority*0.15 + recency_decay*0.85) * country_boost² (SQL)
-    //   × getLanguageBoost(language)                                 (JS)
-    // No large candidate pool, no diversityRerank dominance, no
-    // countryVarianceRerank forcing round-robin rotation — those were
-    // what produced the rigid HINDU → DAKAROIS → TOPWAR → LIVEMINT lock-in
-    // under the `getRankedFeedArticles` pipeline.
+    // Ranking contract:
+    //   SQL ORDER BY (base*0.15 + recency*0.85) * country_boost²  (pool of ~100)
+    //   ↓
+    //   JS final_priority = same formula × getLanguageBoost(language)
+    //   ↓
+    //   MAX_PER_SOURCE=2 cap → replaces diversityRerank + countryVariance
+    //   ↓
+    //   take top effectiveLimit
     //
-    // Cache key is per (limit, offset) so every page is a distinct cached
-    // query. 60s TTL mirrors the Cloudflare edge cache.
+    // The leftover diversityRerank (5-slot cooldown) + countryVarianceRerank
+    // inside _finalizeSearchResults were still forcing rigid rotations when
+    // country_boost² concentrated 6-8 articles into each of 3 publishers —
+    // e.g. UGANDA/CUBA/NIGERIA 3-way round-robin. The new per-source cap +
+    // widened SQL pool produces natural source/country variety without
+    // forced interleaving.
+    //
+    // Cache key is per (limit, offset). 60s TTL mirrors the Cloudflare edge
+    // cache. Version bumped to v4 to invalidate the old clustered results.
     const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag;
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
-      const cacheKey = `news/search:default:v3:${effectiveLimit}:${offset}`;
+      const cacheKey = `news/search:default:v4:${effectiveLimit}:${offset}`;
       const cached = await ttlCached(cacheKey, 60_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset });
       });
