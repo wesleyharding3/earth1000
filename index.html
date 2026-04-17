@@ -14347,6 +14347,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             preFocusZoom = camera.position.z;
             if (pickedMode === "country") {
               focusCountry(pickedData);
+              // Illuminate the polygon. On desktop the polygon layer's own
+              // click handler runs selectCountry, but on mobile the pick is
+              // committed from touchend (before any synthetic click) and the
+              // panel opens before the click reaches the overlay canvas —
+              // so the polygon layer never gets a chance to highlight. Call
+              // it directly here using the picked country's iso code (the
+              // key format the polygon layer stores, UPPERCASE).
+              const _polyKey = (pickedData.iso_code || '').toString().toUpperCase().trim();
+              if (_polyKey && window.__polygonLayer?.selectCountry) {
+                window.__polygonLayer.selectCountry(_polyKey);
+              }
               queueFocusPanelOpen(() => openNodePanel(pickedData, "country"), { immediate: true });
             } else {
               focusCity(pickedData);
