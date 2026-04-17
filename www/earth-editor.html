@@ -1529,9 +1529,11 @@
               <button class="seg-add" onclick="addArticle(${idx})">Add</button></div></div>`;
 
           const vid = seg.video || {};
-          const videoId = vid.video_id || vid.id || seg.video_id || '';
+          const enrichVid = (enrichData && seg.thread_id != null) ? (enrichData[seg.thread_id]?.video_meta || null) : null;
+          const videoId = vid.video_id || vid.id || seg.video_id || enrichVid?.video_id || '';
           const mediaType = vid.media_type || seg.media_type || 'youtube';
           const twitterUrl = vid.twitter_url || seg.twitter_url || '';
+          if (videoId && !seg.video_id) seg.video_id = videoId;
           const focal = vid.focal || seg.video_focal || {};
           const focalEnabled = !!focal.enabled;
           const focalStart = focal.start_sec ?? '';
