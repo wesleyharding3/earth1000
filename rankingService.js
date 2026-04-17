@@ -25,14 +25,11 @@ const MAX_PER_SOURCE = 60;
 const NATIONAL_POOL_LIMIT = 800;
 const CITY_POOL_LIMIT     = 400;
 
-// Statement timeouts for the tiered fallback. Tier 1 is the full query with
-// the LATERAL thread lookup; Tier 2 drops the thread lookup so articles still
-// render even when the thread-status join is the cold-buffer bottleneck.
-// The pool's default statement_timeout is 45s — we shorten these so a single
-// cold request can't burn a connection for the full 45s window.
-const TIER1_TIMEOUT_MS = 12000;
-const TIER2_TIMEOUT_MS = 4000;
-const POOL_DEFAULT_TIMEOUT_MS = 45000;
+// No per-query statement_timeout here — `pool.connect()` + `SET` was grabbing
+// a dedicated connection per request, and when many fed stacked up (country
+// warmer + real traffic + search fallbacks) the pool exhausted. We use plain
+// `pool.query()` now, so each request consumes one pool slot for however long
+// the query actually needs, capped by the pool-wide default (45s).
 
 // Ambient headline spotlight gate. When callers pass { ambient: true }, the
 // candidate pool is restricted to tier 2/3/4 sources with a minimum
@@ -112,7 +109,7 @@ const ARTICLE_JOINS = `
 `;
 
 // ─────────────────────────────────────────────────────────────
-// QUERY BUILDER + TIERED EXECUTOR
+// QUERY BUILDER
 // ─────────────────────────────────────────────────────────────
 //
 // Fetches up to `poolLimit` articles matching the scope (country/city filter)
@@ -122,12 +119,12 @@ const ARTICLE_JOINS = `
 // which on cold buffer cache tipped the whole feed query past our pool's
 // 45s statement_timeout and returned 500s to the client.
 //
-// Two-tier execution with statement timeouts:
-//   Tier 1 (12s): full query incl. thread LATERAL + source/country joins.
-//   Tier 2 ( 4s): drops the thread LATERAL entirely. Articles lose the
-//                 in-thread boost in JS ranking, but the feed still renders.
-//
-// This mirrors the approach used by /api/news/search's _executeNewsSearch.
+// Uses `pool.query()` (one pool slot, auto-released). The prior per-request
+// `pool.connect()` + `SET statement_timeout` pattern was piling dedicated
+// connections onto the pool under load — under fan-out the pool exhausted and
+// neighboring endpoints (news/search tiered fallbacks, image lookups) all
+// started erroring with "Cannot use a pool after calling end on the pool"
+// once Render cycled the process.
 
 function _buildAmbientClauses(ambient) {
   // Inner-join on news_sources is equivalent to the prior
@@ -153,31 +150,16 @@ function _buildTagClause(tagId) {
     : "";
 }
 
-async function _runWithTimeout(sql, params, timeoutMs) {
-  const client = await pool.connect();
-  try {
-    await client.query(`SET statement_timeout = ${timeoutMs}`);
-    const { rows } = await client.query(sql, params);
-    return rows;
-  } finally {
-    // Restore the pool's default so the next consumer of this physical
-    // connection isn't stuck with our short timeout.
-    await client.query(`SET statement_timeout = ${POOL_DEFAULT_TIMEOUT_MS}`).catch(() => {});
-    client.release();
-  }
-}
-
 async function _loadCandidatePool({ scopeSql, scopeParams, ambient, tagId, poolLimit }) {
   const { join: ambientJoin, where: ambientWhere } = _buildAmbientClauses(ambient);
   const tagJoin = _buildTagClause(tagId);
 
-  // ── Tier 1: full query, thread lookup via single LATERAL ────────────
   // NOTE on the LATERAL shape: SELECT with an aggregate over an empty input
   // still returns one row (implicit grouping), so a literal `true` would be
   // true even when the article has zero story_thread_articles rows. Using
   // `count(*) > 0` over sta + a LEFT JOIN to story_threads gives the correct
   // in_thread flag AND the aggregated thread_status in a single pass.
-  const tier1 = `
+  const sql = `
     SELECT ${ARTICLE_FIELDS},
       COALESCE(th.in_thread, false) AS in_thread,
       th.thread_status
@@ -205,36 +187,8 @@ async function _loadCandidatePool({ scopeSql, scopeParams, ambient, tagId, poolL
     LIMIT ${poolLimit}
   `;
 
-  try {
-    return await _runWithTimeout(tier1, scopeParams, TIER1_TIMEOUT_MS);
-  } catch (err) {
-    console.warn(`[rankingService] tier1 timed out (${TIER1_TIMEOUT_MS}ms): ${err.message}, falling back to tier2`);
-  }
-
-  // ── Tier 2: drop thread lookup entirely ─────────────────────────────
-  // Feed still renders; articles just won't get the in-thread boost from
-  // priorityEngine. Acceptable degradation vs. 500ing the whole request.
-  const tier2 = `
-    SELECT ${ARTICLE_FIELDS},
-      false AS in_thread,
-      NULL::text AS thread_status
-    FROM news_articles a
-    ${ARTICLE_JOINS}
-    ${ambientJoin}
-    ${tagJoin}
-    WHERE ${scopeSql}
-      AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
-      ${ambientWhere}
-    ORDER BY a.published_at DESC NULLS LAST, a.id DESC
-    LIMIT ${poolLimit}
-  `;
-
-  try {
-    return await _runWithTimeout(tier2, scopeParams, TIER2_TIMEOUT_MS);
-  } catch (err2) {
-    console.warn(`[rankingService] tier2 timed out (${TIER2_TIMEOUT_MS}ms): ${err2.message}, returning empty`);
-    return [];
-  }
+  const { rows } = await pool.query(sql, scopeParams);
+  return rows;
 }
 
 function _applyPerSourceCap(rows, maxPerSource) {
