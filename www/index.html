@@ -26305,6 +26305,38 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const accountBtn      = document.getElementById('accountBtn');
   const accountBtnIcon  = document.getElementById('accountBtnIcon');
   const accountDropdown = document.getElementById('accountDropdown');
+
+  // #accountBtn has `backdrop-filter: blur(12px)`, which in modern
+  // Chrome/Safari/WKWebView makes it a containing block for ALL
+  // positioned descendants — including `position: fixed`. The dropdown
+  // was authored as a child of the button; on mobile that pins the
+  // fixed-position dropdown to the 40×46 button box and punts it
+  // ~450px above the viewport. Reparenting to <body> so its own
+  // position:absolute/fixed resolves against the viewport as intended.
+  if (accountDropdown && accountDropdown.parentElement !== document.body) {
+    document.body.appendChild(accountDropdown);
+  }
+  // Position the dropdown relative to the button on every open. Used on
+  // desktop/wide viewports where the absolute-positioning-inside-button
+  // layout used to do this automatically. Mobile keeps its "anchor to
+  // bottom of viewport" rules from the @media block.
+  function positionAccountDropdown() {
+    if (!accountDropdown || !accountBtn) return;
+    // Detect whether the mobile CSS block is active — it forces fixed
+    // positioning + bottom anchor. If so, leave the CSS alone.
+    const isMobileLayout = window.matchMedia('(pointer: coarse), (max-width: 600px)').matches;
+    if (isMobileLayout) {
+      // Clear any inline overrides from a prior desktop open
+      accountDropdown.style.top = '';
+      accountDropdown.style.left = '';
+      accountDropdown.style.position = '';
+      return;
+    }
+    const r = accountBtn.getBoundingClientRect();
+    accountDropdown.style.position = 'fixed';
+    accountDropdown.style.top = `${Math.round(r.bottom + 9)}px`;
+    accountDropdown.style.left = `${Math.round(r.left)}px`;
+  }
   const authOverlay     = document.getElementById('authOverlay');
   const authClose       = document.getElementById('authClose');
   const authMsg         = document.getElementById('authMsg');
@@ -26426,7 +26458,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!av) {
         av = document.createElement('div');
         av.className = 'acct-avatar';
-        accountBtn.insertBefore(av, accountDropdown);
+        // accountDropdown has been reparented to <body>, so just append
+        // the avatar inside the button (was insertBefore(av, accountDropdown)).
+        accountBtn.appendChild(av);
       }
       av.textContent = (user.email || '?')[0].toUpperCase();
       acctDpEmail.textContent = user.email;
@@ -26641,6 +26675,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (e && e.stopPropagation) e.stopPropagation();
     if (currentUser) {
       const opening = !accountDropdown.classList.contains('open');
+      if (opening) positionAccountDropdown();
       accountDropdown.classList.toggle('open');
       if (_topCluster) _topCluster.style.zIndex = opening ? '10001' : '';
       clearTimeout(_acctDropTimer);
@@ -26654,6 +26689,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       openModal('signin');
     }
   }
+  // Reposition if the viewport changes while the dropdown is open
+  window.addEventListener('resize', () => {
+    if (accountDropdown.classList.contains('open')) positionAccountDropdown();
+  });
 
   // Mobile/iOS WKWebView: 'click' is sometimes eaten by the globe's touch
   // handlers. pointerdown+pointerup tap detection fires reliably on touch.
