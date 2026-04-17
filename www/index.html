@@ -32154,7 +32154,7 @@ body.ticker-active .gTickerLabel {
   function updateToggleBtnVisibility() {
     if (!toggleBtn) return;
     const isGlobe = (window.__currentPage === 1);
-    toggleBtn.style.display = (isGlobe && !window.__semHeatActive) ? 'flex' : 'none';
+    toggleBtn.style.display = isGlobe ? 'flex' : 'none';
   }
   updateToggleBtnVisibility();
   const _origGoTo = window.__goToPage;
@@ -34482,7 +34482,6 @@ body.ticker-active .gTickerLabel {
     document.body.classList.add('sem-heatmap-active');
     panel.classList.remove('minimized');
     panel.classList.add('visible');
-    toggleBtn.style.display = 'none';
     hideNodeMarkers();
     enableHeatClickInspector();
     updateLegend();
