@@ -3495,13 +3495,9 @@ body.flow-maximized #flowArcList {
   box-shadow: 0 0 6px rgba(255,180,80,0.85), 0 0 12px rgba(255,170,60,0.5);
   flex: 0 0 auto;
 }
-/* (pill bar styles above replace old absolute-positioned buttons) */
 /* Minimized state — hide image and meta, compact card */
 #flowCtxCard.flowCtxMinimized .flowCtxImgWrap { display: none; }
 #flowCtxCard.flowCtxMinimized .flowCtxMeta { display: none; }
-#flowCtxCard.flowCtxMinimized .flowCtxViewRoutesBtn { display: none !important; }
-/* Collapse the 56px image column so minimized title isn't indented.
-   Without this, the grid leaves the fixed left column reserved. */
 #flowCtxCard.flowCtxMinimized .flowCtxInfoView {
   grid-template-columns: 1fr;
   grid-template-areas:
@@ -3512,42 +3508,61 @@ body.flow-maximized #flowArcList {
   -webkit-line-clamp: 1;
   font-size: 11px;
 }
-.flowCtxInfoView { display: flex; flex-direction: column; gap: 8px; }
+/* Override the grid display to hide by default; view-info restores it. */
+#flowCtxCard .flowCtxInfoView { display: none; }
 
-/* ── Drill-down: View Routes inside context card (mobile) ── */
-.flowCtxViewRoutesBtn {
-  display: none;
-  width: 100%;
-  padding: 8px 0;
-  margin-top: 4px;
-  border: 1px solid rgba(255,180,80,0.25);
-  border-radius: 8px;
-  background: rgba(255,180,80,0.08);
-  color: rgba(255,200,140,0.95);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+/* ── Tab-driven view switching inside flowCtxCard ───────────────────
+   Three sibling views share the same card body. State in each view is
+   preserved because non-active views are display:none'd, not unmounted. */
+#flowCtxCard.view-info .flowCtxInfoView { display: grid; }
+#flowCtxCard.view-arcs .flowCtxLiveArcsSlot { display: flex; }
+#flowCtxCard.view-arcs #flowArcList { display: flex; }
+#flowCtxCard.view-ctx  #arcContextPanel { display: flex; position: static; opacity: 1; visibility: visible; pointer-events: auto; }
+#flowCtxCard.view-arcs,
+#flowCtxCard.view-ctx {
+  max-height: calc(100vh - env(safe-area-inset-top, 0px) - 100px);
+}
+#flowCtxCard .flowCtxPillBar { display: flex; }
+#flowCtxCard.noInfoOrigin .flowCtxReturn,
+#flowCtxCard.noInfoOrigin .flowCtxTab[data-view="info"] { display: none !important; }
+
+/* ── Tab buttons in the pill bar ─────────────────────────────────── */
+.flowCtxTab {
+  position: static;
+  width: 26px;
+  height: 20px;
+  border-radius: 11px;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.55);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0 1px;
+  transition: background 0.12s, color 0.12s, box-shadow 0.15s;
+  font-size: 12px;
+  line-height: 1;
 }
-.flowCtxViewRoutesBtn:hover { background: rgba(255,180,80,0.18); }
-.flowCtxViewRoutesBtn.visible { display: block; }
-
-.flowCtxRoutesView {
-  display: none;
-  flex-direction: column;
-  gap: 0;
-  overflow: hidden;
+.flowCtxTab svg { width: 12px; height: 12px; }
+.flowCtxTab:hover { background: rgba(255,255,255,0.10); color: #fff; }
+.flowCtxTab.active {
+  background: rgba(255,180,80,0.22);
+  color: rgba(255,220,170,1);
 }
-#flowCtxCard.ctxRoutesActive { max-height: calc(100vh - env(safe-area-inset-top, 0px) - 100px); }
-#flowCtxCard.ctxRoutesActive .flowCtxInfoView { display: none; }
-#flowCtxCard.ctxRoutesActive .flowCtxRoutesView { display: flex; }
-/* Persistent pill bar across info/routes/ai views — user explicitly
-   asked for the top header to stay visible in both. */
-#flowCtxCard.ctxRoutesActive .flowCtxPillBar { display: flex; }
-/* When the panel was opened with no originating article/thread/timeline
-   card, the Back button in the pill bar has nowhere to return to. */
-#flowCtxCard.noInfoOrigin .flowCtxReturn { display: none; }
+.flowCtxTab.ai {
+  color: rgba(210,180,255,0.88);
+  animation: flowCtxAiPulse 2.4s ease-in-out infinite;
+  font-size: 13px;
+}
+.flowCtxTab.ai:hover { background: rgba(139,92,246,0.26); color: #eadcff; }
+.flowCtxTab.ai.active {
+  background: rgba(139,92,246,0.36);
+  color: #ecdbff;
+  box-shadow: 0 0 10px rgba(139,92,246,0.4);
+  animation: none;
+}
 
 /* ── Live arcs list, embedded inside flowCtxCard ─────────────────── */
 /* Slot that hosts the reparented #flowArcList. When the card is in
@@ -3567,10 +3582,9 @@ body.flow-maximized #flowArcList {
     opacity 0.28s ease-out,
     margin 0.42s cubic-bezier(0.32, 0.72, 0, 1);
 }
-#flowCtxCard.ctxRoutesActive .flowCtxLiveArcsSlot { display: flex; }
 /* Pre-play (News Flows direct): show only the pill-bar header, live
    arcs slot collapsed. */
-#flowCtxCard.ctxRoutesActive.noInfoOrigin.liveArcsPrePlay .flowCtxLiveArcsSlot {
+#flowCtxCard.view-arcs.noInfoOrigin.liveArcsPrePlay .flowCtxLiveArcsSlot {
   max-height: 0;
   opacity: 0;
   margin: 0;
@@ -3578,7 +3592,7 @@ body.flow-maximized #flowArcList {
 }
 /* In noInfoOrigin mode, tighten the overall card and match the
    transparency of the "% Global Coverage" inspector panel. */
-#flowCtxCard.ctxRoutesActive.noInfoOrigin {
+#flowCtxCard.view-arcs.noInfoOrigin {
   width: 220px;
   max-width: calc(100vw - 32px);
   background: rgba(6, 10, 20, 0.30);
@@ -3588,24 +3602,24 @@ body.flow-maximized #flowArcList {
     max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
     background 0.25s ease;
 }
-#flowCtxCard.ctxRoutesActive.noInfoOrigin.liveArcsPrePlay {
+#flowCtxCard.view-arcs.noInfoOrigin.liveArcsPrePlay {
   max-height: 52px;
 }
 /* Minimized in routes/live-arcs mode — collapse the arcs slot to just the
    pill bar. Mirrors the liveArcsPrePlay collapse but applies whether or
    not the card was opened directly (noInfoOrigin) vs. drilled-down. */
-#flowCtxCard.ctxRoutesActive.flowCtxMinimized .flowCtxLiveArcsSlot {
+#flowCtxCard.view-arcs.flowCtxMinimized .flowCtxLiveArcsSlot {
   max-height: 0;
   opacity: 0;
   margin: 0;
   pointer-events: none;
 }
-#flowCtxCard.ctxRoutesActive.flowCtxMinimized {
+#flowCtxCard.view-arcs.flowCtxMinimized {
   max-height: 52px;
 }
 /* Inner scroll area gets the 3-bar cap so overflow scrolls instead of
    bleeding past the outer cap. */
-#flowCtxCard.ctxRoutesActive.noInfoOrigin .arcListScroll {
+#flowCtxCard.view-arcs.noInfoOrigin .arcListScroll {
   max-height: 200px;
   min-height: 0;
 }
@@ -18484,9 +18498,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     window.__arcAiContextOpen = function() {
       if (!_arcCtxSession) return;
+      window.__flowCtxSetView?.('ctx');
       const root = document.getElementById('arcListPanelRoot');
       if (!root) return;
-      root.classList.add('ai-context-open');
       document.getElementById('arcListAiBtn')?.classList.add('active');
       document.getElementById('flowCtxAiBtn')?.classList.add('active');
       _arcCtxUpdateFlowTabState();
@@ -18501,11 +18515,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     };
 
     window.__arcAiContextClose = function() {
-      const root = document.getElementById('arcListPanelRoot');
-      if (!root) return;
-      root.classList.remove('ai-context-open');
-      document.getElementById('arcListAiBtn')?.classList.remove('active');
-      document.getElementById('flowCtxAiBtn')?.classList.remove('active');
+      const card = document.getElementById('flowCtxCard');
+      if (card?.classList.contains('view-ctx')) {
+        window.__flowCtxSetView?.('arcs');
+      }
       if (_arcCtxStreamAbort) { try { _arcCtxStreamAbort.abort(); } catch(_){} _arcCtxStreamAbort = null; }
       if (_arcCtxTimelinePaused) {
         _arcCtxTimelinePaused = false;
@@ -18528,9 +18541,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__arcAiSetSegment = function(segInfo) {
       _arcCtxSegment = segInfo || null;
       _arcCtxUpdateFlowTabState();
-      // If the interpanel is already open on the flow tab, re-render for the new segment.
-      const root = document.getElementById('arcListPanelRoot');
-      if (root?.classList.contains('ai-context-open') && _arcCtxScope === 'flow') {
+      const card = document.getElementById('flowCtxCard');
+      if (card?.classList.contains('view-ctx') && _arcCtxScope === 'flow') {
         const key = _arcCtxKey('flow');
         _arcCtxCurrentKey = key;
         const blocks = _arcCtxCache.get(key);
@@ -22812,7 +22824,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     el.innerHTML = `
       <div class="flowCtxPillBar">
         <button class="flowCtxReturn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
-        <button class="flowCtxAiBtn" id="flowCtxAiBtn" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦ Context</button>
+        <button class="flowCtxTab active" data-view="info" title="Article"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
+        <button class="flowCtxTab" data-view="arcs" title="Live Arcs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 18 C 8 6, 16 6, 20 18"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/></svg></button>
+        <button class="flowCtxTab ai" id="flowCtxAiBtn" data-view="ctx" title="AI Context">✦</button>
         <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
         <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       </div>
@@ -22821,7 +22835,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="flowCtxImgWrap"></div>
         <div class="flowCtxTitle"></div>
         <div class="flowCtxMeta"></div>
-        <button class="flowCtxViewRoutesBtn" onclick="window.__flowCtxViewRoutes?.()">View Routes</button>
       </div>
       <div class="flowCtxLiveArcsSlot"></div>
     `;
@@ -22835,6 +22848,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
         slot.appendChild(arcListRoot);
       }
     } catch (_) {}
+    // Reparent the AI context panel as a direct child of the card so it
+    // becomes a sibling view — independent of the arc list's visibility.
+    try {
+      const ctxPanel = document.getElementById('arcContextPanel');
+      if (ctxPanel && ctxPanel.parentElement !== el) {
+        el.appendChild(ctxPanel);
+      }
+    } catch (_) {}
+    // Tab click → switch view, preserving each view's state.
+    el.querySelectorAll('.flowCtxTab').forEach(tab => {
+      const handler = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const view = tab.dataset.view;
+        if (view) window.__flowCtxSetView?.(view);
+      };
+      tab.addEventListener('click', handler);
+      // iOS WKWebView: click can be eaten by parent touch handlers.
+      tab.addEventListener('pointerup', handler);
+    });
     el.querySelector(".flowCtxClose").addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -22869,7 +22902,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
     return el;
   }
-  function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta, hasRoutes }) {
+  function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta }) {
     const el = _ensureFlowCtxCard();
     el.querySelector(".flowCtxKind").textContent = kind || "";
     el.querySelector(".flowCtxTitle").textContent = title || "";
@@ -22886,23 +22919,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } else {
       wrap.innerHTML = `<div class="flowCtxImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
     }
-    // Reset drill-down state
-    el.classList.remove("ctxRoutesActive", "noInfoOrigin");
-    // Show "View Routes" button if routes are available
-    const vrBtn = el.querySelector(".flowCtxViewRoutesBtn");
-    if (vrBtn) {
-      if (hasRoutes) vrBtn.classList.add("visible");
-      else vrBtn.classList.remove("visible");
-    }
-    // force reflow so the transition fires reliably
+    el.classList.remove("noInfoOrigin", "liveArcsPrePlay");
     el.classList.remove("visible", "flowCtxMinimized");
     void el.offsetHeight;
     el.classList.add("visible");
+    window.__flowCtxSetView?.('info');
   }
   function hideFlowCtxCard() {
     const el = document.getElementById("flowCtxCard");
     if (el) {
-      el.classList.remove("visible", "ctxRoutesActive", "liveArcsPrePlay");
+      el.classList.remove("visible", "view-info", "view-arcs", "view-ctx", "liveArcsPrePlay");
       window.__flowCtxDrillDown = false;
     }
   }
@@ -22913,56 +22939,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // (no .visible class) until something explicitly shows it.
   try { _ensureFlowCtxCard(); } catch (_) {}
 
-  // ── Drill-down: "View Routes" inside context card (mobile only) ──
-  // When arcs are triggered from a card on mobile, this flag suppresses
-  // the standalone arc list panel and drives drill-down inside flowCtxCard.
-  window.__flowCtxDrillDown = false;
-
-  window.__flowCtxViewRoutes = function() {
-    const el = document.getElementById("flowCtxCard");
+  // Tab-driven view switch — see desktop for the design note.
+  window.__flowCtxSetView = function(view) {
+    const el = document.getElementById('flowCtxCard');
     if (!el) return;
-    el.classList.add("ctxRoutesActive");
-    // Ensure the embedded arc list is visible; its sync loop already
-    // populates it from arcObjects so there's nothing to hand-render.
-    document.getElementById('flowArcList')?.classList.add('visible');
-    window.__flowCtxDrillDown = false;
+    const valid = view === 'info' || view === 'arcs' || view === 'ctx';
+    if (!valid) view = 'info';
+    if (view === 'info' && el.classList.contains('noInfoOrigin')) view = 'arcs';
+    el.classList.remove('view-info', 'view-arcs', 'view-ctx');
+    el.classList.add(`view-${view}`);
+    el.querySelectorAll('.flowCtxTab').forEach(t => {
+      t.classList.toggle('active', t.dataset.view === view);
+    });
+    const arcList = document.getElementById('flowArcList');
+    if (arcList) {
+      if (view === 'arcs') arcList.classList.add('visible');
+      else arcList.classList.remove('visible');
+    }
   };
 
+  // ── Legacy shims ──
+  window.__flowCtxDrillDown = false;
+  window.__flowCtxViewRoutes = function() { window.__flowCtxSetView?.('arcs'); };
   window.__flowCtxBackToInfo = function() {
-    const el = document.getElementById("flowCtxCard");
-    if (!el) return;
-    el.classList.remove("ctxRoutesActive");
-
-    // Close the AI interpanel if it was open inside the live arcs view
-    try { window.__arcAiContextClose?.(); } catch (_) {}
-
-    // Restore all arc opacities (deselect)
-    for (const arc of arcObjects) {
-      arc._frozenOpacity = null;
-      arc._frozen = false;
-    }
-    // Hide hover card
+    window.__flowCtxSetView?.('info');
+    for (const arc of arcObjects) { arc._frozenOpacity = null; arc._frozen = false; }
     document.getElementById('flowArcInfoCard')?.classList.remove('visible');
   };
 
   // Unified entry when News Flows activates without an originating card —
-  // opens the combined panel straight in Routes view. Starts in the
-  // "pre-play" state: only the pill-bar header is visible until the user
-  // clicks Play on the News Flows controls.
+  // opens the combined panel straight in Arcs view. Retains the existing
+  // "pre-play" class for the mobile pre-play compact state.
   window.showFlowPanelRoutesOnly = function() {
     const el = _ensureFlowCtxCard();
-    // Clear info-view fields so a stale header doesn't flash
     el.querySelector(".flowCtxKind").textContent = "";
     el.querySelector(".flowCtxTitle").textContent = "";
     el.querySelector(".flowCtxMeta").textContent = "";
     const wrap = el.querySelector(".flowCtxImgWrap");
     if (wrap) wrap.innerHTML = '';
-    const vrBtn = el.querySelector(".flowCtxViewRoutesBtn");
-    if (vrBtn) vrBtn.classList.remove("visible");
     el.classList.remove("visible", "flowCtxMinimized");
     void el.offsetHeight;
-    el.classList.add("visible", "ctxRoutesActive", "noInfoOrigin", "liveArcsPrePlay");
-    document.getElementById('flowArcList')?.classList.add('visible');
+    el.classList.add("visible", "noInfoOrigin", "liveArcsPrePlay");
+    window.__flowCtxSetView?.('arcs');
   };
 
   function _flowCtxSelectRoute(uid, flow, scrollEl) {
@@ -23887,7 +23905,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Timeline flows are about playback — jump straight into the
         // routes view so the ⏮▶⏭ controls are immediately reachable.
         // User can still ← back to the info view from the pill bar.
-        document.getElementById('flowCtxCard')?.classList.add('ctxRoutesActive');
+        window.__flowCtxSetView?.('arcs');
 
         // Register an AI-context session so the ✦ button surfaces.
         try {
