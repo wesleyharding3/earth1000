@@ -172,6 +172,11 @@ async function _loadCandidatePool({ scopeSql, scopeParams, ambient, tagId, poolL
   const tagJoin = _buildTagClause(tagId);
 
   // ── Tier 1: full query, thread lookup via single LATERAL ────────────
+  // NOTE on the LATERAL shape: SELECT with an aggregate over an empty input
+  // still returns one row (implicit grouping), so a literal `true` would be
+  // true even when the article has zero story_thread_articles rows. Using
+  // `count(*) > 0` over sta + a LEFT JOIN to story_threads gives the correct
+  // in_thread flag AND the aggregated thread_status in a single pass.
   const tier1 = `
     SELECT ${ARTICLE_FIELDS},
       COALESCE(th.in_thread, false) AS in_thread,
@@ -181,7 +186,8 @@ async function _loadCandidatePool({ scopeSql, scopeParams, ambient, tagId, poolL
     ${ambientJoin}
     ${tagJoin}
     LEFT JOIN LATERAL (
-      SELECT true AS in_thread,
+      SELECT
+        count(*) > 0 AS in_thread,
         CASE
           WHEN bool_or(t.status = 'active')  THEN 'active'
           WHEN bool_or(t.status = 'cooling') THEN 'cooling'
@@ -189,7 +195,7 @@ async function _loadCandidatePool({ scopeSql, scopeParams, ambient, tagId, poolL
           ELSE NULL
         END AS thread_status
       FROM story_thread_articles sta
-      JOIN story_threads t ON t.id = sta.thread_id
+      LEFT JOIN story_threads t ON t.id = sta.thread_id
       WHERE sta.article_id = a.id
     ) th ON TRUE
     WHERE ${scopeSql}

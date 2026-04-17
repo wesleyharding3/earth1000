@@ -9154,30 +9154,6 @@ async function _warmFeedCaches() {
     `${base}/api/cities/all`,                          // city list
   ];
 
-  // Country feed warming: pull the 20 highest-volume countries by article
-  // count in the last 24h and warm both ambient and standard variants.
-  // /api/news/country/:id?ambient=1 is the per-country headline feed that
-  // was timing out at 20s on cold buffers — keeping those countries in
-  // Postgres' buffer cache + our ttlCached keeps the common case instant.
-  try {
-    const { rows: hotCountries } = await pool.query(`
-      SELECT country_id
-      FROM news_articles
-      WHERE country_id IS NOT NULL
-        AND city_id IS NULL
-        AND published_at > NOW() - INTERVAL '24 hours'
-      GROUP BY country_id
-      ORDER BY COUNT(*) DESC
-      LIMIT 20
-    `);
-    for (const { country_id } of hotCountries) {
-      urls.push(`${base}/api/news/country/${country_id}?limit=20&offset=0&ambient=1`);
-      urls.push(`${base}/api/news/country/${country_id}?limit=20&offset=0`);
-    }
-  } catch (e) {
-    console.warn('[cache-warm] hot-countries fetch failed:', e.message);
-  }
-
   for (const url of urls) {
     try {
       await new Promise((resolve, reject) => {
