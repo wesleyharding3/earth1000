@@ -1588,8 +1588,8 @@
   gap: 10px;
   pointer-events: all;
   user-select: none;
-  min-width: 416px;
-  max-width: 416px;
+  min-width: 208px;
+  max-width: 208px;
 }
 #flowControls.visible { display: flex; }
 body.ticker-active #flowControls {
@@ -1657,7 +1657,7 @@ body.ticker-active #flowControls {
   width: 100%;
   box-sizing: border-box;
   box-shadow: 0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07);
-  -webkit-  position: relative;
+  position: relative;
   overflow: hidden;
   animation: flowBorderPulse 2.9s ease-in-out infinite;
   /* Animate collapse/expand so the arc list can glide into the freed space
@@ -26467,7 +26467,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (_acctSuppressClick) return;
     _acctDoAction(e);
   });
-  document.addEventListener('click', () => {
+  // Capture-phase delegator: catches clicks on the account button even if
+  // a descendant (.acct-avatar, the svg icon) absorbs the event or an
+  // intermediate listener calls stopPropagation before accountBtn's own
+  // handler fires. Guarded by _acctSuppressClick to avoid double-fire.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (!t || !t.closest) return;
+    if (!t.closest('#accountBtn')) return;
+    if (t.closest('#accountDropdown')) return;
+    if (_acctSuppressClick) return;
+    _acctDoAction(e);
+  }, true);
+  // "Click outside to close" — but NOT when the click originates from the
+  // account button itself (that's the toggle path) or from inside the
+  // dropdown (menu items handle their own actions). Without this guard,
+  // every real tap on the account button is processed in order:
+  //   (1) pointerup/click → dropdown opens
+  //   (2) click bubbles to document → THIS listener → dropdown closes
+  // which made the panel appear "swallowed" — opened and closed within
+  // the same gesture.
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && t.closest && (t.closest('#accountBtn') || t.closest('#accountDropdown'))) {
+      return;
+    }
     clearTimeout(_acctDropTimer);
     accountDropdown.classList.remove('open');
     if (_topCluster) _topCluster.style.zIndex = '';
@@ -31696,7 +31720,7 @@ body.ticker-active .gTickerLabel {
   function updateToggleBtnVisibility() {
     if (!toggleBtn) return;
     const isGlobe = (window.__currentPage === 1);
-    toggleBtn.style.display = (isGlobe && !window.__semHeatActive) ? 'flex' : 'none';
+    toggleBtn.style.display = isGlobe ? 'flex' : 'none';
   }
   updateToggleBtnVisibility();
   const _origGoTo = window.__goToPage;
@@ -34023,7 +34047,6 @@ body.ticker-active .gTickerLabel {
     document.body.classList.add('sem-heatmap-active');
     panel.classList.remove('minimized');
     panel.classList.add('visible');
-    toggleBtn.style.display = 'none';
     hideNodeMarkers();
     enableHeatClickInspector();
     updateLegend();
