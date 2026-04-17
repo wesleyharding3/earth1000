@@ -14162,6 +14162,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         if (event.target.closest(".closePanel")) return;
         if (isArticleDetailTarget(event.target)) return;
+        // Clicks inside the search UI (input + results dropdown) must
+        // NEVER fall through to globe-node selection. Previously, tapping
+        // a search result rotated the globe via focusCity/focusCountry
+        // but the same click event bubbled to this window handler, which
+        // then picked whichever globe node happened to sit under the
+        // tap screen-coordinate — e.g. tapping "Atlanta" opened the
+        // Maldives panel because Maldives was visually near the tap
+        // position before the rotation completed.
+        if (event.target.closest && event.target.closest("#searchWrapper")) return;
         
         // If a panel is already active:
         //  - clicks INSIDE the panel never trigger node selection
@@ -14279,6 +14288,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const _tt = event.touches[0];
           const _target = document.elementFromPoint(_tt.clientX, _tt.clientY);
           if (_target && _target.closest && _target.closest("#viewSidebar")) return;
+          // Same guard for the search UI — taps on search results must
+          // never arm a pending globe-node pick (see window click handler
+          // for the full story).
+          if (_target && _target.closest && _target.closest("#searchWrapper")) return;
         }
 
         // Skip node selection when flow mode is active
@@ -15369,8 +15382,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
               '<div class="searchItemBody">' +
                 '<div class="searchItemMain">' + _escHtml(country.name) + '</div>' +
               '</div>';
-            row.addEventListener("click", () => {
+            row.addEventListener("click", (e) => {
+              // Prevent bubble to window-level click handler, which
+              // would otherwise pick whatever globe node is near the
+              // tap screen-coordinate and open its panel (tapping
+              // "Atlanta" → Maldives panel bug on iOS Capacitor).
+              e.stopPropagation();
               focusCountry(country);
+              // Also open the country's actual panel — matches what
+              // clicking the globe-node does so search → panel is
+              // consistent across entry points.
+              try { queueFocusPanelOpen(() => openNodePanel(country, "country"), { immediate: true }); } catch (_) {}
               resultsContainer.style.display = "none";
               searchInput.value = country.name;
             });
@@ -15394,8 +15416,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 '<div class="searchItemMain">' + _escHtml(city.name) + '</div>' +
                 (subTxt ? '<div class="searchItemSub">' + _escHtml(subTxt) + '</div>' : '') +
               '</div>';
-            row.addEventListener("click", () => {
+            row.addEventListener("click", (e) => {
+              e.stopPropagation();
               focusCity(city);
+              try { queueFocusPanelOpen(() => openNodePanel(city, "city"), { immediate: true }); } catch (_) {}
               resultsContainer.style.display = "none";
               searchInput.value = city.name;
             });
