@@ -1009,18 +1009,30 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   const poolLimit = (effectiveLimit + 1) * POOL_MULTIPLIER;
   const params = [poolLimit, offset];
 
-  // ── Tier 1: Full ranked query with 8s timeout ──
+  // ── Tier 1: Full ranked query with 15s timeout ──
+  // Structured as two CTE phases so the expensive image-join only
+  // processes the ~100 ranked rows, not the full 72h candidate set:
+  //
+  //   Phase 1 (ranked): priority-order & LIMIT without image joins.
+  //     Cheap — uses the base_priority + published_at indices.
+  //   Phase 2 (select *): LATERAL image lookup per ranked row only.
+  //     At most ~100 index lookups vs thousands before.
+  //
+  // Previous monolithic inner-SELECT forced the planner to LEFT JOIN
+  // article_image_assignments (a multi-million-row table) for every
+  // article in the 72h window BEFORE applying ORDER BY + LIMIT. Over a
+  // remote connection that regularly hit the 15s statement_timeout and
+  // fell through to Tier 2, destroying the country_boost weighting.
   const client = await pool.connect();
   try {
-    await client.query('SET statement_timeout = 8000');
+    await client.query('SET statement_timeout = 15000');
     const { rows } = await client.query(`
-      SELECT * FROM (
+      WITH ranked AS (
         SELECT
           a.id, a.source_id, a.youtube_source_id,
           a.title, a.translated_title, a.url, a.article_url,
           a.summary, a.translated_summary,
           a.image_url,
-          img_a.public_url AS catalog_image_url,
           a.published_at, a.sentiment_score,
           l.iso_code_2 AS language, a.base_priority,
           COALESCE(ns.name, ys.name) AS source_name,
@@ -1033,27 +1045,40 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
             POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
             0.02
           ) AS recency_decay,
-          a.media_type, a.video_id, a.duration_seconds
+          a.media_type, a.video_id, a.duration_seconds,
+          (
+            (COALESCE(a.base_priority, 0) * 0.15 + GREATEST(
+              POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+              0.02
+            ) * 0.85)
+            * POWER(COALESCE(cfb.boost_score, 1.0), 2.0)
+          ) AS _rank
         FROM news_articles a
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN languages l ON l.id = ns.language_id
         JOIN countries src_co ON src_co.id = a.country_id
         LEFT JOIN country_feed_boost cfb ON cfb.country_id = a.country_id
-        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         WHERE a.city_id IS NULL
           AND a.published_at > NOW() - INTERVAL '72 hours'
-      ) sub
-      ORDER BY (
-        (COALESCE(sub.base_priority, 0) * 0.15 + sub.recency_decay * 0.85)
-        * POWER(COALESCE(sub.country_boost, 1.0), 2.0)
-      ) DESC
-      LIMIT $1 OFFSET $2
+          AND COALESCE(a.base_priority, 0) > 0.05
+        ORDER BY _rank DESC
+        LIMIT $1 OFFSET $2
+      )
+      SELECT r.*, ia.public_url AS catalog_image_url
+      FROM ranked r
+      LEFT JOIN LATERAL (
+        SELECT img.public_url
+        FROM article_image_assignments aia
+        JOIN image_assets img ON img.id = aia.image_id
+        WHERE aia.article_id = r.id
+        LIMIT 1
+      ) ia ON TRUE
+      ORDER BY r._rank DESC
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
   } catch (err) {
-    console.warn('[news/search] Tier 1 timed out (8s), falling back:', err.message);
+    console.warn('[news/search] Tier 1 timed out (15s), falling back:', err.message);
   } finally {
     // Reset timeout to pool default before returning connection
     await client.query('SET statement_timeout = 45000').catch(() => {});
@@ -1061,33 +1086,44 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   }
 
   // ── Tier 2: Lightweight — no image joins, source join only, 6s timeout ──
+  // IMPORTANT: orders by the same priority formula as Tier 1 (minus
+  // country_boost, which requires the country_feed_boost join that's
+  // absent here). Previously Tier 2 did `ORDER BY published_at DESC`,
+  // which silently destroyed priority-ranking whenever Tier 1 timed out
+  // — the user saw recency-sorted noise instead of the ranked feed.
   const client2 = await pool.connect();
   try {
     await client2.query('SET statement_timeout = 6000');
     const { rows } = await client2.query(`
-      SELECT
-        a.id, a.source_id, a.youtube_source_id,
-        a.title, a.translated_title, a.url, a.article_url,
-        a.summary, a.translated_summary,
-        a.image_url,
-        NULL AS catalog_image_url,
-        a.published_at, a.sentiment_score,
-        NULL AS language, a.base_priority,
-        COALESCE(ns.name, ys.name) AS source_name,
-        NULL AS source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        NULL AS site_url,
-        src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-        1.0 AS country_boost,
-        1.0 AS recency_decay,
-        a.media_type, a.video_id, a.duration_seconds
-      FROM news_articles a
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      JOIN countries src_co ON src_co.id = a.country_id
-      WHERE a.city_id IS NULL
-        AND a.published_at > NOW() - INTERVAL '48 hours'
-      ORDER BY a.published_at DESC
+      SELECT * FROM (
+        SELECT
+          a.id, a.source_id, a.youtube_source_id,
+          a.title, a.translated_title, a.url, a.article_url,
+          a.summary, a.translated_summary,
+          a.image_url,
+          NULL AS catalog_image_url,
+          a.published_at, a.sentiment_score,
+          NULL AS language, a.base_priority,
+          COALESCE(ns.name, ys.name) AS source_name,
+          NULL AS source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          NULL AS site_url,
+          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+          1.0 AS country_boost,
+          GREATEST(
+            POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+            0.02
+          ) AS recency_decay,
+          a.media_type, a.video_id, a.duration_seconds
+        FROM news_articles a
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        JOIN countries src_co ON src_co.id = a.country_id
+        WHERE a.city_id IS NULL
+          AND a.published_at > NOW() - INTERVAL '48 hours'
+          AND COALESCE(a.base_priority, 0) > 0.05
+      ) sub
+      ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85) DESC
       LIMIT $1 OFFSET $2
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
@@ -1099,61 +1135,35 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   }
 
   // ── Tier 3: Bare minimum — just articles + country, no joins ──
+  // Same priority ordering as Tier 2, no country_boost since no cfb join.
   const { rows } = await pool.query(`
-    SELECT
-      a.id, a.source_id, a.youtube_source_id,
-      a.title, a.translated_title, a.url, a.article_url,
-      a.summary, a.translated_summary, a.image_url,
-      NULL AS catalog_image_url,
-      a.published_at, a.sentiment_score,
-      NULL AS language, a.base_priority,
-      NULL AS source_name, NULL AS source_summary,
-      'unknown' AS source_bias, NULL AS site_url,
-      src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-      1.0 AS country_boost, 1.0 AS recency_decay,
-      a.media_type, a.video_id, a.duration_seconds
-    FROM news_articles a
-    JOIN countries src_co ON src_co.id = a.country_id
-    WHERE a.city_id IS NULL
-      AND a.published_at > NOW() - INTERVAL '24 hours'
-    ORDER BY a.published_at DESC
+    SELECT * FROM (
+      SELECT
+        a.id, a.source_id, a.youtube_source_id,
+        a.title, a.translated_title, a.url, a.article_url,
+        a.summary, a.translated_summary, a.image_url,
+        NULL AS catalog_image_url,
+        a.published_at, a.sentiment_score,
+        NULL AS language, a.base_priority,
+        NULL AS source_name, NULL AS source_summary,
+        'unknown' AS source_bias, NULL AS site_url,
+        src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+        1.0 AS country_boost,
+        GREATEST(
+          POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+          0.02
+        ) AS recency_decay,
+        a.media_type, a.video_id, a.duration_seconds
+      FROM news_articles a
+      JOIN countries src_co ON src_co.id = a.country_id
+      WHERE a.city_id IS NULL
+        AND a.published_at > NOW() - INTERVAL '24 hours'
+        AND COALESCE(a.base_priority, 0) > 0.05
+    ) sub
+    ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85) DESC
     LIMIT $1 OFFSET $2
   `, params);
   return _finalizeSearchResults(rows, effectiveLimit, offset);
-}
-
-// Language boost: restores Apr 14 behavior (tiered non-English multiplier).
-//
-// The earlier neutralization was a band-aid for a different bug — the
-// `getRankedFeedArticles` pipeline with `diversityRerank` + `countryVariance
-// Rerank` on a 1500-row pool was rigidly round-robinning the top few
-// high-volume sources, and the 1.35× boost on non-English amplified the
-// problem by lifting low-base_priority regional outlets into the rotation.
-//
-// With the default-query path restored to `_executeNewsSearch` (small pool,
-// pure SQL ORDER BY), the tiered boost produces the even English / non-
-// English mix from Apr 14 — wire services cluster at top by recency, but
-// non-English stories with real editorial country_boost get meaningful lift
-// so the feed isn't monolingual.
-//
-// Tier A (major non-English with strong global coverage):  1.35×
-// Tier B (broad non-English written Latin/Cyrillic etc.):  1.20×
-// Other non-English:                                       1.15×
-// English:                                                 1.00×
-const NON_ENGLISH_BOOST_A = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
-const NON_ENGLISH_BOOST_B = new Set([
-  "fr","de","es","pt","it","tr","hi","bn","ur","id","ms","th","vi","pl",
-  "nl","sv","no","da","fi","el","he","ro","hu","cs","sk","bg","hr","sr",
-  "ka","hy","az","kk","uz","tg","ps","sw","am","my","km","lo","mn","ne",
-]);
-
-function getLanguageBoost(lang) {
-  if (!lang) return 1.0;
-  const code = lang.toLowerCase().slice(0, 2);
-  if (code === "en") return 1.0;
-  if (NON_ENGLISH_BOOST_A.has(code)) return 1.35;
-  if (NON_ENGLISH_BOOST_B.has(code)) return 1.20;
-  return 1.15;
 }
 
 // ── User Preference Boost Engine ──────────────────────────────────────────
@@ -1357,7 +1367,7 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
     ...r,
     final_priority: (
       (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-    ) * Math.pow(r.country_boost || 1, 2.0) * getLanguageBoost(r.language)
+    ) * Math.pow(r.country_boost || 1, 2.0)
   }));
 
   // SQL already ordered by the same formula, but defense-in-depth in
@@ -1366,46 +1376,49 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
   // priority-ordered list.
   scored.sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
 
-  // Per-source cap. The rigid HINDU/CUBA/NIGERIA/UGANDA rotation the
-  // user reported came from diversityRerank's 5-slot cooldown on a
-  // 26-row pool where country_boost² had concentrated 6-8 articles into
-  // each of 3 publishers. Cooldown interleaved them → strict 3-way
-  // rotation.
+  // Per-source cap with graceful relaxation.
   //
-  // This cap replaces both diversityRerank AND countryVarianceRerank.
-  // Max 2 articles per source in the returned slice. Combined with the
-  // 4× SQL pool above, overflow from a dominant source is replaced by
-  // lower-priority articles from other sources — natural diversity
-  // without forced rotation. If overall variety is low (rare), the cap
-  // is relaxed so we never return fewer than effectiveLimit rows.
-  const MAX_PER_SOURCE = 2;
-  const sourceCount = new Map();
-  const primary = [];
-  const overflow = [];
-  for (const r of scored) {
-    const key = r.source_id
-      ? `s:${r.source_id}`
-      : r.youtube_source_id
-        ? `y:${r.youtube_source_id}`
-        : `n:${r.source_name || "unknown"}`;
-    const n = sourceCount.get(key) || 0;
-    if (n < MAX_PER_SOURCE) {
-      primary.push(r);
-      sourceCount.set(key, n + 1);
-    } else {
-      overflow.push(r);
+  // First attempt allows 2 per source (the tight Apr 14 feel — no
+  // publisher can land 3 articles in a 25-slot feed). If the pool
+  // genuinely lacks source diversity — e.g. 10 sources × 2 = 20 articles
+  // for a 25-slot feed — the cap is bumped to 3, re-applied against the
+  // full pool in priority order, and checked again. Keeps relaxing until
+  // effectiveLimit is reached or the cap is so high it doesn't bind.
+  //
+  // Why iterate-and-relax instead of append overflow:
+  //  - Append put 6 consecutive Free Malaysia Today articles at slots
+  //    20-25 (out of priority order: their base=0.76 landed *after*
+  //    Cumhuriyet at base=0.40). Visually tacky and breaks ranking.
+  //  - Relaxation re-ranks the whole pool under each cap, so the
+  //    returned slice stays in strict priority order regardless of
+  //    how tight or loose the final cap has to be.
+  const keyOf = (r) => r.source_id
+    ? `s:${r.source_id}`
+    : r.youtube_source_id
+      ? `y:${r.youtube_source_id}`
+      : `n:${r.source_name || "unknown"}`;
+
+  const MAX_CAP = 10; // hard ceiling — stop relaxing above this
+  let chosen = [];
+  for (let cap = 2; cap <= MAX_CAP; cap += 1) {
+    const counts = new Map();
+    chosen = [];
+    for (const r of scored) {
+      const k = keyOf(r);
+      const n = counts.get(k) || 0;
+      if (n < cap) {
+        chosen.push(r);
+        counts.set(k, n + 1);
+        if (chosen.length >= effectiveLimit) break;
+      }
     }
-  }
-  // If the capped set is short of the requested limit (not enough source
-  // diversity), backfill from overflow in priority order rather than
-  // returning a short page.
-  let combined = primary;
-  if (combined.length < effectiveLimit && overflow.length) {
-    combined = combined.concat(overflow.slice(0, effectiveLimit - combined.length));
+    if (chosen.length >= effectiveLimit) break;
   }
 
-  const hasMore = combined.length > effectiveLimit || overflow.length > 0;
-  const articles = combined.slice(0, effectiveLimit);
+  // Fallback — if even cap=10 doesn't reach effectiveLimit, pool is
+  // genuinely thin. Return what we have rather than padding.
+  const articles = chosen.slice(0, effectiveLimit);
+  const hasMore = scored.length > articles.length;
 
   return { total: offset + articles.length + (hasMore ? 1 : 0), articles };
 }
@@ -1431,25 +1444,20 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     // Ranking contract:
     //   SQL ORDER BY (base*0.15 + recency*0.85) * country_boost²  (pool of ~100)
     //   ↓
-    //   JS final_priority = same formula × getLanguageBoost(language)
+    //   JS final_priority = same formula (no language boost — removed)
     //   ↓
-    //   MAX_PER_SOURCE=2 cap → replaces diversityRerank + countryVariance
+    //   Per-source cap with graceful relaxation (starts at 2, bumps as
+    //   needed) → replaces diversityRerank + countryVarianceRerank
     //   ↓
-    //   take top effectiveLimit
-    //
-    // The leftover diversityRerank (5-slot cooldown) + countryVarianceRerank
-    // inside _finalizeSearchResults were still forcing rigid rotations when
-    // country_boost² concentrated 6-8 articles into each of 3 publishers —
-    // e.g. UGANDA/CUBA/NIGERIA 3-way round-robin. The new per-source cap +
-    // widened SQL pool produces natural source/country variety without
-    // forced interleaving.
+    //   take top effectiveLimit, strict priority order preserved
     //
     // Cache key is per (limit, offset). 60s TTL mirrors the Cloudflare edge
-    // cache. Version bumped to v4 to invalidate the old clustered results.
+    // cache. Version bumped to v5 for the cap-relaxation + language-boost
+    // removal; forces fresh results for all clients.
     const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag;
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
-      const cacheKey = `news/search:default:v4:${effectiveLimit}:${offset}`;
+      const cacheKey = `news/search:default:v8:${effectiveLimit}:${offset}`;
       const cached = await ttlCached(cacheKey, 60_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset });
       });
