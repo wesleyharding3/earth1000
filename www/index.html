@@ -26186,7 +26186,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } catch (_) { return null; }
     }
     function clearCookie() {
-      document.cookie = `${COOKIE_KEY}=; max-age=0; path=/; SameSite=Lax`;
+      // Write BOTH expires= and max-age=0 for maximum compatibility.
+      // iOS Safari WKWebView has a known quirk where max-age alone is
+      // sometimes ignored on SameSite=Lax cookies, and the cookie
+      // survives a page reload → user stays logged in after sign out.
+      document.cookie = `${COOKIE_KEY}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/; SameSite=Lax`;
+      // Also try without path and without SameSite in case the original
+      // was set differently at some point in the past — deletion has to
+      // match the cookie's original attributes exactly.
+      document.cookie = `${COOKIE_KEY}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/`;
+      document.cookie = `${COOKIE_KEY}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0`;
     }
 
     // On startup: diagnose what's in each storage layer
@@ -26626,6 +26635,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   let _userInitiatedSignOut = false;
+  // Sticky sign-out marker. iOS Capacitor WKWebView has multiple
+  // persistence layers (localStorage, sessionStorage, cookies via
+  // WKHTTPCookieStore, IndexedDB) that don't all clear synchronously
+  // before window.location.reload() fires. Result: after sign-out the
+  // page reloads and one of the layers still has the session, so
+  // initAuth restores the user. This marker is written in a
+  // dedicated key that initAuth checks FIRST — if it's fresh (within
+  // 30s), every storage layer is force-cleared and no restoration is
+  // attempted, regardless of what leaked through.
+  const _SIGNOUT_MARK_KEY = 'earth_signout_intent';
   async function signOut() {
     _userInitiatedSignOut = true;
     _allowStorageRemoval = true; // allow Supabase + our code to clear storage
@@ -26634,13 +26653,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
-    // Also clear all storage backups
-    _authStorage.removeItem(_AUTH_STORAGE_KEY);
+    // Belt-and-suspenders clear: primary, backup, sessionStorage, cookie.
+    try { _authStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    try { localStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    try { localStorage.removeItem(_BACKUP_KEY); } catch (_) {}
+    try { sessionStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    // Plant the sticky marker — lives through the reload, checked by initAuth.
+    try { localStorage.setItem(_SIGNOUT_MARK_KEY, String(Date.now())); } catch (_) {}
     clearAuthUI();
     accountDropdown.classList.remove('open');
     const tc = document.getElementById('topLeftCluster');
     if (tc) tc.style.zIndex = '';
-    window.location.reload();
+    // Defer reload slightly so cookie + localStorage writes flush on
+    // iOS WKWebView (where `document.cookie` assignments are sometimes
+    // microtask-deferred).
+    setTimeout(() => { window.location.reload(); }, 50);
   }
 
   async function forgotPassword() {
@@ -26918,6 +26945,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   (async function initAuth() {
     console.log('[auth] === initAuth START ===');
+
+    // ── Sticky sign-out check — Capacitor iOS can persist one of the
+    // storage layers (cookie / IndexedDB / localStorage backup) across
+    // the post-signOut reload even though we nuked them all. If the
+    // user just signed out (within 30s), force-clear every layer and
+    // treat this load as genuinely logged-out. No restoration
+    // attempted, regardless of what leaked through.
+    try {
+      const signOutAt = parseInt(localStorage.getItem(_SIGNOUT_MARK_KEY) || '0', 10);
+      if (signOutAt && (Date.now() - signOutAt) < 30_000) {
+        console.log('[auth] sticky sign-out marker present — force-clearing every layer');
+        _allowStorageRemoval = true;
+        try { localStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+        try { localStorage.removeItem(_BACKUP_KEY); } catch (_) {}
+        try { sessionStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+        try {
+          // Aggressive cookie clear — try every attribute combo.
+          document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/; SameSite=Lax';
+          document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/';
+          document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0';
+        } catch (_) {}
+        try { localStorage.removeItem(_SIGNOUT_MARK_KEY); } catch (_) {}
+        await applySession(null, 'INITIAL_SESSION');
+        console.log('[auth] === initAuth END (sticky signed-out) ===');
+        return;
+      }
+    } catch (_) {}
+
     console.log('[auth] hasPersistedSession:', hasPersistedSession());
     try {
       const { data, error } = await sb.auth.getSession();
