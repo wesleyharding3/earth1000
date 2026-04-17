@@ -5467,29 +5467,46 @@ app.get("/api/timelines/latest", async (req, res) => {
 
       if (!timelines.length) return [];
 
-      // Hero images for timelines: native publisher scrape only.
-      //   1. Most recent constituent article with a.image_url.
-      //   2. Otherwise null → findBucketImage() below matches directly on
-      //      primary_nations / keywords / category in image_assets.
-      // The old article_image_assignments path was removed — the bucket
-      // lookup is more on-topic than whatever fallback happened to be
-      // assigned to a single article in the timeline.
+      // Hero images for timelines: prefer native publisher scrape, fall
+      // back to article_image_assignments (populated by backfillImages.js).
+      //
+      // The earlier version ONLY looked at a.image_url, which meant every
+      // timeline whose articles had null/dead native images returned no
+      // hero — even though backfillImages has assigned on-topic fallback
+      // images for those same articles in article_image_assignments. The
+      // bucket/Wikimedia fallback below was trying to cover that gap but
+      // was capped at 20 timelines inside a 6s Promise.race, so long lists
+      // or slow runs still ended up imageless.
+      //
+      // DISTINCT ON ordering: within a timeline, prefer articles that have
+      // a native image over those that only have an assignment; within each
+      // tier, prefer most recent. COALESCE picks native first, assignment
+      // second.
       const timelineIds = timelines.map(t => t.timeline_id);
       const { rows: heroes } = await pool.query(`
         SELECT DISTINCT ON (sta.timeline_id)
           sta.timeline_id,
-          a.image_url AS hero_image_url,
+          COALESCE(
+            NULLIF(a.image_url, ''),
+            img.public_url
+          ) AS hero_image_url,
           COALESCE(ns.name, ys.name) AS hero_source_name,
           co.iso_code AS hero_iso_code
         FROM story_timeline_articles sta
         JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img ON img.id = aia.image_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.timeline_id = ANY($1)
-          AND a.image_url IS NOT NULL
-          AND a.image_url <> ''
-        ORDER BY sta.timeline_id, a.published_at DESC
+          AND (
+            (a.image_url IS NOT NULL AND a.image_url <> '')
+            OR img.public_url IS NOT NULL
+          )
+        ORDER BY sta.timeline_id,
+          CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+          a.published_at DESC
       `, [timelineIds]);
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
@@ -6030,15 +6047,21 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       FROM ranked_threads rt
       LEFT JOIN LATERAL (
         SELECT
-          a.image_url AS hero_image_url,
+          COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
           co.iso_code AS hero_iso_code
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img ON img.id = aia.image_id
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.thread_id = rt.thread_id
-          AND a.image_url IS NOT NULL
-          AND a.image_url <> ''
-        ORDER BY a.published_at DESC
+          AND (
+            (a.image_url IS NOT NULL AND a.image_url <> '')
+            OR img.public_url IS NOT NULL
+          )
+        ORDER BY
+          CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+          a.published_at DESC
         LIMIT 1
       ) h ON TRUE
       ORDER BY rt.importance DESC NULLS LAST,
@@ -6093,15 +6116,21 @@ app.get("/api/threads/id/:id", async (req, res) => {
     const thread = rows[0];
     const { rows: heroRows } = await pool.query(`
       SELECT
-        a.image_url AS hero_image_url,
+        COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img ON img.id = aia.image_id
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = $1
-        AND a.image_url IS NOT NULL
-        AND a.image_url <> ''
-      ORDER BY a.published_at DESC
+        AND (
+          (a.image_url IS NOT NULL AND a.image_url <> '')
+          OR img.public_url IS NOT NULL
+        )
+      ORDER BY
+        CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+        a.published_at DESC
       LIMIT 1
     `, [threadId]);
 
@@ -6278,28 +6307,44 @@ app.get("/api/threads/latest", async (req, res) => {
     if (!threads.length) return [];
 
     // Step 2: batch-fetch hero images. Rule for threads:
-    //   1. If any constituent article has a native (publisher-scraped) image
-    //      in a.image_url, pick the MOST RECENT such article.
-    //   2. Otherwise, leave hero_image_url null — findBucketImage() below
-    //      resolves a thematic image directly from image_assets (country,
-    //      keyword, or category match). We deliberately skip the old
-    //      article_image_assignments path here: the bucket lookup does a
-    //      better job of finding an on-topic image for the thread itself
-    //      than picking whatever fallback happened to be assigned to one
-    //      of its articles.
+    //   1. Prefer most-recent constituent article with a native
+    //      (publisher-scraped) a.image_url.
+    //   2. Fall back to an assigned image from article_image_assignments
+    //      (populated by backfillImages.js + imageResolver.js). This is
+    //      the layer that gives us on-topic fallback art for articles
+    //      whose publisher scrape returned empty / 404'd.
+    //   3. Only when BOTH are absent does the findBucketImage/Wikimedia
+    //      path below run.
+    //
+    // Earlier versions explicitly skipped step 2 on the theory that
+    // thread-level bucket lookup was more on-topic. In practice most
+    // thread rows ended up with hero_image_url = null because the bucket
+    // pass is capped at 20 items inside a 6s race and frequently times
+    // out. Restoring the assignment fallback unblocks thousands of
+    // thread cards that already have perfectly good images sitting in
+    // article_image_assignments.
     const threadIds = threads.map(t => t.thread_id);
     const { rows: heroes } = await pool.query(`
       SELECT DISTINCT ON (sta.thread_id)
         sta.thread_id,
-        a.image_url AS hero_image_url,
+        COALESCE(
+          NULLIF(a.image_url, ''),
+          img.public_url
+        ) AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img ON img.id = aia.image_id
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = ANY($1)
-        AND a.image_url IS NOT NULL
-        AND a.image_url <> ''
-      ORDER BY sta.thread_id, a.published_at DESC
+        AND (
+          (a.image_url IS NOT NULL AND a.image_url <> '')
+          OR img.public_url IS NOT NULL
+        )
+      ORDER BY sta.thread_id,
+        CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+        a.published_at DESC
     `, [threadIds]);
 
     const heroMap = new Map(heroes.map(h => [h.thread_id, h]));

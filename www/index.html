@@ -3422,24 +3422,46 @@ body.flow-maximized #flowArcList {
   text-transform: uppercase;
   color: rgba(255,200,140,0.9);
 }
+/* Compact horizontal layout: small square image on the left, kind / title /
+   meta stacked on the right. Reuses the existing DOM order inside
+   .flowCtxInfoView (kind → imgWrap → title → meta → viewRoutesBtn) via
+   CSS grid named areas, so no HTML/JS changes are needed. */
+.flowCtxInfoView {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  grid-template-areas:
+    "img   kind"
+    "img   title"
+    "img   meta"
+    "btn   btn";
+  column-gap: 10px;
+  row-gap: 4px;
+  align-items: start;
+}
+#flowCtxCard .flowCtxKind          { grid-area: kind; }
+#flowCtxCard .flowCtxImgWrap       { grid-area: img; align-self: start; }
+#flowCtxCard .flowCtxTitle         { grid-area: title; }
+#flowCtxCard .flowCtxMeta          { grid-area: meta; }
+#flowCtxCard .flowCtxViewRoutesBtn { grid-area: btn; }
+
 #flowCtxCard .flowCtxImg {
-  width: 100%;
-  height: 110px;
+  width: 56px;
+  height: 56px;
   object-fit: cover;
   border-radius: 8px;
   background: rgba(255,255,255,0.04);
   display: block;
 }
 #flowCtxCard .flowCtxImgPh {
-  width: 100%;
-  height: 110px;
+  width: 56px;
+  height: 56px;
   border-radius: 8px;
   background: linear-gradient(135deg, rgba(212,168,67,0.07), rgba(255,255,255,0.02));
   display: flex;
   align-items: center;
   justify-content: center;
 }
-#flowCtxCard .flowCtxImgPh svg { width: 26px; height: 26px; opacity: 0.25; color: #fff; }
+#flowCtxCard .flowCtxImgPh svg { width: 22px; height: 22px; opacity: 0.25; color: #fff; }
 #flowCtxCard .flowCtxTitle {
   font-size: 12px;
   font-weight: 600;
@@ -3476,6 +3498,14 @@ body.flow-maximized #flowArcList {
 #flowCtxCard.flowCtxMinimized .flowCtxImgWrap { display: none; }
 #flowCtxCard.flowCtxMinimized .flowCtxMeta { display: none; }
 #flowCtxCard.flowCtxMinimized .flowCtxViewRoutesBtn { display: none !important; }
+/* Collapse the 56px image column so minimized title isn't indented.
+   Without this, the grid leaves the fixed left column reserved. */
+#flowCtxCard.flowCtxMinimized .flowCtxInfoView {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "kind"
+    "title";
+}
 #flowCtxCard.flowCtxMinimized .flowCtxTitle {
   -webkit-line-clamp: 1;
   font-size: 11px;
