@@ -26809,8 +26809,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function signOut() {
     _userInitiatedSignOut = true;
     _allowStorageRemoval = true; // allow Supabase + our code to clear storage
+    // Race sb.auth.signOut against a 1.5s timeout — on iOS WKWebView the
+    // network call can hang (offline, slow Supabase, blocked) and we still
+    // want the local logout + reload to proceed. Without the race, a hung
+    // signOut prevents the sticky marker from planting → reload never
+    // fires → user appears logged in on next render.
     try {
-      await sb.auth.signOut({ scope: 'local' });
+      await Promise.race([
+        sb.auth.signOut({ scope: 'local' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 1500))
+      ]);
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
@@ -26819,6 +26827,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try { localStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
     try { localStorage.removeItem(_BACKUP_KEY); } catch (_) {}
     try { sessionStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    try {
+      document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/; SameSite=Lax';
+      document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/';
+      document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0';
+    } catch (_) {}
     // Plant the sticky marker — lives through the reload, checked by initAuth.
     try { localStorage.setItem(_SIGNOUT_MARK_KEY, String(Date.now())); } catch (_) {}
     clearAuthUI();
