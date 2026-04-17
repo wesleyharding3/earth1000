@@ -23229,8 +23229,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/article/${articleId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        // No flow arcs — single-location story. Keep the context card
-        // visible, highlight the origin country, and rotate the camera.
+        // No flow arcs — the source country is the only entity. Highlight
+        // it, rotate the camera, and surface a label card so the user can
+        // see which country owns the story.
         const _originIso = _ctxArticle?.iso_code || data.article?.iso_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
@@ -23238,7 +23239,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const _c = (window.__globeCountries || []).find(
             c => c && (c.iso_code || '').toUpperCase() === iso
           );
-          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+          if (_c && _c.lat != null) {
+            window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+            const _selfFlow = {
+              src: { lat: parseFloat(_c.lat), lon: parseFloat(_c.lon),
+                     place: _c.name || iso, id: _c.id || iso,
+                     type: 'country', iso },
+              dst: { lat: parseFloat(_c.lat), lon: parseFloat(_c.lon),
+                     place: _c.name || iso, id: _c.id || iso,
+                     type: 'country', iso },
+              count: 1
+            };
+            window.__flowShowLabelsForCardTrigger?.([_selfFlow]);
+          }
         }
         // Show back button so user can return (don't call hideFlowArcBackBtn — it hides the ctx card)
         const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
