@@ -14154,6 +14154,72 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const DRAG_SELECT_COOLOFF_MS = 14000;
       window.__dragSelectCooloffMs = DRAG_SELECT_COOLOFF_MS;
 
+      // ── City disambiguation fan (reuses #countryFan DOM + CSS) ──────────
+      // In city view: any click/tap gathers every city within a zoom-scaled
+      // geodesic radius (50 mi at default camera, clamped 2–65). 0 hits
+      // dismisses any open fan. 1 hit opens the panel directly. ≥2 hits
+      // show a fan list sorted by distance (nearest = primary).
+      function cityFanRadiusMi() {
+        const DEFAULT_CAM = _isMobileView ? 3.6 : 3.0;
+        const zf = DEFAULT_CAM / Math.max(0.1, camera.position.length());
+        const BASE = 50, MIN_MI = 2, MAX_MI = 65;
+        return Math.max(MIN_MI, Math.min(MAX_MI, BASE / Math.max(0.35, zf)));
+      }
+      function collectCityHits(clickLat, clickLon, radiusMi) {
+        if (!window.__haversineMi) return [];
+        const hits = [];
+        for (let i = 0; i < cities.length; i++) {
+          if (cityPopMask && !cityPopMask[i]) continue;
+          if (cityGdpMask && !cityGdpMask[i]) continue;
+          const c = cities[i];
+          const cLat = c.lat;
+          const cLon = (c.lon !== undefined ? c.lon : c.lng);
+          if (!Number.isFinite(cLat) || !Number.isFinite(cLon)) continue;
+          const np = new THREE.Vector3(
+            positions[i*3], positions[i*3+1], positions[i*3+2]
+          ).applyMatrix4(cityPoints.matrixWorld);
+          if (!isCityVisible(np, camera)) continue;
+          const d = window.__haversineMi(clickLat, clickLon, cLat, cLon);
+          if (d <= radiusMi) hits.push({ city: c, idx: i, dist_mi: d });
+        }
+        hits.sort((a, b) => a.dist_mi - b.dist_mi);
+        return hits;
+      }
+      function commitCityHit(h) {
+        lockAmbientRotation();
+        selectedNodeIndex = h.idx; isFocused = true;
+        preFocusZoom = camera.position.z;
+        focusCity(h.city);
+        queueFocusPanelOpen(() => openNodePanel(h.city, "city"), { immediate: true });
+      }
+      function showCityFanUI(hits, x, y) {
+        const fanEl = document.getElementById('countryFan');
+        if (!fanEl) return;
+        fanEl.innerHTML = '';
+        hits.forEach((h, i) => {
+          const card = document.createElement('div');
+          card.className = 'countryFanCard' + (i === 0 ? ' primary' : '');
+          const label = document.createElement('span');
+          label.textContent = h.city.name || '—';
+          card.appendChild(label);
+          if (h.dist_mi > 0.5) {
+            const dist = document.createElement('span');
+            dist.className = 'countryFanCardDist';
+            dist.textContent = h.dist_mi.toFixed(0) + ' mi';
+            card.appendChild(dist);
+          }
+          card.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            fanEl.classList.remove('visible');
+            commitCityHit(h);
+          });
+          fanEl.appendChild(card);
+        });
+        fanEl.style.left = x + 'px';
+        fanEl.style.top  = y + 'px';
+        fanEl.classList.add('visible');
+      }
+
       window.addEventListener("click", event => {
         if (window.__currentPage !== undefined && window.__currentPage !== 1) return;
         if (window.briefingActive) return;   // globe locked during briefing
@@ -14250,6 +14316,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
               queueFocusPanelOpen(() => openRegionPanel(r));
             }
           }
+          return;
+        }
+
+        // City view: geodesic 50-mi radius fan (zoom-scaled). See
+        // cityFanRadiusMi / collectCityHits above.
+        if (currentViewMode === "city" && typeof window.__screenToLatLon === "function") {
+          const ll = window.__screenToLatLon(event.clientX, event.clientY);
+          const fanEl = document.getElementById('countryFan');
+          if (!ll) { if (fanEl) fanEl.classList.remove('visible'); return; }
+          const hits = collectCityHits(ll.lat, ll.lon, cityFanRadiusMi());
+          if (hits.length === 0) { if (fanEl) fanEl.classList.remove('visible'); return; }
+          if (hits.length === 1) { if (fanEl) fanEl.classList.remove('visible'); commitCityHit(hits[0]); return; }
+          showCityFanUI(hits, event.clientX, event.clientY);
           return;
         }
 
@@ -14375,6 +14454,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 isFocused = true; preFocusZoom = camera.position.z;
                 focusRegion(r);
                 queueFocusPanelOpen(() => openRegionPanel(r), { immediate: true });
+              };
+              _pendingTouchPickTime = Date.now();
+            }
+          }
+          return;
+        }
+
+        // City view: geodesic 50-mi radius fan (zoom-scaled). Deferred to
+        // touchend via _pendingTouchPick so a drag never commits a pick.
+        if (currentViewMode === "city" && typeof window.__screenToLatLon === "function") {
+          const ll = window.__screenToLatLon(touch.clientX, touch.clientY);
+          if (ll) {
+            const hits = collectCityHits(ll.lat, ll.lon, cityFanRadiusMi());
+            if (hits.length >= 1) {
+              const tx = touch.clientX, ty = touch.clientY;
+              _pendingTouchPick = () => {
+                touchNodeSelectTime = Date.now();
+                if (hits.length === 1) commitCityHit(hits[0]);
+                else showCityFanUI(hits, tx, ty);
               };
               _pendingTouchPickTime = Date.now();
             }
@@ -34942,6 +35040,8 @@ body.ticker-active .gTickerLabel {
   window.__hitTestReady     = () => loadGeoJson();
   window.__hitTestCountries = () => _countries;
   window.__hitTestThreshold = getZoomThresholdMi;
+  window.__screenToLatLon   = screenToLatLon;
+  window.__haversineMi      = haversineMi;
 
   // ── debug click-logging (off by default) ──────────────────────────────
   //   window.__hitTestDebug = true;
