@@ -3994,6 +3994,46 @@ app.get('/api/admin/timelines', requireAdmin, async (req, res) => {
   }
 });
 
+// Get a single timeline + its articles (for editor detail panel)
+app.get('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const { rows: tlRows } = await pool.query(`
+      SELECT id, title, description, scope, status, importance, primary_category,
+             geographic_scope, keywords, primary_nations, article_count,
+             distinct_source_count, last_updated_at,
+             NULL::text AS image_url
+      FROM story_timelines WHERE id = $1
+    `, [id]);
+    if (!tlRows.length) return res.status(404).json({ error: 'Timeline not found' });
+
+    const { rows: articles } = await pool.query(`
+      SELECT a.id, COALESCE(a.translated_title, a.title) AS title,
+             COALESCE(a.translated_summary, a.summary) AS summary,
+             COALESCE(NULLIF(a.image_url, ''), img.public_url, '') AS image_url,
+             a.article_url, a.published_at,
+             COALESCE(ns.name, ys.name) AS source_name,
+             sta.relevance_score
+      FROM story_timeline_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+      LEFT JOIN image_assets img ON img.id = aia.image_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE sta.timeline_id = $1
+      ORDER BY a.published_at DESC
+      LIMIT 100
+    `, [id]);
+
+    res.json({ timeline: tlRows[0], articles });
+  } catch (err) {
+    console.error('[admin/timelines] detail error:', err.message);
+    res.status(500).json({ error: 'Failed to get timeline' });
+  }
+});
+
 // Update a timeline's editable fields
 app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
   try {
