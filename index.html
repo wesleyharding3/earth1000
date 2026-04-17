@@ -12091,6 +12091,10 @@ function computeCityTiers(cities) {
       }
 
       function updateScaleBar() {
+        // Guard: while the HUD intro is animating the scalebar, suppress
+        // updates so the render loop doesn't rebuild the labels DOM every
+        // frame and wipe the in-progress fade transitions.
+        if (window.__scaleBarIntroActive) return;
         const labelsEl = document.getElementById("scaleBarLabels");
         const bar = document.getElementById("scaleBarLine");
         if (!labelsEl || !bar) return;

@@ -712,43 +712,67 @@ async function claudeCreateTimelines(articles, existingTimelines) {
     scope: t.scope,
   }));
 
-  const prompt = `You are creating NEW broad geopolitical timeline arcs for a GEOPOLITICS app. These are UMBRELLA-LEVEL multi-month narratives tracking SPECIFIC ongoing crises, conflicts, and power shifts — NOT abstract global topic categories.
+  const prompt = `You are creating NEW timeline arcs for a GEOPOLITICS app. Timelines record HISTORY AS IT UNFOLDS — named, dated, traceable events that span weeks, months, or years and have a clear "what happens next" trajectory. They are NOT topic summaries, NOT analytical observations, and NOT passive "amid"/"reveals"/"parallels" framings.
 
-Your job: group these unmatched articles into genuinely NEW timeline arcs that don't already exist.
+Think: Ukraine-Russia War. Gaza Genocide. Israel-Lebanon Ceasefire. Sudan Civil War. Each one names a specific historical event with a beginning, ongoing developments, and an eventual end. A historian a decade from now would recognize the title as a chapter heading.
+
+Your job: group unmatched articles into genuinely NEW timeline arcs that pass the central-event test below.
 
 ═══ EXISTING TIMELINES (DO NOT DUPLICATE) ═══
 ${JSON.stringify(existingInfo, null, 1)}
 
-═══ RULES ═══
-• Title: 2-5 words MAX. Name the ARC: "Gaza Genocide", "NATO Expansion", "Sahel Insurgency"
-• Scope: stable snake_case slug: "gaza_genocide", "nato_expansion", "sahel_insurgency"
-• Only create if 3+ articles clearly belong to the same SPECIFIC arc
-• importance: 5-10 (10 = genocide/major war, 9 = major conflict, 5 = regional political shift)
+═══ THE CENTRAL EVENT TEST (every timeline must pass ALL of these) ═══
+1. NAMED EVENT: There is a specific, nameable event or crisis at the center — a war, an election, a coup, a treaty, a ceasefire, a disaster, an indictment, a mass protest movement, a sustained military campaign. NOT a "situation," NOT a "trend," NOT an "ongoing concern."
+2. CONCRETE ACTORS: At least one specific named actor (country, leader, organization, faction) is doing something — not "tech platforms face X" or "global Y crisis."
+3. ACTIVE VERB: The title describes something happening, not an analytical observation. "Russia Invades Ukraine" ✅. "US Governance Crisis Parallels Soviet Collapse" ❌ (analytical/passive).
+4. TRAJECTORY: A reasonable person could ask "what happens next?" and expect future articles to answer. One-off announcements, single revelations, and verdicts on past events fail this test unless they kick off a longer arc.
+5. HISTORICAL WEIGHT: A decade from now, would this be remembered as a discrete event? If it reads like a generic op-ed topic, it fails.
 
-═══ MANDATORY REJECTIONS ═══
-REJECT all of the following — they are NOT valid geopolitical arcs:
-• Sports, entertainment, local crime, product launches, lifestyle
-• Abstract global categories: "Global Energy Transition", "Renewable Energy", "Climate Crisis", "Cost of Living", "Cybersecurity Standards", "Digital Infrastructure", "AI Regulation", "Global Health", "Food Security", "Labor Negotiations"
-• Generic topic buckets that lack a SPECIFIC country, actor, or event: "Cultural Heritage Protection", "Extreme Weather Response", "Global Economic Slowdown"
-• Any title starting with "Global" followed by an abstract noun (policy, transition, security, reform, etc.)
+═══ HARD REJECTIONS ═══
+• Sports, entertainment, local crime, product launches, lifestyle, business deals, single corporate actions
+• Abstract global categories: "Global Energy Transition", "Climate Crisis", "AI Regulation", "Global Health", "Food Security", "Cybersecurity Standards"
+• Topic buckets dressed up with a country: "X Country Energy Policy", "Y Region Tech Sector Growth"
+• Passive/analytical framings: titles containing "Reveals Potential," "Parallels," "Amid X Crisis," "Faces Pressure," "Sparks Debate," "Raises Questions," "Highlights," "Tensions Over," "Discussions on"
+• Titles starting with "Global," "International," "Worldwide" followed by an abstract noun
+• Titles framing a routine institutional process as a crisis ("Country X Election Process Underway", "Y Constitutional Referendum Underway")
+• Op-ed-style framings ("Y Crisis Demands Accountability", "Z Sector Faces Growing Pressure")
 
-═══ WHAT MAKES A VALID ARC ═══
-A valid arc has a SPECIFIC geopolitical signal:
-  ✅ "Hungary Election Crisis" — specific country, specific event
-  ✅ "US-Iran Blockade" — specific actors, specific action
-  ✅ "Gaza Genocide" — specific location, specific crisis
-  ✅ "DRC-Rwanda Proxy War" — specific countries, specific conflict
-  ❌ "Global Energy Security" — no specific actor or event
-  ❌ "Renewable Energy Transition" — abstract category, not a story arc
-  ❌ "Natural Disasters & Climate Impacts" — vague topic bucket
+═══ EXAMPLES — STUDY THESE CAREFULLY ═══
+✅ VALID — these name historical events with trajectory:
+  • "Ukraine-Russia War" — ongoing war, clear trajectory
+  • "Gaza Genocide" — specific crisis, traceable events
+  • "Israel-Lebanon Ceasefire" — named event with aftermath to track
+  • "Sudan Civil War" — named conflict, ongoing
+  • "Hungary Orbán Defeat" — specific election outcome, political aftermath
+  • "Mizoram Hmar Peace Deal" — specific signed agreement
+  • "Cyclone Vaianu Strikes New Zealand" — specific named disaster
+  • "Mongolia PM Resignation" — concrete event, succession to track
 
-If articles don't form a SPECIFIC geopolitical arc, return empty array [].
+❌ INVALID — kill these and ones like them:
+  • "US Governance Crisis: Trump Administration Parallels Soviet Collapse" — analytical observation, not an event
+  • "Nicaragua Secret US Contacts Reveal Potential Government Pressure" — passive "reveals potential," vague
+  • "Argentina Approves Mining Near Glaciers Amid Water Crisis" — single approval + "amid" framing = no arc
+  • "Tech Platforms Face AI Abuse and Accountability Crisis" — abstract topic, no actor doing anything
+  • "Climate Crisis: Extreme Weather, Water Security, and Environmental Disasters" — topic bucket
+  • "Global Maritime Governance Crisis" — abstract global X
+  • "Global Humanitarian Worker Deaths Triple" — statistic, not an event
+  • "Bangladesh City Corporation Electoral Process Underway" — routine process
+  • "US Heating Cost Crisis Winter 2026" — seasonal/topic
+  • "Minimum Wage Increases Across Multiple Countries" — disconnected events sharing a theme
+
+═══ REQUIREMENTS ═══
+• Title: 2-6 words. Name the EVENT, not the topic. Use active framing.
+• Scope: stable snake_case slug ("gaza_genocide", "ukraine_russia_war")
+• Only create if 3+ articles clearly belong to the same specific event arc
+• importance: 5-10 (10 = world-historic war/genocide; 8-9 = major conflict/crisis; 6-7 = significant national event; 5 = regional inflection point)
+
+If articles don't pass the central-event test, DO NOT force a timeline. Return an empty array [].
 
 ═══ UNMATCHED ARTICLES ═══
 ${JSON.stringify(articleData, null, 1)}
 
 Return ONLY valid JSON array, no explanation:
-[{"title":"...", "description":"Two sentences.", "scope":"snake_slug", "article_ids":[ids], "anchor_article_id":id, "primary_category":"politics|economy|military|diplomacy|environment|technology|conflict|security", "geographic_scope":"global|regional", "importance":7, "keywords":["5-10 keywords"]}]`;
+[{"title":"...", "description":"Two sentences naming the event and stating its current trajectory.", "scope":"snake_slug", "article_ids":[ids], "anchor_article_id":id, "primary_category":"politics|economy|military|diplomacy|environment|technology|conflict|security", "geographic_scope":"global|regional", "importance":7, "keywords":["5-10 keywords"]}]`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
