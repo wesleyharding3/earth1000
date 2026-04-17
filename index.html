@@ -18269,6 +18269,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     };
     window.__arcAiOnSelectArc = function() { _arcCtxUpdateFlowTabState(); };
 
+    // Backup delegated click handler — the inline onclick="" on
+    // #flowCtxAiBtn / #arcListAiBtn can be pre-empted if a parent
+    // listener calls stopPropagation in capture phase, or if the button
+    // is re-rendered without its onclick attribute. Capture-phase
+    // delegator on document guarantees the click reaches us.
+    document.addEventListener('click', (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest('#flowCtxAiBtn') || t.closest('#arcListAiBtn')) {
+        try { window.__arcAiContextOpen?.(); } catch (_) {}
+      }
+    }, true);
+
     // Hook into flow lifecycle
     const _origFlowTick = window.__flowTick;
     window.__flowTick = function() {
@@ -19220,7 +19233,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   document.getElementById("flowPlayBtn").addEventListener("click", (e) => {
     e.stopPropagation();
     if (flowMode === "aggregate") return;  // No playback in aggregate mode
-    if (!flowData.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
+    // Card-triggered modes (thread/timeline/article) push arcs directly to
+    // arcObjects without populating flowData. Don't fall through to
+    // loadFlows() in that case — it would clearArcs() and wipe the
+    // card-triggered arcs (and the labels-but-no-arcs symptom).
+    if (!flowData.length && !arcObjects.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
     if (flowPlaying) {
       flowPlaying = false;
       e.target.textContent = "▶ Play";
@@ -19268,7 +19285,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // Minimized bar play/pause
   window.__flowMinTogglePlay = function() {
     if (flowMode === "aggregate") return;
-    if (!flowData.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
+    if (!flowData.length && !arcObjects.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
     if (flowPlaying) {
       flowPlaying = false;
       document.getElementById("flowPlayBtn").textContent = "▶ Play";
@@ -25981,6 +25998,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // read them immediately on init (unlike IndexedDB which is async).
   const _AUTH_STORAGE_KEY = 'sb-hqzabwjwuszupxwookgx-auth-token';
   const _BACKUP_KEY = '_earth_session_backup'; // independent key Supabase can't touch
+  const _SIGNOUT_MARK_KEY = 'earth_signout_intent'; // sticky marker — survives reload
   let _allowStorageRemoval = false; // only true during user-initiated sign-out
   const _authStorage = (() => {
     const COOKIE_KEY = 'earth_auth_backup';
@@ -26399,19 +26417,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _userInitiatedSignOut = false;
   async function signOut() {
     _userInitiatedSignOut = true;
-    _allowStorageRemoval = true;
+    _allowStorageRemoval = true; // allow Supabase + our code to clear storage
     try {
       await sb.auth.signOut({ scope: 'local' });
     } catch (err) {
       console.warn('[auth] signOut error:', err?.message || err);
     }
-    // Also clear all storage backups
-    _authStorage.removeItem(_AUTH_STORAGE_KEY);
+    // Belt-and-suspenders clear: primary, backup, sessionStorage, cookie.
+    try { _authStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    try { localStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    try { localStorage.removeItem(_BACKUP_KEY); } catch (_) {}
+    try { sessionStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+    // Plant the sticky marker — lives through the reload, checked by initAuth.
+    try { localStorage.setItem(_SIGNOUT_MARK_KEY, String(Date.now())); } catch (_) {}
     clearAuthUI();
     accountDropdown.classList.remove('open');
     const tc = document.getElementById('topLeftCluster');
     if (tc) tc.style.zIndex = '';
-    window.location.reload();
+    // Defer reload slightly so cookie + localStorage writes flush.
+    setTimeout(() => { window.location.reload(); }, 50);
   }
 
   async function forgotPassword() {
@@ -26682,6 +26706,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   (async function initAuth() {
     console.log('[auth] === initAuth START ===');
+
+    // ── Sticky sign-out check — one of the storage layers (cookie /
+    // localStorage backup / sessionStorage) can persist across the
+    // post-signOut reload even though we nuked them all. If the user
+    // just signed out (within 30s), force-clear every layer and treat
+    // this load as genuinely logged-out. No restoration attempted,
+    // regardless of what leaked through.
+    try {
+      const signOutAt = parseInt(localStorage.getItem(_SIGNOUT_MARK_KEY) || '0', 10);
+      if (signOutAt && (Date.now() - signOutAt) < 30_000) {
+        console.log('[auth] sticky sign-out marker present — force-clearing every layer');
+        _allowStorageRemoval = true;
+        try { localStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+        try { localStorage.removeItem(_BACKUP_KEY); } catch (_) {}
+        try { sessionStorage.removeItem(_AUTH_STORAGE_KEY); } catch (_) {}
+        try {
+          document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/; SameSite=Lax';
+          document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/';
+          document.cookie = 'earth_auth_backup=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0';
+        } catch (_) {}
+        try { localStorage.removeItem(_SIGNOUT_MARK_KEY); } catch (_) {}
+        await applySession(null, 'INITIAL_SESSION');
+        console.log('[auth] === initAuth END (sticky signed-out) ===');
+        return;
+      }
+    } catch (_) {}
+
     console.log('[auth] hasPersistedSession:', hasPersistedSession());
     try {
       const { data, error } = await sb.auth.getSession();
@@ -31413,8 +31464,8 @@ body.ticker-active .gTickerLabel {
     const _imgOnErr = _imgRest.length
       ? `(function(el){var f=${JSON.stringify(_imgRest)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}else{el.style.display='none';}})(this)`
       : `this.style.display='none'`;
-    const _heroHTML = _imgSrc
-      ? `<img class="cdHero" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
+    const _imgHTML = _imgSrc
+      ? `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
       : '';
 
     detailEl.innerHTML = `
@@ -31425,9 +31476,9 @@ body.ticker-active .gTickerLabel {
           </svg>
         </div>
       </button>
-      ${_heroHTML}
       <div class="cdHeader">
         <div class="cdHeaderTop">
+          ${_imgHTML}
           <div style="flex:1;min-width:0;">
             <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
