@@ -35712,6 +35712,53 @@ body.ticker-active .gTickerLabel {
     // We only consume the click if the fan shows or a polygon hit succeeds.
     dom.addEventListener('click', onClick, true);
 
+    // ── Mobile tap handler (capture-phase) ────────────────────────────
+    // The window-level touchend pipeline discards the pick if the finger
+    // moved even one pixel (touchMoved flag), which on iOS glass means a
+    // real tap over a polygon usually gets dropped. On desktop, click
+    // fires without any movement check → the polygon layer handles it
+    // directly. To give mobile the same behavior, we listen to touchend
+    // on the canvas ourselves: if the tap was short and roughly
+    // stationary (thumb drift tolerated up to TAP_SLOP_PX), we run the
+    // exact same polygon-hit-test + selectCountry + focus + panel
+    // sequence the desktop click handler does.
+    const TAP_SLOP_PX   = 12;   // thumb drift tolerance — anything past this is a drag
+    const TAP_MAX_MS    = 500;  // taps longer than this are long-presses / scrubs
+    let _tsX = 0, _tsY = 0, _tsT = 0, _tsValid = false;
+    dom.addEventListener('touchstart', (e) => {
+      if (!e.touches || e.touches.length !== 1) { _tsValid = false; return; }
+      _tsX = e.touches[0].clientX;
+      _tsY = e.touches[0].clientY;
+      _tsT = Date.now();
+      _tsValid = true;
+    }, { passive: true });
+    dom.addEventListener('touchmove', (e) => {
+      if (!_tsValid || !e.touches || e.touches.length !== 1) return;
+      const dx = Math.abs(e.touches[0].clientX - _tsX);
+      const dy = Math.abs(e.touches[0].clientY - _tsY);
+      if (dx + dy > TAP_SLOP_PX) _tsValid = false;
+    }, { passive: true });
+    dom.addEventListener('touchend', (e) => {
+      if (!_tsValid) return;
+      _tsValid = false;
+      if (Date.now() - _tsT > TAP_MAX_MS) return;
+      if (!_ready || !isCountryView()) return;
+      if (window.__semHeatActive || window.briefingActive) return;
+      if (window.__flowIsOpen?.()) return;
+      const t = e.changedTouches && e.changedTouches[0];
+      if (!t) return;
+      if (window.__mouseDragEndTime && Date.now() - window.__mouseDragEndTime < 250) return;
+      const hit = hitTestAt(t.clientX, t.clientY);
+      if (!hit || !hit.key) return;
+      e.stopPropagation?.();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+      selectCountry(hit.key);
+      if (window.__openCountryByName) {
+        window.__openCountryByName(hit.name, hit.key);
+      }
+      hideFan();
+    }, true);
+
     // Activate polygon countries mode — hides the old country node dots.
     window.__polygonCountriesActive = true;
 
