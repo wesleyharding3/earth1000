@@ -1060,7 +1060,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   // fell through to Tier 2, destroying the country_boost weighting.
   const client = await pool.connect();
   try {
-    await client.query('SET statement_timeout = 3500');
+    await client.query('SET statement_timeout = 6000');
     const { rows } = await client.query(`
       WITH ranked AS (
         SELECT
@@ -1113,14 +1113,14 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
   } catch (err) {
-    console.warn('[news/search] Tier 1 timed out (3.5s), falling back:', err.message);
+    console.warn('[news/search] Tier 1 timed out (6s), falling back:', err.message);
   } finally {
     // Reset timeout to pool default before returning connection
     await client.query('SET statement_timeout = 45000').catch(() => {});
     client.release();
   }
 
-  // ── Tier 2: Lightweight — no image joins, source join only, 6s timeout ──
+  // ── Tier 2: Lightweight — no image joins, source join only, 3s timeout ──
   // IMPORTANT: orders by the same priority formula as Tier 1 (minus
   // country_boost, which requires the country_feed_boost join that's
   // absent here). Previously Tier 2 did `ORDER BY published_at DESC`,
@@ -1128,7 +1128,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   // — the user saw recency-sorted noise instead of the ranked feed.
   const client2 = await pool.connect();
   try {
-    await client2.query('SET statement_timeout = 1500');
+    await client2.query('SET statement_timeout = 3000');
     const { rows } = await client2.query(`
       SELECT * FROM (
         SELECT
@@ -1163,20 +1163,20 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
   } catch (err2) {
-    console.warn('[news/search] Tier 2 timed out (1.5s), falling back to bare minimum:', err2.message);
+    console.warn('[news/search] Tier 2 timed out (3s), falling back to bare minimum:', err2.message);
   } finally {
     await client2.query('SET statement_timeout = 45000').catch(() => {});
     client2.release();
   }
 
-  // ── Tier 3: Bare minimum — just articles + country, no joins, 1.5s cap ──
-  // Same priority ordering as Tier 2, no country_boost since no cfb join.
-  // Wrapped with an explicit statement_timeout so it can never hang for the
-  // pool default 45s — that was the real cause of 20s+ user-visible stalls
-  // when Tier 1 and Tier 2 both timed out.
+  // ── Tier 3: Bare minimum — just articles + country, no joins, 10s cap ──
+  // This is the floor: must always return *something* so the endpoint never
+  // 500s in the common "cold Postgres + Tiers 1/2 timed out" case. Wrapped
+  // in try/catch so even a pathological failure yields an empty articles
+  // array rather than an exception that bubbles to a 500 response.
   const client3 = await pool.connect();
   try {
-    await client3.query('SET statement_timeout = 1500');
+    await client3.query('SET statement_timeout = 10000');
     const { rows } = await client3.query(`
       SELECT * FROM (
         SELECT
@@ -1205,6 +1205,9 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
       LIMIT $1 OFFSET $2
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
+  } catch (err3) {
+    console.warn('[news/search] Tier 3 floor failed (10s), returning empty:', err3.message);
+    return { total: 0, articles: [] };
   } finally {
     await client3.query('SET statement_timeout = 45000').catch(() => {});
     client3.release();
@@ -1547,9 +1550,13 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
         return res.json(personalized);
       }
 
-      // Shared default → safe for Cloudflare edge cache (60s, mirrors
-      // ttlCached TTL). stale-while-revalidate=120 smooths expiry.
-      res.set("Cache-Control", "public, max-age=30, s-maxage=60, stale-while-revalidate=120");
+      // Shared default → safe for Cloudflare edge cache. s-maxage=90 gives
+      // the edge a slightly longer hot window than the in-process 60s TTL
+      // so most users hit the CDN, not our origin. stale-while-revalidate
+      // smooths expiry; stale-if-error covers cold-DB / transient 5xx by
+      // letting CF serve the last good response for up to an hour if origin
+      // returns an error.
+      res.set("Cache-Control", "public, max-age=30, s-maxage=90, stale-while-revalidate=300, stale-if-error=3600");
       return res.json(cached);
     }
 
@@ -1669,17 +1676,17 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       ${limitClause}
     `;
 
-    // ── Tier 1: Full filtered query, 10s timeout ──
+    // ── Tier 1: Full filtered query, 12s timeout ──
     let rows;
     let tier1Ok = false;
     const filterClient = await pool.connect();
     try {
-      await filterClient.query('SET statement_timeout = 10000');
+      await filterClient.query('SET statement_timeout = 12000');
       const result = await filterClient.query(fullQuery, params);
       rows = result.rows;
       tier1Ok = true;
     } catch (filterErr) {
-      console.warn('[news/search] Filtered Tier 1 timed out (10s), falling back:', filterErr.message);
+      console.warn('[news/search] Filtered Tier 1 timed out (12s), falling back:', filterErr.message);
     } finally {
       await filterClient.query('SET statement_timeout = 45000').catch(() => {});
       filterClient.release();
@@ -1729,11 +1736,11 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       `;
       const client2 = await pool.connect();
       try {
-        await client2.query('SET statement_timeout = 6000');
+        await client2.query('SET statement_timeout = 8000');
         const result2 = await client2.query(liteQuery, params);
         rows = result2.rows;
       } catch (filterErr2) {
-        console.warn('[news/search] Filtered Tier 2 timed out (6s):', filterErr2.message);
+        console.warn('[news/search] Filtered Tier 2 timed out (8s):', filterErr2.message);
         rows = [];
       } finally {
         await client2.query('SET statement_timeout = 45000').catch(() => {});
@@ -1769,11 +1776,24 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     // Re-rank by boosted final_priority while preserving publisher variance.
     _prefResort(results);
 
+    // Filtered queries vary by query-string; Cloudflare will hash by URL so
+    // each distinct filter gets its own edge entry. Short s-maxage since
+    // filter-space is huge and we don't want stale personalized results.
+    // stale-if-error lets the edge ride out a cold-DB blip for up to 1h.
+    if (!req.user?.id) {
+      res.set("Cache-Control", "public, max-age=15, s-maxage=45, stale-while-revalidate=180, stale-if-error=3600");
+    } else {
+      res.set("Cache-Control", "private, max-age=15");
+    }
     res.json({ total: offset + results.length + (hasMore ? 1 : 0), articles: results });
 
   } catch (err) {
+    // Never 500 on search — the feed failing visibly is worse than showing
+    // an empty state the retry button can refresh. Cloudflare must NOT cache
+    // this fallback, or a transient DB blip would pin the edge to empty.
     console.error("Search error:", err.message);
-    res.status(500).json({ error: "Search failed", detail: req.user?.is_admin ? err.message : undefined });
+    res.set("Cache-Control", "no-store");
+    res.status(200).json({ total: 0, articles: [], degraded: true });
   }
 });
 
