@@ -288,6 +288,38 @@ async function resolveHeroIsoFromText(items, idKey) {
 // of being inserted, so the live feel is preserved.
 const _ttlCache = new Map();        // key → { expires, value }
 const _ttlInflight = new Map();     // key → Promise
+
+// ── Disk-persisted snapshot of the default news feed ─────────────────────
+// So a cold server boot (deploy, restart, crash) never serves an empty page
+// while the cache warms up. We load whatever was last-good into _ttlCache
+// before any user request can arrive, and rewrite the file on every
+// successful default-feed compute.
+const _FEED_SNAPSHOT_FILE = require('path').join(__dirname, '.feed-snapshot.json');
+const _SNAPSHOT_KEYS = new Set([
+  'news/search:default:v8:25:0',
+  'news/search:default:v8:24:0',
+]);
+try {
+  const raw = require('fs').readFileSync(_FEED_SNAPSHOT_FILE, 'utf8');
+  const snap = JSON.parse(raw);
+  for (const [k, v] of Object.entries(snap || {})) {
+    // expires in the near past → next request gets served stale immediately
+    // via ttlCached's stale-while-revalidate path, while fresh data computes.
+    _ttlCache.set(k, { expires: Date.now() - 1, value: v });
+  }
+  console.log(`[feed-snapshot] loaded ${Object.keys(snap || {}).length} keys from disk`);
+} catch (_) { /* no snapshot yet — fine on first boot */ }
+
+function _persistFeedSnapshot() {
+  const out = {};
+  for (const key of _SNAPSHOT_KEYS) {
+    const hit = _ttlCache.get(key);
+    if (hit && hit.value) out[key] = hit.value;
+  }
+  if (!Object.keys(out).length) return;
+  require('fs').writeFile(_FEED_SNAPSHOT_FILE, JSON.stringify(out), () => {});
+}
+
 async function ttlCached(key, ttlMs, producer) {
   const now = Date.now();
   const hit = _ttlCache.get(key);
@@ -301,6 +333,7 @@ async function ttlCached(key, ttlMs, producer) {
         try {
           const value = await producer();
           _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
+      if (_SNAPSHOT_KEYS.has(key)) _persistFeedSnapshot();
         } catch (_) {} finally { _ttlInflight.delete(key); }
       })();
       _ttlInflight.set(key, bg);
@@ -313,6 +346,8 @@ async function ttlCached(key, ttlMs, producer) {
     try {
       const value = await producer();
       _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
+      if (_SNAPSHOT_KEYS.has(key)) _persistFeedSnapshot();
+
       return value;
     } catch (err) {
       // App-level stale-if-error: if the producer failed (cold-cache timeout,
@@ -1025,7 +1060,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   // fell through to Tier 2, destroying the country_boost weighting.
   const client = await pool.connect();
   try {
-    await client.query('SET statement_timeout = 15000');
+    await client.query('SET statement_timeout = 3500');
     const { rows } = await client.query(`
       WITH ranked AS (
         SELECT
@@ -1078,7 +1113,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
   } catch (err) {
-    console.warn('[news/search] Tier 1 timed out (15s), falling back:', err.message);
+    console.warn('[news/search] Tier 1 timed out (3.5s), falling back:', err.message);
   } finally {
     // Reset timeout to pool default before returning connection
     await client.query('SET statement_timeout = 45000').catch(() => {});
@@ -1093,7 +1128,7 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   // — the user saw recency-sorted noise instead of the ranked feed.
   const client2 = await pool.connect();
   try {
-    await client2.query('SET statement_timeout = 6000');
+    await client2.query('SET statement_timeout = 1500');
     const { rows } = await client2.query(`
       SELECT * FROM (
         SELECT
@@ -1128,42 +1163,52 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
   } catch (err2) {
-    console.warn('[news/search] Tier 2 timed out (6s), falling back to bare minimum:', err2.message);
+    console.warn('[news/search] Tier 2 timed out (1.5s), falling back to bare minimum:', err2.message);
   } finally {
     await client2.query('SET statement_timeout = 45000').catch(() => {});
     client2.release();
   }
 
-  // ── Tier 3: Bare minimum — just articles + country, no joins ──
+  // ── Tier 3: Bare minimum — just articles + country, no joins, 1.5s cap ──
   // Same priority ordering as Tier 2, no country_boost since no cfb join.
-  const { rows } = await pool.query(`
-    SELECT * FROM (
-      SELECT
-        a.id, a.source_id, a.youtube_source_id,
-        a.title, a.translated_title, a.url, a.article_url,
-        a.summary, a.translated_summary, a.image_url,
-        NULL AS catalog_image_url,
-        a.published_at, a.sentiment_score,
-        NULL AS language, a.base_priority,
-        NULL AS source_name, NULL AS source_summary,
-        'unknown' AS source_bias, NULL AS site_url,
-        src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
-        1.0 AS country_boost,
-        GREATEST(
-          POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
-          0.02
-        ) AS recency_decay,
-        a.media_type, a.video_id, a.duration_seconds
-      FROM news_articles a
-      JOIN countries src_co ON src_co.id = a.country_id
-      WHERE a.city_id IS NULL
-        AND a.published_at > NOW() - INTERVAL '24 hours'
-        AND COALESCE(a.base_priority, 0) > 0.05
-    ) sub
-    ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85) DESC
-    LIMIT $1 OFFSET $2
-  `, params);
-  return _finalizeSearchResults(rows, effectiveLimit, offset);
+  // Wrapped with an explicit statement_timeout so it can never hang for the
+  // pool default 45s — that was the real cause of 20s+ user-visible stalls
+  // when Tier 1 and Tier 2 both timed out.
+  const client3 = await pool.connect();
+  try {
+    await client3.query('SET statement_timeout = 1500');
+    const { rows } = await client3.query(`
+      SELECT * FROM (
+        SELECT
+          a.id, a.source_id, a.youtube_source_id,
+          a.title, a.translated_title, a.url, a.article_url,
+          a.summary, a.translated_summary, a.image_url,
+          NULL AS catalog_image_url,
+          a.published_at, a.sentiment_score,
+          NULL AS language, a.base_priority,
+          NULL AS source_name, NULL AS source_summary,
+          'unknown' AS source_bias, NULL AS site_url,
+          src_co.iso_code, src_co.name AS country_name, src_co.flag AS country_flag,
+          1.0 AS country_boost,
+          GREATEST(
+            POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
+            0.02
+          ) AS recency_decay,
+          a.media_type, a.video_id, a.duration_seconds
+        FROM news_articles a
+        JOIN countries src_co ON src_co.id = a.country_id
+        WHERE a.city_id IS NULL
+          AND a.published_at > NOW() - INTERVAL '24 hours'
+          AND COALESCE(a.base_priority, 0) > 0.05
+      ) sub
+      ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85) DESC
+      LIMIT $1 OFFSET $2
+    `, params);
+    return _finalizeSearchResults(rows, effectiveLimit, offset);
+  } finally {
+    await client3.query('SET statement_timeout = 45000').catch(() => {});
+    client3.release();
+  }
 }
 
 // ── User Preference Boost Engine ──────────────────────────────────────────
