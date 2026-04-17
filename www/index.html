@@ -3548,14 +3548,53 @@ body.flow-maximized #flowArcList {
 #flowCtxCard.noInfoOrigin .flowCtxReturn { display: none; }
 
 /* ── Live arcs list, embedded inside flowCtxCard ─────────────────── */
-/* Slot that hosts the reparented #flowArcList */
+/* Slot that hosts the reparented #flowArcList. When the card is in
+   noInfoOrigin mode (News Flows opened directly from the nav), the slot
+   animates open/closed based on play state. `.liveArcsPrePlay` keeps it
+   collapsed to just the pill-bar header until the user clicks Play. */
 .flowCtxLiveArcsSlot {
   display: none;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* Approx. 3 article bars (≈60px each) inside the scroll area. */
+  max-height: 210px;
+  opacity: 1;
+  transition:
+    max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.28s ease-out,
+    margin 0.42s cubic-bezier(0.32, 0.72, 0, 1);
 }
 #flowCtxCard.ctxRoutesActive .flowCtxLiveArcsSlot { display: flex; }
+/* Pre-play (News Flows direct): show only the pill-bar header, live
+   arcs slot collapsed. */
+#flowCtxCard.ctxRoutesActive.noInfoOrigin.liveArcsPrePlay .flowCtxLiveArcsSlot {
+  max-height: 0;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+/* In noInfoOrigin mode, tighten the overall card and match the
+   transparency of the "% Global Coverage" inspector panel. */
+#flowCtxCard.ctxRoutesActive.noInfoOrigin {
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  background: rgba(6, 10, 20, 0.30);
+  padding: 8px;
+  max-height: calc(24px + 210px + 28px);
+  transition:
+    max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    background 0.25s ease;
+}
+#flowCtxCard.ctxRoutesActive.noInfoOrigin.liveArcsPrePlay {
+  max-height: 52px;
+}
+/* Inner scroll area gets the 3-bar cap so overflow scrolls instead of
+   bleeding past the outer cap. */
+#flowCtxCard.ctxRoutesActive.noInfoOrigin .arcListScroll {
+  max-height: 200px;
+  min-height: 0;
+}
 
 /* Override the standalone-panel positioning that #flowArcList carries
    by default — once it's inside the card, it needs to flow naturally. */
@@ -19340,6 +19379,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
     flowPlaying = true;
     lastTimestamp = performance.now();
     document.getElementById("flowPlayBtn").textContent = "⏸ Pause";
+    // Live-arcs / News-Flows-direct interaction:
+    // When the user kicks off playback and the combined card is in
+    // noInfoOrigin mode (opened from the nav, no originating card), slide
+    // the News Flows panel into its minimized bar and expand the Live Arcs
+    // slot. Only trigger once — subsequent pauses/resumes leave the arc
+    // panel open.
+    try {
+      const ctxCard = document.getElementById("flowCtxCard");
+      if (ctxCard?.classList.contains("noInfoOrigin") && ctxCard.classList.contains("liveArcsPrePlay")) {
+        ctxCard.classList.remove("liveArcsPrePlay");
+        const flowControls = document.getElementById("flowControls");
+        if (flowControls?.classList.contains("visible")) {
+          flowControls.classList.add("minimized");
+        }
+      }
+    } catch (_) {}
   }
 
   // Expose pause/resume for article detail panel. Also freezes the flow
@@ -22698,7 +22753,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function hideFlowCtxCard() {
     const el = document.getElementById("flowCtxCard");
     if (el) {
-      el.classList.remove("visible", "ctxRoutesActive");
+      el.classList.remove("visible", "ctxRoutesActive", "liveArcsPrePlay");
       window.__flowCtxDrillDown = false;
     }
   }
@@ -22742,7 +22797,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   // Unified entry when News Flows activates without an originating card —
-  // opens the combined panel straight in Routes view.
+  // opens the combined panel straight in Routes view. Starts in the
+  // "pre-play" state: only the pill-bar header is visible until the user
+  // clicks Play on the News Flows controls.
   window.showFlowPanelRoutesOnly = function() {
     const el = _ensureFlowCtxCard();
     // Clear info-view fields so a stale header doesn't flash
@@ -22755,7 +22812,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (vrBtn) vrBtn.classList.remove("visible");
     el.classList.remove("visible", "flowCtxMinimized");
     void el.offsetHeight;
-    el.classList.add("visible", "ctxRoutesActive", "noInfoOrigin");
+    el.classList.add("visible", "ctxRoutesActive", "noInfoOrigin", "liveArcsPrePlay");
     document.getElementById('flowArcList')?.classList.add('visible');
   };
 
@@ -31207,6 +31264,7 @@ body.ticker-active .gTickerLabel {
   }
 
   let _tickerFirstRender = true;
+  let _entryActive = false;
   function _renderTicker(articles) {
     const el = document.getElementById('gTickerTrack');
     if (!el) return null;
@@ -31218,15 +31276,31 @@ body.ticker-active .gTickerLabel {
 
     if (_tickerFirstRender) {
       _tickerFirstRender = false;
+      _entryActive = true;
       // First load: slide in from offscreen right, then switch to normal loop
       el.classList.remove('reset');
       el.style.animation = 'gTickerEntry 4s cubic-bezier(0.22, 1, 0.36, 1) forwards';
-      const handler = () => {
+      const handler = (ev) => {
+        // Ignore bubbling animationend from child nodes — only react to
+        // the track's own entry animation completing.
+        if (ev && ev.target !== el) return;
+        if (ev && ev.animationName && ev.animationName !== 'gTickerEntry') return;
         el.removeEventListener('animationend', handler);
-        el.style.animation = '';
-        // Kick into normal looping scroll
+        clearTimeout(fallbackTimer);
+        _entryActive = false;
+        // Explicitly re-apply the scroll animation rather than relying on
+        // the CSS class to take over when the inline shorthand clears.
+        // iOS WKWebView (Capacitor) does not reliably re-trigger the
+        // class-based animation on a flex child with `width: max-content`
+        // after the inline `animation` property is wiped — the ticker
+        // appears frozen. Setting it inline guarantees it runs.
+        el.style.animation = 'gTickerScroll 180s linear infinite';
         void el.offsetWidth;
+        _syncTickerDuration();
       };
+      // Safety net in case animationend never fires (e.g. element hidden
+      // mid-animation). 4s + a little slack.
+      const fallbackTimer = setTimeout(() => handler(null), 4500);
       el.addEventListener('animationend', handler);
     } else {
       el.classList.remove('reset');
@@ -31260,7 +31334,12 @@ body.ticker-active .gTickerLabel {
     _pendingArticles = articles;
     const el = _renderTicker(articles);
     if (!el) return;
-    _syncTickerDuration();
+    // Skip duration sync while the first-load entry animation is active —
+    // setting animationDuration during entry would stretch the 4s slide to
+    // the content-based scroll duration and appear to freeze the ticker.
+    // The entry's animationend handler will call _syncTickerDuration itself
+    // once the slide-in completes.
+    if (!_entryActive) _syncTickerDuration();
     if (_canMeasureTicker()) {
       _pendingArticles = null;
     }
