@@ -116,6 +116,13 @@ const corsOptions = {
     : [..._prodOrigins, ..._devOrigins],
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Authorization", "Content-Type", "Accept"],
+  // /api/ai/flow-context uses XHR with `withCredentials = true` so that
+  // SSE streams survive long enough for browsers that treat cookieless
+  // requests as third-party. Credentials mode requires the server to
+  // echo Allow-Credentials AND a specific origin (not `*`) — the origin
+  // list above already resolves to a concrete string per request, so
+  // toggling this on is safe.
+  credentials: true,
   optionsSuccessStatus: 204,
 };
 app.use(cors(corsOptions));
