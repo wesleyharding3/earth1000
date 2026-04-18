@@ -19186,11 +19186,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       const srcName = flow.src?.place || 'Unknown';
       const dstName = flow.dst?.place || 'Unknown';
+      // Collapse a same-country "Italy → Italy" to just the origin chip —
+      // domestic stories (or articles where the LATERAL dst resolved back
+      // to src) shouldn't visually imply a cross-border arc.
+      const _srcIso = (flow.src?.iso || '').toUpperCase();
+      const _dstIso = (flow.dst?.iso || '').toUpperCase();
+      const _sameOriginDest = _srcIso && _dstIso && _srcIso === _dstIso;
+      const routeHTML = _sameOriginDest
+        ? `<div class="arcBarRoute">${esc(srcName)}</div>`
+        : `<div class="arcBarRoute">${esc(srcName)}<span class="arcBarArrow">→</span>${esc(dstName)}</div>`;
+
       const title = flow.title || (flow.count ? `${flow.count} articles` : '');
       const time = flow.publishedAt ? formatRelTime(flow.publishedAt) : '';
 
       div.innerHTML =
-        `<div class="arcBarRoute">${esc(srcName)}<span class="arcBarArrow">→</span>${esc(dstName)}</div>` +
+        routeHTML +
         (title ? `<div class="arcBarTitle">${esc(title)}</div>` : '') +
         (time ? `<div class="arcBarTime">${time}</div>` : '');
 
@@ -19252,7 +19262,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           : (_arcIsolationUid === uid);
         html += `<div class="arcCardMetaRow">`;
         html += `<button class="arcCardIconBtn" data-action="deselect" title="Back to list" aria-label="Back to list">${SVG_BACK}</button>`;
-        html += `<span class="arcCardRoute">${esc(srcName)} → ${esc(dstName)}</span>`;
+        {
+          const _srcIsoX = (flow.src?.iso || '').toUpperCase();
+          const _dstIsoX = (flow.dst?.iso || '').toUpperCase();
+          const _same = _srcIsoX && _dstIsoX && _srcIsoX === _dstIsoX;
+          html += _same
+            ? `<span class="arcCardRoute">${esc(srcName)}</span>`
+            : `<span class="arcCardRoute">${esc(srcName)} → ${esc(dstName)}</span>`;
+        }
         html += `<button class="arcCardIconBtn${eyeActive ? ' active' : ''}" data-action="eye" title="${_isThreadCtx ? "Zoom to article's flow" : 'Isolate arc on globe'}" aria-label="${_isThreadCtx ? "Zoom to article's flow" : 'Isolate arc on globe'}">${SVG_EYE}</button>`;
         html += `<button class="arcCardIconBtn" data-action="page" title="Open article" aria-label="Open article">${SVG_PAGE}</button>`;
         html += `</div>`;
@@ -24244,17 +24261,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // country so the bar's "src → dst" renders as a single origin; the
           // eye still keys off flow._article.id / flow.id.
           const articleFlows = items.map(a => {
-            const originNode = {
+            // src = article's home country (publisher / origin).
+            const srcNode = {
               type: 'country',
-              iso: a.iso_code || null,
+              iso: a.src_iso || null,
               id: a.id,
-              place: a.city_name || a.country_name || (a.iso_code || '').toUpperCase() || '—',
-              lat: a.country_lat != null ? parseFloat(a.country_lat) : 0,
-              lon: a.country_lon != null ? parseFloat(a.country_lon) : 0,
+              place: a.src_city_name || a.src_country_name || (a.src_iso || '').toUpperCase() || '—',
+              lat: a.src_lat != null ? parseFloat(a.src_lat) : 0,
+              lon: a.src_lon != null ? parseFloat(a.src_lon) : 0,
             };
+            // dst = primary "about" country from article_locations (LATERAL
+            // on the server). If no cross-border dst resolved, fall back to
+            // src so the route row shows a single origin chip.
+            const dstNode = a.dst_iso
+              ? {
+                  type: 'country',
+                  iso: a.dst_iso,
+                  id: a.id,
+                  place: a.dst_city_name || a.dst_country_name || a.dst_iso.toUpperCase(),
+                  lat: a.dst_lat != null ? parseFloat(a.dst_lat) : 0,
+                  lon: a.dst_lon != null ? parseFloat(a.dst_lon) : 0,
+                }
+              : { ...srcNode };
             return {
               id: a.id,
-              _article: a,
+              _article: { ...a, iso_code: a.src_iso || a.dst_iso },
               _threadArticleBar: true,
               title: a.title,
               summary: a.summary,
@@ -24262,8 +24293,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               sourceName: a.source_name,
               url: a.url,
               publishedAt: a.published_at,
-              src: { ...originNode },
-              dst: { ...originNode },
+              src: srcNode,
+              dst: dstNode,
             };
           });
           window.__threadArticleFlows = articleFlows;

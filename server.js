@@ -2753,6 +2753,13 @@ app.get("/api/threads/:id/articles", async (req, res) => {
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
     const _cached = await ttlCached(`threads/${threadId}/articles`, 180_000, async () => {
+      // src = article's home country (publisher / origin).
+      // dst = primary destination country this article is ABOUT, pulled from
+      //       article_locations with 'content' routing preferred over 'source'.
+      //       LATERAL takes the top-ranked row per article so each bar gets
+      //       exactly one src → dst even when an article mentions several
+      //       places. If dst resolves to the same country as src (e.g. domestic
+      //       story), front-end will display just the origin.
       const { rows } = await pool.query(`
         SELECT
           a.id,
@@ -2762,19 +2769,45 @@ app.get("/api/threads/:id/articles", async (req, res) => {
           COALESCE(ns.name, ys.name)                AS source_name,
           a.article_url                              AS url,
           a.published_at,
-          co.iso_code                                AS iso_code,
-          co.name                                    AS country_name,
-          ci.name                                    AS city_name,
-          co.latitude                                AS country_lat,
-          co.longitude                               AS country_lon,
+          src_co.iso_code                            AS src_iso,
+          src_co.name                                AS src_country_name,
+          src_ci.name                                AS src_city_name,
+          src_co.latitude                            AS src_lat,
+          src_co.longitude                           AS src_lon,
+          dst.dst_iso,
+          dst.dst_country_name,
+          dst.dst_city_name,
+          dst.dst_lat,
+          dst.dst_lon,
+          dst.routing_type                           AS dst_routing_type,
           sta.is_anchor,
           sta.relevance_score
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
-        LEFT JOIN countries co ON co.id = a.country_id
-        LEFT JOIN cities    ci ON ci.id = a.city_id
+        LEFT JOIN countries src_co ON src_co.id = a.country_id
+        LEFT JOIN cities    src_ci ON src_ci.id = a.city_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN LATERAL (
+          SELECT
+            dco.iso_code AS dst_iso,
+            dco.name     AS dst_country_name,
+            dci.name     AS dst_city_name,
+            COALESCE(dci.latitude,  dco.latitude)  AS dst_lat,
+            COALESCE(dci.longitude, dco.longitude) AS dst_lon,
+            al.routing_type
+          FROM article_locations al
+          LEFT JOIN countries dco ON dco.id = al.country_id
+          LEFT JOIN cities    dci ON dci.id = al.city_id
+          WHERE al.article_id = a.id
+            AND al.routing_type IN ('content', 'source')
+            AND al.country_id IS NOT NULL
+            AND al.country_id <> a.country_id   -- prefer true cross-border dst
+          ORDER BY
+            CASE al.routing_type WHEN 'content' THEN 0 ELSE 1 END,
+            al.id ASC
+          LIMIT 1
+        ) dst ON TRUE
         WHERE sta.thread_id = $1
         ORDER BY sta.is_anchor DESC NULLS LAST,
                  a.published_at DESC
