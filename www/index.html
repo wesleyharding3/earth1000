@@ -4659,6 +4659,17 @@ body.flow-maximized #flowArcList {
   to   { opacity: 1; transform: translateX(0); }
 }
 
+/* Hide the News Flows / Live Arcs card behind the article panel when
+   the page icon drills in, so the expanded arc card doesn't show
+   through around the article panel edges. Kept as opacity + pointer
+   gating (not display:none) so the card's DOM state and scroll
+   position survive until the user taps Back to Flow. */
+#flowCtxCard.adp-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease-out;
+}
+
 .adpCloseBtn {
   background: none;
   border: none;
@@ -26303,6 +26314,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Force reflow so re-adding the class re-triggers the fade.
       void panel.offsetWidth;
       panel.classList.add('adp-flow-return');
+      // Hide the News Flows / Live Arcs card behind the article panel
+      // so the expanded arc card doesn't peek around the edges.
+      document.getElementById('flowCtxCard')?.classList.add('adp-hidden');
     }
 
     // Update back button text based on context
@@ -26336,6 +26350,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     void panel.offsetHeight;
     panel.classList.remove('visible');
     panel.classList.remove('adp-flow-return');
+    // Restore the News Flows / Live Arcs card if we hid it on open.
+    document.getElementById('flowCtxCard')?.classList.remove('adp-hidden');
     panel.style.transform = 'translateY(100%)';
     // Clear the inline transform after the slide completes so future
     // opens rely on the CSS cascade.
