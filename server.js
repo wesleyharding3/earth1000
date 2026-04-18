@@ -585,15 +585,74 @@ async function resolveTierRecordById(tierId) {
 
 // optionalAuth — enriches req.user when a valid Bearer JWT is present.
 // Loads is_admin + active tier from Supabase. Falls through silently if no token.
+// Tiny token-verification cache. Supabase projects on newer plans issue
+// ES256-signed JWTs (asymmetric — you see `"alg":"ES256","kid":"…"` in the
+// header) that HS256 verification with SUPABASE_JWT_SECRET can't validate.
+// When local verify fails we fall back to sba.auth.getUser(token), which
+// asks Supabase's auth server to verify with the right key. That's a
+// round-trip, so we cache {sub,email,exp} by token for 60s.
+const _tokenCache = new Map(); // token -> { sub, email, expMs }
+const _TOKEN_CACHE_MS = 60_000;
+function _cacheClaims(token, sub, email, expUnix) {
+  const expMs = Math.min(
+    Date.now() + _TOKEN_CACHE_MS,
+    (Number(expUnix) || 0) * 1000
+  );
+  _tokenCache.set(token, { sub, email, expMs });
+  // LRU-ish: keep cache size bounded.
+  if (_tokenCache.size > 500) {
+    const firstKey = _tokenCache.keys().next().value;
+    _tokenCache.delete(firstKey);
+  }
+}
+async function _verifyBearerToken(token) {
+  // 1. Cache hit.
+  const cached = _tokenCache.get(token);
+  if (cached && cached.expMs > Date.now()) return { sub: cached.sub, email: cached.email };
+  if (cached) _tokenCache.delete(token);
+
+  // 2. Local HS256 verify — fast path for legacy projects still on the
+  //    shared-secret signing algorithm.
+  if (SUPABASE_JWT_SECRET) {
+    try {
+      const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
+      _cacheClaims(token, payload.sub, payload.email, payload.exp);
+      return { sub: payload.sub, email: payload.email };
+    } catch (_) { /* fall through to Supabase-backed verify */ }
+  }
+
+  // 3. Remote verify via Supabase Admin client. Handles ES256/RS256 keys
+  //    and any future rotation without us needing to ship a JWKS fetcher.
+  try {
+    const { data, error } = await sba.auth.getUser(token);
+    if (error || !data?.user?.id) return null;
+    // Supabase doesn't return `exp` directly on getUser response — decode
+    // the token body without verifying just to extract the expiry claim.
+    let expUnix = 0;
+    try {
+      const body = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+      expUnix = body?.exp || 0;
+    } catch (_) {}
+    _cacheClaims(token, data.user.id, data.user.email || null, expUnix);
+    return { sub: data.user.id, email: data.user.email || null };
+  } catch (_) {
+    return null;
+  }
+}
+
 async function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ") || !SUPABASE_JWT_SECRET) return next();
+  if (!authHeader?.startsWith("Bearer ")) return next();
   const token = authHeader.slice(7);
-  try {
-    const payload = jwt.verify(token, SUPABASE_JWT_SECRET);
-    req.user = { id: payload.sub, email: payload.email };
+  if (!token) return next();
 
-    // Load admin flag + active subscription tier from Supabase
+  const claims = await _verifyBearerToken(token);
+  if (!claims?.sub) return next(); // invalid / expired / unverifiable
+
+  req.user = { id: claims.sub, email: claims.email };
+
+  // Load admin flag + active subscription tier from Supabase
+  try {
     const { data: profile } = await sba
       .from("profiles")
       .select("is_admin, subscriptions(status, updated_at, subscription_tiers(name))")
@@ -616,7 +675,10 @@ async function optionalAuth(req, res, next) {
       req.user.tier     = "free";
     }
   } catch (_) {
-    // Invalid / expired token — treat request as anonymous
+    // DB hiccup — fall back to anonymous tier. Don't 401 if the token
+    // verified; just treat them as free until profile loads next time.
+    req.user.is_admin = req.user.is_admin ?? false;
+    req.user.tier     = req.user.tier || "free";
   }
   next();
 }
