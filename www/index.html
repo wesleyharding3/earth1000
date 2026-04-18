@@ -25312,7 +25312,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   border: 1px solid rgba(255,180,80,0.28);
   border-radius: 8px;
   padding: 5px 9px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Inherit the body font stack so the ORIGIN/DEST label cards match the
+     arc-list bars and flowCtxCard panel. Previously this rule set a
+     shorter stack (-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)
+     which resolved identically on iOS but fell back to a different face on
+     Android/Chrome than the surrounding panels. `inherit` keeps them
+     locked together as the body stack evolves. */
+  font-family: inherit;
   color: rgba(255,255,255,0.94);
   white-space: nowrap;
   transform: translate(-50%, -100%) translateY(-8px);
@@ -25362,7 +25368,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   border: 1px solid rgba(100,200,255,0.18);
   border-radius: 14px;
   padding: 12px 14px 10px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Inherit body stack so the timeline card matches arcs/flowCtxCard. */
+  font-family: inherit;
   max-height: 260px;
   overflow: hidden;
 }
