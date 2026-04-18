@@ -2427,15 +2427,21 @@ body.flow-maximized #flowArcList {
    the green expand + grey minimize buttons; glyph differs per container
    (+ in minBar, − in header) but both call window.__arcListToggle. */
 .arcListToggleBtn {
+  -webkit-appearance: none;
+  appearance: none;
   background: transparent;
   border: none;
+  box-shadow: none;
+  outline: none;
   color: rgba(255,255,255,0.55);
   cursor: pointer;
   padding: 0;
+  margin: 0;
   line-height: 1;
   flex-shrink: 0;
   transition: color 0.15s;
 }
+.arcListToggleBtn:focus { outline: none; box-shadow: none; }
 .arcListToggleBtn:hover { color: rgba(255,255,255,0.95); }
 .arcListMinBar .arcListToggleBtn {
   position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
@@ -10182,7 +10188,6 @@ window.sourceBiasBadgeHTML = function(bias) {
     <div class="arcListPanel" id="arcListPanelRoot">
       <div class="arcListHeader">
         <span class="arcListTitle">Live Arcs</span>
-        <button class="arcListHeaderBtn aiCtx" id="arcListAiBtn" style="display:none" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦</button>
         <button class="arcListToggleBtn" id="arcListToggleBtnHeader" title="Minimize" onclick="window.__arcListToggle?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
       </div>
