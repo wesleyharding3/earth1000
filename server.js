@@ -2921,7 +2921,16 @@ app.get("/api/threads/:id/articles", async (req, res) => {
             AND al.country_id <> a.country_id   -- prefer true cross-border dst
           ORDER BY
             CASE al.routing_type WHEN 'content' THEN 0 ELSE 1 END,
-            al.id ASC
+            -- al.id does NOT exist on article_locations (the table has no
+            -- surrogate pk in this schema; rows are identified by the
+            -- (article_id, country_id, city_id, routing_type) tuple). Using
+            -- it as a tiebreak crashed the whole endpoint with a 500 so the
+            -- thread-flow Live Arcs panel silently fell back to showing
+            -- route arcs instead of the constituent articles. Tiebreak on
+            -- country_id for determinism; city-specific rows win over
+            -- country-only rows since NULL sorts last.
+            al.city_id ASC NULLS LAST,
+            al.country_id ASC
           LIMIT 1
         ) dst ON TRUE
         WHERE sta.thread_id = $1

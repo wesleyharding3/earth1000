@@ -23892,6 +23892,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (arc) window.__flowPushArc?.(arc);
       });
       window.__flowShowLabelsForCardTrigger?.(flows);
+
+      // Re-frame the globe to the isolated article's arc midpoint. The
+      // article's src/dst often diverge from the thread's primary_nations
+      // (e.g. an Italian stringer covering Ukraine for a thread whose
+      // focal countries are RU/UA/HU), so the parked thread-macro camera
+      // framing would leave the new arc partly off-screen.
+      try {
+        const _first = flows[0];
+        if (_first?.src && _first?.dst
+            && Number.isFinite(_first.src.lat) && Number.isFinite(_first.src.lon)
+            && Number.isFinite(_first.dst.lat) && Number.isFinite(_first.dst.lon)) {
+          const midLat = (_first.src.lat + _first.dst.lat) / 2;
+          const midLon = (_first.src.lon + _first.dst.lon) / 2;
+          window.startFocus?.(midLat, midLon);
+        } else if (_homeIso) {
+          const _c = (window.__globeCountries || []).find(
+            c => c && (c.iso_code || '').toUpperCase() === _homeIso
+          );
+          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+        }
+      } catch (_) {}
+    } else if (_homeIso) {
+      // No per-article flows came back (e.g. single-country story) — at
+      // least rotate to the article's home country so the user doesn't
+      // stare at the parent thread's old framing.
+      try {
+        const _c = (window.__globeCountries || []).find(
+          c => c && (c.iso_code || '').toUpperCase() === _homeIso
+        );
+        if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+      } catch (_) {}
     }
 
     if (_microISOs.size) window.__flowHighlightCountries?.(_microISOs);
@@ -23915,6 +23946,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
     if (flows.length) window.__flowShowLabelsForCardTrigger?.(flows);
     if (stash.isos && stash.isos.size) window.__flowHighlightCountries?.(stash.isos);
+
+    // Re-frame camera back to the thread macro's midpoint so the zoom-out
+    // feels symmetric with the zoom-in.
+    try {
+      const _first = flows[0];
+      if (_first?.src && _first?.dst
+          && Number.isFinite(_first.src.lat) && Number.isFinite(_first.src.lon)
+          && Number.isFinite(_first.dst.lat) && Number.isFinite(_first.dst.lon)) {
+        const midLat = (_first.src.lat + _first.dst.lat) / 2;
+        const midLon = (_first.src.lon + _first.dst.lon) / 2;
+        window.startFocus?.(midLat, midLon);
+      }
+    } catch (_) {}
 
     window.__flowInArticleMicroView = null;
     try { window.__flowSyncEyeButtons?.(); } catch (_) {}
