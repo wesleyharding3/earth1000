@@ -3263,8 +3263,8 @@ body.flow-maximized #flowArcList {
     .fadeInCard {
       opacity: 0;
       transform: translateY(8px);
-      transition: opacity 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-                  transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+      transition: opacity 0.504s cubic-bezier(0.32, 0.72, 0, 1),
+                  transform 0.504s cubic-bezier(0.32, 0.72, 0, 1);
       will-change: opacity, transform;
     }
     .fadeInCard.inView {
@@ -10821,7 +10821,12 @@ window.sourceBiasBadgeHTML = function(bias) {
           }
           delay += 50;
         }
-      }, { root: null, rootMargin: '0px 0px -40px 0px', threshold: 0.01 });
+      // rootMargin extends the viewport DOWN by 120 px so cards begin
+      // fading in while they're still below the fold. Gives single-column
+      // mobile layouts a real cascade feel (card N+1 is already in flight
+      // when card N crosses into view) instead of the prior "one at a
+      // time" pop. Desktop multi-column rows enter as batches either way.
+      }, { root: null, rootMargin: '0px 0px 120px 0px', threshold: 0.01 });
 
       function _register(el) {
         if (!el || el.dataset.fadeObserved === '1') return;
