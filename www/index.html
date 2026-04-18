@@ -14258,6 +14258,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return;
         }
 
+        // Country mode is handled exclusively by the polygon overlay's
+        // capture-phase click listener (it stopPropagation()s on hit).
+        // If execution reaches here in country mode, the polygon missed
+        // — do NOT fall back to picking from invisible country centroid
+        // nodes, or they'd swallow clicks meant for ocean / microstate
+        // gaps and mis-illuminate a neighboring country.
+        if (currentViewMode === "country") return;
+
         // Screen-space sweep: project all visible nodes, pick the one whose dot
         // is closest to the click point. No raycaster needed — O(N) is trivial
         // for a single click event and works correctly for any cluster density.
@@ -14415,28 +14423,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // tap?" and queue the pick with full polygon illumination. If no
         // polygon hit (ocean / microstate), fall through to the old
         // centroid screen-space sweep below.
-        if (currentViewMode === "country" && window.__polygonLayer?.hitTestAt) {
-          const _polyHit = window.__polygonLayer.hitTestAt(touch.clientX, touch.clientY);
-          if (_polyHit?.key) {
-            const _hitKey = String(_polyHit.key).toUpperCase().trim();
-            const _pickedIdx = countries.findIndex(c => (c?.iso_code || '').toUpperCase() === _hitKey);
-            if (_pickedIdx >= 0) {
-              const _pickedData = countries[_pickedIdx];
-              _pendingTouchPick = () => {
-                touchNodeSelectTime = Date.now();
-                lockAmbientRotation();
-                selectedNodeIndex = _pickedIdx; isFocused = true;
-                preFocusZoom = camera.position.z;
-                focusCountry(_pickedData);
-                if (window.__polygonLayer?.selectCountry) {
-                  window.__polygonLayer.selectCountry(_hitKey);
-                }
-                queueFocusPanelOpen(() => openNodePanel(_pickedData, "country"), { immediate: true });
-              };
-              _pendingTouchPickTime = Date.now();
-              return;
+        if (currentViewMode === "country") {
+          if (window.__polygonLayer?.hitTestAt) {
+            const _polyHit = window.__polygonLayer.hitTestAt(touch.clientX, touch.clientY);
+            if (_polyHit?.key) {
+              const _hitKey = String(_polyHit.key).toUpperCase().trim();
+              const _pickedIdx = countries.findIndex(c => (c?.iso_code || '').toUpperCase() === _hitKey);
+              if (_pickedIdx >= 0) {
+                const _pickedData = countries[_pickedIdx];
+                _pendingTouchPick = () => {
+                  touchNodeSelectTime = Date.now();
+                  lockAmbientRotation();
+                  selectedNodeIndex = _pickedIdx; isFocused = true;
+                  preFocusZoom = camera.position.z;
+                  focusCountry(_pickedData);
+                  if (window.__polygonLayer?.selectCountry) {
+                    window.__polygonLayer.selectCountry(_hitKey);
+                  }
+                  queueFocusPanelOpen(() => openNodePanel(_pickedData, "country"), { immediate: true });
+                };
+                _pendingTouchPickTime = Date.now();
+              }
             }
           }
+          // Country mode is polygon-only. Invisible country centroids
+          // (opacity 0, visible false) must NOT be clickable — skipping
+          // the legacy screen-space centroid sweep below prevents hidden
+          // nodes from swallowing taps that miss a polygon.
+          return;
         }
 
         // Screen-space sweep — same logic as click handler
