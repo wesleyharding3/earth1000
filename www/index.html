@@ -2642,60 +2642,6 @@ body.flow-maximized #flowArcList {
 .arcCtxBody .arcCtxLock:hover { opacity: 1; }
 .arcCtxBody .arcCtxLock strong { color: rgba(255,195,70,1); }
 
-/* "Generate context" CTA — Pro/Enterprise/Admin path. Pulses subtly to
-   flag itself as an intentional, AI-cost action. Violet palette reuses
-   the ✦ flowCtxAiBtn family so the button reads as part of the same
-   AI-context surface. */
-.arcCtxBody .arcCtxGenerateBtn {
-  -webkit-appearance: none; appearance: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  margin: 14px auto;
-  padding: 8px 16px;
-  border-radius: 999px;
-  background: rgba(139,92,246,0.18);
-  border: 1px solid rgba(170,130,255,0.55);
-  color: #ecdbff;
-  font: 600 11.5px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  box-shadow: 0 0 0 0 rgba(170,130,255,0.45);
-  animation: arcCtxGeneratePulse 2.1s ease-in-out infinite;
-  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
-}
-.arcCtxBody .arcCtxGenerateBtn:hover {
-  background: rgba(139,92,246,0.30);
-  border-color: rgba(200,160,255,0.85);
-  color: #fff;
-}
-.arcCtxBody .arcCtxGenerateBtn:active { transform: scale(0.97); }
-.arcCtxBody .arcCtxGenerateGlyph {
-  font-size: 14px;
-  line-height: 1;
-  color: rgba(255,255,255,0.95);
-  text-shadow: 0 0 10px rgba(170,130,255,0.75);
-}
-.arcCtxBody .arcCtxGenerateLabel {
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 10px;
-  font-weight: 700;
-}
-@keyframes arcCtxGeneratePulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(170,130,255,0.35),
-                0 0 16px 0 rgba(139,92,246,0.15);
-  }
-  50% {
-    box-shadow: 0 0 0 6px rgba(170,130,255,0.0),
-                0 0 22px 2px rgba(139,92,246,0.28);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .arcCtxBody .arcCtxGenerateBtn { animation: none; }
-}
 
 /* Timeline segment controls — only visible for timeline-sourced flows */
 .arcListTimelineBar {
@@ -18847,28 +18793,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
 
-    // Pulsing "Generate context" CTA shown to Pro / Enterprise / Admin
-    // users before the first stream in a session. Opt-in so every tab
-    // open doesn't automatically trigger a Claude call.
-    function _arcCtxShowGenerate() {
-      const body = document.getElementById('arcCtxBody');
-      if (!body) return;
-      body.innerHTML =
-        `<button class="arcCtxGenerateBtn" type="button">` +
-          `<span class="arcCtxGenerateGlyph">✦</span>` +
-          `<span class="arcCtxGenerateLabel">Generate context</span>` +
-        `</button>`;
-      body.querySelector('.arcCtxGenerateBtn')?.addEventListener('click', () => {
-        // Double-check the gate at click time — handles the edge where a
-        // token expired or the session got revoked between tab-open and
-        // this click.
-        if (window.__checkTier?.('pro')) {
-          _arcCtxStream(_arcCtxScope);
-        } else {
-          _arcCtxShowLock();
-        }
-      });
-    }
 
     async function _arcCtxStream(scope) {
       if (!_arcCtxSession) return;
@@ -19071,13 +18995,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const blocks = _arcCtxCache.get(key);
       if (blocks && blocks.length) {
         _arcCtxRenderBlocks(key);
-      } else if (window.__checkTier?.('pro')) {
-        // Pro / Enterprise / Admin — show a deliberate "Generate context"
-        // CTA instead of auto-streaming, so users opt in to the tokens
-        // spend rather than having Claude kick off on every tab open.
-        _arcCtxShowGenerate();
       } else {
-        _arcCtxShowLock();
+        // Stream immediately on tab-open. The tier gate inside _arcCtxStream
+        // falls through to _arcCtxShowLock for free-tier users.
+        _arcCtxStream(_arcCtxScope);
       }
     };
 
