@@ -1570,18 +1570,30 @@
   position: fixed;
   bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
   left: 50%;
-  transform: translateX(-50%);
-  z-index: 600;
-  display: none;
+  /* Hidden state: kept in layout so opacity/transform can animate in.
+     The Y translate gives a gentle slide-up on show and slide-down on
+     hide, matching the heatmap panel's fade feel. */
+  display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  pointer-events: all;
   user-select: none;
   min-width: 416px;
   max-width: 416px;
+  z-index: 600;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(6px);
+  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0.3s;
 }
-#flowControls.visible { display: flex; }
+#flowControls.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: all;
+  transform: translateX(-50%) translateY(0);
+  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0s;
+}
 /* When flow arcs are triggered from a thread / timeline / article CARD,
    the floating flowCtxCard already surfaces all arc navigation inline
    with the triggering source — so the standalone #flowControls panel
@@ -3461,18 +3473,21 @@ body.flow-maximized #flowArcList {
   border-radius: 14px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 0 24px rgba(255,180,80,0.08);
   padding: 10px;
-  display: none;
+  display: flex;
   flex-direction: column;
   gap: 8px;
-  pointer-events: auto;
   opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
   transform: translateY(-6px);
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0.3s;
 }
 #flowCtxCard.visible {
-  display: flex;
   opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
   transform: translateY(0);
+  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0s;
 }
 /* ── flowCtxCard pill control bar ── */
 .flowCtxPillBar {
@@ -3975,7 +3990,7 @@ body.flow-maximized #flowArcList {
   overflow: auto;
   pointer-events: auto;
 }
-#semHeatPanel.visible { display: flex; animation: semHeatIn 0.18s ease-out; }
+#semHeatPanel.visible { display: flex; animation: semHeatIn 0.3s ease-out; }
 #semHeatPanel.fading-out { animation: semHeatOut 0.3s ease-in forwards; }
 @keyframes semHeatIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 @keyframes semHeatOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px); } }
