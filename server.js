@@ -2723,9 +2723,18 @@ app.get("/api/flows/route-articles", searchLimiter, async (req, res) => {
 
 /* =========================================
    Flows for a thread (all articles in the thread)
-   Returns arcs between countries directly involved in the story
-   (subject/actor/location roles from entity extraction, not
-   every country that merely has an article mentioning the topic)
+   Returns arcs between the story's curated focal countries.
+
+   Source-of-truth is `story_threads.primary_nations` — the same
+   ISO-code array that renders the flag chips at the bottom of the
+   thread card in the UI. Earlier versions of this endpoint derived
+   countries from `article_entity_mentions` across every constituent
+   article, which dragged in backdrop mentions (e.g. a Lebanon
+   ceasefire thread picking up Italy/China/Venezuela because articles
+   name-dropped them in passing). We now only fall back to entity
+   extraction when a thread has no primary_nations at all, and even
+   then we tighten the role filter to subject/actor only + raise the
+   confidence floor so passing mentions don't leak in.
 ========================================= */
 app.get("/api/flows/thread/:id", async (req, res) => {
   try {
@@ -2733,42 +2742,79 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
     const _cached = await ttlCached(`flows/thread:${threadId}`, 300_000, async () => {
-    // Find distinct countries directly involved in this thread's story
-    // by looking at entity mentions with active roles (subject/actor/location)
-    const { rows: involvedCountries } = await pool.query(`
-      SELECT DISTINCT
-        co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
-        co.iso_code AS iso,
-        'country' AS type,
-        -- Weight: subject > actor > location for ordering
-        MIN(CASE aem.role
-          WHEN 'subject'  THEN 1
-          WHEN 'actor'    THEN 2
-          WHEN 'location' THEN 3
-          ELSE 4
-        END) AS role_rank,
-        COUNT(DISTINCT sta.article_id) AS mention_count
-      FROM story_thread_articles sta
-      JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
-      JOIN entities e ON e.id = aem.entity_id
-      JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
-      WHERE sta.thread_id = $1
-        AND e.entity_type = 'location'
-        AND aem.role IN ('subject', 'actor', 'location')
-        AND aem.confidence >= 0.6
-      GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
-      ORDER BY role_rank, mention_count DESC
+    // PREFERRED: curated primary_nations on the thread row.
+    // generate_subscripts preserves curator order (usually most-central first).
+    // mention_count is pulled from article_entity_mentions restricted to the
+    // curated ISOs so arc thickness still reflects coverage weight.
+    const { rows: curatedCountries } = await pool.query(`
+      WITH focal AS (
+        SELECT UPPER(TRIM(iso)) AS iso_upper,
+               ord
+        FROM story_threads t,
+             LATERAL unnest(t.primary_nations) WITH ORDINALITY AS u(iso, ord)
+        WHERE t.id = $1
+          AND t.primary_nations IS NOT NULL
+          AND array_length(t.primary_nations, 1) > 0
+      )
+      SELECT
+        co.id,
+        co.name      AS place,
+        co.latitude  AS lat,
+        co.longitude AS lon,
+        co.iso_code  AS iso,
+        'country'    AS type,
+        f.ord,
+        COALESCE((
+          SELECT COUNT(DISTINCT aem.article_id)
+          FROM story_thread_articles sta
+          JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+          JOIN entities e ON e.id = aem.entity_id
+          WHERE sta.thread_id = $1
+            AND e.entity_type = 'location'
+            AND UPPER(e.country_code) = f.iso_upper
+        ), 0) AS mention_count
+      FROM focal f
+      JOIN countries co ON UPPER(co.iso_code) = f.iso_upper
+      ORDER BY f.ord
       LIMIT 10
     `, [threadId]);
 
+    let involvedCountries = curatedCountries;
+
+    // FALLBACK 1: thread has no primary_nations → use entity extraction,
+    // but tighten to subject/actor only (drop the noisy 'location' role)
+    // and raise confidence floor to 0.7.
     if (involvedCountries.length < 2) {
-      // Fallback: find distinct content-routed countries across all articles
-      // in this thread, then draw arcs between them (country↔country, not
-      // source→country which shows where reporters are, not the story).
+      const { rows: entityCountries } = await pool.query(`
+        SELECT DISTINCT
+          co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+          co.iso_code AS iso,
+          'country' AS type,
+          MIN(CASE aem.role WHEN 'subject' THEN 1 WHEN 'actor' THEN 2 ELSE 3 END) AS role_rank,
+          COUNT(DISTINCT sta.article_id) AS mention_count
+        FROM story_thread_articles sta
+        JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+        JOIN entities e ON e.id = aem.entity_id
+        JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
+        WHERE sta.thread_id = $1
+          AND e.entity_type = 'location'
+          AND aem.role IN ('subject', 'actor')
+          AND aem.confidence >= 0.7
+        GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+        ORDER BY role_rank, mention_count DESC
+        LIMIT 10
+      `, [threadId]);
+      involvedCountries = entityCountries;
+    }
+
+    // FALLBACK 2: still nothing → content-routed article_locations
+    // (country↔country, not source→country).
+    if (involvedCountries.length < 2) {
       const { rows: contentCountries } = await pool.query(`
         SELECT
           co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
           co.iso_code AS iso,
+          'country' AS type,
           COUNT(DISTINCT al.article_id) AS mention_count
         FROM story_thread_articles sta
         JOIN article_locations al ON al.article_id = sta.article_id
@@ -2779,27 +2825,12 @@ app.get("/api/flows/thread/:id", async (req, res) => {
         ORDER BY mention_count DESC
         LIMIT 10
       `, [threadId]);
-
-      if (contentCountries.length < 2) return { flows: [], maxCount: 0 };
-
-      // Connect consecutive content-country pairs (most-mentioned first)
-      const flows = [];
-      for (let i = 0; i < contentCountries.length - 1; i++) {
-        const src = contentCountries[i];
-        const dst = contentCountries[i + 1];
-        flows.push({
-          src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
-                 place: src.place, id: src.id, type: 'country', iso: src.iso },
-          dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
-                 place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
-          count: parseInt(src.mention_count) + parseInt(dst.mention_count)
-        });
-      }
-      const maxCount = Math.max(...flows.map(f => f.count));
-      return { flows, maxCount };
+      involvedCountries = contentCountries;
     }
 
-    // Build arcs between involved countries (consecutive pairs by role importance)
+    if (involvedCountries.length < 2) return { flows: [], maxCount: 0 };
+
+    // Consecutive pairs — curator order preserved when primary_nations drove it.
     const flows = [];
     for (let i = 0; i < involvedCountries.length - 1; i++) {
       const src = involvedCountries[i];
@@ -2809,11 +2840,11 @@ app.get("/api/flows/thread/:id", async (req, res) => {
                place: src.place, id: src.id, type: 'country', iso: src.iso },
         dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
                place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
-        count: parseInt(src.mention_count) + parseInt(dst.mention_count)
+        count: (parseInt(src.mention_count) || 0) + (parseInt(dst.mention_count) || 0)
       });
     }
 
-    const maxCount = flows.length ? Math.max(...flows.map(f => f.count)) : 1;
+    const maxCount = flows.length ? Math.max(...flows.map(f => f.count), 1) : 1;
     return { flows, maxCount };
     });
     res.json(_cached);
