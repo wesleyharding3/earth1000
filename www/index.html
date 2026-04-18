@@ -2755,8 +2755,58 @@ body.flow-maximized #flowArcList {
 
 /* Expanded article card (replaces bar when selected) */
 .arcCardExpanded {
+  position: relative;
   padding: 10px 12px; border-left: 2px solid rgba(0,220,130,0.6);
   background: rgba(0,220,130,0.06); animation: arcCardExpand 0.25s ease-out;
+}
+
+/* Top-left return arrow — fades in on expansion, returns to bar list. */
+.arcCardReturnBtn {
+  -webkit-appearance: none; appearance: none;
+  position: absolute; top: 6px; left: 6px;
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; outline: none;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transform: translateX(-3px);
+  animation: arcCardReturnFadeIn 0.36s cubic-bezier(0.32, 0.72, 0, 1) 0.08s forwards;
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 2;
+}
+.arcCardReturnBtn:hover { color: rgba(255,255,255,0.95); }
+.arcCardReturnBtn svg { width: 14px; height: 14px; }
+@keyframes arcCardReturnFadeIn {
+  from { opacity: 0; transform: translateX(-3px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Bottom-right icon buttons (eye / page) — transparent, no pill. */
+.arcCardIconBtn {
+  -webkit-appearance: none; appearance: none;
+  width: 24px; height: 24px; padding: 0;
+  background: transparent; border: none; outline: none;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.arcCardIconBtn:hover { color: rgba(255,255,255,0.95); }
+.arcCardIconBtn svg { width: 15px; height: 15px; }
+.arcCardIconBtn.active { color: rgba(0,220,130,0.95); }
+
+/* Bottom meta row — holds the Back button on the left and route +
+   eye + page on the right. */
+.arcCardMetaRow {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.arcCardMetaRow .arcCardRoute {
+  font-size: 10px; color: rgba(0,220,130,0.75); font-weight: 600;
+  letter-spacing: 0.04em; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; margin-left: auto;
 }
 @keyframes arcCardExpand {
   from { opacity: 0; max-height: 0; }
@@ -4563,6 +4613,19 @@ body.flow-maximized #flowArcList {
 .adpBackBtn svg {
   width: 16px;
   height: 16px;
+}
+
+/* When the article panel is opened from a flow (arc-list page button),
+   the top-left back arrow fades in to signal the return path back to
+   the Live Arcs list. Regular opens keep the default (instant visible). */
+#articleDetailPanel.adp-flow-return .adpBackBtn {
+  opacity: 0;
+  transform: translateX(-4px);
+  animation: adpBackFadeIn 0.42s cubic-bezier(0.32, 0.72, 0, 1) 0.12s forwards;
+}
+@keyframes adpBackFadeIn {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 .adpCloseBtn {
@@ -18265,8 +18328,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
     let _lastPanelSync = 0;
     let _prevVisibleUids = new Set();
     let _selectedArcUid = null;   // stable UID of selected arc
+    let _arcIsolationUid = null;  // uid of arc currently isolated on globe via eye btn
     let _minimized = false;
     const SYNC_INTERVAL = 250; // ms
+
+    // ── Arc isolation (eye button) ──
+    // Explicit opt-in: fades out every arc except the one identified by uid.
+    // Cleared by tapping the eye again, by selecting/expanding a new arc,
+    // or by pressing the flow ▶ play button.
+    function isolateArc(uid) {
+      _arcIsolationUid = uid;
+      for (const arc of (typeof arcObjects !== 'undefined' ? arcObjects : [])) {
+        if (arc._uid === uid) {
+          arc._frozenOpacity = null;
+          arc._frozen = true;
+        } else {
+          arc._frozenOpacity = 0;
+        }
+      }
+      _syncEyeButtons();
+    }
+    function clearArcIsolation() {
+      if (_arcIsolationUid === null) return;
+      _arcIsolationUid = null;
+      for (const arc of (typeof arcObjects !== 'undefined' ? arcObjects : [])) {
+        arc._frozenOpacity = null;
+        arc._frozen = false;
+      }
+      _syncEyeButtons();
+    }
+    function _syncEyeButtons() {
+      const scrollEl = document.getElementById('arcListScroll');
+      if (!scrollEl) return;
+      scrollEl.querySelectorAll('.arcCardExpanded').forEach(card => {
+        const uid = card.dataset.uid;
+        const eyeBtn = card.querySelector('[data-action="eye"]');
+        if (eyeBtn) eyeBtn.classList.toggle('active', _arcIsolationUid === uid);
+      });
+    }
+    // Expose for the flow ▶ Play button so it can drop any active mask.
+    window.__clearArcIsolation = clearArcIsolation;
 
     // ── Show/hide with flow controls ──
     function showPanel() {
@@ -18791,10 +18892,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const dstName = flow.dst?.place || 'Unknown';
       const isAggregate = !!flow.count;
 
+      // Inline SVG icons (no emoji) — eye (outline), page (document), back arrow.
+      const SVG_EYE   = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+      const SVG_PAGE  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>`;
+      const SVG_BACK  = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+
       let html = '';
 
       if (isAggregate) {
-        // Aggregate route — show loading, then fetch articles
+        // Aggregate route — show loading, then fetch articles. Layout unchanged.
         html += `<div class="arcCardOrigin">${esc(srcName)} → ${esc(dstName)} · ${flow.count} articles</div>`;
         html += `<div class="arcCardSummary" id="arcRouteArticles_${uid}"><span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span></div>`;
         html += `<div class="arcCardActions">`;
@@ -18802,28 +18908,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
         html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
         html += `</div>`;
       } else {
+        // Top-left return arrow — fades in; returns to bar list.
+        html += `<button class="arcCardReturnBtn" data-action="return" title="Back to list" aria-label="Back to list">${SVG_BACK}</button>`;
         if (flow.imageUrl) {
           html += `<img class="arcCardImg" src="${esc(flow.imageUrl)}" alt="" onerror="this.style.display='none'" />`;
         }
         html += `<div class="arcCardHeadline">${esc(flow.title || '')}</div>`;
-        html += `<div class="arcCardOrigin">${esc(srcName)} → ${esc(dstName)}</div>`;
-        if (flow.summary) {
-          html += `<div class="arcCardSummary">${esc(flow.summary)}</div>`;
-        }
         // Translate button
         const _needsTrans = window.articleNeedsTranslation?.({ title: flow.title, translated_title: flow.translatedTitle });
         if (_needsTrans && flow.id) {
           const _tL = window.getUserTargetLang?.() || { short: 'EN', label: 'English' };
           html += `<button class="articleTranslateBtn arcCardTransBtn" data-id="${flow.id}" data-title="${(flow.title||'').replace(/"/g,'&quot;')}" data-summary="${(flow.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_tL.label}">${_tL.short}</button>`;
         }
-        html += `<div class="arcCardActions">`;
-        html += `<button class="arcCardBtn globe" data-action="globe">View on Globe</button>`;
-        html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
+        // Bottom row: Back button on the left, then route / eye / page on the right.
+        const isolated = (_arcIsolationUid === uid);
+        html += `<div class="arcCardMetaRow">`;
+        html += `<button class="arcCardBtn deselect" data-action="deselect" title="Back to list">Back</button>`;
+        html += `<span class="arcCardRoute">${esc(srcName)} → ${esc(dstName)}</span>`;
+        html += `<button class="arcCardIconBtn${isolated ? ' active' : ''}" data-action="eye" title="Isolate arc on globe" aria-label="Isolate arc on globe">${SVG_EYE}</button>`;
+        html += `<button class="arcCardIconBtn" data-action="page" title="Open article" aria-label="Open article">${SVG_PAGE}</button>`;
         html += `</div>`;
       }
 
       div.innerHTML = html;
 
+      // Aggregate retains the old "View on Globe" action for its case.
       div.querySelector('[data-action="globe"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         viewOnGlobe(flow);
@@ -18831,6 +18940,58 @@ const settingsToggle     = document.getElementById("settingsToggle");
       div.querySelector('[data-action="deselect"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
         deselectArc();
+      });
+      // Top-left return arrow (individual card only) — same as Back.
+      div.querySelector('[data-action="return"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deselectArc();
+      });
+      // Eye — toggle globe-level arc isolation (individual card only).
+      div.querySelector('[data-action="eye"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (_arcIsolationUid === uid) {
+          clearArcIsolation();
+        } else {
+          isolateArc(uid);
+        }
+      });
+      // Page — open article detail panel with a "Back to Flow" return.
+      div.querySelector('[data-action="page"]')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof window.openArticleDetail !== 'function') return;
+        const article = flow._article || (flow.id ? {
+          id: flow.id,
+          title: flow.title,
+          translated_title: flow.translatedTitle || flow.translated_title,
+          summary: flow.summary,
+          image_url: flow.imageUrl || flow.image_url,
+          url: flow.url,
+          source_name: flow.sourceName || flow.source_name,
+          published_at: flow.publishedAt || flow.published_at,
+          iso_code: flow.src?.iso || null,
+          country_name: flow.src?.place || null,
+        } : null);
+        if (article) {
+          document.getElementById('flowArcInfoCard')?.classList.remove('visible');
+          window.openArticleDetail(article, { type: 'flow' });
+        }
+      });
+
+      // Dbltap / dblclick on the card body (not on buttons) → deselect.
+      // Buttons stopPropagation above, so taps on them don't count.
+      div.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        deselectArc();
+      });
+      let _lastTapT = 0;
+      div.addEventListener('click', (e) => {
+        const now = Date.now();
+        if (now - _lastTapT < 320) {
+          _lastTapT = 0;
+          deselectArc();
+        } else {
+          _lastTapT = now;
+        }
       });
 
       // Fetch route articles for aggregate arcs
@@ -18915,66 +19076,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById('flowPlayBtn').textContent = '▶ Play';
       }
 
-      // Hide all arcs except selected (match by UID)
-      let selectedArc = null;
-      for (const arc of arcObjects) {
-        if (arc._uid === uid) {
-          arc._frozenOpacity = null; // normal opacity
-          arc._frozen = true;        // skip age advancement in tickArcs
-          selectedArc = arc;
-        } else {
-          arc._frozenOpacity = 0;    // fully hidden
-        }
-      }
-
-      // Show globe-aware hover card for individual (non-aggregate) arcs
-      const sf = selectedArc?.flow;
-      if (sf && !sf.count) {
-        const infoCard = document.getElementById('flowArcInfoCard');
-        const routeEl  = document.getElementById('faiRoute');
-        const titleEl  = document.getElementById('faiTitle');
-        const metaEl   = document.getElementById('faiMeta');
-        const hintEl   = document.getElementById('faiExpandHint');
-        if (infoCard) {
-          infoCard.classList.remove('fan', 'expanded', 'faiMinimized');
-          if (routeEl) routeEl.textContent = `${sf.src?.place || '?'} → ${sf.dst?.place || '?'}`;
-          if (titleEl) titleEl.textContent = sf.title || '';
-          if (metaEl)  metaEl.textContent  = sf.sourceName || '';
-          if (hintEl)  hintEl.textContent  = '';
-          infoCard.style.opacity = '1';
-          infoCard.classList.add('visible');
-          const dLat = sf.dst?.lat ?? sf.src?.lat;
-          const dLon = sf.dst?.lon ?? sf.src?.lon;
-          if (dLat != null && dLon != null) _startFaiTracking(dLat, dLon);
-        }
-      } else {
-        document.getElementById('flowArcInfoCard')?.classList.remove('visible');
-      }
-
-      // Open the full article detail panel if this individual arc has an
-      // article payload (either pre-attached via _article or constructable
-      // from the flat flow shape). Aggregate arcs have no single article —
-      // their expanded arc card surfaces the list separately.
-      if (sf && !sf.count && typeof window.openArticleDetail === 'function') {
-        const article = sf._article || (sf.id ? {
-          id: sf.id,
-          title: sf.title,
-          translated_title: sf.translatedTitle || sf.translated_title,
-          summary: sf.summary,
-          image_url: sf.imageUrl || sf.image_url,
-          url: sf.url,
-          source_name: sf.sourceName || sf.source_name,
-          published_at: sf.publishedAt || sf.published_at,
-          iso_code: sf.src?.iso || null,
-          country_name: sf.src?.place || null,
-        } : null);
-        if (article) {
-          // Close the floating info card so the article panel is unobstructed.
-          document.getElementById('flowArcInfoCard')?.classList.remove('visible');
-          window.openArticleDetail(article, { type: 'flow' });
-        }
-      }
-
+      // Note: selecting an arc no longer auto-isolates other arcs on the
+      // globe or auto-opens the article panel. The expanded card surfaces
+      // explicit controls — an eye icon that toggles isolation, and a
+      // page icon that opens the article panel with "Back to Flow".
       syncPanel();
     }
 
@@ -18987,7 +19092,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Hide hover card
       document.getElementById('flowArcInfoCard')?.classList.remove('visible');
 
-      // Restore all arc opacities
+      // Drop any eye-initiated isolation so leaving the card restores the
+      // full flow. (isolateArc's mask was its own opt-in; clearing here is
+      // idempotent if no mask was active.)
+      _arcIsolationUid = null;
       for (const arc of arcObjects) {
         arc._frozenOpacity = null;
         arc._frozen = false;
@@ -19566,6 +19674,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   document.getElementById("flowPlayBtn").addEventListener("click", (e) => {
     e.stopPropagation();
+    // Pressing ▶ always drops any eye-initiated arc isolation mask so the
+    // full flow resumes visible. Stateless if no mask is active.
+    try { window.__clearArcIsolation?.(); } catch (_) {}
     if (flowMode === "aggregate") return;  // No playback in aggregate mode
     if (!flowData.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
     if (flowPlaying) {
@@ -26032,6 +26143,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     panel.classList.add('visible');
     panel.classList.remove('adp-minimized');
 
+    // Flow-return visual: fade the top-left back arrow in only when
+    // entering from the Live Arcs page-icon drilldown. Restarts the
+    // animation even if the class was already present from a prior open.
+    panel.classList.remove('adp-flow-return');
+    if (context?.type === 'flow') {
+      // Force reflow so re-adding the class re-triggers the fade.
+      void panel.offsetWidth;
+      panel.classList.add('adp-flow-return');
+    }
+
     // Update back button text based on context
     const backLabel = backBtn.querySelector('span');
     if (context?.type === 'thread') {
@@ -26062,6 +26183,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Force a layout flush so the next assignment transitions.
     void panel.offsetHeight;
     panel.classList.remove('visible');
+    panel.classList.remove('adp-flow-return');
     panel.style.transform = 'translateY(100%)';
     // Clear the inline transform after the slide completes so future
     // opens rely on the CSS cascade.
