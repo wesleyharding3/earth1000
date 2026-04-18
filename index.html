@@ -18592,6 +18592,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // but XHR exposes responseText incrementally via progress events
         // on every platform. We parse the same SSE `data: {...}` frames
         // from the growing responseText.
+        // Resolve a fresh access token. window.__authToken is populated
+        // asynchronously by the Supabase auth listener, so on early clicks
+        // (or after a silent refresh) it may be null even for a logged-in
+        // user. Fall through to sb.auth.getSession() for the live value.
+        let _authTok = window.__authToken || null;
+        if (!_authTok && window.__earthSupabase?.auth?.getSession) {
+          try {
+            const { data } = await window.__earthSupabase.auth.getSession();
+            _authTok = data?.session?.access_token || null;
+            if (_authTok) window.__authToken = _authTok;
+          } catch (_) {}
+        }
+
         await new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('POST', `${API}/api/ai/flow-context`, true);
@@ -18601,8 +18614,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // (which injects Authorization on fetch() calls) so we set it
           // manually here. Without this the server's optionalAuth sees no
           // token → requireTier('pro') returns 401.
-          if (window.__authToken) {
-            xhr.setRequestHeader('Authorization', `Bearer ${window.__authToken}`);
+          if (_authTok) {
+            xhr.setRequestHeader('Authorization', `Bearer ${_authTok}`);
           }
           let consumed = 0;
           const drain = (final) => {
