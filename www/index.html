@@ -2423,6 +2423,30 @@ body.flow-maximized #flowArcList {
   background: rgba(0,220,130,0.25); border-color: rgba(0,220,130,0.5);
 }
 
+/* Unified state-aware expand/minimize toggle — no pill wrapper. Replaces
+   the green expand + grey minimize buttons; glyph differs per container
+   (+ in minBar, − in header) but both call window.__arcListToggle. */
+.arcListToggleBtn {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.55);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.arcListToggleBtn:hover { color: rgba(255,255,255,0.95); }
+.arcListMinBar .arcListToggleBtn {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 20px; width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+}
+.arcListHeader .arcListToggleBtn {
+  width: 22px; height: 22px; font-size: 16px;
+  display: flex; align-items: center; justify-content: center;
+}
+
 /* Main panel body */
 .arcListPanel {
   background: rgba(6, 10, 20, 0.30);
@@ -10151,7 +10175,7 @@ window.sourceBiasBadgeHTML = function(bias) {
   <div class="arcListMinBar" id="arcListMinBar">
     <span class="arcListMinLabel">Arcs</span>
     <span class="arcListMinCount" id="arcListMinCount">0</span>
-    <button class="arcListExpandBtn" id="arcListExpandBtn" title="Expand" onclick="window.__arcListExpand?.()">+</button>
+    <button class="arcListToggleBtn" id="arcListToggleBtn" title="Expand" onclick="window.__arcListToggle?.()">+</button>
     <button class="arcListExpandBtn" id="arcListMinCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
   </div>
   <div id="flowArcList">
@@ -10159,7 +10183,7 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div class="arcListHeader">
         <span class="arcListTitle">Live Arcs</span>
         <button class="arcListHeaderBtn aiCtx" id="arcListAiBtn" style="display:none" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦</button>
-        <button class="arcListHeaderBtn" id="arcListMinBtn" title="Minimize" onclick="window.__arcListMinimize?.()">−</button>
+        <button class="arcListToggleBtn" id="arcListToggleBtnHeader" title="Minimize" onclick="window.__arcListToggle?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
       </div>
       <div class="arcListTimelineBar" id="arcListTimelineBar" style="display:none;">
@@ -18233,18 +18257,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
-    // ── Minimize / Expand ──
-    window.__arcListMinimize = function() {
-      _minimized = true;
-      deselectArc();
-      panel.classList.remove('visible');
-      minBar.classList.add('visible');
+    // ── Toggle (combines Minimize + Expand) ──
+    // Single state-aware handler; the visible button's glyph is + in the
+    // minBar and − in the header, so the user sees a single control that
+    // transforms with state. __arcListMinimize / __arcListExpand retained
+    // as thin aliases in case any external caller still uses them.
+    window.__arcListToggle = function() {
+      if (_minimized) {
+        _minimized = false;
+        minBar.classList.remove('visible');
+        panel.classList.add('visible');
+      } else {
+        _minimized = true;
+        deselectArc();
+        panel.classList.remove('visible');
+        minBar.classList.add('visible');
+      }
     };
-    window.__arcListExpand = function() {
-      _minimized = false;
-      minBar.classList.remove('visible');
-      panel.classList.add('visible');
-    };
+    window.__arcListMinimize = function() { if (!_minimized) window.__arcListToggle(); };
+    window.__arcListExpand   = function() { if (_minimized)  window.__arcListToggle(); };
     window.__arcListClose = function() {
       hidePanel();
     };
