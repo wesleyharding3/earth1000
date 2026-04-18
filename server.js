@@ -649,36 +649,46 @@ async function optionalAuth(req, res, next) {
   const claims = await _verifyBearerToken(token);
   if (!claims?.sub) return next(); // invalid / expired / unverifiable
 
-  req.user = { id: claims.sub, email: claims.email };
+  req.user = { id: claims.sub, email: claims.email, is_admin: false, tier: "free" };
 
-  // Load admin flag + active subscription tier from Supabase
+  // Split admin lookup and subscription lookup into two independent queries.
+  // A single combined SELECT with the nested `subscriptions(subscription_tiers(name))`
+  // relation was silently returning `data = null` whenever the nested join
+  // tripped (PostgREST schema cache quirks, missing FK, etc.) — which
+  // cascaded into `req.user.is_admin = false` even for genuine admins and
+  // 403-ed them out of `requireTier('pro')`.
   try {
-    const { data: profile } = await sba
+    const { data: profile, error: profileErr } = await sba
       .from("profiles")
-      .select("is_admin, subscriptions(status, updated_at, subscription_tiers(name))")
+      .select("is_admin")
       .eq("id", req.user.id)
       .maybeSingle();
+    if (profileErr) {
+      console.warn("[optionalAuth] profile lookup failed:", profileErr.message);
+    } else if (profile) {
+      req.user.is_admin = profile.is_admin === true;
+    }
+  } catch (e) {
+    console.warn("[optionalAuth] profile exception:", e.message);
+  }
 
-    if (profile) {
-      req.user.is_admin = profile.is_admin || false;
-      const { data: subs, error: subsError } = await sba
-        .from("subscriptions")
-        .select("status, updated_at, tier_id")
-        .eq("user_id", req.user.id)
-        .eq("status", "active");
-      if (subsError) throw new Error(subsError.message);
+  // Tier resolution is independent — even if it fails, admins still pass
+  // requireTier via the is_admin short-circuit.
+  try {
+    const { data: subs, error: subsErr } = await sba
+      .from("subscriptions")
+      .select("status, updated_at, tier_id")
+      .eq("user_id", req.user.id)
+      .eq("status", "active");
+    if (subsErr) {
+      console.warn("[optionalAuth] subs lookup failed:", subsErr.message);
+    } else {
       const activeSub = pickBestActiveSubscription(subs || []);
       const tierRow = await resolveTierRecordById(activeSub?.tier_id);
       req.user.tier = tierRow?.name || "free";
-    } else {
-      req.user.is_admin = false;
-      req.user.tier     = "free";
     }
-  } catch (_) {
-    // DB hiccup — fall back to anonymous tier. Don't 401 if the token
-    // verified; just treat them as free until profile loads next time.
-    req.user.is_admin = req.user.is_admin ?? false;
-    req.user.tier     = req.user.tier || "free";
+  } catch (e) {
+    console.warn("[optionalAuth] subs exception:", e.message);
   }
   next();
 }
@@ -738,6 +748,12 @@ function requireTier(minTier) {
     const userLevel = TIER_ORDER.indexOf(req.user.tier || "free");
     const reqLevel  = TIER_ORDER.indexOf(minTier);
     if (userLevel >= reqLevel) return next();
+    // Diagnostic: show what the gate actually observed so a misclassified
+    // admin/enterprise user ends up in the logs rather than silently 403-ed.
+    console.warn(
+      `[requireTier] 403 uid=${req.user.id} is_admin=${req.user.is_admin} ` +
+      `tier=${req.user.tier} required=${minTier}`
+    );
     return res.status(403).json({
       error: `A ${minTier} subscription is required for this feature`,
       requiredTier: minTier
