@@ -23536,6 +23536,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
 
+    // Ensure the pauseable flow clock is running — article-card arcs
+    // drive their draw-in off _flowClockAccumSec just like thread arcs.
+    try { window.resumeFlowAnimation?.(); } catch (_) {}
+
     // Capture the originating article object from the news feed card BEFORE
     // we navigate away. The flow-arc response may or may not include the
     // full article record, so this local copy guarantees the compact
@@ -23866,6 +23870,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.showThreadFlows = async function(threadId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
+
+    // Thread arcs drive their draw-in through the pauseable flow clock
+    // (nowFlowSec → _flowClockAccumSec). If the user previously paused it
+    // via a News-Flows bar-selection (selectArc → pauseFlowAnimation) and
+    // never explicitly resumed, the clock stays frozen — scheduleThreadWaves
+    // captures a fixed batchStart and `elapsed` never advances, leaving
+    // every thread arc stuck at opacity 0. Resuming here ensures the
+    // waves actually fire. No-args call is a safe no-op when the clock is
+    // already running.
+    try { window.resumeFlowAnimation?.(); } catch (_) {}
 
     // Clear any previous thread's article-bar override so the list doesn't
     // flicker the prior thread's constituents during a thread-to-thread
@@ -24416,6 +24430,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.showTimelineFlows = async function(timelineId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
+
+    // Ensure the pauseable flow clock is running — timeline arcs use
+    // the thread pipeline which is driven off _flowClockAccumSec.
+    try { window.resumeFlowAnimation?.(); } catch (_) {}
 
     // Grab the originating timeline card data (if any) for the floating card.
     let _ctxTimeline = null;
