@@ -12639,12 +12639,17 @@ function computeCityTiers(cities) {
         touchDragging = false;
 
         // Fire the deferred pick only if the touch was a true stationary tap.
+        // Drift tolerance: touchThresholdMet (≥ TOUCH_DRAG_THRESHOLD=8px) is
+        // the drag cutoff. Any sub-threshold drift — which iOS reports as
+        // touchmove events for natural thumb jitter — must NOT cancel the
+        // pick, or taps on polygon-backed countries get dropped (window
+        // pipeline was stricter than the polygon layer's own 12px slop).
         const pick = _pendingTouchPick;
         const pickTime = _pendingTouchPickTime;
         _pendingTouchPick = null;
         _pendingTouchPickTime = 0;
         if (!pick) return;
-        if (touchMoved || touchThresholdMet) return;
+        if (touchThresholdMet) return;
         if (Date.now() - pickTime > TOUCH_TAP_MAX_MS) return;
         // Also respect the post-drag cooloff in case a recent drag just ended.
         if (Date.now() - touchDragEndTime < DRAG_SELECT_COOLOFF_MS) return;
