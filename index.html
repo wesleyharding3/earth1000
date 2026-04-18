@@ -18757,11 +18757,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Show panel when flows are loaded
     const origLoadFlows = window.loadFlows;
-    // Observe flowControls visibility to show/hide arc list
+    // Observe flowControls visibility to show/hide arc list.
+    // The MutationObserver fires on ANY class mutation — including
+    // `.minimized` being toggled and any other unrelated class changes.
+    // If we called show/hidePanel every time, hidePanel's deselectArc
+    // would fire on innocuous toggles — collapsing the user's expanded
+    // card mid-isolation (exactly the desktop bug where clicking eye
+    // after selecting a bar during playback caused the panel to
+    // "minimize" with no way to return). Track the previous .visible
+    // state and only react to genuine transitions.
     const flowCtl = document.getElementById('flowControls');
     if (flowCtl) {
+      let wasVisible = flowCtl.classList.contains('visible');
       const obs = new MutationObserver(() => {
-        if (flowCtl.classList.contains('visible')) showPanel();
+        const isVisible = flowCtl.classList.contains('visible');
+        if (isVisible === wasVisible) return;
+        wasVisible = isVisible;
+        if (isVisible) showPanel();
         else hidePanel();
       });
       obs.observe(flowCtl, { attributes: true, attributeFilter: ['class'] });
