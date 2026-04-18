@@ -328,7 +328,7 @@ async function run() {
         }
 
         const durMonths = parseInt(def.expected_arc_duration_months, 10);
-        if (!Number.isFinite(durMonths) || durMonths < 3) {
+        if (!Number.isFinite(durMonths) || durMonths < 1) {
           console.log(`\n   🚫 Rejected "${def.title}" (expected_arc_duration_months=${def.expected_arc_duration_months} — too short, that's a Thread)`);
           continue;
         }
@@ -773,7 +773,7 @@ ${JSON.stringify(existingInfo, null, 1)}
   "primary_entities":               ["name", ...],           // 1-6 named people, orgs, or factions central to the arc
   "enduring_subject":               "...",                   // 8-20 words. THE SERIES. What is STILL happening in 12 months.
   "representative_event_today":     "...",                   // 8-20 words. TODAY'S EPISODE. What happened this week that triggered these articles.
-  "expected_arc_duration_months":   3-120,                   // integer. Minimum 3 — anything shorter is a Thread, not a Line.
+  "expected_arc_duration_months":   1-120,                   // integer. Minimum 1 — anything shorter is a Thread, not a Line.
   "title":                          "2-6 words, names the SERIES not the EPISODE",
   "description":                    "Two sentences: (1) what is the ongoing arc; (2) what is the current trajectory.",
   "scope":                          "snake_case_slug",
@@ -834,7 +834,7 @@ Do not create a timeline when the cluster is:
 • An abstract theme ("Global Energy Transition", "Climate Crisis", "AI Regulation")
 • A routine institutional process not attached to a larger arc (ordinary budget passage, scheduled municipal election)
 • A one-off announcement, single verdict, or statistic release with no expected follow-on
-• A news event likely resolved within 3 months
+• A news event likely resolved within 1 month
 
 If no cluster clearly passes, return an empty array [].
 
