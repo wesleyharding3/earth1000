@@ -3256,6 +3256,26 @@ body.flow-maximized #flowArcList {
 
 
 
+    /* Scroll-reveal: cards carrying this class fade + slide in when they
+       enter the viewport. Wired up by the IntersectionObserver in the
+       initFadeInOnScroll IIFE further down. Applied to the news feed,
+       threads, lines, and country/region/city panel article cards. */
+    .fadeInCard {
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+                  transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+      will-change: opacity, transform;
+    }
+    .fadeInCard.inView {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .fadeInCard { transition: opacity 0.18s ease; transform: none; }
+      .fadeInCard.inView { transform: none; }
+    }
+
     .articleCard {
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.09);
@@ -10767,6 +10787,72 @@ window.sourceBiasBadgeHTML = function(bias) {
 
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
 
+    /* ──────────────────────────────────────────────────────────────────
+       Scroll-reveal fade-in for card grids.
+
+       Any element carrying the `.fadeInCard` class starts hidden
+       (opacity 0, translateY 8px) and animates in when it enters the
+       page viewport. One shared IntersectionObserver watches all
+       registered cards; a MutationObserver auto-picks up newly-rendered
+       cards so per-render wiring isn't needed — just tag the markup.
+
+       Staggers: when many cards become visible in one frame (e.g. a
+       panel opens with 10 cards already on-screen), we space their
+       `inView` flips by ~50ms so they cascade instead of pop together.
+
+       Scoped to these 6 contexts: news feed, threads, lines, country /
+       region / city panel article grids. Any markup carrying fadeInCard
+       outside those contexts will animate the same way.
+       ────────────────────────────────────────────────────────────── */
+    (function initFadeInOnScroll() {
+      if (window.__fadeInOnScrollInited) return;
+      window.__fadeInOnScrollInited = true;
+
+      const _io = new IntersectionObserver((entries) => {
+        let delay = 0;
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const el = e.target;
+          _io.unobserve(el);
+          if (delay === 0) {
+            el.classList.add('inView');
+          } else {
+            setTimeout(() => el.classList.add('inView'), delay);
+          }
+          delay += 50;
+        }
+      }, { root: null, rootMargin: '0px 0px -40px 0px', threshold: 0.01 });
+
+      function _register(el) {
+        if (!el || el.dataset.fadeObserved === '1') return;
+        el.dataset.fadeObserved = '1';
+        _io.observe(el);
+      }
+      function _registerAll(root) {
+        (root || document).querySelectorAll('.fadeInCard:not([data-fade-observed])').forEach(_register);
+      }
+
+      // Auto-pick up newly-rendered cards anywhere in the DOM. Scoped to
+      // childList mutations on body; attribute/text changes are ignored.
+      const _mo = new MutationObserver((muts) => {
+        for (const m of muts) {
+          if (!m.addedNodes || !m.addedNodes.length) continue;
+          for (const n of m.addedNodes) {
+            if (!(n instanceof Element)) continue;
+            if (n.classList?.contains('fadeInCard')) _register(n);
+            if (n.querySelectorAll) n.querySelectorAll('.fadeInCard:not([data-fade-observed])').forEach(_register);
+          }
+        }
+      });
+      function _startMO() {
+        if (document.body) _mo.observe(document.body, { childList: true, subtree: true });
+        else setTimeout(_startMO, 50);
+      }
+      _startMO();
+
+      window.__observeFadeInCards = _registerAll;
+    })();
+
     const scene = new THREE.Scene();
     window.scene = scene; // expose for briefing player
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -15027,7 +15113,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return `
             <div style="position:relative">
               <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
-              <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
+              <div class="articleCard fadeInCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
                 <div class="articleCardBody">
                   <div>
@@ -16415,7 +16501,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               : "";
             return `<div style="position:relative">
               <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
-              <div class="articleCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
+              <div class="articleCard fadeInCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
               <div class="articleCardBody">
                 <div class="articleCardSource">${sourceLine}</div>
@@ -18546,12 +18632,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function _syncEyeButtons() {
       const scrollEl = document.getElementById('arcListScroll');
       if (!scrollEl) return;
+      // Two sources of "active": legacy News Flows arc isolation by uid,
+      // and the thread → article micro-view by articleId. Whichever is
+      // active for a given card wins.
+      const threadCtx = !!window.__threadMacroCurrent;
+      const microAid  = window.__flowInArticleMicroView;
       scrollEl.querySelectorAll('.arcCardExpanded').forEach(card => {
         const uid = card.dataset.uid;
         const eyeBtn = card.querySelector('[data-action="eye"]');
-        if (eyeBtn) eyeBtn.classList.toggle('active', _arcIsolationUid === uid);
+        if (!eyeBtn) return;
+        let isActive = false;
+        if (threadCtx) {
+          const aid = card.dataset.articleId;
+          if (aid != null && microAid != null && String(aid) === String(microAid)) {
+            isActive = true;
+          }
+        } else {
+          isActive = (_arcIsolationUid === uid);
+        }
+        eyeBtn.classList.toggle('active', isActive);
       });
     }
+    // Expose so the micro-view helpers (defined in another IIFE) can
+    // repaint eye state after enter/exit/swap.
+    window.__flowSyncEyeButtons = _syncEyeButtons;
     // Expose for the flow ▶ Play button so it can drop any active mask.
     window.__clearArcIsolation = clearArcIsolation;
 
@@ -19073,6 +19177,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const div = document.createElement('div');
       div.className = 'arcCardExpanded';
       div.dataset.uid = uid;
+      // Stamp articleId for thread-context eye-state lookups.
+      const _aidAttr = flow._article?.id ?? flow.id;
+      if (_aidAttr != null) div.dataset.articleId = _aidAttr;
 
       const srcName = flow.src?.place || 'Unknown';
       const dstName = flow.dst?.place || 'Unknown';
@@ -19109,11 +19216,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Bottom row: small back-arrow icon on the left, then route / eye /
         // page on the right. Back is a small return-arrow (not text) that
         // matches the icon-button treatment of eye + page.
-        const isolated = (_arcIsolationUid === uid);
+        // In thread-flow context the eye semantics change: instead of
+        // isolating one arc on the macro globe, it zooms into the article's
+        // own micro flow — the "granular article making up the larger
+        // story gets its moment" UX. `active` reflects either state.
+        const _isThreadCtx = !!window.__threadMacroCurrent;
+        const _articleIdForMicro = flow._article?.id ?? flow.id ?? null;
+        const eyeActive = _isThreadCtx
+          ? (window.__flowInArticleMicroView != null && _articleIdForMicro != null && String(window.__flowInArticleMicroView) === String(_articleIdForMicro))
+          : (_arcIsolationUid === uid);
         html += `<div class="arcCardMetaRow">`;
         html += `<button class="arcCardIconBtn" data-action="deselect" title="Back to list" aria-label="Back to list">${SVG_BACK}</button>`;
         html += `<span class="arcCardRoute">${esc(srcName)} → ${esc(dstName)}</span>`;
-        html += `<button class="arcCardIconBtn${isolated ? ' active' : ''}" data-action="eye" title="Isolate arc on globe" aria-label="Isolate arc on globe">${SVG_EYE}</button>`;
+        html += `<button class="arcCardIconBtn${eyeActive ? ' active' : ''}" data-action="eye" title="${_isThreadCtx ? "Zoom to article's flow" : 'Isolate arc on globe'}" aria-label="${_isThreadCtx ? "Zoom to article's flow" : 'Isolate arc on globe'}">${SVG_EYE}</button>`;
         html += `<button class="arcCardIconBtn" data-action="page" title="Open article" aria-label="Open article">${SVG_PAGE}</button>`;
         html += `</div>`;
       }
@@ -19127,16 +19242,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       div.querySelector('[data-action="deselect"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        // Deselecting a card in thread-micro view should first zoom back
+        // out to the thread macro (then collapse the card on touchend).
+        if (window.__threadMacroCurrent && window.__flowInArticleMicroView) {
+          try { window.__flowExitArticleMicroView?.(); } catch (_) {}
+        }
         deselectArc();
       });
       // Top-left return arrow (individual card only) — same as Back.
       div.querySelector('[data-action="return"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (window.__threadMacroCurrent && window.__flowInArticleMicroView) {
+          try { window.__flowExitArticleMicroView?.(); } catch (_) {}
+        }
         deselectArc();
       });
-      // Eye — toggle globe-level arc isolation (individual card only).
+      // Eye — two modes:
+      //   • Thread context: enter/swap/exit the article micro-view (zoom
+      //     into the article's own src→dst flow).
+      //   • News Flows context: toggle arc-level isolation on the globe.
       div.querySelector('[data-action="eye"]')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (window.__threadMacroCurrent) {
+          const aid = flow._article?.id ?? flow.id ?? null;
+          if (aid == null) return;
+          const currentMicro = window.__flowInArticleMicroView;
+          if (currentMicro != null && String(currentMicro) === String(aid)) {
+            // Same article → exit micro, return to thread macro.
+            try { window.__flowExitArticleMicroView?.(); } catch (_) {}
+          } else {
+            // Enter (or direct-swap from another article's micro view).
+            // articleHint carries iso_code for the home-country fallback.
+            const articleHint = flow._article || {
+              id: aid,
+              iso_code: flow.src?.iso || null,
+              country_code: flow.src?.iso || null,
+            };
+            try { window.__flowEnterArticleMicroView?.(aid, articleHint); } catch (_) {}
+          }
+          _syncEyeButtons();
+          return;
+        }
+        // Default News Flows path — arc-level isolation toggle.
         if (_arcIsolationUid === uid) {
           clearArcIsolation();
         } else {
@@ -19867,6 +20014,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Pressing ▶ always drops any eye-initiated arc isolation mask so the
     // full flow resumes visible. Stateless if no mask is active.
     try { window.__clearArcIsolation?.(); } catch (_) {}
+    // Pressing ▶ also zooms out of any thread → article micro-view so
+    // the full thread macro resumes. Stateless if no micro view active.
+    try { window.__flowExitArticleMicroView?.(); } catch (_) {}
+    // Also exit any thread→article micro view so playback resumes over the
+    // thread macro, not a single article's zoomed-in flow.
+    try { window.__flowExitArticleMicroView?.(); } catch (_) {}
     if (flowMode === "aggregate") return;  // No playback in aggregate mode
     if (!flowData.length) { loadFlows().then(() => { startPlay(); syncMinPlayBtn(); }); return; }
     if (flowPlaying) {
@@ -21883,7 +22036,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       return `
       <div style="position:relative">
         ${flowArcBtn}
-        <div class="nfCard" onclick="openFeedArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
+        <div class="nfCard fadeInCard" onclick="openFeedArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
           ${img}
           <div class="nfCardBody">
             <div>
@@ -22200,7 +22353,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const isTimeline = t.__kind === 'timeline';
         const flowFn = isTimeline ? 'showTimelineFlows' : 'showThreadFlows';
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
-        return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard" data-thread='${dataAttr}'>
+        return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
@@ -23166,6 +23319,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // Track where we came from so we can navigate back
   let _flowArcOrigin = null; // { type: 'article'|'thread', page: number, label: string }
+  // Thread macro state snapshot — populated at the end of showThreadFlows
+  // so the article micro-view (eye-click) can restore the full thread view
+  // instantly on exit without a re-fetch. Cleared on back / panel close /
+  // non-thread flow trigger. Shape: { flows, isos, ctxThread, threadId }.
+  window.__threadMacroCurrent = null;
 
   // ── Flow context card (compact floating card shown on globe alongside arcs) ──
   function _ensureFlowCtxCard() {
@@ -23512,6 +23670,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _flowArcOrigin = null;
     document.body.classList.remove('flow-from-card');
     hideFlowCtxCard();
+    // Exiting a flow session invalidates the thread-macro snapshot.
+    window.__threadMacroCurrent = null;
   }
 
   window.__flowArcGoBack = function() {
@@ -23555,6 +23715,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.showArticleFlows = async function(articleId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
+
+    // Leaving thread context — drop any cached thread-macro snapshot and
+    // clear the micro-view marker so the eye button resets to News-Flows mode.
+    window.__threadMacroCurrent = null;
+    window.__flowInArticleMicroView = null;
 
     // Capture the originating article object from the news feed card BEFORE
     // we navigate away. The flow-arc response may or may not include the
@@ -23789,6 +23954,110 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? 's' : ''}`;
   }
 
+  /* ───────────────────────────────────────────────────────────────
+     Thread → article micro-view zoom.
+
+     In the thread-flow context, tapping the eye icon on an expanded
+     article card replaces the thread's macro arcs with the single
+     article's own src→dst flow arcs. The thread macro state is
+     snapshotted at showThreadFlows time so we can restore it instantly
+     on exit (no refetch). Fallback chain on enter:
+       1. /api/flows/article/{id} returns flows → render article arcs.
+       2. No flows but article has iso_code → highlight home country.
+       3. Neither → no-op (stay in thread macro).
+     Second eye-click on the same article, flow ▶ Play, or deselecting
+     the card all call exit, which replays the cached thread macro.
+     ─────────────────────────────────────────────────────────────── */
+  window.__flowInArticleMicroView = null; // articleId of current micro-view, or null
+
+  window.__flowEnterArticleMicroView = async function(articleId, articleHint) {
+    if (!window.__threadMacroCurrent) return; // not in thread context; eye falls through to legacy isolation
+    const API = window.__API || "https://earth-wjr6.onrender.com";
+
+    // Direct-swap support: if already in micro view for another article,
+    // we fetch first, then atomically clear + render so there's no empty
+    // globe flash between the two micro views.
+    let microFlows = [];
+    try {
+      const res = await fetch(`${API}/api/flows/article/${articleId}`);
+      const data = await res.json();
+      microFlows = Array.isArray(data?.flows) ? data.flows : [];
+    } catch (e) {
+      console.warn('[flowEnterArticleMicroView] fetch failed:', e);
+    }
+
+    // Compose the ISO set from the article's flows + its home country.
+    const _microISOs = new Set();
+    microFlows.forEach(f => {
+      if (f.src?.iso) _microISOs.add(String(f.src.iso).toUpperCase());
+      if (f.dst?.iso) _microISOs.add(String(f.dst.iso).toUpperCase());
+    });
+    const _homeIso = (articleHint?.iso_code || articleHint?.country_code || '').toString().toUpperCase();
+    if (_homeIso) _microISOs.add(_homeIso);
+
+    // Fallback chain.
+    if (!microFlows.length && !_homeIso) {
+      // Nothing to show — leave thread macro untouched.
+      return;
+    }
+
+    // Clear current arcs + labels (thread macro or previous micro). We
+    // rely on __flowClearArcs to recycle tubes, and clearFlowNodeLabels
+    // to remove the ORIGIN/DEST overlay.
+    window.__flowClearArcs?.();
+    window.clearFlowNodeLabels?.();
+    window.__flowClearHighlights?.();
+
+    window.__flowInArticleMicroView = articleId;
+
+    if (microFlows.length) {
+      const flows = microFlows.map(f => {
+        const remapped = window.__flowRemapForView?.(f) || f;
+        remapped._cardTriggered = true;
+        // Reuse the thread animation pipeline (BFS waves → loop pulses)
+        // so the zoom-in feels identical to the parent thread render.
+        remapped._sourceType = 'thread';
+        remapped._microView = true;
+        return remapped;
+      });
+      window.__flowAssignLaneOffsets?.(flows);
+      const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
+      flows.forEach(flow => {
+        const arc = window.__flowCreateArc?.(flow, maxCount);
+        if (arc) window.__flowPushArc?.(arc);
+      });
+      window.__flowShowLabelsForCardTrigger?.(flows);
+    }
+
+    if (_microISOs.size) window.__flowHighlightCountries?.(_microISOs);
+    try { window.__flowSyncEyeButtons?.(); } catch (_) {}
+  };
+
+  window.__flowExitArticleMicroView = function() {
+    const stash = window.__threadMacroCurrent;
+    if (!stash || !window.__flowInArticleMicroView) return;
+
+    // Tear down the micro view.
+    window.__flowClearArcs?.();
+    window.clearFlowNodeLabels?.();
+    window.__flowClearHighlights?.();
+
+    // Rebuild the thread macro from snapshot. Flows were already remapped
+    // + lane-offset'd before they were stashed, so we can feed them
+    // straight into createArc without re-running the pipeline.
+    const flows = stash.flows || [];
+    const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
+    flows.forEach(flow => {
+      const arc = window.__flowCreateArc?.(flow, maxCount);
+      if (arc) window.__flowPushArc?.(arc);
+    });
+    if (flows.length) window.__flowShowLabelsForCardTrigger?.(flows);
+    if (stash.isos && stash.isos.size) window.__flowHighlightCountries?.(stash.isos);
+
+    window.__flowInArticleMicroView = null;
+    try { window.__flowSyncEyeButtons?.(); } catch (_) {}
+  };
+
   window.showThreadFlows = async function(threadId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
@@ -23899,17 +24168,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__flowShowLabelsForCardTrigger?.(flows);
 
       // Force-highlight ALL country polygons touched by these flows upfront
+      const _threadMacroISOs = new Set();
       {
-        const _allISOs = new Set();
         flows.forEach(f => {
-          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
+          if (f.src?.iso) _threadMacroISOs.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) _threadMacroISOs.add(f.dst.iso.toUpperCase());
         });
         // Include the thread's own country for single-country stories
         const _thrIso = _ctxThread?.iso_code || _ctxThread?.country_code || data.thread?.iso_code;
-        if (_thrIso) _allISOs.add(String(_thrIso).toUpperCase());
-        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+        if (_thrIso) _threadMacroISOs.add(String(_thrIso).toUpperCase());
+        if (_threadMacroISOs.size) window.__flowHighlightCountries?.(_threadMacroISOs);
       }
+
+      // Snapshot thread macro state for the article micro-view (eye) to
+      // zoom out back to without re-fetching. Captured AFTER flows have
+      // been remapped + lane-assigned + arc'd, so restoration is a simple
+      // replay through the same createArc pipeline.
+      window.__threadMacroCurrent = {
+        flows: flows.slice(),           // shallow copy — caller may re-assign
+        isos: _threadMacroISOs,
+        ctxThread: _ctxThread || data.thread || null,
+        threadId,
+      };
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
@@ -24264,6 +24544,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.showTimelineFlows = async function(timelineId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
+
+    // Leaving thread context — drop any cached thread-macro snapshot and
+    // clear the micro-view marker so the eye button resets to News-Flows mode.
+    window.__threadMacroCurrent = null;
+    window.__flowInArticleMicroView = null;
 
     // Grab the originating timeline card data (if any) for the floating card.
     let _ctxTimeline = null;
