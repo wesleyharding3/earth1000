@@ -24998,8 +24998,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     // Pass 3 — commit positions and sync leader lines. Leader SVG overlay
-    // sits just BELOW the labels (z-index 89 vs labels' 190) so the label
-    // box covers the near end of the line cleanly.
+    // sits just BELOW the labels (z-index 189 vs labels' 190) so the label
+    // box covers the near end of the line cleanly. Style is modeled after
+    // the heatmap "Percentage Global Coverage" inspector (warm amber,
+    // dashed stroke, anchor dot) — see #semHeatInspectorSvg for the
+    // reference palette.
     let svg = document.getElementById("flowNodeLeaders");
     if (!svg) {
       svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -25010,19 +25013,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const vw = window.innerWidth, vh = window.innerHeight;
     svg.setAttribute("width", vw);
     svg.setAttribute("height", vh);
-    // Pool lines — one per visible label.
+    // Pool one <g> per visible label, each holding <line> + <circle> so
+    // anchor dot and dashed connector move/fade as a unit.
     while (svg.children.length < visible.length) {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
       const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("stroke", "rgba(80,255,160,0.45)");
-      line.setAttribute("stroke-width", "1");
+      line.setAttribute("stroke", "rgba(255,200,120,0.75)");
+      line.setAttribute("stroke-width", "1.2");
+      line.setAttribute("stroke-dasharray", "4 3");
       line.setAttribute("stroke-linecap", "round");
-      svg.appendChild(line);
+      const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      dot.setAttribute("r", "4");
+      dot.setAttribute("fill", "rgba(255,200,120,0.9)");
+      dot.setAttribute("stroke", "rgba(255,255,255,0.9)");
+      dot.setAttribute("stroke-width", "1");
+      g.appendChild(line);
+      g.appendChild(dot);
+      svg.appendChild(g);
     }
     while (svg.children.length > visible.length) {
       svg.removeChild(svg.lastChild);
     }
 
-    const LEADER_MIN = 6; // px — below this, don't draw (label is on top of node)
+    const LEADER_MIN = 6; // px — below this, label is directly over its node
     for (let k = 0; k < visible.length; k++) {
       const r = visible[k];
       r.el.style.left = r.px + "px";
@@ -25030,20 +25043,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
       r.el.style.opacity = String(r.opacity);
 
       // Line tip = node (r.ax, r.ay). Line near-end = label's bottom-center
-      // (r.px, r.py - 8). We shorten the near-end a few px so the line
-      // visibly terminates at the label edge rather than running under it.
+      // (r.px, r.py - 8). Dot sits on the node so the leader clearly
+      // originates from the geographic point the label describes.
       const ex = r.px, ey = r.py - 8;
       const dx = ex - r.ax, dy = ey - r.ay;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const line = svg.children[k];
+      const g = svg.children[k];
+      const line = g.firstChild;
+      const dot  = g.lastChild;
+      line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
+      dot .setAttribute("cx", r.ax); dot .setAttribute("cy", r.ay);
       if (dist < LEADER_MIN || r.opacity < 0.2) {
-        line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
+        // Label sitting directly over its node — suppress both line and
+        // dot so uncluttered nodes stay clean.
         line.setAttribute("x2", r.ax); line.setAttribute("y2", r.ay);
-        line.style.opacity = "0";
+        g.style.opacity = "0";
       } else {
-        line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
-        line.setAttribute("x2", ex);    line.setAttribute("y2", ey);
-        line.style.opacity = String(r.opacity * 0.75);
+        line.setAttribute("x2", ex); line.setAttribute("y2", ey);
+        g.style.opacity = String(r.opacity);
       }
     }
 
