@@ -3589,6 +3589,24 @@ body.flow-maximized #flowArcList {
 #flowCtxCard .flowCtxPillBar button:focus,
 #flowCtxCard .flowCtxPillBar button:focus-visible { outline: none; box-shadow: none; }
 
+/* On touch devices the :hover state sticks to the last-tapped element
+   and renders as a grey pill over − (the pillbar is only 24px tall, so
+   the 28×20 hover bg compresses into a vertical-looking ellipse). Desktop
+   keeps its hover feedback; touch devices get a fully transparent button. */
+@media (hover: none) {
+  #flowCtxCard .flowCtxReturn:hover,
+  #flowCtxCard .flowCtxMinimize:hover,
+  #flowCtxCard .flowCtxClose:hover {
+    background: none;
+    color: rgba(255,255,255,0.7);
+  }
+  #flowCtxCard .flowCtxReturn:active,
+  #flowCtxCard .flowCtxMinimize:active,
+  #flowCtxCard .flowCtxClose:active {
+    background: none;
+  }
+}
+
 /* ── Tab buttons in the pill bar ─────────────────────────────────── */
 .flowCtxTab {
   position: static;
