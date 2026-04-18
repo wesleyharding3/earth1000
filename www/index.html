@@ -3730,6 +3730,19 @@ body.flow-maximized #flowArcList {
 #flowCtxCard.view-ctx {
   max-height: calc(100vh - env(safe-area-inset-top, 0px) - 100px);
 }
+
+/* Mobile: cap the AI context window at the same height the live-arcs
+   slot uses (210px) so the context panel can't grow past the article
+   bar panel's footprint. `.arcContextPanel` already has min-height:0 +
+   overflow:hidden, and .arcCtxBody has overflow-y:auto + touch-action
+   pan-y, so the body content scrolls cleanly inside the capped window.
+   Desktop (pointer: fine && > 700px) keeps the full-height default —
+   there's enough real estate for it to flow naturally. */
+@media (pointer: coarse), (max-width: 700px) {
+  #flowCtxCard.view-ctx #arcContextPanel {
+    max-height: 210px;
+  }
+}
 #flowCtxCard .flowCtxPillBar { display: flex; }
 #flowCtxCard.noInfoOrigin .flowCtxReturn,
 #flowCtxCard.noInfoOrigin .flowCtxTab[data-view="info"],
