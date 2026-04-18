@@ -18003,6 +18003,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
+    // ── Isolation post-pass ─────────────────────────────────────────────
+    // Runs after every mode branch (including the `continue`-returning
+    // aggregate/thread/articleCard paths) so the eye-button isolation
+    // state wins uniformly. The target arc is forced to its FULL src→dst
+    // curve (visibleStart=0, visibleEnd=1) with a fade-in on opacity, so
+    // it no longer shows as a mid-animation stub. On clear, the arc's
+    // opacity eases down quickly and then its frozen state is released
+    // back into the normal flow animation.
+    for (const arc of arcObjects) {
+      if (arc._isolationFull) {
+        arc.tubeMat.uniforms.uVisibleStart.value = 0;
+        arc.tubeMat.uniforms.uVisibleEnd.value   = 1;
+        const targetOp = (arc._isolationTarget || 0) * (arc.baseOpacity || 0.62);
+        if (arc._isolationOpacity == null) arc._isolationOpacity = 0;
+        arc._isolationOpacity += (targetOp - arc._isolationOpacity) * 0.22;
+        arc.tubeMat.uniforms.uOpacity.value = arc._isolationOpacity;
+        if (arc.orb) arc.orb.visible = false;
+        if (arc.ptMat) arc.ptMat.opacity = 0;
+        if (arc._isolationFading && arc._isolationOpacity < 0.02) {
+          arc._isolationFull = false;
+          arc._isolationFading = false;
+          arc._isolationOpacity = 0;
+          arc._isolationTarget = 0;
+          arc._frozen = false;
+          arc._frozenOpacity = null;
+        }
+      } else if (arc._frozenOpacity != null) {
+        arc.tubeMat.uniforms.uOpacity.value = arc._frozenOpacity;
+        if (arc._frozenOpacity < 0.1) {
+          if (arc.orb) arc.orb.visible = false;
+          if (arc.ptMat) arc.ptMat.opacity = 0;
+        }
+      }
+    }
+
     // Update country polygon highlights dynamically
     if (!setsEqual(_flowContactISOs, frameContactISOs)) {
       _flowContactISOs = frameContactISOs;
@@ -18087,17 +18122,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const SYNC_INTERVAL = 250; // ms
 
     // ── Arc isolation (eye button) ──
-    // Explicit opt-in: fades out every arc except the one identified by uid.
-    // Cleared by tapping the eye again, by selecting/expanding a new arc,
-    // or by pressing the flow ▶ play button.
+    // Explicit opt-in: fades out every arc except the one identified by uid,
+    // and forces the selected arc to render its FULL src→dst curve (no
+    // mid-animation stub) with a gentle opacity fade-in. Cleared by tapping
+    // the eye again, by pressing flow ▶ Play, or by closing the card —
+    // all three initiate a quick fade-out on the isolated arc before it
+    // returns to normal flow animation.
     function isolateArc(uid) {
       _arcIsolationUid = uid;
       for (const arc of (typeof arcObjects !== 'undefined' ? arcObjects : [])) {
         if (arc._uid === uid) {
-          arc._frozenOpacity = null;
-          arc._frozen = true;
+          arc._frozen          = true;
+          arc._frozenOpacity   = null;
+          arc._isolationFull   = true;
+          arc._isolationOpacity = 0;   // start transparent → fade up
+          arc._isolationTarget = 1;
+          arc._isolationFading = false;
         } else {
-          arc._frozenOpacity = 0;
+          arc._frozenOpacity = 0;       // fade others to hidden
         }
       }
       _syncEyeButtons();
@@ -18106,8 +18148,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (_arcIsolationUid === null) return;
       _arcIsolationUid = null;
       for (const arc of (typeof arcObjects !== 'undefined' ? arcObjects : [])) {
-        arc._frozenOpacity = null;
-        arc._frozen = false;
+        if (arc._isolationFull) {
+          // Quick fade-out; tickArcs post-pass releases flags once opacity
+          // reaches near-zero, returning the arc to normal animation.
+          arc._isolationTarget = 0;
+          arc._isolationFading = true;
+        } else {
+          arc._frozenOpacity = null;
+          arc._frozen = false;
+        }
       }
       _syncEyeButtons();
     }
@@ -18654,10 +18703,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const _tL = window.getUserTargetLang?.() || { short: 'EN', label: 'English' };
           html += `<button class="articleTranslateBtn arcCardTransBtn" data-id="${flow.id}" data-title="${(flow.title||'').replace(/"/g,'&quot;')}" data-summary="${(flow.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_tL.label}">${_tL.short}</button>`;
         }
-        // Bottom row: Back button on the left, then route / eye / page on the right.
+        // Bottom row: small back-arrow icon on the left, then route / eye /
+        // page on the right. Back is a small return-arrow (not text) that
+        // matches the icon-button treatment of eye + page.
         const isolated = (_arcIsolationUid === uid);
         html += `<div class="arcCardMetaRow">`;
-        html += `<button class="arcCardBtn deselect" data-action="deselect" title="Back to list">Back</button>`;
+        html += `<button class="arcCardIconBtn" data-action="deselect" title="Back to list" aria-label="Back to list">${SVG_BACK}</button>`;
         html += `<span class="arcCardRoute">${esc(srcName)} → ${esc(dstName)}</span>`;
         html += `<button class="arcCardIconBtn${isolated ? ' active' : ''}" data-action="eye" title="Isolate arc on globe" aria-label="Isolate arc on globe">${SVG_EYE}</button>`;
         html += `<button class="arcCardIconBtn" data-action="page" title="Open article" aria-label="Open article">${SVG_PAGE}</button>`;
@@ -18826,13 +18877,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Hide hover card
       document.getElementById('flowArcInfoCard')?.classList.remove('visible');
 
-      // Drop any eye-initiated isolation so leaving the card restores the
-      // full flow. (isolateArc's mask was its own opt-in; clearing here is
-      // idempotent if no mask was active.)
-      _arcIsolationUid = null;
+      // Drop any eye-initiated isolation with a gentle fade-out (handled
+      // in tickArcs post-pass). Also clear any stale frozen state on arcs
+      // that were not the isolation target.
+      clearArcIsolation();
       for (const arc of arcObjects) {
-        arc._frozenOpacity = null;
-        arc._frozen = false;
+        if (!arc._isolationFull) {
+          arc._frozenOpacity = null;
+          arc._frozen = false;
+        }
       }
 
       // Resume the wall-clock flow animations + timeline auto-advance.
