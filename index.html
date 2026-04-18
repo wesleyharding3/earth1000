@@ -18794,7 +18794,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ones so arcs whose opacity briefly dips don't flicker the bar list.
           const wasVisible = _prevVisibleUids.has(arc._uid);
           const threshold = wasVisible ? 0.002 : 0.06;
-          if (op > threshold && ve - vs > 0.01) {
+          // The eye-isolated arc fades in from 0 opacity over several
+          // frames. If syncPanel ticks in that sub-threshold window it
+          // would drop the arc → auto-deselect → card collapses. Force
+          // the isolated UID to always stay in the list.
+          const isIsolated = (_arcIsolationUid !== null && arc._uid === _arcIsolationUid);
+          if (isIsolated || (op > threshold && ve - vs > 0.01)) {
             visibleArcs.push({ uid: arc._uid, arc, flow: arc.flow });
           }
         }
@@ -24651,6 +24656,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const camDir = new THREE.Vector3();
     camera.getWorldDirection(camDir).normalize();
 
+    // Pass 1 — project each visible label to its "home" position (where it
+    // would sit with no siblings around). Records are stored in an array
+    // so the collision-resolution pass can nudge them without committing
+    // layout mid-loop.
+    const visible = [];
     labels.forEach(label => {
       const node = label.__flowNode;
       if (!node) return;
@@ -24664,11 +24674,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       );
       if (sceneQuat) pos.applyQuaternion(sceneQuat);
 
-      // Dot of the surface normal with the camera forward direction.
-      // camera.getWorldDirection points away from the camera into the
-      // scene, so a front-facing node has -camDir · n > 0.
       const dot = -camDir.dot(pos.clone().normalize());
-
       if (dot < 0.05) {
         label.style.opacity = "0";
         return;
@@ -24678,10 +24684,94 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const sx = (projected.x + 1) / 2 * rect.width + rect.left;
       const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
 
-      label.style.left = sx + "px";
-      label.style.top = (sy - 20) + "px";
-      label.style.opacity = String(Math.min(1, (dot - 0.05) * 4));
+      // Label's CSS `left, top` anchors where the label's invisible pointer
+      // lives — its translate(-50%, -100%) + translateY(-8px) lifts the
+      // visible box up and back-left from there. ax/ay is the node itself
+      // (leader-line tip). hx/hy = home position for the label anchor.
+      const w = label.offsetWidth  || 120;
+      const h = label.offsetHeight || 32;
+      visible.push({
+        el: label,
+        ax: sx, ay: sy,
+        hx: sx, hy: sy - 20,
+        px: sx, py: sy - 20,
+        w, h,
+        opacity: Math.min(1, (dot - 0.05) * 4),
+      });
     });
+
+    // Pass 2 — separate overlapping labels along the Y axis. Six iterations
+    // converges for typical cluster counts (<15); quadratic scan is fine
+    // at this scale. Each pair gets a mutual half-push along whichever
+    // label currently sits higher.
+    const PAD = 4;
+    const ITERS = 6;
+    for (let iter = 0; iter < ITERS; iter++) {
+      let moved = false;
+      for (let i = 0; i < visible.length; i++) {
+        for (let j = i + 1; j < visible.length; j++) {
+          const a = visible[i], b = visible[j];
+          const aLeft = a.px - a.w / 2, aRight = a.px + a.w / 2;
+          const aBot  = a.py - 8,        aTop   = aBot  - a.h;
+          const bLeft = b.px - b.w / 2, bRight = b.px + b.w / 2;
+          const bBot  = b.py - 8,        bTop   = bBot  - b.h;
+          const overlapX = Math.min(aRight, bRight) - Math.max(aLeft, bLeft);
+          const overlapY = Math.min(aBot,   bBot)   - Math.max(aTop,  bTop);
+          if (overlapX <= -PAD || overlapY <= -PAD) continue;
+          const push = (overlapY + PAD) / 2;
+          if (a.py < b.py) { a.py -= push; b.py += push; }
+          else             { a.py += push; b.py -= push; }
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+
+    // Pass 3 — commit positions and sync leader lines. Leader SVG overlay
+    // sits just BELOW the labels (z-index 189 vs labels' 190) so the label
+    // box covers the near end of the line cleanly.
+    let svg = document.getElementById("flowNodeLeaders");
+    if (!svg) {
+      svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.id = "flowNodeLeaders";
+      svg.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:189;";
+      document.body.insertBefore(svg, container);
+    }
+    const vw = window.innerWidth, vh = window.innerHeight;
+    svg.setAttribute("width", vw);
+    svg.setAttribute("height", vh);
+    while (svg.children.length < visible.length) {
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("stroke", "rgba(80,255,160,0.45)");
+      line.setAttribute("stroke-width", "1");
+      line.setAttribute("stroke-linecap", "round");
+      svg.appendChild(line);
+    }
+    while (svg.children.length > visible.length) {
+      svg.removeChild(svg.lastChild);
+    }
+
+    const LEADER_MIN = 6;
+    for (let k = 0; k < visible.length; k++) {
+      const r = visible[k];
+      r.el.style.left = r.px + "px";
+      r.el.style.top  = r.py + "px";
+      r.el.style.opacity = String(r.opacity);
+
+      const ex = r.px, ey = r.py - 8;
+      const dx = ex - r.ax, dy = ey - r.ay;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const line = svg.children[k];
+      if (dist < LEADER_MIN || r.opacity < 0.2) {
+        line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
+        line.setAttribute("x2", r.ax); line.setAttribute("y2", r.ay);
+        line.style.opacity = "0";
+      } else {
+        line.setAttribute("x1", r.ax); line.setAttribute("y1", r.ay);
+        line.setAttribute("x2", ex);    line.setAttribute("y2", ey);
+        line.style.opacity = String(r.opacity * 0.75);
+      }
+    }
 
     window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
   }
@@ -24696,6 +24786,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function _clearFlowNodeLabelsImpl() {
     const container = document.getElementById("flowNodeLabels");
     if (container) container.remove();
+    const leaders = document.getElementById("flowNodeLeaders");
+    if (leaders) leaders.remove();
     if (window.__flowNodeLabelRAF) {
       cancelAnimationFrame(window.__flowNodeLabelRAF);
       window.__flowNodeLabelRAF = null;
