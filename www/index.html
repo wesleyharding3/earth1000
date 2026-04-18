@@ -18851,7 +18851,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           xhr.open('POST', `${API}/api/ai/flow-context`, true);
           xhr.setRequestHeader('Content-Type', 'application/json');
           xhr.setRequestHeader('Accept', 'text/event-stream');
-          xhr.withCredentials = true;
+          // Bearer auth — XHR is NOT covered by the global fetch interceptor
+          // (which injects Authorization on fetch() calls) so we set it
+          // manually here. Without this the server's optionalAuth sees no
+          // token → requireTier('pro') returns 401.
+          if (window.__authToken) {
+            xhr.setRequestHeader('Authorization', `Bearer ${window.__authToken}`);
+          }
           let consumed = 0;
           const drain = (final) => {
             const buf = xhr.responseText.slice(consumed);
@@ -25227,33 +25233,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
   position: fixed;
   pointer-events: none;
   z-index: 190;
-  background: rgba(5,7,12,0.88);
-  border: 1px solid rgba(80,255,160,0.3);
+  background: rgba(6,10,20,0.82);
+  border: 1px solid rgba(255,180,80,0.28);
   border-radius: 8px;
-  padding: 4px 8px;
-  font-size: 10px;
+  padding: 5px 9px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: rgba(255,255,255,0.85);
+  color: rgba(255,255,255,0.94);
   white-space: nowrap;
   transform: translate(-50%, -100%) translateY(-8px);
   transition: opacity 0.35s ease;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 18px rgba(255,180,80,0.06);
   text-shadow: 0 1px 3px rgba(0,0,0,0.6);
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* ORIGIN / DEST eyebrow — matches .flowCtxKind palette (9px, 700,
+   uppercase, 0.08em letter-spacing, warm-amber). */
 .flowNodeLabel .fnlType {
-  font-size: 8px;
+  font-size: 9px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: rgba(80,255,160,0.6);
+  letter-spacing: 0.08em;
+  color: rgba(255,200,140,0.9);
   margin-bottom: 1px;
 }
+/* Place name — matches .flowCtxTitle palette (12px, 600, tight leading). */
 .flowNodeLabel .fnlName {
+  font-size: 12px;
   font-weight: 600;
-  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(255,255,255,0.94);
 }
 .flowNodeLabel .fnlFlag {
   margin-right: 3px;
