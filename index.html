@@ -1582,6 +1582,15 @@
   max-width: 416px;
 }
 #flowControls.visible { display: flex; }
+/* When flow arcs are triggered from a thread / timeline / article CARD,
+   the floating flowCtxCard already surfaces all arc navigation inline
+   with the triggering source — so the standalone #flowControls panel
+   is redundant clutter in that context. When the user opens flow arcs
+   directly from the top-nav News Flows button, there's no ctx card, so
+   #flowControls is the only nav surface and must show. The body class
+   `flow-from-card` is toggled by show{Thread,Timeline,Article}Flows to
+   distinguish the two entry points. */
+body.flow-from-card #flowControls.visible { display: none !important; }
 body.ticker-active #flowControls {
   bottom: calc(var(--global-ticker-height) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
 }
@@ -22670,6 +22679,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__flowCtxDrillDown = false;
       _flowArcOrigin = null;
       window.__flowArcOriginForHeat = null;
+      document.body.classList.remove('flow-from-card');
       hideFlowCtxCard();
     });
     el.querySelector(".flowCtxMinimize").addEventListener("click", (e) => {
@@ -22927,19 +22937,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     el.querySelectorAll('.flowCtxRouteBar.selected').forEach(b => b.classList.remove('selected'));
   };
 
-  function showFlowArcBackBtn(label) {
-    const btn = document.getElementById("flowArcBackBtn");
-    const lbl = document.getElementById("flowArcBackLabel");
-    if (btn && lbl) {
-      lbl.textContent = label;
-      btn.classList.add("visible");
-    }
+  // Standalone "Back to Threads/Lines/Briefing" button removed from the UI —
+  // the flowCtxCard's .flowCtxReturn button already routes to __flowArcGoBack()
+  // and provides the same back-navigation affordance in context. Having both
+  // was visual clutter. This function is kept as a no-op so existing call
+  // sites (showThreadFlows, showTimelineFlows, showArticleFlows) don't need
+  // surgery; they just stop producing the redundant button.
+  function showFlowArcBackBtn(/* label */) {
+    /* no-op — ctx-card .flowCtxReturn handles back navigation */
   }
 
   function hideFlowArcBackBtn() {
     const btn = document.getElementById("flowArcBackBtn");
     if (btn) btn.classList.remove("visible");
     _flowArcOrigin = null;
+    document.body.classList.remove('flow-from-card');
     hideFlowCtxCard();
   }
 
@@ -23001,6 +23013,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Remember where we came from
       const originPage = window.__currentPage || 2;
       _flowArcOrigin = { type: 'article', page: originPage, label: 'Back to News' };
+      // Card-triggered flow arcs: suppress the standalone #flowControls
+      // panel (flowCtxCard carries all needed controls inline).
+      document.body.classList.add('flow-from-card');
 
       // 0. Show the compact floating card IMMEDIATELY so it's visible even
       //    before the flow API responds (or if the response lacks article).
@@ -23159,6 +23174,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try {
       const originPage = window.__currentPage || 2;
       _flowArcOrigin = { type: 'thread', page: originPage, label: 'Back to Threads' };
+      document.body.classList.add('flow-from-card');
 
       window.__clusterCloseNodePanel?.();
       window.closeArticleDetail?.();
@@ -23589,6 +23605,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     try {
       const originPage = window.__currentPage || 2;
       _flowArcOrigin = { type: 'timeline', page: originPage, label: 'Back to Lines' };
+      document.body.classList.add('flow-from-card');
 
       window.__clusterCloseNodePanel?.();
       window.closeArticleDetail?.();
@@ -23697,7 +23714,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const flows = data.flows.map(f => {
         const remapped = window.__flowRemapForView?.(f) || f;
         remapped._cardTriggered = true;
-        remapped._sourceType = "timeline";
+        // Tag as 'thread' not 'timeline' — the arc-mode switch at
+        // arc.mode = _isThread ? 'thread' : null only animates 'thread'
+        // and 'articleCard'. A 'timeline' sourceType falls through to
+        // aggregate-static mode (no pulse/wave/dst-highlight), which is
+        // what produced the "arcs don't animate and target countries
+        // don't light up" failure on Lines cards. Timeline flows reuse
+        // the thread animation pipeline by design — the segmented-
+        // playback path at _buildSegmentsFromTimeline already tags
+        // its flows as 'thread' for the same reason.
+        remapped._sourceType = "thread";
         remapped._timelineId = timelineId;
         return remapped;
       });
