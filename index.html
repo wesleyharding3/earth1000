@@ -3526,7 +3526,10 @@ body.flow-maximized #flowArcList {
 */
 #flowCtxCard.view-info .flowCtxInfoView { display: flex; }
 #flowCtxCard.view-arcs .flowCtxLiveArcsSlot { display: flex; }
-#flowCtxCard.view-arcs #flowArcList { display: flex; }
+/* Require the .visible class so the minimize handler can hide the arc list
+   by removing .visible. Previously this rule unconditionally forced display,
+   which defeated __arcListMinimize() — click minimize, panel stayed open. */
+#flowCtxCard.view-arcs #flowArcList.visible { display: flex; }
 #flowCtxCard.view-ctx  #arcContextPanel { display: flex; position: static; opacity: 1; visibility: visible; pointer-events: auto; }
 /* Arcs + ctx views use the tall card so the list / AI body have room. */
 #flowCtxCard.view-arcs,
@@ -3538,7 +3541,11 @@ body.flow-maximized #flowArcList {
 /* When the panel was opened with no originating article/thread/timeline
    card (News Flows nav), Back and the Article tab have nothing to show. */
 #flowCtxCard.noInfoOrigin .flowCtxReturn,
-#flowCtxCard.noInfoOrigin .flowCtxTab[data-view="info"] { display: none !important; }
+#flowCtxCard.noInfoOrigin .flowCtxTab[data-view="info"],
+/* AI Context (✦) is anchored to a specific thread/timeline/article session.
+   When the user opens News Flows from the top-nav button there's no source
+   item to contextualize, so the tab is meaningless clutter — hide it. */
+#flowCtxCard.noInfoOrigin .flowCtxTab.ai { display: none !important; }
 
 /* ── Tab buttons in the pill bar ─────────────────────────────────── */
 .flowCtxTab {
@@ -9468,8 +9475,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="kwi-mode-tabs">
           <button class="kwi-mode-tab active" data-mode="trending" onclick="kwiSetMode('trending')">Trend</button>
           <button class="kwi-mode-tab" data-mode="rising" onclick="kwiSetMode('rising')">Rising</button>
-          <button class="kwi-mode-tab" data-mode="graph" onclick="kwiSetMode('graph')">Graph</button>
-          <button class="kwi-mode-tab" data-mode="search" onclick="kwiSetMode('search')">Search</button>
         </div>
 
         <!-- Location context (shows when country selected) -->
@@ -9482,75 +9487,8 @@ window.sourceBiasBadgeHTML = function(bias) {
         <!-- Trending list (default view) -->
         <div class="kwi-trending-list" id="kwiTrendingList"></div>
 
-        <!-- Search (hidden by default) -->
-        <div class="kwi-search-wrap" id="kwiSearchWrap" style="display:none;">
-          <input class="kwi-search-input" id="kwiInput" type="text"
-            placeholder="Search keyword or phrase…"
-            autocomplete="off"
-            oninput="kwiOnInput(this.value)"
-            onkeydown="kwiOnKey(event)"/>
-          <button class="kwi-search-go" onclick="kwiSearch()" title="Search">
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-              <circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.5"/>
-              <line x1="8.5" y1="8.5" x2="12" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </button>
-          <div class="kwi-autocomplete" id="kwiAC"></div>
-        </div>
-
-        <!-- Graph view (hidden by default) -->
-        <div class="kwi-graph-wrap" id="kwiGraphWrap" style="display:none;">
-          <div class="kwi-graph-search">
-            <div class="kwi-graph-input-wrap">
-              <input class="kwi-graph-input" id="kwiGraphInput" type="text"
-                placeholder="Add keyword to track…"
-                autocomplete="off"
-                oninput="kwiGraphOnInput(this.value)"
-                onkeydown="kwiGraphOnKey(event)"/>
-              <div class="kwi-graph-ac" id="kwiGraphAC"></div>
-            </div>
-            <button class="kwi-graph-go" type="button" onclick="kwiGraphSubmit()">Enter</button>
-          </div>
-          <div class="kwi-graph-chips" id="kwiGraphChips"></div>
-          <div class="kwi-graph-controls">
-            <button class="kwi-range-btn active" data-days="7" onclick="kwiGraphSetRange(7)">7D</button>
-            <button class="kwi-range-btn" data-days="30" onclick="kwiGraphSetRange(30)">30D</button>
-            <button class="kwi-range-btn" data-days="90" onclick="kwiGraphSetRange(90)">90D</button>
-          </div>
-          <div class="kwi-graph-canvas-wrap">
-            <canvas id="kwiGraphCanvas"></canvas>
-          </div>
-          <div class="kwi-graph-legend" id="kwiGraphLegend"></div>
-        </div>
-
-        <!-- Active keyword chip -->
-        <div class="kwi-active-chip" id="kwiChip">
-          <span id="kwiChipLabel"></span>
-          <span class="kwi-chip-x" onclick="kwiClear()">✕</span>
-        </div>
-
-        <!-- Controls (for search mode) -->
-        <div class="kwi-controls" id="kwiControls" style="display:none;">
-          <button class="kwi-range-btn active" data-days="7"   onclick="kwiSetRange(7)">7D</button>
-          <button class="kwi-range-btn"        data-days="30"  onclick="kwiSetRange(30)">30D</button>
-          <button class="kwi-range-btn"        data-days="90"  onclick="kwiSetRange(90)">90D</button>
-          <button class="kwi-range-btn"        data-days="365" onclick="kwiSetRange(365)">1Y</button>
-          <div class="kwi-view-toggle">
-            <button class="kwi-view-btn active" data-view="bar"   onclick="kwiSetView('bar')">BAR</button>
-            <button class="kwi-view-btn"        data-view="trend" onclick="kwiSetView('trend')">TREND</button>
-          </div>
-        </div>
-
-        <!-- Chart area (hidden in trending/rising list modes) -->
-        <div class="kwi-chart-area" id="kwiChartArea" style="display:none;">
-          <!-- Bar view -->
-          <div class="kwi-bars" id="kwiBars" style="display:none;"></div>
-          <!-- Trend view -->
-          <div class="kwi-canvas-wrap" id="kwiCanvasWrap" style="display:none;">
-            <canvas class="kwi-canvas" id="kwiCanvas"></canvas>
-          </div>
-          <div class="kwi-loading" id="kwiLoading"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>
-        </div>
+        <!-- Shared loading spinner — used by both Trend and Rising list loaders. -->
+        <div class="kwi-loading" id="kwiLoading"><div class="kwi-dot"></div><div class="kwi-dot"></div><div class="kwi-dot"></div></div>
 
         <div class="kwi-footer">
           <span class="kwi-footer-text">News Keyword Index</span>
@@ -10122,7 +10060,8 @@ window.sourceBiasBadgeHTML = function(bias) {
   <div class="arcListMinBar" id="arcListMinBar">
     <span class="arcListMinLabel">Arcs</span>
     <span class="arcListMinCount" id="arcListMinCount">0</span>
-    <button class="arcListExpandBtn" id="arcListExpandBtn" title="Expand" onclick="window.__arcListExpand?.()">↓</button>
+    <button class="arcListExpandBtn" id="arcListExpandBtn" title="Expand" onclick="window.__arcListExpand?.()">+</button>
+    <button class="arcListExpandBtn" id="arcListMinCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
   </div>
   <div id="flowArcList">
     <div class="arcListPanel" id="arcListPanelRoot">
@@ -23157,6 +23096,69 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   };
 
+  // ── Fallback arc synthesis from card ISO list ──────────────────────
+  // When the backend /api/flows/{thread|timeline}/:id endpoint returns no
+  // flows — which happens for stories whose articles lack rich
+  // article_locations data even when the card clearly names multiple
+  // countries (Kinahan arrest: Ireland / EU / UAE from primary_nations) —
+  // fall back to hub-and-spoke arcs drawn from the card's own ISO list.
+  // First ISO is the hub; remaining ISOs are spokes. ISOs that don't
+  // resolve to country coordinates (EU supranational, disputed regions,
+  // etc.) are silently skipped.
+  function _synthesizeFlowsFromCardIsos(ctx) {
+    if (!ctx) return [];
+    const isos = Array.isArray(ctx.primary_nations) ? ctx.primary_nations
+               : Array.isArray(ctx.geographic_scope) ? ctx.geographic_scope
+               : [];
+    if (!isos.length) return [];
+    const seen = new Set();
+    const resolved = [];
+    for (const raw of isos) {
+      const iso = String(raw || '').toUpperCase().trim();
+      if (!iso || seen.has(iso)) continue;
+      seen.add(iso);
+      const coords = (window.__flowGetCountryCoordsByIso?.(iso)) ||
+                     ((window.__globeCountries || []).find(c => (c?.iso_code || '').toUpperCase() === iso));
+      if (!coords || coords.lat == null || coords.lon == null) continue;
+      resolved.push({
+        iso,
+        lat: parseFloat(coords.lat),
+        lon: parseFloat(coords.lon),
+        place: coords.place || coords.name || iso,
+      });
+    }
+    if (resolved.length < 2) return [];
+    const src = resolved[0];
+    return resolved.slice(1).map(dst => ({
+      src: { type: 'country', iso: src.iso, id: src.iso, place: src.place, lat: src.lat, lon: src.lon },
+      dst: { type: 'country', iso: dst.iso, id: dst.iso, place: dst.place, lat: dst.lat, lon: dst.lon },
+      count: 1,
+    }));
+  }
+
+  // Push a set of synthesized flows through the live arc pipeline — same
+  // path the real flows take, so animations (thread-mode daisy-chain +
+  // country polygon highlights) behave identically.
+  function _renderSynthesizedFlows(flows, { sourceType, threadId, timelineId }) {
+    if (!flows.length) return;
+    window.__flowSetOpen?.(true);
+    flows.forEach(f => {
+      f._cardTriggered = true;
+      f._sourceType = sourceType;                    // 'thread' for both paths so arc-mode switch routes to animated branch
+      if (threadId != null)   f._threadId   = threadId;
+      if (timelineId != null) f._timelineId = timelineId;
+    });
+    window.__flowAssignLaneOffsets?.(flows);
+    const maxCount = Math.max(...flows.map(f => f.count || 1), 1);
+    flows.forEach(flow => {
+      const arc = window.__flowCreateArc?.(flow, maxCount);
+      if (arc) window.__flowPushArc?.(arc);
+    });
+    window.__flowShowLabelsForCardTrigger?.(flows);
+    const statsEl = document.getElementById('flowMinStats');
+    if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? 's' : ''}`;
+  }
+
   window.showThreadFlows = async function(threadId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
@@ -23216,8 +23218,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/thread/${threadId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        // No flow arcs — single-location story. Keep context card,
-        // highlight the origin country, and rotate camera.
+        // Backend returned no flows — most likely the articles behind this
+        // thread lack rich article_locations data. The CARD almost always
+        // names 2+ countries via primary_nations / geographic_scope (see
+        // the Kinahan "Ireland, EU, UAE" case). Synthesize hub-and-spoke
+        // arcs from those ISOs so the user still sees the connection
+        // structure the card promised.
+        const synthFlows = _synthesizeFlowsFromCardIsos(_ctxThread || data.thread);
+        if (synthFlows.length) {
+          _renderSynthesizedFlows(synthFlows, { sourceType: 'thread', threadId });
+          window.__flowCtxDrillDown = false;
+          document.getElementById('flowArcList')?.classList.add('visible');
+          const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
+          showFlowArcBackBtn(backLabel);
+          return;
+        }
+        // Truly single-location (only one resolvable ISO on the card):
+        // fall back to the original behavior — highlight + focus.
         const _originIso = _ctxThread?.iso_code || data.thread?.iso_code || _ctxThread?.country_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
@@ -23696,6 +23713,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/timeline/${timelineId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
+        // Same fallback path as showThreadFlows: synthesize arcs from the
+        // card's primary_nations / geographic_scope ISO list when the
+        // backend returns no flows. See _synthesizeFlowsFromCardIsos
+        // above for the hub-and-spoke shape.
+        const synthFlows = _synthesizeFlowsFromCardIsos(_ctxTimeline || data.timeline);
+        if (synthFlows.length) {
+          _renderSynthesizedFlows(synthFlows, { sourceType: 'thread', timelineId });
+          window.__flowCtxDrillDown = false;
+          document.getElementById('flowArcList')?.classList.add('visible');
+          showFlowArcBackBtn(backLabel);
+          return;
+        }
         const _originIso = _ctxTimeline?.iso_code || data.timeline?.iso_code || _ctxTimeline?.country_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
@@ -24319,53 +24348,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Mode switching ──────────────────────────────────────────────────────────
   window.kwiSetMode = function(mode) {
+    // Graph + Search modes were removed — collapsed scope to the two list
+    // surfaces (Trend + Rising) per the product audit. Any accidental caller
+    // falls back to trending instead of breaking.
+    if (mode !== 'trending' && mode !== 'rising') mode = 'trending';
+
     kwiMode = mode;
     kwiListRequestId += 1;
     kwiSetLoading(false);
-    
-    // Update tab active state
-    document.querySelectorAll('.kwi-mode-tab').forEach(t => 
-      t.classList.toggle('active', t.dataset.mode === mode));
-    
-    // Show/hide elements based on mode
-    const searchWrap = document.getElementById('kwiSearchWrap');
-    const graphWrap = document.getElementById('kwiGraphWrap');
-    const controls = document.getElementById('kwiControls');
-    const trendingList = document.getElementById('kwiTrendingList');
-    const chartArea = document.getElementById('kwiChartArea');
-    const chip = document.getElementById('kwiChip');
-    
-    // Hide all first
-    searchWrap.style.display = 'none';
-    graphWrap.style.display = 'none';
-    controls.style.display = 'none';
-    trendingList.style.display = 'none';
-    chartArea.style.display = 'none';
-    chip.classList.remove('visible');
-    
-    if (mode === 'search') {
-      searchWrap.style.display = 'block';
-      controls.style.display = kwiKeyword ? 'flex' : 'none';
-      chartArea.style.display = 'flex';
-      chip.classList.toggle('visible', !!kwiKeyword);
-      if (kwiKeyword) {
-        kwiLoad();
-      }
-    } else if (mode === 'graph') {
-      graphWrap.style.display = 'flex';
-      scheduleKwiGraphRender();
-    } else {
-      trendingList.style.display = 'flex';
-      // Show skeleton immediately so the list fills the widget and the user
-      // sees a loading state instead of stale content from the previous mode.
-      kwiRenderSkeleton();
 
-      if (mode === 'trending') {
-        kwiLoadTrending();
-      } else if (mode === 'rising') {
-        kwiLoadRising();
-      }
-    }
+    // Update tab active state
+    document.querySelectorAll('.kwi-mode-tab').forEach(t =>
+      t.classList.toggle('active', t.dataset.mode === mode));
+
+    const trendingList = document.getElementById('kwiTrendingList');
+    if (trendingList) trendingList.style.display = 'flex';
+
+    // Show skeleton immediately so the list fills the widget and the user
+    // sees a loading state instead of stale content from the previous mode.
+    kwiRenderSkeleton();
+    if (mode === 'trending') kwiLoadTrending();
+    else if (mode === 'rising') kwiLoadRising();
   };
 
   // ── Skeleton loading state for list modes ───────────────────────────────────

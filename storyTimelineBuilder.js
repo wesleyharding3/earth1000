@@ -49,8 +49,23 @@ const MIN_CLUSTER          = 5;          // need at least 5 articles for a new t
 const MAX_PER_SOURCE       = 20;
 const TOTAL_ARTICLE_LIMIT  = 2000;
 const BASE_PRIORITY_FLOOR  = 0.45;       // wider net — top ~35%
-const ATTACH_THRESHOLD     = 2.5;        // min score to attach article to existing timeline
-const STRONG_ATTACH        = 5.0;        // score above this = definite match, skip lower-scored timelines
+// Attach thresholds raised substantially after the "hodgepodge timeline"
+// audit: the previous 2.5 / 5.0 pair allowed one or two coincidental English
+// title words to cross into attach territory, vacuuming off-theme articles
+// into vague umbrella timelines. New scoring (below) requires actual keyword
+// OR entity overlap as a floor — title words are demoted to an amplifier.
+const ATTACH_THRESHOLD     = 5.0;
+const STRONG_ATTACH        = 8.5;
+
+// ── Per-signal score weights (new, content-signal-first) ──────────────────
+// Tune ONLY these constants to rebalance attach behavior. The signal gate
+// ("hasContentSignal") below them is a hard floor that prevents attachment
+// on title-word match alone, no matter how many.
+const W_KEYWORD_OVERLAP    = 2.5;   // per shared (normalized, stopword-filtered) keyword
+const W_ENTITY_OVERLAP     = 3.5;   // per shared entity (capped at 5)
+const W_TITLE_WORD_MATCH   = 0.6;   // per article-title word matching timeline title/scope — amplifier only
+const W_COUNTRY_CATEGORY   = 1.5;   // same country AND same hard-news category
+const ENTITY_OVERLAP_CAP   = 5;
 
 // ── Generic topic-bucket filter ─────────────────────────────────────────────
 // Catch any abstract "Global X" / "Renewable Y" topic-category titles that
@@ -193,37 +208,52 @@ async function run() {
     let bestTimeline = null;
 
     for (const tl of existingTimelines) {
-      let score = 0;
-
-      // Keyword overlap: each shared keyword = 1.5 points
+      // ── Signal counts ───────────────────────────────────────────────
+      // Compute overlaps FIRST, then apply the content-signal floor.
+      // Without this floor, title-word coincidences alone could cross
+      // the attach threshold and vacuum off-theme articles into vague
+      // umbrella timelines (the "hodgepodge timeline" bug).
       let kwOverlap = 0;
-      for (const kw of artKws) {
-        if (tl._kwSet.has(kw)) kwOverlap++;
-      }
-      score += kwOverlap * 1.5;
+      for (const kw of artKws) if (tl._kwSet.has(kw)) kwOverlap++;
 
-      // Title word match: article title words matching timeline title/scope = 2 points each
-      for (const w of artTitleWords) {
-        if (tl._titleWords.has(w) || tl._scopeWords.has(w)) score += 2.0;
-      }
-
-      // Entity overlap: shared entities = 1.8 points each (capped at 5)
       const tlEnts = tlEntityMap.get(Number(tl.id)) || new Set();
       let entOverlap = 0;
-      for (const eid of artEntities) {
-        if (tlEnts.has(eid)) entOverlap++;
-      }
-      score += Math.min(entOverlap, 5) * 1.8;
+      for (const eid of artEntities) if (tlEnts.has(eid)) entOverlap++;
+      const entOverlapCapped = Math.min(entOverlap, ENTITY_OVERLAP_CAP);
 
-      // Country + category match: same country AND same hard-news category = 1.5 bonus
+      let titleWordMatches = 0;
+      for (const w of artTitleWords) {
+        if (tl._titleWords.has(w) || tl._scopeWords.has(w)) titleWordMatches++;
+      }
+
       const HARD_CATS = new Set(['politics', 'military', 'diplomacy', 'conflict', 'economy']);
       const tlCountries = (tl._countries || []).map(c => c.toLowerCase());
+      let countryCategoryBonus = 0;
       if (artCountry && tlCountries.includes(artCountry) && HARD_CATS.has(artCategory)) {
         const tlCat = (tl.primary_category || '').toLowerCase();
         if (tlCat === artCategory || HARD_CATS.has(tlCat)) {
-          score += 1.5;
+          countryCategoryBonus = W_COUNTRY_CATEGORY;
         }
       }
+
+      // ── Content-signal floor ────────────────────────────────────────
+      // An article attaches to an existing timeline only if there is
+      // real topical overlap. Title-word coincidences (e.g. "FBI",
+      // "investigation", "committee") do NOT count as content — they
+      // merely amplify an existing match.
+      const hasContentSignal =
+        kwOverlap >= 2 ||                              // 2+ shared keywords
+        (kwOverlap >= 1 && entOverlap >= 1) ||         // 1 kw + 1 entity
+        (entOverlap >= 2 &&                            // 2+ entities in same country
+          artCountry && tlCountries.includes(artCountry));
+      if (!hasContentSignal) continue;
+
+      // ── Score ───────────────────────────────────────────────────────
+      let score = 0;
+      score += kwOverlap        * W_KEYWORD_OVERLAP;
+      score += entOverlapCapped * W_ENTITY_OVERLAP;
+      score += titleWordMatches * W_TITLE_WORD_MATCH;   // amplifier only
+      score += countryCategoryBonus;
 
       if (score > bestScore) {
         bestScore = score;
