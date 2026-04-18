@@ -19065,12 +19065,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // ones so arcs whose opacity briefly dips don't flicker the bar list.
           const wasVisible = _prevVisibleUids.has(arc._uid);
           const threshold = wasVisible ? 0.002 : 0.06;
-          // The eye-isolated arc fades in from 0 opacity over several
-          // frames. If syncPanel ticks in that sub-threshold window it
-          // would drop the arc → auto-deselect → card collapses. Force
-          // the isolated UID to always stay in the list.
+          // Two sticky cases that must NEVER drop out of visibleArcs until
+          // the user deliberately deselects, or the auto-deselect branch
+          // below will fire and collapse an expanded card while the user
+          // is still interacting with it:
+          //   1. Eye-isolation target — fades in from 0 opacity on enter
+          //      and fades back through 0 on exit.
+          //   2. Currently-selected arc — may momentarily dip below the
+          //      opacity threshold during isolation toggling (the globe
+          //      tube animates; the list selection is UI state, not tube
+          //      state). Without this, clicking Play or eye-to-unisolate
+          //      auto-deselects, closing the expanded article card.
           const isIsolated = (_arcIsolationUid !== null && arc._uid === _arcIsolationUid);
-          if (isIsolated || (op > threshold && ve - vs > 0.01)) {
+          const isSelected = (_selectedArcUid   !== null && arc._uid === _selectedArcUid);
+          if (isIsolated || isSelected || (op > threshold && ve - vs > 0.01)) {
             visibleArcs.push({ uid: arc._uid, arc, flow: arc.flow });
           }
         }
@@ -24997,18 +25005,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!moved) break;
     }
 
-    // Pass 3 — commit positions and sync leader lines. Leader SVG overlay
-    // sits just BELOW the labels (z-index 189 vs labels' 190) so the label
-    // box covers the near end of the line cleanly. Style is modeled after
-    // the heatmap "Percentage Global Coverage" inspector (warm amber,
-    // dashed stroke, anchor dot) — see #semHeatInspectorSvg for the
-    // reference palette.
+    // Pass 3 — commit positions and sync leader lines. Leader SVG sits
+    // INSIDE the label container so both share the container's z-index:90
+    // stacking context — SVG at default z-index, labels at 190 →
+    // labels always paint above the lines. Style modeled after the
+    // heatmap "Percentage Global Coverage" inspector (warm amber, dashed
+    // stroke, anchor dot) — see #semHeatInspectorSvg for the palette.
     let svg = document.getElementById("flowNodeLeaders");
     if (!svg) {
       svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.id = "flowNodeLeaders";
-      svg.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:189;";
-      document.body.insertBefore(svg, container);
+      svg.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;";
+      container.insertBefore(svg, container.firstChild);
     }
     const vw = window.innerWidth, vh = window.innerHeight;
     svg.setAttribute("width", vw);
