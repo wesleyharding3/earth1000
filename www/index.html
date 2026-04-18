@@ -24553,6 +24553,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   function renderAC() {
     const el = document.getElementById('kwiAC');
+    if (!el) return;
     if (!kwiAcList.length) { el.classList.remove('open'); return; }
     el.innerHTML = kwiAcList.map((w, i) =>
       `<div class="kwi-ac-item${i===kwiAcIdx?' selected':''}"
@@ -24569,7 +24570,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   function kwiCloseAC() {
-    document.getElementById('kwiAC').classList.remove('open');
+    const el = document.getElementById('kwiAC');
+    if (el) el.classList.remove('open');
     kwiAcList = []; kwiAcIdx = -1;
   }
 
@@ -35167,7 +35169,9 @@ body.ticker-active .gTickerLabel {
   window.__hitTestReady     = () => loadGeoJson();
   window.__hitTestCountries = () => _countries;
   window.__hitTestThreshold = getZoomThresholdMi;
-  window.__screenToLatLon   = screenToLatLon;
+  // window.__screenToLatLon is assigned in the polygon layer IIFE below,
+  // where screenToLatLon is actually defined. Assigning it here was a
+  // ReferenceError that halted the rest of this IIFE at startup.
   window.__haversineMi      = haversineMi;
 
   // ── debug click-logging (off by default) ──────────────────────────────
@@ -35786,6 +35790,11 @@ body.ticker-active .gTickerLabel {
     }
     return null;
   }
+
+  // Expose screenToLatLon globally — the window-level city handler uses
+  // it for geodesic fan-out, and it was previously assigned (and failing)
+  // in the hit-test IIFE above where the local function didn't exist.
+  window.__screenToLatLon = screenToLatLon;
 
   window.__polygonLayer = {
     selectCountry,
