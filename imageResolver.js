@@ -25,31 +25,73 @@ function computeKeywordOverlap(assetKeywords, articleKeywords) {
   );
 }
 
+// ─── Scoring weights ────────────────────────────────────────────────────────
+// Content match dominates. Previous weights (country +22, tag_weight × 14,
+// keyword × 2.5, generic_category +6) let generic-category images win over
+// thematically correct but slightly less-decorated ones — the reason
+// "Buddhist temple on Australian mine" could happen. Rebalanced so:
+//   • location match (city/country) is strongest
+//   • content tags are the primary relevance signal
+//   • keyword overlap reinforces
+//   • generic_category is a weak nudge, not a carrying signal
+const W_CITY_MATCH            = 40;
+const W_COUNTRY_MATCH         = 40;   // was 22 — content-less country match should carry
+const W_COUNTRY_MISMATCH      = -50;
+const W_TAG_WEIGHT            = 30;   // was 14 — tags are the strongest content signal
+const W_PRIMARY_CATEGORY      = 20;   // was 10 — exact category is meaningful
+const W_GENERIC_CATEGORY      = 2;    // was 6 — too weak to drive assignment on its own
+const W_KEYWORD_OVERLAP_EACH  = 6;    // was 2.5 — per matched keyword
+const W_THEMATIC_MISMATCH     = -15;  // article has tags, candidate has zero overlap
+const W_REUSE_PENALTY_PER_USE = 0.5;  // small score haircut — NOT a sort key
+const REUSE_PENALTY_CAP       = 5;    // never pushes a correct reuse below a wrong fresh image
+
+// Minimum score for assignment. Below this, return null — no image is better
+// than a wrong image. Tune up to be pickier, down for more coverage.
+const MIN_ASSIGN_SCORE = 15;
+
 function scoreCandidate(candidate, context) {
   let score = 0;
 
-  if (context.cityId && candidate.city_id === context.cityId) score += 40;
-  if (context.countryId && candidate.country_id === context.countryId) score += 22;
+  if (context.cityId && candidate.city_id === context.cityId) score += W_CITY_MATCH;
+  if (context.countryId && candidate.country_id === context.countryId) score += W_COUNTRY_MATCH;
 
-  // Country-mismatch penalty: if both sides know their country and they differ,
-  // heavily penalize. This is the second line of defense behind the Tier 3 SQL
-  // hard-gate — catches anything that slips through on Tier 1/2 overflow.
+  // Country-mismatch hard penalty: belt-and-suspenders behind the Tier 3 SQL
+  // gate. Catches anything that slips through on Tier 1/2 overflow.
   if (
     context.countryId &&
     candidate.country_id &&
     candidate.country_id !== context.countryId
   ) {
-    score -= 50;
+    score += W_COUNTRY_MISMATCH;
   }
 
-  score += (candidate.tag_weight || 0) * 14;
+  const tagWeight = candidate.tag_weight || 0;
+  score += tagWeight * W_TAG_WEIGHT;
 
-  if (context.primaryCategories.includes(candidate.primary_category)) score += 10;
-  if (context.genericCategories.includes(candidate.generic_category)) score += 6;
-
+  // Thematic-mismatch penalty: when the article has tags but the candidate
+  // has zero tag overlap AND no category/keyword match, it's almost certainly
+  // thematically wrong. Penalize so it loses to even a reused correct image.
   const overlap = computeKeywordOverlap(candidate.keywords || [], context.keywords);
-  score += overlap * 2.5;
+  const hasPrimaryMatch  = context.primaryCategories.includes(candidate.primary_category);
+  const hasGenericMatch  = context.genericCategories.includes(candidate.generic_category);
+  const hasAnyContentSignal = tagWeight > 0 || overlap > 0 || hasPrimaryMatch;
+  if (context.tagIds && context.tagIds.length > 0 && !hasAnyContentSignal) {
+    score += W_THEMATIC_MISMATCH;
+  }
+
+  if (hasPrimaryMatch) score += W_PRIMARY_CATEGORY;
+  if (hasGenericMatch) score += W_GENERIC_CATEGORY;
+
+  score += overlap * W_KEYWORD_OVERLAP_EACH;
   score += Math.max(candidate.priority || 0, 0);
+
+  // Soft reuse penalty: -0.5 per prior use, capped at -5. Replaces the old
+  // `usage_count ASC` sort tiebreak that forced us to pick unused-but-wrong
+  // images over used-but-correct ones. Correctness wins; freshness is a
+  // secondary preference rather than a hard rule.
+  const uses = candidate.usage_count || 0;
+  const reusePenalty = Math.min(uses, REUSE_PENALTY_CAP / W_REUSE_PENALTY_PER_USE) * W_REUSE_PENALTY_PER_USE;
+  score -= reusePenalty;
 
   return {
     ...candidate,
@@ -228,13 +270,16 @@ async function queryPool(poolWhere, poolParams, scoringContext, tagIds, client) 
 }
 
 async function findBestCandidate(context, client) {
-  const defaultGenericCategories = ["general", "world", "global"];
+  // NOTE: the old default fallback list ["general","world","global"] used to
+  // be OR'd into the Tier 3 SQL gate, which meant any image with
+  // generic_category='general' was eligible for any article — producing
+  // "Buddhist temple on Australian mine" failures when content-specific
+  // images weren't available. Removed. Generic categories now only flow
+  // through when the article's own tags map to them via
+  // image_category_fallbacks (the `fallbackCategories` source).
   const primaryCategories = normalizeStringList(context.tags.map(tag => tag.name));
   const fallbackCategories = await fetchFallbackCategories(primaryCategories, client);
-  const genericCategories = normalizeStringList([
-    ...fallbackCategories,
-    ...defaultGenericCategories,
-  ]);
+  const genericCategories = normalizeStringList(fallbackCategories);
   const keywords = normalizeStringList(context.keywords);
   const tagIds   = context.tags.map(tag => tag.id);
 
@@ -263,12 +308,18 @@ async function findBestCandidate(context, client) {
     if (poolRows.length) usedTier = "country";
   }
 
-  // ── Tier 3: tag/keyword/generic (final fallback) ─────────────
+  // ── Tier 3: tag/keyword/category (final fallback) ─────────────
   //
   // Hard country-gate: when the article has a country_id, any candidate
   // whose country_id is non-null MUST match. Location-agnostic assets
   // (country_id IS NULL) are still eligible. This SQL filter is the
   // first line of defense; scoreCandidate adds a -50 penalty as backup.
+  //
+  // The old "generic_category IN ('general','world','global')" OR-branch
+  // was removed — it was the gate that let Buddhist temples into Australian
+  // mine articles. Now a candidate must match at least one of: tag / keyword /
+  // primary_category / mapped-fallback generic_category. Nothing gets in on
+  // "general" alone.
   if (!poolRows.length) {
     const { rows } = await client.query(
       `SELECT
@@ -280,21 +331,20 @@ async function findBestCandidate(context, client) {
        LEFT JOIN image_asset_tags iat ON iat.image_id = ia.id
        WHERE ia.is_active = TRUE
          AND (
-           $6::int IS NULL
+           $5::int IS NULL
            OR ia.country_id IS NULL
-           OR ia.country_id = $6::int
+           OR ia.country_id = $5::int
          )
          AND (
            (COALESCE(array_length($1::int[], 1), 0) > 0 AND iat.tag_id = ANY($1::int[]))
            OR (COALESCE(array_length($2::text[], 1), 0) > 0 AND ia.keywords && $2::text[])
            OR (COALESCE(array_length($3::text[], 1), 0) > 0 AND ia.primary_category = ANY($3::text[]))
            OR (COALESCE(array_length($4::text[], 1), 0) > 0 AND ia.generic_category = ANY($4::text[]))
-           OR ia.generic_category = ANY($5::text[])
          )
        GROUP BY ia.id
        ORDER BY ia.priority DESC, ia.usage_count ASC, ia.last_used_at ASC NULLS FIRST, RANDOM()
        LIMIT 250`,
-      [tagIds, keywords, primaryCategories, genericCategories, defaultGenericCategories, countryId || null]
+      [tagIds, keywords, primaryCategories, genericCategories, countryId || null]
     );
     poolRows = rows;
     usedTier = "generic";
@@ -303,6 +353,10 @@ async function findBestCandidate(context, client) {
   if (!poolRows.length) return null;
 
   // ── Score the winning pool ────────────────────────────────────
+  // usage_count is baked into score via the soft reuse penalty in
+  // scoreCandidate — it's no longer a hard tiebreaker here. last_used_at
+  // remains as a secondary tiebreak: when scores are truly equal, prefer
+  // the image that's been idle longer.
   const scored = poolRows
     .map(candidate => scoreCandidate(candidate, {
       cityId,
@@ -310,16 +364,25 @@ async function findBestCandidate(context, client) {
       primaryCategories,
       genericCategories,
       keywords,
+      tagIds,
     }))
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      if ((a.usage_count || 0) !== (b.usage_count || 0)) return (a.usage_count || 0) - (b.usage_count || 0);
       const aLast = a.last_used_at ? new Date(a.last_used_at).getTime() : 0;
       const bLast = b.last_used_at ? new Date(b.last_used_at).getTime() : 0;
       return aLast - bLast;
     });
 
-  return { ...scored[0], _tier: usedTier };
+  const best = scored[0];
+
+  // Minimum-score floor: below this threshold we've failed to find a
+  // thematically relevant image. Better to return null and let the UI
+  // render an image-less card than pin something unrelated. If you're
+  // seeing too many image-less cards after deploy, lower MIN_ASSIGN_SCORE
+  // (module constant above) — don't hack around it here.
+  if (!best || best.score < MIN_ASSIGN_SCORE) return null;
+
+  return { ...best, _tier: usedTier };
 
 }
 

@@ -83,8 +83,40 @@ async function saveCheckpoint(lastId, done, failed) {
 
 // ─── Main ──────────────────────────────────────────────────────
 async function main() {
-  const dryRun = process.argv.includes("--dry-run");
-  const reset  = process.argv.includes("--reset");
+  const dryRun     = process.argv.includes("--dry-run");
+  let   reset      = process.argv.includes("--reset");
+  const redoWeak   = process.argv.includes("--redo-weak");
+
+  // --redo-weak: delete any existing article_image_assignments whose
+  // confidence is below MIN_CONFIDENCE (default 15, override with
+  // --min-confidence=N), then force a full re-pass. Use this after
+  // ingesting new images or changing scoring weights — articles that
+  // currently have a weak/wrong assignment will be re-evaluated against
+  // the new pool / new scoring. Without this flag the backfill only
+  // processes articles that have NO assignment at all, so existing bad
+  // assignments stick forever.
+  const minConfArg = process.argv.find(a => a.startsWith("--min-confidence="));
+  const MIN_CONFIDENCE = minConfArg ? parseFloat(minConfArg.split("=")[1]) : 15;
+
+  if (redoWeak) {
+    console.log(`\n🧹 --redo-weak: clearing article_image_assignments with confidence < ${MIN_CONFIDENCE}...`);
+    if (dryRun) {
+      const { rows } = await pool.query(
+        `SELECT COUNT(*) AS n FROM article_image_assignments WHERE confidence < $1`,
+        [MIN_CONFIDENCE]
+      );
+      console.log(`   [dry-run] would clear ${rows[0].n} weak assignments`);
+    } else {
+      const { rowCount } = await pool.query(
+        `DELETE FROM article_image_assignments WHERE confidence < $1`,
+        [MIN_CONFIDENCE]
+      );
+      console.log(`   cleared ${rowCount} weak assignments`);
+    }
+    // Force reset so the checkpoint doesn't skip articles whose weak
+    // assignments we just deleted (they'd otherwise be below last_id).
+    reset = true;
+  }
 
   await ensureCheckpointTable();
   const checkpoint = await loadCheckpoint(reset);
