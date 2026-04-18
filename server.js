@@ -6318,10 +6318,9 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
                rt.last_in_country_at DESC,
                rt.last_updated_at DESC
     `, [iso, String(days), limit]);
-      // Override hero_iso_code with subject country from geographic_scope
-      const geoIsoMap = await resolveGeoScopeIsoMap(rows);
+      // Override hero_iso_code with subject country parsed from geographic_scope text
       for (const row of rows) {
-        const subjectIso = pickGeoScopeIso(row.geographic_scope, geoIsoMap);
+        const subjectIso = await pickCountryIsoFromText(row.geographic_scope);
         if (subjectIso) row.hero_iso_code = subjectIso;
       }
       return rows;
@@ -6383,8 +6382,7 @@ app.get("/api/threads/id/:id", async (req, res) => {
     `, [threadId]);
 
     const hero = heroRows[0] || {};
-    const geoIsoMap = await resolveGeoScopeIsoMap([thread]);
-    const subjectIso = pickGeoScopeIso(thread.geographic_scope, geoIsoMap);
+    const subjectIso = await pickCountryIsoFromText(thread.geographic_scope);
     res.json({
       ...thread,
       latest_published_at: thread.last_updated_at,

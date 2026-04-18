@@ -310,16 +310,61 @@ async function run() {
           continue;
         }
 
+        // ── Structured-schema validation (series vs episode contract) ──
+        // The Claude prompt demands arc_type / enduring_subject /
+        // representative_event_today / expected_arc_duration_months /
+        // primary_entities. Any output failing these checks is silently
+        // dropped — this replaces the regex-wall arms race with a schema
+        // contract that's structurally impossible to abuse.
+        const ALLOWED_ARC_TYPES = new Set([
+          'conflict','crisis','election_cycle','authoritarian_consolidation',
+          'democratic_transition','diplomatic_episode','trade_dispute',
+          'policy_shift','disaster_response','revolution_or_uprising',
+          'peace_process','investigation_or_trial'
+        ]);
+        if (!def.arc_type || !ALLOWED_ARC_TYPES.has(String(def.arc_type).toLowerCase())) {
+          console.log(`\n   🚫 Rejected "${def.title}" (missing/invalid arc_type="${def.arc_type}")`);
+          continue;
+        }
+
+        const durMonths = parseInt(def.expected_arc_duration_months, 10);
+        if (!Number.isFinite(durMonths) || durMonths < 3) {
+          console.log(`\n   🚫 Rejected "${def.title}" (expected_arc_duration_months=${def.expected_arc_duration_months} — too short, that's a Thread)`);
+          continue;
+        }
+
+        if (!Array.isArray(def.primary_entities) || def.primary_entities.filter(Boolean).length < 1) {
+          console.log(`\n   🚫 Rejected "${def.title}" (no primary_entities)`);
+          continue;
+        }
+
+        // Series-vs-episode check: enduring_subject must be meaningfully
+        // different from representative_event_today. If they share >50% of
+        // non-stopword tokens, Claude has named the episode not the series.
+        const tokenize = (s) => new Set(
+          String(s || '').toLowerCase()
+            .replace(/[^\w\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
+        );
+        const subj = tokenize(def.enduring_subject);
+        const ep   = tokenize(def.representative_event_today);
+        if (subj.size < 2 || ep.size < 2) {
+          console.log(`\n   🚫 Rejected "${def.title}" (enduring_subject or representative_event_today too thin)`);
+          continue;
+        }
+        let overlap = 0;
+        for (const t of subj) if (ep.has(t)) overlap++;
+        const overlapPct = overlap / Math.min(subj.size, ep.size);
+        if (overlapPct > 0.5) {
+          console.log(`\n   🚫 Rejected "${def.title}" (series≈episode: overlap=${Math.round(overlapPct*100)}%)`);
+          continue;
+        }
+
         const cat = String(def.primary_category || '').toLowerCase();
         const ALLOWED_CATS = new Set(['politics','economy','military','diplomacy','environment','technology','conflict','security']);
         if (cat && !ALLOWED_CATS.has(cat)) {
           console.log(`\n   🚫 Rejected "${def.title}" (category=${cat})`);
-          continue;
-        }
-
-        // Reject generic topic buckets that slipped past the prompt
-        if (isGenericTopicBucket(def.title)) {
-          console.log(`\n   🚫 Rejected generic bucket "${def.title}"`);
           continue;
         }
 
@@ -712,67 +757,91 @@ async function claudeCreateTimelines(articles, existingTimelines) {
     scope: t.scope,
   }));
 
-  const prompt = `You are creating NEW timeline arcs for a GEOPOLITICS app. Timelines record HISTORY AS IT UNFOLDS — named, dated, traceable events that span weeks, months, or years and have a clear "what happens next" trajectory. They are NOT topic summaries, NOT analytical observations, and NOT passive "amid"/"reveals"/"parallels" framings.
+  const prompt = `You are creating NEW timeline arcs for a GEOPOLITICS app. A timeline is NOT a news story — it is the *container* a news story belongs inside. Today's events are episodes; the timeline is the series.
 
-Think: Ukraine-Russia War. Gaza Genocide. Israel-Lebanon Ceasefire. Sudan Civil War. Each one names a specific historical event with a beginning, ongoing developments, and an eventual end. A historian a decade from now would recognize the title as a chapter heading.
+If a user reads "Guelleh wins sixth term in Djibouti" today, the timeline this article belongs to is "Djibouti Authoritarian Continuity," not "Guelleh Sixth Term Election." The election is an episode; the authoritarian continuity is the series.
 
-Your job: group unmatched articles into genuinely NEW timeline arcs that pass the central-event test below.
+Your job: identify the *series* that the provided articles are episodes of. You will output structured objects the backend validates — any output failing validation is silently discarded. Be conservative: return an empty array if no article cluster clearly belongs to a real long-running arc.
 
 ═══ EXISTING TIMELINES (DO NOT DUPLICATE) ═══
 ${JSON.stringify(existingInfo, null, 1)}
 
-═══ THE CENTRAL EVENT TEST (every timeline must pass ALL of these) ═══
-1. NAMED EVENT: There is a specific, nameable event or crisis at the center — a war, an election, a coup, a treaty, a ceasefire, a disaster, an indictment, a mass protest movement, a sustained military campaign. NOT a "situation," NOT a "trend," NOT an "ongoing concern."
-2. CONCRETE ACTORS: At least one specific named actor (country, leader, organization, faction) is doing something — not "tech platforms face X" or "global Y crisis."
-3. ACTIVE VERB: The title describes something happening, not an analytical observation. "Russia Invades Ukraine" ✅. "US Governance Crisis Parallels Soviet Collapse" ❌ (analytical/passive).
-4. TRAJECTORY: A reasonable person could ask "what happens next?" and expect future articles to answer. One-off announcements, single revelations, and verdicts on past events fail this test unless they kick off a longer arc.
-5. HISTORICAL WEIGHT: A decade from now, would this be remembered as a discrete event? If it reads like a generic op-ed topic, it fails.
+═══ OUTPUT SCHEMA — return an array of objects with ALL these fields ═══
+{
+  "arc_type":                       "conflict | crisis | election_cycle | authoritarian_consolidation | democratic_transition | diplomatic_episode | trade_dispute | policy_shift | disaster_response | revolution_or_uprising | peace_process | investigation_or_trial",
+  "primary_countries":              ["ISO_A2", ...],         // uppercase ISO-3166 alpha-2 codes only
+  "primary_entities":               ["name", ...],           // 1-6 named people, orgs, or factions central to the arc
+  "enduring_subject":               "...",                   // 8-20 words. THE SERIES. What is STILL happening in 12 months.
+  "representative_event_today":     "...",                   // 8-20 words. TODAY'S EPISODE. What happened this week that triggered these articles.
+  "expected_arc_duration_months":   3-120,                   // integer. Minimum 3 — anything shorter is a Thread, not a Line.
+  "title":                          "2-6 words, names the SERIES not the EPISODE",
+  "description":                    "Two sentences: (1) what is the ongoing arc; (2) what is the current trajectory.",
+  "scope":                          "snake_case_slug",
+  "article_ids":                    [ids...],                // at least 3 article IDs from the input
+  "anchor_article_id":              id,
+  "primary_category":               "politics | economy | military | diplomacy | environment | technology | conflict | security",
+  "geographic_scope":               "global | regional",
+  "importance":                     5-10,
+  "keywords":                       ["5-10 keywords"]
+}
+
+═══ THE SERIES-VS-EPISODE TEST ═══
+A correct timeline output has an "enduring_subject" that is meaningfully DIFFERENT from the "representative_event_today." If they overlap by more than ~50%, you have named the episode, not the series.
+
+✅ series vs episode:
+  enduring_subject: "Bangladesh political transition after Sheikh Hasina's fall"
+  representative_event_today: "City corporation elections launch under interim government"
+
+✅ series vs episode:
+  enduring_subject: "Djibouti's long-running single-party dominance under Guelleh"
+  representative_event_today: "Guelleh claims sixth term with regional support"
+
+✅ series vs episode:
+  enduring_subject: "Nordic far-right political normalization across coalition governments"
+  representative_event_today: "Swedish Liberals explore coalition with Sweden Democrats"
+
+✅ series vs episode:
+  enduring_subject: "Russian surveillance-state expansion tightening control over citizens and critics"
+  representative_event_today: "Russian tax authority gains new cross-agency data access"
+
+❌ series-as-episode — DO NOT DO THIS:
+  enduring_subject: "City corporation electoral process in Bangladesh"
+  representative_event_today: "Bangladesh city corporation elections underway"
+  (these are the same sentence — this is the episode masquerading as a series)
+
+❌ series-as-episode:
+  enduring_subject: "Guelleh wins sixth term with regional support"
+  representative_event_today: "Guelleh wins sixth term"
+  (again, episode labeled as series — kill this)
+
+═══ ARC-TYPE GUIDANCE ═══
+• conflict — active hostilities between armed actors (Gaza, Ukraine, Sudan)
+• crisis — acute ongoing emergency, humanitarian or political (Haiti gang control, Venezuela exodus)
+• election_cycle — named electoral contest spanning weeks/months (US 2024 election, Mexico 2024 general)
+• authoritarian_consolidation — ongoing democratic backslide or power concentration (Russia under Putin, Nicaragua under Ortega)
+• democratic_transition — post-autocracy/coup reconstruction (Syria post-Assad, Bangladesh post-Hasina)
+• diplomatic_episode — named negotiation or rupture (Iran nuclear talks, Venezuela-Guyana Essequibo dispute)
+• trade_dispute — named tariff regime or sanctions cycle (US-China tech war, EU-China EV tariffs)
+• policy_shift — single-country major policy reorientation sustained over time (Argentina Milei austerity, Argentina dollarization debate)
+• disaster_response — named disaster and its political aftermath (Turkey 2023 earthquake recovery, Libya flood crisis)
+• revolution_or_uprising — mass protest movement with political demands (Iran women-life-freedom, Myanmar resistance)
+• peace_process — named negotiation toward ending a conflict (Colombia FARC, Sudan peace talks)
+• investigation_or_trial — named legal proceeding with political consequence (Netanyahu trial, ICC proceedings)
 
 ═══ HARD REJECTIONS ═══
-• Sports, entertainment, local crime, product launches, lifestyle, business deals, single corporate actions
-• Abstract global categories: "Global Energy Transition", "Climate Crisis", "AI Regulation", "Global Health", "Food Security", "Cybersecurity Standards"
-• Topic buckets dressed up with a country: "X Country Energy Policy", "Y Region Tech Sector Growth"
-• Passive/analytical framings: titles containing "Reveals Potential," "Parallels," "Amid X Crisis," "Faces Pressure," "Sparks Debate," "Raises Questions," "Highlights," "Tensions Over," "Discussions on"
-• Titles starting with "Global," "International," "Worldwide" followed by an abstract noun
-• Titles framing a routine institutional process as a crisis ("Country X Election Process Underway", "Y Constitutional Referendum Underway")
-• Op-ed-style framings ("Y Crisis Demands Accountability", "Z Sector Faces Growing Pressure")
+Do not create a timeline when the cluster is:
+• Sports, entertainment, local crime, product launches, lifestyle
+• An abstract theme ("Global Energy Transition", "Climate Crisis", "AI Regulation")
+• A routine institutional process not attached to a larger arc (ordinary budget passage, scheduled municipal election)
+• A one-off announcement, single verdict, or statistic release with no expected follow-on
+• A news event likely resolved within 3 months
 
-═══ EXAMPLES — STUDY THESE CAREFULLY ═══
-✅ VALID — these name historical events with trajectory:
-  • "Ukraine-Russia War" — ongoing war, clear trajectory
-  • "Gaza Genocide" — specific crisis, traceable events
-  • "Israel-Lebanon Ceasefire" — named event with aftermath to track
-  • "Sudan Civil War" — named conflict, ongoing
-  • "Hungary Orbán Defeat" — specific election outcome, political aftermath
-  • "Mizoram Hmar Peace Deal" — specific signed agreement
-  • "Cyclone Vaianu Strikes New Zealand" — specific named disaster
-  • "Mongolia PM Resignation" — concrete event, succession to track
-
-❌ INVALID — kill these and ones like them:
-  • "US Governance Crisis: Trump Administration Parallels Soviet Collapse" — analytical observation, not an event
-  • "Nicaragua Secret US Contacts Reveal Potential Government Pressure" — passive "reveals potential," vague
-  • "Argentina Approves Mining Near Glaciers Amid Water Crisis" — single approval + "amid" framing = no arc
-  • "Tech Platforms Face AI Abuse and Accountability Crisis" — abstract topic, no actor doing anything
-  • "Climate Crisis: Extreme Weather, Water Security, and Environmental Disasters" — topic bucket
-  • "Global Maritime Governance Crisis" — abstract global X
-  • "Global Humanitarian Worker Deaths Triple" — statistic, not an event
-  • "Bangladesh City Corporation Electoral Process Underway" — routine process
-  • "US Heating Cost Crisis Winter 2026" — seasonal/topic
-  • "Minimum Wage Increases Across Multiple Countries" — disconnected events sharing a theme
-
-═══ REQUIREMENTS ═══
-• Title: 2-6 words. Name the EVENT, not the topic. Use active framing.
-• Scope: stable snake_case slug ("gaza_genocide", "ukraine_russia_war")
-• Only create if 3+ articles clearly belong to the same specific event arc
-• importance: 5-10 (10 = world-historic war/genocide; 8-9 = major conflict/crisis; 6-7 = significant national event; 5 = regional inflection point)
-
-If articles don't pass the central-event test, DO NOT force a timeline. Return an empty array [].
+If no cluster clearly passes, return an empty array [].
 
 ═══ UNMATCHED ARTICLES ═══
 ${JSON.stringify(articleData, null, 1)}
 
-Return ONLY valid JSON array, no explanation:
-[{"title":"...", "description":"Two sentences naming the event and stating its current trajectory.", "scope":"snake_slug", "article_ids":[ids], "anchor_article_id":id, "primary_category":"politics|economy|military|diplomacy|environment|technology|conflict|security", "geographic_scope":"global|regional", "importance":7, "keywords":["5-10 keywords"]}]`;
+Return ONLY valid JSON array, no explanation or markdown.`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
