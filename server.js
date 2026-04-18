@@ -17,7 +17,7 @@ const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 const { extractArticleSignals } = require("./sentimentLexicon");
-const { findFallbackImage, findBucketImage } = require("./imageFallback");
+const { findBucketImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
 const {
   logEditorEvent,
@@ -5787,9 +5787,7 @@ app.get("/api/timelines/latest", async (req, res) => {
           Promise.all(_noImgTl.map(async (t) => {
             try {
               const bucketUrl = await findBucketImage(t, pool);
-              if (bucketUrl) { t.hero_image_url = bucketUrl; return; }
-              const wikiUrl = await findFallbackImage(t);
-              if (wikiUrl) t.hero_image_url = wikiUrl;
+              if (bucketUrl) t.hero_image_url = bucketUrl;
             } catch (e) { /* silent */ }
           })),
           new Promise(r => setTimeout(r, 6000))
@@ -6629,9 +6627,7 @@ app.get("/api/threads/latest", async (req, res) => {
         Promise.all(_noImg.map(async (t) => {
           try {
             const bucketUrl = await findBucketImage(t, pool);
-            if (bucketUrl) { t.hero_image_url = bucketUrl; return; }
-            const wikiUrl = await findFallbackImage(t);
-            if (wikiUrl) t.hero_image_url = wikiUrl;
+            if (bucketUrl) t.hero_image_url = bucketUrl;
           } catch (e) { /* silent */ }
         })),
         new Promise(r => setTimeout(r, 6000))
@@ -9211,75 +9207,6 @@ async function _warmFeedCaches() {
 }
 setTimeout(_warmFeedCaches, 5000);
 setInterval(_warmFeedCaches, 90_000).unref?.();
-
-// ── Top-stories pre-warmer ──────────────────────────────────────────────────
-// Per-thread/timeline detail queries (flow arcs, timeline of articles, panels,
-// entity-mention joins) do expensive multi-table joins. On a cold Postgres
-// buffer cache these can exceed the 45s statement timeout, producing the
-// "fails first, works second" pattern. This warmer pulls the top-N active
-// threads and timelines every 4 min, hits each of their hot endpoints over
-// localhost, and populates both the in-process ttlCache and Cloudflare's
-// edge cache. Endpoint TTLs are 60–300s; we refresh every 240s so the
-// cache never fully expires.
-//
-// Endpoints warmed per item:
-//   threads:    /api/flows/thread/:id, /api/threads/:id/timeline, /api/threads/:threadId/panels, /api/threads/id/:id
-//   timelines:  /api/flows/timeline/:id, /api/timelines/:id/articles
-//
-// Cost: ~20 threads × 4 endpoints + 20 timelines × 2 endpoints = ~120 HTTP
-// hits per cycle. Serialized with 45s cap per request, pooled via the single
-// pg Pool. Typically completes in ~60–90s — still well under the 240s cycle.
-async function _warmFlowArcs() {
-  const http = require('http');
-  const base = `http://localhost:${PORT}`;
-  try {
-    const { rows: threads } = await pool.query(`
-      SELECT id FROM story_threads
-      WHERE status IN ('active','cooling')
-      ORDER BY importance DESC NULLS LAST, last_updated_at DESC
-      LIMIT 20
-    `);
-    const { rows: timelines } = await pool.query(`
-      SELECT id FROM story_timelines
-      WHERE status = 'active'
-      ORDER BY importance DESC NULLS LAST, last_updated_at DESC
-      LIMIT 20
-    `);
-    const urls = [
-      // Thread detail: flow arcs + timeline articles + panels + summary row
-      ...threads.flatMap(t => [
-        `${base}/api/flows/thread/${t.id}`,
-        `${base}/api/threads/${t.id}/timeline`,
-        `${base}/api/threads/${t.id}/panels`,
-        `${base}/api/threads/id/${t.id}`,
-      ]),
-      // Timeline detail: flow arcs + articles
-      ...timelines.flatMap(t => [
-        `${base}/api/flows/timeline/${t.id}`,
-        `${base}/api/timelines/${t.id}/articles`,
-      ]),
-    ];
-    // Warm serially with a small gap — DB statement_timeout is 45s, and we'd
-    // rather a single slow warm not cascade into a pool-exhaustion event.
-    for (const url of urls) {
-      try {
-        await new Promise((resolve, reject) => {
-          const r = http.get(url, res => { res.resume(); res.on('end', resolve); });
-          r.on('error', reject);
-          r.setTimeout(45000, () => { r.destroy(); reject(new Error('timeout')); });
-        });
-      } catch (e) {
-        console.warn('[flow-warm]', url, e.message);
-      }
-    }
-  } catch (err) {
-    console.warn('[flow-warm] fetch-top failed:', err.message);
-  }
-}
-// Kick off 20s after boot so the main warmers and article listener have
-// settled, then refresh every 4 min (slightly ahead of the 5-min TTL).
-setTimeout(_warmFlowArcs, 20_000);
-setInterval(_warmFlowArcs, 240_000).unref?.();
 
 // ── World Leaders tweets (oEmbed, admin-curated) ────────────────────────
 const { processTweetUrls } = require('./twitterFetcher');

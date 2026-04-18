@@ -1403,18 +1403,6 @@
       box-shadow: 0 0 10px #ffffffb3;
     }
 
-    .sidebarLangSelect {
-      width: 100%; margin-top: 8px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 7px; padding: 7px 10px;
-      color: rgba(255,255,255,0.8); font-size: 12px;
-      outline: none; cursor: pointer;
-      -webkit-appearance: none; appearance: none;
-    }
-    .sidebarLangSelect:focus { border-color: rgba(96,200,255,0.4); }
-    .sidebarLangSelect option { background: #0a0f1e; }
-
     .settingsSlider::-moz-range-thumb {
       width: 13px; height: 13px;
       border: none;
@@ -9907,9 +9895,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         <div class="viewOption" data-mode="regions">
           <span class="viewOptionDot"></span>Regions
         </div>
-        <div class="viewOption" data-mode="transportation">
-          <span class="viewOptionDot"></span>Transportation
-        </div>
       </div>
     </div>
     <!-- Heatmap toggle button -->
@@ -10157,60 +10142,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         </div>
       </div>
 
-      <!-- Transportation view -->
-      <div class="sidebarPanel" id="sidebarPanelTransportation">
-        <div class="sidebarViewBadge">
-          <div class="sidebarViewBadgeDot"></div>
-          <span class="sidebarViewBadgeLabel">Transportation</span>
-        </div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Layers</div>
-          <div class="layerList">
-            <div class="layerOpt active" id="transLayerRail" data-trans-layer="rail">
-              <div class="layerDot"></div>
-              <span class="layerLabel">Rail Networks</span>
-            </div>
-            <div class="layerOpt" id="transLayerFlight" data-trans-layer="flight">
-              <div class="layerDot"></div>
-              <span class="layerLabel">Flight Paths</span>
-            </div>
-            <div class="layerOpt" id="transLayerShipping" data-trans-layer="shipping">
-              <div class="layerDot"></div>
-              <span class="layerLabel">Shipping Lanes</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="sidebarDivider"></div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Appearance</div>
-          <div class="sliderRow">
-            <div class="sliderLabelRow">
-              <span class="sliderLabel">Opacity</span>
-              <span class="sliderValue" id="transOpacityVal">80%</span>
-            </div>
-            <input class="settingsSlider" type="range" id="transOpacitySlider"
-                   min="0" max="1" step="0.01" value="0.8" />
-          </div>
-        </div>
-
-        <div class="sidebarDivider"></div>
-
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Globe Motion</div>
-          <div class="sliderRow">
-            <div class="sliderLabelRow">
-              <span class="sliderLabel">Ambient Rotation</span>
-              <span class="sliderValue" id="ambientValTransportation">—</span>
-            </div>
-            <input class="settingsSlider" type="range" id="ambientSliderTransportation"
-                   min="0" max="0.0020" step="0.00005" value="0.0004" />
-          </div>
-        </div>
-      </div>
-
       <!-- Default panel shown before any view mode is selected -->
       <div class="sidebarPanel active" id="sidebarPanelDefault">
         <div class="sidebarViewBadge">
@@ -10264,14 +10195,6 @@ window.sourceBiasBadgeHTML = function(bias) {
               <span class="layerLabel">Show News Ticker</span>
             </div>
           </div>
-        </div>
-        <div class="sidebarDivider"></div>
-        <div class="sidebarSection">
-          <div class="sidebarSectionLabel">Display Language</div>
-          <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-bottom:6px;line-height:1.4;">
-            Translate buttons convert articles into this language
-          </div>
-          <select class="sidebarLangSelect" id="userLangSelect"></select>
         </div>
       </div>
 
@@ -12871,21 +12794,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const v = document.getElementById(vid);
         if (v) v.textContent = formatSpeed(parseFloat(document.getElementById("ambientSlider").value));
       });
-
-      // ── User display language preference ─────────────────────────────────────────
-      (function initUserLangSelect() {
-        const sel = document.getElementById('userLangSelect');
-        if (!sel) return;
-        const current = localStorage.getItem('__userTargetLang') || 'EN-US';
-        sel.innerHTML = SUPPORTED_LANGUAGES.map(l =>
-          `<option value="${l.code}" ${l.code === current ? 'selected' : ''}>${l.label}</option>`
-        ).join('');
-        sel.addEventListener('change', () => {
-          localStorage.setItem('__userTargetLang', sel.value);
-          // Re-render open panel if visible to update translate buttons
-          if (typeof renderCurrentPanel === 'function') renderCurrentPanel();
-        });
-      })();
 
       const biomeOverlayToggles = [
         document.getElementById("biomeOverlayToggleCountry"),
