@@ -56,9 +56,17 @@ async function normalizeRecentKeywords(options) {
     throw new Error('normalizeRecentKeywords requires either scope.hours or scope.threadIds+windowStart+windowEnd');
   }
 
+  // Provider preference: Claude Haiku FIRST when available, DeepL only as a
+  // fallback. Keywords are short strings (5–20 chars) where DeepL's
+  // per-character billing stacks up fast — ~576 k chars/day measured on the
+  // DEEPL_API_KEY when Claude was erroneously demoted. Claude Haiku is
+  // dramatically cheaper at this input size and returns JSON already in the
+  // shape we need. DeepL remains wired so that if ANTHROPIC_API_KEY is
+  // missing the pipeline still translates, just at higher cost.
   const translator = deeplApiKey
     ? new deepl.Translator(deeplApiKey, { serverUrl: 'https://api.deepl.com' })
     : null;
+  const primaryProvider = anthropicClient ? 'claude' : (translator ? 'deepl' : 'none');
 
   const { sql, params } = buildCandidateQuery({
     scope,
@@ -70,7 +78,7 @@ async function normalizeRecentKeywords(options) {
   const { rows } = await pool.query(sql, params);
   if (!rows.length) {
     return {
-      provider: translator ? 'deepl' : anthropicClient ? 'claude' : 'none',
+      provider: primaryProvider,
       candidateKeywords: 0,
       translatedChars: 0,
       updatedKeywords: 0,
@@ -95,7 +103,7 @@ async function normalizeRecentKeywords(options) {
 
   if (!pending.length) {
     return {
-      provider: translator ? 'deepl' : anthropicClient ? 'claude' : 'none',
+      provider: primaryProvider,
       candidateKeywords: rows.length,
       translatedChars: 0,
       updatedKeywords: 0,
@@ -106,8 +114,36 @@ async function normalizeRecentKeywords(options) {
   let updatedKeywords = 0;
   let updatedRows = 0;
 
+  // Primary path: Claude Haiku. Handles every pending keyword regardless
+  // of script (Latin, CJK, Cyrillic, Arabic, …) — the SQL candidate
+  // filter already narrowed to non-English-labelled or non-ASCII rows,
+  // and the Claude prompt returns null for untranslatable fragments.
+  if (anthropicClient) {
+    logger.log?.(`   Claude normalizing ${pending.length} recent keywords...`);
+    for (let i = 0; i < pending.length; i += 60) {
+      const batch = pending.slice(i, i + 60);
+      try {
+        const accepted = await normalizeBatchWithClaude(anthropicClient, batch.map((item) => item.keyword));
+        const stats = await persistTranslations(pool, accepted);
+        updatedKeywords += stats.updatedKeywords;
+        updatedRows += stats.updatedRows;
+      } catch (err) {
+        logger.warn?.(`[keywordNormalizer] Claude batch failed: ${err.message}`);
+      }
+    }
+
+    return {
+      provider: 'claude',
+      candidateKeywords: rows.length,
+      translatedChars,
+      updatedKeywords,
+      updatedRows
+    };
+  }
+
+  // Fallback: DeepL (only reached when ANTHROPIC_API_KEY is unset).
   if (translator) {
-    logger.log?.(`   DeepL normalizing ${pending.length} recent keywords...`);
+    logger.log?.(`   DeepL normalizing ${pending.length} recent keywords (Claude unavailable)...`);
     for (let i = 0; i < pending.length; i += batchSize) {
       const batch = pending.slice(i, i + batchSize);
       const originals = batch.map((item) => item.keyword);
@@ -136,31 +172,6 @@ async function normalizeRecentKeywords(options) {
       provider: 'deepl',
       candidateKeywords: rows.length,
       translatedChars,
-      updatedKeywords,
-      updatedRows
-    };
-  }
-
-  if (anthropicClient) {
-    const claudePending = pending.filter((item) => isNonAscii(item.keyword));
-    logger.log?.(`   Claude normalizing ${claudePending.length} recent keywords...`);
-
-    for (let i = 0; i < claudePending.length; i += 60) {
-      const batch = claudePending.slice(i, i + 60);
-      try {
-        const accepted = await normalizeBatchWithClaude(anthropicClient, batch.map((item) => item.keyword));
-        const stats = await persistTranslations(pool, accepted);
-        updatedKeywords += stats.updatedKeywords;
-        updatedRows += stats.updatedRows;
-      } catch (err) {
-        logger.warn?.(`[keywordNormalizer] Claude batch failed: ${err.message}`);
-      }
-    }
-
-    return {
-      provider: 'claude',
-      candidateKeywords: rows.length,
-      translatedChars: claudePending.reduce((sum, item) => sum + item.keyword.length, 0),
       updatedKeywords,
       updatedRows
     };
