@@ -2895,15 +2895,20 @@ body.flow-maximized #flowArcList {
 /* Inside the expanded article card, the translate pill is repositioned
    as a small square stacked directly above the page icon, so the two
    no longer overlap. Specificity beats the base .articleTranslateBtn
-   absolute rule. */
+   absolute rule; min/max width+height lock the 1:1 aspect so neither
+   iOS button chrome nor the base's padding: 3px 7px can elongate it. */
 .arcCardExpanded .arcCardTransBtn {
   position: absolute;
   right: 12px;
   bottom: 36px;           /* sits just above the .arcCardMetaRow */
-  width: 20px; height: 20px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px; max-width: 22px;
+  min-height: 22px; max-height: 22px;
+  aspect-ratio: 1 / 1;
   padding: 0;
   margin: 0;
-  font-size: 8.5px;
+  font-size: 9px;
   line-height: 1;
   border-radius: 4px;
   display: inline-flex;
