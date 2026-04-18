@@ -19043,17 +19043,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (!panel.classList.contains('visible') && !minBar.classList.contains('visible')) return;
 
       const visibleArcs = [];
-      for (const arc of arcObjects) {
-        if (!arc.flow || arc._uid == null) continue;
-        const op = arc.tubeMat?.uniforms?.uOpacity?.value || 0;
-        const vs = arc.tubeMat?.uniforms?.uVisibleStart?.value || 0;
-        const ve = arc.tubeMat?.uniforms?.uVisibleEnd?.value || 0;
-        // Hysteresis: keep existing bars at a much lower threshold than new
-        // ones so arcs whose opacity briefly dips don't flicker the bar list.
-        const wasVisible = _prevVisibleUids.has(arc._uid);
-        const threshold = wasVisible ? 0.002 : 0.06;
-        if (op > threshold && ve - vs > 0.01) {
-          visibleArcs.push({ uid: arc._uid, arc, flow: arc.flow });
+
+      // Thread-flow override: when the thread-articles list is populated,
+      // render one bar per article instead of per on-globe arc. The macro
+      // arcs (route tubes) keep rendering on the globe independently; this
+      // only swaps the list's data source. UIDs use a dedicated "art-"
+      // prefix so they never collide with arcObjects' numeric UIDs.
+      if (Array.isArray(window.__threadArticleFlows) && window.__threadArticleFlows.length
+          && window.__threadMacroCurrent) {
+        for (const flow of window.__threadArticleFlows) {
+          if (!flow || flow.id == null) continue;
+          visibleArcs.push({ uid: `art-${flow.id}`, arc: null, flow });
+        }
+      } else {
+        for (const arc of arcObjects) {
+          if (!arc.flow || arc._uid == null) continue;
+          const op = arc.tubeMat?.uniforms?.uOpacity?.value || 0;
+          const vs = arc.tubeMat?.uniforms?.uVisibleStart?.value || 0;
+          const ve = arc.tubeMat?.uniforms?.uVisibleEnd?.value || 0;
+          // Hysteresis: keep existing bars at a much lower threshold than new
+          // ones so arcs whose opacity briefly dips don't flicker the bar list.
+          const wasVisible = _prevVisibleUids.has(arc._uid);
+          const threshold = wasVisible ? 0.002 : 0.06;
+          if (op > threshold && ve - vs > 0.01) {
+            visibleArcs.push({ uid: arc._uid, arc, flow: arc.flow });
+          }
         }
       }
 
@@ -19084,7 +19098,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // ticker slide: the departing bar shrinks while neighbours slide up
       // into the reclaimed space.
       for (const [key, el] of existingMap) {
-        if (!curUids.has(parseInt(key, 10))) {
+        // UIDs may be numeric (on-globe arc UIDs) or string "art-<id>"
+        // (thread-article bars). Match both flavors to decide if the bar
+        // is stale.
+        const keyAsNum = Number(key);
+        const stillVisible = curUids.has(key)
+          || (Number.isFinite(keyAsNum) && curUids.has(keyAsNum));
+        if (!stillVisible) {
           if (!el.classList.contains('fading-out')) {
             const h = el.offsetHeight;
             el.style.maxHeight = h + 'px';
@@ -23329,6 +23349,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // instantly on exit without a re-fetch. Cleared on back / panel close /
   // non-thread flow trigger. Shape: { flows, isos, ctxThread, threadId }.
   window.__threadMacroCurrent = null;
+  // Flat article list for the thread-flow Live Arcs panel. When non-null,
+  // syncPanel renders one bar per article (thread constituents) instead
+  // of per route. Populated by showThreadFlows via /api/threads/:id/articles.
+  window.__threadArticleFlows = null;
 
   // ── Flow context card (compact floating card shown on globe alongside arcs) ──
   function _ensureFlowCtxCard() {
@@ -23675,8 +23699,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _flowArcOrigin = null;
     document.body.classList.remove('flow-from-card');
     hideFlowCtxCard();
-    // Exiting a flow session invalidates the thread-macro snapshot.
+    // Exiting a flow session invalidates the thread-macro snapshot and
+    // the article-list override so the next flow trigger starts clean.
     window.__threadMacroCurrent = null;
+    window.__threadArticleFlows = null;
   }
 
   window.__flowArcGoBack = function() {
@@ -24067,6 +24093,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
 
+    // Clear any previous thread's article-bar override so the list doesn't
+    // flicker the prior thread's constituents during a thread-to-thread
+    // hop. Re-populated by the /articles fetch below once arcs are ready.
+    window.__threadArticleFlows = null;
+    try { window.__arcPanelDirty?.(); } catch (_) {}
+
     // Grab the originating thread card data (if any) so we can show it as
     // a compact floating card on the globe alongside the arcs.
     let _ctxThread = null;
@@ -24195,6 +24227,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ctxThread: _ctxThread || data.thread || null,
         threadId,
       };
+
+      // Fetch the thread's constituent articles and use them as the Live
+      // Arcs list override. In thread context, routes (Italy→Germany for a
+      // Middle-East story) aren't meaningful article surfaces — each arc
+      // bar is an ARTICLE in the thread, eye-click opens that article's
+      // own micro flow. Fire-and-forget; arcs list will populate when it
+      // resolves.
+      (async () => {
+        try {
+          const artRes = await fetch(`${API}/api/threads/${threadId}/articles`);
+          const artData = await artRes.json();
+          const items = Array.isArray(artData?.articles) ? artData.articles : [];
+          // Shape each article into a flow-like record buildBar / buildExpandedCard
+          // already understand. src + dst both point at the article's home
+          // country so the bar's "src → dst" renders as a single origin; the
+          // eye still keys off flow._article.id / flow.id.
+          const articleFlows = items.map(a => {
+            const originNode = {
+              type: 'country',
+              iso: a.iso_code || null,
+              id: a.id,
+              place: a.city_name || a.country_name || (a.iso_code || '').toUpperCase() || '—',
+              lat: a.country_lat != null ? parseFloat(a.country_lat) : 0,
+              lon: a.country_lon != null ? parseFloat(a.country_lon) : 0,
+            };
+            return {
+              id: a.id,
+              _article: a,
+              _threadArticleBar: true,
+              title: a.title,
+              summary: a.summary,
+              imageUrl: a.image_url,
+              sourceName: a.source_name,
+              url: a.url,
+              publishedAt: a.published_at,
+              src: { ...originNode },
+              dst: { ...originNode },
+            };
+          });
+          window.__threadArticleFlows = articleFlows;
+          try { window.__arcPanelDirty?.(); } catch (_) {}
+        } catch (e) {
+          console.warn('[showThreadFlows] thread articles fetch failed:', e);
+          window.__threadArticleFlows = null;
+        }
+      })();
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;

@@ -2739,6 +2739,57 @@ app.get("/api/flows/thread/:id", async (req, res) => {
 });
 
 /* =========================================
+   Articles constituent of a thread.
+   Used by the thread-flow Live Arcs panel, which — unlike the News
+   Flows discovery tool — treats the arc list as the story's article
+   roster rather than a route-article lookup. Returns everything the
+   client needs to render a bar + expanded card, including the
+   article's home ISO so the eye-button can fall back to home-country
+   highlight when /api/flows/article/:id is empty.
+========================================= */
+app.get("/api/threads/:id/articles", async (req, res) => {
+  try {
+    const threadId = parseInt(req.params.id, 10);
+    if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
+
+    const _cached = await ttlCached(`threads/${threadId}/articles`, 180_000, async () => {
+      const { rows } = await pool.query(`
+        SELECT
+          a.id,
+          COALESCE(a.translated_title, a.title)     AS title,
+          COALESCE(a.translated_summary, a.summary) AS summary,
+          a.image_url,
+          COALESCE(ns.name, ys.name)                AS source_name,
+          a.article_url                              AS url,
+          a.published_at,
+          co.iso_code                                AS iso_code,
+          co.name                                    AS country_name,
+          ci.name                                    AS city_name,
+          co.latitude                                AS country_lat,
+          co.longitude                               AS country_lon,
+          sta.is_anchor,
+          sta.relevance_score
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities    ci ON ci.id = a.city_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        WHERE sta.thread_id = $1
+        ORDER BY sta.is_anchor DESC NULLS LAST,
+                 a.published_at DESC
+        LIMIT 80
+      `, [threadId]);
+      return { thread_id: threadId, articles: rows, count: rows.length };
+    });
+    res.json(_cached);
+  } catch (err) {
+    console.error("[threads/articles]", err.message);
+    res.status(500).json({ error: "Failed to fetch thread articles", detail: req.user?.is_admin ? err.message : undefined });
+  }
+});
+
+/* =========================================
    Articles for a specific route within a thread
    Used when clicking a flow arc in thread flow view
 ========================================= */
