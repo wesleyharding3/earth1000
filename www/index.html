@@ -2853,6 +2853,32 @@ body.flow-maximized #flowArcList {
 .arcCardTransBtn {
   position: relative; margin: 4px 0 2px; font-size: 9px; padding: 3px 8px;
 }
+/* Inside the expanded article card, the translate pill is repositioned
+   as a small square stacked directly above the page icon, so the two
+   no longer overlap. Specificity beats the base .articleTranslateBtn
+   absolute rule. */
+.arcCardExpanded .arcCardTransBtn {
+  position: absolute;
+  right: 12px;
+  bottom: 36px;           /* sits just above the .arcCardMetaRow */
+  width: 20px; height: 20px;
+  padding: 0;
+  margin: 0;
+  font-size: 8.5px;
+  line-height: 1;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  z-index: 3;
+}
+
+/* Shift the bottom action row a few px closer to the card's bottom edge
+   without growing the overall card height: the reduced padding-bottom
+   exactly offsets the larger margin-top on the meta row. */
+.arcCardExpanded { padding-bottom: 4px; }
+.arcCardExpanded .arcCardMetaRow { margin-top: 14px; }
 /* Aggregate drill-down: article mini-cards inside expanded route card */
 .arcRouteArticle {
   padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -10628,6 +10654,74 @@ window.sourceBiasBadgeHTML = function(bias) {
 
     window.getUserTargetLang = getUserTargetLang;
     window.articleNeedsTranslation = articleNeedsTranslation;
+
+    // Module-level translate handler.
+    // Historically this was defined inside openNodePanel and only exposed
+    // as window.translateCard on first panel open — so translate buttons
+    // rendered outside that path (e.g. the expanded arc card in the Live
+    // Arcs list) hit "translateCard is not a function" on click until the
+    // user had visited a country/city feed first. Defining it here makes
+    // it available from page load. The in-panel version still reassigns
+    // the same handler with an extra allArticles[] patch for feed-card
+    // re-renders — that patch is a news-feed optimization and is safe to
+    // skip in contexts that don't render the feed list.
+    if (!window.translateCard) {
+      window.translateCard = async function translateCard(e, btn) {
+        e.preventDefault(); e.stopPropagation();
+        if (btn.classList.contains("done") || btn.classList.contains("error")) return;
+        if (!window.__checkTier?.('pro')) { window.__openPricing?.(); return; }
+        const articleId = btn.dataset.id;
+        const title     = btn.dataset.title;
+        const summary   = btn.dataset.summary;
+        const originalText = btn.textContent;
+        btn.textContent = "⏳"; btn.disabled = true;
+        try {
+          const targetLang = getUserTargetLang();
+          const res = await fetch(`https://earth-wjr6.onrender.com/api/translate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title, summary, id: articleId, targetLang: targetLang.code })
+          });
+          if (!res.ok) throw new Error("bad response");
+          const { translatedTitle, translatedSummary } = await res.json();
+          const wrapper = btn.parentElement;
+          if (translatedTitle) {
+            const el = wrapper?.querySelector(".articleCardTitle") || wrapper?.querySelector(".nfCardTitle") || wrapper?.querySelector(".arcCardHeadline");
+            if (el) el.textContent = translatedTitle;
+          }
+          if (translatedSummary) {
+            const el = wrapper?.querySelector(".articleCardSummary") || wrapper?.querySelector(".nfCardSummary") || wrapper?.querySelector(".arcCardSummary");
+            if (el) el.textContent = translatedSummary;
+          }
+          const adpContent = document.getElementById("adpContent");
+          if (adpContent) {
+            if (translatedTitle) {
+              const t = adpContent.querySelector(".adpTitle");
+              if (t) t.textContent = translatedTitle;
+            }
+            if (translatedSummary) {
+              const s = adpContent.querySelector(".adpSummary");
+              if (s) s.textContent = translatedSummary;
+            }
+          }
+          // Patch news-feed array if it happens to be exposed (openNodePanel's
+          // in-scope version also patches its own allArticles[] closure).
+          const nfList = window.__nfArticles;
+          if (Array.isArray(nfList)) {
+            const art = nfList.find(a => String(a.id) === String(articleId));
+            if (art) {
+              if (translatedTitle)   art.translated_title   = translatedTitle;
+              if (translatedSummary) art.translated_summary = translatedSummary;
+            }
+          }
+          btn.textContent = "✓"; btn.classList.add("done");
+        } catch (err) {
+          console.error("Translation failed:", err);
+          btn.textContent = "✗"; btn.title = "Translation failed — tap to retry"; btn.classList.add("error"); btn.disabled = false;
+        }
+      };
+    }
+
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
 
     const scene = new THREE.Scene();
