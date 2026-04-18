@@ -3575,7 +3575,19 @@ body.flow-maximized #flowArcList {
 /* AI Context (✦) is anchored to a specific thread/timeline/article session.
    When the user opens News Flows from the top-nav button there's no source
    item to contextualize, so the tab is meaningless clutter — hide it. */
-#flowCtxCard.noInfoOrigin .flowCtxTab.ai { display: none !important; }
+#flowCtxCard.noInfoOrigin .flowCtxTab.ai,
+/* Live Arcs tab is also redundant in noInfoOrigin mode — there is no
+   other view to switch to, so the panel shows only − and ✕. */
+#flowCtxCard.noInfoOrigin .flowCtxTab[data-view="arcs"] { display: none !important; }
+
+/* Kill iOS tap flash / focus outline on the pillbar controls so the only
+   visible chrome is the outer .flowCtxPillBar horizontal pill itself. */
+#flowCtxCard .flowCtxPillBar button {
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+#flowCtxCard .flowCtxPillBar button:focus,
+#flowCtxCard .flowCtxPillBar button:focus-visible { outline: none; box-shadow: none; }
 
 /* ── Tab buttons in the pill bar ─────────────────────────────────── */
 .flowCtxTab {
@@ -10097,6 +10109,7 @@ window.sourceBiasBadgeHTML = function(bias) {
     <div class="arcListPanel" id="arcListPanelRoot">
       <div class="arcListHeader">
         <span class="arcListTitle">Live Arcs</span>
+        <button class="arcListHeaderBtn aiCtx" id="arcListAiBtn" style="display:none" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦</button>
         <button class="arcListToggleBtn" id="arcListToggleBtnHeader" title="Minimize" onclick="window.__arcListToggle?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
       </div>
