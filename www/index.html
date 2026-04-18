@@ -3718,9 +3718,14 @@ body.flow-maximized #flowArcList {
 }
 .flowCtxTab svg { width: 12px; height: 12px; }
 .flowCtxTab:hover { background: rgba(255,255,255,0.10); color: #fff; }
+/* Active indicator: no background pill — the icon itself glows in the
+   tab's color family. Background pills on a 26×20 button inside a 24px
+   pillbar compressed into oversized ellipses that spilled past the pill
+   and the card. drop-shadow hugs the glyph, so it never bleeds out. */
 .flowCtxTab.active {
-  background: rgba(255,180,80,0.22);
+  background: none;
   color: rgba(255,220,170,1);
+  filter: drop-shadow(0 0 5px rgba(255,180,80,0.85));
 }
 .flowCtxTab.ai {
   color: rgba(210,180,255,0.88);
@@ -3729,10 +3734,17 @@ body.flow-maximized #flowArcList {
 }
 .flowCtxTab.ai:hover { background: rgba(139,92,246,0.26); color: #eadcff; }
 .flowCtxTab.ai.active {
-  background: rgba(139,92,246,0.36);
+  background: none;
+  box-shadow: none;
   color: #ecdbff;
-  box-shadow: 0 0 10px rgba(139,92,246,0.4);
+  filter: drop-shadow(0 0 5px rgba(170,130,255,0.9));
   animation: none;
+}
+/* Touch devices: kill the sticky hover background so ellipse artifacts
+   don't persist after a tap. */
+@media (hover: none) {
+  .flowCtxTab:hover,
+  .flowCtxTab.ai:hover { background: none; }
 }
 
 /* ── Live arcs list, embedded inside flowCtxCard ─────────────────── */
