@@ -23439,7 +23439,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 8. Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // 8b. Country polygon highlights now handled dynamically by tickArcs()
+      // 8b. Force-highlight ALL country polygons touched by these flows
+      //     upfront — don't rely solely on tickArcs frame-by-frame collection.
+      //     Thread/article arcs start hidden (uOpacity=0) and only contribute
+      //     their ISOs to frameContactISOs after their BFS wave fires, so
+      //     without this upfront push the user sees an unlit globe until the
+      //     last wave lands. Ported from the mobile build (commit 383d3f2).
+      {
+        const _allISOs = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
+        });
+        // Also include the article's own country (single-country stories)
+        const _artIso = _ctxArticle?.iso_code || articleObj?.iso_code;
+        if (_artIso) _allISOs.add(String(_artIso).toUpperCase());
+        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+      }
 
       // 9. Show back button
       const backLabel = originPage === 2 ? "Back to News" : originPage === 0 ? "Back to Briefing" : "Back";
@@ -23644,7 +23660,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // Country polygon highlights now handled dynamically by tickArcs()
+      // Force-highlight ALL country polygons touched by these flows upfront.
+      // Without this, the dynamic _flowContactDirty path in tickArcs only
+      // adds an arc's ISOs to the set after its BFS wave fires — so late
+      // waves' countries stay unlit until they animate in. Ported from the
+      // mobile build (commit 383d3f2).
+      {
+        const _allISOs = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
+        });
+        // Include the thread's own country for single-country stories
+        const _thrIso = _ctxThread?.iso_code || _ctxThread?.country_code || data.thread?.iso_code;
+        if (_thrIso) _allISOs.add(String(_thrIso).toUpperCase());
+        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+      }
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
@@ -23870,6 +23901,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (arc) window.__flowPushArc?.(arc);
       });
       window.__flowShowLabelsForCardTrigger?.(flows);
+
+      // Force-highlight ALL country polygons for this segment upfront.
+      // Ported from mobile (commit 383d3f2) — without this the dynamic
+      // _flowContactDirty path only adds ISOs once an arc's wave fires,
+      // leaving this segment's countries unlit until late waves land.
+      {
+        const _allISOs = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
+        });
+        // Also include the segment's sourceIso for single-country events
+        if (seg._sourceIso) _allISOs.add(seg._sourceIso.toUpperCase());
+        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+      }
 
       const statsEl = document.getElementById('flowMinStats');
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? 's' : ''}`;
@@ -24140,6 +24186,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       window.__flowShowLabelsForCardTrigger?.(flows);
+
+      // Force-highlight ALL country polygons touched by these flows upfront.
+      // Ported from mobile (commit 383d3f2) — without this the late-wave
+      // countries stay unlit until their BFS wave fires.
+      {
+        const _allISOs = new Set();
+        flows.forEach(f => {
+          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
+          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
+        });
+        const _tlIso = _ctxTimeline?.iso_code || _ctxTimeline?.country_code || data.timeline?.iso_code;
+        if (_tlIso) _allISOs.add(String(_tlIso).toUpperCase());
+        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+      }
 
       const statsEl = document.getElementById("flowMinStats");
       if (statsEl) statsEl.textContent = `${flows.length} route${flows.length !== 1 ? "s" : ""}`;
