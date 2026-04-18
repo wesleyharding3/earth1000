@@ -25581,8 +25581,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   window.kwiClear = function() {
     kwiKeyword = null;
-    document.getElementById('kwiInput').value = '';
-    document.getElementById('kwiChip').classList.remove('visible');
+    const _input = document.getElementById('kwiInput');
+    if (_input) _input.value = '';
+    document.getElementById('kwiChip')?.classList.remove('visible');
     kwiSetMode('trending');
   };
 
@@ -25916,8 +25917,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function kwiLoadTrending() {
     const requestId = ++kwiListRequestId;
     kwiSetLoading(true);
-    document.getElementById('kwiChip').classList.remove('visible');
-    
+    // kwiChip was removed from the DOM in a prior pass but three references
+    // to it lingered (here, kwiClear, and line 25919's twin in the desktop
+    // build). Accessing .classList on the null getElementById result threw
+    // synchronously BEFORE the try block, so finally never fired and the
+    // loading overlay stuck on forever. Null-guard every kwiChip touch.
+    document.getElementById('kwiChip')?.classList.remove('visible');
+
     try {
       let trendingUrl = `https://earth-wjr6.onrender.com/api/keywords/trending?days=${kwiDays}&limit=100`;
       let risingUrl = `https://earth-wjr6.onrender.com/api/keywords/rising?days=3&baseline_days=14&limit=5`;
