@@ -20037,16 +20037,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById("aggArticleCount").textContent = (data.totalArticles || 0).toLocaleString();
         document.getElementById("flowStats").innerHTML = `<span class="flowStatHighlight">${data.totalRoutes}</span> routes`;
         updateMinimizedStats();
+        // Hand the freshly-loaded flow set to the label-toggle hook. This
+        // is the missing wiring that caused the "Show origin &
+        // destination" checkbox to do nothing in News Flows direct mode:
+        // flowData lives inside this IIFE but the checkbox handler is at
+        // top-level script scope, so its `typeof flowData !== undefined`
+        // fallback never resolved and `_flowLabelFlows` stayed null.
+        window.__flowNotifyCurrentFlows?.(flowData);
 
       } else {
         // Handle both { flows: [...] } and direct array responses
         const flows = Array.isArray(data.flows) ? data.flows : (Array.isArray(data) ? data : []);
         flowData = flows.map(remapFlowForView);
         assignFlowLaneOffsets(flowData);
-        document.getElementById("flowStats").innerHTML = 
+        document.getElementById("flowStats").innerHTML =
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
         updateMinimizedStats();
-        
+        window.__flowNotifyCurrentFlows?.(flowData);
+
         // Generate date ticks for the timeline
         generateDateTicks();
       }
@@ -20122,6 +20130,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       flowControls.classList.toggle("aggregate-mode", flowMode === "aggregate");
       clearArcs();
       flowData = [];
+      // Drop the cached flow list so the label toggle has nothing to
+      // re-render against stale state on the next check.
+      window.__flowNotifyCurrentFlows?.(null);
       syncMinPlayBtn();
     });
   });
@@ -25233,14 +25244,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const chk = document.getElementById("flowLabelsToggle");
     if (!chk) return;
     chk.addEventListener("change", () => {
-      const flows = _flowLabelFlows || (typeof flowData !== 'undefined' && flowData.length ? flowData : null);
-      if (chk.checked && flows) {
-        showFlowNodeLabels(flows);
+      // _flowLabelFlows is kept in sync by three call sites:
+      //   1. __flowShowLabelsForCardTrigger (thread/article/timeline
+      //      card entry points) — sets it to the flow set being drawn.
+      //   2. __flowNotifyCurrentFlows (News Flows direct mode) — sets
+      //      it to flowData whenever loadFlows resolves or clears.
+      //   3. showFlowNodeLabels itself — refreshes on re-render.
+      // The earlier fallback to `flowData` was dead code: flowData is
+      // scoped inside the setupFlowAnimation IIFE and invisible here,
+      // so `typeof flowData !== 'undefined'` always resolved to false.
+      if (chk.checked && _flowLabelFlows) {
+        showFlowNodeLabels(_flowLabelFlows);
       } else {
         _clearFlowNodeLabelsImpl();
       }
     });
   })();
+
+  // Called by the News Flows loader (setupFlowAnimation IIFE) whenever
+  // its flowData changes — keeps the label toggle's cached flow set
+  // aligned with the arcs currently on the globe. If the user has the
+  // checkbox already checked, also triggers a re-render so labels track
+  // the new arcs.
+  window.__flowNotifyCurrentFlows = function(flows) {
+    _flowLabelFlows = (Array.isArray(flows) && flows.length) ? flows : null;
+    const chk = document.getElementById("flowLabelsToggle");
+    if (!chk) return;
+    if (chk.checked && _flowLabelFlows) {
+      showFlowNodeLabels(_flowLabelFlows);
+    } else if (!_flowLabelFlows) {
+      // flowData cleared (e.g. mode toggle) — tear down any stale labels
+      _clearFlowNodeLabelsImpl();
+    }
+  };
 
   window.__flowShowLabelsForCardTrigger = function(flows) {
     const chk = document.getElementById("flowLabelsToggle");

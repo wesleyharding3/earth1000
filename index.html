@@ -19765,16 +19765,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         document.getElementById("aggArticleCount").textContent = (data.totalArticles || 0).toLocaleString();
         document.getElementById("flowStats").innerHTML = `<span class="flowStatHighlight">${data.totalRoutes}</span> routes`;
         updateMinimizedStats();
+        // Hand the freshly-loaded flow set to the label-toggle hook (fixes
+        // "Show origin & destination" checkbox in News Flows direct mode).
+        window.__flowNotifyCurrentFlows?.(flowData);
 
       } else {
         // Handle both { flows: [...] } and direct array responses
         const flows = Array.isArray(data.flows) ? data.flows : (Array.isArray(data) ? data : []);
         flowData = flows.map(remapFlowForView);
         assignFlowLaneOffsets(flowData);
-        document.getElementById("flowStats").innerHTML = 
+        document.getElementById("flowStats").innerHTML =
           `<span class="flowStatHighlight">${flowData.length}</span> flows`;
         updateMinimizedStats();
-        
+        window.__flowNotifyCurrentFlows?.(flowData);
+
         // Generate date ticks for the timeline
         generateDateTicks();
       }
@@ -19850,6 +19854,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       flowControls.classList.toggle("aggregate-mode", flowMode === "aggregate");
       clearArcs();
       flowData = [];
+      // Drop the cached flow list so the label toggle doesn't re-render
+      // against stale state on next check.
+      window.__flowNotifyCurrentFlows?.(null);
       syncMinPlayBtn();
     });
   });
@@ -24959,14 +24966,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const chk = document.getElementById("flowLabelsToggle");
     if (!chk) return;
     chk.addEventListener("change", () => {
-      const flows = _flowLabelFlows || (typeof flowData !== 'undefined' && flowData.length ? flowData : null);
-      if (chk.checked && flows) {
-        showFlowNodeLabels(flows);
+      // _flowLabelFlows is kept in sync by __flowShowLabelsForCardTrigger
+      // (card entry points) and __flowNotifyCurrentFlows (News Flows
+      // direct mode). Dead fallback to `flowData` removed — that var
+      // lives inside the setupFlowAnimation IIFE and was invisible here.
+      if (chk.checked && _flowLabelFlows) {
+        showFlowNodeLabels(_flowLabelFlows);
       } else {
         _clearFlowNodeLabelsImpl();
       }
     });
   })();
+
+  // Called by the News Flows loader whenever flowData changes. Keeps
+  // the cached flow set aligned and re-renders if the box is checked.
+  window.__flowNotifyCurrentFlows = function(flows) {
+    _flowLabelFlows = (Array.isArray(flows) && flows.length) ? flows : null;
+    const chk = document.getElementById("flowLabelsToggle");
+    if (!chk) return;
+    if (chk.checked && _flowLabelFlows) {
+      showFlowNodeLabels(_flowLabelFlows);
+    } else if (!_flowLabelFlows) {
+      _clearFlowNodeLabelsImpl();
+    }
+  };
 
   // Helper: check the labels box and show labels for a set of flows
   window.__flowShowLabelsForCardTrigger = function(flows) {
