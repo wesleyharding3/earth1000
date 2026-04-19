@@ -298,9 +298,18 @@
     }
 
     #infoPanel.maximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 80px);
+      /* Maximized sheet sits flush under the iOS status bar. The old
+         calc subtracted an extra 80 px + safe-area-inset-bottom from
+         the top, leaving a ~114 px strip of backdrop visible above the
+         panel. Product intent is "panel top just below Apple bar", so
+         height is viewport minus safe_top only; bottom: 0 covers the
+         home-indicator area (content uses safe_bottom internally). */
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
       border-radius: 26px 26px 0 0;
-      padding-top: max(24px, calc(env(safe-area-inset-top, 0px) + 12px));
+      /* Content sits naturally at the top edge of the panel (which is
+         already below the Apple bar). Previous double-counted padding
+         removed. */
+      padding-top: 24px;
     }
 
     .panelHeader {
@@ -4644,7 +4653,12 @@ body.flow-maximized #flowArcList {
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - 10px);
+  /* Top edge sits flush under the iOS safe-area (status bar). The
+     earlier -10px left a stray strip above the panel; and the inner
+     padding-top: safe-area-inset-top double-counted with height, pushing
+     content further down than it needed to be. One subtraction, no
+     padding-top compensation. */
+  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
   max-height: none;
   background: rgb(7, 11, 21);
   border: none;
@@ -4656,7 +4670,6 @@ body.flow-maximized #flowArcList {
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
-  padding-top: env(safe-area-inset-top, 0px);
 }
 
 #articleDetailPanel.visible {
@@ -5653,7 +5666,10 @@ body.flow-maximized #flowArcList {
       z-index: 200;
     }
     #clusterDetail.cdMaximized {
-      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - 80px);
+      /* Top edge flush under iOS status bar — same rule the mobile
+         media-query override uses. The previous -80 px reservation
+         left a conspicuous backdrop strip above the maximized panel. */
+      height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
       border-radius: 20px 20px 0 0;
     }
     /* Minimized state — capped to title bar + first line above the nav.
@@ -5686,7 +5702,12 @@ body.flow-maximized #flowArcList {
       #clusterDetail.cdMaximized {
         width: 100%;
         left: 0;
-        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom) - 60px);
+        /* Top edge flush under iOS status bar. Old calc reserved an
+           extra 60 px gap at the top; bottom offset of safe-area-inset-
+           bottom (set on .open) already accounts for the home indicator
+           so the remaining height exactly fills from just below the
+           Apple bar to just above the home indicator. */
+        height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom));
         border-radius: 16px 16px 0 0;
       }
     }
@@ -9282,9 +9303,14 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   background: rgba(255,180,80,0.18); color: rgba(255,195,70,0.9);
   padding: 1px 7px; border-radius: 10px; min-width: 18px; text-align: center;
 }
-/* Library panel (Saved / History) */
+/* Library panel (Saved / History) — side drawer, anchored to top of
+   safe area (just below the iOS status bar) so it doesn't cover the
+   Apple time/battery indicators. Bottom respects the home indicator. */
 #libraryPanel {
-  display: none; position: fixed; top: 0; right: 0; bottom: 0;
+  display: none; position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  right: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
   width: min(380px, 92vw); background: rgba(8,14,26,0.98);
   border-left: 1px solid rgba(255,255,255,0.1);
   box-shadow: -10px 0 40px rgba(0,0,0,0.6); z-index: 600;
