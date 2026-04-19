@@ -1176,12 +1176,23 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
             0.02
           ) AS recency_decay,
           a.media_type, a.video_id, a.duration_seconds,
+          -- VIDEO_BOOST (1.5×): videos are ~0.2% of ingest volume (99 /
+          -- 43 500 in a typical 24 h window) but carry comparable
+          -- base_priority to text articles. Without this multiplier the
+          -- top-100 ranked pool contains zero videos on most days, so
+          -- users effectively never see YouTube content in the feed.
+          -- 1.5× puts a priority-0.7 video on par with a priority-1.05
+          -- article — enough to surface a few per feed page without
+          -- turning the main feed into a video stream. _finalizeSearch
+          -- Results re-applies this same multiplier in the JS final_
+          -- priority computation so the sort stays consistent.
           (
             (COALESCE(a.base_priority, 0) * 0.15 + GREATEST(
               POWER(0.5, EXTRACT(EPOCH FROM (NOW() - a.published_at)) / 21600.0),
               0.02
             ) * 0.85)
             * POWER(COALESCE(cfb.boost_score, 1.0), 2.0)
+            * CASE WHEN a.media_type = 'video' OR a.video_id IS NOT NULL THEN 2.5 ELSE 1.0 END
           ) AS _rank
         FROM news_articles a
         LEFT JOIN news_sources ns ON ns.id = a.source_id
@@ -1253,7 +1264,12 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
           AND a.published_at > NOW() - INTERVAL '48 hours'
           AND COALESCE(a.base_priority, 0) > 0.05
       ) sub
-      ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85) DESC
+      -- Video boost (1.5×) applied to the sort expression — see Tier 1
+      -- for the rationale. Falls through to a pure rank comparison
+      -- without any inline CASE in the SELECT so the subquery's column
+      -- list stays portable with Tier 1.
+      ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85)
+             * CASE WHEN sub.media_type = 'video' OR sub.video_id IS NOT NULL THEN 2.5 ELSE 1.0 END DESC
       LIMIT $1 OFFSET $2
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
@@ -1296,7 +1312,9 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
           AND a.published_at > NOW() - INTERVAL '24 hours'
           AND COALESCE(a.base_priority, 0) > 0.05
       ) sub
-      ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85) DESC
+      -- Video boost (1.5×) — same rationale as Tier 1/Tier 2.
+      ORDER BY (sub.base_priority * 0.15 + sub.recency_decay * 0.85)
+             * CASE WHEN sub.media_type = 'video' OR sub.video_id IS NOT NULL THEN 2.5 ELSE 1.0 END DESC
       LIMIT $1 OFFSET $2
     `, params);
     return _finalizeSearchResults(rows, effectiveLimit, offset);
@@ -1524,17 +1542,32 @@ function _prefResort(articles) {
   articles.splice(0, articles.length, ...capped);
 }
 
+// Kept in sync with the SQL video_boost in _executeNewsSearch so the JS
+// final_priority matches the server-side _rank ordering. Changing one
+// without the other will produce subtle ranking drift.
+//
+// Chosen empirically: the pool contains ~99 videos vs ~43 000 text
+// articles per 24 h window. At 1.5× zero videos surfaced in the top
+// 100; at 2.0× one did; at 2.5× ~12 did. 2.5× puts a priority-0.7
+// video at an effective rank comparable to a priority-1.05 text
+// article, which lands 2–3 videos per 24-slot feed page. If this ever
+// needs to go higher we're over-boosting — tune the feed UX instead
+// (dedicated video tab, etc).
+const VIDEO_BOOST = 2.5;
+const isVideoRow = (r) =>
+  r && (r.media_type === 'video' || (r.video_id != null && r.video_id !== ''));
+
 function _finalizeSearchResults(rows, effectiveLimit, offset) {
-  // Compute final_priority with country_boost² + language boost on top
-  // of the SQL priority (which already includes country_boost² in the
-  // ORDER BY). The JS re-apply is needed because the SQL ordering is
-  // LIMIT-truncated before this point; we need final_priority present
-  // on each row for the cap's tie-break sort below.
+  // Compute final_priority with country_boost² + video_boost on top of
+  // the SQL priority (which already includes both in the ORDER BY). The
+  // JS re-apply is needed because the SQL ordering is LIMIT-truncated
+  // before this point; we need final_priority present on each row for
+  // the cap's tie-break sort below.
   let scored = rows.map(r => ({
     ...r,
     final_priority: (
       (r.base_priority || 0) * 0.15 + (r.recency_decay || 0) * 0.85
-    ) * Math.pow(r.country_boost || 1, 2.0)
+    ) * Math.pow(r.country_boost || 1, 2.0) * (isVideoRow(r) ? VIDEO_BOOST : 1.0)
   }));
 
   // SQL already ordered by the same formula, but defense-in-depth in
@@ -1580,6 +1613,49 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
       }
     }
     if (chosen.length >= effectiveLimit) break;
+  }
+
+  // Guaranteed video slot(s).
+  //
+  // Video base_priority is comparable to text articles (~0.72 avg), but
+  // videos are ~0.2% of ingest volume (99 videos vs 43 500 articles /
+  // 24h typical). Even with the 1.5× boost applied in the SQL _rank
+  // and the JS final_priority above, on a busy text-heavy day videos
+  // can still lose the cap race to higher-volume text publishers. This
+  // safety net ensures at least MIN_VIDEOS_IN_FEED videos land in the
+  // returned slice whenever the candidate pool contained any videos —
+  // by swapping the lowest-ranked text article in the chosen slice for
+  // the highest-ranked video still in the pool but not chosen.
+  //
+  // Kept cheap: never promotes more videos than the pool holds, never
+  // drops a video below its natural position if it's already chosen.
+  const MIN_VIDEOS_IN_FEED = 2;
+  const poolVideos   = scored.filter(isVideoRow);
+  const chosenVideos = chosen.filter(isVideoRow);
+  const deficit      = Math.min(MIN_VIDEOS_IN_FEED, poolVideos.length) - chosenVideos.length;
+  if (deficit > 0) {
+    const chosenSet      = new Set(chosen.map(r => r.id));
+    const promotableVids = poolVideos
+      .filter(v => !chosenSet.has(v.id))
+      .sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0))
+      .slice(0, deficit);
+    // Sort chosen by priority ascending so we replace the weakest slots.
+    // Only replace TEXT articles — never swap a video out for another
+    // video, and never bump a top-ranked text article beyond slot 0.
+    const replaceableIdx = chosen
+      .map((r, i) => ({ i, r }))
+      .filter(({ r }) => !isVideoRow(r))
+      .sort((a, b) => (a.r.final_priority || 0) - (b.r.final_priority || 0))
+      .slice(0, promotableVids.length)
+      .map(x => x.i);
+    for (let i = 0; i < promotableVids.length; i++) {
+      const slot = replaceableIdx[i];
+      if (slot == null) break;
+      chosen[slot] = promotableVids[i];
+    }
+    // Re-sort chosen by final_priority DESC so the promoted videos land
+    // where their scores deserve, not at the slot we swapped into.
+    chosen.sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
   }
 
   // Fallback — if even cap=10 doesn't reach effectiveLimit, pool is

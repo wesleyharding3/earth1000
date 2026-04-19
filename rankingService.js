@@ -353,20 +353,61 @@ async function getRankedFeedArticles(options = {}) {
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
 
-  // Apply country_boost as a terminal multiplier on priority, then
-  // stable-resort (insertion-style) by boosted priority. We don't
-  // full-sort because rankArticles already ran diversityRerank and the
+  // Apply country_boost + video_boost as terminal multipliers on
+  // priority, then stable-resort by boosted priority. We don't full-
+  // sort because rankArticles already ran diversityRerank and the
   // boost should nudge within equivalence classes, not blow up the
-  // diversity arrangement. A simple multiply + re-sort is close enough
-  // in practice and the caller's countryVarianceRerank runs as the
-  // terminal pass anyway.
+  // diversity arrangement.
+  //
+  // VIDEO_BOOST (2.5×): kept in sync with server.js's same-named
+  // constant in _finalizeSearchResults. Videos are ~0.2% of ingest
+  // volume with comparable base_priority to text — empirically a 1.5×
+  // boost produced zero video surfaces in the top 100 pool; 2.0×
+  // produced one; 2.5× produces ~12. Landing 2–3 videos per feed
+  // page is the target.
+  const VIDEO_BOOST = 2.5;
   for (const a of ranked) {
-    const boost = parseFloat(a.country_boost) || 1;
-    a.priority = (a.priority || 0) * boost;
+    const countryBoost = parseFloat(a.country_boost) || 1;
+    const isVideo = a.media_type === 'video' || (a.video_id != null && a.video_id !== '');
+    const videoBoost = isVideo ? VIDEO_BOOST : 1.0;
+    a.priority = (a.priority || 0) * countryBoost * videoBoost;
   }
   ranked.sort((a, b) => (b.priority || 0) - (a.priority || 0));
 
-  return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
+  // Guaranteed-slot safety net — mirrors _finalizeSearchResults.
+  // After the boosted re-sort, if the returned slice would contain no
+  // videos despite the pool having some, swap the lowest-priority text
+  // article in the slice for the top-ranked video outside the slice.
+  // Applied only to the slice that will actually be returned; keeps the
+  // cost O(slice).
+  if (limit) {
+    const slice = ranked.slice(offset, offset + limit);
+    const MIN_VIDEOS = 2;
+    const sliceVideos = slice.filter(a => a.media_type === 'video' || (a.video_id != null && a.video_id !== ''));
+    if (sliceVideos.length < MIN_VIDEOS) {
+      const sliceIdSet = new Set(slice.map(a => a.id));
+      const promotable = ranked
+        .filter(a => !sliceIdSet.has(a.id) && (a.media_type === 'video' || (a.video_id != null && a.video_id !== '')))
+        .slice(0, MIN_VIDEOS - sliceVideos.length);
+      if (promotable.length) {
+        const replaceableIdx = slice
+          .map((r, i) => ({ i, r }))
+          .filter(({ r }) => !(r.media_type === 'video' || (r.video_id != null && r.video_id !== '')))
+          .sort((a, b) => (a.r.priority || 0) - (b.r.priority || 0))
+          .slice(0, promotable.length)
+          .map(x => x.i);
+        for (let i = 0; i < promotable.length; i++) {
+          const slot = replaceableIdx[i];
+          if (slot == null) break;
+          slice[slot] = promotable[i];
+        }
+        slice.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+        return slice;
+      }
+    }
+    return slice;
+  }
+  return ranked.slice(offset);
 }
 
 module.exports = { getRankedArticles, getRankedCityArticles, getRankedFeedArticles };
