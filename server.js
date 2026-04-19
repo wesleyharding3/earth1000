@@ -6072,6 +6072,92 @@ app.get("/api/timelines/:id/articles", async (req, res) => {
   }
 });
 
+// GET /api/timelines/:id/events
+//
+// Returns the chronological event structure produced by storyTimeline
+// Builder's Phase C extraction pass (story_timeline_events). The
+// cluster-detail panel renders this in its Timeline section — one
+// row per event, ordered newest-first, showing the day, the anchor
+// article's title, and the Claude-written description. Replaces the
+// old threads path which just dumped articles chronologically (a flat
+// list, not an actual narrative).
+app.get("/api/timelines/:id/events", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+    const { rows } = await pool.query(`
+      SELECT
+        ste.id,
+        ste.event_date,
+        ste.event_title,
+        ste.event_description,
+        ste.anchor_article_id,
+        ste.article_ids,
+        ste.source_count,
+        ste.importance,
+        ste.updated_at,
+        -- Hydrate the anchor article's basic fields so the UI can link
+        -- straight to it without a second round-trip.
+        a.article_url  AS anchor_url,
+        a.image_url    AS anchor_image_url,
+        a.published_at AS anchor_published_at,
+        COALESCE(ns.name, ys.name) AS anchor_source_name,
+        co.iso_code    AS anchor_iso_code,
+        co.name        AS anchor_country_name
+      FROM story_timeline_events ste
+      LEFT JOIN news_articles a ON a.id = ste.anchor_article_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      LEFT JOIN countries co ON co.id = a.country_id
+      WHERE ste.timeline_id = $1
+      ORDER BY ste.event_date DESC, ste.id DESC
+      LIMIT 200
+    `, [timelineId]);
+    res.json({ events: rows });
+  } catch (err) {
+    console.error("[timelines/events]", err.message);
+    res.status(500).json({ error: "Failed to fetch timeline events" });
+  }
+});
+
+// GET /api/timelines/:id/threads
+//
+// Returns the threads that graduated into this timeline via
+// story_threads.timeline_id (set by storyTimelineBuilder's Phase B
+// promotion pass, or by the one-shot relinkExistingTimelines script).
+// Consumed by the cluster-detail panel to surface constituent threads
+// as a source type alongside articles + videos. Ordered by recency so
+// the latest thread in the story sits on top.
+app.get("/api/timelines/:id/threads", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+    const { rows } = await pool.query(`
+      SELECT
+        t.id AS thread_id,
+        t.title,
+        t.description,
+        t.primary_category,
+        t.importance,
+        t.article_count,
+        t.distinct_source_count,
+        t.status,
+        t.keywords,
+        t.primary_nations,
+        t.first_seen_at,
+        t.last_updated_at
+      FROM story_threads t
+      WHERE t.timeline_id = $1
+      ORDER BY t.last_updated_at DESC NULLS LAST, t.importance DESC
+      LIMIT 100
+    `, [timelineId]);
+    res.json({ threads: rows });
+  } catch (err) {
+    console.error("[timelines/threads]", err.message);
+    res.status(500).json({ error: "Failed to fetch timeline threads" });
+  }
+});
+
 // GET /api/flows/timeline/:id — flow arcs for a timeline
 // Uses entity extraction (subject/actor/location roles) to show only
 // countries directly involved in the story, not every reporting country.
