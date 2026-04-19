@@ -29,7 +29,12 @@ const Anthropic = require("@anthropic-ai/sdk");
 // language bridge. Normalization is now a dedicated cron —
 // keywordNormalizerCron.js — that runs hourly with 5× the cap and no
 // silent-catch. The builder assumes translations are already populated.
-const { deepAnalyzeArticle } = require("./deepAnalyzer");
+// Deep enrichment moved to articleDeepEnrichment.js — one scrape + one
+// Claude call per article, output persisted to article_deep_context so
+// briefingGenerator can read cached context instead of re-scraping.
+// deepAnalyzer.js is deprecated but still re-exports enrichArticle as
+// deepAnalyzeArticle for any stray callers.
+const { enrichArticle } = require("./articleDeepEnrichment");
 const { loadRulesBlock } = require("./editorialRuleInjector");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -720,6 +725,25 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
 
   for (const def of defs) {
     if (!def.article_ids?.length) continue;
+
+    // DEFENSIVE: validate existing_thread_id against the authoritative
+    // thread map BEFORE trusting it. Claude occasionally hallucinates
+    // thread IDs — returns a plausible-looking number that isn't one of
+    // the 150 IDs we actually showed it. Our prior path just trusted
+    // the number, tried to UPDATE a non-existent row (UPDATE silently
+    // matches 0 rows), then hit FK violation on the subsequent
+    // INSERT INTO story_thread_articles and threw, dropping the whole
+    // def — including what was often a legitimate NEW thread that
+    // Claude misrouted. Null the bogus id so we fall through to the
+    // CREATE path and keep the def. Edge case also covered: a thread
+    // deleted by another process between snapshot time and now.
+    if (def.existing_thread_id) {
+      const idNum = Number(def.existing_thread_id);
+      if (!Number.isFinite(idNum) || !existingThreadMap.has(idNum)) {
+        console.log(`   ⚠ Claude referenced unknown thread id ${def.existing_thread_id} for "${def.title}" — routing as NEW`);
+        def.existing_thread_id = null;
+      }
+    }
 
     // Only reject NEW threads — never block extensions of existing threads,
     // since those decisions were already made.
@@ -1559,7 +1583,20 @@ async function deepAnalyzeTopPerThread() {
   if (!rows.length) return 0;
 
   const articleIds = rows.map(r => r.article_id);
-  console.log(`   Found ${articleIds.length} article(s) to deep-analyze across active threads`);
+  console.log(`   Found ${articleIds.length} article(s) to deep-enrich across active threads`);
+
+  // Track which threads touched which newly-enriched articles so we can
+  // backfill story_threads.primary_nations at the end — single pass per
+  // thread rather than one UPDATE per article.
+  const threadsTouched = new Set();
+  {
+    const { rows: tmap } = await pool.query(`
+      SELECT DISTINCT sta.thread_id
+      FROM story_thread_articles sta
+      WHERE sta.article_id = ANY($1::int[])
+    `, [articleIds]);
+    for (const r of tmap) threadsTouched.add(Number(r.thread_id));
+  }
 
   // Process with limited concurrency
   let completed = 0;
@@ -1568,10 +1605,10 @@ async function deepAnalyzeTopPerThread() {
     while (i < articleIds.length) {
       const id = articleIds[i++];
       try {
-        await deepAnalyzeArticle(id, { skipThreshold: true });
+        await enrichArticle(id, { skipThreshold: true });
         completed++;
       } catch (err) {
-        console.warn(`   ⚠️  Deep analysis failed [${id}]: ${err.message}`);
+        console.warn(`   ⚠️  Deep enrichment failed [${id}]: ${err.message}`);
       }
     }
   }
@@ -1582,7 +1619,84 @@ async function deepAnalyzeTopPerThread() {
   }
   await Promise.all(workers);
 
+  // After enrichment lands in article_deep_context, populate
+  // story_threads.primary_nations for every thread that just got fresh
+  // enrichment on one of its articles. Only affects threads whose
+  // primary_nations is currently NULL/empty (respects admin curation).
+  let natPopulated = 0;
+  for (const threadId of threadsTouched) {
+    try {
+      const before = await pool.query(
+        `SELECT COALESCE(array_length(primary_nations, 1), 0) AS len FROM story_threads WHERE id = $1`,
+        [threadId]
+      );
+      await backfillThreadPrimaryNations(threadId);
+      const after = await pool.query(
+        `SELECT COALESCE(array_length(primary_nations, 1), 0) AS len FROM story_threads WHERE id = $1`,
+        [threadId]
+      );
+      if ((before.rows[0]?.len || 0) === 0 && (after.rows[0]?.len || 0) > 0) natPopulated++;
+    } catch (_) {}
+  }
+  if (natPopulated) {
+    console.log(`   Populated primary_nations on ${natPopulated} thread(s) from fresh deep-context`);
+  }
+
   return completed;
+}
+
+// Helper used after thread creation: pull primary_nations from the most
+// recently-enriched articles in this thread and write the result back
+// onto story_threads. This is the "builder populates primary_nations"
+// promise from the audit — before this, every builder-created thread
+// shipped with primary_nations = NULL, which forced the flow-arc +
+// flag-chip path to fall back to noisy entity-mention extraction.
+//
+// Strategy: take the union of primary_nations across the thread's
+// anchor + top-relevance articles (limited to the ones with
+// article_deep_context rows), weight by frequency so countries that
+// appear in multiple articles rise to the top, cap at 6. We don't
+// overwrite a curated primary_nations — only populate if it's NULL or
+// empty, so admin edits stay sacred.
+async function backfillThreadPrimaryNations(threadId) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT adc.primary_nations
+      FROM story_thread_articles sta
+      JOIN article_deep_context adc ON adc.article_id = sta.article_id
+      WHERE sta.thread_id = $1
+        AND COALESCE(array_length(adc.primary_nations, 1), 0) > 0
+      ORDER BY sta.is_anchor DESC NULLS LAST,
+               sta.relevance_score DESC
+      LIMIT 8
+    `, [threadId]);
+    if (!rows.length) return;
+
+    const freq = new Map();
+    for (const r of rows) {
+      for (const code of (r.primary_nations || [])) {
+        const key = String(code || '').trim().toUpperCase();
+        if (!/^[A-Z]{2}$/.test(key)) continue;
+        freq.set(key, (freq.get(key) || 0) + 1);
+      }
+    }
+    if (!freq.size) return;
+    const ranked = [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([code]) => code);
+
+    // Only populate — never overwrite a non-empty existing value (might
+    // be a manual admin curation).
+    await pool.query(`
+      UPDATE story_threads
+         SET primary_nations = $1
+       WHERE id = $2
+         AND (primary_nations IS NULL OR array_length(primary_nations, 1) IS NULL)
+    `, [ranked, threadId]);
+  } catch (err) {
+    console.warn(`   ⚠ backfillThreadPrimaryNations [${threadId}]: ${err.message}`);
+  }
 }
 
 run().catch(err => {

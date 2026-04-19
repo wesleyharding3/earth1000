@@ -29,6 +29,11 @@ const { spawnSync } = require('child_process');
 const Anthropic = require('@anthropic-ai/sdk');
 const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
 const dataPanels = require('./dataPanelGenerator');
+// Consolidated deep enrichment — replaces the old per-thread
+// _deepEnrichThread that re-scraped and re-Claude'd at briefing time.
+// Data now lives in article_deep_context (populated by the thread
+// builder's post-threading enrichment pass) and we just aggregate it.
+const { loadContextForArticles, aggregateThreadContext } = require('./articleDeepEnrichment');
 
 const client         = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
@@ -448,10 +453,18 @@ async function run() {
     }
     console.log(`   [${elapsed(t0)}] ${threadData.length} unique threads after overlap dedup`);
 
-    // ── 2c. Deep-scrape articles for richer Claude context ────────────────
-    console.log(`   [${elapsed(t0)}] Deep-scraping articles to enrich narrative context...`);
-    await deepEnrichAllThreads(threadData);
-    console.log(`   [${elapsed(t0)}] Article enrichment complete`);
+    // ── 2c. Load cached deep context from article_deep_context ────────────
+    // Previously this block did fresh HTTP scrapes + fresh Haiku calls
+    // to build thread.deepContext from scratch at briefing time
+    // (_deepEnrichThread / deepEnrichAllThreads). Same work was already
+    // being done by deepAnalyzer.js post-threading → we were paying
+    // twice. Now articleDeepEnrichment.js persists per-article
+    // enrichment to article_deep_context, and we just aggregate the
+    // cached rows into thread.deepContext here. No Claude call, no
+    // scrape — just a DB read.
+    console.log(`   [${elapsed(t0)}] Loading cached deep context from article_deep_context...`);
+    await loadDeepContextFromCache(threadData);
+    console.log(`   [${elapsed(t0)}] Deep context loaded`);
 
     console.log('\n── ENRICHED THREADS ─────────────────────────────────────────');
     threadData.forEach((t, i) => {
@@ -1138,81 +1151,65 @@ async function _fetchArticleText(url, timeoutMs = 10000) {
   } catch (_) { return null; }
 }
 
-async function _deepEnrichThread(thread) {
-  const articles    = thread.articles || [];
-  const textArts    = articles.filter(a => !a.video_id && a.article_url);
-  if (!textArts.length) return null;
+// loadDeepContextFromCache
+//
+// Replaces the old _deepEnrichThread + deepEnrichAllThreads pair. Those
+// functions re-scraped article URLs + called Claude Haiku once per
+// thread at briefing time, producing a transient thread.deepContext
+// that got fed to the voiceover Sonnet prompt and then discarded. Same
+// articles were already being scraped + Claude'd by the thread
+// builder's post-threading deep-analysis pass (deepAnalyzer.js) whose
+// output nobody read. Two pipelines, overlapping work, ~$0.60/day of
+// duplicated Haiku calls.
+//
+// Post-consolidation: articleDeepEnrichment.js is the single scrape +
+// Claude writer. It persists per-article enrichment to
+// article_deep_context. Here we just batch-read those rows for every
+// article in every selected thread, aggregate them into the same
+// thread.deepContext shape the voiceover prompt expects
+// ({ key_keywords, key_entities, relationships, background }), and
+// attach. Zero scrapes, zero Claude calls at briefing time.
+//
+// Graceful degradation: articles without a cached deep_context row
+// (e.g. not in top-N per thread, haven't been enriched yet) simply
+// aren't in the loaded map. aggregateThreadContext returns null if no
+// article in the thread has cached context — same semantics as the old
+// "No scrape" branch, and the voiceover prompt already handles
+// missing deep_context via the conditional `...(t.deepContext ? { ... } : {})`
+// spread in the segment payload.
+async function loadDeepContextFromCache(threadData) {
+  // Gather all article IDs across every thread, dedupe, single DB round-trip
+  const idsSet = new Set();
+  for (const thread of threadData) {
+    for (const id of (thread.articleIds || [])) idsSet.add(Number(id));
+    for (const a of (thread.articles || [])) if (a?.id) idsSet.add(Number(a.id));
+  }
+  const allIds = [...idsSet];
+  if (!allIds.length) return;
 
-  const target  = Math.min(3, textArts.length);
-  const toFetch = textArts.slice(0, target);
+  const ctxMap = await loadContextForArticles(allIds);
 
-  // Fetch full text — reuse cached content if already substantial
-  const settled = await Promise.allSettled(toFetch.map(async a => {
-    if (a.content && a.content.length > 300) {
-      return { title: a.translated_title || a.title, text: a.content };
-    }
-    console.log(`   ↳ Fetching full article [${a.id}] for story keywords/entities: ${(a.translated_title || a.title || '').slice(0, 80)}`);
-    const text = await _fetchArticleText(a.article_url);
-    if (text) {
-      // Persist so next run can skip the fetch
-      pool.query(`UPDATE news_articles SET content = $1 WHERE id = $2`, [text.slice(0, 8000), a.id]).catch(() => {});
-    }
-    return text ? { title: a.translated_title || a.title, text } : null;
-  }));
+  let hit = 0, miss = 0;
+  for (const thread of threadData) {
+    const threadIds = new Set([
+      ...(thread.articleIds || []).map(Number),
+      ...((thread.articles || []).map(a => Number(a?.id)).filter(Boolean)),
+    ]);
+    const ctxs = [...threadIds]
+      .map(id => ctxMap.get(id))
+      .filter(Boolean);
 
-  const scraped = settled
-    .filter(r => r.status === 'fulfilled' && r.value)
-    .map(r => r.value);
-
-  if (!scraped.length) return null;
-
-  // Combine texts for Haiku — cap each article at 1500 chars to keep prompt lean
-  const combined = scraped
-    .map((s, i) => `ARTICLE ${i + 1}: ${s.title}\n${s.text.slice(0, 1500)}`)
-    .join('\n\n---\n\n');
-
-  try {
-    const resp = await client.messages.create({
-      model:      'claude-haiku-4-5',
-      max_tokens: 450,
-      messages: [{
-        role: 'user',
-        content:
-`Extract structured context from these articles about "${thread.title}" for a news briefing writer. Return ONLY valid JSON:
-{
-  "key_keywords": ["6-10 specific terms, proper nouns, or insider phrases NOT obvious from the headline alone"],
-  "key_entities": ["named people, organizations, laws, treaties, sanctions mentioned"],
-  "relationships": ["2-3 concrete cause-effect or political relationships, e.g. 'Country X sanctions Y because Z'"],
-  "background": "1-2 sentences of deeper geopolitical, historical, or legal context the briefing writer should know"
-}
-
-ARTICLES:
-${combined}`,
-      }],
-    });
-
-    const match = resp.content[0].text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    return { ...JSON.parse(match[0]), scraped_count: scraped.length };
-  } catch (_) { return null; }
-}
-
-// Enrich all threads with concurrency cap of 4
-async function deepEnrichAllThreads(threadData) {
-  let idx = 0;
-  async function worker() {
-    while (idx < threadData.length) {
-      const thread = threadData[idx++];
-      const ctx = await _deepEnrichThread(thread).catch(() => null);
-      if (ctx) {
-        thread.deepContext = ctx;
-        console.log(`   ✓ Enriched [${thread.id}] "${thread.title.slice(0, 45)}" (${ctx.scraped_count} articles)`);
-      } else {
-        console.log(`   – No scrape  [${thread.id}] "${thread.title.slice(0, 45)}"`);
-      }
+    const agg = aggregateThreadContext(ctxs);
+    if (agg) {
+      thread.deepContext = agg;
+      hit++;
+      console.log(`   ✓ Cached context [${thread.id}] "${thread.title.slice(0, 45)}" (${agg.scraped_count} articles)`);
+    } else {
+      miss++;
+      console.log(`   – No cached ctx [${thread.id}] "${thread.title.slice(0, 45)}"`);
     }
   }
-  await Promise.all([worker(), worker(), worker(), worker()]);
+  console.log(`   cache: ${hit} thread(s) with context, ${miss} without`);
 }
 
 // ─── Entity Coordinate Resolution ─────────────────────────────────────────

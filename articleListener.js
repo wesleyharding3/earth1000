@@ -3,7 +3,11 @@ const pool = require("./db");
 const { classifyArticle } = require("./scoringEngine");
 const { routeArticle } = require("./locationRouter");
 const { resolveImageForArticle } = require("./imageResolver");
-const { deepAnalyzeArticle } = require("./deepAnalyzer");
+// deepAnalyzer.js is deprecated — the per-article fire-and-forget call
+// below was disabled months ago in favor of post-threading enrichment
+// via storyThreadBuilder. Deep enrichment now lives in
+// articleDeepEnrichment.js. Import left out entirely so we don't pull
+// the Anthropic client init for nothing.
 const { processArticleById: extractEntitiesForArticle } = require("./entityResolver");
 const { scoreArticle: lexiconScoreArticle } = require("./sentimentLexicon");
 
@@ -155,11 +159,14 @@ async function startArticleListener() {
         applyLexiconSentiment(articleId)
           .catch(err => console.warn(`⚠️  Lexicon sentiment failed [${articleId}]: ${err.message}`));
 
-        // Deep NLP analysis — DISABLED per-article fire-and-forget.
-        // Now runs post-threading in storyThreadBuilder.js: only the top 3
-        // articles per thread get deep-analyzed, cutting Haiku costs ~90%.
-        // deepAnalyzeArticle(articleId)
-        //   .catch(err => console.warn(`⚠️  Deep analysis failed [${articleId}]: ${err.message}`));
+        // Deep NLP enrichment runs post-threading from storyThreadBuilder,
+        // via articleDeepEnrichment.enrichArticle on the top-N articles
+        // per active thread (see deepAnalyzeTopPerThread). Per-article
+        // fire-and-forget at ingest time was disabled months ago — Haiku
+        // cost was dominated by 80% of articles that never ended up
+        // surfaced. The consolidated pipeline feeds both the thread
+        // builder (primary_nations backfill) and briefingGenerator
+        // (cached thread.deepContext via DB read, no re-scrape).
 
         // ─── Timelines knowledge-graph extraction (PAUSED) ──────────────────
         // Fire-and-forget call to entityResolver.processArticleById, which:
