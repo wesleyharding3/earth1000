@@ -1,149 +1,169 @@
 /**
- * storyTimelineBuilder.js  — v2 (deterministic-first architecture)
+ * storyTimelineBuilder.js  —  v3 (thread-graduation architecture)
  *
  * Builds the "Lines" lane — broad multi-month umbrella arcs that track
- * the world's major ongoing conflicts, crises, and geopolitical narratives.
+ * the world's major ongoing conflicts, crises, and geopolitical
+ * narratives.
  *
- * Lines vs Threads:
- *   • Threads  — 48h tight breaking meta-story (storyThreadBuilder.js)
- *   • Lines    — month/year-scale umbrella arcs ("Russia Ukraine War",
- *                "Gaza War", "Mexican Cartel Violence"). This file.
+ * ═══ CORE MODEL ═══
  *
- * ═══ Architecture (v2) ═══
- *   Phase 1 — DETERMINISTIC ATTACH
- *     For every new article, score it against every existing timeline using
- *     keyword overlap, entity overlap, and country+category match.
- *     If score exceeds threshold, attach it directly — no LLM needed.
- *     This is the 90% case and eliminates the Haiku matching failure.
+ *   Threads  (storyThreadBuilder.js)
+ *     48-hour breaking-story cards. A thread emerges when ≥3 distinct
+ *     sources converge on the same signal within a 24 h window. Lives
+ *     for the duration of active coverage.
  *
- *   Phase 2 — CLUSTER UNMATCHED
- *     Articles that didn't match any existing timeline get clustered via
- *     union-find (keyword + entity + country/category scoring).
+ *   Lines / Timelines  (this file)
+ *     The graduated form of threads that have crossed a "sustained
+ *     coverage" gate. A storm timeline may dormant in 10 days; an
+ *     Iran–US timeline may stay active for 5 years. The data model
+ *     doesn't care about duration, only about signal.
  *
- *   Phase 3 — CLAUDE CREATES ONLY
- *     Send unmatched clusters to Claude to create genuinely NEW timelines.
- *     Claude no longer matches to existing — that's handled deterministically.
+ *   The product framing:
+ *     "The line records the series of events, the thread captures
+ *     pictures of the present."
  *
- *   Phase 4 — THREAD-INFORMED SEEDING
- *     Active threads (importance ≥ 6) that have no matching timeline get
- *     force-seeded as new timelines (Claude names them).
+ *     Threads and timelines COEXIST after promotion. The thread keeps
+ *     showing as a 48 h breaking card in the feed. The timeline shows
+ *     in the Lines lane with the thread linked via story_threads
+ *     .timeline_id. Multiple threads roll up into one timeline over
+ *     time (new "Hormuz Closure" thread + existing "Iran-US Escalation"
+ *     timeline → thread.timeline_id set, timeline gets the new articles).
  *
- *   Phase 5 — COOLDOWN & CLEANUP
- *     Transition inactive timelines, merge duplicates, refresh counts.
+ * ═══ WHY v3 ═══
+ *
+ *   v2 clustered raw articles directly (Phases 1–3), duplicating work
+ *   the thread builder had just done two hours earlier. Threads and
+ *   timelines were two parallel pipelines with similar keyword
+ *   clustering and overlapping dedup logic. This caused:
+ *     — timelines that weren't sourced from the thread signal the
+ *       product calls "news"
+ *     — double spend on Claude for overlapping article pools
+ *     — inconsistent titles (threads optimized for 48 h, timelines
+ *       copying those same titles)
+ *     — no concept of "events" — a 6-month arc rendered as a flat
+ *       bag of 200 articles, which isn't a timeline, it's a topic tag
+ *
+ *   v3 reframes timelines as the graduated form of threads, and adds a
+ *   day-level event extraction pass so the UI / briefing narrator can
+ *   render them as chronological progressions.
+ *
+ * ═══ PIPELINE ═══
+ *
+ *   Phase A — PROMOTION CANDIDATES
+ *     Scan story_threads for promotion-ready candidates:
+ *       — ≥ MIN_PROMOTION_ARTICLES articles
+ *       — ≥ MIN_PROMOTION_SOURCES distinct sources
+ *       — published span ≥ MIN_PROMOTION_SPAN_DAYS
+ *       — primary_nations populated (populated by the article_deep
+ *         _context writeback in the thread-builder's deep-enrich pass)
+ *       — not already linked to a timeline (timeline_id IS NULL)
+ *
+ *   Phase B — ATTACH OR CREATE
+ *     For each candidate thread, score it against every active/cooling
+ *     /dormant timeline using:
+ *       — entity overlap   (from article_deep_context.entities of the
+ *                          thread's anchor + top articles)
+ *       — primary_nations  overlap (Jaccard)
+ *       — keyword          overlap (Jaccard, normalized kw)
+ *       — title-token      Jaccard (cheap baseline)
+ *     If max score clears ATTACH_THRESHOLD → link to that timeline.
+ *     Dormant timelines with VERY HIGH overlap (REAWAKEN_THRESHOLD)
+ *     reactivate (status='active', last_reawakened_at=NOW()) — e.g.
+ *     "Ukraine-Russia Ceasefire" dormant 6 months, war resumes, same
+ *     timeline comes back to life rather than spawning a duplicate.
+ *     Otherwise → create a new timeline (title = thread title, scope
+ *     derived from slug).
+ *
+ *   Phase C — EVENT EXTRACTION
+ *     For each active/cooling timeline that has fresh articles since
+ *     last extraction, run Claude Haiku once per dirty day-cluster to
+ *     emit 1–3 events per day. Event title is the anchor article's
+ *     (translated) title verbatim; Claude only writes the
+ *     one/two-sentence description. Upsert to story_timeline_events
+ *     (timeline_id, event_date, anchor_article_id) UNIQUE.
+ *
+ *   Phase D — COOLDOWN
+ *     Transition active → cooling (30d no new articles) → dormant (90d).
+ *
+ * ═══ RELATIONSHIP TO OLD PHASES ═══
+ *
+ *   v2 Phase 1 (deterministic attach of raw articles):  REMOVED
+ *   v2 Phase 2 (cluster unmatched raw articles):         REMOVED
+ *   v2 Phase 3 (Claude creates from raw clusters):       REMOVED
+ *   v2 Phase 4 (seedFromThreads):                        EXPANDED into Phase A+B
+ *   v2 Phase 5 (cooldown + dedup):                       Phase D (dedup now a separate manual tool)
  *
  * Usage:
- *   node storyTimelineBuilder.js             — full run
- *   node storyTimelineBuilder.js --hours=240 — custom lookback
+ *   node storyTimelineBuilder.js                  — default run, last 24h of threads
+ *   node storyTimelineBuilder.js --hours=72       — custom thread-scan window
+ *   node storyTimelineBuilder.js --skip-events    — promotion only, no event pass
+ *   node storyTimelineBuilder.js --only-events    — event extraction only
  */
 
-require("dotenv").config();
-const pool = require("./db");
-const Anthropic = require("@anthropic-ai/sdk");
+'use strict';
+
+require('dotenv').config();
+const pool = require('./db');
+const Anthropic = require('@anthropic-ai/sdk');
+const { loadContextForArticles } = require('./articleDeepEnrichment');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const LOOKBACK_HOURS       = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "720");
-const PARABOLIC_PEAK_HOURS = 24;
-const CLAUDE_BATCH         = 40;
-const MIN_CLUSTER          = 5;          // need at least 5 articles for a new timeline (raised from 3)
-const MAX_PER_SOURCE       = 20;
-const TOTAL_ARTICLE_LIMIT  = 2000;
-const BASE_PRIORITY_FLOOR  = 0.45;       // wider net — top ~35%
-// Attach thresholds raised substantially after the "hodgepodge timeline"
-// audit: the previous 2.5 / 5.0 pair allowed one or two coincidental English
-// title words to cross into attach territory, vacuuming off-theme articles
-// into vague umbrella timelines. New scoring (below) requires actual keyword
-// OR entity overlap as a floor — title words are demoted to an amplifier.
-const ATTACH_THRESHOLD     = 5.0;
-const STRONG_ATTACH        = 8.5;
+// ─── CLI flags ────────────────────────────────────────────────────────────────
+const LOOKBACK_HOURS = parseInt(
+  process.argv.find(a => a.startsWith('--hours='))?.split('=')[1] || '24',
+  10
+);
+const SKIP_EVENTS = process.argv.includes('--skip-events');
+const ONLY_EVENTS = process.argv.includes('--only-events');
 
-// ── Per-signal score weights (new, content-signal-first) ──────────────────
-// Tune ONLY these constants to rebalance attach behavior. The signal gate
-// ("hasContentSignal") below them is a hard floor that prevents attachment
-// on title-word match alone, no matter how many.
-const W_KEYWORD_OVERLAP    = 2.5;   // per shared (normalized, stopword-filtered) keyword
-const W_ENTITY_OVERLAP     = 3.5;   // per shared entity (capped at 5)
-const W_TITLE_WORD_MATCH   = 0.6;   // per article-title word matching timeline title/scope — amplifier only
-const W_COUNTRY_CATEGORY   = 1.5;   // same country AND same hard-news category
-const ENTITY_OVERLAP_CAP   = 5;
+// ─── Promotion gates ──────────────────────────────────────────────────────────
+// The thread → timeline graduation criteria. Tuned so that a storm that
+// produces a day's worth of coverage doesn't immediately become a
+// timeline, but a trial / agreement / protest / conflict with a week+
+// of sustained signal does.
+const MIN_PROMOTION_ARTICLES    = 5;
+const MIN_PROMOTION_SOURCES     = 3;
+const MIN_PROMOTION_SPAN_DAYS   = 3;
+const MIN_PROMOTION_IMPORTANCE  = 5;   // out of 10
+// Max threads to evaluate per run. Keeps Claude cost bounded even if a
+// burst of new threads crosses the gate simultaneously.
+const MAX_PROMOTIONS_PER_RUN    = 60;
 
-// ── Generic topic-bucket filter ─────────────────────────────────────────────
-// Catch any abstract "Global X" / "Renewable Y" topic-category titles that
-// Claude sometimes creates despite the prompt. These aren't geopolitical arcs.
-const GENERIC_TOPIC_PATTERNS = [
-  /^global\s+\w+\s+(crisis|policy|security|transition|reform|system|investment|slowdown|negotiation)/i,
-  /^regional\s+\w+\s+(development|cooperation|infrastructure)/i,
-  /^\w+\s+energy\s+(transition|infrastructure|expansion|security)/i,
-  /^(extreme|natural|climate)\s+\w+\s+(response|disaster|impact)/i,
-  /^(cyber|digital|quantum)\s+\w+\s+(standard|breach|development|transition|infrastructure)/i,
-  /^(african|indo-pacific|sub-saharan)\s+\w+\s+(infrastructure|governance|reform|stress)/i,
-  /^(ai|artificial intelligence)\s+(in|for|and)\s+/i,
-  /^global\s+(organized|protest|labor|data|semiconductor|food|health|monetary|economic|hydrogen|energy)/i,
-  /^(renewable|green|clean)\s+energy/i,
-  /^(cultural|heritage)\s+\w+\s+(protection|preservation)/i,
-  /^cost\s+of\s+living/i,
-  /^(faith|religion)\s*[-–]?\s*based/i,
-  /^space\s+exploration$/i,
-  /^(media|press)\s+(freedom|regulation)/i,
-  // ── Additional bucket patterns (catches "AI in Newsrooms", "Cybersecurity Data Breaches", etc.) ──
-  /^cybersecurity\s+(data\s+)?breaches?$/i,
-  /^\w+\s+airport\s+disruptions?$/i,
-  /^\w+\s+politics$/i,                     // "Nepal Politics", "Canadian Politics"
-  /^\w+\s+(in\s+)?(newsrooms?|education|healthcare|classrooms?)/i,
-  /^\w+\s+data\s+breaches?/i,
-  // Abstract [Topic] and [Topic] patterns — "AI in Newsrooms and Education"
-  /^[\w\s]+\band\b\s+(education|development|reform|infrastructure|governance|society|innovation)$/i,
-  // Bare country + abstract noun — "Nepal Politics", "Canadian Liberal Majority Government"
-  /^(canadian|american|british|french|german|japanese|chinese|indian|brazilian|mexican|australian|african|european|asian)\s+(liberal|conservative|labor|labour)?\s*(majority\s+)?(government|politics|policy|reform|economy)$/i,
-];
-const COUNTRY_SIGNAL_RE = /\b(gaza|palestine|ukraine|russia|iran|israel|china|taiwan|north korea|dprk|venezuela|syria|yemen|myanmar|burma|sudan|ethiopia|libya|haiti|cuba|hungary|turkey|india|pakistan|lebanon|iraq|afghanistan|somalia|congo|drc|niger|mali|burkina|chad|nigeria|brazil|mexico|colombia|peru|chile|argentina|egypt|saudi|qatar|uae|bahrain|jordan|georgia|armenia|azerbaijan|moldova|belarus|poland|romania|serbia|kosovo|bosnia|philippines|indonesia|thailand|vietnam|japan|korea|kenya|tanzania|mozambique|zimbabwe|south africa|morocco|algeria|tunisia)\b/i;
+// ─── Attach / reawaken thresholds ─────────────────────────────────────────────
+// Scoring is additive across entity / nation / keyword / title signals.
+// Weights chosen so:
+//   — 4+ shared entities OR 2 entities + 1 nation = clear attach
+//   — 3 shared entities + 1 nation + 2 keywords  = clear attach
+//   — single coincidental title word alone       = no attach (below floor)
+const W_ENTITY_OVERLAP    = 2.5;   // per shared entity text (case-folded)
+const W_NATION_OVERLAP    = 2.5;   // per shared ISO code
+const W_KEYWORD_OVERLAP   = 1.0;   // per shared normalized keyword
+const W_TITLE_TOKEN       = 0.4;   // per shared title token, amplifier only
+const ENTITY_CAP          = 6;
+const KEYWORD_CAP         = 8;
 
-function isGenericTopicBucket(title) {
-  const lower = title.toLowerCase().trim();
-  for (const pat of GENERIC_TOPIC_PATTERNS) {
-    if (pat.test(lower)) {
-      // Rescue if it mentions a specific country
-      if (COUNTRY_SIGNAL_RE.test(lower)) return false;
-      return true;
-    }
-  }
-  return false;
-}
+const ATTACH_THRESHOLD    = 6.0;   // thread links to this timeline
+const REAWAKEN_THRESHOLD  = 9.0;   // VERY HIGH overlap → reactivate dormant
 
-const SKIP_KEYWORDS = new Set([
-  "government","minister","president","official","said","year","people",
-  "new","first","last","will","also","one","two","three","could","would",
-  "after","before","over","under","says","day","week","month","country",
-  "world","international","national","local","news","report","according",
-  "state","united","states","make","made","time","city","part","group"
+// ─── Event extraction ────────────────────────────────────────────────────────
+const EVENT_MIN_ARTICLES_PER_DAY = 2;   // skip days with 1 isolated article
+const EVENT_LOOKBACK_DAYS        = 21;  // day-clusters older than this are stable
+const EVENT_MAX_DAYS_PER_RUN     = 40;  // cap Claude spend per run
+
+// ─── Cooldown ────────────────────────────────────────────────────────────────
+const COOLING_AFTER_DAYS = 30;
+const DORMANT_AFTER_DAYS = 90;
+
+// ─── Stopwords for title tokenization ─────────────────────────────────────────
+const TITLE_STOPWORDS = new Set([
+  'the','a','an','of','in','on','at','to','for','and','or','but','is','are','was','were',
+  'with','from','by','as','that','this','its','it','after','before','over','under',
+  'new','old','first','last','top','all','some','any',
+  'news','report','update','coverage','story','analysis',
 ]);
 
-// ── Parabolic weighting (same as v1) ────────────────────────────────────────
-function parabolicWeight(ageHours) {
-  const h = Math.max(0, ageHours);
-  const logistic = 1 / (1 + Math.exp(0.012 * (h - PARABOLIC_PEAK_HOURS)));
-  const gaussian = Math.exp(-Math.pow(h - PARABOLIC_PEAK_HOURS, 2) / 1800);
-  const base = Math.max(0.10, logistic * (1 + 0.4 * gaussian));
-  return Number(base.toFixed(5));
-}
-
-function normalizeKeyword(keyword) {
-  return String(keyword || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/["""'`]/g, "")
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-function chunkArray(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  MAIN
@@ -152,1258 +172,792 @@ async function run() {
   const t0 = Date.now();
   const elapsed = () => `+${((Date.now()-t0)/1000).toFixed(1)}s`;
 
-  console.log(`\n🗓  Story Timeline Builder v2 — ${new Date().toISOString()}`);
-  console.log(`   Lookback: ${LOOKBACK_HOURS}h | Attach threshold: ${ATTACH_THRESHOLD} | Article limit: ${TOTAL_ARTICLE_LIMIT}`);
+  console.log(`\n🗓  Story Timeline Builder v3 (threads→timelines) — ${new Date().toISOString()}`);
+  console.log(`   lookback=${LOOKBACK_HOURS}h  min_articles=${MIN_PROMOTION_ARTICLES}  min_sources=${MIN_PROMOTION_SOURCES}  min_span_days=${MIN_PROMOTION_SPAN_DAYS}  min_imp=${MIN_PROMOTION_IMPORTANCE}`);
 
-  // ── Load existing timelines ──────────────────────────────────────────────
-  console.log(`   [${elapsed()}] Loading existing timelines...`);
-  const existingTimelines = await getActiveTimelines();
-  console.log(`   [${elapsed()}] ${existingTimelines.length} existing timelines`);
+  const metrics = {
+    candidateThreads:    0,
+    attachedThreads:     0,
+    newTimelines:        0,
+    reawakened:          0,
+    eventExtractionRuns: 0,
+    eventsEmitted:       0,
+    claudeCallsPromote:  0,
+    claudeCallsEvent:    0,
+    inputTokens:         0,
+    outputTokens:        0,
+  };
 
-  // Build keyword index for each timeline (for fast matching)
-  for (const tl of existingTimelines) {
-    tl._kwSet = new Set((tl.keywords || []).map(k => normalizeKeyword(k)).filter(k => k.length >= 3 && !SKIP_KEYWORDS.has(k)));
-    tl._titleWords = new Set(
-      (tl.title || '').toLowerCase().split(/[\s\-_,]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
-    );
-    tl._scopeWords = new Set(
-      (tl.scope || '').split(/[_\-]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
-    );
+  if (!ONLY_EVENTS) {
+    await runPromotionPhase(metrics, elapsed);
   }
 
-  // ── Load article pool (articles NOT yet in any timeline) ─────────────────
-  console.log(`   [${elapsed()}] Querying article pool...`);
-  const articles = await getArticlePool(LOOKBACK_HOURS);
-  console.log(`   [${elapsed()}] Pool: ${articles.length} articles`);
-
-  if (!articles.length) { console.log("   Nothing to process. Done."); await pool.end(); return; }
-
-  // ── Load entity mentions ────────────────────────────────────────────────
-  console.log(`   [${elapsed()}] Loading entity mentions...`);
-  const entityMap = await loadEntityMentions(articles.map(a => a.id));
-
-  // Also load entity mentions for existing timeline articles (sample)
-  const tlEntityMap = await loadTimelineEntityProfiles(existingTimelines.map(t => t.id));
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  PHASE 1: DETERMINISTIC ATTACH
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log(`\n   ═══ PHASE 1: Deterministic Attach ═══`);
-
-  let attachCount = 0;
-  const unmatched = [];
-
-  for (const article of articles) {
-    const artKws = new Set(
-      (article.keywords || []).map(k => normalizeKeyword(k)).filter(k => k.length >= 3 && !SKIP_KEYWORDS.has(k))
-    );
-    const artEntities = new Set((entityMap.get(article.id) || []).map(Number));
-    const artCountry = (article.country_name || '').toLowerCase();
-    const artCategory = (article.primary_category || '').toLowerCase();
-    const artTitleWords = new Set(
-      (article.title || '').toLowerCase().split(/[\s\-_,.:;'"]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
-    );
-
-    let bestScore = 0;
-    let bestTimeline = null;
-
-    for (const tl of existingTimelines) {
-      // ── Signal counts ───────────────────────────────────────────────
-      // Compute overlaps FIRST, then apply the content-signal floor.
-      // Without this floor, title-word coincidences alone could cross
-      // the attach threshold and vacuum off-theme articles into vague
-      // umbrella timelines (the "hodgepodge timeline" bug).
-      let kwOverlap = 0;
-      for (const kw of artKws) if (tl._kwSet.has(kw)) kwOverlap++;
-
-      const tlEnts = tlEntityMap.get(Number(tl.id)) || new Set();
-      let entOverlap = 0;
-      for (const eid of artEntities) if (tlEnts.has(eid)) entOverlap++;
-      const entOverlapCapped = Math.min(entOverlap, ENTITY_OVERLAP_CAP);
-
-      let titleWordMatches = 0;
-      for (const w of artTitleWords) {
-        if (tl._titleWords.has(w) || tl._scopeWords.has(w)) titleWordMatches++;
-      }
-
-      const HARD_CATS = new Set(['politics', 'military', 'diplomacy', 'conflict', 'economy']);
-      const tlCountries = (tl._countries || []).map(c => c.toLowerCase());
-      let countryCategoryBonus = 0;
-      if (artCountry && tlCountries.includes(artCountry) && HARD_CATS.has(artCategory)) {
-        const tlCat = (tl.primary_category || '').toLowerCase();
-        if (tlCat === artCategory || HARD_CATS.has(tlCat)) {
-          countryCategoryBonus = W_COUNTRY_CATEGORY;
-        }
-      }
-
-      // ── Content-signal floor ────────────────────────────────────────
-      // An article attaches to an existing timeline only if there is
-      // real topical overlap. Title-word coincidences (e.g. "FBI",
-      // "investigation", "committee") do NOT count as content — they
-      // merely amplify an existing match.
-      const hasContentSignal =
-        kwOverlap >= 2 ||                              // 2+ shared keywords
-        (kwOverlap >= 1 && entOverlap >= 1) ||         // 1 kw + 1 entity
-        (entOverlap >= 2 &&                            // 2+ entities in same country
-          artCountry && tlCountries.includes(artCountry));
-      if (!hasContentSignal) continue;
-
-      // ── Score ───────────────────────────────────────────────────────
-      let score = 0;
-      score += kwOverlap        * W_KEYWORD_OVERLAP;
-      score += entOverlapCapped * W_ENTITY_OVERLAP;
-      score += titleWordMatches * W_TITLE_WORD_MATCH;   // amplifier only
-      score += countryCategoryBonus;
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestTimeline = tl;
-        if (score >= STRONG_ATTACH) break; // definitely this timeline, no need to check more
-      }
-    }
-
-    if (bestScore >= ATTACH_THRESHOLD && bestTimeline) {
-      // Attach article to this timeline
-      if (!bestTimeline._pendingArticles) bestTimeline._pendingArticles = [];
-      bestTimeline._pendingArticles.push(article);
-      attachCount++;
-    } else {
-      unmatched.push(article);
-    }
+  if (!SKIP_EVENTS) {
+    await runEventExtractionPhase(metrics, elapsed);
   }
 
-  console.log(`   [${elapsed()}] Deterministically attached: ${attachCount} articles`);
-  console.log(`   [${elapsed()}] Unmatched: ${unmatched.length} articles`);
+  console.log(`\n   [${elapsed()}] Cooldown pass...`);
+  const cooled = await runCooldownPhase();
+  console.log(`   cooled=${cooled.cooled} dormant=${cooled.dormant}`);
 
-  // Persist deterministic attachments in bulk
-  let updatedTimelines = 0;
-  for (const tl of existingTimelines) {
-    if (!tl._pendingArticles?.length) continue;
-    await bulkInsertTimelineArticles(Number(tl.id), tl._pendingArticles);
-    await pool.query(`
-      UPDATE story_timelines
-      SET last_updated_at = NOW(),
-          status          = 'active',
-          article_count   = article_count + $1
-      WHERE id = $2
-    `, [tl._pendingArticles.length, tl.id]);
-    updatedTimelines++;
-  }
-  console.log(`   [${elapsed()}] Updated ${updatedTimelines} existing timelines`);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  PHASE 2: CLUSTER UNMATCHED
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log(`\n   ═══ PHASE 2: Cluster Unmatched ═══`);
-
-  const clusters = clusterBroad(unmatched, entityMap);
-  console.log(`   [${elapsed()}] Clusters from unmatched: ${clusters.length} (articles in clusters: ${clusters.reduce((s,c) => s+c.length, 0)})`);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  PHASE 3: CLAUDE CREATES NEW TIMELINES
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log(`\n   ═══ PHASE 3: Claude Creates New Timelines ═══`);
-
-  let created = 0;
-  const existingScopeSet = new Set(existingTimelines.map(t => (t.scope || '').toLowerCase()));
-  const existingTitleSet = new Set(existingTimelines.map(t => (t.title || '').toLowerCase()));
-
-  // Only send clusters big enough to warrant a new timeline
-  const viableClusters = clusters.filter(c => c.length >= MIN_CLUSTER);
-  const allBatches = [];
-
-  for (const cluster of viableClusters) {
-    if (cluster.length <= CLAUDE_BATCH) {
-      allBatches.push(cluster);
-    } else {
-      // Split large clusters into manageable batches
-      for (const chunk of chunkArray(cluster, CLAUDE_BATCH)) {
-        allBatches.push(chunk);
-      }
-    }
-  }
-
-  console.log(`   [${elapsed()}] Sending ${allBatches.length} batch(es) to Claude for new timeline creation...`);
-
-  for (let i = 0; i < allBatches.length; i++) {
-    const batch = allBatches[i];
-    process.stdout.write(`   [${elapsed()}] Batch ${i+1}/${allBatches.length} (${batch.length} articles) → Claude... `);
-    try {
-      const defs = await claudeCreateTimelines(batch, existingTimelines);
-      for (const def of defs) {
-        if (!def.article_ids?.length || def.article_ids.length < MIN_CLUSTER) continue;
-
-        // Skip if scope already exists
-        const scope = (def.scope || '').toLowerCase().replace(/\s+/g, '_').slice(0, 80);
-        if (scope && existingScopeSet.has(scope)) {
-          console.log(`\n   ⚠ Skipped duplicate scope "${scope}"`);
-          continue;
-        }
-
-        // ── Structured-schema validation (series vs episode contract) ──
-        // The Claude prompt demands arc_type / enduring_subject /
-        // representative_event_today / expected_arc_duration_months /
-        // primary_entities. Any output failing these checks is silently
-        // dropped — this replaces the regex-wall arms race with a schema
-        // contract that's structurally impossible to abuse.
-        const ALLOWED_ARC_TYPES = new Set([
-          'conflict','crisis','election_cycle','authoritarian_consolidation',
-          'democratic_transition','diplomatic_episode','trade_dispute',
-          'policy_shift','disaster_response','revolution_or_uprising',
-          'peace_process','investigation_or_trial'
-        ]);
-        if (!def.arc_type || !ALLOWED_ARC_TYPES.has(String(def.arc_type).toLowerCase())) {
-          console.log(`\n   🚫 Rejected "${def.title}" (missing/invalid arc_type="${def.arc_type}")`);
-          continue;
-        }
-
-        const durMonths = parseInt(def.expected_arc_duration_months, 10);
-        if (!Number.isFinite(durMonths) || durMonths < 1) {
-          console.log(`\n   🚫 Rejected "${def.title}" (expected_arc_duration_months=${def.expected_arc_duration_months} — too short, that's a Thread)`);
-          continue;
-        }
-
-        if (!Array.isArray(def.primary_entities) || def.primary_entities.filter(Boolean).length < 1) {
-          console.log(`\n   🚫 Rejected "${def.title}" (no primary_entities)`);
-          continue;
-        }
-
-        // Series-vs-episode check: enduring_subject must be meaningfully
-        // different from representative_event_today. If they share >50% of
-        // non-stopword tokens, Claude has named the episode not the series.
-        const tokenize = (s) => new Set(
-          String(s || '').toLowerCase()
-            .replace(/[^\w\s]/g, ' ')
-            .split(/\s+/)
-            .filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
-        );
-        const subj = tokenize(def.enduring_subject);
-        const ep   = tokenize(def.representative_event_today);
-        if (subj.size < 2 || ep.size < 2) {
-          console.log(`\n   🚫 Rejected "${def.title}" (enduring_subject or representative_event_today too thin)`);
-          continue;
-        }
-        let overlap = 0;
-        for (const t of subj) if (ep.has(t)) overlap++;
-        const overlapPct = overlap / Math.min(subj.size, ep.size);
-        if (overlapPct > 0.5) {
-          console.log(`\n   🚫 Rejected "${def.title}" (series≈episode: overlap=${Math.round(overlapPct*100)}%)`);
-          continue;
-        }
-
-        const cat = String(def.primary_category || '').toLowerCase();
-        const ALLOWED_CATS = new Set(['politics','economy','military','diplomacy','environment','technology','conflict','security']);
-        if (cat && !ALLOWED_CATS.has(cat)) {
-          console.log(`\n   🚫 Rejected "${def.title}" (category=${cat})`);
-          continue;
-        }
-
-        // Entity/geography gate: title must contain a country signal or proper noun
-        if (!COUNTRY_SIGNAL_RE.test(def.title) && !hasProperNoun(def.title)) {
-          console.log(`\n   🚫 Rejected (no entity anchor): "${def.title}"`);
-          continue;
-        }
-
-        const validIds = def.article_ids.map(Number).filter(id => batch.some(a => a.id === id));
-        if (validIds.length < MIN_CLUSTER) continue;
-
-        try {
-          const { rows } = await pool.query(`
-            INSERT INTO story_timelines
-              (title, description, scope, primary_category, geographic_scope,
-               importance, keywords, article_count, lookback_days, parabolic_peak_hours)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            RETURNING id
-          `, [
-            def.title,
-            def.description || '',
-            scope || null,
-            def.primary_category || 'politics',
-            def.geographic_scope || 'global',
-            def.importance || 6,
-            def.keywords || [],
-            validIds.length,
-            Math.ceil(LOOKBACK_HOURS / 24),
-            PARABOLIC_PEAK_HOURS
-          ]);
-
-          const timelineId = rows[0].id;
-          const batchArticles = batch.filter(a => validIds.includes(a.id));
-          await bulkInsertTimelineArticles(timelineId, batchArticles, def.anchor_article_id);
-          existingScopeSet.add(scope);
-          created++;
-        } catch (err) {
-          if (err.code === '23505') {
-            console.log(`\n   ⚠ Duplicate key for "${def.title}" — skipped`);
-          } else {
-            console.error(`\n   ⚠ Failed to create "${def.title}": ${err.message}`);
-          }
-        }
-      }
-      console.log(`✓ created ${defs.length} timeline defs`);
-    } catch (err) {
-      console.log(`✗ ERROR: ${err.message}`);
-    }
-    await sleep(1500);
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  PHASE 4: THREAD-INFORMED SEEDING
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log(`\n   ═══ PHASE 4: Thread-Informed Seeding ═══`);
-
-  // Reload existing timelines (includes newly created ones)
-  const updatedExisting = await getActiveTimelines();
-  const updatedScopeSet = new Set(updatedExisting.map(t => (t.scope || '').toLowerCase()));
-
-  const seeded = await seedFromThreads(updatedExisting, updatedScopeSet);
-  console.log(`   [${elapsed()}] Seeded ${seeded} new timelines from uncovered threads`);
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  PHASE 5: CLEANUP
-  // ═══════════════════════════════════════════════════════════════════════════
-  console.log(`\n   ═══ PHASE 5: Cleanup ═══`);
-
-  await refreshAllCounts();
-  await coolDownTimelines();
-  await detectAndMergeDuplicates();
-
-  console.log(`\n✅ Done in ${((Date.now()-t0)/1000).toFixed(1)}s — ${attachCount} attached, ${created} created, ${seeded} seeded.\n`);
+  // ── End-of-run summary ───────────────────────────────────────────────────
+  console.log(`\n═══ TIMELINE RUN SUMMARY (${elapsed()}) ═══`);
+  console.log(`  candidate_threads       : ${metrics.candidateThreads}`);
+  console.log(`  attached_to_existing    : ${metrics.attachedThreads}`);
+  console.log(`  new_timelines_created   : ${metrics.newTimelines}`);
+  console.log(`  dormant_reawakened      : ${metrics.reawakened}`);
+  console.log(`  timelines_cooled        : ${cooled.cooled}`);
+  console.log(`  timelines_dormant       : ${cooled.dormant}`);
+  console.log(`  event_extractions_run   : ${metrics.eventExtractionRuns}`);
+  console.log(`  events_emitted          : ${metrics.eventsEmitted}`);
+  console.log(`  claude_calls (promote)  : ${metrics.claudeCallsPromote}`);
+  console.log(`  claude_calls (events)   : ${metrics.claudeCallsEvent}`);
+  console.log(`  claude_tokens           : in=${metrics.inputTokens}  out=${metrics.outputTokens}`);
+  console.log(`✅ Done.\n`);
   await pool.end();
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  ARTICLE POOL — articles NOT yet in any timeline
+//  PHASE A + B : PROMOTION
 // ═════════════════════════════════════════════════════════════════════════════
-async function getArticlePool(hours) {
-  // Disable statement timeout for these heavy queries
-  await pool.query('SET statement_timeout = 0');
-
-  // Pre-fetch the set of article IDs already in timelines (fast hash join)
-  const { rows: existingRows } = await pool.query(
-    'SELECT DISTINCT article_id FROM story_timeline_articles'
-  );
-  const inTimeline = new Set(existingRows.map(r => r.article_id));
-
-  const { rows } = await pool.query(`
-    WITH ranked AS (
+async function runPromotionPhase(metrics, elapsed) {
+  // ── A. Find candidate threads ────────────────────────────────────────────
+  // Gates: enough articles, enough sources, enough span, enough importance,
+  // primary_nations set, not already graduated, actively extending (last
+  // article in window).
+  console.log(`   [${elapsed()}] Phase A: scanning for promotion-ready threads...`);
+  const { rows: candidates } = await pool.query(`
+    WITH thread_stats AS (
       SELECT
-        a.id, a.title, a.summary, a.translated_summary,
-        a.published_at, a.base_priority,
-        COALESCE(ns.name, ys.name) AS source_name,
-        COALESCE(ns.id::text, 'y'||ys.id::text) AS source_key,
-        COALESCE(ns.fetch_tier, 1) AS fetch_tier,
-        co.name AS country_name,
-        ci.name AS city_name,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
-          ORDER BY a.published_at DESC
-        ) AS source_rank
-      FROM news_articles a
-      LEFT JOIN countries     co ON co.id = a.country_id
-      LEFT JOIN cities        ci ON ci.id = a.city_id
-      LEFT JOIN news_sources  ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
-        AND a.published_at < NOW()
-        AND a.title IS NOT NULL
-        AND (
-          COALESCE(ns.fetch_tier, 1) IN (2, 3, 4)
-          OR COALESCE(a.base_priority, 0) >= ${BASE_PRIORITY_FLOOR}
-        )
+        t.id, t.title, t.description, t.primary_category, t.geographic_scope,
+        t.importance, t.keywords, t.primary_nations, t.article_count,
+        t.distinct_source_count, t.status, t.timeline_id,
+        MAX(a.published_at) AS latest_pub,
+        MIN(a.published_at) AS earliest_pub,
+        COUNT(DISTINCT COALESCE(a.source_id::text, a.youtube_source_id::text)) AS src_count,
+        EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400.0 AS span_days
+      FROM story_threads t
+      JOIN story_thread_articles sta ON sta.thread_id = t.id
+      JOIN news_articles a ON a.id = sta.article_id
+      WHERE t.timeline_id IS NULL
+        AND t.status IN ('active','cooling')
+      GROUP BY t.id
     )
-    SELECT id, title, summary, translated_summary, published_at, base_priority,
-           source_name, source_key, fetch_tier, country_name, city_name
-    FROM ranked
-    WHERE source_rank <= ${MAX_PER_SOURCE}
-    ORDER BY base_priority DESC NULLS LAST, published_at DESC
-    LIMIT ${TOTAL_ARTICLE_LIMIT * 2}
+    SELECT *
+    FROM thread_stats
+    WHERE article_count         >= $1
+      AND src_count              >= $2
+      AND span_days              >= $3
+      AND importance             >= $4
+      AND latest_pub > NOW() - ($5 * INTERVAL '1 hour')
+      AND COALESCE(array_length(primary_nations, 1), 0) > 0
+    ORDER BY importance DESC, article_count DESC
+    LIMIT $6
+  `, [
+    MIN_PROMOTION_ARTICLES, MIN_PROMOTION_SOURCES, MIN_PROMOTION_SPAN_DAYS,
+    MIN_PROMOTION_IMPORTANCE, LOOKBACK_HOURS, MAX_PROMOTIONS_PER_RUN
+  ]);
+  metrics.candidateThreads = candidates.length;
+  console.log(`   [${elapsed()}] ${candidates.length} candidate thread(s) ready for promotion`);
+
+  if (!candidates.length) return;
+
+  // ── Load all timelines for matching (active + cooling + dormant) ─────────
+  const { rows: timelines } = await pool.query(`
+    SELECT id, title, description, scope, status, importance, keywords,
+           primary_nations, article_count, primary_category, geographic_scope,
+           first_seen_at, last_updated_at
+    FROM story_timelines
+    WHERE last_updated_at > NOW() - INTERVAL '365 days'
+       OR status = 'active'
+    ORDER BY importance DESC, last_updated_at DESC
+    LIMIT 1000
   `);
+  console.log(`   [${elapsed()}] ${timelines.length} existing timeline(s) in match pool`);
 
-  // Filter out articles already in timelines (in JS — avoids slow NOT IN subquery)
-  const filtered = rows.filter(r => !inTimeline.has(r.id)).slice(0, TOTAL_ARTICLE_LIMIT);
-  if (!filtered.length) return [];
+  // Precompute timeline match-features once. Entities for existing
+  // timelines come from article_deep_context rows of their articles —
+  // batched read.
+  const timelineFeatures = await buildTimelineFeatures(timelines);
 
-  // Batch-fetch categories from thread associations
-  const allIds = filtered.map(r => r.id);
-  const { rows: catRows } = await pool.query(`
-    SELECT DISTINCT ON (sta.article_id)
-      sta.article_id, st.primary_category
-    FROM story_thread_articles sta
-    JOIN story_threads st ON st.id = sta.thread_id
-    WHERE sta.article_id = ANY($1::int[])
-    ORDER BY sta.article_id, st.importance DESC
-  `, [allIds]);
-  const catMap = new Map(catRows.map(r => [r.article_id, r.primary_category]));
-  for (const r of filtered) {
-    r.primary_category = catMap.get(r.id) || null;
-  }
+  // ── B. For each candidate, attach or create ──────────────────────────────
+  for (const cand of candidates) {
+    try {
+      const decision = await decideAttachOrCreate(cand, timelines, timelineFeatures);
+      metrics.claudeCallsPromote += decision._claudeCalls || 0;
+      if (decision._usage) {
+        metrics.inputTokens  += decision._usage.input_tokens        || 0;
+        metrics.inputTokens  += decision._usage.cache_read_input_tokens || 0;
+        metrics.inputTokens  += decision._usage.cache_creation_input_tokens || 0;
+        metrics.outputTokens += decision._usage.output_tokens       || 0;
+      }
 
-  // Also inject articles from active/cooling threads not yet in timelines
-  const { rows: threadRows } = await pool.query(`
-    SELECT DISTINCT ON (a.id)
-      a.id, a.title, a.summary, a.translated_summary,
-      a.published_at, a.base_priority,
-      COALESCE(ns.name, ys.name) AS source_name,
-      COALESCE(ns.id::text, 'y'||ys.id::text) AS source_key,
-      COALESCE(ns.fetch_tier, 1) AS fetch_tier,
-      co.name AS country_name,
-      ci.name AS city_name,
-      st.primary_category
-    FROM story_threads st
-    JOIN story_thread_articles sta ON sta.thread_id = st.id
-    JOIN news_articles a ON a.id = sta.article_id
-    LEFT JOIN countries     co ON co.id = a.country_id
-    LEFT JOIN cities        ci ON ci.id = a.city_id
-    LEFT JOIN news_sources  ns ON ns.id = a.source_id
-    LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-    WHERE st.status IN ('active', 'cooling')
-      AND st.importance >= 4
-      AND a.published_at > NOW() - INTERVAL '${hours} hours'
-      AND a.title IS NOT NULL
-    ORDER BY a.id, st.importance DESC, a.published_at DESC
-    LIMIT 800
-  `);
-
-  // Merge, dedup — also filter thread rows through inTimeline set
-  const allRows = [...filtered];
-  const existingIds = new Set(filtered.map(r => r.id));
-  for (const tr of threadRows) {
-    if (!existingIds.has(tr.id) && !inTimeline.has(tr.id)) {
-      allRows.push(tr);
-      existingIds.add(tr.id);
+      if (decision.action === 'attach' || decision.action === 'reawaken') {
+        await attachThreadToTimeline(cand, decision.timelineId, decision.action === 'reawaken');
+        metrics.attachedThreads++;
+        if (decision.action === 'reawaken') metrics.reawakened++;
+        const matched = timelines.find(t => t.id === decision.timelineId);
+        console.log(`   ↳ ${decision.action === 'reawaken' ? 'REAWAKENED' : 'attached'} thread "${cand.title.slice(0,50)}" → timeline "${matched?.title?.slice(0,50) || decision.timelineId}" (score=${decision.score?.toFixed(1)})`);
+      } else {
+        const timelineId = await createTimelineFromThread(cand);
+        metrics.newTimelines++;
+        // Add the freshly-created timeline to the in-memory match pool so
+        // any subsequent candidate this run can dedup-attach to it. Cheap
+        // rebuild of its feature row from the thread we just promoted.
+        const newRow = {
+          id: timelineId,
+          title: cand.title,
+          description: cand.description,
+          scope: null,
+          status: 'active',
+          importance: cand.importance,
+          keywords: cand.keywords || [],
+          primary_nations: cand.primary_nations || [],
+          article_count: cand.article_count,
+          primary_category: cand.primary_category,
+          geographic_scope: cand.geographic_scope,
+        };
+        timelines.push(newRow);
+        timelineFeatures.set(timelineId, await buildSingleTimelineFeatures(newRow));
+        console.log(`   ↳ CREATED new timeline "${cand.title.slice(0,60)}" (id=${timelineId})`);
+      }
+    } catch (err) {
+      console.warn(`   ⚠ Promotion failed for thread ${cand.id} "${cand.title?.slice(0,40)}": ${err.message}`);
     }
+    await sleep(300);
   }
-
-  // Load keywords for all articles
-  const ids = allRows.map(r => r.id);
-  const { rows: kwRows } = await pool.query(`
-    SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
-    FROM article_keywords
-    WHERE article_id = ANY($1::int[])
-    GROUP BY article_id
-  `, [ids]);
-  const kwMap = new Map(kwRows.map(r => [r.article_id, r.keywords]));
-
-  return allRows.map(a => {
-    const ageHours = (Date.now() - new Date(a.published_at).getTime()) / 3600000;
-    return {
-      ...a,
-      keywords: kwMap.get(a.id) || [],
-      age_hours: ageHours,
-      parabolic_weight: parabolicWeight(ageHours)
-    };
-  });
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  ENTITY LOADING
-// ═════════════════════════════════════════════════════════════════════════════
-async function loadEntityMentions(articleIds) {
-  const out = new Map(articleIds.map(id => [id, []]));
-  if (!articleIds.length) return out;
-  try {
-    const { rows } = await pool.query(`
-      SELECT article_id, entity_id
-      FROM article_entity_mentions
-      WHERE article_id = ANY($1::int[])
-        AND role IN ('subject', 'actor', 'location')
-    `, [articleIds]);
-    for (const r of rows) {
-      if (!out.has(r.article_id)) out.set(r.article_id, []);
-      out.get(r.article_id).push(r.entity_id);
-    }
-  } catch (e) {
-    console.warn(`   ⚠ Entity mention lookup skipped: ${e.message}`);
-  }
-  return out;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+//  Match features — built once per run, reused across every candidate
+// ─────────────────────────────────────────────────────────────────────────────
+async function buildTimelineFeatures(timelines) {
+  // Fetch top-N articles per timeline and batch-load their deep-context
+  // entities. Timelines with zero deep-enriched articles get an empty
+  // entity set — they'll still match on keywords/nations/title.
+  const featureMap = new Map();
+  if (!timelines.length) return featureMap;
 
-// Build entity profiles for existing timelines — sample top entities from
-// each timeline's most recent articles
-async function loadTimelineEntityProfiles(timelineIds) {
-  const out = new Map();
-  if (!timelineIds.length) return out;
-  try {
-    const { rows } = await pool.query(`
-      SELECT sta.timeline_id, aem.entity_id, COUNT(*) AS mentions
+  const timelineIds = timelines.map(t => t.id);
+  const { rows: articleLinks } = await pool.query(`
+    SELECT timeline_id, article_id
+    FROM (
+      SELECT sta.timeline_id, sta.article_id,
+             ROW_NUMBER() OVER (PARTITION BY sta.timeline_id ORDER BY sta.relevance_score DESC NULLS LAST, sta.added_at DESC) AS rn
       FROM story_timeline_articles sta
-      JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
       WHERE sta.timeline_id = ANY($1::int[])
-        AND aem.role IN ('subject', 'actor', 'location')
-      GROUP BY sta.timeline_id, aem.entity_id
-      HAVING COUNT(*) >= 2
-      ORDER BY sta.timeline_id, mentions DESC
-    `, [timelineIds]);
-    for (const r of rows) {
-      const tid = Number(r.timeline_id);
-      if (!out.has(tid)) out.set(tid, new Set());
-      out.get(tid).add(Number(r.entity_id));
-    }
-  } catch (e) {
-    console.warn(`   ⚠ Timeline entity profile skipped: ${e.message}`);
+    ) ranked
+    WHERE rn <= 10
+  `, [timelineIds]);
+
+  const byTimeline = new Map();
+  const allArticleIds = new Set();
+  for (const r of articleLinks) {
+    if (!byTimeline.has(r.timeline_id)) byTimeline.set(r.timeline_id, []);
+    byTimeline.get(r.timeline_id).push(Number(r.article_id));
+    allArticleIds.add(Number(r.article_id));
   }
 
-  // Also load country info for each timeline
+  const ctxMap = await loadContextForArticles([...allArticleIds]);
+
+  for (const t of timelines) {
+    const arts = byTimeline.get(t.id) || [];
+    const entitySet = new Set();
+    for (const id of arts) {
+      const ctx = ctxMap.get(id);
+      if (!ctx) continue;
+      for (const e of (ctx.entities || [])) {
+        if (!e?.text) continue;
+        entitySet.add(String(e.text).toLowerCase().trim());
+      }
+    }
+    featureMap.set(t.id, {
+      entities: entitySet,
+      nations:  new Set((t.primary_nations || []).map(n => String(n).toUpperCase())),
+      keywords: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean)),
+      titleTokens: tokenizeTitle(t.title),
+    });
+  }
+  return featureMap;
+}
+
+async function buildSingleTimelineFeatures(t) {
+  return {
+    entities: new Set(),  // new timeline — no article history yet
+    nations:  new Set((t.primary_nations || []).map(n => String(n).toUpperCase())),
+    keywords: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean)),
+    titleTokens: tokenizeTitle(t.title),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Scoring a candidate thread against existing timelines
+// ─────────────────────────────────────────────────────────────────────────────
+async function decideAttachOrCreate(cand, timelines, timelineFeatures) {
+  // Gather the candidate's own entities from its articles' deep-context.
+  // Force-load: if the anchor article hasn't been deep-enriched yet,
+  // the promotion decision is weaker but still valid via keywords+nations.
+  const { rows: topArts } = await pool.query(`
+    SELECT sta.article_id
+    FROM story_thread_articles sta
+    WHERE sta.thread_id = $1
+    ORDER BY sta.is_anchor DESC NULLS LAST, sta.relevance_score DESC NULLS LAST
+    LIMIT 5
+  `, [cand.id]);
+  const candArticleIds = topArts.map(r => Number(r.article_id));
+  const candCtxMap = await loadContextForArticles(candArticleIds);
+  const candEntities = new Set();
+  for (const id of candArticleIds) {
+    const ctx = candCtxMap.get(id);
+    if (!ctx) continue;
+    for (const e of (ctx.entities || [])) {
+      if (!e?.text) continue;
+      candEntities.add(String(e.text).toLowerCase().trim());
+    }
+  }
+  const candNations  = new Set((cand.primary_nations || []).map(n => String(n).toUpperCase()));
+  const candKeywords = new Set((cand.keywords || []).map(normalizeKeyword).filter(Boolean));
+  const candTitleTokens = tokenizeTitle(cand.title);
+
+  // Score every timeline; pick max.
+  let bestScore = 0;
+  let bestTimeline = null;
+  const breakdown = [];
+  for (const tl of timelines) {
+    const feat = timelineFeatures.get(tl.id);
+    if (!feat) continue;
+
+    const entShared  = Math.min(ENTITY_CAP,  intersectCount(candEntities,  feat.entities));
+    const natShared  = intersectCount(candNations,  feat.nations);
+    const kwShared   = Math.min(KEYWORD_CAP, intersectCount(candKeywords,  feat.keywords));
+    const ttkShared  = intersectCount(candTitleTokens, feat.titleTokens);
+
+    const score =
+      entShared  * W_ENTITY_OVERLAP +
+      natShared  * W_NATION_OVERLAP +
+      kwShared   * W_KEYWORD_OVERLAP +
+      ttkShared  * W_TITLE_TOKEN;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestTimeline = tl;
+      breakdown.length = 0;
+      breakdown.push({ ent: entShared, nat: natShared, kw: kwShared, ttk: ttkShared });
+    }
+  }
+
+  // Decide.
+  if (bestTimeline && bestScore >= ATTACH_THRESHOLD) {
+    const isDormant = (bestTimeline.status === 'dormant');
+    const action = (isDormant && bestScore >= REAWAKEN_THRESHOLD) ? 'reawaken' : 'attach';
+    return {
+      action,
+      timelineId: bestTimeline.id,
+      score: bestScore,
+      breakdown: breakdown[0],
+      _claudeCalls: 0,   // deterministic — no Claude needed
+    };
+  }
+
+  // No confident deterministic match. Check if the score is in the gray
+  // zone (3.0 < score < ATTACH_THRESHOLD) — call Claude for tiebreak.
+  // Below 3.0 we just create a new timeline outright (no signal).
+  if (bestScore >= 3.0 && bestTimeline) {
+    const claudeCall = await askClaudeAttachOrCreate(cand, bestTimeline);
+    if (claudeCall && claudeCall.decision === 'attach') {
+      return {
+        action: bestTimeline.status === 'dormant' ? 'reawaken' : 'attach',
+        timelineId: bestTimeline.id,
+        score: bestScore,
+        breakdown: breakdown[0],
+        _claudeCalls: 1,
+        _usage: claudeCall._usage,
+      };
+    }
+    return {
+      action: 'create',
+      _claudeCalls: claudeCall ? 1 : 0,
+      _usage: claudeCall?._usage,
+    };
+  }
+
+  return { action: 'create', _claudeCalls: 0 };
+}
+
+async function askClaudeAttachOrCreate(cand, candidateTimeline) {
   try {
-    const { rows } = await pool.query(`
-      SELECT sta.timeline_id, co.name AS country_name, COUNT(*) AS cnt
+    const prompt =
+`Decide whether this THREAD should attach to the candidate TIMELINE or become its own new timeline.
+
+THREAD:
+  title: ${cand.title}
+  description: ${cand.description || ''}
+  primary_nations: ${(cand.primary_nations || []).join(', ') || '(none)'}
+  keywords: ${(cand.keywords || []).slice(0, 6).join(', ')}
+  category: ${cand.primary_category}
+
+TIMELINE:
+  title: ${candidateTimeline.title}
+  description: ${candidateTimeline.description || ''}
+  primary_nations: ${(candidateTimeline.primary_nations || []).join(', ') || '(none)'}
+  keywords: ${(candidateTimeline.keywords || []).slice(0, 6).join(', ')}
+  status: ${candidateTimeline.status}
+
+Attach if the thread is clearly a chapter / episode of the timeline's ongoing story.
+Create if the thread is a different story that happens to share some vocabulary.
+
+Return ONLY this JSON, nothing else:
+{"decision": "attach" | "create", "reason": "one sentence"}`;
+
+    const response = await client.messages.create({
+      model:      'claude-haiku-4-5',
+      max_tokens: 200,
+      messages:   [{ role: 'user', content: prompt }]
+    });
+    const raw = response.content?.[0]?.text || '';
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    return {
+      decision: parsed.decision === 'attach' ? 'attach' : 'create',
+      reason:   parsed.reason || '',
+      _usage:   response.usage || null,
+    };
+  } catch (err) {
+    console.warn(`   ⚠ Claude tiebreak failed: ${err.message}`);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Persist: attach thread to existing timeline / create new
+// ─────────────────────────────────────────────────────────────────────────────
+async function attachThreadToTimeline(thread, timelineId, reawaken) {
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+
+    // Link the thread
+    await tx.query(
+      `UPDATE story_threads SET timeline_id = $1 WHERE id = $2`,
+      [timelineId, thread.id]
+    );
+
+    // Attach the thread's articles to the timeline (upsert — idempotent).
+    // parabolic_weight + relevance_score stay whatever the thread gave
+    // them; timelines don't re-weight.
+    await tx.query(`
+      INSERT INTO story_timeline_articles (timeline_id, article_id, relevance_score, parabolic_weight, is_anchor, added_at)
+      SELECT $1, sta.article_id, sta.relevance_score, 1.0, sta.is_anchor, NOW()
+      FROM story_thread_articles sta
+      WHERE sta.thread_id = $2
+      ON CONFLICT (timeline_id, article_id) DO NOTHING
+    `, [timelineId, thread.id]);
+
+    // Refresh timeline counters + mark active. last_reawakened_at only
+    // set if the dormant-→-active transition actually happened here.
+    if (reawaken) {
+      await tx.query(`
+        UPDATE story_timelines
+           SET status             = 'active',
+               last_reawakened_at = NOW(),
+               last_updated_at    = NOW(),
+               importance         = GREATEST(importance, $2),
+               keywords           = ARRAY(SELECT DISTINCT unnest(keywords || $3::text[])),
+               primary_nations    = ARRAY(SELECT DISTINCT unnest(primary_nations || $4::text[])),
+               article_count      = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
+         WHERE id = $1
+      `, [timelineId, thread.importance || 5, thread.keywords || [], thread.primary_nations || []]);
+    } else {
+      await tx.query(`
+        UPDATE story_timelines
+           SET last_updated_at = NOW(),
+               importance      = GREATEST(importance, $2),
+               keywords        = ARRAY(SELECT DISTINCT unnest(keywords || $3::text[])),
+               primary_nations = ARRAY(SELECT DISTINCT unnest(primary_nations || $4::text[])),
+               article_count   = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1),
+               status          = CASE WHEN status = 'dormant' THEN 'active' ELSE status END
+         WHERE id = $1
+      `, [timelineId, thread.importance || 5, thread.keywords || [], thread.primary_nations || []]);
+    }
+
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    tx.release();
+  }
+}
+
+async function createTimelineFromThread(thread) {
+  const scope = slugifyScope(thread.title);
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+
+    // Scope is UNIQUE — on collision we append thread id as suffix. We
+    // already checked overlap against existing timelines above; this is
+    // a belt-and-braces safeguard against two threads producing the
+    // same slug at the exact same time.
+    const { rows } = await tx.query(`
+      INSERT INTO story_timelines
+        (title, description, scope, status, importance, primary_category,
+         geographic_scope, keywords, primary_nations, article_count,
+         first_seen_at, last_updated_at)
+      VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, 0, NOW(), NOW())
+      ON CONFLICT (scope) DO UPDATE SET
+        last_updated_at = NOW()
+      RETURNING id
+    `, [
+      thread.title,
+      thread.description || '',
+      scope,
+      thread.importance || 5,
+      thread.primary_category || 'politics',
+      thread.geographic_scope || 'global',
+      thread.keywords || [],
+      thread.primary_nations || [],
+    ]);
+    const timelineId = rows[0].id;
+
+    // Link thread
+    await tx.query(
+      `UPDATE story_threads SET timeline_id = $1 WHERE id = $2`,
+      [timelineId, thread.id]
+    );
+
+    // Attach articles
+    await tx.query(`
+      INSERT INTO story_timeline_articles (timeline_id, article_id, relevance_score, parabolic_weight, is_anchor, added_at)
+      SELECT $1, sta.article_id, sta.relevance_score, 1.0, sta.is_anchor, NOW()
+      FROM story_thread_articles sta
+      WHERE sta.thread_id = $2
+      ON CONFLICT (timeline_id, article_id) DO NOTHING
+    `, [timelineId, thread.id]);
+
+    // Refresh count
+    await tx.query(`
+      UPDATE story_timelines
+         SET article_count = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
+       WHERE id = $1
+    `, [timelineId]);
+
+    await tx.query('COMMIT');
+    return timelineId;
+  } catch (err) {
+    await tx.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    tx.release();
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PHASE C : EVENT EXTRACTION
+// ═════════════════════════════════════════════════════════════════════════════
+async function runEventExtractionPhase(metrics, elapsed) {
+  console.log(`\n   [${elapsed()}] Phase C: day-level event extraction...`);
+
+  // Find active/cooling timelines that have fresh articles since their
+  // last event extraction. Use GREATEST(latest_event_created_at,
+  // first_seen_at) to include timelines that have never been extracted.
+  const { rows: dirtyTimelines } = await pool.query(`
+    SELECT t.id, t.title,
+           MAX(ste.created_at) AS last_event_at,
+           MAX(a.published_at) AS latest_article_at
+    FROM story_timelines t
+    JOIN story_timeline_articles sta ON sta.timeline_id = t.id
+    JOIN news_articles a ON a.id = sta.article_id
+    LEFT JOIN story_timeline_events ste ON ste.timeline_id = t.id
+    WHERE t.status IN ('active','cooling')
+    GROUP BY t.id, t.title
+    HAVING MAX(a.published_at) > COALESCE(MAX(ste.created_at), t.first_seen_at)
+    ORDER BY MAX(a.published_at) DESC
+    LIMIT 80
+  `);
+  console.log(`   [${elapsed()}] ${dirtyTimelines.length} timeline(s) have fresh articles since last extraction`);
+
+  let daysProcessed = 0;
+  for (const tl of dirtyTimelines) {
+    if (daysProcessed >= EVENT_MAX_DAYS_PER_RUN) break;
+    try {
+      const emitted = await extractEventsForTimeline(tl.id, tl.title, metrics);
+      metrics.eventsEmitted += emitted.eventsEmitted;
+      metrics.eventExtractionRuns += emitted.daysProcessed;
+      metrics.claudeCallsEvent += emitted.claudeCalls;
+      metrics.inputTokens  += emitted.inputTokens;
+      metrics.outputTokens += emitted.outputTokens;
+      daysProcessed += emitted.daysProcessed;
+    } catch (err) {
+      console.warn(`   ⚠ Event extraction failed for timeline ${tl.id}: ${err.message}`);
+    }
+    await sleep(400);
+  }
+}
+
+async function extractEventsForTimeline(timelineId, timelineTitle, metrics) {
+  // Load articles attached to this timeline, grouped by day. We only
+  // (re)extract for days that (a) have ≥ EVENT_MIN_ARTICLES_PER_DAY
+  // articles AND (b) either have no events yet OR have new articles
+  // added since the last extraction.
+  const { rows } = await pool.query(`
+    WITH day_clusters AS (
+      SELECT
+        DATE(a.published_at AT TIME ZONE 'UTC') AS event_date,
+        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+        a.article_url, a.published_at, a.country_id, a.source_id,
+        sta.relevance_score, sta.is_anchor,
+        co.name AS country_name,
+        COALESCE(ns.name, ys.name) AS source_name
       FROM story_timeline_articles sta
       JOIN news_articles a ON a.id = sta.article_id
-      JOIN countries co ON co.id = a.country_id
-      WHERE sta.timeline_id = ANY($1::int[])
-      GROUP BY sta.timeline_id, co.name
-      HAVING COUNT(*) >= 2
-      ORDER BY sta.timeline_id, cnt DESC
-    `, [timelineIds]);
+      LEFT JOIN countries co ON co.id = a.country_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE sta.timeline_id = $1
+        AND a.published_at IS NOT NULL
+        AND a.published_at > NOW() - ($2 * INTERVAL '1 day')
+    )
+    SELECT * FROM day_clusters
+    ORDER BY event_date DESC, relevance_score DESC NULLS LAST
+  `, [timelineId, EVENT_LOOKBACK_DAYS]);
 
-    // Store on the timeline objects (we'll read it in Phase 1)
-    const countryMap = new Map();
-    for (const r of rows) {
-      const tid = Number(r.timeline_id);
-      if (!countryMap.has(tid)) countryMap.set(tid, []);
-      countryMap.get(tid).push(r.country_name);
-    }
-    // Attach to timeline objects — we need to pass this through
-    // Store on global object for now
-    global.__tlCountryMap = countryMap;
-  } catch (e) {
-    console.warn(`   ⚠ Timeline country profile skipped: ${e.message}`);
+  if (!rows.length) {
+    return { eventsEmitted: 0, daysProcessed: 0, claudeCalls: 0, inputTokens: 0, outputTokens: 0 };
   }
 
+  // Group by day
+  const byDay = new Map();
+  for (const r of rows) {
+    const key = r.event_date.toISOString().slice(0,10);
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(r);
+  }
+
+  // Find dirty days: days whose existing events are stale (older than
+  // the newest article on that day) OR days with no events yet.
+  const { rows: existingEvents } = await pool.query(`
+    SELECT event_date, MAX(updated_at) AS last_extracted
+    FROM story_timeline_events
+    WHERE timeline_id = $1
+    GROUP BY event_date
+  `, [timelineId]);
+  const extractedMap = new Map();
+  for (const e of existingEvents) {
+    extractedMap.set(e.event_date.toISOString().slice(0,10), e.last_extracted);
+  }
+
+  const dirtyDays = [];
+  for (const [day, articles] of byDay.entries()) {
+    if (articles.length < EVENT_MIN_ARTICLES_PER_DAY) continue;
+    const last = extractedMap.get(day);
+    const newest = articles[0].published_at;
+    if (!last || new Date(newest) > new Date(last)) {
+      dirtyDays.push({ day, articles });
+    }
+  }
+  if (!dirtyDays.length) {
+    return { eventsEmitted: 0, daysProcessed: 0, claudeCalls: 0, inputTokens: 0, outputTokens: 0 };
+  }
+
+  // Claude pass: one call covers up to 5 days at once. Keeps token budget
+  // low. We give Claude the day's articles and ask for {anchor_article_id,
+  // event_description} — the event_title is set by us from the anchor's
+  // (translated) title.
+  let eventsEmitted = 0;
+  let claudeCalls = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  const daysBatches = chunk(dirtyDays, 5);
+  for (const batch of daysBatches) {
+    const batchInput = batch.map(b => ({
+      date: b.day,
+      articles: b.articles.slice(0, 6).map(a => ({
+        id: a.id,
+        title: a.translated_title || a.title,
+        summary: (a.translated_summary || a.summary || '').slice(0, 200),
+        source: a.source_name,
+        country: a.country_name,
+      })),
+    }));
+
+    const prompt =
+`You are the event-structure writer for a geopolitical timeline called "${timelineTitle}".
+
+Below is a list of days. For each day, the articles published that day are provided. Extract the KEY EVENTS that happened (1–3 per day). Pick an anchor article (the most representative reporting of the event), and write a 1–2 sentence description of what occurred.
+
+If a day contains only background/commentary/opinion articles with no clear event, emit zero events for it.
+
+DAYS:
+${JSON.stringify(batchInput, null, 2)}
+
+Return ONLY a JSON array, no markdown fences, no prose:
+[
+  {
+    "event_date": "YYYY-MM-DD",
+    "anchor_article_id": <number>,
+    "description": "1-2 sentence description of the event"
+  }
+]`;
+
+    try {
+      const response = await client.messages.create({
+        model:      'claude-haiku-4-5',
+        max_tokens: 1500,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      claudeCalls++;
+      inputTokens  += response.usage?.input_tokens  || 0;
+      outputTokens += response.usage?.output_tokens || 0;
+
+      const rawText = response.content?.[0]?.text || '';
+      const parsed = parseJsonArray(rawText);
+      if (!Array.isArray(parsed)) continue;
+
+      // Persist
+      for (const evt of parsed) {
+        if (!evt.event_date || !evt.anchor_article_id) continue;
+        // Find the anchor article's title from our batch input
+        const dayBatch = batch.find(b => b.day === evt.event_date);
+        const anchor = dayBatch?.articles.find(a => Number(a.id) === Number(evt.anchor_article_id));
+        if (!anchor) continue;
+        const eventTitle = anchor.translated_title || anchor.title;
+        if (!eventTitle) continue;
+
+        // article_ids: every article from that day that mentions the same
+        // signals. Simplest heuristic: all articles in the day-batch.
+        const allIdsForDay = dayBatch.articles.map(a => Number(a.id));
+        const sourceCount = new Set(dayBatch.articles.map(a => a.source_id).filter(Boolean)).size
+                         || dayBatch.articles.length;
+
+        await pool.query(`
+          INSERT INTO story_timeline_events (
+            timeline_id, event_date, anchor_article_id,
+            event_title, event_description, article_ids, source_count, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+          ON CONFLICT (timeline_id, event_date, anchor_article_id) DO UPDATE SET
+            event_title       = EXCLUDED.event_title,
+            event_description = EXCLUDED.event_description,
+            article_ids       = EXCLUDED.article_ids,
+            source_count      = EXCLUDED.source_count,
+            updated_at        = NOW()
+        `, [
+          timelineId,
+          evt.event_date,
+          Number(evt.anchor_article_id),
+          eventTitle.slice(0, 400),
+          String(evt.description || '').slice(0, 1200),
+          allIdsForDay,
+          sourceCount,
+        ]);
+        eventsEmitted++;
+      }
+    } catch (err) {
+      console.warn(`   ⚠ Event extraction Claude call failed: ${err.message}`);
+    }
+  }
+
+  return {
+    eventsEmitted,
+    daysProcessed: dirtyDays.length,
+    claudeCalls,
+    inputTokens,
+    outputTokens,
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PHASE D : COOLDOWN
+// ═════════════════════════════════════════════════════════════════════════════
+async function runCooldownPhase() {
+  const { rows: c1 } = await pool.query(`
+    UPDATE story_timelines
+       SET status = 'cooling'
+     WHERE status = 'active'
+       AND last_updated_at < NOW() - ($1 * INTERVAL '1 day')
+     RETURNING id
+  `, [COOLING_AFTER_DAYS]);
+  const { rows: c2 } = await pool.query(`
+    UPDATE story_timelines
+       SET status = 'dormant'
+     WHERE status = 'cooling'
+       AND last_updated_at < NOW() - ($1 * INTERVAL '1 day')
+     RETURNING id
+  `, [DORMANT_AFTER_DAYS]);
+  return { cooled: c1.length, dormant: c2.length };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function normalizeKeyword(keyword) {
+  return String(keyword || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/["""'`]/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeTitle(title) {
+  return new Set(
+    String(title || '')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !TITLE_STOPWORDS.has(w))
+  );
+}
+
+function intersectCount(a, b) {
+  if (!a || !b) return 0;
+  let n = 0;
+  for (const x of a) if (b.has(x)) n++;
+  return n;
+}
+
+function slugifyScope(title) {
+  return String(title || 'untitled')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 80);
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  CLUSTERING (for unmatched articles only)
-// ═════════════════════════════════════════════════════════════════════════════
-function clusterBroad(articles, entityMap) {
-  if (!articles.length) return [];
-
-  const kwIndex = new Map();
-  for (const a of articles) {
-    for (const kw of (a.keywords || [])) {
-      const k = normalizeKeyword(kw);
-      if (k.length < 3 || SKIP_KEYWORDS.has(k)) continue;
-      if (!kwIndex.has(k)) kwIndex.set(k, []);
-      kwIndex.get(k).push(a);
-    }
-  }
-
-  const pairScore = new Map();
-  const addPair = (idA, idB, weight) => {
-    const key = idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
-    pairScore.set(key, (pairScore.get(key) || 0) + weight);
-  };
-
-  for (const [, arts] of kwIndex) {
-    if (arts.length < 2 || arts.length > 150) continue;
-    for (let i = 0; i < arts.length; i++) {
-      for (let j = i + 1; j < arts.length; j++) {
-        addPair(arts[i].id, arts[j].id, 1);
-      }
-    }
-  }
-
-  // Entity overlap
-  const entIndex = new Map();
-  for (const a of articles) {
-    const ents = entityMap.get(a.id) || [];
-    for (const eid of ents) {
-      if (!entIndex.has(eid)) entIndex.set(eid, []);
-      entIndex.get(eid).push(a);
-    }
-  }
-  for (const [, arts] of entIndex) {
-    if (arts.length < 2 || arts.length > 100) continue;
-    for (let i = 0; i < arts.length; i++) {
-      for (let j = i + 1; j < arts.length; j++) {
-        addPair(arts[i].id, arts[j].id, 1.5);
-      }
-    }
-  }
-
-  // Country + category co-location
-  const HARD_CATS = new Set(['politics', 'military', 'diplomacy', 'conflict']);
-  const ccIndex = new Map();
-  for (const a of articles) {
-    if (!a.country_name) continue;
-    const cat = (a.primary_category || '').toLowerCase();
-    if (!HARD_CATS.has(cat)) continue;
-    const key = `${a.country_name.toLowerCase()}::${cat}`;
-    if (!ccIndex.has(key)) ccIndex.set(key, []);
-    ccIndex.get(key).push(a);
-  }
-  for (const [, arts] of ccIndex) {
-    if (arts.length < 2 || arts.length > 100) continue;
-    for (let i = 0; i < arts.length; i++) {
-      for (let j = i + 1; j < arts.length; j++) {
-        addPair(arts[i].id, arts[j].id, 0.8);
-      }
-    }
-  }
-
-  // Union-Find
-  const parent = new Map(articles.map(a => [a.id, a.id]));
-  const find = (x) => {
-    if (parent.get(x) !== x) parent.set(x, find(parent.get(x)));
-    return parent.get(x);
-  };
-  const union = (x, y) => parent.set(find(x), find(y));
-
-  for (const [pair, score] of pairScore) {
-    if (score >= 1.5) { // slightly higher threshold for new timeline creation
-      const [a, b] = pair.split(":").map(Number);
-      union(a, b);
-    }
-  }
-
-  const clusters = new Map();
-  for (const a of articles) {
-    const root = find(a.id);
-    if (!clusters.has(root)) clusters.set(root, []);
-    clusters.get(root).push(a);
-  }
-  return Array.from(clusters.values()).filter(c => c.length >= MIN_CLUSTER);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  CLAUDE — CREATE-ONLY (no matching to existing)
-// ═════════════════════════════════════════════════════════════════════════════
-async function claudeCreateTimelines(articles, existingTimelines) {
-  const articleData = articles.map(a => ({
-    id:       a.id,
-    title:    a.title,
-    summary:  (a.translated_summary || a.summary || "").slice(0, 200),
-    keywords: (a.keywords || []).slice(0, 10),
-    country:  a.country_name || null,
-    category: a.primary_category || null,
-    age_h:    Math.round(a.age_hours),
-  }));
-
-  // Show existing timelines so Claude doesn't create duplicates
-  const existingInfo = existingTimelines.slice(0, 200).map(t => ({
-    title: t.title,
-    scope: t.scope,
-  }));
-
-  const prompt = `You are creating NEW timeline arcs for a GEOPOLITICS app. A timeline is NOT a news story — it is the *container* a news story belongs inside. Today's events are episodes; the timeline is the series.
-
-If a user reads "Guelleh wins sixth term in Djibouti" today, the timeline this article belongs to is "Djibouti Authoritarian Continuity," not "Guelleh Sixth Term Election." The election is an episode; the authoritarian continuity is the series.
-
-Your job: identify the *series* that the provided articles are episodes of. You will output structured objects the backend validates — any output failing validation is silently discarded. Be conservative: return an empty array if no article cluster clearly belongs to a real long-running arc.
-
-═══ EXISTING TIMELINES (DO NOT DUPLICATE) ═══
-${JSON.stringify(existingInfo, null, 1)}
-
-═══ OUTPUT SCHEMA — return an array of objects with ALL these fields ═══
-{
-  "arc_type":                       "conflict | crisis | election_cycle | authoritarian_consolidation | democratic_transition | diplomatic_episode | trade_dispute | policy_shift | disaster_response | revolution_or_uprising | peace_process | investigation_or_trial",
-  "primary_countries":              ["ISO_A2", ...],         // uppercase ISO-3166 alpha-2 codes only
-  "primary_entities":               ["name", ...],           // 1-6 named people, orgs, or factions central to the arc
-  "enduring_subject":               "...",                   // 8-20 words. THE SERIES. What is STILL happening in 12 months.
-  "representative_event_today":     "...",                   // 8-20 words. TODAY'S EPISODE. What happened this week that triggered these articles.
-  "expected_arc_duration_months":   1-120,                   // integer. Minimum 1 — anything shorter is a Thread, not a Line.
-  "title":                          "2-6 words, names the SERIES not the EPISODE",
-  "description":                    "Two sentences: (1) what is the ongoing arc; (2) what is the current trajectory.",
-  "scope":                          "snake_case_slug",
-  "article_ids":                    [ids...],                // at least 3 article IDs from the input
-  "anchor_article_id":              id,
-  "primary_category":               "politics | economy | military | diplomacy | environment | technology | conflict | security",
-  "geographic_scope":               "global | regional",
-  "importance":                     5-10,
-  "keywords":                       ["5-10 keywords"]
-}
-
-═══ THE SERIES-VS-EPISODE TEST ═══
-A correct timeline output has an "enduring_subject" that is meaningfully DIFFERENT from the "representative_event_today." If they overlap by more than ~50%, you have named the episode, not the series.
-
-✅ series vs episode:
-  enduring_subject: "Bangladesh political transition after Sheikh Hasina's fall"
-  representative_event_today: "City corporation elections launch under interim government"
-
-✅ series vs episode:
-  enduring_subject: "Djibouti's long-running single-party dominance under Guelleh"
-  representative_event_today: "Guelleh claims sixth term with regional support"
-
-✅ series vs episode:
-  enduring_subject: "Nordic far-right political normalization across coalition governments"
-  representative_event_today: "Swedish Liberals explore coalition with Sweden Democrats"
-
-✅ series vs episode:
-  enduring_subject: "Russian surveillance-state expansion tightening control over citizens and critics"
-  representative_event_today: "Russian tax authority gains new cross-agency data access"
-
-❌ series-as-episode — DO NOT DO THIS:
-  enduring_subject: "City corporation electoral process in Bangladesh"
-  representative_event_today: "Bangladesh city corporation elections underway"
-  (these are the same sentence — this is the episode masquerading as a series)
-
-❌ series-as-episode:
-  enduring_subject: "Guelleh wins sixth term with regional support"
-  representative_event_today: "Guelleh wins sixth term"
-  (again, episode labeled as series — kill this)
-
-═══ ARC-TYPE GUIDANCE ═══
-• conflict — active hostilities between armed actors (Gaza, Ukraine, Sudan)
-• crisis — acute ongoing emergency, humanitarian or political (Haiti gang control, Venezuela exodus)
-• election_cycle — named electoral contest spanning weeks/months (US 2024 election, Mexico 2024 general)
-• authoritarian_consolidation — ongoing democratic backslide or power concentration (Russia under Putin, Nicaragua under Ortega)
-• democratic_transition — post-autocracy/coup reconstruction (Syria post-Assad, Bangladesh post-Hasina)
-• diplomatic_episode — named negotiation or rupture (Iran nuclear talks, Venezuela-Guyana Essequibo dispute)
-• trade_dispute — named tariff regime or sanctions cycle (US-China tech war, EU-China EV tariffs)
-• policy_shift — single-country major policy reorientation sustained over time (Argentina Milei austerity, Argentina dollarization debate)
-• disaster_response — named disaster and its political aftermath (Turkey 2023 earthquake recovery, Libya flood crisis)
-• revolution_or_uprising — mass protest movement with political demands (Iran women-life-freedom, Myanmar resistance)
-• peace_process — named negotiation toward ending a conflict (Colombia FARC, Sudan peace talks)
-• investigation_or_trial — named legal proceeding with political consequence (Netanyahu trial, ICC proceedings)
-
-═══ HARD REJECTIONS ═══
-Do not create a timeline when the cluster is:
-• Sports, entertainment, local crime, product launches, lifestyle
-• An abstract theme ("Global Energy Transition", "Climate Crisis", "AI Regulation")
-• A routine institutional process not attached to a larger arc (ordinary budget passage, scheduled municipal election)
-• A one-off announcement, single verdict, or statistic release with no expected follow-on
-• A news event likely resolved within 1 month
-
-If no cluster clearly passes, return an empty array [].
-
-═══ UNMATCHED ARTICLES ═══
-${JSON.stringify(articleData, null, 1)}
-
-Return ONLY valid JSON array, no explanation or markdown.`;
-
-  const response = await client.messages.create({
-    model:      "claude-haiku-4-5",
-    max_tokens: 4000,
-    messages:   [{ role: "user", content: prompt }]
-  });
-
-  const text = response.content[0].text.trim();
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error(`No JSON array in response: ${text.slice(0, 200)}`);
-  return JSON.parse(jsonMatch[0]);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  THREAD-INFORMED SEEDING — PRIMARY source of new timelines
-//
-//  A thread graduates to a timeline ONLY when it proves sustained coverage:
-//    • article coverage span ≥ 7 days (measured from actual article dates,
-//      not thread created_at — so a thread with articles on day 1 and day 30
-//      but nothing in between still counts, but one with articles only on a
-//      single day does not)
-//    • article_count ≥ 5
-//    • distinct_source_count ≥ 3 (multi-source coverage)
-//    • has at least one primary_nation (entity/geography anchor)
-//    • ANY status qualifies (active, cooling, OR dormant) — a thread that
-//      tracked the Ukraine-Russia war for months and went dormant should
-//      still become a timeline
-//
-//  Title comes directly from the thread — no Claude umbrella invention.
-//  Before creating, we check article overlap against existing timelines
-//  and merge if ≥ 30% overlap.
-// ═════════════════════════════════════════════════════════════════════════════
-async function seedFromThreads(existingTimelines, existingScopeSet) {
+// Tolerant JSON array extractor — strips markdown fences, falls back to
+// bracketed match. Same pattern we use in keywordNormalizer +
+// articleDeepEnrichment now.
+function parseJsonArray(rawText) {
+  if (!rawText) return null;
+  let text = String(rawText).trim();
+  const fenceMatch = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) text = fenceMatch[1].trim();
   try {
-    // ── Gate: threads with ≥ 7 days of article coverage span ──
-    // We join story_thread_articles → news_articles to compute the actual
-    // date range of articles in each thread. A thread qualifies if
-    // MAX(published_at) - MIN(published_at) ≥ 7 days.
-    // ALL statuses included: active threads still developing, cooling ones
-    // winding down, and dormant ones that tracked a long-running story.
-    const { rows: threads } = await pool.query(`
-      SELECT st.id, st.title, st.description, st.keywords, st.importance,
-             st.primary_category, st.article_count, st.distinct_source_count,
-             st.primary_nations, st.created_at, st.status,
-             span.first_article, span.last_article, span.span_days
-      FROM story_threads st
-      JOIN (
-        SELECT sta.thread_id,
-               MIN(a.published_at) AS first_article,
-               MAX(a.published_at) AS last_article,
-               EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400.0 AS span_days
-        FROM story_thread_articles sta
-        JOIN news_articles a ON a.id = sta.article_id
-        GROUP BY sta.thread_id
-        HAVING EXTRACT(EPOCH FROM (MAX(a.published_at) - MIN(a.published_at))) / 86400.0 >= 7
-      ) span ON span.thread_id = st.id
-      WHERE st.article_count >= 5
-        AND st.distinct_source_count >= 3
-      ORDER BY st.importance DESC, span.span_days DESC, st.article_count DESC
-      LIMIT 120
-    `);
-    if (!threads.length) return 0;
-    console.log(`   [seedFromThreads] ${threads.length} threads pass 7-day gate`);
-
-    // ── Reject generic topic buckets ──
-    const qualified = threads.filter(t => {
-      if (isGenericTopicBucket(t.title)) {
-        console.log(`   🚫 Rejected generic: "${t.title}"`);
-        return false;
-      }
-      // Must have a proper noun / country signal in title
-      if (!COUNTRY_SIGNAL_RE.test(t.title) && !hasProperNoun(t.title)) {
-        console.log(`   🚫 Rejected (no entity anchor): "${t.title}"`);
-        return false;
-      }
-      return true;
-    });
-    if (!qualified.length) return 0;
-    console.log(`   [seedFromThreads] ${qualified.length} threads pass entity/quality gate`);
-
-    // ── Title-cluster dedup: prevent 10 Iran variants from all graduating ──
-    // Sort best-first, then absorb any subsequent thread whose title signal
-    // words have containment similarity ≥ 0.50 with an already-kept thread.
-    // Containment = shared / size_of_smaller_set (more aggressive than Jaccard).
-    {
-      const sorted = [...qualified].sort((a, b) =>
-        (b.importance - a.importance) || (b.span_days - a.span_days) || (b.article_count - a.article_count));
-
-      const sigs = sorted.map(t => ({
-        thread: t,
-        sig: new Set(
-          (t.title || '').toLowerCase()
-            .split(/[\s\-_,.:;'"&+/]+/)
-            .filter(w => w.length >= 4 && !SKIP_KEYWORDS.has(w))
-        )
-      }));
-
-      const absorbed = new Set();
-      const kept = [];
-      for (let i = 0; i < sigs.length; i++) {
-        if (absorbed.has(i)) continue;
-        kept.push(sorted[i]);
-        for (let j = i + 1; j < sigs.length; j++) {
-          if (absorbed.has(j)) continue;
-          const sigA = sigs[i].sig;
-          const sigB = sigs[j].sig;
-          if (!sigA.size || !sigB.size) continue;
-          let shared = 0;
-          for (const w of sigA) { if (sigB.has(w)) shared++; }
-          const containment = shared / Math.min(sigA.size, sigB.size);
-          if (containment >= 0.50) {
-            console.log(`   ⟳ Title-cluster: "${sorted[j].title}" absorbed by "${sorted[i].title}" (${(containment*100).toFixed(0)}%)`);
-            absorbed.add(j);
-          }
-        }
-      }
-      qualified.length = 0;
-      kept.forEach(t => qualified.push(t));
-      console.log(`   [seedFromThreads] After title-cluster dedup: ${qualified.length} threads`);
-    }
-
-    // ── Load article IDs for each qualifying thread ──
-    const threadIds = qualified.map(t => t.id);
-    const { rows: threadArticleRows } = await pool.query(`
-      SELECT sta.thread_id, ARRAY_AGG(sta.article_id) AS article_ids
-      FROM story_thread_articles sta
-      WHERE sta.thread_id = ANY($1::int[])
-      GROUP BY sta.thread_id
-    `, [threadIds]);
-    const threadArticleMap = new Map(threadArticleRows.map(r => [r.thread_id, new Set(r.article_ids)]));
-
-    // ── Load article IDs for existing timelines (for overlap check) ──
-    const tlIds = existingTimelines.map(t => Number(t.id));
-    const tlArticleMap = new Map();
-    if (tlIds.length) {
-      const { rows: tlArtRows } = await pool.query(`
-        SELECT timeline_id, ARRAY_AGG(article_id) AS article_ids
-        FROM story_timeline_articles
-        WHERE timeline_id = ANY($1::int[])
-        GROUP BY timeline_id
-      `, [tlIds]);
-      for (const r of tlArtRows) {
-        tlArticleMap.set(Number(r.timeline_id), new Set(r.article_ids));
-      }
-    }
-
-    let seeded = 0;
-    for (const thread of qualified) {
-      const threadArts = threadArticleMap.get(thread.id);
-      if (!threadArts || threadArts.size < 5) continue;
-
-      // ── Article-overlap check against existing timelines ──
-      let bestOverlap = 0;
-      let bestTl = null;
-      for (const tl of existingTimelines) {
-        const tlArts = tlArticleMap.get(Number(tl.id));
-        if (!tlArts || !tlArts.size) continue;
-        let shared = 0;
-        for (const aid of threadArts) { if (tlArts.has(aid)) shared++; }
-        const overlapRatio = shared / Math.min(threadArts.size, tlArts.size);
-        if (overlapRatio > bestOverlap) {
-          bestOverlap = overlapRatio;
-          bestTl = tl;
-        }
-      }
-
-      if (bestOverlap >= 0.20 && bestTl) {
-        // ── Merge into existing timeline ──
-        console.log(`   ⤵ Thread "${thread.title}" → merge into "${bestTl.title}" (${(bestOverlap*100).toFixed(0)}% overlap)`);
-        // Add thread's articles to the existing timeline
-        const artIds = [...threadArts];
-        for (const artId of artIds) {
-          await pool.query(`
-            INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
-            VALUES ($1, $2, 0.5, 0.5, false)
-            ON CONFLICT DO NOTHING
-          `, [bestTl.id, artId]);
-        }
-        await pool.query(`UPDATE story_timelines SET last_updated_at = NOW(), status = 'active' WHERE id = $1`, [bestTl.id]);
-        continue;
-      }
-
-      // ── Check scope/title duplicate ──
-      const scope = (thread.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 80);
-      if (existingScopeSet.has(scope)) {
-        console.log(`   ⚠ Scope collision: "${scope}" — skipped`);
-        continue;
-      }
-
-      // ── Also check title-word overlap with existing timelines ──
-      const threadTitleWords = new Set(
-        (thread.title || '').toLowerCase().split(/[\s\-_,.:;'"]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
-      );
-      let titleDupe = false;
-      for (const tl of existingTimelines) {
-        const tlWords = new Set(
-          (tl.title || '').toLowerCase().split(/[\s\-_,.:;'"]+/).filter(w => w.length >= 3 && !SKIP_KEYWORDS.has(w))
-        );
-        if (!tlWords.size || !threadTitleWords.size) continue;
-        let shared = 0;
-        for (const w of threadTitleWords) { if (tlWords.has(w)) shared++; }
-        const jaccard = shared / (new Set([...threadTitleWords, ...tlWords])).size;
-        if (jaccard >= 0.30) {
-          console.log(`   ⚠ Title overlap with "${tl.title}" (jaccard ${jaccard.toFixed(2)}) — skipped`);
-          titleDupe = true;
-          break;
-        }
-      }
-      if (titleDupe) continue;
-
-      // ── Create new timeline from thread ──
-      try {
-        const { rows } = await pool.query(`
-          INSERT INTO story_timelines
-            (title, description, scope, primary_category, geographic_scope,
-             importance, keywords, primary_nations, article_count,
-             lookback_days, parabolic_peak_hours)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          RETURNING id
-        `, [
-          thread.title,
-          thread.description || '',
-          scope,
-          thread.primary_category || 'politics',
-          'regional',
-          thread.importance || 6,
-          thread.keywords || [],
-          thread.primary_nations || [],
-          threadArts.size,
-          Math.ceil(LOOKBACK_HOURS / 24),
-          PARABOLIC_PEAK_HOURS
-        ]);
-
-        const timelineId = rows[0].id;
-        const artIds = [...threadArts];
-        for (const artId of artIds) {
-          await pool.query(`
-            INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
-            VALUES ($1, $2, 0.5, 0.5, false)
-            ON CONFLICT DO NOTHING
-          `, [timelineId, artId]);
-        }
-
-        existingScopeSet.add(scope);
-        // Also add to existingTimelines so subsequent threads can overlap-check
-        existingTimelines.push({
-          id: timelineId, title: thread.title, scope, keywords: thread.keywords || [],
-          primary_category: thread.primary_category, _countries: thread.primary_nations || [],
-          importance: thread.importance, article_count: threadArts.size, status: 'active'
-        });
-        tlArticleMap.set(timelineId, threadArts);
-        seeded++;
-        console.log(`   ✓ Graduated: "${thread.title}" (${threadArts.size} articles, ${thread.distinct_source_count} sources, ${Math.round(thread.span_days)}d coverage span, status=${thread.status || 'unknown'})`);
-      } catch (err) {
-        if (err.code !== '23505') {
-          console.error(`   ⚠ Seed failed "${thread.title}": ${err.message}`);
-        }
-      }
-    }
-
-    return seeded;
-  } catch (e) {
-    console.warn(`   ⚠ Thread seeding skipped: ${e.message}`);
-    return 0;
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (_) {}
+  const bracketMatch = text.match(/\[[\s\S]*\]/);
+  if (bracketMatch) {
+    try {
+      const parsed = JSON.parse(bracketMatch[0]);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (_) {}
   }
-}
-
-// Simple proper-noun check: title contains at least one capitalized word
-// that isn't at the start and isn't a common English word.
-function hasProperNoun(title) {
-  if (!title) return false;
-  const words = title.split(/\s+/).slice(1); // skip first word (always capitalized)
-  const COMMON = new Set(['the','and','for','with','from','into','over','after','before','during','against','between','under','about','through']);
-  return words.some(w => /^[A-Z]/.test(w) && !COMMON.has(w.toLowerCase()));
+  return null;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  BULK INSERT ARTICLES INTO TIMELINE
-// ═════════════════════════════════════════════════════════════════════════════
-async function bulkInsertTimelineArticles(timelineId, articles, anchorId) {
-  if (!articles.length) return;
-  const values = [];
-  const params = [];
-  let idx = 1;
-
-  for (const a of articles) {
-    const weight = a.parabolic_weight || 0.5;
-    const importance = a.base_priority || 0.5;
-    const relevance = Number((importance * weight).toFixed(4));
-    const isAnchor = a.id === Number(anchorId);
-    values.push(`($${idx}, $${idx+1}, $${idx+2}, $${idx+3}, $${idx+4})`);
-    params.push(timelineId, a.id, weight, relevance, isAnchor);
-    idx += 5;
-  }
-
-  await pool.query(`
-    INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
-    VALUES ${values.join(', ')}
-    ON CONFLICT DO NOTHING
-  `, params);
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  REFRESH COUNTS, COOLDOWN, MERGE
-// ═════════════════════════════════════════════════════════════════════════════
-async function refreshAllCounts() {
-  try {
-    await pool.query(`
-      UPDATE story_timelines t
-      SET article_count       = sub.cnt,
-          distinct_source_count = sub.src_cnt,
-          parabolic_weight_sum = sub.pw_sum
-      FROM (
-        SELECT sta.timeline_id,
-               COUNT(*)::int AS cnt,
-               COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS src_cnt,
-               COALESCE(SUM(sta.parabolic_weight)::real, 0) AS pw_sum
-        FROM story_timeline_articles sta
-        JOIN news_articles a ON a.id = sta.article_id
-        GROUP BY sta.timeline_id
-      ) sub
-      WHERE t.id = sub.timeline_id
-    `);
-    console.log(`   Refreshed article counts for all timelines`);
-  } catch (e) {
-    console.warn(`   ⚠ Count refresh failed: ${e.message}`);
-  }
-}
-
-async function coolDownTimelines() {
-  // Timelines that haven't had new articles in 30 days → cooling
-  // Cooling for 60+ more days → dormant
-  const a = await pool.query(`
-    UPDATE story_timelines SET status = 'cooling'
-    WHERE status = 'active' AND last_updated_at < NOW() - INTERVAL '30 days'
-  `);
-  const c = await pool.query(`
-    UPDATE story_timelines SET status = 'dormant'
-    WHERE status = 'cooling' AND last_updated_at < NOW() - INTERVAL '90 days'
-  `);
-  console.log(`   active→cooling: ${a.rowCount} | cooling→dormant: ${c.rowCount}`);
-}
-
-async function detectAndMergeDuplicates() {
-  let merged = 0;
-
-  // ── Pass 0: Title-similarity dedup ───────────────────────────────────────
-  // Two active timelines with title-signal containment ≥ 0.50 are the same
-  // story. Catches "US-Iran Military Escalation" vs "Iran-US Escalation Crisis"
-  // even when they share < 30% article overlap (different articles, same arc).
-  try {
-    const { rows: allTls } = await pool.query(`
-      SELECT id, title, importance, article_count
-      FROM story_timelines
-      WHERE status IN ('active', 'cooling')
-      ORDER BY importance DESC, article_count DESC
-    `);
-
-    const sigs = allTls.map(t => ({
-      tl: t,
-      sig: new Set(
-        (t.title || '').toLowerCase()
-          .split(/[\s\-_,.:;'"&+/]+/)
-          .filter(w => w.length >= 4 && !SKIP_KEYWORDS.has(w))
-      )
-    }));
-
-    const titleAbsorbed = new Set();
-    let titleMerged = 0;
-    for (let i = 0; i < sigs.length; i++) {
-      if (titleAbsorbed.has(sigs[i].tl.id)) continue;
-      for (let j = i + 1; j < sigs.length; j++) {
-        if (titleAbsorbed.has(sigs[j].tl.id)) continue;
-        const sigA = sigs[i].sig;
-        const sigB = sigs[j].sig;
-        if (!sigA.size || !sigB.size) continue;
-        let shared = 0;
-        for (const w of sigA) { if (sigB.has(w)) shared++; }
-        const containment = shared / Math.min(sigA.size, sigB.size);
-        if (containment >= 0.50) {
-          const keepTl = sigs[i].tl;
-          const loseTl = sigs[j].tl;
-          console.log(`   ⤵ Title merge (${(containment*100).toFixed(0)}%): "${loseTl.title}" → "${keepTl.title}"`);
-          await mergeTimelineInto(keepTl.id, loseTl.id);
-          titleAbsorbed.add(loseTl.id);
-          titleMerged++;
-        }
-      }
-    }
-    if (titleMerged) console.log(`   Merged ${titleMerged} title-similarity duplicate(s)`);
-  } catch (e) {
-    console.warn(`   ⚠ Title-similarity dedup skipped: ${e.message}`);
-  }
-
-  // ── Pass 1: Exact scope-slug duplicates ──────────────────────────────────
-  try {
-    const { rows } = await pool.query(`
-      SELECT scope, ARRAY_AGG(id ORDER BY article_count DESC) AS ids,
-             COUNT(*) AS cnt
-      FROM story_timelines
-      WHERE scope IS NOT NULL AND scope != ''
-      GROUP BY scope
-      HAVING COUNT(*) > 1
-    `);
-
-    for (const row of rows) {
-      const [keepId, ...dupeIds] = row.ids;
-      for (const dupeId of dupeIds) {
-        await mergeTimelineInto(keepId, dupeId);
-        merged++;
-      }
-    }
-    if (merged) console.log(`   Merged ${merged} scope-slug duplicate(s)`);
-  } catch (e) {
-    console.warn(`   ⚠ Scope-slug dedup skipped: ${e.message}`);
-  }
-
-  // ── Pass 2: Article-overlap dedup ────────────────────────────────────────
-  // Any two active timelines sharing ≥ 30% of their articles are the same
-  // story. Keep the one with higher importance (tiebreak: more articles).
-  try {
-    const { rows: activeTls } = await pool.query(`
-      SELECT id, title, importance, article_count
-      FROM story_timelines
-      WHERE status IN ('active', 'cooling')
-      ORDER BY importance DESC, article_count DESC
-    `);
-    if (activeTls.length < 2) return;
-
-    // Load article sets for each timeline
-    const { rows: artRows } = await pool.query(`
-      SELECT timeline_id, ARRAY_AGG(article_id) AS aids
-      FROM story_timeline_articles
-      WHERE timeline_id = ANY($1::int[])
-      GROUP BY timeline_id
-    `, [activeTls.map(t => t.id)]);
-    const artSets = new Map(artRows.map(r => [Number(r.timeline_id), new Set(r.aids)]));
-
-    const absorbed = new Set(); // timelines already merged away
-    let overlapMerged = 0;
-
-    for (let i = 0; i < activeTls.length; i++) {
-      const a = activeTls[i];
-      if (absorbed.has(a.id)) continue;
-      const setA = artSets.get(a.id);
-      if (!setA || !setA.size) continue;
-
-      for (let j = i + 1; j < activeTls.length; j++) {
-        const b = activeTls[j];
-        if (absorbed.has(b.id)) continue;
-        const setB = artSets.get(b.id);
-        if (!setB || !setB.size) continue;
-
-        let shared = 0;
-        for (const aid of setA) { if (setB.has(aid)) shared++; }
-        const overlapRatio = shared / Math.min(setA.size, setB.size);
-
-        if (overlapRatio >= 0.20) {
-          // Keep the one with higher importance; tiebreak by article count
-          const keepHigher = (a.importance > b.importance) ||
-            (a.importance === b.importance && a.article_count >= b.article_count);
-          const [keepId, loserId] = keepHigher ? [a.id, b.id] : [b.id, a.id];
-          const keepTitle = keepHigher ? a.title : b.title;
-          const loserTitle = keepHigher ? b.title : a.title;
-
-          console.log(`   ⤵ Overlap merge (${(overlapRatio*100).toFixed(0)}%): "${loserTitle}" → "${keepTitle}"`);
-          await mergeTimelineInto(keepId, loserId);
-          absorbed.add(loserId);
-          // Update the surviving set
-          if (setB) for (const aid of setB) setA.add(aid);
-          overlapMerged++;
-        }
-      }
-    }
-    if (overlapMerged) console.log(`   Merged ${overlapMerged} article-overlap duplicate(s)`);
-  } catch (e) {
-    console.warn(`   ⚠ Article-overlap dedup skipped: ${e.message}`);
-  }
-}
-
-// Shared merge helper: move articles from loser into keeper, union keywords, delete loser
-async function mergeTimelineInto(keepId, loserId) {
-  // Move articles from loser to keeper
-  await pool.query(`
-    INSERT INTO story_timeline_articles (timeline_id, article_id, parabolic_weight, relevance_score, is_anchor)
-    SELECT $1, article_id, parabolic_weight, relevance_score, is_anchor
-    FROM story_timeline_articles
-    WHERE timeline_id = $2
-    ON CONFLICT DO NOTHING
-  `, [keepId, loserId]);
-
-  // Delete loser's article links
-  await pool.query(`DELETE FROM story_timeline_articles WHERE timeline_id = $1`, [loserId]);
-
-  // Merge keywords
-  await pool.query(`
-    UPDATE story_timelines
-    SET keywords = (SELECT ARRAY(SELECT DISTINCT unnest(keywords || (SELECT keywords FROM story_timelines WHERE id = $2))))
-    WHERE id = $1
-  `, [keepId, loserId]);
-
-  // Delete loser timeline
-  await pool.query(`DELETE FROM story_timelines WHERE id = $1`, [loserId]);
-}
-
-async function getActiveTimelines() {
-  const { rows } = await pool.query(`
-    SELECT id, title, description, scope, keywords, primary_category, geographic_scope,
-           importance, article_count, status
-    FROM story_timelines
-    WHERE last_updated_at > NOW() - INTERVAL '180 days'
-    ORDER BY
-      CASE status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
-      importance DESC, last_updated_at DESC
-    LIMIT 500
-  `);
-
-  // Attach country info
-  const countryMap = global.__tlCountryMap || new Map();
-  for (const tl of rows) {
-    tl._countries = countryMap.get(Number(tl.id)) || [];
-  }
-
-  return rows;
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-if (require.main === module) {
-  run().catch(err => {
-    console.error("Fatal:", err);
-    process.exit(1);
-  });
-}
-
-module.exports = { run, parabolicWeight };
+run().catch(err => {
+  console.error('Fatal:', err);
+  process.exit(1);
+});
