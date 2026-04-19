@@ -3886,6 +3886,13 @@ body.flow-maximized #flowArcList {
    other view to switch to, so the panel shows only − and ✕. */
 #flowCtxCard.noInfoOrigin .flowCtxTab[data-view="arcs"] { display: none !important; }
 
+/* Article-origin flow contexts: collapse the pill bar to just Back, −,
+   and ✕. The Article / Live Arcs / AI Context tabs are hidden because
+   there's no meaningful content to switch to for a single article. */
+#flowCtxCard.articleOrigin .flowCtxTab[data-view="info"],
+#flowCtxCard.articleOrigin .flowCtxTab[data-view="arcs"],
+#flowCtxCard.articleOrigin .flowCtxTab.ai { display: none !important; }
+
 /* Kill iOS tap flash / focus outline on the pillbar controls so the only
    visible chrome is the outer .flowCtxPillBar horizontal pill itself. */
 #flowCtxCard .flowCtxPillBar button {
@@ -23796,6 +23803,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       wrap.innerHTML = `<div class="flowCtxImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></div>`;
     }
     el.classList.remove("noInfoOrigin", "liveArcsPrePlay");
+    // Article-origin: pill bar collapses to Back / − / ✕ only.
+    el.classList.toggle("articleOrigin", kind === "Article");
     el.classList.remove("visible", "flowCtxMinimized");
     void el.offsetHeight;
     el.classList.add("visible");
