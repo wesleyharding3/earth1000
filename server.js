@@ -7129,42 +7129,80 @@ app.get("/api/threads/latest", async (req, res) => {
 });
 
 // POST /api/cluster-node/summary — 200-word unbiased Claude-generated description using deep article search
-// Cached in-process for 10 min keyed by thread_id: same thread → same summary
+// Cached in-process for 10 min keyed by mode + id: same entity → same summary
 // until new articles materially shift the context. Cloudflare can't cache
 // POSTs, but ttlCached dedups concurrent and near-concurrent requests so a
 // single Claude call serves fan-out from many clients viewing the same node.
+//
+// Accepts either { thread_id } or { timeline_id }. Threads join
+// story_thread_articles + story_threads; timelines join
+// story_timeline_articles + story_timelines. Prompt + length constraint
+// (exactly 200 words, two paragraphs) is identical for both so the
+// Analysis section renders with consistent depth regardless of kind.
 app.post("/api/cluster-node/summary", async (req, res) => {
-  const { thread_id } = req.body || {};
-  const threadId = parseInt(thread_id, 10);
-  if (!threadId) return res.status(400).json({ error: "thread_id required" });
+  const { thread_id, timeline_id } = req.body || {};
+  const threadId   = parseInt(thread_id,   10);
+  const timelineId = parseInt(timeline_id, 10);
+  const isTimeline = Number.isFinite(timelineId) && timelineId > 0;
+  const isThread   = Number.isFinite(threadId)   && threadId   > 0;
+  if (!isTimeline && !isThread) {
+    return res.status(400).json({ error: "thread_id or timeline_id required" });
+  }
+  const mode = isTimeline ? "timeline" : "thread";
+  const id   = isTimeline ? timelineId : threadId;
 
   try {
-    const cached = await ttlCached(`cluster-node-summary:${threadId}`, 600_000, async () => {
-    // Deep article search: fetch all articles for this thread with full context
-    const { rows: articles } = await pool.query(`
-      SELECT
-        a.title, a.translated_title, a.summary, a.translated_summary,
-        a.published_at, a.media_type,
-        COALESCE(ns.name, ys.name) AS source_name,
-        co.name AS country_name
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      WHERE sta.thread_id = $1
-      ORDER BY sta.is_anchor DESC, a.published_at ASC
-      LIMIT 30
-    `, [threadId]);
+    const cached = await ttlCached(`cluster-node-summary:${mode}:${id}`, 600_000, async () => {
+    // Deep article search: fetch articles for this thread or timeline with
+    // full context. Ordering anchors/recency prefers the most narratively
+    // representative sample when truncated to 30.
+    const articlesQuery = isTimeline
+      ? {
+          text: `
+            SELECT
+              a.title, a.translated_title, a.summary, a.translated_summary,
+              a.published_at, a.media_type,
+              COALESCE(ns.name, ys.name) AS source_name,
+              co.name AS country_name
+            FROM story_timeline_articles sta
+            JOIN news_articles a ON a.id = sta.article_id
+            LEFT JOIN news_sources ns ON ns.id = a.source_id
+            LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+            LEFT JOIN countries co ON co.id = a.country_id
+            WHERE sta.timeline_id = $1
+            ORDER BY sta.is_anchor DESC, sta.parabolic_weight DESC NULLS LAST, a.published_at DESC
+            LIMIT 30
+          `,
+          params: [id],
+        }
+      : {
+          text: `
+            SELECT
+              a.title, a.translated_title, a.summary, a.translated_summary,
+              a.published_at, a.media_type,
+              COALESCE(ns.name, ys.name) AS source_name,
+              co.name AS country_name
+            FROM story_thread_articles sta
+            JOIN news_articles a ON a.id = sta.article_id
+            LEFT JOIN news_sources ns ON ns.id = a.source_id
+            LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+            LEFT JOIN countries co ON co.id = a.country_id
+            WHERE sta.thread_id = $1
+            ORDER BY sta.is_anchor DESC, a.published_at ASC
+            LIMIT 30
+          `,
+          params: [id],
+        };
+    const { rows: articles } = await pool.query(articlesQuery.text, articlesQuery.params);
 
-    // Also fetch the thread metadata
-    const { rows: threadRows } = await pool.query(`
-      SELECT title, description, primary_category, keywords
-      FROM story_threads WHERE id = $1
-    `, [threadId]);
-    const thread = threadRows[0];
+    // Entity metadata.
+    const metaQuery = isTimeline
+      ? { text: `SELECT title, description, primary_category, keywords FROM story_timelines WHERE id = $1`, params: [id] }
+      : { text: `SELECT title, description, primary_category, keywords FROM story_threads   WHERE id = $1`, params: [id] };
+    const { rows: metaRows } = await pool.query(metaQuery.text, metaQuery.params);
+    const meta = metaRows[0];
 
-    if (!articles.length && !thread) {
+    if (!articles.length && !meta) {
       // Signal 404 through the cache by returning a sentinel; the caller
       // branches on it to preserve the HTTP status code.
       return { _notFound: true };
@@ -7181,8 +7219,9 @@ app.post("/api/cluster-node/summary", async (req, res) => {
       return `${i + 1}. "${title}"${type} — ${source}${country ? `, ${country}` : ""}${date ? ` (${date})` : ""}\n   ${summary.slice(0, 300)}`;
     }).join("\n");
 
-    const threadContext = thread
-      ? `Thread: "${thread.title}"\nCategory: ${thread.primary_category || "General"}\nDescription: ${thread.description || ""}\nKeywords: ${(thread.keywords || []).slice(0, 15).join(", ")}`
+    const kindLabel = isTimeline ? "Line" : "Thread";
+    const entityContext = meta
+      ? `${kindLabel}: "${meta.title}"\nCategory: ${meta.primary_category || "General"}\nDescription: ${meta.description || ""}\nKeywords: ${(meta.keywords || []).slice(0, 15).join(", ")}`
       : "";
 
     const response = await Anthropic.messages.create({
@@ -7190,7 +7229,7 @@ app.post("/api/cluster-node/summary", async (req, res) => {
       max_tokens: 400,
       messages: [{
         role: "user",
-        content: `You are an impartial global news analyst. Using ONLY the article data below, write exactly 200 words (no more, no less). Structure: first paragraph provides the broader geopolitical or societal context; second paragraph summarizes the specific events and developments. Be factual, neutral, and unbiased — no opinions, no speculation, no markdown formatting, no introductory phrases.\n\n${threadContext}\n\nArticles:\n${articleContext}`,
+        content: `You are an impartial global news analyst. Using ONLY the article data below, write exactly 200 words (no more, no less). Structure: first paragraph provides the broader geopolitical or societal context; second paragraph summarizes the specific events and developments. Be factual, neutral, and unbiased — no opinions, no speculation, no markdown formatting, no introductory phrases.\n\n${entityContext}\n\nArticles:\n${articleContext}`,
       }],
     });
 
@@ -7198,7 +7237,7 @@ app.post("/api/cluster-node/summary", async (req, res) => {
     return { summary };
     });
 
-    if (cached?._notFound) return res.status(404).json({ error: "No data found for this thread" });
+    if (cached?._notFound) return res.status(404).json({ error: `No data found for this ${mode}` });
     res.json(cached);
   } catch (err) {
     console.error("[cluster-node/summary]", err.message);

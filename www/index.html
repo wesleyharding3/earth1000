@@ -34176,15 +34176,13 @@ body.ticker-active .gTickerLabel {
     //     reading a field the user already sees on the card.
     const summaryPromise = (async () => {
       if (!threadId) return null;
-      if (isTimeline) {
-        return String(node.description || '').trim() || null;
-      }
       if (!window.__checkTier?.('pro')) return '__pro_locked__';
       try {
+        const body = isTimeline ? { timeline_id: threadId } : { thread_id: threadId };
         const res = await fetch(`${BASE}/api/cluster-node/summary`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ thread_id: threadId })
+          body: JSON.stringify(body)
         });
         if (res.ok) { const data = await res.json(); return data.summary || null; }
         return null;
