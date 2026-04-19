@@ -2744,7 +2744,9 @@ body.flow-maximized #flowArcList {
   position: relative;
   height: 56px;
   cursor: pointer;
-  touch-action: pan-y;
+  /* touch-action:none claims the pointer on touchstart so the browser
+     doesn't dispatch globe-canvas drag events during a scrub. */
+  touch-action: none;
 }
 .densityRuler .drGlowLayer,
 .densityRuler .drBarLayer,
@@ -25008,26 +25010,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       // ─ Event wiring
+      // Pointer-event drag with pointer capture. setPointerCapture routes
+      // all subsequent pointer events for this pointer to the stage element
+      // directly, so the globe's canvas / OrbitControls never see them —
+      // dragging the ruler no longer rotates the globe underneath. Also
+      // stopPropagation + preventDefault block any sibling/document-level
+      // listeners that might otherwise react.
       let scrubbing = false;
-      const onStageDown = (e) => {
+      let scrubPointerId = null;
+      const onStagePointerDown = (e) => {
         if (!state.buckets.length) return;
         const t = e.target;
         if (t.classList && (t.classList.contains('drPeakMarker') || t.classList.contains('drPeakLabel'))) return;
+        e.preventDefault();
+        e.stopPropagation();
         scrubbing = true;
+        scrubPointerId = e.pointerId;
         if (state.playing) setPlaying(false);
-        seekFromClientX(e.clientX || (e.touches && e.touches[0]?.clientX) || 0);
+        try { els.stage.setPointerCapture(e.pointerId); } catch (_) {}
+        seekFromClientX(e.clientX);
       };
-      const onStageMove = (e) => {
-        if (!scrubbing) return;
-        seekFromClientX(e.clientX || (e.touches && e.touches[0]?.clientX) || 0);
+      const onStagePointerMove = (e) => {
+        if (!scrubbing || e.pointerId !== scrubPointerId) return;
+        e.stopPropagation();
+        seekFromClientX(e.clientX);
       };
-      const onStageUp = () => { scrubbing = false; };
-      els.stage.addEventListener('mousedown', onStageDown);
-      els.stage.addEventListener('touchstart', onStageDown, { passive: true });
-      window.addEventListener('mousemove', onStageMove);
-      window.addEventListener('touchmove', onStageMove, { passive: true });
-      window.addEventListener('mouseup', onStageUp);
-      window.addEventListener('touchend', onStageUp);
+      const onStagePointerUp = (e) => {
+        if (!scrubbing || e.pointerId !== scrubPointerId) return;
+        e.stopPropagation();
+        try { els.stage.releasePointerCapture(e.pointerId); } catch (_) {}
+        scrubbing = false;
+        scrubPointerId = null;
+      };
+      els.stage.addEventListener('pointerdown', onStagePointerDown);
+      els.stage.addEventListener('pointermove', onStagePointerMove);
+      els.stage.addEventListener('pointerup',   onStagePointerUp);
+      els.stage.addEventListener('pointercancel', onStagePointerUp);
 
       // Peak markers: desktop hover shows label; mobile tap toggles pinned label.
       els.peakLayer.addEventListener('mouseover', (e) => {
@@ -25127,10 +25145,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       state.destroy = function () {
         document.removeEventListener('pointerdown', onDocTap);
         document.removeEventListener('keydown', onKey);
-        window.removeEventListener('mousemove', onStageMove);
-        window.removeEventListener('touchmove', onStageMove);
-        window.removeEventListener('mouseup', onStageUp);
-        window.removeEventListener('touchend', onStageUp);
+        // Stage-level pointer listeners are removed automatically when
+        // root.remove() tears down the DOM subtree (prevDestroy handles it).
         prevDestroy();
       };
 
