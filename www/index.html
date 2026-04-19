@@ -23755,6 +23755,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } catch (_) {}
       try { window.hideFlowArcBackBtn?.(); } catch (_) {}
       window.__flowClearHighlights?.();
+      // Always clear node labels (e.g. "Serbia" hoverCard + svg line pinned
+      // to the source country). closeFlowPanel only runs when flow mode was
+      // toggled open — for single-country articles it isn't, so the label
+      // would otherwise linger indefinitely.
+      try { window.clearFlowNodeLabels?.(); } catch (_) {}
       window.__flowCtxDrillDown = false;
       _flowArcOrigin = null;
       window.__flowArcOriginForHeat = null;
@@ -24111,7 +24116,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (_ctxArticle.country_name) _parts.push(_ctxArticle.country_name);
         else if (_ctxArticle.iso_code) _parts.push(String(_ctxArticle.iso_code).trim().toUpperCase());
         showFlowCtxCard({
-          kind: "Article · Flow arcs",
+          kind: "Article",
           title: _ctxArticle.translated_title || _ctxArticle.title || "Untitled",
           imageUrl: _ctxArticle.image_url || null,
           isoCode: _ctxArticle.iso_code || null,
@@ -24239,7 +24244,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (_finalArt.country_name) _parts.push(_finalArt.country_name);
         else if (_finalArt.iso_code) _parts.push(String(_finalArt.iso_code).trim().toUpperCase());
         showFlowCtxCard({
-          kind: "Article · Flow arcs",
+          kind: "Article",
           title: _finalArt.translated_title || _finalArt.title || "Untitled",
           imageUrl: _finalArt.image_url || null,
           isoCode: _finalArt.iso_code || null,
@@ -24530,7 +24535,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // even if the backend lookup is slow or missing _ctxThread.
       if (_ctxThread) {
         showFlowCtxCard({
-          kind: "Thread · Flow arcs",
+          kind: "Thread",
           title: _ctxThread.title || _ctxThread.translated_title || "Untitled thread",
           imageUrl: _ctxThread.hero_image_url || _ctxThread.image_url || _ctxThread.thumbnail_url || null,
           isoCode: _ctxThread.hero_iso_code || null,
@@ -24703,7 +24708,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Surface compact floating card with "View Routes" button
       if (_t) {
         showFlowCtxCard({
-          kind: "Thread · Flow arcs",
+          kind: "Thread",
           title: _t.title || _t.translated_title || "Untitled thread",
           imageUrl: _t.hero_image_url || _t.image_url || _t.thumbnail_url || null,
           isoCode: _t.hero_iso_code || null,
@@ -25516,7 +25521,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       if (_ctxTimeline) {
         showFlowCtxCard({
-          kind: "Timeline · Flow arcs",
+          kind: "Timeline",
           title: _ctxTimeline.title || _ctxTimeline.translated_title || "Untitled timeline",
           imageUrl: _ctxTimeline.hero_image_url || _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || null,
           isoCode: _ctxTimeline.hero_iso_code || null,
@@ -25546,7 +25551,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         _timelinePlaying    = false; // user selects direction + hits play
         _timelineBackLabel  = backLabel;
         _timelineCtxMeta    = _ctxTimeline ? {
-          kind: "Timeline · Flow arcs",
+          kind: "Timeline",
           title: _ctxTimeline.title || _ctxTimeline.translated_title || "Untitled timeline",
           imageUrl: _ctxTimeline.hero_image_url || _ctxTimeline.image_url || _ctxTimeline.thumbnail_url || null,
           isoCode: _ctxTimeline.hero_iso_code || null,
@@ -25658,7 +25663,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const _tl = _ctxTimeline || data.timeline || null;
       if (_tl) {
         showFlowCtxCard({
-          kind: "Timeline · Flow arcs",
+          kind: "Timeline",
           title: _tl.title || _tl.translated_title || "Untitled timeline",
           imageUrl: _tl.hero_image_url || _tl.image_url || _tl.thumbnail_url || null,
           isoCode: _tl.hero_iso_code || null,
