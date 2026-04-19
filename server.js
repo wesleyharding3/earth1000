@@ -3567,8 +3567,13 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
     }
     if (!videoId) return res.status(400).json({ error: 'Could not extract YouTube video ID from URL' });
 
-    // Try to get video info via oEmbed (no API key needed)
+    // oEmbed is the source of truth for embeddability. YouTube's own API
+    // returns 200 only when the video is publicly embeddable. 401/403
+    // specifically signals embedding disabled by owner; 404 means the
+    // video is gone. Anything else (5xx, network failure) is treated as
+    // transient and falls through to the (now tightened) embed-HTML check.
     let title = 'YouTube Video', author = '';
+    let oembedOk = false;
     try {
       const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
       const resp = await fetch(oembedUrl);
@@ -3576,6 +3581,7 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
         const data = await resp.json();
         title = data.title || 'Unknown';
         author = data.author_name || '';
+        oembedOk = true;
       } else if (resp.status === 401 || resp.status === 403) {
         return res.status(400).json({ error: 'Video is not embeddable (embedding disabled by owner)' });
       } else if (resp.status === 404) {
@@ -3583,41 +3589,46 @@ app.post('/api/admin/briefing-editor/resolve-video', requireAdmin, async (req, r
       }
     } catch (_) {}
 
-    // Check embed endpoint — fetch the full HTML to detect blocked/unavailable videos.
-    // Videos blocked by content owners (AFP, SME, etc.) return 200 but the player
-    // body contains "UNPLAYABLE" or playability status indicating the restriction.
-    try {
-      const embedResp = await fetch(`https://www.youtube-nocookie.com/embed/${videoId}`, {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'en' },
-        signal: AbortSignal.timeout(6000)
-      });
-      const xfo = embedResp.headers.get('x-frame-options');
-      if (xfo && xfo.toLowerCase() === 'sameorigin') {
-        return res.status(400).json({ error: 'Video cannot be embedded (X-Frame-Options restriction)' });
-      }
-      if (embedResp.ok) {
-        const embedHtml = await embedResp.text();
-        // Detect playability errors embedded in the player page
-        // These patterns cover: content owner blocks, geo-restrictions, age gates, removed videos
-        const blocked = /playabilityStatus.*?UNPLAYABLE/i.test(embedHtml)
-          || /playabilityStatus.*?ERROR/i.test(embedHtml)
-          || /playabilityStatus.*?LOGIN_REQUIRED/i.test(embedHtml)
-          || /blocked\s+it\s+from\s+display/i.test(embedHtml)
-          || /Video\s+unavailable/i.test(embedHtml)
-          || /content\s+from\s+[^,]+,\s+who\s+has\s+blocked/i.test(embedHtml)
-          || /"status":"UNPLAYABLE"/.test(embedHtml)
-          || /"status":"ERROR"/.test(embedHtml);
-        if (blocked) {
-          // Try to extract the specific reason
-          let reason = 'Video is blocked from embedding on third-party sites';
-          const reasonMatch = embedHtml.match(/"reason":"([^"]{1,200})"/);
-          const subMatch = embedHtml.match(/"subreason":"([^"]{1,200})"/);
-          if (reasonMatch) reason = reasonMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"');
-          if (subMatch) reason += ' — ' + subMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"');
-          return res.status(400).json({ error: reason });
+    // Secondary embed-HTML inspection. Only runs when oEmbed didn't
+    // confirm embeddability (5xx / network failure). Regexes are
+    // STRUCTURED — they must match an actual JSON playabilityStatus
+    // object, not stray occurrences of the enum strings that YouTube's
+    // embed JS ships in its localisation / enum dictionaries. An earlier
+    // broader match was denying every video because "UNPLAYABLE" appears
+    // in YouTube's compiled JS regardless of the specific video's state.
+    //
+    // X-Frame-Options SAMEORIGIN from youtube-nocookie.com on a
+    // server-side fetch is also NOT a reliable signal of embed blocking
+    // — that header controls browser framing, not fetch permissibility.
+    // Removing that check (it was false-positiving every video).
+    if (!oembedOk) {
+      try {
+        const embedResp = await fetch(`https://www.youtube-nocookie.com/embed/${videoId}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'en' },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (embedResp.ok) {
+          const embedHtml = await embedResp.text();
+          // Match the actual JSON shape: "playabilityStatus":{"status":"<NOT OK>"}
+          // Allows whitespace variation. Enum strings appearing elsewhere
+          // in the JS bundle (as part of type declarations, localisation
+          // tables, etc.) no longer cause false positives.
+          const statusMatch = embedHtml.match(
+            /"playabilityStatus"\s*:\s*\{\s*"status"\s*:\s*"([A-Z_]+)"/
+          );
+          const statusValue = statusMatch?.[1] || null;
+          const blockedStatuses = ['UNPLAYABLE', 'ERROR', 'LOGIN_REQUIRED', 'CONTENT_CHECK_REQUIRED'];
+          if (statusValue && blockedStatuses.includes(statusValue)) {
+            let reason = 'Video is blocked from embedding on third-party sites';
+            const reasonMatch = embedHtml.match(/"reason"\s*:\s*"([^"]{1,200})"/);
+            const subMatch    = embedHtml.match(/"subreason"\s*:\s*"([^"]{1,200})"/);
+            if (reasonMatch) reason = reasonMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"');
+            if (subMatch)   reason += ' — ' + subMatch[1].replace(/\\u0026/g, '&').replace(/\\"/g, '"');
+            return res.status(400).json({ error: reason });
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
     // Check if captions/subtitles are available via timedtext API
     let hasCaptions = false;

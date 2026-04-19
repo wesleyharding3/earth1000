@@ -220,12 +220,32 @@ router.get('/paypal/config', (_req, res) => {
 });
 
 router.get('/subscription-status', requireAuth, async (req, res) => {
+  // Two pieces of state are returned so the frontend can resolve access
+  // with a single round-trip: (1) the active subscription + tier, (2) the
+  // is_admin flag from profiles (already resolved by optionalAuth). If
+  // the subscription lookup throws — missing table, RLS, network — we
+  // degrade to a synthetic free-tier record and keep is_admin intact so
+  // admins are never blocked by transient DB failures. Error details
+  // surface only to admins, never to ordinary clients.
+  const isAdmin = req.user?.is_admin === true;
   try {
     const status = await getBestSubscriptionStatus(req.user.id);
-    res.json(status);
+    res.json({ ...status, is_admin: isAdmin });
   } catch (err) {
     console.error('[payments/subscription-status]', err.message);
-    res.status(500).json({ error: 'Failed to load subscription status' });
+    const fallback = {
+      subscription_id:   null,
+      status:            null,
+      provider:          null,
+      tier_id:           isAdmin ? null : 1,
+      tier_name:         'free',
+      tier_display_name: 'Free',
+      updated_at:        null,
+      is_admin:          isAdmin,
+      degraded:          true,
+    };
+    if (isAdmin) fallback.error_detail = err.message;
+    res.status(200).json(fallback);
   }
 });
 

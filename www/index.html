@@ -10622,7 +10622,6 @@ window.sourceBiasBadgeHTML = function(bias) {
           <button class="tlcBtn" id="tlcNextBtn" title="Next segment">⏭</button>
         </div>
       </div>
-      <div id="arcListDensityRuler" style="display:none;"></div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
       </div>
@@ -10630,6 +10629,10 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div class="arcContextPanel" id="arcContextPanel">
         <div class="arcCtxBody" id="arcCtxBody"></div>
       </div>
+      <!-- Density ruler (appended to the bottom of the panel). Mounted by
+           _mountArcListDensityRuler when a timeline is active; dragging or
+           playing it jumps the segment stepper to the closest matching day. -->
+      <div id="arcListDensityRuler" style="display:none;"></div>
     </div>
   </div>
 
@@ -25221,6 +25224,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // Density ruler handle for the arc-list panel (null when unmounted).
   let _arcListDensityRulerHandle = null;
+  // Find the timeline segment whose date is closest (and ≤) to the given
+  // day. Segments are thread graduations with their own dates; the density
+  // ruler is finer-grained (per-day) than segments, so many days map to
+  // the same segment. Returns -1 if nothing matches.
+  function _closestSegmentIdxForDate(dateStr) {
+    if (!Array.isArray(_timelineSegments) || !_timelineSegments.length) return -1;
+    const targetMs = new Date(dateStr).getTime();
+    if (!Number.isFinite(targetMs)) return -1;
+    let bestLE = -1;
+    let bestLEMs = -Infinity;
+    let bestAny = -1;
+    let bestAnyDiff = Infinity;
+    for (let i = 0; i < _timelineSegments.length; i++) {
+      const sd = _timelineSegments[i]?.date;
+      if (!sd) continue;
+      const ms = new Date(sd).getTime();
+      if (!Number.isFinite(ms)) continue;
+      const diff = Math.abs(ms - targetMs);
+      if (diff < bestAnyDiff) { bestAnyDiff = diff; bestAny = i; }
+      if (ms <= targetMs && ms > bestLEMs) { bestLEMs = ms; bestLE = i; }
+    }
+    return bestLE !== -1 ? bestLE : bestAny;
+  }
   function _mountArcListDensityRuler(timelineId) {
     const host = document.getElementById('arcListDensityRuler');
     if (!host) return;
@@ -25235,10 +25261,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     host.style.display = '';
     _arcListDensityRulerHandle = window.renderDensityRuler(host, timelineId, {
+      inline: true,
+      // Dragging or playing the ruler jumps the existing segment stepper
+      // to the closest matching segment, which in turn rebuilds the arcs
+      // and entity highlights on the globe via _activateTimelineSegment.
+      // We throttle re-activation by checking segment index identity so
+      // rapid drag events don't queue redundant fade/redraw cycles.
+      onSeek: (date) => {
+        const idx = _closestSegmentIdxForDate(date);
+        if (idx < 0) return;
+        if (idx === _timelineCurrentIdx) return;
+        // Pause the segment stepper's own autoplay so user control is honoured.
+        _timelinePlaying = false;
+        _activateTimelineSegment(idx);
+      },
       onPeakOpen: (articleId) => {
-        // Job A: clicking a peak opens the article in the existing
-        // article-detail panel if the app exposes that API. No map
-        // layer wiring yet — Job B will add time-machine filtering.
+        // Clicking a peak opens the article in the existing article-detail panel.
         if (articleId && window.openArticleDetail) {
           try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
         }
@@ -28534,6 +28572,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         acctDpTier.textContent = data?.tier_display_name || 'Free';
         acctDpTier.className = `acctDpTier ${data?.tier_name || 'free'}`;
         window.__userTier = data?.tier_name || 'free';
+        // Backend returns is_admin alongside tier now — trust it.
+        // This keeps admins unblocked even when the subscriptions table
+        // can't be read (degraded response) and covers the race where
+        // loadProfile() hasn't run yet when __checkTier is first called.
+        if (typeof data?.is_admin === 'boolean') {
+          window.__isAdmin = data.is_admin || window.__isAdmin || false;
+        }
         _tierLoadedFor = userId;
         return;
       } catch (err) {
