@@ -33187,81 +33187,51 @@ body.ticker-active .gTickerLabel {
     return filtered.map(makeCdCard).join("");
   }
 
-  // Timeline-aware source grid. Blends articles + graduated threads into
-  // a single grid, filtered by the active tab:
-  //   "all"     → everything (articles + videos + threads if timeline)
-  //   "article" → text articles only
-  //   "video"   → video articles only
-  //   "thread"  → graduated threads only (timelines only)
-  // Threads are rendered as their own card shape (makeCdThreadCard)
-  // so they read visually distinct from articles — title + catagory
-  // + article count + status chip.
-  function renderSourcesGrid(articles, threads, filter, isTimeline) {
-    let parts = [];
-    const wantArticles = (filter === 'all' || filter === 'article');
-    const wantVideos   = (filter === 'all' || filter === 'video');
-    const wantThreads  = isTimeline && (filter === 'all' || filter === 'thread');
-
-    if (wantArticles) {
-      const textArts = articles.filter(a => a.media_type !== "video" && !a.video_id);
-      parts = parts.concat(textArts.map(makeCdCard));
-    }
-    if (wantVideos) {
-      const vidArts = articles.filter(a => a.media_type === "video" || !!a.video_id);
-      parts = parts.concat(vidArts.map(makeCdCard));
-    }
-    if (wantThreads && threads.length) {
-      parts = parts.concat(threads.map(makeCdThreadCard));
-    }
-    if (!parts.length) {
-      return `<div class="cdLoadingRow" style="grid-column:1/-1"><span style="opacity:0.3">No ${filter === 'video' ? 'videos' : filter === 'thread' ? 'threads' : filter === 'article' ? 'articles' : 'sources'} found</span></div>`;
-    }
-    return parts.join('');
-  }
-
-  // Thread-as-source card used inside the timeline's Sources grid.
-  // Visually distinct from the article card (no image, category chip
-  // on the left, article count + status on the right) so the user can
-  // tell at a glance "this is a breaking thread that fed into this
-  // timeline" vs "this is a single article source".
-  function makeCdThreadCard(t) {
-    const title = esc(t.title || 'Untitled thread');
-    const cat   = esc(String(t.primary_category || 'story').toUpperCase());
-    const count = t.article_count || 0;
-    const status = (t.status || 'active').toLowerCase();
-    const statusChip = ['active','cooling','dormant'].includes(status)
-      ? `<span class="nfThreadStatusBadge status-${status}" style="font-size:7px;padding:1px 5px">${status}</span>`
+  // Event row in the timeline's Events section — renders a GRADUATED
+  // THREAD. In the product model, a thread that has been promoted into
+  // a timeline IS an event: it already has a specific actor / place /
+  // event title, a description, a date (first_seen_at), an article
+  // count, and a status chip. Clicking the row opens the thread's own
+  // detail panel (so the reader can drill from the line's narrative
+  // into any chapter's breaking-state coverage).
+  function makeThreadEventItem(t) {
+    const dateRaw = t.first_seen_at || t.last_updated_at || null;
+    const date = dateRaw
+      ? new Date(dateRaw).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
       : '';
-    const _data = JSON.stringify({ __kind: 'thread', thread_id: t.thread_id, title: t.title, description: t.description, primary_category: t.primary_category, importance: t.importance, article_count: t.article_count, distinct_source_count: t.distinct_source_count, keywords: t.keywords, hero_iso_code: null, hero_image_url: null, hero_catalog_image_url: null }).replace(/'/g, '&#39;');
-    return `<div class="cdCard cdThreadAsSourceCard" data-thread='${_data}' onclick="(function(el){try{const t=JSON.parse(el.dataset.thread);window.openThreadInPanel&&window.openThreadInPanel(t);}catch(e){}})(this)" style="cursor:pointer;display:flex;flex-direction:column;padding:12px;gap:6px;min-height:auto">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <span style="font-size:8px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;opacity:0.6">${cat}</span>
+    const title = esc(t.title || 'Untitled thread');
+    const desc  = esc(t.description || '');
+    const cat   = esc(String(t.primary_category || '').toUpperCase());
+    const count = t.article_count || 0;
+    const status = String(t.status || 'active').toLowerCase();
+    const statusChip = ['active','cooling','dormant'].includes(status)
+      ? `<span class="nfThreadStatusBadge status-${status}" style="font-size:7px;padding:1px 5px;margin-left:6px">${status}</span>`
+      : '';
+    const srcCount = t.distinct_source_count
+      ? `<span style="opacity:0.5">· ${t.distinct_source_count} source${t.distinct_source_count !== 1 ? 's' : ''}</span>`
+      : '';
+    // Serialize only what openThreadInPanel / buildThreadPanelNode
+    // actually consumes so the data-thread attribute stays small.
+    const _payload = JSON.stringify({
+      __kind: 'thread',
+      thread_id: t.thread_id,
+      title: t.title,
+      description: t.description,
+      primary_category: t.primary_category,
+      importance: t.importance,
+      article_count: t.article_count,
+      distinct_source_count: t.distinct_source_count,
+      keywords: t.keywords,
+    }).replace(/'/g, '&#39;');
+    return `<div class="cdTimelineItem cdThreadEventItem" data-thread='${_payload}' onclick="(function(el){try{const x=JSON.parse(el.dataset.thread);window.openThreadInPanel&&window.openThreadInPanel(x);}catch(e){}})(this)" style="padding:12px 14px;border-left:2px solid rgba(255,195,70,0.5);background:rgba(255,195,70,0.04);margin-bottom:8px;border-radius:0 8px 8px 0;cursor:pointer;transition:background 0.12s">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="font-size:10px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,195,70,0.75)">${date}</span>
+        ${cat ? `<span style="font-size:9px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;opacity:0.4">· ${cat}</span>` : ''}
         ${statusChip}
       </div>
-      <div style="font-size:13px;font-weight:600;line-height:1.35;color:rgba(255,255,255,0.92);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${title}</div>
-      <div style="font-size:10px;color:rgba(255,255,255,0.4)">${count} article${count !== 1 ? 's' : ''}</div>
-    </div>`;
-  }
-
-  // Event row rendered inside the timeline's Events section. The
-  // event_title IS the anchor article's translated title (captured at
-  // extraction time so it's stable), event_description is Claude's
-  // one/two-sentence summary of what happened that day.
-  function makeEventItem(e) {
-    const date = e.event_date ? new Date(e.event_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '';
-    const title = esc(e.event_title || 'Event');
-    const desc  = esc(e.event_description || '');
-    const source = esc(e.anchor_source_name || '');
-    const flag  = e.anchor_iso_code ? `<img src="https://flagcdn.com/w20/${e.anchor_iso_code.toLowerCase()}.png" style="vertical-align:middle;margin-right:4px;width:14px;height:10px" alt="">` : '';
-    const url   = e.anchor_url || '';
-    const srcCount = e.source_count ? `<span style="opacity:0.5">· ${e.source_count} source${e.source_count !== 1 ? 's' : ''}</span>` : '';
-    const linkOpen = url ? `<a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">` : '';
-    const linkClose = url ? `</a>` : '';
-    return `<div class="cdTimelineItem cdEventItem" style="padding:12px 14px;border-left:2px solid rgba(255,195,70,0.4);background:rgba(255,195,70,0.04);margin-bottom:8px;border-radius:0 8px 8px 0">
-      <div style="font-size:10px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:rgba(255,195,70,0.75);margin-bottom:4px">${date}</div>
-      ${linkOpen}<div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.92);line-height:1.4;margin-bottom:4px">${title}</div>${linkClose}
+      <div style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.92);line-height:1.4;margin-bottom:4px">${title}</div>
       ${desc ? `<div style="font-size:12px;color:rgba(255,255,255,0.65);line-height:1.45;margin-bottom:6px">${desc}</div>` : ''}
-      <div style="font-size:10px;color:rgba(255,255,255,0.35);display:flex;align-items:center;gap:4px">${flag}${source}${srcCount}</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.35);display:flex;align-items:center;gap:4px">${count} article${count !== 1 ? 's' : ''}${srcCount}</div>
     </div>`;
   }
 
@@ -33500,23 +33470,19 @@ body.ticker-active .gTickerLabel {
       } catch (_) { return []; }
     })();
 
-    // Events: only for timelines. Reads story_timeline_events (populated
-    // by storyTimelineBuilder's Phase C extraction pass). Replaces the
-    // flat chronological article dump that the Thread Timeline section
-    // showed — timelines now render an actual narrative.
-    const eventsPromise = (async () => {
-      if (!isTimeline || !threadId) return [];
-      try {
-        const res = await fetch(`${BASE}/api/timelines/${threadId}/events`);
-        if (!res.ok) return [];
-        const json = await res.json();
-        return Array.isArray(json?.events) ? json.events : [];
-      } catch (_) { return []; }
-    })();
-
-    // Graduated threads: only for timelines. Reads story_threads
-    // WHERE timeline_id = this timeline. Surfaced as an additional
-    // source-type tab alongside Articles + Videos.
+    // Graduated threads — timelines' Events section.
+    //
+    // Product model: a thread that graduated into a timeline IS an
+    // event in the timeline's narrative. A thread has a discrete arc
+    // (48 h breaking moment with a named actor / event / place) and
+    // already carries a specific title, description, date range, and
+    // source count — exactly what an event row should display. An
+    // earlier implementation tried to day-cluster articles into
+    // synthesized events via story_timeline_events (Claude day-pass);
+    // that's a wrong abstraction because the thread layer already
+    // gives us the right granularity. The events endpoint stays live
+    // on the server for potential sub-event work later, but it's no
+    // longer read here.
     const threadsPromise = (async () => {
       if (!isTimeline || !threadId) return [];
       try {
@@ -33559,20 +33525,27 @@ body.ticker-active .gTickerLabel {
       if (tlLabel) tlLabel.lastChild.textContent = ' Events';
     }
 
-    // Render the Timeline section — branches on isTimeline:
-    //   — timelines → event rows from story_timeline_events
+    // Render the Events / Thread-Timeline section:
+    //   — timelines → graduated threads as event rows (chronological,
+    //     newest-first by first_seen_at)
     //   — threads   → article list sorted newest-first (unchanged)
-    Promise.all([articlesPromise, eventsPromise]).then(([articles, events]) => {
+    Promise.all([articlesPromise, threadsPromise]).then(([articles, threads]) => {
       if (_selected !== node) return;
       allArticles = articles;
+      allThreads  = threads;
       const timelineEl = document.getElementById("cdTimelineBody");
       if (!timelineEl) return;
 
       if (isTimeline) {
-        if (!events.length) {
-          timelineEl.innerHTML = `<div class="cdLoadingRow" style="flex-direction:column;gap:4px"><span style="opacity:0.3">No events extracted yet</span><span style="opacity:0.4;font-size:11px">Event structure appears once the timeline accumulates day-level coverage.</span></div>`;
+        if (!threads.length) {
+          timelineEl.innerHTML = `<div class="cdLoadingRow" style="flex-direction:column;gap:4px"><span style="opacity:0.3">No graduated threads yet</span><span style="opacity:0.4;font-size:11px">Events appear when breaking threads graduate into this line.</span></div>`;
         } else {
-          timelineEl.innerHTML = `<div class="cdTimeline">${events.map(makeEventItem).join('')}</div>`;
+          // Sort threads by first_seen_at DESC — most recent chapter of
+          // the line on top. Threads without a timestamp fall to bottom.
+          const sorted = [...threads].sort((a, b) =>
+            new Date(b.first_seen_at || 0) - new Date(a.first_seen_at || 0)
+          );
+          timelineEl.innerHTML = `<div class="cdTimeline">${sorted.map(makeThreadEventItem).join('')}</div>`;
         }
       } else {
         if (!articles.length) {
@@ -33584,45 +33557,50 @@ body.ticker-active .gTickerLabel {
       }
     });
 
-    // Render the Sources section — for threads it's the same as before.
-    // For timelines we add a third tab "Threads" that renders graduated
-    // thread cards. Tabs always show (All / Articles / Videos / Threads)
-    // when any two or more source types have items.
-    Promise.all([articlesPromise, threadsPromise]).then(([articles, threads]) => {
+    // Render the Sources section — articles only for both kinds now.
+    // For timelines the "Threads" source-type tab is gone: threads live
+    // upstairs in the Events section (they ARE the events, not a source
+    // type). For timelines we also sort strictly by published_at DESC
+    // to deliver the "date-indexed source articles making up the
+    // threads in the line" pattern rather than the weighted parabolic
+    // order the server returns.
+    articlesPromise.then((articles) => {
       if (_selected !== node) return;
-      allThreads = threads;
       const tabWrap = document.getElementById("cdTabBarWrap");
       const gridEl  = document.getElementById("cdArticlesBody");
       if (!tabWrap || !gridEl) return;
-      const videoCount   = articles.filter(a => a.media_type === "video" || !!a.video_id).length;
-      const articleCount = articles.length - videoCount;
-      const threadCount  = threads.length;
+
+      // Sort client-side for timelines so Sources reads as a
+      // chronological source ledger regardless of server weighting.
+      const orderedArticles = isTimeline
+        ? [...articles].sort((a, b) => new Date(b.published_at || 0) - new Date(a.published_at || 0))
+        : articles;
+
+      const videoCount   = orderedArticles.filter(a => a.media_type === "video" || !!a.video_id).length;
+      const articleCount = orderedArticles.length - videoCount;
       let activeFilter = "all";
 
-      const tabs = [];
-      const totalForAll = articles.length + (isTimeline ? threadCount : 0);
-      if (totalForAll > 0) tabs.push(`<div class="cdTab active" data-filter="all">All (${totalForAll})</div>`);
-      if (articleCount > 0) tabs.push(`<div class="cdTab" data-filter="article">Articles (${articleCount})</div>`);
-      if (videoCount > 0) tabs.push(`<div class="cdTab" data-filter="video">Videos (${videoCount})</div>`);
-      if (isTimeline && threadCount > 0) tabs.push(`<div class="cdTab" data-filter="thread">Threads (${threadCount})</div>`);
-      // Only show the tabbar when there's a meaningful choice to make
-      if (tabs.length >= 2) {
-        tabWrap.innerHTML = `<div class="cdTabBar">${tabs.join('')}</div>`;
+      if (videoCount > 0 && articleCount > 0) {
+        tabWrap.innerHTML = `<div class="cdTabBar">
+          <div class="cdTab active" data-filter="all">All (${orderedArticles.length})</div>
+          <div class="cdTab" data-filter="article">Articles (${articleCount})</div>
+          <div class="cdTab" data-filter="video">Videos (${videoCount})</div>
+        </div>`;
         tabWrap.querySelectorAll(".cdTab").forEach(tab => {
           tab.addEventListener("click", () => {
             activeFilter = tab.dataset.filter;
             tabWrap.querySelectorAll(".cdTab").forEach(t => t.classList.toggle("active", t === tab));
-            gridEl.innerHTML = renderSourcesGrid(articles, threads, activeFilter, isTimeline);
+            gridEl.innerHTML = renderArticleGrid(orderedArticles, activeFilter);
           });
         });
       } else {
         tabWrap.innerHTML = '';
       }
 
-      if (!articles.length && !threads.length) {
-        gridEl.innerHTML = `<div class="cdLoadingRow" style="grid-column:1/-1;flex-direction:column;gap:4px"><span style="font-size:22px;opacity:0.2;">\u25C8</span><span>${fmtNum(node.article_count)} ${isTimeline ? 'items' : 'articles'} in this ${isTimeline ? 'timeline' : 'thread'}</span></div>`;
+      if (!orderedArticles.length) {
+        gridEl.innerHTML = `<div class="cdLoadingRow" style="grid-column:1/-1;flex-direction:column;gap:4px"><span style="font-size:22px;opacity:0.2;">\u25C8</span><span>${fmtNum(node.article_count)} articles in this ${isTimeline ? 'timeline' : 'thread'}</span></div>`;
       } else {
-        gridEl.innerHTML = renderSourcesGrid(articles, threads, activeFilter, isTimeline);
+        gridEl.innerHTML = renderArticleGrid(orderedArticles, activeFilter);
       }
     });
 
