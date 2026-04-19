@@ -3439,19 +3439,19 @@ body.flow-maximized #flowArcList {
 
 
 
-    /* Scroll-reveal: cards carrying this class fade + slide in when they
-       enter the viewport. Wired up by the IntersectionObserver in the
-       initFadeInOnScroll IIFE further down. Applied to the news feed,
-       threads, lines, and country/region/city panel article cards.
-       Duration bumped from 0.504s → 1.2s so the fade reads as an actual
-       transition rather than blinking in near-instantly. The slightly
-       larger translateY (8px → 12px) gives the motion more presence at
-       the slower speed. */
+    /* Scroll-reveal: cards carrying this class rise up from below and fade
+       in when they enter the viewport. Wired up by the IntersectionObserver
+       in the initFadeInOnScroll IIFE further down. Applied to the news
+       feed, threads, lines, and country/region/city panel article cards.
+       Updated from a subtle 12px lift to a pronounced 40px bottom-up
+       rise so the motion reads as a deliberate slide-in, not just a
+       fade. Duration 0.9s with a cubic-bezier that eases out so the
+       card decelerates into place. */
     .fadeInCard {
       opacity: 0;
-      transform: translateY(12px);
-      transition: opacity 1.2s cubic-bezier(0.32, 0.72, 0, 1),
-                  transform 1.2s cubic-bezier(0.32, 0.72, 0, 1);
+      transform: translateY(40px);
+      transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+                  transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
       will-change: opacity, transform;
     }
     .fadeInCard.inView {
@@ -5963,6 +5963,25 @@ body.flow-maximized #flowArcList {
     .cdSections {
       flex: 1; overflow-y: auto; scroll-behavior: smooth;
       padding-bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 24px);
+    }
+    /* Pinned ruler footer at the bottom of #clusterDetail. Sits as a
+       flex sibling of .cdSections so it stays visible while the user
+       scrolls the section content. The inner .densityRuler component
+       provides its own padding + bars; this wrapper only supplies the
+       footer chrome (top divider, background, edge-to-edge width). */
+    .cdDensityFooter {
+      flex-shrink: 0;
+      background: rgba(6,10,18,0.94);
+      border-top: 1px solid rgba(212,168,67,0.22);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      z-index: 2;
+    }
+    .cdDensityFooter .densityRuler {
+      background: transparent;
+      border-bottom: none;
+      border-radius: 0;
+      margin: 0;
     }
     .cdSections::-webkit-scrollbar { width: 4px; }
     .cdSections::-webkit-scrollbar-track { background: transparent; }
@@ -34033,7 +34052,6 @@ body.ticker-active .gTickerLabel {
             <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
             Thread Timeline
           </div>
-          <div id="cdDensityRuler" style="display:none;"></div>
           <div id="cdTimelineBody">
             <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading timeline...</span></div>
           </div>
@@ -34049,6 +34067,10 @@ body.ticker-active .gTickerLabel {
           </div>
         </div>
       </div>
+      <!-- Pinned density-ruler footer. Sits outside .cdSections so it
+           doesn't scroll with the content; appears only for timelines
+           (mount block in openNodePanel below hides it otherwise). -->
+      <div id="cdDensityRuler" class="cdDensityFooter" style="display:none;"></div>
     `;
     cdApplySnap("default", false);
     detailEl.classList.add("open");
@@ -34152,7 +34174,9 @@ body.ticker-active .gTickerLabel {
       if (isTimeline && threadId && typeof window.renderDensityRuler === 'function') {
         _cdRulerHost.style.display = '';
         _cdDensityRulerHandle = window.renderDensityRuler(_cdRulerHost, threadId, {
-          inline: true,
+          // No inline:true — the host is the pinned footer band, so the
+          // ruler should render flush (non-card). The .cdDensityFooter
+          // CSS override also nulls the stock densityRuler chrome.
           onPeakOpen: (articleId) => {
             if (articleId && window.openArticleDetail) {
               try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
