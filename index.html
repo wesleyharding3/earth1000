@@ -2735,6 +2735,168 @@ body.flow-maximized #flowArcList {
   color: rgba(150,210,255,0.95);
 }
 
+/* ── Line density ruler ─────────────────────────────────────────────
+   Daily (or weekly) article-volume histogram with a glow underlay,
+   playhead, and peak markers. Used in the arcListPanel (below the
+   segment stepper) and in the cluster-detail panel (above the thread
+   timeline). Self-contained — all state lives on the root element's
+   __drState reference. */
+.densityRuler {
+  position: relative;
+  padding: 10px 12px 8px;
+  background: rgba(6,10,20,0.24);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-family: inherit;
+  user-select: none;
+  flex-shrink: 0;
+}
+.densityRuler.inline {
+  border-bottom: none;
+  border-radius: 10px;
+  background: rgba(10,14,24,0.35);
+  margin: 8px 0;
+}
+.densityRuler .drMeta {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 6px;
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: rgba(255,255,255,0.38);
+}
+.densityRuler .drMetaLeft { font-weight: 700; color: rgba(212,168,67,0.85); letter-spacing: 0.12em; }
+.densityRuler .drMetaCenter {
+  flex: 1; text-align: center; color: rgba(255,255,255,0.7);
+  font-weight: 600; letter-spacing: 0.06em;
+}
+.densityRuler .drMetaRight { font-size: 9px; color: rgba(255,255,255,0.3); }
+.densityRuler .drStage {
+  position: relative;
+  height: 56px;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+.densityRuler .drGlowLayer,
+.densityRuler .drBarLayer,
+.densityRuler .drPeakLayer {
+  position: absolute; inset: 0;
+  pointer-events: none;
+}
+.densityRuler .drGlowLayer { filter: blur(9px); opacity: 0.85; }
+.densityRuler .drBar {
+  position: absolute; bottom: 12px;
+  background: #d4a843; border-radius: 1px;
+  transition: opacity 0.2s;
+}
+.densityRuler .drGlow {
+  position: absolute; bottom: 10px;
+  background: #d4a843; border-radius: 2px;
+}
+.densityRuler .drBaseline {
+  position: absolute; left: 0; right: 0; bottom: 11px;
+  height: 1px; background: rgba(255,255,255,0.08);
+}
+.densityRuler .drPeakMarker {
+  position: absolute; top: 2px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: rgba(255,215,120,0.95);
+  box-shadow: 0 0 8px rgba(212,168,67,0.7);
+  transform: translateX(-50%);
+  pointer-events: auto; cursor: pointer;
+}
+.densityRuler .drPeakMarker.primary { width: 7px; height: 7px; }
+@media (pointer: coarse) {
+  .densityRuler .drPeakMarker { width: 8px; height: 8px; top: 0; }
+  .densityRuler .drPeakMarker.primary { width: 10px; height: 10px; }
+}
+.densityRuler .drPeakLabel {
+  position: absolute; bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  background: rgba(10,14,24,0.96);
+  border: 1px solid rgba(212,168,67,0.4);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 10px; color: rgba(255,255,255,0.92);
+  white-space: nowrap; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis;
+  pointer-events: auto; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  z-index: 3;
+  display: none;
+}
+.densityRuler .drPeakLabel.visible { display: block; }
+.densityRuler .drPeakLabel::after {
+  content: ''; position: absolute; left: 50%; bottom: -4px;
+  transform: translateX(-50%) rotate(45deg);
+  width: 6px; height: 6px;
+  background: rgba(10,14,24,0.96);
+  border-right: 1px solid rgba(212,168,67,0.4);
+  border-bottom: 1px solid rgba(212,168,67,0.4);
+}
+.densityRuler .drPlayhead {
+  position: absolute; top: 0; bottom: 0;
+  width: 1px; background: rgba(255,230,160,0.9);
+  box-shadow: 0 0 6px rgba(212,168,67,0.7);
+  pointer-events: none;
+  transition: left 0.12s linear;
+}
+.densityRuler .drPlayhead::before {
+  content: ''; position: absolute; top: -1px; left: 50%;
+  transform: translateX(-50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255,230,160,0.95);
+  box-shadow: 0 0 8px rgba(212,168,67,0.85);
+}
+.densityRuler .drPlayheadDate {
+  position: absolute; bottom: -18px;
+  transform: translateX(-50%);
+  font-size: 9px; color: rgba(255,215,120,0.9);
+  font-weight: 600; letter-spacing: 0.04em;
+  white-space: nowrap; pointer-events: none;
+}
+.densityRuler .drAxis {
+  display: flex; justify-content: space-between;
+  margin-top: 6px;
+  font-size: 9px; color: rgba(255,255,255,0.32);
+  letter-spacing: 0.04em;
+}
+.densityRuler .drControls {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 10px;
+}
+.densityRuler .drPlayBtn {
+  width: 26px; height: 26px; border-radius: 13px;
+  background: rgba(212,168,67,0.16);
+  border: 1px solid rgba(212,168,67,0.38);
+  color: rgba(255,215,120,0.95);
+  font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.densityRuler .drPlayBtn:hover {
+  background: rgba(212,168,67,0.26);
+  border-color: rgba(212,168,67,0.55);
+}
+.densityRuler .drSpeedBtn {
+  height: 22px; padding: 0 8px;
+  border-radius: 11px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.7);
+  font-size: 9.5px; font-weight: 600;
+  cursor: pointer; flex-shrink: 0;
+}
+.densityRuler .drSpeedBtn:hover { background: rgba(255,255,255,0.1); }
+.densityRuler .drEmpty {
+  text-align: center; padding: 18px 8px;
+  font-size: 11px; color: rgba(255,255,255,0.35);
+}
+.densityRuler .drLoading {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: rgba(255,255,255,0.3);
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+
 /* Scrollable article list */
 .arcListScroll {
   overflow-y: auto; flex: 0 1 auto; padding: 4px 0;
@@ -10327,6 +10489,7 @@ window.sourceBiasBadgeHTML = function(bias) {
           <button class="tlcBtn" id="tlcNextBtn" title="Next segment">⏭</button>
         </div>
       </div>
+      <div id="arcListDensityRuler" style="display:none;"></div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
       </div>
@@ -24258,6 +24421,396 @@ const settingsToggle     = document.getElementById("settingsToggle");
           running for a 10s dwell (extended later for AI context).
        4. If playing, auto-advance to the next segment (direction-aware).
      ---------------------------------------------------------------- */
+  /* ─── Line density ruler ──────────────────────────────────────────
+     Self-contained histogram-over-time for a story timeline. Mounts
+     into any container. Fetches /api/timelines/:id/density, renders
+     bars + glow + playhead + peak markers, and emits onSeek(date).
+     Job A only: no map-layer coupling yet — the ruler seeks its own
+     playhead and (optionally) opens the day's top article. Job B
+     will wire the playhead to globe-layer filtering.
+     Usage:
+       const h = window.renderDensityRuler(containerEl, timelineId, {
+         inline: true,                 // inline (card) vs panel style
+         onSeek: date => { ... },      // fires on scrub/play tick
+         onPeakOpen: (articleId, date) => { ... },
+       });
+       h.destroy();                    // when panel closes
+  */
+  window.renderDensityRuler = (function () {
+    const API_BASE = window.API || '';
+    const SPEEDS   = [1, 2, 4];
+    const MOBILE   = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
+    function fmtShort(d) {
+      if (!d) return '';
+      const dt = d instanceof Date ? d : new Date(d);
+      if (isNaN(dt)) return '';
+      return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+    function fmtFull(d) {
+      if (!d) return '';
+      const dt = d instanceof Date ? d : new Date(d);
+      if (isNaN(dt)) return '';
+      return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    function diffDays(a, b) {
+      return Math.round((new Date(b) - new Date(a)) / 86400000);
+    }
+    function pickPeaks(buckets, n) {
+      if (!buckets?.length) return [];
+      const sorted = buckets.map((b, i) => ({ i, count: b.count })).sort((a, b) => b.count - a.count);
+      const peakCount = Math.min(n, sorted.filter(s => s.count > 0).length);
+      return sorted.slice(0, peakCount).map(s => s.i).sort((a, b) => a - b);
+    }
+
+    function render(containerEl, timelineId, opts) {
+      opts = opts || {};
+      if (!containerEl || !timelineId) return { destroy() {} };
+
+      // Clean any prior ruler on this container (idempotent remount).
+      const prev = containerEl.querySelector(':scope > .densityRuler');
+      if (prev && prev.__drState) {
+        try { prev.__drState.destroy(); } catch (_) {}
+        prev.remove();
+      }
+
+      const root = document.createElement('div');
+      root.className = 'densityRuler' + (opts.inline ? ' inline' : '');
+      root.innerHTML = `
+        <div class="drMeta">
+          <span class="drMetaLeft">Density</span>
+          <span class="drMetaCenter" data-el="coverage">—</span>
+          <span class="drMetaRight" data-el="bucket"></span>
+        </div>
+        <div class="drStage" data-el="stage">
+          <div class="drLoading" data-el="loading">Loading…</div>
+          <div class="drBaseline"></div>
+          <div class="drGlowLayer" data-el="glowLayer"></div>
+          <div class="drBarLayer"  data-el="barLayer"></div>
+          <div class="drPeakLayer" data-el="peakLayer"></div>
+          <div class="drPlayhead" data-el="playhead" style="display:none;">
+            <div class="drPlayheadDate" data-el="playheadDate"></div>
+          </div>
+        </div>
+        <div class="drAxis">
+          <span data-el="axisStart">—</span>
+          <span data-el="axisEnd">—</span>
+        </div>
+        <div class="drControls">
+          <button class="drPlayBtn" data-el="playBtn" title="Play">▶</button>
+          <button class="drSpeedBtn" data-el="speedBtn" title="Playback speed">1×</button>
+        </div>
+      `;
+      containerEl.appendChild(root);
+
+      const els = {};
+      root.querySelectorAll('[data-el]').forEach(n => { els[n.dataset.el] = n; });
+
+      const state = {
+        timelineId,
+        destroyed: false,
+        loading:   true,
+        buckets:   [],
+        bucketType:'day',
+        startDate: null,
+        endDate:   null,
+        peaks:     [],         // indices into buckets
+        primaryPeak: -1,
+        currentIdx: 0,         // playhead index
+        playing:   false,
+        speedIdx:  0,
+        rafHandle: null,
+        lastTickMs: 0,
+        visibleLabelIdx: -1,
+        tooltipPinned:   false,
+        destroy() {
+          state.destroyed = true;
+          if (state.rafHandle) cancelAnimationFrame(state.rafHandle);
+          window.removeEventListener('resize', onResize);
+          root.remove();
+        }
+      };
+      root.__drState = state;
+
+      function setPlaying(p) {
+        state.playing = p;
+        els.playBtn.textContent = p ? '⏸' : '▶';
+        els.playBtn.title = p ? 'Pause' : 'Play';
+        if (p) {
+          state.lastTickMs = performance.now();
+          tick();
+        } else if (state.rafHandle) {
+          cancelAnimationFrame(state.rafHandle);
+          state.rafHandle = null;
+        }
+      }
+      function tick() {
+        if (state.destroyed || !state.playing) return;
+        const now = performance.now();
+        const dt  = now - state.lastTickMs;
+        const mult = SPEEDS[state.speedIdx] || 1;
+        const perBucketMs = 600 / mult;
+        if (dt >= perBucketMs) {
+          state.lastTickMs = now;
+          const next = state.currentIdx + 1;
+          if (next >= state.buckets.length) {
+            setPlaying(false);
+            return;
+          }
+          seekToIdx(next, { emit: true });
+        }
+        state.rafHandle = requestAnimationFrame(tick);
+      }
+      function seekToIdx(i, o) {
+        o = o || {};
+        if (!state.buckets.length) return;
+        i = Math.max(0, Math.min(state.buckets.length - 1, i));
+        state.currentIdx = i;
+        renderPlayhead();
+        if (o.emit !== false && typeof opts.onSeek === 'function') {
+          try { opts.onSeek(state.buckets[i].date, i, state.buckets[i]); } catch (_) {}
+        }
+      }
+
+      function renderBars() {
+        const stageW = els.stage.clientWidth;
+        if (!stageW || !state.buckets.length) return;
+        const n = state.buckets.length;
+        const gap = Math.max(0, Math.min(2, stageW / n * 0.22));
+        const barW = Math.max(1, (stageW - gap * (n - 1)) / n);
+        const maxCount = Math.max(1, ...state.buckets.map(b => b.count));
+        const maxHeight = 38;
+
+        const barHtml = state.buckets.map((b, i) => {
+          const x = i * (barW + gap);
+          const norm = Math.sqrt(b.count / maxCount);
+          const h = Math.max(b.count > 0 ? 3 : 1, Math.round(norm * maxHeight));
+          const op = 0.25 + norm * 0.75;
+          return `<div class="drBar" style="left:${x}px;width:${barW}px;height:${h}px;opacity:${op.toFixed(3)};"></div>`;
+        }).join('');
+        els.barLayer.innerHTML = barHtml;
+
+        const glowHtml = state.buckets.map((b, i) => {
+          const x = i * (barW + gap);
+          const norm = Math.sqrt(b.count / maxCount);
+          if (norm < 0.08) return '';
+          const h = Math.max(4, Math.round(norm * (maxHeight + 6)));
+          const op = Math.min(0.9, norm * 0.95);
+          const w = Math.max(3, barW + 3);
+          return `<div class="drGlow" style="left:${x - 1}px;width:${w}px;height:${h}px;opacity:${op.toFixed(3)};"></div>`;
+        }).join('');
+        els.glowLayer.innerHTML = glowHtml;
+
+        renderPeaks(barW, gap);
+        renderPlayhead();
+      }
+
+      function renderPeaks(barW, gap) {
+        if (!state.buckets.length) { els.peakLayer.innerHTML = ''; return; }
+        state.peaks = pickPeaks(state.buckets, 3);
+        state.primaryPeak = state.peaks.length
+          ? state.peaks.slice().sort((a, b) => state.buckets[b].count - state.buckets[a].count)[0]
+          : -1;
+        const html = state.peaks.map(idx => {
+          const b = state.buckets[idx];
+          const cx = idx * (barW + gap) + barW / 2;
+          const isPrimary = idx === state.primaryPeak;
+          const label = (b.top_headline || '').replace(/"/g, '&quot;');
+          const showInitial = !MOBILE && isPrimary && !!b.top_headline;
+          return `
+            <div class="drPeakMarker${isPrimary ? ' primary' : ''}" data-idx="${idx}" style="left:${cx}px;"></div>
+            <div class="drPeakLabel${showInitial ? ' visible' : ''}" data-labelidx="${idx}" style="left:${cx}px;" title="${label}">${label || fmtShort(b.date)}</div>
+          `;
+        }).join('');
+        els.peakLayer.innerHTML = html;
+        if (!MOBILE && state.primaryPeak >= 0) state.visibleLabelIdx = state.primaryPeak;
+      }
+
+      function renderPlayhead() {
+        if (!state.buckets.length) { els.playhead.style.display = 'none'; return; }
+        const stageW = els.stage.clientWidth;
+        if (!stageW) return;
+        const n = state.buckets.length;
+        const gap = Math.max(0, Math.min(2, stageW / n * 0.22));
+        const barW = Math.max(1, (stageW - gap * (n - 1)) / n);
+        const cx = state.currentIdx * (barW + gap) + barW / 2;
+        els.playhead.style.display = '';
+        els.playhead.style.left = `${cx}px`;
+        els.playheadDate.textContent = fmtShort(state.buckets[state.currentIdx].date);
+      }
+
+      function seekFromClientX(clientX) {
+        const rect = els.stage.getBoundingClientRect();
+        const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+        const frac = rect.width > 0 ? x / rect.width : 0;
+        const idx = Math.round(frac * (state.buckets.length - 1));
+        seekToIdx(idx, { emit: true });
+      }
+
+      let scrubbing = false;
+      const onStageDown = (e) => {
+        if (!state.buckets.length) return;
+        const t = e.target;
+        if (t.classList && (t.classList.contains('drPeakMarker') || t.classList.contains('drPeakLabel'))) return;
+        scrubbing = true;
+        if (state.playing) setPlaying(false);
+        seekFromClientX(e.clientX || (e.touches && e.touches[0]?.clientX) || 0);
+      };
+      const onStageMove = (e) => {
+        if (!scrubbing) return;
+        seekFromClientX(e.clientX || (e.touches && e.touches[0]?.clientX) || 0);
+      };
+      const onStageUp = () => { scrubbing = false; };
+      els.stage.addEventListener('mousedown', onStageDown);
+      els.stage.addEventListener('touchstart', onStageDown, { passive: true });
+      window.addEventListener('mousemove', onStageMove);
+      window.addEventListener('touchmove', onStageMove, { passive: true });
+      window.addEventListener('mouseup', onStageUp);
+      window.addEventListener('touchend', onStageUp);
+
+      els.peakLayer.addEventListener('mouseover', (e) => {
+        if (MOBILE) return;
+        const m = e.target.closest('.drPeakMarker'); if (!m) return;
+        const idx = parseInt(m.dataset.idx, 10);
+        showPeakLabel(idx);
+      });
+      els.peakLayer.addEventListener('mouseout', (e) => {
+        if (MOBILE) return;
+        const m = e.target.closest('.drPeakMarker'); if (!m) return;
+        if (!state.tooltipPinned && state.primaryPeak >= 0) showPeakLabel(state.primaryPeak);
+        else hideAllLabels();
+      });
+      els.peakLayer.addEventListener('click', (e) => {
+        const m = e.target.closest('.drPeakMarker, .drPeakLabel');
+        if (!m) return;
+        const idx = parseInt(m.dataset.idx || m.dataset.labelidx, 10);
+        if (Number.isNaN(idx)) return;
+        if (MOBILE) {
+          if (m.classList.contains('drPeakLabel')) {
+            const b = state.buckets[idx];
+            seekToIdx(idx, { emit: true });
+            if (b?.top_article_id && typeof opts.onPeakOpen === 'function') {
+              try { opts.onPeakOpen(b.top_article_id, b.date); } catch (_) {}
+            }
+            state.tooltipPinned = false;
+            hideAllLabels();
+          } else {
+            state.tooltipPinned = true;
+            showPeakLabel(idx);
+          }
+          return;
+        }
+        const b = state.buckets[idx];
+        seekToIdx(idx, { emit: true });
+        if (b?.top_article_id && typeof opts.onPeakOpen === 'function') {
+          try { opts.onPeakOpen(b.top_article_id, b.date); } catch (_) {}
+        }
+      });
+      const onDocTap = (e) => {
+        if (!MOBILE || !state.tooltipPinned) return;
+        if (root.contains(e.target)) return;
+        state.tooltipPinned = false;
+        hideAllLabels();
+      };
+      document.addEventListener('pointerdown', onDocTap);
+
+      function showPeakLabel(idx) {
+        els.peakLayer.querySelectorAll('.drPeakLabel').forEach(el => {
+          el.classList.toggle('visible', parseInt(el.dataset.labelidx, 10) === idx);
+        });
+        state.visibleLabelIdx = idx;
+      }
+      function hideAllLabels() {
+        els.peakLayer.querySelectorAll('.drPeakLabel').forEach(el => el.classList.remove('visible'));
+        state.visibleLabelIdx = -1;
+      }
+
+      els.playBtn.addEventListener('click', () => {
+        if (!state.buckets.length) return;
+        if (!state.playing && state.currentIdx >= state.buckets.length - 1) {
+          seekToIdx(0, { emit: true });
+        }
+        setPlaying(!state.playing);
+      });
+      els.speedBtn.addEventListener('click', () => {
+        state.speedIdx = (state.speedIdx + 1) % SPEEDS.length;
+        els.speedBtn.textContent = `${SPEEDS[state.speedIdx]}×`;
+      });
+
+      const onKey = (e) => {
+        if (state.destroyed || !state.buckets.length) return;
+        if (!root.contains(document.activeElement) && !root.matches(':hover')) return;
+        if (e.key === 'ArrowLeft')       { e.preventDefault(); seekToIdx(state.currentIdx - 1, { emit: true }); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); seekToIdx(state.currentIdx + 1, { emit: true }); }
+        else if (e.key === ' ')          { e.preventDefault(); els.playBtn.click(); }
+      };
+      document.addEventListener('keydown', onKey);
+
+      let resizeTimer = null;
+      function onResize() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(renderBars, 80);
+      }
+      window.addEventListener('resize', onResize);
+
+      const prevDestroy = state.destroy;
+      state.destroy = function () {
+        document.removeEventListener('pointerdown', onDocTap);
+        document.removeEventListener('keydown', onKey);
+        window.removeEventListener('mousemove', onStageMove);
+        window.removeEventListener('touchmove', onStageMove);
+        window.removeEventListener('mouseup', onStageUp);
+        window.removeEventListener('touchend', onStageUp);
+        prevDestroy();
+      };
+
+      (async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/timelines/${timelineId}/density`);
+          if (!res.ok) throw new Error('fetch failed');
+          const json = await res.json();
+          if (state.destroyed) return;
+          state.loading    = false;
+          state.buckets    = Array.isArray(json.buckets) ? json.buckets : [];
+          state.bucketType = json.bucket || 'day';
+          state.startDate  = json.start_date || null;
+          state.endDate    = json.end_date   || null;
+          state.currentIdx = Math.max(0, state.buckets.length - 1);
+          els.loading.remove();
+
+          if (!state.buckets.length) {
+            els.stage.innerHTML = '<div class="drEmpty">No articles indexed yet for this line.</div>';
+            return;
+          }
+
+          const spanDays = state.startDate && state.endDate
+            ? Math.max(1, diffDays(state.startDate, state.endDate) + 1)
+            : state.buckets.length;
+          els.coverage.textContent = `${fmtFull(state.startDate)} → ${fmtFull(state.endDate)} · ${spanDays} days`;
+          els.bucket.textContent = state.bucketType === 'week' ? '(weekly)' : '';
+          els.axisStart.textContent = fmtShort(state.startDate);
+          els.axisEnd.textContent   = fmtShort(state.endDate);
+
+          requestAnimationFrame(renderBars);
+        } catch (err) {
+          if (state.destroyed) return;
+          els.loading.textContent = 'Density unavailable';
+        }
+      })();
+
+      return {
+        destroy: () => state.destroy(),
+        seekTo: (date) => {
+          const i = state.buckets.findIndex(b => b.date === date);
+          if (i >= 0) seekToIdx(i, { emit: false });
+        },
+        getCurrent: () => state.buckets[state.currentIdx] || null,
+      };
+    }
+
+    return render;
+  })();
+
   const TIMELINE_DWELL_MS        = 10000;
   const TIMELINE_WAVE_ESTIMATE_S = 1.5; // per-wave draw-in duration
   let _timelineSegments       = [];
@@ -24322,6 +24875,38 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function _setTimelineBarVisible(visible) {
     const bar = document.getElementById('arcListTimelineBar');
     if (bar) bar.style.display = visible ? 'flex' : 'none';
+  }
+
+  // Density ruler handle for the arc-list panel (null when unmounted).
+  let _arcListDensityRulerHandle = null;
+  function _mountArcListDensityRuler(timelineId) {
+    const host = document.getElementById('arcListDensityRuler');
+    if (!host) return;
+    if (_arcListDensityRulerHandle) {
+      try { _arcListDensityRulerHandle.destroy(); } catch (_) {}
+      _arcListDensityRulerHandle = null;
+    }
+    if (!timelineId || typeof window.renderDensityRuler !== 'function') {
+      host.style.display = 'none';
+      host.innerHTML = '';
+      return;
+    }
+    host.style.display = '';
+    _arcListDensityRulerHandle = window.renderDensityRuler(host, timelineId, {
+      onPeakOpen: (articleId) => {
+        if (articleId && window.openArticleDetail) {
+          try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
+        }
+      },
+    });
+  }
+  function _unmountArcListDensityRuler() {
+    const host = document.getElementById('arcListDensityRuler');
+    if (_arcListDensityRulerHandle) {
+      try { _arcListDensityRulerHandle.destroy(); } catch (_) {}
+      _arcListDensityRulerHandle = null;
+    }
+    if (host) { host.style.display = 'none'; host.innerHTML = ''; }
   }
 
   function _formatSegDate(dateStr) {
@@ -24511,6 +25096,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _timelinePlaying = false;
     _timelineCtxMeta = null;
     _setTimelineBarVisible(false);
+    _unmountArcListDensityRuler();
     _refreshTimelineUI();
   };
 
@@ -24638,6 +25224,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__flowCtxDrillDown = false;
         document.getElementById('flowArcList')?.classList.add('visible');
         _setTimelineBarVisible(true);
+        _mountArcListDensityRuler(timelineId);
         // Timeline flows are about playback — jump straight into the
         // routes view so the ⏮▶⏭ controls are immediately reachable.
         // User can still ← back to the info view from the pill bar.
@@ -32580,6 +33167,10 @@ body.ticker-active .gTickerLabel {
 
   function closeNodePanel() {
     if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
+    if (_cdDensityRulerHandle) {
+      try { _cdDensityRulerHandle.destroy(); } catch (_) {}
+      _cdDensityRulerHandle = null;
+    }
     detailEl.classList.remove("open", "cdMaximized", "cdMinimized");
     cdSnapState = "default";
     detailEl.style.height = "";
@@ -32704,6 +33295,7 @@ body.ticker-active .gTickerLabel {
   }
 
   let _typewriterAbort = null;
+  let _cdDensityRulerHandle = null;
   function typewriterText(el, text, charDelay) {
     if (_typewriterAbort) _typewriterAbort();
     charDelay = charDelay || 3;
@@ -32801,6 +33393,7 @@ body.ticker-active .gTickerLabel {
             <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
             Thread Timeline
           </div>
+          <div id="cdDensityRuler" style="display:none;"></div>
           <div id="cdTimelineBody">
             <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading timeline...</span></div>
           </div>
@@ -32903,6 +33496,30 @@ body.ticker-active .gTickerLabel {
     const isTimeline = node.__kind === 'timeline';
     let allArticles = [];
     let allThreads  = [];
+
+    // Mount the density ruler for timelines (Lines) only. Threads don't
+    // have a multi-month narrative so the ruler would be noise. Ruler is
+    // scoped to this panel instance; closeNodePanel tears it down.
+    try {
+      if (_cdDensityRulerHandle) { _cdDensityRulerHandle.destroy(); _cdDensityRulerHandle = null; }
+    } catch (_) {}
+    const _cdRulerHost = document.getElementById('cdDensityRuler');
+    if (_cdRulerHost) {
+      if (isTimeline && threadId && typeof window.renderDensityRuler === 'function') {
+        _cdRulerHost.style.display = '';
+        _cdDensityRulerHandle = window.renderDensityRuler(_cdRulerHost, threadId, {
+          inline: true,
+          onPeakOpen: (articleId) => {
+            if (articleId && window.openArticleDetail) {
+              try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
+            }
+          },
+        });
+      } else {
+        _cdRulerHost.style.display = 'none';
+        _cdRulerHost.innerHTML = '';
+      }
+    }
 
     const articlesPromise = (async () => {
       try {
