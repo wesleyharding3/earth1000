@@ -6196,6 +6196,98 @@ app.get("/api/timelines/:id/events", async (req, res) => {
   }
 });
 
+// GET /api/timelines/:id/density
+//
+// Daily (or weekly) article-volume histogram for a timeline, used by the
+// Line-level density ruler. Returns one bucket per day up to 120 days,
+// auto-switching to weekly buckets for longer timelines. Each bucket
+// includes the top headline of that window (highest parabolic_weight,
+// tie-broken by most-recent published_at) so the ruler can annotate
+// peaks without a second round-trip.
+app.get("/api/timelines/:id/density", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+
+    // Determine the timeline's active window from its articles, so the
+    // ruler covers the real coverage span (not the DB insert range).
+    const { rows: spanRows } = await pool.query(`
+      SELECT
+        MIN(a.published_at)::date AS start_date,
+        MAX(a.published_at)::date AS end_date,
+        COUNT(*)::int              AS total
+      FROM story_timeline_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      WHERE sta.timeline_id = $1
+        AND a.published_at IS NOT NULL
+    `, [timelineId]);
+
+    const span = spanRows[0];
+    if (!span || !span.start_date || !span.end_date || span.total === 0) {
+      return res.json({ bucket: 'day', start_date: null, end_date: null, buckets: [] });
+    }
+
+    const startDate = new Date(span.start_date);
+    const endDate   = new Date(span.end_date);
+    const spanDays  = Math.max(1, Math.round((endDate - startDate) / 86400000) + 1);
+    const bucket    = spanDays > 120 ? 'week' : 'day';
+    const truncUnit = bucket === 'week' ? 'week' : 'day';
+
+    // Aggregate counts per bucket, and for each bucket pick the top
+    // article (highest parabolic_weight, then most recent). LATERAL
+    // gives us one row per bucket without a correlated subquery.
+    const { rows } = await pool.query(`
+      WITH bucketed AS (
+        SELECT
+          date_trunc($2, a.published_at)::date AS bucket_date,
+          sta.article_id,
+          sta.parabolic_weight,
+          a.published_at,
+          COALESCE(a.translated_title, a.title) AS headline
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE sta.timeline_id = $1
+          AND a.published_at IS NOT NULL
+      ),
+      counts AS (
+        SELECT bucket_date, COUNT(*)::int AS count
+        FROM bucketed
+        GROUP BY bucket_date
+      )
+      SELECT
+        c.bucket_date AS date,
+        c.count,
+        top.headline  AS top_headline,
+        top.article_id AS top_article_id
+      FROM counts c
+      LEFT JOIN LATERAL (
+        SELECT b.article_id, b.headline
+        FROM bucketed b
+        WHERE b.bucket_date = c.bucket_date
+        ORDER BY b.parabolic_weight DESC NULLS LAST, b.published_at DESC
+        LIMIT 1
+      ) top ON true
+      ORDER BY c.bucket_date ASC
+    `, [timelineId, truncUnit]);
+
+    res.json({
+      bucket,
+      start_date: span.start_date,
+      end_date:   span.end_date,
+      total:      span.total,
+      buckets:    rows.map(r => ({
+        date:           r.date,
+        count:          r.count,
+        top_headline:   r.top_headline,
+        top_article_id: r.top_article_id,
+      })),
+    });
+  } catch (err) {
+    console.error("[timelines/density]", err.message);
+    res.status(500).json({ error: "Failed to fetch timeline density" });
+  }
+});
+
 // GET /api/timelines/:id/threads
 //
 // Returns the threads that graduated into this timeline via
