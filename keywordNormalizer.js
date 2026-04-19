@@ -123,7 +123,7 @@ async function normalizeRecentKeywords(options) {
     for (let i = 0; i < pending.length; i += 60) {
       const batch = pending.slice(i, i + 60);
       try {
-        const accepted = await normalizeBatchWithClaude(anthropicClient, batch.map((item) => item.keyword));
+        const accepted = await normalizeBatchWithClaude(anthropicClient, batch.map((item) => item.keyword), logger);
         const stats = await persistTranslations(pool, accepted);
         updatedKeywords += stats.updatedKeywords;
         updatedRows += stats.updatedRows;
@@ -256,7 +256,30 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
   };
 }
 
-async function normalizeBatchWithClaude(client, originals) {
+// Tolerant JSON extractor. Claude Haiku-4.5 regularly wraps its output
+// in ```json ... ``` fences despite being told not to, which caused the
+// previous `JSON.parse(trim(...))` to throw and the silent catch to drop
+// the whole batch. That's why normalizer coverage was sitting at
+// ~0% — every batch silently returned []. This strips fences, tries a
+// whole-body parse, falls back to the first balanced-brace extraction,
+// and loudly logs parse failures so cron logs surface them.
+function _extractJsonObject(rawText) {
+  if (!rawText) return null;
+  // Strip ```json or ``` fences if present
+  let text = String(rawText).trim();
+  const fenceMatch = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) text = fenceMatch[1].trim();
+  // Try whole-body parse first
+  try { return JSON.parse(text); } catch (_) {}
+  // Fallback: find the first { ... } block and parse that
+  const braceMatch = text.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try { return JSON.parse(braceMatch[0]); } catch (_) {}
+  }
+  return null;
+}
+
+async function normalizeBatchWithClaude(client, originals, logger = console) {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 800,
@@ -266,6 +289,7 @@ async function normalizeBatchWithClaude(client, originals) {
 Return ONLY a valid JSON object: each key is the original keyword, each value is the lowercase English equivalent string, or null if untranslatable/too ambiguous.
 Use standard English proper nouns (e.g. "Пекин"→"beijing", "北京"→"beijing", "موسكو"→"moscow", "한국"→"south korea").
 Single characters or meaningless fragments → null.
+Do NOT wrap the response in markdown code fences.
 
 Keywords: ${JSON.stringify(originals)}
 
@@ -273,10 +297,13 @@ JSON only:`
     }]
   });
 
-  let map;
-  try {
-    map = JSON.parse(msg.content[0].text.trim());
-  } catch {
+  const rawText = msg.content?.[0]?.text || '';
+  const map = _extractJsonObject(rawText);
+  if (!map) {
+    // Loud: previously this was a silent return []. That's how coverage
+    // collapsed to 0% without anyone noticing. Log the first 200 chars
+    // of the raw body so we can diagnose drift in Claude's output format.
+    logger.warn?.(`[keywordNormalizer] Claude JSON parse failed — dropping batch of ${originals.length}. Raw: ${rawText.slice(0, 200)}`);
     return [];
   }
 

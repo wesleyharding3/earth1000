@@ -2826,8 +2826,15 @@ body.flow-maximized #flowArcList {
   to   { opacity: 1; max-height: 400px; }
 }
 .arcCardImg {
-  width: 100%; height: 110px; object-fit: cover;
-  border-radius: 8px; margin-bottom: 8px;
+  /* Height tuned to fit inside the flowCtxCard live-arcs slot
+     (~200 px tall). With headline + meta row budget of ~75 px and top/
+     bottom padding of ~14 px, image gets ~110 px worst case — but we cap
+     at 80 px so the expanded card never overflows and the image matches
+     the size used by the news-flows drill-down article mini-card
+     (.arcRouteArticle.arcRAExpanded .arcRAImg = 90 px) for visual
+     consistency between the two lists. */
+  width: 100%; height: 80px; object-fit: cover;
+  border-radius: 8px; margin-bottom: 6px;
   background: rgba(255,255,255,0.04);
 }
 .arcCardHeadline {
@@ -2896,7 +2903,11 @@ body.flow-maximized #flowArcList {
    without growing the overall card height: the reduced padding-bottom
    exactly offsets the larger margin-top on the meta row. */
 .arcCardExpanded { padding-bottom: 4px; }
-.arcCardExpanded .arcCardMetaRow { margin-top: 14px; }
+/* Snug the meta row up closer to the headline — the previous 14 px gap
+   was sized for a 110 px image; with the slimmer 80 px image we don't
+   need the extra breathing room and shaving 4 px keeps the card well
+   under the 200 px live-arcs slot cap. */
+.arcCardExpanded .arcCardMetaRow { margin-top: 10px; }
 /* Aggregate drill-down: article mini-cards inside expanded route card */
 .arcRouteArticle {
   padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);

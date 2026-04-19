@@ -2881,7 +2881,11 @@ app.get("/api/threads/:id/articles", async (req, res) => {
           a.id,
           COALESCE(a.translated_title, a.title)     AS title,
           COALESCE(a.translated_summary, a.summary) AS summary,
-          a.image_url,
+          -- news_articles.image_url is NULL for most articles; the real
+          -- artwork lives in the assigned catalog image. Same COALESCE
+          -- chain that /api/admin/threads/:id uses so the expanded-card
+          -- image consistently has something to render.
+          COALESCE(a.image_url, img_a.public_url)   AS image_url,
           COALESCE(ns.name, ys.name)                AS source_name,
           a.article_url                              AS url,
           a.published_at,
@@ -2904,6 +2908,8 @@ app.get("/api/threads/:id/articles", async (req, res) => {
         LEFT JOIN cities    src_ci ON src_ci.id = a.city_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
         LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
         LEFT JOIN LATERAL (
           SELECT
             dco.iso_code AS dst_iso,

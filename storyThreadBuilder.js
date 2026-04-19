@@ -23,7 +23,12 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
-const { normalizeRecentKeywords } = require("./keywordNormalizer");
+// Note: keyword normalization used to run inline here (4× / day, capped at
+// 800 kw / 80 k chars / run, silent-catch). It gave us <1% non-English
+// normalization coverage and silo'd every non-English article from the
+// language bridge. Normalization is now a dedicated cron —
+// keywordNormalizerCron.js — that runs hourly with 5× the cap and no
+// silent-catch. The builder assumes translations are already populated.
 const { deepAnalyzeArticle } = require("./deepAnalyzer");
 const { loadRulesBlock } = require("./editorialRuleInjector");
 
@@ -46,8 +51,16 @@ const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
 const FRESH_PRIORITY_HOURS = 6;
-const FRESH_PRIORITY_LIMIT = 100;
-const TOTAL_ARTICLE_LIMIT  = 300;
+// Capacity bump (2026-04-19): pipeline audit showed attach_rate of 0.1–1.5%
+// of daily ingest. Builder was processing 300/run × 4 runs/day = 1 200/day
+// against 60–120 k/day ingestion. Combined with an 8× cron cadence bump on
+// Render (every 3h instead of every 6h) this lifts capacity to ≈ 5 000/day,
+// covering the actual breaking-story stream instead of a thin sliver.
+// Budget impact at Haiku 4.5: ~$5.85/day builder + $1.80/day normalizer,
+// before prompt caching. Caching on the rules+existing-threads prefix
+// trims another ~40 % off builder input cost.
+const FRESH_PRIORITY_LIMIT = 200;
+const TOTAL_ARTICLE_LIMIT  = 625;
 const REFRESH_MIN_ARTICLES = 5;
 const REFRESH_MIN_NEW_KWS  = 3;
 const RECENCY_HALF_LIFE_HOURS = 36;
@@ -65,23 +78,29 @@ async function run() {
   const elapsed = () => `+${((Date.now()-t0)/1000).toFixed(1)}s`;
 
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
-  console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
+  console.log(`   lookback=${LOOKBACK_HOURS}h  fresh_limit=${FRESH_PRIORITY_LIMIT}  total_limit=${TOTAL_ARTICLE_LIMIT}  claude_batch=${CLAUDE_BATCH}`);
 
-  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords...`);
-  // Use a dedicated client with extended timeout for the heavy normalization query
-  const normClient = await pool.connect();
-  await normClient.query("SET statement_timeout = 120000"); // 2 min
-  const normalization = await normalizeRecentKeywords({
-    pool: normClient,
-    anthropicClient: client,
-    logger: console,
-    scope: { hours: LOOKBACK_HOURS }
-  }).catch(err => {
-    console.warn(`   ⚠ Keyword normalization skipped: ${err.message}`);
-    return null;
-  }).finally(() => normClient.release());
-  if (normalization) {
-    console.log(`   [${elapsed()}] Keyword normalization provider=${normalization.provider} updated_keywords=${normalization.updatedKeywords} updated_rows=${normalization.updatedRows}`);
+  // Report normalization coverage at run start. If it's collapsed (e.g.
+  // keywordNormalizerCron stopped firing or is failing) we want the
+  // builder log to surface it — not silently cluster on un-bridged
+  // source-language keywords and pretend that's fine.
+  try {
+    const { rows: cov } = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE ak.source_language IS DISTINCT FROM 'en')::int AS non_en_rows,
+        COUNT(*) FILTER (WHERE ak.source_language IS DISTINCT FROM 'en' AND ak.normalized_keyword IS NOT NULL)::int AS non_en_normalized
+      FROM article_keywords ak
+      JOIN news_articles a ON a.id = ak.article_id
+      WHERE a.published_at > NOW() - ($1 * INTERVAL '1 hour')
+    `, [LOOKBACK_HOURS]);
+    const { non_en_rows, non_en_normalized } = cov[0] || {};
+    const pct = non_en_rows ? (100 * non_en_normalized / non_en_rows).toFixed(1) : '0.0';
+    console.log(`   [${elapsed()}] non-en normalization coverage (last ${LOOKBACK_HOURS}h): ${non_en_normalized}/${non_en_rows} = ${pct}%`);
+    if (non_en_rows && (non_en_normalized / non_en_rows) < 0.10) {
+      console.warn(`   ⚠ Non-English normalization coverage is low (<10%). Check keywordNormalizerCron on Render.`);
+    }
+  } catch (e) {
+    console.warn(`   ⚠ Could not read normalization coverage: ${e.message}`);
   }
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
@@ -100,10 +119,46 @@ async function run() {
   const existingThreadMap = new Map(existingThreads.map(t => [Number(t.id), { ...t }]));
   console.log(`   [${elapsed()}] Active threads in DB: ${existingThreads.length}`);
 
+  // FROZEN existing-threads snapshot used as Claude's cacheable prompt
+  // prefix. Computing it once per run keeps the prefix byte-identical
+  // across every batch, which is what prompt-caching requires. The
+  // downside — Claude in later batches can't see threads created earlier
+  // in the SAME run — is intentional and tolerated: dedupSimilarThreads
+  // runs at end-of-run (see below) and collapses any duplicate threads a
+  // blind-batch pair might spawn. Same trade-off the code already
+  // assumes: "batch-isolated Claude calls inevitably create duplicates".
+  const frozenExistingData = existingThreads.slice(0, 150).map(t => ({
+    id:    t.id,
+    title: t.title,
+    kw:    (t.keywords || []).slice(0, 3),
+    cat:   t.primary_category
+  }));
+  // Sort by id so the JSON serialization is deterministic — any drift in
+  // Map iteration order would invalidate the cache on every batch.
+  frozenExistingData.sort((a, b) => Number(a.id) - Number(b.id));
+
   let created = 0, updated = 0;
+  // Run-level counters for the end-of-run summary. These are the
+  // diagnostic we were missing before — without them, silent failures
+  // (Claude JSON parse, rate limits, junk-filter rejections) are
+  // indistinguishable from "nothing was threadable this run".
+  const metrics = {
+    batchesTotal:   0,
+    batchesOk:      0,
+    batchesFailed:  0,
+    claudeDefs:     0,  // total thread-defs Claude returned
+    articlesIn:     articles.length,
+    articlesClaudeSent: 0,
+    articlesAttached: 0,
+    cacheReadIn:    0,  // tokens served from cache
+    cacheWriteIn:   0,  // tokens written to cache
+    stdIn:          0,  // uncached input tokens
+    outTokens:      0
+  };
   const refreshThreadIds = new Set();
   const allGroups = [...clusters, ...chunkSingletons(singletons, 20)];
   const totalBatches = Math.ceil(allGroups.length / 3);
+  metrics.batchesTotal = totalBatches;
   console.log(`   [${elapsed()}] Sending ${totalBatches} batch(es) to Claude...\n`);
 
   for (let i = 0; i < allGroups.length; i += 3) {
@@ -112,14 +167,25 @@ async function run() {
     if (!batch.length) continue;
 
     process.stdout.write(`   [${elapsed()}] Batch ${batchNum}/${totalBatches} (${batch.length} articles) → Claude... `);
+    metrics.articlesClaudeSent += batch.length;
     try {
       const validIdSet = new Set(batch.map(a => Number(a.id)));
-      const defs = await evaluateWithClaude(batch, [...existingThreadMap.values()]);
-      const { c, u, refreshIds } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
+      const { defs, usage } = await evaluateWithClaude(batch, frozenExistingData);
+      metrics.claudeDefs += defs.length;
+      if (usage) {
+        metrics.cacheReadIn   += usage.cache_read_input_tokens    || 0;
+        metrics.cacheWriteIn  += usage.cache_creation_input_tokens || 0;
+        metrics.stdIn         += usage.input_tokens               || 0;
+        metrics.outTokens     += usage.output_tokens              || 0;
+      }
+      const { c, u, refreshIds, attachedCount } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
       created += c; updated += u;
+      metrics.articlesAttached += (attachedCount || 0);
       refreshIds.forEach(id => refreshThreadIds.add(Number(id)));
-      console.log(`✓ ${defs.length} threads (${c} new, ${u} updated)`);
+      metrics.batchesOk += 1;
+      console.log(`✓ ${defs.length} defs (${c} new, ${u} updated)`);
     } catch (err) {
+      metrics.batchesFailed += 1;
       console.log(`✗ ERROR: ${err.message}`);
     }
 
@@ -150,7 +216,28 @@ async function run() {
   const deepAnalyzed = await deepAnalyzeTopPerThread();
   console.log(`   [${elapsed()}] Deep-analyzed ${deepAnalyzed} article(s)`);
 
-  console.log(`\n✅ Done in ${((Date.now()-t0)/1000).toFixed(1)}s — ${created} threads created, ${updated} updated.\n`);
+  // End-of-run summary. Every run now emits one structured block so we
+  // can diff runs over time — and so a collapse in, e.g., Claude JSON
+  // parse success shows up as a concrete number instead of "it feels
+  // like fewer threads lately".
+  const runSec = ((Date.now() - t0) / 1000).toFixed(1);
+  const attachRate = metrics.articlesIn
+    ? (100 * metrics.articlesAttached / metrics.articlesIn).toFixed(1)
+    : '0.0';
+  const cacheHitRate = (metrics.cacheReadIn + metrics.stdIn + metrics.cacheWriteIn)
+    ? (100 * metrics.cacheReadIn / (metrics.cacheReadIn + metrics.stdIn + metrics.cacheWriteIn)).toFixed(1)
+    : '0.0';
+  console.log(`\n═══ RUN SUMMARY (${runSec}s) ═══`);
+  console.log(`  articles_in          : ${metrics.articlesIn}`);
+  console.log(`  articles_claude_sent : ${metrics.articlesClaudeSent}`);
+  console.log(`  articles_attached    : ${metrics.articlesAttached}  (${attachRate}% of in)`);
+  console.log(`  batches              : ${metrics.batchesOk}/${metrics.batchesTotal} ok, ${metrics.batchesFailed} failed`);
+  console.log(`  claude_defs_returned : ${metrics.claudeDefs}`);
+  console.log(`  threads_created      : ${created}`);
+  console.log(`  threads_updated      : ${updated}`);
+  console.log(`  input_tokens         : std=${metrics.stdIn}  cache_read=${metrics.cacheReadIn}  cache_write=${metrics.cacheWriteIn}  (cache_hit=${cacheHitRate}%)`);
+  console.log(`  output_tokens        : ${metrics.outTokens}`);
+  console.log(`✅ Done.\n`);
   await pool.end();
 }
 
@@ -216,7 +303,13 @@ function chunkSingletons(singletons, size) {
 
 // ─── Claude Evaluation ────────────────────────────────────────────────────────
 
-async function evaluateWithClaude(articles, existingThreads) {
+// NOTE: `existingData` is now passed in pre-computed from run(). It's
+// frozen once at run start so the cacheable prompt prefix stays
+// byte-identical across every batch in a run. Claude in later batches
+// won't see threads created earlier in the SAME run — dedupSimilarThreads
+// cleans up any duplicate spawns at end of run, which is the same
+// trade-off the code already assumes for batch-isolated calls.
+async function evaluateWithClaude(articles, existingData) {
   const articleData = articles
     .filter(a => !isGarbledText(a.translated_title || a.title))
     .map(a => ({
@@ -230,18 +323,22 @@ async function evaluateWithClaude(articles, existingThreads) {
     published_at: a.published_at
   }));
 
-  // Compact format keeps token usage manageable while letting Claude see
-  // ~150 active threads (vs the old 30) so it can correctly extend duplicates
-  // instead of spawning parallel "Trump-Iran" / "Iran-US war" / etc threads.
-  const existingData = existingThreads.slice(0, 150).map(t => ({
-    id:       t.id,
-    title:    t.title,
-    kw:       (t.keywords || []).slice(0, 3),
-    cat:      t.primary_category
-  }));
-
   const rulesBlock = await loadRulesBlock('thread').catch(() => '');
-  const prompt = `${rulesBlock}You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
+
+  // ── STATIC PREFIX (cacheable across all batches in a run) ──
+  // Everything up to but NOT including the articles-to-analyze block.
+  // Marked with cache_control: ephemeral — first batch writes the cache
+  // (paying 1.25× input rate on ~18 k tokens), every subsequent batch in
+  // the same ~5-min window reads it at 10× discount. With 10 batches
+  // per run this is ~40% off total input cost. See the run summary
+  // block for realized cache_hit% per run.
+  //
+  // This block is ORDER-SENSITIVE. Don't reshuffle sections without
+  // updating the cache invalidation expectations — any byte change
+  // here means the next run pays full price on batch 1 which it would
+  // anyway (fine), but re-ordering mid-refactor can accidentally break
+  // the cache-key identity BETWEEN batches of the same run.
+  const staticPrefix = `${rulesBlock}You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
 
 ═══ BREAKING META-STORY DEFINITION ═══
 A thread here is a SHARP, RIGHT-NOW story that has broken from a single report into a multi-source moment:
@@ -280,9 +377,6 @@ Obscure information about factories, plants, industries, real estate markets, co
 
 EXISTING ACTIVE THREADS (check if any articles extend these):
 ${JSON.stringify(existingData, null, 2)}
-
-ARTICLES TO ANALYZE:
-${JSON.stringify(articleData, null, 2)}
 
 ═══ WHAT QUALIFIES AS A THREAD ═══
 A thread MUST be about at least one of:
@@ -399,24 +493,52 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and
     "importance": 7,
     "keywords": ["array", "of", "5-10", "core", "keywords"]
   }
-]`;
+]
+
+The articles to analyze appear below. Evaluate them against the rules above and return the JSON array.`;
+
+  // ── VARIABLE SUFFIX (NOT cached — changes every batch) ──
+  // Articles block intentionally placed AFTER staticPrefix so the cache
+  // prefix identity holds. Moving articleData to the tail was the whole
+  // point of the prompt restructure — previously it sat mid-prompt
+  // sandwiched between rules sections, which broke prefix stability.
+  const articlesBlock = `ARTICLES TO ANALYZE:\n${JSON.stringify(articleData, null, 2)}`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
     max_tokens: 3072,
-    messages:   [{ role: "user", content: prompt }]
+    messages: [{
+      role: "user",
+      content: [
+        // cache_control: ephemeral → 5-min TTL, 10× input discount on
+        // cache-read, 1.25× on cache-write. At 10 batches/run, first
+        // batch writes the cache and the remaining 9 read it → ~40%
+        // total input-side savings per run, zero behaviour change.
+        { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } },
+        { type: "text", text: articlesBlock }
+      ]
+    }]
   });
 
   const text = response.content[0].text.trim();
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) throw new Error(`No JSON array in Claude response: ${text.slice(0, 200)}`);
-  return JSON.parse(jsonMatch[0]);
+  // Return both parsed defs AND the usage block so the caller can
+  // accumulate cache_read / cache_write / std_input / output tokens
+  // across batches for the end-of-run summary.
+  return { defs: JSON.parse(jsonMatch[0]), usage: response.usage || null };
 }
 
 // ─── Persist ─────────────────────────────────────────────────────────────────
 
 async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()) {
   let created = 0, updated = 0;
+  // attachedCount = best-effort estimate of how many batch articles
+  // survived into an actual story_thread_articles row. Sum of
+  // def.article_ids filtered to validIdSet after junk rejection. Upper
+  // bound (ON CONFLICT DO NOTHING duplicates are not deducted) but good
+  // enough for the run-summary attach_rate readout.
+  let attachedCount = 0;
   const refreshIds = new Set();
 
   // Hard reject categories that don't belong on a geopolitical platform.
@@ -631,6 +753,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
 
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
+        attachedCount += def.article_ids.filter(id => validIdSet.has(Number(id))).length;
         if (current) {
           existingThreadMap.set(threadId, {
             ...current,
@@ -661,6 +784,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         const threadId = rows[0].id;
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
+        attachedCount += def.article_ids.filter(id => validIdSet.has(Number(id))).length;
         existingThreadMap.set(Number(threadId), {
           id: Number(threadId),
           title: def.title,
@@ -678,7 +802,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     }
   }
 
-  return { c: created, u: updated, refreshIds: [...refreshIds] };
+  return { c: created, u: updated, refreshIds: [...refreshIds], attachedCount };
 }
 
 async function insertArticles(threadId, articleIds, anchorId, importance, validIdSet) {
