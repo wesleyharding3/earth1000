@@ -10622,6 +10622,10 @@ window.sourceBiasBadgeHTML = function(bias) {
           <button class="tlcBtn" id="tlcNextBtn" title="Next segment">⏭</button>
         </div>
       </div>
+      <!-- Legacy slot — preserved at its original position; currently
+           not mounted. Keeps the DOM surface stable for any external
+           code that may have referenced it. -->
+      <div id="arcListDensityRuler" style="display:none;"></div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
       </div>
@@ -10629,10 +10633,11 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div class="arcContextPanel" id="arcContextPanel">
         <div class="arcCtxBody" id="arcCtxBody"></div>
       </div>
-      <!-- Density ruler (appended to the bottom of the panel). Mounted by
+      <!-- Density ruler, bottom-of-panel placement. Mounted by
            _mountArcListDensityRuler when a timeline is active; dragging or
-           playing it jumps the segment stepper to the closest matching day. -->
-      <div id="arcListDensityRuler" style="display:none;"></div>
+           playing it jumps the segment stepper to the closest matching day,
+           which rebuilds arcs + entity highlights on the globe. -->
+      <div id="arcListDensityRulerBottom" style="display:none;"></div>
     </div>
   </div>
 
@@ -25248,7 +25253,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return bestLE !== -1 ? bestLE : bestAny;
   }
   function _mountArcListDensityRuler(timelineId) {
-    const host = document.getElementById('arcListDensityRuler');
+    const host = document.getElementById('arcListDensityRulerBottom');
     if (!host) return;
     if (_arcListDensityRulerHandle) {
       try { _arcListDensityRulerHandle.destroy(); } catch (_) {}
@@ -25284,7 +25289,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
   }
   function _unmountArcListDensityRuler() {
-    const host = document.getElementById('arcListDensityRuler');
+    const host = document.getElementById('arcListDensityRulerBottom');
     if (_arcListDensityRulerHandle) {
       try { _arcListDensityRulerHandle.destroy(); } catch (_) {}
       _arcListDensityRulerHandle = null;
