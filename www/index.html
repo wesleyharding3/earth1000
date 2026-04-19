@@ -3893,6 +3893,26 @@ body.flow-maximized #flowArcList {
 #flowCtxCard.articleOrigin .flowCtxTab[data-view="arcs"],
 #flowCtxCard.articleOrigin .flowCtxTab.ai { display: none !important; }
 
+/* Density-ruler footer on #flowCtxCard. Appears at the bottom of the
+   card across all tab views (info, arcs, ctx) as long as a timeline is
+   active. Mount block fills the slot only for timelines; other kinds
+   keep it display:none. Negative margin pulls the ruler to the card
+   edges so it reads as an attached module, not a floating card. */
+#flowCtxDensityRuler {
+  margin: 8px -10px -10px;
+  border-top: 1px solid rgba(212,168,67,0.22);
+  background: rgba(6,10,20,0.55);
+  border-radius: 0 0 13px 13px;
+  overflow: hidden;
+}
+#flowCtxDensityRuler .densityRuler {
+  background: transparent;
+  border-bottom: none;
+  border-radius: 0;
+  margin: 0;
+}
+#flowCtxCard.flowCtxMinimized #flowCtxDensityRuler { display: none !important; }
+
 /* Kill iOS tap flash / focus outline on the pillbar controls so the only
    visible chrome is the outer .flowCtxPillBar horizontal pill itself. */
 #flowCtxCard .flowCtxPillBar button {
@@ -5963,25 +5983,6 @@ body.flow-maximized #flowArcList {
     .cdSections {
       flex: 1; overflow-y: auto; scroll-behavior: smooth;
       padding-bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 24px);
-    }
-    /* Pinned ruler footer at the bottom of #clusterDetail. Sits as a
-       flex sibling of .cdSections so it stays visible while the user
-       scrolls the section content. The inner .densityRuler component
-       provides its own padding + bars; this wrapper only supplies the
-       footer chrome (top divider, background, edge-to-edge width). */
-    .cdDensityFooter {
-      flex-shrink: 0;
-      background: rgba(6,10,18,0.94);
-      border-top: 1px solid rgba(212,168,67,0.22);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      z-index: 2;
-    }
-    .cdDensityFooter .densityRuler {
-      background: transparent;
-      border-bottom: none;
-      border-radius: 0;
-      margin: 0;
     }
     .cdSections::-webkit-scrollbar { width: 4px; }
     .cdSections::-webkit-scrollbar-track { background: transparent; }
@@ -10641,10 +10642,6 @@ window.sourceBiasBadgeHTML = function(bias) {
           <button class="tlcBtn" id="tlcNextBtn" title="Next segment">⏭</button>
         </div>
       </div>
-      <!-- Legacy slot — preserved at its original position; currently
-           not mounted. Keeps the DOM surface stable for any external
-           code that may have referenced it. -->
-      <div id="arcListDensityRuler" style="display:none;"></div>
       <div class="arcListScroll" id="arcListScroll">
         <div class="arcListEmpty">No arcs visible</div>
       </div>
@@ -10652,11 +10649,6 @@ window.sourceBiasBadgeHTML = function(bias) {
       <div class="arcContextPanel" id="arcContextPanel">
         <div class="arcCtxBody" id="arcCtxBody"></div>
       </div>
-      <!-- Density ruler, bottom-of-panel placement. Mounted by
-           _mountArcListDensityRuler when a timeline is active; dragging or
-           playing it jumps the segment stepper to the closest matching day,
-           which rebuilds arcs + entity highlights on the globe. -->
-      <div id="arcListDensityRulerBottom" style="display:none;"></div>
     </div>
   </div>
 
@@ -23760,6 +23752,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         el.appendChild(ctxPanel);
       }
     } catch (_) {}
+    // Pinned density-ruler footer. Appended AFTER arcContextPanel so it's
+    // the last child of #flowCtxCard — visible across every tab view
+    // (info, arcs, ctx) instead of only while the arcs panel is open.
+    // Only populated when a timeline is active (see _mountArcListDensity
+    // Ruler); stays display:none for articles / threads.
+    try {
+      if (!document.getElementById('flowCtxDensityRuler')) {
+        const ruler = document.createElement('div');
+        ruler.id = 'flowCtxDensityRuler';
+        ruler.style.display = 'none';
+        el.appendChild(ruler);
+      }
+    } catch (_) {}
     // Tab click → switch view, preserving each view's state.
     el.querySelectorAll('.flowCtxTab').forEach(tab => {
       const handler = (e) => {
@@ -25272,7 +25277,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return bestLE !== -1 ? bestLE : bestAny;
   }
   function _mountArcListDensityRuler(timelineId) {
-    const host = document.getElementById('arcListDensityRulerBottom');
+    const host = document.getElementById('flowCtxDensityRuler');
     if (!host) return;
     if (_arcListDensityRulerHandle) {
       try { _arcListDensityRulerHandle.destroy(); } catch (_) {}
@@ -25308,7 +25313,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
   }
   function _unmountArcListDensityRuler() {
-    const host = document.getElementById('arcListDensityRulerBottom');
+    const host = document.getElementById('flowCtxDensityRuler');
     if (_arcListDensityRulerHandle) {
       try { _arcListDensityRulerHandle.destroy(); } catch (_) {}
       _arcListDensityRulerHandle = null;
@@ -33820,10 +33825,6 @@ body.ticker-active .gTickerLabel {
 
   function closeNodePanel() {
     if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
-    if (_cdDensityRulerHandle) {
-      try { _cdDensityRulerHandle.destroy(); } catch (_) {}
-      _cdDensityRulerHandle = null;
-    }
     detailEl.classList.remove("open", "cdMaximized", "cdMinimized");
     cdSnapState = "default";
     detailEl.style.height = "";
@@ -33952,7 +33953,6 @@ body.ticker-active .gTickerLabel {
   }
 
   let _typewriterAbort = null;
-  let _cdDensityRulerHandle = null;
   function typewriterText(el, text, charDelay) {
     if (_typewriterAbort) _typewriterAbort();
     charDelay = charDelay || 3;
@@ -34067,10 +34067,6 @@ body.ticker-active .gTickerLabel {
           </div>
         </div>
       </div>
-      <!-- Pinned density-ruler footer. Sits outside .cdSections so it
-           doesn't scroll with the content; appears only for timelines
-           (mount block in openNodePanel below hides it otherwise). -->
-      <div id="cdDensityRuler" class="cdDensityFooter" style="display:none;"></div>
     `;
     cdApplySnap("default", false);
     detailEl.classList.add("open");
@@ -34162,32 +34158,6 @@ body.ticker-active .gTickerLabel {
     const isTimeline = node.__kind === 'timeline';
     let allArticles = [];
     let allThreads  = [];
-
-    // Mount the density ruler for timelines (Lines) only. Threads don't
-    // have a multi-month narrative so the ruler would be noise.
-    // Ruler is scoped to this panel instance; closeNodePanel tears it down.
-    try {
-      if (_cdDensityRulerHandle) { _cdDensityRulerHandle.destroy(); _cdDensityRulerHandle = null; }
-    } catch (_) {}
-    const _cdRulerHost = document.getElementById('cdDensityRuler');
-    if (_cdRulerHost) {
-      if (isTimeline && threadId && typeof window.renderDensityRuler === 'function') {
-        _cdRulerHost.style.display = '';
-        _cdDensityRulerHandle = window.renderDensityRuler(_cdRulerHost, threadId, {
-          // No inline:true — the host is the pinned footer band, so the
-          // ruler should render flush (non-card). The .cdDensityFooter
-          // CSS override also nulls the stock densityRuler chrome.
-          onPeakOpen: (articleId) => {
-            if (articleId && window.openArticleDetail) {
-              try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
-            }
-          },
-        });
-      } else {
-        _cdRulerHost.style.display = 'none';
-        _cdRulerHost.innerHTML = '';
-      }
-    }
 
     // Articles: both kinds hit their own endpoint. For timelines we
     // use /api/timelines/:id/articles which returns { articles: [] },
