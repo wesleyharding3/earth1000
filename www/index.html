@@ -3177,6 +3177,26 @@ body.flow-maximized #flowArcList {
       margin: 0px auto 0;
       flex-shrink: 0;
     }
+    /* Row wrapper placed around .panelSearchPill on country/city/region
+       panels so the grid-view toggle can sit next to the search input.
+       Shrinks the pill's effective width (220px max) to make room for
+       the toggle without the row wrapping on narrow phones. */
+    .panelSearchRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: center;
+      padding: 0 16px;
+      flex-shrink: 0;
+    }
+    .panelSearchRow .panelSearchPill {
+      flex: 1 1 auto;
+      max-width: 220px;
+      margin: 0;
+    }
+    @media (max-width: 420px) {
+      .panelSearchRow .panelSearchPill { max-width: none; }
+    }
     .panelSearchPillInput {
       flex: 1;
       height: 30px;
@@ -3362,6 +3382,18 @@ body.flow-maximized #flowArcList {
       min-height: 32px;
       padding: 6px 0;
     }
+    /* Align the category dropdown pill with the Article/Video + Local/
+       Global segments. tagFilterBtn's default height is 40px (designed
+       for a standalone pill); inside .panelControlsRow1 it read taller
+       than its neighbours by 8px, which looked off. Force it to match. */
+    .panelControlsRow1 .tagFilterBtn {
+      height: 32px;
+      min-height: 32px;
+      border-radius: 16px;
+      font-size: 10px;
+      padding: 0 10px;
+    }
+    .panelControlsRow1 .tagFilterBtn svg { width: 9px; height: 9px; }
     .panelControlsRow1 .panelSortLabel,
     .panelControlsRow1 .panelMediaOption {
       font-size: 9px !important;
@@ -3439,7 +3471,100 @@ body.flow-maximized #flowArcList {
       .articleCardImagePlaceholder { height: 160px; }
     }
 
+    /* ===============================
+       Grid-view toggle (mobile only)
+       ===============================
+       Users can flip between the default 2x2 layout and a single-column
+       layout on any panel with a card grid. Default is 2x2 — that's what
+       renders when the grid has no explicit class. `.gridView-1col`
+       re-enables the legacy single-column layout; `.gridView-2col` is an
+       explicit name for the default (kept for clarity + to override the
+       <=420px rule above on ultra-small phones).
 
+       Applies to:
+         #nfGrid           — News Feed
+         #nfThreadsGrid    — Threads / Lines grid
+         .articlesGrid     — Country / City / Region panel article grid
+         .cdArticleGrid    — Cluster-detail (node) panel sources grid
+
+       Scoped to mobile (≤640px) — desktop uses its own 3/4-col layout.
+    */
+    @media (max-width: 640px) {
+      /* Default + explicit 2-col mode: enforce 2 columns across all
+         mobile widths, overriding the <=420px 1-col rule above. */
+      #nfGrid,
+      #nfGrid.gridView-2col,
+      #nfThreadsGrid,
+      #nfThreadsGrid.gridView-2col,
+      .articlesGrid,
+      .articlesGrid.gridView-2col,
+      .cdArticleGrid,
+      .cdArticleGrid.gridView-2col {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 10px;
+      }
+      /* Opt-in 1-col mode: the toggle writes this class. */
+      #nfGrid.gridView-1col,
+      #nfThreadsGrid.gridView-1col,
+      .articlesGrid.gridView-1col,
+      .cdArticleGrid.gridView-1col {
+        grid-template-columns: 1fr !important;
+      }
+      /* When a card lives inside a 2-col grid, space is tight — clamp
+         summaries and descriptions to 2 lines so titles + metadata stay
+         readable without cards becoming column-height uneven. Titles
+         keep their existing line-clamp. Single-col mode restores the
+         full summary since there's room. */
+      .gridView-2col .articleCardSummary,
+      .gridView-2col .nfCardSummary,
+      .gridView-2col .nfThreadCardDesc {
+        display: -webkit-box !important;
+        -webkit-line-clamp: 2 !important;
+        -webkit-box-orient: vertical !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis;
+      }
+    }
+
+    /* Toggle component — a two-button segmented control with a single-
+       square icon (list mode) and a four-small-squares icon (grid mode).
+       Shows the active state via background + opacity. Mobile-only. */
+    .gridViewToggle {
+      display: none;
+      align-items: center;
+      gap: 2px;
+      padding: 2px;
+      border-radius: 7px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      flex-shrink: 0;
+    }
+    .gridViewToggle button {
+      background: transparent;
+      border: none;
+      padding: 3px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      color: rgba(255,255,255,0.40);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+    .gridViewToggle button:hover { color: rgba(255,255,255,0.75); }
+    .gridViewToggle button.active {
+      background: rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.92);
+    }
+    .gridViewToggle svg {
+      width: 13px; height: 13px;
+      stroke: currentColor; fill: none;
+      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+    }
+    /* Show only on mobile. */
+    @media (max-width: 640px) {
+      .gridViewToggle { display: inline-flex; }
+    }
 
     /* Scroll-reveal: cards carrying this class rise up from below and fade
        in when they enter the viewport. Wired up by the IntersectionObserver
@@ -6053,6 +6178,17 @@ body.flow-maximized #flowArcList {
     }
     .cdTab:hover { color: rgba(255,255,255,0.55); }
     .cdTab.active { background: rgba(212,168,67,0.12); color: var(--grm-gold); }
+    /* Row wrapper around the cluster-detail tab bar so the grid-view
+       toggle can sit next to the All/Articles/Videos filter. tabBarWrap
+       takes remaining width; toggle clings to the right edge. */
+    .cdFilterRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .cdFilterRow #cdTabBarWrap { flex: 1; min-width: 0; }
+    .cdFilterRow #cdTabBarWrap .cdTabBar { margin-bottom: 0; }
     .cdArticleGrid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px;
     }
@@ -15194,13 +15330,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="tagDropdown" id="tagDropdown"></div>
             </div>
           </div>
-          <div class="panelSearchPill">
-            <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-            <span class="panelSearchPillIcon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
-              </svg>
-            </span>
+          <div class="panelSearchRow">
+            <div class="panelSearchPill">
+              <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+              <span class="panelSearchPillIcon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+                </svg>
+              </span>
+            </div>
+            <div class="gridViewToggle">
+              <button data-grid-view="1col" title="Single column">
+                <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1.5"/></svg>
+              </button>
+              <button data-grid-view="2col" title="Grid view" class="active">
+                <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1"/><rect x="13" y="13" width="7.5" height="7.5" rx="1"/></svg>
+              </button>
+            </div>
           </div>
           <div class="panelTabsWrapper" style="position:relative;">
             <div class="panelSlide" id="articlesViewport"><div class="articlesGrid" id="articlesTrack"></div></div>
@@ -16639,13 +16785,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
             <div class="panelControlsRow2">
-              <div class="panelSearchPill">
-                <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-                <span class="panelSearchPillIcon">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
-                  </svg>
-                </span>
+              <div class="panelSearchRow">
+                <div class="panelSearchPill">
+                  <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
+                  <span class="panelSearchPillIcon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
+                    </svg>
+                  </span>
+                </div>
+                <div class="gridViewToggle">
+                  <button data-grid-view="1col" title="Single column">
+                    <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1.5"/></svg>
+                  </button>
+                  <button data-grid-view="2col" title="Grid view" class="active">
+                    <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1"/><rect x="13" y="13" width="7.5" height="7.5" rx="1"/></svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -21767,7 +21923,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <div id="nfMeta">
       <span class="nfMetaCount" id="nfMetaCount"></span>
       <div class="nfMetaPills" id="nfMetaPills"></div>
-      <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters" style="margin-left:auto;">
+      <!-- Grid-view toggle: single-column vs 2x2 layout for the Feed grid.
+           Mobile-only (hidden on desktop via CSS). Click delegation in the
+           grid-view IIFE further down persists the selection across views
+           and panels. -->
+      <div class="gridViewToggle" style="margin-left:auto;">
+        <button data-grid-view="1col" title="Single column">
+          <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1.5"/></svg>
+        </button>
+        <button data-grid-view="2col" title="Grid view" class="active">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1"/><rect x="13" y="13" width="7.5" height="7.5" rx="1"/></svg>
+        </button>
+      </div>
+      <button class="nfCollapseBtn" id="nfCollapseBtn" title="Toggle filters">
         <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="2,3.5 5,6.5 8,3.5"/>
         </svg>
@@ -21794,12 +21962,110 @@ const settingsToggle     = document.getElementById("settingsToggle");
     <!-- Threads meta -->
     <div id="nfThreadsMeta" style="display:none">
       <span class="nfMetaCount" id="nfThreadsMetaCount"></span>
+      <div class="gridViewToggle" style="margin-left:auto;">
+        <button data-grid-view="1col" title="Single column">
+          <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1.5"/></svg>
+        </button>
+        <button data-grid-view="2col" title="Grid view" class="active">
+          <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1"/><rect x="13" y="13" width="7.5" height="7.5" rx="1"/></svg>
+        </button>
+      </div>
     </div>
     <!-- Threads view -->
     <div id="nfThreadsViewport" style="display:none">
       <div id="nfThreadsGrid"></div>
     </div>
   </div>
+
+  <script>
+  /* ──────────────────────────────────────────────────────────────
+     Grid-view toggle wiring
+     ──────────────────────────────────────────────────────────────
+     Mobile-only feature. Users flip between a 2x2 grid (default) and a
+     single-column layout on any panel with article/thread cards.
+
+     Storage: one global key `earth00:gridView` = '2col' | '1col'.
+     Default on first visit: '2col'.
+
+     Applies to grid elements: #nfGrid, #nfThreadsGrid, .articlesGrid,
+     .cdArticleGrid. Toggle buttons live inside `.gridViewToggle`
+     containers placed in #nfMeta, #nfThreadsMeta, country/city/region
+     panel search rows, and the cluster-detail cdFilterRow.
+
+     Dynamic panels (country/city/region, cluster-detail) re-render
+     their inner DOM on open; a MutationObserver re-applies the active
+     view class + toggle-button state whenever a new .gridViewToggle or
+     grid element appears. Also a global document-level click delegate
+     handles all toggle clicks — no per-instance wiring needed.
+  ────────────────────────────────────────────────────────────── */
+  (function() {
+    const STORAGE_KEY = 'earth00:gridView';
+    const GRID_SELECTOR = '#nfGrid, #nfThreadsGrid, .articlesGrid, .cdArticleGrid';
+    const VIEWS = ['2col', '1col'];
+
+    function getView() {
+      try {
+        const v = localStorage.getItem(STORAGE_KEY);
+        return VIEWS.includes(v) ? v : '2col';
+      } catch (_) { return '2col'; }
+    }
+    function setView(view) {
+      if (!VIEWS.includes(view)) return;
+      try { localStorage.setItem(STORAGE_KEY, view); } catch (_) {}
+      apply(view);
+    }
+    function apply(view) {
+      view = view || getView();
+      document.querySelectorAll(GRID_SELECTOR).forEach(el => {
+        el.classList.remove('gridView-1col', 'gridView-2col');
+        el.classList.add('gridView-' + view);
+      });
+      document.querySelectorAll('.gridViewToggle').forEach(toggle => {
+        toggle.querySelectorAll('button').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.gridView === view);
+        });
+      });
+    }
+
+    // Expose so other code (e.g. dynamic panel creation paths) can
+    // force a re-apply if they want to, though MutationObserver should
+    // cover nearly all cases automatically.
+    window.__setGridView = setView;
+    window.__getGridView = getView;
+    window.__applyGridView = apply;
+
+    // Click delegation — one handler covers every .gridViewToggle
+    // instance on the page, including ones added later via innerHTML.
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.gridViewToggle button');
+      if (!btn) return;
+      const view = btn.dataset.gridView;
+      if (!VIEWS.includes(view)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setView(view);
+    });
+
+    // MutationObserver: re-apply whenever a new grid or toggle appears.
+    // Rate-limited with rAF to avoid thrashing on large innerHTML
+    // replacements that drop dozens of card elements at once.
+    let _raf = null;
+    const mo = new MutationObserver(() => {
+      if (_raf) return;
+      _raf = requestAnimationFrame(() => { _raf = null; apply(); });
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+
+    // First-paint application. Runs immediately for elements already
+    // in the DOM (nfMeta, nfThreadsMeta, nfGrid, nfThreadsGrid); the
+    // observer handles any that mount later.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => apply());
+    } else {
+      apply();
+    }
+  })();
+  </script>
 
   <script>
   (function() {
@@ -34083,7 +34349,17 @@ body.ticker-active .gTickerLabel {
             <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6h6M5 9h4" stroke-linecap="round"/></svg>
             Sources
           </div>
-          <div id="cdTabBarWrap"></div>
+          <div class="cdFilterRow">
+            <div id="cdTabBarWrap"></div>
+            <div class="gridViewToggle">
+              <button data-grid-view="1col" title="Single column">
+                <svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1.5"/></svg>
+              </button>
+              <button data-grid-view="2col" title="Grid view" class="active">
+                <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1"/><rect x="13" y="13" width="7.5" height="7.5" rx="1"/></svg>
+              </button>
+            </div>
+          </div>
           <div id="cdArticlesBody" class="cdArticleGrid">
             <div class="cdLoadingRow" style="grid-column:1/-1"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading sources...</span></div>
           </div>
