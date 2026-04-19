@@ -5,6 +5,12 @@ const pool = require("./db");
 const crypto = require("crypto");
 const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtractor");
 const Anthropic = require("@anthropic-ai/sdk");
+// Charset-aware response decoder — replaces bare response.text() so
+// Russian / CJK / Eastern European feeds served in legacy encodings
+// (windows-1251, KOI8-R, GBK, Shift_JIS) don't get UTF-8-decoded into
+// U+FFFD soup. Also rejects the fetch if the decoded output is
+// mojibake — better to skip than persist garbage.
+const { decodeResponseBody } = require("./fetchDecode");
 
 // ── Translation (DeepL) — cost-limited re-enablement ─────────────────────────
 // Translate TITLE ONLY (not summary) to keep DeepL costs low.
@@ -839,7 +845,13 @@ async function fetchWithRetry(url, timeoutMs = 15000) {
         if (attempt > 0) {
           console.log(`  ↩️  Unblocked on ${RETRY_UA_LABELS[attempt - 1]} UA (attempt ${attempt + 1})`);
         }
-        const text = await response.text();
+        // decodeResponseBody sniffs charset from BOM / XML prolog /
+        // HTML meta / Content-Type, decodes with iconv-lite when the
+        // source isn't UTF-8, and throws with err.code='MOJIBAKE' if
+        // the decoded output is replacement-char soup. The outer retry
+        // loop treats MOJIBAKE like any other decode failure and moves
+        // on to the next UA or gives up.
+        const text = await decodeResponseBody(response, { urlForLog: url });
         if (text.length > MAX_FEED_SIZE) throw new Error("Feed exceeds max size limit");
         return text;
       }
@@ -939,7 +951,10 @@ async function discoverFeedUrl(originalUrl) {
   try {
     const res = await _fetchRaw(origin, HEADERS_DESKTOP, 10000);
     if (res.ok) {
-      const html = await res.text();
+      // Charset-aware decode so homepages in non-UTF-8 don't produce
+      // mojibake in the link-tag match below (still ASCII-only logic,
+      // but this avoids throwing downstream if we log the matched URL).
+      const html = await decodeResponseBody(res, { urlForLog: origin });
       // Match both attribute orderings
       const m =
         html.match(/<link[^>]+type=["']application\/(rss|atom)\+xml["'][^>]+href=["']([^"']+)["']/i) ||
@@ -1204,7 +1219,10 @@ async function fetchMobileHtml(feed) {
       const response = await _fetchRaw(feed.scrape_url, mobileFirst[attempt], 20000);
       if (response.ok) {
         if (attempt > 0) console.log(`  ↩️  Mobile-html unblocked on ${mobileLabels[attempt]} UA`);
-        html = await response.text();
+        // Same charset-aware path as the feed fetcher. Throws on
+        // mojibake so we drop the scrape instead of writing `�` soup
+        // into article fields.
+        html = await decodeResponseBody(response, { urlForLog: feed.scrape_url });
         break;
       }
       const status = response.status;

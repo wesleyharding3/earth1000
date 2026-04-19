@@ -43,6 +43,14 @@ const http     = require('http');
 const cheerio  = require('cheerio');
 const pool     = require('./db');
 const Anthropic = require('@anthropic-ai/sdk');
+// Charset-aware buffer decoder. Previous `.toString('utf8')` forced
+// UTF-8 regardless of what the remote source actually sent; Russian /
+// CJK / Eastern European articles served in legacy charsets became
+// U+FFFD soup, and the deep-enriched output was garbage. decodeBuffer
+// sniffs charset from BOM / XML prolog / HTML meta / Content-Type and
+// decodes with iconv-lite where needed; throws err.code='MOJIBAKE' on
+// unrecoverable input so the enrichment skips instead of persisting.
+const { decodeBuffer } = require('./fetchDecode');
 
 const client = new Anthropic();
 
@@ -96,12 +104,36 @@ function _fetchHTML(url, redirectsLeft = MAX_REDIRECTS) {
       }
       const chunks = [];
       let size = 0;
+      const contentType = res.headers?.['content-type'] || null;
+      // Decode via fetchDecode.decodeBuffer so non-UTF-8 sources are
+      // recognized and routed through iconv-lite, and mojibake fails
+      // loudly with err.code='MOJIBAKE' rather than silently producing
+      // U+FFFD soup. Outer try/catch on enrichArticle treats this as a
+      // scrape failure → falls back to content column → summary.
+      const _decodeSafe = (buf) => {
+        try { return decodeBuffer(buf, contentType, { urlForLog: url }); }
+        catch (err) {
+          if (err?.code === 'MOJIBAKE') {
+            // Surface as a scrape-failure error so the caller falls
+            // through the same path it would for HTTP 404 etc.
+            throw new Error(`Mojibake (bad charset): ${err.charset}`);
+          }
+          throw err;
+        }
+      };
       res.on('data', chunk => {
         size += chunk.length;
         chunks.push(chunk);
-        if (size >= MAX_HTML_BYTES) { req.destroy(); done(Buffer.concat(chunks).toString('utf8')); }
+        if (size >= MAX_HTML_BYTES) {
+          req.destroy();
+          try { done(_decodeSafe(Buffer.concat(chunks))); }
+          catch (err) { fail(err); }
+        }
       });
-      res.on('end',   () => done(Buffer.concat(chunks).toString('utf8')));
+      res.on('end', () => {
+        try { done(_decodeSafe(Buffer.concat(chunks))); }
+        catch (err) { fail(err); }
+      });
       res.on('error', fail);
     });
     req.on('timeout', () => { req.destroy(); fail(new Error('Fetch timeout')); });

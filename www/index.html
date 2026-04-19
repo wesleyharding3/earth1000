@@ -5667,11 +5667,18 @@ body.flow-maximized #flowArcList {
       transition: background 0.12s, color 0.12s; line-height: 1;
     }
     .cdMinimize:hover { background: rgba(255,255,255,0.1); color: #fff; }
-    /* Mobile: smaller panel, left-aligned, positioned lower */
+    /* Mobile: full-width panel in BOTH default and maximized states.
+       Previously default=92%/left:4% and maximized=100%/left:0, which
+       caused a visible horizontal snap at the end of every vertical
+       drag (cdApplySnap toggles .cdMaximized at touchend → width + left
+       change instantly because the main transition list at L5647 only
+       animates bottom/height/opacity). On a phone there's not enough
+       horizontal room for the inset to earn its cost anyway — the
+       width/left mismatch was desktop tablet behavior leaking in. */
     @media (max-width: 640px) {
       #clusterDetail {
-        width: 92%;
-        left: 4%;
+        width: 100%;
+        left: 0;
         right: auto;
         height: min(55vh, calc(var(--app-height, 100vh) - 120px));
         border-radius: 16px 16px 0 0;
@@ -22489,7 +22496,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const dataAttr = JSON.stringify(t).replace(/'/g, "&#39;");
         const isTimeline = t.__kind === 'timeline';
         const flowFn = isTimeline ? 'showTimelineFlows' : 'showThreadFlows';
-        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${t.thread_id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+        // Threads endpoint returns thread_id; timelines endpoint returns
+        // timeline_id. The shared card markup used `t.thread_id`
+        // unconditionally, so timeline cards rendered onclick="
+        // showTimelineFlows(undefined,event)" and the corresponding
+        // panel-open path fetched /api/threads/id/undefined/... — both
+        // silently fail. Coalesce so both shapes resolve cleanly.
+        const entityId = t.thread_id ?? t.timeline_id ?? t.id;
+        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
         return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
@@ -22625,9 +22639,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       function buildThreadPanelNode(t) {
+        // Coalesce id across both API shapes — threads/latest returns
+        // thread_id, timelines/latest returns timeline_id. Bare .id
+        // is the final fallback for any path that preserved the DB pk
+        // under its native name. Without this, tapping a line card
+        // opened a panel whose id was undefined and every downstream
+        // fetch (/api/threads/id/undefined/...) 404'd silently.
+        const pk = t.thread_id ?? t.timeline_id ?? t.id ?? null;
         return {
-          thread_id: t.thread_id,
-          id: t.thread_id,
+          thread_id: pk,
+          id: pk,
           title: t.title,
           description: t.description,
           primary_category: t.primary_category || 'politics',
