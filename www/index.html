@@ -9403,7 +9403,13 @@ window.fmtDate = function(d) {
   const DEFAULT_TIMEOUT = 20000;
   const LONG_TIMEOUT = 45000;
   // Endpoints that hit heavy DB queries under load get a longer leash
-  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities'];
+  // /api/payments/subscription-status was getting stuck at the default
+  // 20 s timeout on first-load when the backend was under contention,
+  // surfacing as "[auth] backend tier load failed: Fetch is aborted" in
+  // the console and forcing the Supabase direct-read fallback path.
+  // Put it on the long-timeout list so genuine slowness doesn't flip
+  // the abort.
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
@@ -27851,37 +27857,71 @@ const settingsToggle     = document.getElementById("settingsToggle");
       acctDpTier.textContent = 'Free';
       acctDpTier.className = 'acctDpTier free';
       accountDropdown.classList.remove('open');
+      // Clear the tier-cache guard so a subsequent re-login (same user
+      // or different) re-fetches the tier instead of skipping via the
+      // _tierLoadedFor match.
+      _tierLoadedFor = null;
     }
   }
 
   // ── Load tier from DB + set globals ─────────────────────────
-  async function loadUserTier(userId) {
+  // Guards:
+  //   _tierLoadedFor  — last userId we resolved a tier for (any path)
+  //   _tierInFlight   — true while a loadUserTier call is executing
+  //
+  // updateAccountUI(user) fires twice during bootstrap (Supabase
+  // initial-session hydration + auth state change listener, both with
+  // the same session), which used to trigger two parallel network
+  // requests against /api/payments/subscription-status, both of which
+  // would abort on the 20s global fetch timeout under contention —
+  // surfacing the "Fetch is aborted" warning twice in a row. Dedupe
+  // so a repeat call for the same user is a no-op, and pass
+  // { force: true } from refreshSubscriptionState() where a fresh
+  // lookup is intentional (post-checkout etc).
+  let _tierLoadedFor = null;
+  let _tierInFlight = false;
+  async function loadUserTier(userId, { force = false } = {}) {
+    if (!force && (_tierInFlight || _tierLoadedFor === userId)) return;
+    _tierInFlight = true;
     try {
-      const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      acctDpTier.textContent = data?.tier_display_name || 'Free';
-      acctDpTier.className = `acctDpTier ${data?.tier_name || 'free'}`;
-      window.__userTier = data?.tier_name || 'free';
-      return;
-    } catch (err) {
-      console.warn('[auth] backend tier load failed:', err.message);
-    }
+      try {
+        const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        acctDpTier.textContent = data?.tier_display_name || 'Free';
+        acctDpTier.className = `acctDpTier ${data?.tier_name || 'free'}`;
+        window.__userTier = data?.tier_name || 'free';
+        _tierLoadedFor = userId;
+        return;
+      } catch (err) {
+        // AbortError = the global 20s fetch timeout fired — Supabase
+        // fallback below covers this path, no need to spam the console.
+        // Anything else (HTTP error, parse error, network fail) still
+        // warns so we can tell a real backend regression from a
+        // contention-induced timeout.
+        if (err?.name !== 'AbortError') {
+          console.warn('[auth] backend tier load failed:', err.message);
+        }
+      }
 
-    const { data, error } = await sb
-      .from('subscriptions')
-      .select('status, updated_at, tier_id')
-      .eq('user_id', userId)
-      .eq('status', 'active');
-    if (error) {
-      console.warn('[auth] tier load failed:', error.message);
-      return;
+      const { data, error } = await sb
+        .from('subscriptions')
+        .select('status, updated_at, tier_id')
+        .eq('user_id', userId)
+        .eq('status', 'active');
+      if (error) {
+        console.warn('[auth] tier load failed:', error.message);
+        return;
+      }
+      const bestSub = pickBestSubscription(data || []);
+      const tier = await loadTierRecord(bestSub?.tier_id);
+      acctDpTier.textContent  = tier?.display_name ?? 'Free';
+      acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
+      window.__userTier = tier?.name ?? 'free';
+      _tierLoadedFor = userId;
+    } finally {
+      _tierInFlight = false;
     }
-    const bestSub = pickBestSubscription(data || []);
-    const tier = await loadTierRecord(bestSub?.tier_id);
-    acctDpTier.textContent  = tier?.display_name ?? 'Free';
-    acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
-    window.__userTier = tier?.name ?? 'free';
   }
 
   // ── Load profile/admin state directly from Supabase ───────────
@@ -27922,7 +27962,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function refreshSubscriptionState(options = {}) {
     const user = currentUser || window.__currentUser;
     if (!user) return;
-    await loadUserTier(user.id);
+    // Bypass the loadUserTier dedup — this path is explicitly called
+    // when the tier may have changed server-side (post-checkout, etc).
+    await loadUserTier(user.id, { force: true });
     await loadProfile();
     if (typeof window.__updatePricingState === 'function') {
       window.__updatePricingState();

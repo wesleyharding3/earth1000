@@ -9267,7 +9267,11 @@ window.fmtDate = function(d) {
   const DEFAULT_TIMEOUT = 20000;
   const LONG_TIMEOUT = 45000;
   // Endpoints that hit heavy DB queries under load get a longer leash
-  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities'];
+  // /api/payments/subscription-status was timing out at the default
+  // 20 s on first-load under contention, surfacing as "[auth] backend
+  // tier load failed: Fetch is aborted" in the console and forcing
+  // the Supabase direct-read fallback. Put it on the long-timeout list.
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
@@ -27459,37 +27463,57 @@ const settingsToggle     = document.getElementById("settingsToggle");
       acctDpTier.textContent = 'Free';
       acctDpTier.className = 'acctDpTier free';
       accountDropdown.classList.remove('open');
+      // Clear tier-cache guard so re-login (same user or different)
+      // refetches instead of skipping via the _tierLoadedFor match.
+      _tierLoadedFor = null;
     }
   }
 
   // ── Load tier from DB + set globals ─────────────────────────
-  async function loadUserTier(userId) {
+  // Guards dedupe updateAccountUI's twin fire (initial session +
+  // auth-state-change listener). AbortError path stays silent — that's
+  // the 20 s global fetch timeout firing; Supabase direct fallback
+  // handles it. Pass { force: true } from refreshSubscriptionState
+  // for intentional re-fetches.
+  let _tierLoadedFor = null;
+  let _tierInFlight = false;
+  async function loadUserTier(userId, { force = false } = {}) {
+    if (!force && (_tierInFlight || _tierLoadedFor === userId)) return;
+    _tierInFlight = true;
     try {
-      const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      acctDpTier.textContent = data?.tier_display_name || 'Free';
-      acctDpTier.className = `acctDpTier ${data?.tier_name || 'free'}`;
-      window.__userTier = data?.tier_name || 'free';
-      return;
-    } catch (err) {
-      console.warn('[auth] backend tier load failed:', err.message);
-    }
+      try {
+        const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        acctDpTier.textContent = data?.tier_display_name || 'Free';
+        acctDpTier.className = `acctDpTier ${data?.tier_name || 'free'}`;
+        window.__userTier = data?.tier_name || 'free';
+        _tierLoadedFor = userId;
+        return;
+      } catch (err) {
+        if (err?.name !== 'AbortError') {
+          console.warn('[auth] backend tier load failed:', err.message);
+        }
+      }
 
-    const { data, error } = await sb
-      .from('subscriptions')
-      .select('status, updated_at, tier_id')
-      .eq('user_id', userId)
-      .eq('status', 'active');
-    if (error) {
-      console.warn('[auth] tier load failed:', error.message);
-      return;
+      const { data, error } = await sb
+        .from('subscriptions')
+        .select('status, updated_at, tier_id')
+        .eq('user_id', userId)
+        .eq('status', 'active');
+      if (error) {
+        console.warn('[auth] tier load failed:', error.message);
+        return;
+      }
+      const bestSub = pickBestSubscription(data || []);
+      const tier = await loadTierRecord(bestSub?.tier_id);
+      acctDpTier.textContent  = tier?.display_name ?? 'Free';
+      acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
+      window.__userTier = tier?.name ?? 'free';
+      _tierLoadedFor = userId;
+    } finally {
+      _tierInFlight = false;
     }
-    const bestSub = pickBestSubscription(data || []);
-    const tier = await loadTierRecord(bestSub?.tier_id);
-    acctDpTier.textContent  = tier?.display_name ?? 'Free';
-    acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
-    window.__userTier = tier?.name ?? 'free';
   }
 
   // ── Load profile/admin state directly from Supabase ───────────
@@ -27530,7 +27554,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function refreshSubscriptionState(options = {}) {
     const user = currentUser || window.__currentUser;
     if (!user) return;
-    await loadUserTier(user.id);
+    // Bypass loadUserTier dedup — caller explicitly wants a fresh
+    // lookup (post-checkout, manual refresh, etc).
+    await loadUserTier(user.id, { force: true });
     await loadProfile();
     if (typeof window.__updatePricingState === 'function') {
       window.__updatePricingState();
