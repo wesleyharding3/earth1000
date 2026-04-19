@@ -3271,12 +3271,16 @@ body.flow-maximized #flowArcList {
     /* Scroll-reveal: cards carrying this class fade + slide in when they
        enter the viewport. Wired up by the IntersectionObserver in the
        initFadeInOnScroll IIFE further down. Applied to the news feed,
-       threads, lines, and country/region/city panel article cards. */
+       threads, lines, and country/region/city panel article cards.
+       Duration bumped from 0.504s → 1.2s so the fade reads as an actual
+       transition rather than blinking in near-instantly. The slightly
+       larger translateY (8px → 12px) gives the motion more presence at
+       the slower speed. */
     .fadeInCard {
       opacity: 0;
-      transform: translateY(8px);
-      transition: opacity 0.504s cubic-bezier(0.32, 0.72, 0, 1),
-                  transform 0.504s cubic-bezier(0.32, 0.72, 0, 1);
+      transform: translateY(12px);
+      transition: opacity 1.2s cubic-bezier(0.32, 0.72, 0, 1),
+                  transform 1.2s cubic-bezier(0.32, 0.72, 0, 1);
       will-change: opacity, transform;
     }
     .fadeInCard.inView {
