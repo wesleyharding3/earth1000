@@ -1027,10 +1027,14 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
     // TTL cache so concurrent fan-out on the same feed (many clients hitting
     // the same Cloudflare origin on cache miss) collapses to one DB query.
-    // 60s matches the s-maxage set on this route; stale-while-revalidate in
-    // ttlCached serves stale instantly while a background refresh runs.
+    // Ambient feeds are a passive spotlight rotation — they don't need
+    // to-the-second freshness, so we cache them for 5 min. Non-ambient
+    // feeds stay on the 60s TTL that matches the Cloudflare s-maxage.
+    // Ambient buckets were the dominant source of 3-second cold queries
+    // in the logs; the longer TTL collapses repeat page-load fan-out.
     const cacheKey = `country-feed:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
-    const ranked = await ttlCached(cacheKey, 60_000, () =>
+    const ttlMs = ambient ? 300_000 : 60_000;
+    const ranked = await ttlCached(cacheKey, ttlMs, () =>
       getRankedArticles(countryId, { limit, offset, tagId, ambient })
     );
     res.json(ranked);

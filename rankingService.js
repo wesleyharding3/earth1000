@@ -24,6 +24,14 @@ const MAX_PER_SOURCE = 60;
 // range scan on (country_id, published_at DESC) instead of a big sort.
 const NATIONAL_POOL_LIMIT = 800;
 const CITY_POOL_LIMIT     = 400;
+// Ambient queries apply base_priority >= 2.0 + tier 2-4 — that's already
+// the top ~1.5% of the candidate universe. Pulling 800 rows for ambient
+// means the planner has to scan far more article rows than end up in the
+// ranked set, just to hit the limit. 200 leaves ample room for the per-
+// source cap + rank/diversify while letting the index scan short-circuit
+// much sooner, which was the dominant cost under load.
+const AMBIENT_NATIONAL_POOL_LIMIT = 200;
+const AMBIENT_CITY_POOL_LIMIT     = 100;
 
 // No per-query statement_timeout here — `pool.connect()` + `SET` was grabbing
 // a dedicated connection per request, and when many fed stacked up (country
@@ -127,20 +135,21 @@ const ARTICLE_JOINS = `
 // once Render cycled the process.
 
 function _buildAmbientClauses(ambient) {
-  // Inner-join on news_sources is equivalent to the prior
-  //   LEFT JOIN news_sources + COALESCE(fetch_tier, 1) IN (2,3,4)
-  // because COALESCE(NULL,1) IN (2,3,4) is always false — both forms exclude
-  // YouTube-only articles and articles without a news_sources row. INNER JOIN
-  // lets the planner push the filter into the join instead of evaluating a
-  // COALESCE(...) predicate that blocks index use on fetch_tier.
+  // `ns` is already joined via ARTICLE_JOINS as a LEFT JOIN for the SELECT
+  // fields (source_name, bias, site_url, popularity). When ambient is on,
+  // filter on that existing alias rather than adding a second self-join
+  // on news_sources. `ns.fetch_tier IN (…)` also implicitly excludes the
+  // LEFT-JOIN nulls (YouTube-only rows, rows with no news_sources record),
+  // matching the previous inner-join semantics.
+  //
+  // Removing the duplicate join eliminates an extra index lookup per
+  // candidate row, which was the ambient feed's dominant cost on cold
+  // buffer cache and under pool contention.
   return {
-    join: ambient
-      ? `JOIN news_sources ns_amb ON ns_amb.id = a.source_id AND ns_amb.fetch_tier IN (2, 3, 4)`
+    join: "",
+    where: ambient
+      ? `AND ns.fetch_tier IN (2, 3, 4) AND a.base_priority >= ${AMBIENT_MIN_BASE_PRIORITY}`
       : "",
-    // Dropping COALESCE so the planner can consider any btree index on
-    // base_priority; a NULL base_priority is filtered by this predicate the
-    // same as COALESCE(base_priority, 0) >= 2.0 would (NULL >= 2.0 is NULL).
-    where: ambient ? `AND a.base_priority >= ${AMBIENT_MIN_BASE_PRIORITY}` : "",
   };
 }
 
@@ -220,7 +229,7 @@ async function getRankedArticles(countryId, options = {}) {
     scopeParams: [countryId],
     ambient,
     tagId,
-    poolLimit: NATIONAL_POOL_LIMIT,
+    poolLimit: ambient ? AMBIENT_NATIONAL_POOL_LIMIT : NATIONAL_POOL_LIMIT,
   });
 
   const rows = _applyPerSourceCap(prelim, MAX_PER_SOURCE);
@@ -244,7 +253,7 @@ async function getRankedCityArticles(cityId, options = {}) {
     scopeParams: [cityId],
     ambient,
     tagId,
-    poolLimit: CITY_POOL_LIMIT,
+    poolLimit: ambient ? AMBIENT_CITY_POOL_LIMIT : CITY_POOL_LIMIT,
   });
 
   const rows = _applyPerSourceCap(prelim, MAX_PER_SOURCE);
