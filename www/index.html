@@ -2835,11 +2835,11 @@ body.flow-maximized #flowArcList {
   margin-top: 10px;
 }
 .densityRuler .drPlayBtn {
-  width: 26px; height: 26px; border-radius: 13px;
+  width: 22px; height: 18px; border-radius: 9px;
   background: rgba(212,168,67,0.16);
   border: 1px solid rgba(212,168,67,0.38);
   color: rgba(255,215,120,0.95);
-  font-size: 11px; cursor: pointer;
+  font-size: 10px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   padding: 0; flex-shrink: 0;
   transition: all 0.15s;
@@ -2849,12 +2849,12 @@ body.flow-maximized #flowArcList {
   border-color: rgba(212,168,67,0.55);
 }
 .densityRuler .drSpeedBtn {
-  height: 22px; padding: 0 8px;
-  border-radius: 11px;
+  height: 18px; padding: 0 7px;
+  border-radius: 9px;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.1);
   color: rgba(255,255,255,0.7);
-  font-size: 9.5px; font-weight: 600;
+  font-size: 9px; font-weight: 600;
   cursor: pointer; flex-shrink: 0;
 }
 .densityRuler .drSpeedBtn:hover { background: rgba(255,255,255,0.1); }
@@ -24836,7 +24836,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       root.className = 'densityRuler' + (opts.inline ? ' inline' : '');
       root.innerHTML = `
         <div class="drMeta">
-          <span class="drMetaLeft">Density</span>
+          <span class="drMetaLeft">Events</span>
           <span class="drMetaCenter" data-el="coverage">—</span>
           <span class="drMetaRight" data-el="bucket"></span>
         </div>
@@ -25154,10 +25154,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             return;
           }
 
-          const spanDays = state.startDate && state.endDate
-            ? Math.max(1, diffDays(state.startDate, state.endDate) + 1)
-            : state.buckets.length;
-          els.coverage.textContent = `${fmtFull(state.startDate)} → ${fmtFull(state.endDate)} · ${spanDays} days`;
+          els.coverage.textContent = `${fmtFull(state.startDate)} → ${fmtFull(state.endDate)}`;
           els.bucket.textContent = state.bucketType === 'week' ? '(weekly)' : '';
           els.axisStart.textContent = fmtShort(state.startDate);
           els.axisEnd.textContent   = fmtShort(state.endDate);
