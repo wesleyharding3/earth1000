@@ -25279,6 +25279,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       }
 
+      // Mount the density ruler unconditionally for timeline flows. The
+      // branching below (segmented, flat flows, synth fallback, single-
+      // country) takes different paths depending on what the backend
+      // returns, but all of them represent the same timeline — so the
+      // ruler should appear across all of them. Previously this only
+      // fired in the segmented-playback branch, leaving short / no-segment
+      // timelines with no ruler.
+      _mountArcListDensityRuler(timelineId);
+
       // 1. Try the thread-timeline endpoint first; segmentation lives here.
       let segments = [];
       let tlData = null;
@@ -25312,7 +25321,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__flowCtxDrillDown = false;
         document.getElementById('flowArcList')?.classList.add('visible');
         _setTimelineBarVisible(true);
-        _mountArcListDensityRuler(timelineId);
+        // Ruler mount was hoisted above to run for every timeline path.
         // Timeline flows are about playback — jump straight into the
         // routes view so the ⏮▶⏭ controls are immediately reachable.
         // User can still ← back to the info view from the pill bar.
