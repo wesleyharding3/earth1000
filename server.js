@@ -17,7 +17,7 @@ const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 const { extractArticleSignals } = require("./sentimentLexicon");
-const { findBucketImage } = require("./imageFallback");
+const { findBucketImage, guaranteeHeroImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
 const {
   logEditorEvent,
@@ -6099,6 +6099,10 @@ app.get("/api/timelines/latest", async (req, res) => {
           new Promise(r => setTimeout(r, 6000))
         ]);
       }
+      // Final-line guarantee: hero_image_url MUST be non-empty. Falls back
+      // to country flag (hero_iso_code → primary_nations[0]), then to a
+      // neutral globe SVG data URL as a last resort.
+      mapped.forEach(guaranteeHeroImage);
       // Apply title-based country boost reranking
       mapped.forEach(t => { t._titleBoost = getTitleCountryBoost(t); });
       mapped.sort((a, b) => {
@@ -6807,6 +6811,21 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
         const subjectIso = await pickCountryIsoFromText(row.geographic_scope);
         if (subjectIso) row.hero_iso_code = subjectIso;
       }
+      // Bucket fallback for rows missing hero images, capped with a short race
+      const _noImgBc = rows.filter(r => !r.hero_image_url).slice(0, 20);
+      if (_noImgBc.length) {
+        await Promise.race([
+          Promise.all(_noImgBc.map(async (r) => {
+            try {
+              const bucketUrl = await findBucketImage(r, pool);
+              if (bucketUrl) r.hero_image_url = bucketUrl;
+            } catch (_) { /* silent */ }
+          })),
+          new Promise(r => setTimeout(r, 4000))
+        ]);
+      }
+      // Final-line guarantee: flag → globe
+      rows.forEach(guaranteeHeroImage);
       return rows;
     });
 
@@ -6867,14 +6886,20 @@ app.get("/api/threads/id/:id", async (req, res) => {
 
     const hero = heroRows[0] || {};
     const subjectIso = await pickCountryIsoFromText(thread.geographic_scope);
-    res.json({
+    let bucketUrl = null;
+    if (!hero.hero_image_url) {
+      try { bucketUrl = await findBucketImage(thread, pool); } catch (_) {}
+    }
+    const payload = {
       ...thread,
       latest_published_at: thread.last_updated_at,
-      hero_image_url: hero.hero_image_url || null,
+      hero_image_url: hero.hero_image_url || bucketUrl || null,
       hero_catalog_image_url: null,
       hero_source_name: null,
       hero_iso_code: subjectIso || hero.hero_iso_code || null
-    });
+    };
+    guaranteeHeroImage(payload);
+    res.json(payload);
   } catch (err) {
     console.error("[threads/id/:id]", err.message);
     res.status(500).json({ error: "Failed to fetch thread", detail: req.user?.is_admin ? err.message : undefined });
@@ -7115,6 +7140,9 @@ app.get("/api/threads/latest", async (req, res) => {
         new Promise(r => setTimeout(r, 6000))
       ]);
     }
+    // Final-line guarantee: every thread returned has a non-empty
+    // hero_image_url, even if it's just a country flag or generic globe.
+    result.forEach(guaranteeHeroImage);
 
     // Apply title-based country boost reranking
     result.forEach(t => { t._titleBoost = getTitleCountryBoost(t); });
