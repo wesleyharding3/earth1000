@@ -28010,12 +28010,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
       : '';
 
     const _adpTLang = window.getUserTargetLang ? window.getUserTargetLang() : { short: 'EN', label: 'English' };
-    // Translate pill only appears when the article actually needs translation
-    // — non-English source, no cached translation yet. Shared cache in
-    // news_articles.translated_title means the first user's click populates
-    // for everyone else; subsequent opens of the same article don't show
-    // the button because translated_title is now populated.
-    const _adpNeedsTrans = window.articleNeedsTranslation && window.articleNeedsTranslation(article);
+    // Panel translate-pill policy is PERMISSIVE — it appears unless the
+    // article is definitely English or already has a cached translation.
+    // Different from the card check (which hides when language is
+    // missing) because:
+    //   • User is actively viewing the article in full — they might want
+    //     to force a translation even if metadata is ambiguous.
+    //   • Backend cache-first read means a click on an article that's
+    //     already translated returns instantly from DB, no DeepL cost.
+    //   • Better to show a rarely-useless button than to hide it from
+    //     a user who actually needs it (the card → panel continuity
+    //     case that was breaking).
+    const _adpNeedsTrans = (() => {
+      if (!article || !article.title) return false;
+      if (article.translated_title) return false;
+      const raw = String(article.language || '').toLowerCase().trim();
+      if (!raw) return true; // unknown → show on panel (permissive)
+      const primary = raw.split(/[-_]/)[0];
+      const ENGLISH_CODES = new Set(['en', 'eng', 'english']);
+      if (ENGLISH_CODES.has(primary) || ENGLISH_CODES.has(raw)) return false;
+      return true;
+    })();
     const adpTranslateBtn = _adpNeedsTrans
       ? `<button class="adpTranslateBtn articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_adpTLang.label}">${_adpTLang.short}</button>`
       : '';

@@ -94,11 +94,23 @@ async function run() {
       return;
     }
 
+    // Require Claude for keyword normalization. Previously the code fell
+    // through to null here when ANTHROPIC_API_KEY was unset OR empty,
+    // which silently routed to the DeepL fallback in normalizeRecentKeywords
+    // — measured at ~105k DeepL chars/day, contributing to the Pro-quota
+    // exhaustion. Match keywordNormalizerCron.js's behaviour: fail loud
+    // rather than silently spend. `.trim()` also catches the empty-string
+    // case where the var is declared in .env with no value.
+    const _anthropicKey = String(process.env.ANTHROPIC_API_KEY || '').trim();
+    if (!Anthropic || !_anthropicKey) {
+      throw new Error(
+        'clusterSnapshotBuilder: ANTHROPIC_API_KEY is required (keyword normalization ' +
+        'falls back to DeepL without it — too expensive at current volume).'
+      );
+    }
     const keywordTranslationStats = await normalizeRecentKeywords({
       pool,
-      anthropicClient: Anthropic && process.env.ANTHROPIC_API_KEY
-        ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-        : null,
+      anthropicClient: new Anthropic({ apiKey: _anthropicKey }),
       logger: console,
       scope: {
         threadIds: baseThreads.map((thread) => thread.id),

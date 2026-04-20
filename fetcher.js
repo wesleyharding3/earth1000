@@ -12,17 +12,33 @@ const Anthropic = require("@anthropic-ai/sdk");
 // mojibake — better to skip than persist garbage.
 const { decodeResponseBody } = require("./fetchDecode");
 
-// ── Translation (DeepL) — cost-limited re-enablement ─────────────────────────
-// Translate TITLE ONLY (not summary) to keep DeepL costs low.
-// Only translates for priority non-English languages from tier 2+ sources.
-// Daily character cap prevents runaway costs.
-const TRANSLATION_ENABLED = !!process.env.DEEPL_API_KEY;
+// ── Translation (DeepL) — DISABLED by default ────────────────────────────────
+// The fetcher previously translated every new non-English tier-2+ article at
+// ingest. At ~860k DeepL characters/day this burned through a Pro plan in
+// under a week. Ingest-time translation is now OFF by default; users
+// translate on demand via the panel/card button, which hits the DB
+// cache-first read in /api/translate so the first user pays and every
+// subsequent viewer rides free from `news_articles.translated_title`.
+//
+// To re-enable fetcher-at-ingest translation you must explicitly set
+//   FETCHER_TRANSLATE_TITLES=true
+// in the environment AND have DEEPL_API_KEY set. The daily in-process
+// char cap is retained as a secondary safety net, but it resets on
+// process restart and doesn't persist across workers, so the real
+// cost control is the env-flag gate.
+const FETCHER_TRANSLATE_TITLES_ENABLED = process.env.FETCHER_TRANSLATE_TITLES === 'true';
+const TRANSLATION_ENABLED = FETCHER_TRANSLATE_TITLES_ENABLED && !!process.env.DEEPL_API_KEY;
 const TRANSLATE_TITLE_ONLY = true;   // skip summary translation to reduce costs
 const TRANSLATE_DAILY_CHAR_CAP = 500_000; // ~500k chars/day ≈ DeepL Free tier limit
 const TRANSLATE_PRIORITY_LANGS = new Set(["ru","zh","fa","uk","ja","ko","ar","tr","hi","pt","es","fr","de"]);
 const TRANSLATE_MIN_TIER = 2;        // only tier 2+ sources get translated
 let _translateCharsToday = 0;
 let _translateCharsDayKey = new Date().toISOString().slice(0, 10);
+if (TRANSLATION_ENABLED) {
+  console.warn('⚠️  Fetcher translation ENABLED — FETCHER_TRANSLATE_TITLES=true present. This will consume DeepL credits.');
+} else if (process.env.DEEPL_API_KEY) {
+  console.log('ℹ️  Fetcher translation DISABLED (set FETCHER_TRANSLATE_TITLES=true to enable).');
+}
 
 let _deeplTranslator = null;
 function getDeeplTranslator() {

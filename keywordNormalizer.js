@@ -48,7 +48,13 @@ async function normalizeRecentKeywords(options) {
     charCap = DEFAULT_CHAR_CAP,
     minRows = DEFAULT_MIN_ROWS,
     minFrequency = DEFAULT_MIN_FREQUENCY,
-    scope
+    scope,
+    // DeepL fallback is DANGEROUS at production volume — keyword sets can
+    // run ~100k DeepL chars/day. Fallback is now opt-in: callers must set
+    // allowDeeplFallback:true to use DeepL when Claude is unavailable.
+    // Default (false) means: if Claude is missing, skip the run entirely
+    // rather than silently spend DeepL credits.
+    allowDeeplFallback = false
   } = options || {};
 
   if (!pool) throw new Error('normalizeRecentKeywords requires pool');
@@ -56,17 +62,19 @@ async function normalizeRecentKeywords(options) {
     throw new Error('normalizeRecentKeywords requires either scope.hours or scope.threadIds+windowStart+windowEnd');
   }
 
-  // Provider preference: Claude Haiku FIRST when available, DeepL only as a
-  // fallback. Keywords are short strings (5–20 chars) where DeepL's
-  // per-character billing stacks up fast — ~576 k chars/day measured on the
-  // DEEPL_API_KEY when Claude was erroneously demoted. Claude Haiku is
-  // dramatically cheaper at this input size and returns JSON already in the
-  // shape we need. DeepL remains wired so that if ANTHROPIC_API_KEY is
-  // missing the pipeline still translates, just at higher cost.
-  const translator = deeplApiKey
+  // Provider preference: Claude Haiku FIRST when available. DeepL only
+  // when the caller has explicitly opted into fallback via
+  // allowDeeplFallback:true. Short keywords bill per-character on DeepL
+  // and stack up fast (~576k chars/day measured when Claude was
+  // erroneously demoted). Claude Haiku is dramatically cheaper at this
+  // input size and returns JSON already in the shape we need.
+  const translator = (allowDeeplFallback && deeplApiKey)
     ? new deepl.Translator(deeplApiKey, { serverUrl: 'https://api.deepl.com' })
     : null;
   const primaryProvider = anthropicClient ? 'claude' : (translator ? 'deepl' : 'none');
+  if (!anthropicClient && !translator) {
+    logger.warn?.('[keywordNormalizer] No Claude client and DeepL fallback is disabled — skipping run.');
+  }
 
   const { sql, params } = buildCandidateQuery({
     scope,
