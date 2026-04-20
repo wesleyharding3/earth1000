@@ -9262,6 +9262,143 @@ body.flow-maximized #flowArcList {
   background: rgba(255,255,255,0.04); border-left: 2px solid rgba(212,168,67,0.4);
   border-radius: 0 6px 6px 0; padding: 8px 12px; margin-top: 8px;
 }
+
+/* ── AI Analysis CTA ──────────────────────────────────────────────
+   Reusable click-to-generate pill used across:
+     • cluster-detail panel (Analysis section, threads + timelines)
+     • article-detail panel (Explain Context)
+   Purpose: gate expensive Claude calls behind an explicit user action
+   instead of auto-firing on panel open. Subsequent opens of the same
+   entity hit the backend cache and render content directly (no pill).
+
+   States via modifier classes on .aiAnalysisCta:
+     (none)     → idle, blinking dot, ready to click
+     .loading   → dot morphs into a spinner, text says "GENERATING…"
+     .locked    → amber-static lock icon, text "UPGRADE TO UNLOCK"
+     .error     → red tint, text "RETRY"
+   Subtle 0.4→1.0 opacity pulse on the dot (1.4s), slow outer-glow
+   on the pill (2.6s). No scale jumps — reads as "live and ready",
+   not as a notification. */
+.aiAnalysisCta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px 5px 9px;
+  border-radius: 999px;
+  background: rgba(212,168,67,0.08);
+  border: 1px solid rgba(212,168,67,0.34);
+  color: rgba(255,220,130,0.92);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 0 14px rgba(212,168,67,0.12), inset 0 0 6px rgba(212,168,67,0.06);
+  animation: aiCtaGlow 2.6s ease-in-out infinite;
+  transition: transform 0.14s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+}
+.aiAnalysisCta:hover {
+  background: rgba(212,168,67,0.15);
+  border-color: rgba(212,168,67,0.55);
+  color: rgba(255,235,160,1);
+  box-shadow: 0 0 22px rgba(212,168,67,0.28), inset 0 0 8px rgba(212,168,67,0.10);
+  transform: translateY(-1px);
+}
+.aiAnalysisCta:active { transform: translateY(0); }
+.aiAnalysisCta:disabled { cursor: default; transform: none; }
+.aiAnalysisCta .aiAnalysisDot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: rgba(255,220,130,1);
+  box-shadow: 0 0 6px rgba(255,220,130,0.85);
+  animation: aiCtaDotBlink 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes aiCtaDotBlink {
+  0%,100% { opacity: 0.42; box-shadow: 0 0 3px rgba(255,220,130,0.45); }
+  50%     { opacity: 1;    box-shadow: 0 0 9px rgba(255,220,130,0.95); }
+}
+@keyframes aiCtaGlow {
+  0%,100% { box-shadow: 0 0 14px rgba(212,168,67,0.12), inset 0 0 6px rgba(212,168,67,0.06); }
+  50%     { box-shadow: 0 0 22px rgba(212,168,67,0.22), inset 0 0 9px rgba(212,168,67,0.10); }
+}
+/* Loading state — dot becomes a spinner, blink halts, text swaps. */
+.aiAnalysisCta.loading {
+  animation: none;
+  cursor: default;
+  opacity: 0.85;
+}
+.aiAnalysisCta.loading .aiAnalysisDot {
+  animation: aiCtaSpin 0.8s linear infinite;
+  background: transparent;
+  border: 2px solid rgba(255,220,130,0.25);
+  border-top-color: rgba(255,220,130,1);
+  box-shadow: none;
+  box-sizing: border-box;
+  width: 10px; height: 10px;
+}
+@keyframes aiCtaSpin {
+  to { transform: rotate(360deg); }
+}
+/* Pro-locked — static amber with a subtle lock feel; click opens pricing. */
+.aiAnalysisCta.locked {
+  animation: none;
+  opacity: 0.8;
+  background: rgba(212,168,67,0.05);
+  border-color: rgba(212,168,67,0.22);
+  color: rgba(255,220,130,0.7);
+  box-shadow: none;
+}
+.aiAnalysisCta.locked:hover {
+  opacity: 1;
+  background: rgba(212,168,67,0.12);
+  border-color: rgba(212,168,67,0.45);
+  box-shadow: 0 0 16px rgba(212,168,67,0.18);
+}
+.aiAnalysisCta.locked .aiAnalysisDot {
+  animation: none;
+  background: rgba(255,220,130,0.5);
+  box-shadow: 0 0 4px rgba(255,220,130,0.3);
+}
+/* Error — red tint, click retries. */
+.aiAnalysisCta.error {
+  animation: none;
+  background: rgba(220,80,80,0.08);
+  border-color: rgba(220,80,80,0.4);
+  color: rgba(255,160,160,0.95);
+  box-shadow: 0 0 14px rgba(220,80,80,0.14);
+}
+.aiAnalysisCta.error .aiAnalysisDot {
+  animation: none;
+  background: rgba(255,130,130,1);
+  box-shadow: 0 0 6px rgba(255,130,130,0.7);
+}
+
+/* Regenerate icon — small ↻ shown in the upper-right of a rendered
+   analysis block. Only meaningful for users who pass the Pro gate
+   (the click handler re-checks anyway). Bypasses the DB cache by
+   sending `force: true` to the backend — costs one Claude call. */
+.aiAnalysisRegen {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  color: rgba(212,168,67,0.55);
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+  transition: color 0.15s, background 0.15s, transform 0.2s;
+}
+.aiAnalysisRegen:hover {
+  color: rgba(255,220,130,1);
+  background: rgba(212,168,67,0.1);
+  transform: rotate(45deg);
+}
+.aiAnalysisRegen svg { display: block; width: 12px; height: 12px; }
+.aiAnalysisRegen.spinning svg {
+  animation: aiCtaSpin 0.7s linear infinite;
+}
 /* KWI header layout */
 .kwi-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 8px; }
 /* KWI enterprise AI button */
@@ -28074,15 +28211,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
          </div>`
       : '';
     
-    // Context section — AI Explain button (Pro/Enterprise feature)
+    // Context section — AI Explain pill (Pro/Enterprise, click-gated).
+    // Uses the shared .aiAnalysisCta component so the visual language
+    // matches the cluster-detail Analysis section. Already click-gated;
+    // no auto-fire, so no Claude cost until the user taps.
     const canExplain = window.__checkTier && window.__checkTier('pro');
     const contextHTML = `
       <div class="adpContext" id="adpExplainWrap" data-article-id="${article.id}"
            data-title="${(article.translated_title || article.title || '').replace(/"/g,'&quot;')}"
            data-summary="${((article.translated_summary || article.summary || '')).slice(0,400).replace(/"/g,'&quot;')}">
-        <button class="explainBtn" onclick="window.__triggerExplain(this,'article')" ${!window.__authToken ? 'data-needsauth="1"' : ''}>
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.2v3.1M6 3.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-          Explain context
+        <button class="aiAnalysisCta explainBtn" onclick="window.__triggerExplain(this,'article')" ${!window.__authToken ? 'data-needsauth="1"' : ''}>
+          <span class="aiAnalysisDot"></span>
+          <span>✦ Analysis</span>
         </button>
         <div class="explainResult" id="adpExplainResult" style="display:none"></div>
       </div>
@@ -30166,31 +30306,163 @@ const settingsToggle     = document.getElementById("settingsToggle");
     containerEl.appendChild(div);
   };
 
+  // ── Cluster-detail Analysis click-gate handler ─────────────────
+  // Triggered by the `.aiAnalysisCta` pill in the Analysis section of
+  // the cluster-detail panel. Gates the Claude deep-analysis call
+  // behind an explicit user action — stops Claude costs from accruing
+  // when users browse panels without engaging the Analysis content.
+  // Cache-first backend means repeat clicks for the same entity are
+  // free DB reads.
+  //
+  // Button data attributes (set in the panel template):
+  //   data-thread-id      — thread OR timeline id
+  //   data-is-timeline    — '1' for Line, '0' for Thread
+  //   data-entity-label   — 'timeline' | 'thread' (for user-facing text)
+  //
+  // State transitions on the button:
+  //   idle → loading → (success → button removed, content rendered)
+  //                  ↘ error   → error class, click retries
+  //                  ↘ locked  → locked class + open pricing modal
+  window.__triggerClusterAnalysis = async function (btn, opts) {
+    opts = opts || {};
+    if (!btn || btn.classList.contains('loading')) return;
+    if (!window.__authToken) { window.__openAuthModal?.(); return; }
+
+    // Wait for the tier-readiness barrier so admins/enterprise users
+    // aren't falsely locked on first open.
+    try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
+
+    if (!window.__checkTier?.('pro')) {
+      btn.classList.remove('loading', 'error');
+      btn.classList.add('locked');
+      btn.querySelector('span:last-child').textContent = '🔒 Upgrade to unlock';
+      btn.onclick = () => window.__openPricing?.('Deep analysis requires a Pro or Enterprise plan.');
+      return;
+    }
+
+    const threadId    = btn.dataset.threadId;
+    const isTimeline  = btn.dataset.isTimeline === '1';
+    const entityLabel = btn.dataset.entityLabel || (isTimeline ? 'timeline' : 'thread');
+    const force       = !!opts.force;
+    const body        = isTimeline ? { timeline_id: threadId, force } : { thread_id: threadId, force };
+
+    btn.classList.add('loading');
+    btn.classList.remove('error');
+    const textSpan = btn.querySelector('span:last-child');
+    const originalText = textSpan.textContent;
+    textSpan.textContent = force ? 'Regenerating…' : 'Generating…';
+
+    try {
+      const res = await fetch(`${BASE}/api/cluster-node/summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const summary = data.summary || null;
+
+      const container = btn.closest('#cdSummaryBody') || btn.parentElement;
+      if (!container) return;
+
+      if (!summary) {
+        container.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this ${entityLabel}.</div>`;
+        return;
+      }
+      // Render with the typewriter effect + a small regen icon top-right.
+      container.innerHTML = `
+        <div style="position:relative">
+          <button class="aiAnalysisRegen" title="Regenerate"
+                  data-thread-id="${threadId}"
+                  data-is-timeline="${isTimeline ? '1' : '0'}"
+                  data-entity-label="${entityLabel}"
+                  onclick="window.__regenClusterAnalysis?.(this)"
+                  style="position:absolute;top:0;right:0;z-index:2">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="14 3 14 7 10 7"></polyline>
+              <path d="M13.5 11.5A6 6 0 1 1 14 8"></path>
+            </svg>
+          </button>
+          <div class="cdSummaryText" style="padding-right:24px"></div>
+        </div>`;
+      const target = container.querySelector('.cdSummaryText');
+      if (typeof typewriterText === 'function') typewriterText(target, summary);
+      else target.textContent = summary;
+    } catch (err) {
+      console.warn('[cluster-analysis] failed:', err.message);
+      btn.classList.remove('loading');
+      btn.classList.add('error');
+      textSpan.textContent = 'Retry';
+      btn.onclick = () => window.__triggerClusterAnalysis(btn);
+    }
+  };
+
+  // Regenerate button — bypasses the backend DB cache by sending
+  // force:true. Costs one fresh Claude call per click; open to any
+  // user who passes the Pro gate. Cap can be added later if needed.
+  window.__regenClusterAnalysis = function (regenBtn) {
+    if (!regenBtn) return;
+    regenBtn.classList.add('spinning');
+    const container = regenBtn.closest('#cdSummaryBody');
+    if (!container) return;
+    // Re-mount a fresh CTA in loading state + let the trigger run.
+    container.innerHTML = `
+      <button class="aiAnalysisCta loading"
+              data-thread-id="${regenBtn.dataset.threadId}"
+              data-is-timeline="${regenBtn.dataset.isTimeline}"
+              data-entity-label="${regenBtn.dataset.entityLabel}">
+        <span class="aiAnalysisDot"></span>
+        <span>Regenerating…</span>
+      </button>`;
+    const cta = container.querySelector('.aiAnalysisCta');
+    window.__triggerClusterAnalysis?.(cta, { force: true });
+  };
+
   // ── AI Explain handler ──────────────────────────────────────────
+  // Works on the .aiAnalysisCta pill (shared with cluster-detail Analysis).
+  // Mutates only the inner text span + CTA state classes so the pill's
+  // dot/pulse/glow animations stay intact through loading → done.
   window.__triggerExplain = async function (btn, type) {
     if (!window.__authToken) {
       window.__openAuthModal?.();
       return;
     }
+    if (btn.classList.contains('loading')) return;
 
     const wrap      = btn.closest('[data-title]');
     const resultEl  = wrap?.querySelector('.explainResult');
     if (!wrap || !resultEl) return;
 
-    // Check tier client-side first for immediate feedback
+    // Wait for tier barrier so enterprise/admin aren't false-locked on
+    // first open (matches the cluster-analysis handler).
+    try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
+
+    // Find the text span inside the CTA (last span child). Support both
+    // the new structure (span.aiAnalysisDot + span.text) and any legacy
+    // explainBtn that hasn't been restyled yet.
+    const textSpan = btn.querySelector('span:last-child') || btn;
+    const resetIdle = () => {
+      btn.classList.remove('loading', 'error', 'locked');
+      textSpan.textContent = '✦ Analysis';
+      btn.onclick = (ev) => window.__triggerExplain(ev.currentTarget, type);
+    };
+
     if (!window.__checkTier('pro')) {
-      window.__openPricing('Context explanations require a Pro or Enterprise plan.');
+      btn.classList.remove('loading', 'error');
+      btn.classList.add('locked');
+      textSpan.textContent = '🔒 Upgrade to unlock';
+      btn.onclick = () => window.__openPricing('Context explanations require a Pro or Enterprise plan.');
       return;
     }
 
-    btn.disabled = true;
-    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3" stroke-dasharray="20" stroke-dashoffset="0"><animateTransform attributeName="transform" type="rotate" from="0 6 6" to="360 6 6" dur="0.8s" repeatCount="indefinite"/></circle></svg> Generating…`;
+    btn.classList.add('loading');
+    btn.classList.remove('error');
+    textSpan.textContent = 'Generating…';
 
     try {
       const title    = wrap.dataset.title || '';
       const summary  = wrap.dataset.summary || '';
       const keywords = (() => { try { return JSON.parse(wrap.dataset.keywords || '[]'); } catch { return []; } })();
-      const threadId = wrap.dataset.threadId;
 
       const res  = await fetch(`${BASE}/api/explain`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -30200,6 +30472,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
 
       if (!res.ok) {
+        btn.classList.remove('loading');
         if (res.status === 429 && data.limitReached) {
           resultEl.style.display = 'none';
           window.__showUpgradeNudge(wrap,
@@ -30207,28 +30480,38 @@ const settingsToggle     = document.getElementById("settingsToggle");
             `${data.used}/${data.limit} explanations used today. ${data.resetNote || 'Resets at midnight.'}`,
             data.requiredTier
           );
+          textSpan.textContent = data.requiredTier ? '🔒 Upgrade to unlock' : 'Daily limit hit';
+          btn.classList.add(data.requiredTier ? 'locked' : 'error');
         } else {
           resultEl.textContent = 'Could not generate explanation.';
           resultEl.style.display = 'block';
+          textSpan.textContent = 'Retry';
+          btn.classList.add('error');
         }
+        return;
+      }
+
+      // Success — show the result and hide the CTA pill. On re-opens of
+      // the same panel the pill reappears (server cached / frontend
+      // doesn't cache result locally) — one more click costs an AI call
+      // so users know they're re-generating. We could cache in-memory
+      // later if the UX needs it.
+      resultEl.textContent = data.explanation || '';
+      resultEl.style.display = data.explanation ? 'block' : 'none';
+      btn.classList.remove('loading');
+      if (data.explanation) {
+        btn.style.display = 'none';
       } else {
-        resultEl.textContent = data.explanation || '';
-        resultEl.style.display = data.explanation ? 'block' : 'none';
-        // Update btn to show remaining uses
-        if (data.limit && data.limit !== Infinity) {
-          btn.innerHTML = `✓ ${data.used}/${data.limit} today`;
-          btn.style.opacity = '0.5';
-          return;
-        }
+        resetIdle();
       }
     } catch (e) {
       console.error('[explain]', e);
       resultEl.textContent = 'Network error. Please try again.';
       resultEl.style.display = 'block';
+      btn.classList.remove('loading');
+      btn.classList.add('error');
+      textSpan.textContent = 'Retry';
     }
-
-    btn.disabled = false;
-    btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.3"/><path d="M6 5.2v3.1M6 3.8v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg> Explain context`;
   };
 
   // ── Toast helper ────────────────────────────────────────────────
@@ -34491,7 +34774,14 @@ body.ticker-active .gTickerLabel {
             Analysis
           </div>
           <div id="cdSummaryBody">
-            <div class="cdSummaryLoading"><div class="cdPulse"></div><span>Generating deep analysis...</span></div>
+            <button class="aiAnalysisCta"
+                    data-thread-id="${threadId}"
+                    data-is-timeline="${isTimeline ? '1' : '0'}"
+                    data-entity-label="${isTimeline ? 'timeline' : 'thread'}"
+                    onclick="window.__triggerClusterAnalysis?.(this)">
+              <span class="aiAnalysisDot"></span>
+              <span>✦ Analysis</span>
+            </button>
           </div>
         </div>
         <div class="cdSection" id="cdDataSection" style="display:none">
@@ -34682,25 +34972,12 @@ body.ticker-active .gTickerLabel {
     //     summary from the builder, and timeline-level Claude summary
     //     isn't wired yet). Skip the pro gate since this is just
     //     reading a field the user already sees on the card.
-    const summaryPromise = (async () => {
-      if (!threadId) return null;
-      // Wait for tier state to land before gating — otherwise a first
-      // open races the subscription-status fetch and incorrectly shows
-      // "Pro required" to enterprise/admin users. Safety timeout (5s)
-      // inside __tierReady ensures we never hang here forever.
-      try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
-      if (!window.__checkTier?.('pro')) return '__pro_locked__';
-      try {
-        const body = isTimeline ? { timeline_id: threadId } : { thread_id: threadId };
-        const res = await fetch(`${BASE}/api/cluster-node/summary`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body)
-        });
-        if (res.ok) { const data = await res.json(); return data.summary || null; }
-        return null;
-      } catch (_) { return null; }
-    })();
+    // Deep analysis is no longer auto-fired on panel open — the Analysis
+    // section's innerHTML is a click-gated `.aiAnalysisCta` pill that
+    // triggers `window.__triggerClusterAnalysis` on click. This stops
+    // Claude costs from accruing when users browse panels without
+    // engaging the Analysis content. Backend cache-first reads mean
+    // repeat clicks for the same thread/timeline are free.
 
     // For timelines, rename the Timeline section heading to "Events"
     // so the UI reads as a chronological narrative not a metadata label.
@@ -34788,24 +35065,9 @@ body.ticker-active .gTickerLabel {
       }
     });
 
-    summaryPromise.then((summary) => {
-      if (_selected !== node) return;
-      const el = document.getElementById("cdSummaryBody");
-      if (!el) return;
-      if (summary === '__pro_locked__') {
-        el.innerHTML = `<div class="cdSummaryText" style="opacity:0.55;cursor:pointer;display:flex;align-items:center;gap:8px" onclick="window.__openPricing?.()">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          <span>Deep analysis is available on <strong style="color:rgba(255,195,70,1)">Pro</strong></span>
-        </div>`;
-        return;
-      }
-      if (summary) {
-        el.innerHTML = `<div class="cdSummaryText"></div>`;
-        typewriterText(el.querySelector(".cdSummaryText"), summary);
-      } else {
-        el.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this ${isTimeline ? 'timeline' : 'thread'}.</div>`;
-      }
-    });
+    // summaryPromise.then renderer removed — the Analysis section renders
+    // via window.__triggerClusterAnalysis on user click now. See handler
+    // definition further below in the module scope.
 
     // ── Data analytics panels (lazy-generated server-side, cached in DB) ──
     // Threads-only for now. Timelines will get their own panels once we

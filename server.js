@@ -7155,7 +7155,7 @@ app.get("/api/threads/latest", async (req, res) => {
 // (exactly 200 words, two paragraphs) is identical for both so the
 // Analysis section renders with consistent depth regardless of kind.
 app.post("/api/cluster-node/summary", async (req, res) => {
-  const { thread_id, timeline_id } = req.body || {};
+  const { thread_id, timeline_id, force } = req.body || {};
   const threadId   = parseInt(thread_id,   10);
   const timelineId = parseInt(timeline_id, 10);
   const isTimeline = Number.isFinite(timelineId) && timelineId > 0;
@@ -7165,9 +7165,17 @@ app.post("/api/cluster-node/summary", async (req, res) => {
   }
   const mode = isTimeline ? "timeline" : "thread";
   const id   = isTimeline ? timelineId : threadId;
+  const cacheKey = `cluster-node-summary:${mode}:${id}`;
+
+  // `force: true` comes from the regenerate ↻ icon in the UI —
+  // invalidate the in-process TTL cache so the next producer call
+  // hits Claude fresh instead of serving the stale analysis.
+  if (force === true) {
+    try { _ttlCache.delete(cacheKey); } catch (_) {}
+  }
 
   try {
-    const cached = await ttlCached(`cluster-node-summary:${mode}:${id}`, 600_000, async () => {
+    const cached = await ttlCached(cacheKey, 600_000, async () => {
     // Deep article search: fetch articles for this thread or timeline with
     // full context. Ordering anchors/recency prefers the most narratively
     // representative sample when truncated to 30.
