@@ -33820,6 +33820,13 @@ body.ticker-active .gTickerLabel {
       ? `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy" onerror="${_imgOnErr}">`
       : '';
 
+    // Hoisted from below — the Analysis section's .aiAnalysisCta pill
+    // needs ${threadId} and ${isTimeline} at template-evaluation time.
+    // Leaving these `const` declarations below the innerHTML assignment
+    // triggered a TDZ ReferenceError on every cluster-detail open.
+    const threadId = node.thread_id || node.id;
+    const isTimeline = node.__kind === 'timeline';
+
     detailEl.innerHTML = `
       <button id="cdResizeHandle" aria-label="Resize panel">
         <div id="cdResizeArrow">
@@ -33978,8 +33985,8 @@ body.ticker-active .gTickerLabel {
       _cdHeaderEl.addEventListener("touchend", _cdEndDrag);
     }
 
-    const threadId = node.thread_id || node.id;
-    const isTimeline = node.__kind === 'timeline';
+    // threadId + isTimeline are hoisted above the detailEl.innerHTML
+    // template literal (see comment there). Re-referenced here.
     let allArticles = [];
     let allThreads  = [];
 
