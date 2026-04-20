@@ -24481,16 +24481,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Article-origin: pill bar collapses to Back / − / ✕ only.
     el.classList.toggle("articleOrigin", kind === "Article");
     el.classList.remove("visible", "flowCtxMinimized");
-    // Default the ctx Labels checkbox to checked on every open so users
-    // always see labels on a fresh thread/line open unless they've
-    // explicitly disabled them this session via the master toggle.
+    // Force both the ctx checkbox AND the master #flowLabelsToggle to
+    // checked on every Thread/Line open. showFlowNodeLabels reads master
+    // and aborts if it's unchecked — and master's HTML default is
+    // unchecked, so without this forcing it, the first open (and any open
+    // after the user unchecks) would leave labels off. User explicitly
+    // asked for "default checked + labels visible" on every open.
     try {
-      const ctxChk = el.querySelector('#flowCtxLabelsToggle');
-      if (ctxChk && kind !== 'Article') {
+      if (kind !== 'Article') {
+        const ctxChk = el.querySelector('#flowCtxLabelsToggle');
         const master = document.getElementById('flowLabelsToggle');
-        // Sync to master if master has a different state (user may have
-        // toggled in the News Flows panel); otherwise keep default true.
-        ctxChk.checked = master ? master.checked : true;
+        if (ctxChk) ctxChk.checked = true;
+        if (master) master.checked = true;
       }
     } catch (_) {}
     void el.offsetHeight;
@@ -26449,8 +26451,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     const container = document.createElement("div");
     container.id = "flowNodeLabels";
-    container.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:90;";
+    // Start invisible, fade in on next frame so the set of labels eases
+    // in rather than popping. transition is wired so the user-toggle-off
+    // path (which rides opacity to 0) gets the same duration.
+    container.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:90;opacity:0;transition:opacity 0.35s ease;";
     document.body.appendChild(container);
+    requestAnimationFrame(() => { container.style.opacity = '1'; });
 
     for (const node of nodeMap.values()) {
       const label = document.createElement("div");
@@ -26640,9 +26646,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // declaration, so the wrapper ended up calling itself → infinite
   // recursion → "Maximum call stack size exceeded". The internal helper
   // is now uniquely named so it can never be shadowed.
-  function _clearFlowNodeLabelsImpl() {
+  function _clearFlowNodeLabelsImpl({ fade = false } = {}) {
     const container = document.getElementById("flowNodeLabels");
-    if (container) container.remove();
+    if (container) {
+      if (fade) {
+        // User toggled OFF — fade the whole container out over 350ms so
+        // it's a visible transition, then remove. Rename the id during
+        // the fade so a concurrent showFlowNodeLabels() can immediately
+        // create a fresh #flowNodeLabels without ID collision.
+        container.id = "flowNodeLabels_fading";
+        container.style.transition = 'opacity 0.35s ease';
+        container.style.opacity = '0';
+        setTimeout(() => { try { container.remove(); } catch (_) {} }, 380);
+      } else {
+        // Internal re-render — instant remove so the new container can
+        // take over with the correct fresh label set.
+        container.remove();
+      }
+    }
     const leaders = document.getElementById("flowNodeLeaders");
     if (leaders) leaders.remove();
     if (window.__flowNodeLabelRAF) {
@@ -26666,13 +26687,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       //   2. __flowNotifyCurrentFlows (News Flows direct mode) — sets
       //      it to flowData whenever loadFlows resolves or clears.
       //   3. showFlowNodeLabels itself — refreshes on re-render.
-      // The earlier fallback to `flowData` was dead code: flowData is
-      // scoped inside the setupFlowAnimation IIFE and invisible here,
-      // so `typeof flowData !== 'undefined'` always resolved to false.
       if (chk.checked && _flowLabelFlows) {
         showFlowNodeLabels(_flowLabelFlows);
       } else {
-        _clearFlowNodeLabelsImpl();
+        // User-initiated toggle-off — fade out visibly rather than pop.
+        _clearFlowNodeLabelsImpl({ fade: true });
       }
     });
   })();
