@@ -201,13 +201,19 @@
     #cityList li:last-child { border-bottom: none; }
 
     #infoPanel {
-      pointer-events: none; 
+      pointer-events: none;
       position: fixed;
       bottom: -100%;
       z-index: 100;
       left: 0;
       width: 100%;
-      height: min(60vh, calc(var(--app-height, 100vh) - 24px));
+      /* Height (and max-height) both subtract env(safe-area-inset-top) so
+         the panel's top edge can never slide past the iOS notch / Dynamic
+         Island. The 12px is a small breathing gap below the status bar so
+         the rounded top corners read cleanly instead of kissing the chrome.
+         SNAP.max() in JS uses the same inset for its upper bound. */
+      height: min(60vh, calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - 12px));
+      max-height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
       background: transparent;
       color: white;
       padding: 20px;
