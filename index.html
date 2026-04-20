@@ -7045,8 +7045,32 @@ body.flow-maximized #flowArcList {
       font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
     }
     .nfThreadCardNations {
-      display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+      /* Fixed-height scroll window. Chips wrap onto multiple rows; the
+         container clips to a single visible row and lets the user scroll
+         vertically to reach additional rows. This stops cards with a
+         large primary_nations list from ballooning vertically and keeps
+         the grid uniform. */
+      display: flex; flex-wrap: wrap; gap: 4px;
+      align-items: flex-start;
+      align-content: flex-start;
+      max-height: 22px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      /* Lightly-styled thin scrollbar so the gutter doesn't dominate a
+         chip-sized container. Firefox uses the scrollbar-* props;
+         WebKit uses the ::-webkit-scrollbar pseudo. */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.22) transparent;
+      overscroll-behavior: contain;
+      /* Prevent pointer drags inside the chip bar from bubbling up to
+         the card's open-panel click or the globe drag. */
+      touch-action: pan-y;
     }
+    .nfThreadCardNations::-webkit-scrollbar { width: 3px; }
+    .nfThreadCardNations::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.22); border-radius: 2px;
+    }
+    .nfThreadCardNations::-webkit-scrollbar-track { background: transparent; }
     /* Country chip: flag image by default, falls back to iso-code text when
        flagcdn doesn't serve the code (chip gets .nfNationChip--text set by
        the img onerror handler). Hover on desktop / tap on mobile reveals

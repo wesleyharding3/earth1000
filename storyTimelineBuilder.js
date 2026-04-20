@@ -126,6 +126,11 @@ const SKIP_GATE = process.argv.includes('--skip-gate');
 // backfills where you don't want article-flow to inflate last_updated_at
 // before cooldown runs).
 const SKIP_UMBRELLA = process.argv.includes('--skip-umbrella');
+// --retitle-all runs the Wikipedia-style title rewrite against EVERY
+// existing Line (not just newly-created ones). Use once after deploying
+// the rewriter, or after tuning the prompt. Costs ~1 Claude Haiku call
+// per Line.
+const RETITLE_ALL   = process.argv.includes('--retitle-all');
 
 // ─── Promotion gates ──────────────────────────────────────────────────────────
 // The thread → timeline graduation criteria. Tuned so that a storm that
@@ -249,6 +254,8 @@ async function run() {
     eventsEmitted:                 0,
     claudeCallsPromote:            0,
     claudeCallsEvent:              0,
+    claudeCallsTitle:              0,
+    linesRetitled:                 0,
     inputTokens:                   0,
     outputTokens:                  0,
   };
@@ -284,6 +291,15 @@ async function run() {
     );
   }
 
+  // One-shot retitle pass. Only runs when explicitly requested via flag so
+  // normal scheduled builds don't spend Claude tokens rewriting titles of
+  // Lines that were already renamed.
+  if (RETITLE_ALL) {
+    console.log(`\n   [${elapsed()}] Retitling existing Lines (one-shot pass)...`);
+    await runRetitleExistingLinesPhase(metrics);
+    console.log(`   ${metrics.linesRetitled} Line(s) retitled`);
+  }
+
   // ── End-of-run summary ───────────────────────────────────────────────────
   console.log(`\n═══ TIMELINE RUN SUMMARY (${elapsed()}) ═══`);
   console.log(`  candidate_threads       : ${metrics.candidateThreads}`);
@@ -301,6 +317,8 @@ async function run() {
   console.log(`  events_emitted          : ${metrics.eventsEmitted}`);
   console.log(`  claude_calls (promote)  : ${metrics.claudeCallsPromote}`);
   console.log(`  claude_calls (events)   : ${metrics.claudeCallsEvent}`);
+  console.log(`  claude_calls (titles)   : ${metrics.claudeCallsTitle || 0}`);
+  console.log(`  lines_retitled          : ${metrics.linesRetitled || 0}`);
   console.log(`  claude_tokens           : in=${metrics.inputTokens}  out=${metrics.outputTokens}`);
   if (!SKIP_GATE) {
     console.log(`  quality_gate_evaluated  : ${gateResult.evaluated}`);
@@ -394,7 +412,7 @@ async function runPromotionPhase(metrics, elapsed) {
         const matched = timelines.find(t => t.id === decision.timelineId);
         console.log(`   ↳ ${decision.action === 'reawaken' ? 'REAWAKENED' : 'attached'} thread "${cand.title.slice(0,50)}" → timeline "${matched?.title?.slice(0,50) || decision.timelineId}" (score=${decision.score?.toFixed(1)})`);
       } else {
-        const timelineId = await createTimelineFromThread(cand);
+        const timelineId = await createTimelineFromThread(cand, metrics);
         metrics.newTimelines++;
         // Add the freshly-created timeline to the in-memory match pool so
         // any subsequent candidate this run can dedup-attach to it. Cheap
@@ -579,6 +597,88 @@ async function decideAttachOrCreate(cand, timelines, timelineFeatures) {
   return { action: 'create', _claudeCalls: 0 };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Wikipedia-style title rewriter
+//
+//  Threads inherit newsroom-toned titles from headlines, which bleed into
+//  Line names when a thread graduates ("Prosecutors Seek 24-Year Sentence
+//  for Sánchez's Wife"). Lines are umbrella identifiers for ongoing stories
+//  and read best as encyclopedia entries ("Begoña Gómez corruption case"),
+//  not breaking-news ledes.
+//
+//  Returns { title, _usage, _claudeCalls }. On any failure or sanity-check
+//  miss, returns the original title so the builder never crashes on a
+//  title rewrite.
+// ─────────────────────────────────────────────────────────────────────────────
+async function generateWikipediaStyleTitle(subject) {
+  const originalTitle = String(subject.title || '').trim();
+  if (!originalTitle) return { title: originalTitle, _claudeCalls: 0 };
+
+  const keywords = Array.isArray(subject.keywords) ? subject.keywords.slice(0, 8).join(', ') : '';
+  const nations  = Array.isArray(subject.primary_nations) ? subject.primary_nations.join(', ') : '';
+  const category = subject.primary_category || '';
+  const desc     = String(subject.description || '').slice(0, 400);
+
+  const prompt =
+`Rewrite this news thread title as a Wikipedia article title for a long-running story/Line entry.
+
+THREAD:
+  title: ${originalTitle}
+  description: ${desc}
+  keywords: ${keywords}
+  primary_nations: ${nations}
+  category: ${category}
+
+Rules:
+- Style: Wikipedia article title — clear, concise, factually neutral, no editorializing.
+- Lead with the entity/subject, not the action. Prefer noun phrases over sentences.
+- Use full proper names on first mention ("Pedro Sánchez", not "Sánchez"; "Keir Starmer", not "Starmer").
+- Strip editorial verbs: "Seek", "Face", "Threaten", "Weigh", "Block", "Slam", "Vow", "Warn".
+- Strip hype words: "Crisis" only if the story genuinely is a recognized crisis; otherwise drop it.
+- 3–8 words when possible. Never use colons or em-dashes. Never a full sentence.
+- No dates unless essential to identity ("2026 Mexican elections" OK; "Iran war 2025" OK; "Starmer Faces Pressure Over Parliamentary Misleading Claims in 2026" NO).
+- If the story is about one person's legal trouble, title it "<Full Name> <legal-matter>" ("Begoña Gómez corruption case").
+- If it's about a country's ongoing political saga, "<Country> <event>" ("Italy Meloni government crisis").
+- Write it in English regardless of source language.
+
+Examples:
+- "Prosecutors Seek 24-Year Sentence for Sánchez's Wife" → "Begoña Gómez corruption case"
+- "Mexico Farm Crisis Threatens 2026 World Cup" → "2026 Mexican agricultural crisis"
+- "Starmer Faces Pressure Over Parliamentary Misleading Claims" → "Keir Starmer parliamentary misleading allegations"
+- "Germany Weighs Kerosene Crisis Against Gulf Deployment" → "Germany kerosene shortage 2026"
+- "Iran-US-Israel War 2025" → "Iran-US-Israel war" (already fine, drop the year if no ambiguity)
+
+Return ONLY this JSON, no prose, no markdown:
+{"title": "..."}`;
+
+  try {
+    const response = await client.messages.create({
+      model:      'claude-haiku-4-5',
+      max_tokens: 120,
+      messages:   [{ role: 'user', content: prompt }]
+    });
+    const raw = response.content?.[0]?.text || '';
+    const match = raw.match(/\{[\s\S]*?\}/);
+    if (!match) return { title: originalTitle, _claudeCalls: 1, _usage: response.usage };
+    let parsed;
+    try { parsed = JSON.parse(match[0]); } catch { return { title: originalTitle, _claudeCalls: 1, _usage: response.usage }; }
+    const t = String(parsed.title || '').trim();
+    // Sanity checks: non-empty, not absurd length, no trailing punctuation
+    // that betrays a sentence, no markdown leftovers.
+    if (!t || t.length < 3 || t.length > 120) return { title: originalTitle, _claudeCalls: 1, _usage: response.usage };
+    if (/[\.!\?]$/.test(t)) return { title: originalTitle, _claudeCalls: 1, _usage: response.usage };
+    if (/^["']|["']$/.test(t)) {
+      // Strip surrounding quotes Claude sometimes adds
+      const stripped = t.replace(/^["']|["']$/g, '').trim();
+      if (stripped.length >= 3) return { title: stripped, _claudeCalls: 1, _usage: response.usage };
+    }
+    return { title: t, _claudeCalls: 1, _usage: response.usage };
+  } catch (err) {
+    console.warn(`   ⚠ title rewrite failed for "${originalTitle.slice(0,50)}": ${err.message}`);
+    return { title: originalTitle, _claudeCalls: 0 };
+  }
+}
+
 async function askClaudeAttachOrCreate(cand, candidateTimeline) {
   try {
     const prompt =
@@ -685,8 +785,27 @@ async function attachThreadToTimeline(thread, timelineId, reawaken) {
   }
 }
 
-async function createTimelineFromThread(thread) {
-  const scope = slugifyScope(thread.title);
+async function createTimelineFromThread(thread, metrics = null) {
+  // Rewrite the thread's breaking-news title into a Wikipedia-style Line
+  // name before persisting. On any failure the original title is used —
+  // we never block promotion on the rewrite.
+  const rewrite = await generateWikipediaStyleTitle(thread);
+  const lineTitle = rewrite.title || thread.title;
+  if (metrics) {
+    metrics.claudeCallsTitle = (metrics.claudeCallsTitle || 0) + (rewrite._claudeCalls || 0);
+    if (rewrite._usage) {
+      metrics.inputTokens  += rewrite._usage.input_tokens        || 0;
+      metrics.inputTokens  += rewrite._usage.cache_read_input_tokens || 0;
+      metrics.inputTokens  += rewrite._usage.cache_creation_input_tokens || 0;
+      metrics.outputTokens += rewrite._usage.output_tokens       || 0;
+    }
+  }
+  if (lineTitle !== thread.title) {
+    console.log(`   ✎ retitled for Line: "${thread.title.slice(0,60)}" → "${lineTitle.slice(0,60)}"`);
+  }
+
+  // Slug derived from the REWRITTEN title so scope matches the final name.
+  const scope = slugifyScope(lineTitle);
   const tx = await pool.connect();
   try {
     await tx.query('BEGIN');
@@ -705,7 +824,7 @@ async function createTimelineFromThread(thread) {
         last_updated_at = NOW()
       RETURNING id
     `, [
-      thread.title,
+      lineTitle,
       thread.description || '',
       scope,
       thread.importance || 5,
@@ -1322,6 +1441,52 @@ async function runLineQualityGatePhase({ dryRun = false } = {}) {
     detachedThreads,
     dryRun,
   };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  RETITLE EXISTING LINES (opt-in via --retitle-all)
+//
+//  One-shot sweep: iterate every Line (in any status), rewrite the title
+//  via Claude, and persist if the new title differs from the old. This
+//  cleans up lines that graduated under the old rename-less pipeline.
+//  Runs sequentially with a brief throttle to keep the Claude TPS modest.
+// ═════════════════════════════════════════════════════════════════════════════
+async function runRetitleExistingLinesPhase(metrics) {
+  const { rows: lines } = await pool.query(`
+    SELECT id, title, description, primary_category, geographic_scope,
+           importance, keywords, primary_nations, status
+    FROM story_timelines
+    ORDER BY importance DESC NULLS LAST, last_updated_at DESC
+  `);
+  if (!lines.length) return;
+  console.log(`   scanning ${lines.length} Line(s)...`);
+
+  for (const line of lines) {
+    try {
+      const rewrite = await generateWikipediaStyleTitle(line);
+      metrics.claudeCallsTitle = (metrics.claudeCallsTitle || 0) + (rewrite._claudeCalls || 0);
+      if (rewrite._usage) {
+        metrics.inputTokens  += rewrite._usage.input_tokens        || 0;
+        metrics.inputTokens  += rewrite._usage.cache_read_input_tokens || 0;
+        metrics.inputTokens  += rewrite._usage.cache_creation_input_tokens || 0;
+        metrics.outputTokens += rewrite._usage.output_tokens       || 0;
+      }
+      const newTitle = rewrite.title || line.title;
+      if (newTitle && newTitle !== line.title) {
+        await pool.query(
+          `UPDATE story_timelines SET title = $1 WHERE id = $2`,
+          [newTitle, line.id]
+        );
+        metrics.linesRetitled = (metrics.linesRetitled || 0) + 1;
+        console.log(`   ✎ id=${line.id}  "${String(line.title).slice(0,55)}"  →  "${newTitle.slice(0,55)}"`);
+      }
+    } catch (err) {
+      console.warn(`   ⚠ retitle failed for Line ${line.id}: ${err.message}`);
+    }
+    // Light throttle so sweep of 30-ish Lines stays under ~15s and
+    // doesn't burst Claude rate-limits.
+    await sleep(250);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
