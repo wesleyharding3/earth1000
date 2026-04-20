@@ -8023,7 +8023,39 @@ app.post("/api/translate", async (req, res) => {
   const { title, summary, id, targetLang } = req.body || {};
   if (!title && !summary) return res.status(400).json({ error: "No text provided" });
 
-  // Tier-based translation limits
+  const target = targetLang || 'EN-US';
+  const isEnglishTarget = target.startsWith('EN');
+
+  // ── DB cache-first read ────────────────────────────────────────────
+  // When the caller provides an article id AND the target is English,
+  // check news_articles.translated_title/summary first. If either is
+  // populated, a previous translation already paid the DeepL / Claude
+  // cost and stored it — return instantly with zero external call and
+  // WITHOUT decrementing the user's translation quota. This is the
+  // point of the system-wide cache: the first user to translate an
+  // article absorbs the cost; everyone after reads it for free.
+  if (id && isEnglishTarget) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT translated_title, translated_summary FROM news_articles WHERE id = $1`,
+        [id]
+      );
+      const cached = rows[0];
+      if (cached && (cached.translated_title || cached.translated_summary)) {
+        return res.json({
+          translatedTitle:   cached.translated_title  || null,
+          translatedSummary: cached.translated_summary || null,
+          cached: true,
+        });
+      }
+    } catch (e) {
+      // Cache lookup failure is non-fatal — fall through to live translation.
+      console.warn('[translate] cache lookup failed:', e.message);
+    }
+  }
+
+  // Tier-based translation limits (only gate MISSES — hits above already
+  // returned before this point, so users aren't billed for cached reads).
   if (req.user?.id) {
     const tlAccess = await checkTranslation(req.user.id, req.user.tier || "free").catch(() => ({ allowed: true }));
     if (!tlAccess.allowed) {
@@ -8040,7 +8072,6 @@ app.post("/api/translate", async (req, res) => {
   try {
     // DeepL supports all but: Filipino (TL), Hindi (HI), Malay (MS), Vietnamese (VI)
     const DEEPL_UNSUPPORTED = new Set(['TL', 'HI', 'MS', 'VI']);
-    const target = targetLang || 'EN-US';
     const baseTarget = target.split('-')[0].toUpperCase();
     const needsClaudeFallback = DEEPL_UNSUPPORTED.has(baseTarget);
 
@@ -8087,7 +8118,7 @@ app.post("/api/translate", async (req, res) => {
     // Only persist to DB for English translations (to avoid mixing languages across users).
     // Runs on every call (not just cache miss) because id is per-request; the UPDATE
     // is COALESCE-idempotent so a repeat write for the same id is harmless.
-    const isEnglishTarget = target.startsWith('EN');
+    // isEnglishTarget is already declared in the outer scope (used by the cache-first read above).
     if (isEnglishTarget && id && (translatedTitle || translatedSummary)) {
       await pool.query(
         `UPDATE news_articles SET translated_title = COALESCE($1, translated_title), translated_summary = COALESCE($2, translated_summary) WHERE id = $3`,

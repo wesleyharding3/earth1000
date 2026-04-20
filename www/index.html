@@ -11103,14 +11103,22 @@ window.sourceBiasBadgeHTML = function(bias) {
     }
 
     // Helper: does this article need translation into the current target language?
+    //
+    // English-first policy: the button only appears when all three hold —
+    //   1. the article has a title (sanity),
+    //   2. the source language is not English (lang field missing/unknown
+    //      is treated as "assume English-or-close-enough"; erring on the
+    //      side of not showing the button keeps feeds clean),
+    //   3. translated_title is empty (no cached translation yet).
+    //
+    // Once any user translates, the DB cache populates and the button
+    // disappears for everyone thereafter.
     function articleNeedsTranslation(article) {
       if (!article || !article.title) return false;
-      const target = getUserTargetLang();
-      if (target.code === 'EN-US' || target.code === 'EN-GB') {
-        // English target: only show if no existing translated_title
-        return !article.translated_title;
-      }
-      // Non-English target: always offer translation (stored text is likely English)
+      if (article.translated_title) return false;
+      const lang = String(article.language || '').toLowerCase();
+      if (!lang) return false;
+      if (lang === 'en' || lang.startsWith('en-') || lang.startsWith('en_')) return false;
       return true;
     }
 
@@ -27996,10 +28004,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       : '';
 
     const _adpTLang = window.getUserTargetLang ? window.getUserTargetLang() : { short: 'EN', label: 'English' };
-    // Always surface the translate button on the maximized article panel
-    // — user can force a re-translation into their preferred language
-    // even if the article already has one stored.
-    const adpTranslateBtn = `<button class="adpTranslateBtn articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_adpTLang.label}">${_adpTLang.short}</button>`;
+    // Translate pill only appears when the article actually needs translation
+    // — non-English source, no cached translation yet. Shared cache in
+    // news_articles.translated_title means the first user's click populates
+    // for everyone else; subsequent opens of the same article don't show
+    // the button because translated_title is now populated.
+    const _adpNeedsTrans = window.articleNeedsTranslation && window.articleNeedsTranslation(article);
+    const adpTranslateBtn = _adpNeedsTrans
+      ? `<button class="adpTranslateBtn articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="window.translateCard(event,this)" title="Translate to ${_adpTLang.label}">${_adpTLang.short}</button>`
+      : '';
     const sourceBlock = `
       <div class="adpSource">
         ${sourceLogo}
