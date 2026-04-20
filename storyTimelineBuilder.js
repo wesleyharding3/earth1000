@@ -122,6 +122,10 @@ const DRY_RUN_GATE = process.argv.includes('--dry-run-gate');
 // --skip-gate disables the quality gate entirely (useful during backfill
 // runs where you want to bootstrap weak Lines before the gate runs).
 const SKIP_GATE = process.argv.includes('--skip-gate');
+// --skip-umbrella disables the Article Umbrella phase (used during
+// backfills where you don't want article-flow to inflate last_updated_at
+// before cooldown runs).
+const SKIP_UMBRELLA = process.argv.includes('--skip-umbrella');
 
 // ─── Promotion gates ──────────────────────────────────────────────────────────
 // The thread → timeline graduation criteria. Tuned so that a storm that
@@ -158,8 +162,37 @@ const EVENT_LOOKBACK_DAYS        = 21;  // day-clusters older than this are stab
 const EVENT_MAX_DAYS_PER_RUN     = 40;  // cap Claude spend per run
 
 // ─── Cooldown ────────────────────────────────────────────────────────────────
-const COOLING_AFTER_DAYS = 30;
+// Lines represent historical trends — some legitimately move slowly. Doubled
+// the active→cooling threshold from 30 to 60 so Lines don't prematurely
+// drift to cooling between coverage bursts. Dormant threshold unchanged.
+const COOLING_AFTER_DAYS = 60;
 const DORMANT_AFTER_DAYS = 90;
+
+// ─── Article Umbrella phase ──────────────────────────────────────────────────
+// Beyond thread promotions, recent articles matching a Line's umbrella
+// (entities / nations / keywords) keep that Line alive. Articles flow into
+// story_timeline_articles so they surface in the Line's Sources list and
+// bump last_updated_at, avoiding a premature cooling drift.
+const UMBRELLA_LOOKBACK_DAYS          = 7;    // only consider articles from last 7d
+const UMBRELLA_CANDIDATES_PER_LINE    = 200;  // SQL pre-filter LIMIT per Line
+const UMBRELLA_ATTACH_CAP_PER_LINE    = 50;   // max new articles attached per Line per run
+// Article-umbrella uses a LOWER threshold than thread→line attachment
+// (6.0). Threads carry multiple articles' worth of context so they need
+// a stricter match; single articles are lighter signal and a Line worth
+// keeping alive should have wider semantic overlap with its constituents.
+// Lower floor = "the article is plausibly a followup coverage piece";
+// multi-thread quality gate still protects Line quality long-term.
+// 4.0 blocks "1 nation + 1 keyword" minimum matches (which often align on
+// the publisher country rather than the subject) while keeping legit
+// followup coverage. Hits require either:
+//   (a) 1 nation + ≥2 keywords         = 4.5+
+//   (b) 2 nations                      = 5.0
+//   (c) ≥4 keywords                    = 4.0
+//   (d) any combination w/ entity hits  (entity weight is 2.5 each)
+const UMBRELLA_ATTACH_THRESHOLD       = 4.0;
+// Dormant Lines do NOT participate — per product decision, dormant stays
+// thread-only for reawakening. Cooling Lines with fresh umbrella articles
+// are restored to 'active'.
 
 // ─── Line quality gate (runs every build — first run = one-time sweep) ────────
 // A Line is KEPT if it clears either rule:
@@ -203,20 +236,34 @@ async function run() {
   console.log(`   lookback=${LOOKBACK_HOURS}h  min_articles=${MIN_PROMOTION_ARTICLES}  min_sources=${MIN_PROMOTION_SOURCES}  min_span_days=${MIN_PROMOTION_SPAN_DAYS}  min_imp=${MIN_PROMOTION_IMPORTANCE}`);
 
   const metrics = {
-    candidateThreads:    0,
-    attachedThreads:     0,
-    newTimelines:        0,
-    reawakened:          0,
-    eventExtractionRuns: 0,
-    eventsEmitted:       0,
-    claudeCallsPromote:  0,
-    claudeCallsEvent:    0,
-    inputTokens:         0,
-    outputTokens:        0,
+    candidateThreads:              0,
+    attachedThreads:               0,
+    newTimelines:                  0,
+    reawakened:                    0,
+    umbrellaLinesScanned:          0,
+    umbrellaCandidatesScored:      0,
+    umbrellaArticlesAttached:      0,
+    umbrellaLinesRefreshed:        0,
+    umbrellaCoolingRestored:       0,
+    eventExtractionRuns:           0,
+    eventsEmitted:                 0,
+    claudeCallsPromote:            0,
+    claudeCallsEvent:              0,
+    inputTokens:                   0,
+    outputTokens:                  0,
   };
 
   if (!ONLY_EVENTS) {
     await runPromotionPhase(metrics, elapsed);
+  }
+
+  // Article Umbrella phase runs AFTER promotion (so any newly-graduated
+  // Lines this run also receive umbrella articles) but BEFORE cooldown
+  // (so freshly-attached articles can flip cooling→active before the
+  // cooldown pass runs).
+  if (!ONLY_EVENTS && !SKIP_UMBRELLA) {
+    console.log(`\n   [${elapsed()}] Phase C: Article umbrella (lookback=${UMBRELLA_LOOKBACK_DAYS}d)...`);
+    await runArticleUmbrellaPhase(metrics, elapsed);
   }
 
   if (!SKIP_EVENTS) {
@@ -243,6 +290,11 @@ async function run() {
   console.log(`  attached_to_existing    : ${metrics.attachedThreads}`);
   console.log(`  new_timelines_created   : ${metrics.newTimelines}`);
   console.log(`  dormant_reawakened      : ${metrics.reawakened}`);
+  console.log(`  umbrella_lines_scanned  : ${metrics.umbrellaLinesScanned}`);
+  console.log(`  umbrella_cands_scored   : ${metrics.umbrellaCandidatesScored}`);
+  console.log(`  umbrella_articles_added : ${metrics.umbrellaArticlesAttached}`);
+  console.log(`  umbrella_lines_refresh  : ${metrics.umbrellaLinesRefreshed}`);
+  console.log(`  umbrella_cool_restored  : ${metrics.umbrellaCoolingRestored}`);
   console.log(`  timelines_cooled        : ${cooled.cooled}`);
   console.log(`  timelines_dormant       : ${cooled.dormant}`);
   console.log(`  event_extractions_run   : ${metrics.eventExtractionRuns}`);
@@ -930,6 +982,209 @@ async function runCooldownPhase() {
      RETURNING id
   `, [DORMANT_AFTER_DAYS]);
   return { cooled: c1.length, dormant: c2.length };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PHASE C : ARTICLE UMBRELLA
+//
+//  Beyond thread promotions, recent articles that match a Line's umbrella
+//  (entities / nations / keywords / title tokens) flow into the Line and
+//  keep it alive. The same ATTACH_THRESHOLD we use for thread→timeline is
+//  reused — if an article would be considered a chapter of this Line's
+//  story, attach it. Cooling Lines that receive fresh articles flip back
+//  to 'active'. Dormant Lines are intentionally skipped (per product
+//  decision: dormant stays thread-only for reawakening).
+// ═════════════════════════════════════════════════════════════════════════════
+async function runArticleUmbrellaPhase(metrics, elapsed) {
+  // 1. Load active + cooling Lines
+  const { rows: lines } = await pool.query(`
+    SELECT id, title, status, importance, keywords, primary_nations,
+           primary_category, geographic_scope, first_seen_at, last_updated_at
+    FROM story_timelines
+    WHERE status IN ('active', 'cooling')
+    ORDER BY status, last_updated_at DESC
+  `);
+  metrics.umbrellaLinesScanned = lines.length;
+  if (!lines.length) {
+    console.log(`   [${elapsed()}] no active/cooling Lines to scan`);
+    return;
+  }
+  console.log(`   [${elapsed()}] ${lines.length} Line(s) to scan for umbrella articles`);
+
+  // 2. Build umbrella features for every Line (entities from top-N historical
+  //    articles + nations + keywords + title tokens)
+  const featureMap = await buildTimelineFeatures(lines);
+
+  // 3. For each Line, pre-filter candidate articles via SQL (by nation OR
+  //    keyword overlap), then score + attach the ones that clear threshold.
+  for (const tl of lines) {
+    try {
+      const feat = featureMap.get(tl.id);
+      if (!feat) continue;
+
+      const nations  = Array.from(feat.nations);                  // ISO uppercase
+      const keywords = Array.from(feat.keywords);                 // normalized
+
+      // Skip Lines with no signal at all — nothing to match against.
+      if (!nations.length && !keywords.length) continue;
+
+      // Pre-filter as a UNION of two independently-indexed branches so
+      // Postgres can use the right index per branch instead of forcing a
+      // seq scan on the 700k+ article pool:
+      //   Branch A: articles whose country iso ∈ this Line's nations
+      //             (uses idx_articles_country_published)
+      //   Branch B: articles whose normalized keyword ∈ this Line's keywords
+      //             (uses idx_ak_normalized, then joins to news_articles)
+      // Both branches already filter to the 7-day window and exclude
+      // articles already attached to this Line.
+      //
+      // iso_code is stored uppercase in the countries table so no cast.
+      // nations[] is guaranteed non-empty going into branch A because we
+      // skip the whole Line if nations+keywords are both empty above.
+      // Always emit both branches — empty arrays short-circuit via the
+      // cardinality() guard so Postgres never scans when that branch has
+      // no keys, but the $2/$3 type annotations stay valid either way.
+      const { rows: candidates } = await pool.query(`
+        SELECT DISTINCT ON (id) id, title, published_at, iso_code
+        FROM (
+          SELECT a.id, a.title, a.published_at, co.iso_code
+          FROM news_articles a
+          JOIN countries co ON co.id = a.country_id
+          WHERE cardinality($2::text[]) > 0
+            AND a.published_at >= NOW() - INTERVAL '${UMBRELLA_LOOKBACK_DAYS} days'
+            AND co.iso_code = ANY($2::text[])
+            AND NOT EXISTS (
+              SELECT 1 FROM story_timeline_articles sta
+               WHERE sta.timeline_id = $1 AND sta.article_id = a.id
+            )
+          UNION
+          SELECT a.id, a.title, a.published_at, co.iso_code
+          FROM article_keywords ak
+          JOIN news_articles a ON a.id = ak.article_id
+          LEFT JOIN countries co ON co.id = a.country_id
+          WHERE cardinality($3::text[]) > 0
+            AND ak.normalized_keyword = ANY($3::text[])
+            AND a.published_at >= NOW() - INTERVAL '${UMBRELLA_LOOKBACK_DAYS} days'
+            AND NOT EXISTS (
+              SELECT 1 FROM story_timeline_articles sta
+               WHERE sta.timeline_id = $1 AND sta.article_id = a.id
+            )
+        ) u
+        ORDER BY id, published_at DESC
+        LIMIT $4
+      `, [tl.id, nations, keywords, UMBRELLA_CANDIDATES_PER_LINE]);
+
+      if (!candidates.length) continue;
+      metrics.umbrellaCandidatesScored += candidates.length;
+
+      // 4. Batch-load deep-context entities for all candidates in this Line
+      //    (single call per Line, shared across all candidates).
+      const candIds = candidates.map(c => Number(c.id));
+      const ctxMap = await loadContextForArticles(candIds);
+
+      // 5. Batch-load article_keywords for these candidates
+      const { rows: akRows } = await pool.query(`
+        SELECT article_id, COALESCE(normalized_keyword, LOWER(keyword)) AS kw
+        FROM article_keywords
+        WHERE article_id = ANY($1::int[])
+      `, [candIds]);
+      const kwByArticle = new Map();
+      for (const r of akRows) {
+        if (!kwByArticle.has(r.article_id)) kwByArticle.set(r.article_id, new Set());
+        kwByArticle.get(r.article_id).add(r.kw);
+      }
+
+      // 6. Score each candidate against this Line's umbrella
+      const scored = [];
+      for (const c of candidates) {
+        const ctx = ctxMap.get(Number(c.id));
+        const artEntities = new Set();
+        if (ctx) {
+          for (const e of (ctx.entities || [])) {
+            if (e?.text) artEntities.add(String(e.text).toLowerCase().trim());
+          }
+        }
+        const artNations   = new Set(c.iso_code ? [String(c.iso_code).toUpperCase()] : []);
+        const artKeywords  = kwByArticle.get(Number(c.id)) || new Set();
+        const artTitleTok  = tokenizeTitle(c.title);
+
+        const entShared = Math.min(ENTITY_CAP,  intersectCount(artEntities,  feat.entities));
+        const natShared = intersectCount(artNations,  feat.nations);
+        const kwShared  = Math.min(KEYWORD_CAP, intersectCount(artKeywords,  feat.keywords));
+        const ttkShared = intersectCount(artTitleTok, feat.titleTokens);
+
+        const score =
+          entShared  * W_ENTITY_OVERLAP +
+          natShared  * W_NATION_OVERLAP +
+          kwShared   * W_KEYWORD_OVERLAP +
+          ttkShared  * W_TITLE_TOKEN;
+
+        if (score >= UMBRELLA_ATTACH_THRESHOLD) {
+          scored.push({ articleId: Number(c.id), score });
+        }
+      }
+
+      if (!scored.length) continue;
+
+      // 7. Cap per-Line and attach
+      scored.sort((a, b) => b.score - a.score);
+      const toAttach = scored.slice(0, UMBRELLA_ATTACH_CAP_PER_LINE);
+      const wasCooling = (tl.status === 'cooling');
+
+      const tx = await pool.connect();
+      try {
+        await tx.query('BEGIN');
+
+        // Bulk insert via unnest(). relevance_score carries the umbrella
+        // score; parabolic_weight stays 1.0 (density ruler re-weights at
+        // render time). is_anchor=false — these are followup coverage,
+        // not the anchor article(s) that seeded the Line.
+        const ids   = toAttach.map(a => a.articleId);
+        const rels  = toAttach.map(a => a.score);
+        await tx.query(`
+          INSERT INTO story_timeline_articles (timeline_id, article_id, relevance_score, parabolic_weight, is_anchor, added_at)
+          SELECT $1, unnest($2::int[]), unnest($3::float8[]), 1.0, false, NOW()
+          ON CONFLICT (timeline_id, article_id) DO NOTHING
+        `, [tl.id, ids, rels]);
+
+        // Bump last_updated_at and recount article_count. Cooling → active
+        // if we attached anything. Dormant never participates here.
+        await tx.query(`
+          UPDATE story_timelines
+             SET last_updated_at = NOW(),
+                 status          = CASE WHEN status = 'cooling' THEN 'active' ELSE status END,
+                 article_count   = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
+           WHERE id = $1
+        `, [tl.id]);
+
+        await tx.query('COMMIT');
+      } catch (err) {
+        await tx.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        tx.release();
+      }
+
+      metrics.umbrellaArticlesAttached += toAttach.length;
+      metrics.umbrellaLinesRefreshed += 1;
+      if (wasCooling) metrics.umbrellaCoolingRestored += 1;
+
+      if (toAttach.length >= 5 || wasCooling) {
+        console.log(
+          `   ↳ umbrella: +${toAttach.length} articles → "${(tl.title||'').slice(0,55)}"` +
+          (wasCooling ? ' [cooling→active]' : '')
+        );
+      }
+    } catch (err) {
+      console.warn(`   ⚠ umbrella failed for Line ${tl.id} "${(tl.title||'').slice(0,40)}": ${err.message}`);
+    }
+  }
+
+  console.log(
+    `   [${elapsed()}] umbrella done: scored=${metrics.umbrellaCandidatesScored} ` +
+    `attached=${metrics.umbrellaArticlesAttached} refreshed=${metrics.umbrellaLinesRefreshed} ` +
+    `restored=${metrics.umbrellaCoolingRestored}`
+  );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
