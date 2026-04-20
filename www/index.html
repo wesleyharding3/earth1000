@@ -3516,19 +3516,48 @@ body.flow-maximized #flowArcList {
       .cdArticleGrid.gridView-1col {
         grid-template-columns: 1fr !important;
       }
-      /* When a card lives inside a 2-col grid, space is tight — clamp
-         summaries and descriptions to 2 lines so titles + metadata stay
-         readable without cards becoming column-height uneven. Titles
-         keep their existing line-clamp. Single-col mode restores the
-         full summary since there's room. */
+      /* When a card lives inside a 2-col grid, space is tight — hide
+         summaries entirely and fix the card to a known height so the
+         grid stays uniform (no jagged bottom edges from variable-length
+         titles). Title gets an expanded line-clamp to fill the space
+         summaries used to occupy. Single-col mode leaves everything
+         natural since it has room for summaries + dynamic heights. */
       .gridView-2col .articleCardSummary,
       .gridView-2col .nfCardSummary,
       .gridView-2col .nfThreadCardDesc {
-        display: -webkit-box !important;
-        -webkit-line-clamp: 2 !important;
-        -webkit-box-orient: vertical !important;
-        overflow: hidden !important;
-        text-overflow: ellipsis;
+        display: none !important;
+      }
+      .gridView-2col .articleCard,
+      .gridView-2col .nfCard,
+      .gridView-2col .nfThreadCard {
+        height: 280px !important;
+        min-height: 0 !important;
+        overflow: hidden;
+        display: flex !important;
+        flex-direction: column;
+      }
+      /* Image takes a fixed top slice; body flexes into the remainder. */
+      .gridView-2col .articleCardImage,
+      .gridView-2col .articleCardImagePlaceholder,
+      .gridView-2col .nfCardImg,
+      .gridView-2col .nfCardImgPh,
+      .gridView-2col .nfThreadCardImg,
+      .gridView-2col .nfThreadCardImgPh {
+        height: 130px !important;
+        flex-shrink: 0;
+      }
+      .gridView-2col .articleCardBody,
+      .gridView-2col .nfCardBody,
+      .gridView-2col .nfThreadCardBody {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
+      }
+      /* Title expands to fill the room the summary vacated. */
+      .gridView-2col .articleCardTitle,
+      .gridView-2col .nfCardTitle,
+      .gridView-2col .nfThreadCardTitle {
+        -webkit-line-clamp: 4 !important;
       }
     }
 
@@ -11149,7 +11178,6 @@ window.sourceBiasBadgeHTML = function(bias) {
         const articleId = btn.dataset.id;
         const title     = btn.dataset.title;
         const summary   = btn.dataset.summary;
-        const originalText = btn.textContent;
         btn.textContent = "⏳"; btn.disabled = true;
         try {
           const targetLang = getUserTargetLang();
@@ -11160,15 +11188,46 @@ window.sourceBiasBadgeHTML = function(bias) {
           });
           if (!res.ok) throw new Error("bad response");
           const { translatedTitle, translatedSummary } = await res.json();
-          const wrapper = btn.parentElement;
-          if (translatedTitle) {
-            const el = wrapper?.querySelector(".articleCardTitle") || wrapper?.querySelector(".nfCardTitle") || wrapper?.querySelector(".arcCardHeadline");
-            if (el) el.textContent = translatedTitle;
+
+          // Find the card root. Previously the code used `btn.parentElement`
+          // then querySelector'd inside — that failed on nfCard (where the
+          // button is buried in a footer-right div that's a sibling, not an
+          // ancestor, of the title/summary). `closest()` walks up the tree
+          // from the button to the nearest matching card container, and the
+          // subsequent querySelector covers every title/summary class used
+          // across the app.
+          const CARD_ROOTS = '.nfCard, .articleCard, .nfThreadCard, .cdCard, .arcCardExpanded, .arcCardHeader';
+          const TITLE_SEL  = '.articleCardTitle, .nfCardTitle, .nfThreadCardTitle, .cdCardTitle, .arcCardHeadline';
+          const SUMMARY_SEL= '.articleCardSummary, .nfCardSummary, .nfThreadCardDesc, .cdCardSummary, .arcCardSummary';
+          const cardRoot = btn.closest(CARD_ROOTS) || btn.parentElement;
+          if (cardRoot) {
+            if (translatedTitle) {
+              const t = cardRoot.querySelector(TITLE_SEL);
+              if (t) t.textContent = translatedTitle;
+            }
+            if (translatedSummary) {
+              const s = cardRoot.querySelector(SUMMARY_SEL);
+              if (s) s.textContent = translatedSummary;
+            }
           }
-          if (translatedSummary) {
-            const el = wrapper?.querySelector(".articleCardSummary") || wrapper?.querySelector(".nfCardSummary") || wrapper?.querySelector(".arcCardSummary");
-            if (el) el.textContent = translatedSummary;
-          }
+
+          // Stamp the translation back into the card's data-article payload
+          // (if it has one) so when the card is later clicked and the article
+          // object is parsed from JSON to open the panel, the panel already
+          // reads the translated fields — no flicker back to the original.
+          try {
+            const host = btn.closest('[data-article]');
+            if (host?.dataset?.article) {
+              const obj = JSON.parse(host.dataset.article.replace(/&#39;/g, "'"));
+              if (translatedTitle)   obj.translated_title   = translatedTitle;
+              if (translatedSummary) obj.translated_summary = translatedSummary;
+              host.dataset.article = JSON.stringify(obj).replace(/'/g, "&#39;");
+            }
+          } catch (_) {}
+
+          // Patch the currently-open article detail panel (if any) so
+          // clicking translate from the card instantly updates the panel
+          // too, without waiting for a re-render.
           const adpContent = document.getElementById("adpContent");
           if (adpContent) {
             if (translatedTitle) {
@@ -11180,8 +11239,10 @@ window.sourceBiasBadgeHTML = function(bias) {
               if (s) s.textContent = translatedSummary;
             }
           }
-          // Patch news-feed array if it happens to be exposed (openNodePanel's
-          // in-scope version also patches its own allArticles[] closure).
+
+          // Patch any in-memory article lists exposed on window. The
+          // country-panel variant of translateCard additionally patches
+          // its own closure-scoped allArticles[].
           const nfList = window.__nfArticles;
           if (Array.isArray(nfList)) {
             const art = nfList.find(a => String(a.id) === String(articleId));
@@ -15591,17 +15652,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
             });
             if (!res.ok) throw new Error("bad response");
             const { translatedTitle, translatedSummary } = await res.json();
-            const wrapper = btn.parentElement;
-            // Update card title/summary in feed panels
-            if (translatedTitle) {
-              const el = wrapper.querySelector(".articleCardTitle") || wrapper.querySelector(".nfCardTitle");
-              if (el) el.textContent = translatedTitle;
+
+            // Use closest() to walk up to the card root, then search
+            // downward. Previously this used btn.parentElement and
+            // querySelector only inside that immediate parent — fine for
+            // country-panel cards where the button is a sibling of the
+            // card, but broken on nfCard where the button lives in a deep
+            // footer-right div (title/summary are up in the card body).
+            const CARD_ROOTS = '.nfCard, .articleCard, .nfThreadCard, .cdCard, .arcCardExpanded, .arcCardHeader';
+            const TITLE_SEL  = '.articleCardTitle, .nfCardTitle, .nfThreadCardTitle, .cdCardTitle, .arcCardHeadline';
+            const SUMMARY_SEL= '.articleCardSummary, .nfCardSummary, .nfThreadCardDesc, .cdCardSummary, .arcCardSummary';
+            const cardRoot = btn.closest(CARD_ROOTS) || btn.parentElement;
+            if (cardRoot) {
+              if (translatedTitle) {
+                const t = cardRoot.querySelector(TITLE_SEL);
+                if (t) t.textContent = translatedTitle;
+              }
+              if (translatedSummary) {
+                const s = cardRoot.querySelector(SUMMARY_SEL);
+                if (s) s.textContent = translatedSummary;
+              }
             }
-            if (translatedSummary) {
-              const el = wrapper.querySelector(".articleCardSummary") || wrapper.querySelector(".nfCardSummary");
-              if (el) el.textContent = translatedSummary;
-            }
-            // Also update article detail panel if open
+
+            // Stamp translation into data-article so later panel opens
+            // from this card get the translated fields immediately.
+            try {
+              const host = btn.closest('[data-article]');
+              if (host?.dataset?.article) {
+                const obj = JSON.parse(host.dataset.article.replace(/&#39;/g, "'"));
+                if (translatedTitle)   obj.translated_title   = translatedTitle;
+                if (translatedSummary) obj.translated_summary = translatedSummary;
+                host.dataset.article = JSON.stringify(obj).replace(/'/g, "&#39;");
+              }
+            } catch (_) {}
+
+            // Patch the open article-detail panel (if any).
             const adpContent = document.getElementById("adpContent");
             if (adpContent) {
               if (translatedTitle) {

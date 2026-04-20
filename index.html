@@ -10899,15 +10899,38 @@ window.sourceBiasBadgeHTML = function(bias) {
           });
           if (!res.ok) throw new Error("bad response");
           const { translatedTitle, translatedSummary } = await res.json();
-          const wrapper = btn.parentElement;
-          if (translatedTitle) {
-            const el = wrapper?.querySelector(".articleCardTitle") || wrapper?.querySelector(".nfCardTitle") || wrapper?.querySelector(".arcCardHeadline");
-            if (el) el.textContent = translatedTitle;
+
+          // Find the card root via closest() rather than btn.parentElement —
+          // on nfCard the button is buried in a footer-right div that's a
+          // sibling of the title/summary. closest() walks up to the card
+          // container; the unified selector covers every card variant.
+          const CARD_ROOTS = '.nfCard, .articleCard, .nfThreadCard, .cdCard, .arcCardExpanded, .arcCardHeader';
+          const TITLE_SEL  = '.articleCardTitle, .nfCardTitle, .nfThreadCardTitle, .cdCardTitle, .arcCardHeadline';
+          const SUMMARY_SEL= '.articleCardSummary, .nfCardSummary, .nfThreadCardDesc, .cdCardSummary, .arcCardSummary';
+          const cardRoot = btn.closest(CARD_ROOTS) || btn.parentElement;
+          if (cardRoot) {
+            if (translatedTitle) {
+              const t = cardRoot.querySelector(TITLE_SEL);
+              if (t) t.textContent = translatedTitle;
+            }
+            if (translatedSummary) {
+              const s = cardRoot.querySelector(SUMMARY_SEL);
+              if (s) s.textContent = translatedSummary;
+            }
           }
-          if (translatedSummary) {
-            const el = wrapper?.querySelector(".articleCardSummary") || wrapper?.querySelector(".nfCardSummary") || wrapper?.querySelector(".arcCardSummary");
-            if (el) el.textContent = translatedSummary;
-          }
+
+          // Stamp the translation into data-article so panel opens after
+          // this click read the translated fields directly from JSON.
+          try {
+            const host = btn.closest('[data-article]');
+            if (host?.dataset?.article) {
+              const obj = JSON.parse(host.dataset.article.replace(/&#39;/g, "'"));
+              if (translatedTitle)   obj.translated_title   = translatedTitle;
+              if (translatedSummary) obj.translated_summary = translatedSummary;
+              host.dataset.article = JSON.stringify(obj).replace(/'/g, "&#39;");
+            }
+          } catch (_) {}
+
           const adpContent = document.getElementById("adpContent");
           if (adpContent) {
             if (translatedTitle) {
@@ -15179,17 +15202,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
             });
             if (!res.ok) throw new Error("bad response");
             const { translatedTitle, translatedSummary } = await res.json();
-            const wrapper = btn.parentElement;
-            // Update card title/summary in feed panels
-            if (translatedTitle) {
-              const el = wrapper.querySelector(".articleCardTitle") || wrapper.querySelector(".nfCardTitle");
-              if (el) el.textContent = translatedTitle;
+
+            // closest() walks up to the card container so the title/summary
+            // update works across every card variant including nfCard where
+            // the button lives in a deep footer.
+            const CARD_ROOTS = '.nfCard, .articleCard, .nfThreadCard, .cdCard, .arcCardExpanded, .arcCardHeader';
+            const TITLE_SEL  = '.articleCardTitle, .nfCardTitle, .nfThreadCardTitle, .cdCardTitle, .arcCardHeadline';
+            const SUMMARY_SEL= '.articleCardSummary, .nfCardSummary, .nfThreadCardDesc, .cdCardSummary, .arcCardSummary';
+            const cardRoot = btn.closest(CARD_ROOTS) || btn.parentElement;
+            if (cardRoot) {
+              if (translatedTitle) {
+                const t = cardRoot.querySelector(TITLE_SEL);
+                if (t) t.textContent = translatedTitle;
+              }
+              if (translatedSummary) {
+                const s = cardRoot.querySelector(SUMMARY_SEL);
+                if (s) s.textContent = translatedSummary;
+              }
             }
-            if (translatedSummary) {
-              const el = wrapper.querySelector(".articleCardSummary") || wrapper.querySelector(".nfCardSummary");
-              if (el) el.textContent = translatedSummary;
-            }
-            // Also update article detail panel if open
+
+            // Stamp translation into the host card's data-article payload
+            // so subsequent panel opens from this card see the translated
+            // fields without another round-trip.
+            try {
+              const host = btn.closest('[data-article]');
+              if (host?.dataset?.article) {
+                const obj = JSON.parse(host.dataset.article.replace(/&#39;/g, "'"));
+                if (translatedTitle)   obj.translated_title   = translatedTitle;
+                if (translatedSummary) obj.translated_summary = translatedSummary;
+                host.dataset.article = JSON.stringify(obj).replace(/'/g, "&#39;");
+              }
+            } catch (_) {}
+
+            // Update the open article-detail panel (if any).
             const adpContent = document.getElementById("adpContent");
             if (adpContent) {
               if (translatedTitle) {
