@@ -4038,6 +4038,46 @@ body.flow-maximized #flowArcList {
 }
 /* Override the grid display to hide by default; view-info restores it. */
 #flowCtxCard .flowCtxInfoView { display: none; }
+/* ── Show-labels checkbox pinned to the bottom-right of flowCtxCard ──
+   Visible on Thread / Line flow arcs (kind = "Thread" or "Timeline").
+   Hidden on Article origin via the .articleOrigin modifier below. Drives
+   the master #flowLabelsToggle so the legacy News-Flows panel stays in
+   sync. Defaults to checked so labels appear the moment a card opens. */
+.flowCtxLabelsChk {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.08);
+  z-index: 4;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.flowCtxLabelsChk:hover {
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.88);
+  border-color: rgba(255,255,255,0.18);
+}
+.flowCtxLabelsChk input[type=checkbox] {
+  width: 12px; height: 12px;
+  accent-color: rgba(80,255,160,1);
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
+}
+/* Article flow arcs don't use origin/destination labeling — hide there. */
+#flowCtxCard.articleOrigin .flowCtxLabelsChk { display: none; }
+/* Minimize collapses the card; the label toggle would crowd the title. */
+#flowCtxCard.flowCtxMinimized .flowCtxLabelsChk { display: none; }
 
 /* ── Tab-driven view switching inside flowCtxCard ───────────────────
    Three sibling views share the same card body. State in each view is
@@ -24306,6 +24346,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="flowCtxMeta"></div>
       </div>
       <div class="flowCtxLiveArcsSlot"></div>
+      <label class="flowCtxLabelsChk" title="Show origin &amp; destination labels on the globe">
+        <input type="checkbox" id="flowCtxLabelsToggle" checked>
+        <span>Labels</span>
+      </label>
     `;
     document.body.appendChild(el);
     // Reparent the live arcs DOM into the card. Keeps all existing IDs +
@@ -24388,6 +24432,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
       e.preventDefault();
       window.__flowArcGoBack?.();
     });
+    // Wire the ctx-card's Labels checkbox to the master #flowLabelsToggle
+    // in the News Flows panel. Both checkboxes stay in sync:
+    //   • Ctx → master: dispatch a change on the master so its existing
+    //     show/clear logic fires.
+    //   • Master → ctx: listen for master changes and mirror the state.
+    try {
+      const ctxChk = el.querySelector('#flowCtxLabelsToggle');
+      const master = document.getElementById('flowLabelsToggle');
+      if (ctxChk) {
+        ctxChk.addEventListener('click', (e) => e.stopPropagation());
+        ctxChk.addEventListener('change', (e) => {
+          e.stopPropagation();
+          const m = document.getElementById('flowLabelsToggle');
+          if (m && m.checked !== ctxChk.checked) {
+            m.checked = ctxChk.checked;
+            m.dispatchEvent(new Event('change'));
+          }
+        });
+      }
+      if (master) {
+        master.addEventListener('change', () => {
+          const c = el.querySelector('#flowCtxLabelsToggle');
+          if (c && c.checked !== master.checked) c.checked = master.checked;
+        });
+      }
+    } catch (_) {}
     return el;
   }
   function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta }) {
@@ -24411,6 +24481,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Article-origin: pill bar collapses to Back / − / ✕ only.
     el.classList.toggle("articleOrigin", kind === "Article");
     el.classList.remove("visible", "flowCtxMinimized");
+    // Default the ctx Labels checkbox to checked on every open so users
+    // always see labels on a fresh thread/line open unless they've
+    // explicitly disabled them this session via the master toggle.
+    try {
+      const ctxChk = el.querySelector('#flowCtxLabelsToggle');
+      if (ctxChk && kind !== 'Article') {
+        const master = document.getElementById('flowLabelsToggle');
+        // Sync to master if master has a different state (user may have
+        // toggled in the News Flows panel); otherwise keep default true.
+        ctxChk.checked = master ? master.checked : true;
+      }
+    } catch (_) {}
     void el.offsetHeight;
     el.classList.add("visible");
     window.__flowCtxSetView?.('info');
