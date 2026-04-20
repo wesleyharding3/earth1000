@@ -2415,28 +2415,43 @@ body.flow-maximized #flowArcList {
 .arcListMinBar {
   display: none;
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 60px);
-  left: 10px;
+  /* Match #flowCtxCard's top/left exactly (72px + safe-area, 16px) so
+     the .arcFlowCount counter sits at the same screen coordinates
+     whether the panel is minimized (this bar) or maximized (the card
+     header). User perceives the counter as "staying put" during the
+     min/max transition instead of jumping. */
+  top: calc(env(safe-area-inset-top, 0px) + 72px);
+  left: 16px;
   z-index: 810;
   background: rgba(8, 12, 20, 0.52);
   border: 1px solid rgba(255,255,255,0.14);
   border-radius: 30px;
-  padding: 12px 50px 12px 16px;
-  min-height: 44px;
+  /* Horizontal padding matches the expanded flowCtxCard's inner padding
+     (10px) + arcListHeader padding (10px) ≈ 20px left. Right padding
+     makes room for the absolute-positioned toggle + close buttons. */
+  padding: 8px 60px 8px 20px;
+  min-height: 32px;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   pointer-events: all;
   animation: flowMinBarPulse 2.9s ease-in-out infinite;
   box-sizing: border-box;
 }
 .arcListMinBar.visible { display: inline-flex; }
-.arcListMinBar .arcListMinLabel {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
-  text-transform: uppercase; color: rgba(255,255,255,0.5);
-}
-.arcListMinBar .arcListMinCount {
-  font-size: 11px; color: rgba(0,220,130,0.9); font-weight: 600;
+
+/* Shared counter — same styling whether it's in the min bar or the
+   expanded panel header. Keeping font-size, weight, color, and
+   animation identical means the number doesn't appear to change size
+   when the user toggles min/max. */
+.arcFlowCount {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(0,220,130,0.95);
+  text-shadow: 0 0 10px rgba(0,220,130,0.35);
   animation: flowMinStatsBreath 2.9s ease-in-out infinite;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .arcListMinBar .arcListExpandBtn {
   position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
@@ -3527,9 +3542,14 @@ body.flow-maximized #flowArcList {
       .gridView-2col .nfThreadCardDesc {
         display: none !important;
       }
+      /* Fixed card height across every surface with a card grid so the
+         grid doesn't jag when card content varies. Includes .cdCard —
+         the cluster-detail Sources grid — so the cards inside a
+         thread/line detail panel match the Feed/Threads/Lines grids. */
       .gridView-2col .articleCard,
       .gridView-2col .nfCard,
-      .gridView-2col .nfThreadCard {
+      .gridView-2col .nfThreadCard,
+      .gridView-2col .cdCard {
         height: 280px !important;
         min-height: 0 !important;
         overflow: hidden;
@@ -3542,22 +3562,31 @@ body.flow-maximized #flowArcList {
       .gridView-2col .nfCardImg,
       .gridView-2col .nfCardImgPh,
       .gridView-2col .nfThreadCardImg,
-      .gridView-2col .nfThreadCardImgPh {
+      .gridView-2col .nfThreadCardImgPh,
+      .gridView-2col .cdCardImg,
+      .gridView-2col .cdCardImgNone {
         height: 130px !important;
         flex-shrink: 0;
       }
       .gridView-2col .articleCardBody,
       .gridView-2col .nfCardBody,
-      .gridView-2col .nfThreadCardBody {
+      .gridView-2col .nfThreadCardBody,
+      .gridView-2col .cdCardBody {
         flex: 1 1 auto;
         min-height: 0;
         overflow: hidden;
       }
-      /* Title expands to fill the room the summary vacated. */
+      /* Title expands to fill the room the summary vacated. cdCardTitle
+         already has no summary sibling so the extra clamp gives it room
+         to breathe across two or three lines. */
       .gridView-2col .articleCardTitle,
       .gridView-2col .nfCardTitle,
-      .gridView-2col .nfThreadCardTitle {
+      .gridView-2col .nfThreadCardTitle,
+      .gridView-2col .cdCardTitle {
         -webkit-line-clamp: 4 !important;
+        display: -webkit-box !important;
+        -webkit-box-orient: vertical !important;
+        overflow: hidden;
       }
     }
 
@@ -10927,15 +10956,14 @@ window.sourceBiasBadgeHTML = function(bias) {
   </div>
   <!-- Flow articles list panel -->
   <div class="arcListMinBar" id="arcListMinBar">
-    <span class="arcListMinLabel">Arcs</span>
-    <span class="arcListMinCount" id="arcListMinCount">0</span>
+    <span class="arcFlowCount" id="arcListMinCount">0 flows</span>
     <button class="arcListToggleBtn" id="arcListToggleBtn" title="Expand" onclick="window.__arcListToggle?.()">+</button>
     <button class="arcListExpandBtn" id="arcListMinCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
   </div>
   <div id="flowArcList">
     <div class="arcListPanel" id="arcListPanelRoot">
       <div class="arcListHeader">
-        <span class="arcListTitle">Live Arcs</span>
+        <span class="arcFlowCount" id="arcListMaxCount">0 flows</span>
         <button class="arcListHeaderBtn aiCtx" id="arcListAiBtn" style="display:none" title="AI Context" onclick="window.__arcAiContextOpen?.()">✦</button>
         <button class="arcListToggleBtn" id="arcListToggleBtnHeader" title="Minimize" onclick="window.__arcListToggle?.()">−</button>
         <button class="arcListHeaderBtn close" id="arcListCloseBtn" title="Close" onclick="window.__arcListClose?.()">✕</button>
@@ -19782,8 +19810,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }
 
-      // Update minimized count
-      minCount.textContent = visibleArcs.length;
+      // Update both counters (min bar + expanded header). Share a
+       // single "N flow[s]" string so the number stays identical through
+       // min/max transitions — nothing perceivable changes about the
+       // counter itself, only the chrome around it.
+      {
+        const n = visibleArcs.length;
+        const countText = n + ' flow' + (n === 1 ? '' : 's');
+        minCount.textContent = countText;
+        const maxCount = document.getElementById('arcListMaxCount');
+        if (maxCount) maxCount.textContent = countText;
+      }
 
       // Build desired set (stable UIDs)
       const curUids = new Set(visibleArcs.map(v => v.uid));
