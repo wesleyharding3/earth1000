@@ -92,12 +92,6 @@ const ARTICLE_FIELDS = `
   a.video_id,
   a.duration_seconds,
   a.language,
-  -- Canonical ISO-639-1 code resolved via the languages table. Prefer
-  -- this over a.language (raw RSS header string that can be NULL, 3-
-  -- letter ISO-639-2, or locale-qualified like 'en-US'). Frontend
-  -- translate-button logic checks this first to reliably hide the
-  -- button on English articles regardless of what the source declared.
-  l_lang.iso_code_2                                   AS language_iso,
   COALESCE(ns.name,             ys.name)             AS source_name,
   COALESCE(ns.bias,             'unknown')           AS source_bias,
   COALESCE(ns.site_url,         ys.site_url)         AS site_url,
@@ -120,7 +114,6 @@ const ARTICLE_JOINS = `
   LEFT JOIN news_sources    ns ON ns.id = a.source_id
   LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
   LEFT JOIN countries       co ON co.id = a.country_id
-  LEFT JOIN languages       l_lang ON l_lang.id = COALESCE(ns.language_id, ys.language_id)
 `;
 
 // ─────────────────────────────────────────────────────────────

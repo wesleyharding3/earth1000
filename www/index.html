@@ -11104,36 +11104,23 @@ window.sourceBiasBadgeHTML = function(bias) {
 
     // Helper: does this article need translation?
     //
-    // English-first policy. The button appears when:
-    //   1. The article has a title (sanity).
-    //   2. translated_title is empty (no shared-cache hit yet — if a prior
-    //      user already translated, news_articles.translated_title is
-    //      populated and every subsequent viewer gets it for free).
-    //   3. The source language is NOT English.
+    // English-first policy. Button appears when:
+    //   1. Article has a title (sanity).
+    //   2. No cached translation yet (translated_title empty) — any prior
+    //      user's click populated news_articles.translated_title which
+    //      then serves everyone from cache.
+    //   3. article.language is present AND not English.
     //
-    // Language detection priority:
-    //   a) article.language_iso — canonical ISO-639-1 from the languages
-    //      table join (rankingService.js ARTICLE_FIELDS). Always 2-letter
-    //      lowercase when present. This is the reliable field.
-    //   b) article.language — raw RSS-header string. Can be NULL, 2-letter
-    //      ('en'), 3-letter ('eng'), locale-qualified ('en-US'), or weird.
-    //
-    // If both fields are missing we default to showing the button. Rationale:
-    //   • The panel path historically lost `language` on some article-object
-    //     handoffs, which hid the button even when the originating card
-    //     showed it — bad continuity.
-    //   • If a genuine English article slips through with no language info,
-    //     a user clicking translate hits the DB cache (already English
-    //     translated_title === title) or DeepL's en→en which is a cheap
-    //     idempotent no-op. Failure mode is minor.
-    //   • The alternative (hide by default) is worse: real non-English
-    //     articles from endpoints that don't yet return language_iso would
-    //     be un-translatable.
+    // When language is missing we HIDE the button — keeps the feed clean
+    // (most articles without a declared language are English, matching
+    // the prior behaviour that the user wants restored). Handles the
+    // various forms the RSS-declared language can take:
+    //   'en', 'EN', 'eng', 'english', 'en-US', 'en_GB', 'EN-us', ...
     function articleNeedsTranslation(article) {
       if (!article || !article.title) return false;
       if (article.translated_title) return false;
-      const raw = String(article.language_iso || article.language || '').toLowerCase().trim();
-      if (!raw) return true; // language unknown → show (safe-for-continuity default)
+      const raw = String(article.language || '').toLowerCase().trim();
+      if (!raw) return false; // unknown → hide
       // Strip subtag: 'en-us' → 'en', 'en_gb' → 'en'.
       const primary = raw.split(/[-_]/)[0];
       const ENGLISH_CODES = new Set(['en', 'eng', 'english']);

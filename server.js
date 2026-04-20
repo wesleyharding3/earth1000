@@ -8056,7 +8056,9 @@ app.post("/api/translate", async (req, res) => {
 
   // Tier-based translation limits (only gate MISSES — hits above already
   // returned before this point, so users aren't billed for cached reads).
-  if (req.user?.id) {
+  // Admins bypass the quota: they're internal/support users whose usage
+  // shouldn't count against any cap, same short-circuit as requireTier().
+  if (req.user?.id && !req.user.is_admin) {
     const tlAccess = await checkTranslation(req.user.id, req.user.tier || "free").catch(() => ({ allowed: true }));
     if (!tlAccess.allowed) {
       return res.status(429).json({
