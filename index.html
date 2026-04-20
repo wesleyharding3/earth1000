@@ -11097,12 +11097,17 @@ window.sourceBiasBadgeHTML = function(bias) {
     }
 
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
-    const FLAG_CDN_HERO = "https://flagcdn.com/w320/";
+    // Attach to window so sibling <script> blocks (threadCardHTML, cluster
+    // detail panel) can read these. `const` declarations are local to a
+    // single <script>, so top-of-file constants were ReferenceError'ing in
+    // other tags — which was crashing the cards render map() and leaving
+    // the skeleton stuck on screen.
+    window.FLAG_CDN_HERO = "https://flagcdn.com/w320/";
     // Ultimate fallback: neutral globe SVG. Mirrors imageFallback.js on the
     // server so hero images are guaranteed non-empty even when network,
     // flag-CDN, and catalog all fail. Inline data URL avoids any HTTP round
     // trip so it can serve as the last link in an onerror chain.
-    const GLOBE_PLACEHOLDER_DATA_URL =
+    window.GLOBE_PLACEHOLDER_DATA_URL =
       "data:image/svg+xml;utf8," + encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">' +
         '<rect width="120" height="120" fill="#1e293b"/>' +
@@ -11113,6 +11118,29 @@ window.sourceBiasBadgeHTML = function(bias) {
         '<path d="M32 68 Q46 72 60 68 T88 68" fill="none" stroke="#475569" stroke-width="1.4"/>' +
         '</svg>'
       );
+    // Shared dispatcher for hero-image fallback chains. Avoids embedding
+    // JSON (with its double-quotes) directly into HTML onerror / onload
+    // attributes, which breaks attribute parsing. The fallback list is
+    // instead stored in data-fbchain (JSON-stringified once) and advanced
+    // by this function on each failure. Last entry is always
+    // GLOBE_PLACEHOLDER_DATA_URL so the image can never end up empty.
+    window.__heroImgFailover = function(el){
+      if (!el || el.dataset.fbDone === '1') return;
+      try {
+        const chain = JSON.parse(el.dataset.fbchain || '[]');
+        let i = el.dataset.fbi ? parseInt(el.dataset.fbi, 10) : 0;
+        if (i < chain.length) {
+          el.dataset.fbi = String(i + 1);
+          el.src = chain[i];
+        } else {
+          el.dataset.fbDone = '1';
+          el.src = window.GLOBE_PLACEHOLDER_DATA_URL;
+        }
+      } catch(e) {
+        el.dataset.fbDone = '1';
+        el.src = window.GLOBE_PLACEHOLDER_DATA_URL;
+      }
+    };
 
     /* ──────────────────────────────────────────────────────────────────
        Scroll-reveal fade-in for card grids.
@@ -22550,22 +22578,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         //   2. catalog/bucket fallback  (t.hero_catalog_image_url)
         //   3. country flag             (t.hero_iso_code or primary_nations[0])
         //   4. globe SVG data URL       (GUARANTEED, never empty)
-        // The chain always ends in the inline globe SVG, so no thread card
-        // ever renders a broken / empty "?" image.
+        // The chain is stored in data-fbchain and walked by
+        // window.__heroImgFailover on each failure so the image can never
+        // end up empty.
         const heroRaw    = (t.hero_image_url || '').trim();
         const catalogRaw = (t.hero_catalog_image_url || '').trim();
         const scraped = (heroRaw && heroRaw !== catalogRaw) ? heroRaw : '';
         const isoForFlag = (t.hero_iso_code || (Array.isArray(t.primary_nations) && t.primary_nations[0]) || '').toString().toLowerCase();
         const flag    = (isoForFlag && /^[a-z]{2,3}$/.test(isoForFlag)) ? `${FLAG_CDN_BASE}${isoForFlag}.png` : '';
-        const fallbackChain = [scraped, catalogRaw, flag, GLOBE_PLACEHOLDER_DATA_URL].filter(Boolean);
-        const src = fallbackChain[0] || GLOBE_PLACEHOLDER_DATA_URL;
-        const nextFallbacks = fallbackChain.slice(1);
-        const onErr = nextFallbacks.length
-          ? `(function(el){var f=${JSON.stringify(nextFallbacks)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}})(this)`
-          : '';
-        // onload validator: tiny images (1x1 tracking pixels, broken flags)
-        // fall through to the next chain link instead of rendering a blank.
-        const onLoad = `if(this.naturalWidth<10||this.naturalHeight<10){var f=${JSON.stringify(nextFallbacks)};var i=this.dataset.fbi?parseInt(this.dataset.fbi):0;if(i<f.length){this.dataset.fbi=i+1;this.src=f[i];}}`;
+        const GLOBE = window.GLOBE_PLACEHOLDER_DATA_URL || '';
+        const chain = [scraped, catalogRaw, flag, GLOBE].filter(Boolean);
+        const src = chain[0] || GLOBE;
+        const rest = chain.slice(1);
+        const fbchainAttr = JSON.stringify(rest).replace(/"/g, '&quot;');
         const nations = Array.isArray(t.primary_nations) ? t.primary_nations : [];
         const title = esc(t.title || 'Untitled thread');
         const geoNames = _resolveGeoScope(t.geographic_scope);
@@ -22585,7 +22610,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const entityId = t.thread_id ?? t.timeline_id ?? t.id;
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
         return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
-          <img class="nfThreadCardImg" src="${src}" alt="" loading="lazy"${onErr ? ` onerror="${onErr}"` : ''} onload="${onLoad}">
+          <img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" data-fbchain="${fbchainAttr}" onerror="window.__heroImgFailover(this)" onload="if(this.naturalWidth&lt;10||this.naturalHeight&lt;10)window.__heroImgFailover(this)">
           <div class="nfThreadCardBody">
             <div>
               <div class="nfThreadCardCatRow">
@@ -33841,23 +33866,19 @@ body.ticker-active .gTickerLabel {
     const catColor = CATEGORY_COLORS[node.primary_category] || CATEGORY_COLORS.default;
 
     // Image cascade mirrors threadCardHTML: scraped -> catalog -> flag -> globe.
-    // Final link in the chain is an inline SVG data URL so the thumbnail
-    // is GUARANTEED to render something non-empty even when the network,
-    // flag CDN, and catalog are all unavailable.
+    // Uses the shared window.__heroImgFailover dispatcher (attributes stored
+    // as data-fbchain, avoiding JSON-in-onerror parse breakage).
     const _heroRaw = (node.hero_image_url || '').trim();
     const _catalogRaw = (node.hero_catalog_image_url || '').trim();
     const _scraped = (_heroRaw && _heroRaw !== _catalogRaw) ? _heroRaw : '';
-    const _flag = node.hero_iso_code ? `${FLAG_CDN_HERO}${node.hero_iso_code.toLowerCase()}.png` : '';
-    const _imgChain = [_scraped, _catalogRaw, _flag, GLOBE_PLACEHOLDER_DATA_URL].filter(Boolean);
-    const _imgSrc = _imgChain[0] || GLOBE_PLACEHOLDER_DATA_URL;
+    const _iso = (node.hero_iso_code || (Array.isArray(node.primary_nations) && node.primary_nations[0]) || '').toString().toLowerCase();
+    const _flag = (_iso && /^[a-z]{2,3}$/.test(_iso)) ? `${window.FLAG_CDN_HERO}${_iso}.png` : '';
+    const _GLOBE = window.GLOBE_PLACEHOLDER_DATA_URL || '';
+    const _imgChain = [_scraped, _catalogRaw, _flag, _GLOBE].filter(Boolean);
+    const _imgSrc = _imgChain[0] || _GLOBE;
     const _imgRest = _imgChain.slice(1);
-    // onerror walks the chain; last link (globe data URL) always renders,
-    // so we never need the display:none branch for hero thumbs.
-    const _imgOnErr = _imgRest.length
-      ? `(function(el){var f=${JSON.stringify(_imgRest)};var i=el.dataset.fbi?parseInt(el.dataset.fbi):0;if(i<f.length){el.dataset.fbi=i+1;el.src=f[i];}})(this)`
-      : '';
-    // Always renders — never empty.
-    const _imgHTML = `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy"${_imgOnErr ? ` onerror="${_imgOnErr}"` : ''}>`;
+    const _fbchainAttr = JSON.stringify(_imgRest).replace(/"/g, '&quot;');
+    const _imgHTML = `<img class="cdHeaderImg" src="${_imgSrc}" alt="" loading="lazy" data-fbchain="${_fbchainAttr}" onerror="window.__heroImgFailover(this)">`;
 
     // Hoisted from below — the Analysis section's .aiAnalysisCta pill
     // needs ${threadId} and ${isTimeline} at template-evaluation time.
