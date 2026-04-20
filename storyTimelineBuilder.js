@@ -116,6 +116,12 @@ const LOOKBACK_HOURS = parseInt(
 );
 const SKIP_EVENTS = process.argv.includes('--skip-events');
 const ONLY_EVENTS = process.argv.includes('--only-events');
+// --dry-run-gate prints what the Line quality gate WOULD delete without
+// mutating anything. Useful before a big one-time sweep.
+const DRY_RUN_GATE = process.argv.includes('--dry-run-gate');
+// --skip-gate disables the quality gate entirely (useful during backfill
+// runs where you want to bootstrap weak Lines before the gate runs).
+const SKIP_GATE = process.argv.includes('--skip-gate');
 
 // ─── Promotion gates ──────────────────────────────────────────────────────────
 // The thread → timeline graduation criteria. Tuned so that a storm that
@@ -154,6 +160,27 @@ const EVENT_MAX_DAYS_PER_RUN     = 40;  // cap Claude spend per run
 // ─── Cooldown ────────────────────────────────────────────────────────────────
 const COOLING_AFTER_DAYS = 30;
 const DORMANT_AFTER_DAYS = 90;
+
+// ─── Line quality gate (runs every build — first run = one-time sweep) ────────
+// A Line is KEPT if it clears either rule:
+//   Multi-thread rule:  threads >= 2  AND  span >= 14d  AND  weeks60 >= 3
+//   Single-thread carve-out:
+//                       threads >= 1  AND  articles >= 50
+//                       AND  weeks60 >= 4  AND  span >= 14d
+// Anything else (including 0-thread orphans) is DELETED.
+// On delete:
+//   • story_threads.timeline_id is set to NULL (threads survive, get detached)
+//   • story_timeline_articles and story_timeline_events CASCADE away
+// The gate protects very fresh Lines from the sweep — a new Line needs at
+// least GATE_GRACE_HOURS of wall-clock age before it can be deleted. That
+// way a Line that promotes from a thread at t=0 has time to accumulate
+// span / weeks / sibling threads before being judged.
+const GATE_MIN_THREADS_MULTI   = 2;
+const GATE_MIN_SPAN_DAYS       = 14;
+const GATE_MIN_WEEKS_MULTI     = 3;
+const GATE_CARVEOUT_MIN_ART    = 50;
+const GATE_CARVEOUT_MIN_WEEKS  = 4;
+const GATE_GRACE_HOURS         = 72;   // new Lines get 3 days before the gate bites
 
 // ─── Stopwords for title tokenization ─────────────────────────────────────────
 const TITLE_STOPWORDS = new Set([
@@ -200,6 +227,16 @@ async function run() {
   const cooled = await runCooldownPhase();
   console.log(`   cooled=${cooled.cooled} dormant=${cooled.dormant}`);
 
+  let gateResult = { evaluated: 0, kept: 0, deleted: 0, detachedThreads: 0, dryRun: true };
+  if (!SKIP_GATE) {
+    console.log(`\n   [${elapsed()}] Line quality gate${DRY_RUN_GATE ? ' (DRY RUN)' : ''}...`);
+    gateResult = await runLineQualityGatePhase({ dryRun: DRY_RUN_GATE });
+    console.log(
+      `   evaluated=${gateResult.evaluated} kept=${gateResult.kept} ` +
+      `deleted=${gateResult.deleted} detached_threads=${gateResult.detachedThreads}`
+    );
+  }
+
   // ── End-of-run summary ───────────────────────────────────────────────────
   console.log(`\n═══ TIMELINE RUN SUMMARY (${elapsed()}) ═══`);
   console.log(`  candidate_threads       : ${metrics.candidateThreads}`);
@@ -213,6 +250,12 @@ async function run() {
   console.log(`  claude_calls (promote)  : ${metrics.claudeCallsPromote}`);
   console.log(`  claude_calls (events)   : ${metrics.claudeCallsEvent}`);
   console.log(`  claude_tokens           : in=${metrics.inputTokens}  out=${metrics.outputTokens}`);
+  if (!SKIP_GATE) {
+    console.log(`  quality_gate_evaluated  : ${gateResult.evaluated}`);
+    console.log(`  quality_gate_kept       : ${gateResult.kept}`);
+    console.log(`  quality_gate_deleted    : ${gateResult.deleted}${gateResult.dryRun ? ' (dry-run)' : ''}`);
+    console.log(`  quality_gate_detached   : ${gateResult.detachedThreads} threads`);
+  }
   console.log(`✅ Done.\n`);
   await pool.end();
 }
@@ -887,6 +930,143 @@ async function runCooldownPhase() {
      RETURNING id
   `, [DORMANT_AFTER_DAYS]);
   return { cooled: c1.length, dormant: c2.length };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PHASE E : LINE QUALITY GATE
+//  Idempotent destructive enforcement. Runs every build, so the first run on
+//  deploy is the one-time sweep and every subsequent run is ongoing
+//  enforcement. Fresh Lines younger than GATE_GRACE_HOURS are skipped.
+// ═════════════════════════════════════════════════════════════════════════════
+async function runLineQualityGatePhase({ dryRun = false } = {}) {
+  // Evaluate every timeline with thread / article metrics.
+  const { rows } = await pool.query(`
+    WITH tl AS (
+      SELECT id, title, status, first_seen_at, last_updated_at
+      FROM story_timelines
+    ),
+    thr AS (
+      SELECT
+        timeline_id,
+        COUNT(*)::int AS thread_count,
+        MIN(first_seen_at) AS earliest_thread_at
+      FROM story_threads
+      WHERE timeline_id IS NOT NULL
+      GROUP BY timeline_id
+    ),
+    arts AS (
+      SELECT
+        st.timeline_id,
+        COUNT(DISTINCT a.id)::int AS article_count,
+        MIN(a.published_at) AS earliest_article,
+        MAX(a.published_at) AS latest_article,
+        COUNT(DISTINCT date_trunc('week', a.published_at)) FILTER (
+          WHERE a.published_at >= NOW() - INTERVAL '60 days'
+        )::int AS active_weeks_60d
+      FROM story_threads st
+      JOIN story_thread_articles sta ON sta.thread_id = st.id
+      JOIN news_articles a ON a.id = sta.article_id
+      WHERE st.timeline_id IS NOT NULL
+      GROUP BY st.timeline_id
+    )
+    SELECT
+      tl.id,
+      tl.title,
+      tl.status,
+      tl.first_seen_at,
+      EXTRACT(EPOCH FROM (NOW() - tl.first_seen_at)) / 3600.0 AS age_hours,
+      COALESCE(thr.thread_count, 0) AS thread_count,
+      COALESCE(arts.article_count, 0) AS article_count,
+      COALESCE(arts.active_weeks_60d, 0) AS active_weeks_60d,
+      EXTRACT(EPOCH FROM (
+        COALESCE(arts.latest_article, tl.last_updated_at, tl.first_seen_at)
+        - COALESCE(thr.earliest_thread_at, arts.earliest_article, tl.first_seen_at)
+      )) / 86400.0 AS span_days
+    FROM tl
+    LEFT JOIN thr  ON thr.timeline_id  = tl.id
+    LEFT JOIN arts ON arts.timeline_id = tl.id
+  `);
+
+  const toDelete = [];
+  let kept = 0;
+  for (const r of rows) {
+    const tc = Number(r.thread_count || 0);
+    const ac = Number(r.article_count || 0);
+    const aw = Number(r.active_weeks_60d || 0);
+    const sd = Number(r.span_days || 0);
+    const ageH = Number(r.age_hours || 0);
+
+    const passesMulti =
+      tc >= GATE_MIN_THREADS_MULTI &&
+      sd >= GATE_MIN_SPAN_DAYS &&
+      aw >= GATE_MIN_WEEKS_MULTI;
+
+    const passesCarveout =
+      tc >= 1 &&
+      ac >= GATE_CARVEOUT_MIN_ART &&
+      aw >= GATE_CARVEOUT_MIN_WEEKS &&
+      sd >= GATE_MIN_SPAN_DAYS;
+
+    if (passesMulti || passesCarveout) {
+      kept++;
+      continue;
+    }
+
+    // Grace period protects Lines that have just been promoted and haven't
+    // had time to accumulate siblings / span yet. Zero-thread orphans are
+    // deleted immediately — grace doesn't apply.
+    if (tc >= 1 && ageH < GATE_GRACE_HOURS) {
+      kept++;
+      continue;
+    }
+
+    toDelete.push({
+      id: r.id,
+      title: r.title,
+      threads: tc,
+      articles: ac,
+      weeks60: aw,
+      span: Number(sd.toFixed(1)),
+    });
+  }
+
+  // Verbose logging — cap to keep per-run output reasonable.
+  if (toDelete.length) {
+    const preview = toDelete.slice(0, 15);
+    preview.forEach(d => {
+      console.log(
+        `     ${dryRun ? '[DRY]' : '[DEL]'} id=${d.id} t=${d.threads} a=${d.articles} ` +
+        `wk60=${d.weeks60} span=${d.span}d  ${String(d.title || '').slice(0, 70)}`
+      );
+    });
+    if (toDelete.length > preview.length) {
+      console.log(`     ... + ${toDelete.length - preview.length} more`);
+    }
+  }
+
+  let detachedThreads = 0;
+  if (!dryRun && toDelete.length) {
+    const ids = toDelete.map(d => d.id);
+    // Count threads that will be detached (for reporting) before the delete
+    // cascades / sets null.
+    const { rows: [{ n }] } = await pool.query(`
+      SELECT COUNT(*)::int AS n FROM story_threads WHERE timeline_id = ANY($1::int[])
+    `, [ids]);
+    detachedThreads = Number(n || 0);
+
+    await pool.query(`
+      DELETE FROM story_timelines WHERE id = ANY($1::int[])
+    `, [ids]);
+    console.log(`     ✔ deleted ${ids.length} Line(s); ${detachedThreads} thread(s) detached`);
+  }
+
+  return {
+    evaluated: rows.length,
+    kept,
+    deleted: toDelete.length,
+    detachedThreads,
+    dryRun,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -183,7 +183,7 @@ async function run() {
         metrics.stdIn         += usage.input_tokens               || 0;
         metrics.outTokens     += usage.output_tokens              || 0;
       }
-      const { c, u, refreshIds, attachedCount } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
+      const { c, u, refreshIds, attachedCount } = await persistThreadDefs(defs, validIdSet, existingThreadMap, batch);
       created += c; updated += u;
       metrics.articlesAttached += (attachedCount || 0);
       refreshIds.forEach(id => refreshThreadIds.add(Number(id)));
@@ -536,8 +536,79 @@ The articles to analyze appear below. Evaluate them against the rules above and 
 
 // ─── Persist ─────────────────────────────────────────────────────────────────
 
-async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()) {
+// ─── Claude-extension fit check ────────────────────────────────────
+// Defensive post-Claude filter that drops articles Claude wants to
+// attach to an existing thread but which share no meaningful signal
+// with that thread. Catches hallucinated attachments (e.g. a Bukele
+// / El Salvador article routed into an Iraqi-president thread) that
+// the SQL pre-clusterer would never have connected.
+//
+// Permissive on purpose — requires only ≥1 shared non-stopword token
+// between (thread.title + thread.keywords) and (article.translated_title
+// OR article.title, + article.keywords). Articles with mostly non-Latin
+// title text AND no translated_title are SKIPPED (can't fairly compare
+// to English thread keywords without a translation bridge). Dropped
+// articles aren't destroyed — they stay unthreaded and get another
+// chance in the next run.
+function _tokenizeForFit(text, keywords) {
+  const s = new Set();
+  const add = (raw) => {
+    if (!raw) return;
+    const norm = String(raw).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    for (const tok of norm.split(/[^a-z0-9']+/)) {
+      if (!tok || tok.length < 3) continue;
+      if (SKIP_KEYWORDS.has(tok)) continue;
+      s.add(tok);
+    }
+  };
+  add(text);
+  for (const k of (keywords || [])) add(k);
+  return s;
+}
+function _hasLatinSignal(text) {
+  if (!text) return false;
+  const asciiLetters = (String(text).match(/[a-zA-Z]/g) || []).length;
+  return asciiLetters >= 6 && asciiLetters / String(text).length >= 0.25;
+}
+function _filterExtensionByFit(threadId, threadTitle, threadKeywords, articleIds, articlesById) {
+  const threadTokens = _tokenizeForFit(threadTitle, threadKeywords);
+  if (threadTokens.size < 2) return { kept: articleIds, dropped: [] }; // thread too thin to judge; trust Claude
+  const kept = [];
+  const dropped = [];
+  for (const aid of articleIds) {
+    const a = articlesById.get(Number(aid));
+    if (!a) { kept.push(aid); continue; } // article not in this batch (shouldn't happen); keep
+
+    // Carve-out for languages the filter can't fairly test: an article
+    // whose raw title has no Latin signal AND no translated_title can't
+    // be token-compared to an English-tokens thread. Article keywords
+    // may be in the source language too (normalizer often missed CJK /
+    // Arabic / Cyrillic). Trust Claude rather than drop legit articles.
+    const hasTranslation = !!a.translated_title;
+    const latinTitle     = _hasLatinSignal(a.title);
+    if (!hasTranslation && !latinTitle) {
+      kept.push(aid); continue;
+    }
+
+    const comparableText = a.translated_title || a.title;
+    const articleTokens = _tokenizeForFit(comparableText, a.keywords);
+    if (articleTokens.size < 2) {
+      // Sparse data — keep (avoid false-negative on short titles).
+      kept.push(aid); continue;
+    }
+    let overlap = 0;
+    for (const t of articleTokens) { if (threadTokens.has(t)) { overlap++; if (overlap >= 1) break; } }
+    if (overlap >= 1) kept.push(aid);
+    else dropped.push({ aid, title: (a.translated_title || a.title || '').slice(0, 70) });
+  }
+  return { kept, dropped };
+}
+
+async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map(), batchArticles = []) {
   let created = 0, updated = 0;
+  // Build an articles-by-id map for the fit-check filter below. Cheap —
+  // batch is at most CLAUDE_BATCH (30) entries.
+  const articlesById = new Map(batchArticles.map(a => [Number(a.id), a]));
   // attachedCount = best-effort estimate of how many batch articles
   // survived into an actual story_thread_articles row. Sum of
   // def.article_ids filtered to validIdSet after junk rejection. Upper
@@ -761,6 +832,29 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         const current = existingThreadMap.get(threadId);
         if (shouldRefreshThreadContext(current, def.keywords || [])) {
           refreshIds.add(threadId);
+        }
+
+        // Fit-check extension: require any proposed article to share at
+        // least one meaningful token with the thread's title+keywords.
+        // Catches Claude hallucinations where an unrelated article
+        // (different country, different story) gets routed into an
+        // established thread. Dropped articles stay unthreaded and get
+        // re-evaluated next run. See _filterExtensionByFit comment above
+        // for the non-Latin-script carve-out that preserves recall on
+        // Arabic/CJK/etc. articles lacking translations.
+        if (current && (current.title || (current.keywords?.length))) {
+          const { kept, dropped } = _filterExtensionByFit(
+            threadId, current.title, current.keywords, def.article_ids, articlesById
+          );
+          if (dropped.length) {
+            console.log(`   🚫 Rejected ${dropped.length} low-fit extension(s) on thread ${threadId} "${current.title}":`);
+            for (const d of dropped) console.log(`      - #${d.aid} "${d.title}"`);
+          }
+          def.article_ids = kept;
+          if (!def.article_ids.length) {
+            console.log(`   ↳ All proposed extensions for thread ${threadId} failed fit-check — skipping def`);
+            continue;
+          }
         }
 
         // Update existing thread
