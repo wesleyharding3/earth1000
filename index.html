@@ -27985,11 +27985,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       },
       removeItem(key) {
-        if (!_allowStorageRemoval) {
+        // Only PROTECT the main auth token key (and its backup) from non-
+        // user-initiated removal. Supabase routinely calls removeItem on
+        // auxiliary keys during normal operation — e.g. the PKCE
+        // `-code-verifier` after successful OAuth exchange, stale session
+        // artefacts on token refresh, etc. Blocking those leaves stale
+        // state in storage that breaks subsequent refreshes, which has
+        // been surfacing as "admin shows as Free" because the stale
+        // session prevents the backend from resolving the user's
+        // is_admin flag cleanly. Narrow the guard to the main key only.
+        const isProtectedKey = (key === _AUTH_STORAGE_KEY || key === _BACKUP_KEY);
+        if (isProtectedKey && !_allowStorageRemoval) {
           console.warn('[auth-storage] BLOCKED removeItem for', key, '(not user-initiated sign-out)');
           return;
         }
-        console.log('[auth-storage] removeItem ALLOWED for', key);
         localStorage.removeItem(key);
         sessionStorage.removeItem(key);
         if (key === _AUTH_STORAGE_KEY) {
