@@ -28882,6 +28882,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__isAdmin   = false;
   window.__userTier  = 'free';
 
+  // Tier-readiness signal. Consumers that gate UI on tier (deep analysis,
+  // translate, AI context, etc.) should `await window.__tierReady` before
+  // checking. Resolves when:
+  //   • loadUserTier finishes writing __userTier + __isAdmin (any path),
+  //   • loadProfile finishes writing __isAdmin,
+  //   • clearAuthUI runs (signed-out state is fully known),
+  //   • or a 5s safety timeout elapses (backend broken; fall back to
+  //     whatever __isAdmin/__userTier happen to be).
+  // Without this, the cluster-detail "Deep analysis" section would race
+  // the async tier fetch and show "Pro required" on first open even for
+  // an enterprise/admin user — pass two always worked because by then the
+  // tier state had landed. This promise closes the race.
+  let _tierReadyResolve = null;
+  window.__tierReady = new Promise((r) => { _tierReadyResolve = r; });
+  window.__markTierReady = () => {
+    if (_tierReadyResolve) { _tierReadyResolve(); _tierReadyResolve = null; }
+  };
+  setTimeout(() => { window.__markTierReady(); }, 5000);
+
   // Tier order for comparisons
   const TIER_ORDER = ['free', 'pro', 'enterprise'];
   const TIER_META_BY_ID = {
@@ -29034,6 +29053,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.__isAdmin = data.is_admin || window.__isAdmin || false;
         }
         _tierLoadedFor = userId;
+        window.__markTierReady?.();
         return;
       } catch (err) {
         // AbortError = the global 20s fetch timeout fired — Supabase
@@ -29061,6 +29081,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       acctDpTier.className    = `acctDpTier ${tier?.name ?? 'free'}`;
       window.__userTier = tier?.name ?? 'free';
       _tierLoadedFor = userId;
+      window.__markTierReady?.();
     } finally {
       _tierInFlight = false;
     }
@@ -29073,6 +29094,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__isAdmin = false;
       const badge = accountDropdown.querySelector('.acctAdminBadge');
       if (badge) badge.remove();
+      window.__markTierReady?.();
       return;
     }
     try {
@@ -29098,6 +29120,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } catch (e) {
       window.__isAdmin = false;
       console.warn('[auth] profile load failed:', e.message);
+    } finally {
+      // Profile complete (success or fail) — admin flag is final. Unblock
+      // any consumers that were awaiting tier-readiness to gate UI.
+      window.__markTierReady?.();
     }
   }
 
@@ -29124,6 +29150,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const badge = accountDropdown.querySelector('.acctAdminBadge');
     if (badge) badge.remove();
     updateAccountUI(null);
+    // Signed-out state is fully resolved — unblock any consumers that
+    // were awaiting tier-readiness.
+    window.__markTierReady?.();
   }
 
   // ── Ensure new user has a free subscription row ──────────────
@@ -34655,6 +34684,11 @@ body.ticker-active .gTickerLabel {
     //     reading a field the user already sees on the card.
     const summaryPromise = (async () => {
       if (!threadId) return null;
+      // Wait for tier state to land before gating — otherwise a first
+      // open races the subscription-status fetch and incorrectly shows
+      // "Pro required" to enterprise/admin users. Safety timeout (5s)
+      // inside __tierReady ensures we never hang here forever.
+      try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
       if (!window.__checkTier?.('pro')) return '__pro_locked__';
       try {
         const body = isTimeline ? { timeline_id: threadId } : { thread_id: threadId };
