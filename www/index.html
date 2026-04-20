@@ -4975,13 +4975,13 @@ body.flow-maximized #flowArcList {
   bottom: 0;
   left: 0;
   right: 0;
-  /* Top edge sits flush under the iOS safe-area (status bar). The
-     earlier -10px left a stray strip above the panel; and the inner
-     padding-top: safe-area-inset-top double-counted with height, pushing
-     content further down than it needed to be. One subtraction, no
-     padding-top compensation. */
-  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px));
-  max-height: none;
+  /* Top edge sits below the iOS safe-area with a 12px breathing gap so
+     the rounded corners don't kiss (or overlap) the Dynamic Island /
+     status bar. max-height enforces the same ceiling as a safety
+     invariant — no matter what inline height the drag-snap system
+     assigns, the panel can't push above this line. */
+  height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - 12px);
+  max-height: calc(var(--app-height, 100vh) - env(safe-area-inset-top, 0px) - 12px);
   background: rgb(7, 11, 21);
   border: none;
   border-radius: 20px 20px 0 0;
@@ -11102,23 +11102,42 @@ window.sourceBiasBadgeHTML = function(bias) {
       return SUPPORTED_LANGUAGES.find(l => l.code === code) || SUPPORTED_LANGUAGES.find(l => l.code === 'EN-US');
     }
 
-    // Helper: does this article need translation into the current target language?
+    // Helper: does this article need translation?
     //
-    // English-first policy: the button only appears when all three hold —
-    //   1. the article has a title (sanity),
-    //   2. the source language is not English (lang field missing/unknown
-    //      is treated as "assume English-or-close-enough"; erring on the
-    //      side of not showing the button keeps feeds clean),
-    //   3. translated_title is empty (no cached translation yet).
+    // English-first policy. The button appears when:
+    //   1. The article has a title (sanity).
+    //   2. translated_title is empty (no shared-cache hit yet — if a prior
+    //      user already translated, news_articles.translated_title is
+    //      populated and every subsequent viewer gets it for free).
+    //   3. The source language is NOT English.
     //
-    // Once any user translates, the DB cache populates and the button
-    // disappears for everyone thereafter.
+    // Language detection priority:
+    //   a) article.language_iso — canonical ISO-639-1 from the languages
+    //      table join (rankingService.js ARTICLE_FIELDS). Always 2-letter
+    //      lowercase when present. This is the reliable field.
+    //   b) article.language — raw RSS-header string. Can be NULL, 2-letter
+    //      ('en'), 3-letter ('eng'), locale-qualified ('en-US'), or weird.
+    //
+    // If both fields are missing we default to showing the button. Rationale:
+    //   • The panel path historically lost `language` on some article-object
+    //     handoffs, which hid the button even when the originating card
+    //     showed it — bad continuity.
+    //   • If a genuine English article slips through with no language info,
+    //     a user clicking translate hits the DB cache (already English
+    //     translated_title === title) or DeepL's en→en which is a cheap
+    //     idempotent no-op. Failure mode is minor.
+    //   • The alternative (hide by default) is worse: real non-English
+    //     articles from endpoints that don't yet return language_iso would
+    //     be un-translatable.
     function articleNeedsTranslation(article) {
       if (!article || !article.title) return false;
       if (article.translated_title) return false;
-      const lang = String(article.language || '').toLowerCase();
-      if (!lang) return false;
-      if (lang === 'en' || lang.startsWith('en-') || lang.startsWith('en_')) return false;
+      const raw = String(article.language_iso || article.language || '').toLowerCase().trim();
+      if (!raw) return true; // language unknown → show (safe-for-continuity default)
+      // Strip subtag: 'en-us' → 'en', 'en_gb' → 'en'.
+      const primary = raw.split(/[-_]/)[0];
+      const ENGLISH_CODES = new Set(['en', 'eng', 'english']);
+      if (ENGLISH_CODES.has(primary) || ENGLISH_CODES.has(raw)) return false;
       return true;
     }
 
@@ -28190,9 +28209,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     min: () => Math.round((parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-height')) || window.innerHeight) * 0.35),
     default: () => Math.round((parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-height')) || window.innerHeight) * 0.55),
     max: () => {
+      // Matches the CSS #articleDetailPanel height/max-height ceiling
+      // — leave a 12px breathing gap below the safe-area-inset-top so
+      // the rounded top doesn't overlap the Dynamic Island / status bar.
       const vh = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-height')) || window.innerHeight;
       const sat = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sat')) || 0;
-      return vh - sat - 10;
+      return vh - sat - 12;
     }
   };
   let adpSnapState = 'max'; // start full-height when opened
