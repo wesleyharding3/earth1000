@@ -785,6 +785,7 @@
           <option value="cooling">Cooling</option>
           <option value="dormant">Dormant</option>
         </select>
+        <button class="btn-primary" onclick="openNewManualLineModal()" style="white-space:nowrap;">+ New Line</button>
       </div>
 
       <!-- Merge bar (appears when selecting) -->
@@ -912,6 +913,64 @@
           <div class="thd-modal-actions">
             <button class="btn-secondary" onclick="closeTimelineMergeModal()">Cancel</button>
             <button class="btn-primary" onclick="executeTimelineMerge()">Merge Timelines</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- New manual Line modal -->
+      <div id="tl-new-modal" class="thd-modal-overlay hidden" onclick="if(event.target===this)closeNewManualLineModal()">
+        <div class="thd-modal">
+          <h2>New Manual Line</h2>
+          <p class="thd-modal-desc">
+            Curator-created Lines collect articles matching their keywords + nations on every builder run.
+            They skip the multi-thread quality gate and persist forever until explicitly deleted.
+          </p>
+          <div class="thd-field">
+            <label>Title <span style="color:#64748b;font-weight:400;">(Wikipedia-style, e.g. "Ethiopia Tigray Recovery")</span></label>
+            <input type="text" id="nml-title" class="seg-input" placeholder="Ethiopia Tigray Recovery..." />
+          </div>
+          <div class="thd-field">
+            <label>Description</label>
+            <textarea id="nml-desc" class="seg-textarea" rows="2" placeholder="One-paragraph framing of the Line's scope..."></textarea>
+          </div>
+          <div class="thd-field-row" style="display:flex;gap:8px;">
+            <div class="thd-field" style="flex:1;">
+              <label>Category</label>
+              <input type="text" id="nml-category" class="seg-input" value="politics" placeholder="politics, conflict, economy..." />
+            </div>
+            <div class="thd-field" style="flex:1;">
+              <label>Importance (0–10)</label>
+              <input type="number" id="nml-importance" class="seg-input" min="0" max="10" step="0.5" value="5" />
+            </div>
+          </div>
+          <div class="thd-field">
+            <label>Keywords <span style="color:#64748b;font-weight:400;">(comma-separated; articles matching these get attached)</span></label>
+            <input type="text" id="nml-keywords" class="seg-input" placeholder="tigray, tplf, amhara, abiy ahmed, fano militia..." />
+          </div>
+          <div class="thd-field">
+            <label>Primary Nations <span style="color:#64748b;font-weight:400;">(ISO codes, e.g. ET — typically 1–3)</span></label>
+            <input type="text" id="nml-primary" class="seg-input" placeholder="ET" />
+          </div>
+          <div class="thd-field">
+            <label>Secondary Nations <span style="color:#64748b;font-weight:400;">(up to 8)</span></label>
+            <input type="text" id="nml-secondary" class="seg-input" placeholder="ER, SD, KE" />
+          </div>
+          <div class="thd-field">
+            <label>Backfill on create</label>
+            <select id="nml-backfill" class="thd-select thd-select-full">
+              <option value="0">No backfill — start from today</option>
+              <option value="30">Last 30 days</option>
+              <option value="90" selected>Last 90 days (default)</option>
+              <option value="180">Last 180 days</option>
+              <option value="365">Last 365 days</option>
+            </select>
+          </div>
+          <div class="thd-modal-actions" style="flex-direction:column;align-items:stretch;">
+            <div id="nml-status" style="font-size:0.85rem;color:#94a3b8;min-height:1.3em;"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+              <button class="btn-secondary" onclick="closeNewManualLineModal()">Cancel</button>
+              <button class="btn-primary" id="nml-submit" onclick="submitNewManualLine()">Create Line</button>
+            </div>
           </div>
         </div>
       </div>
@@ -2626,6 +2685,97 @@
         loadAdminTimelines();
       } catch (e) {
         alert('Merge failed: ' + e.message);
+      }
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // New manual Line — create + optional backfill
+    // ───────────────────────────────────────────────────────────────
+    function openNewManualLineModal() {
+      // Reset fields so the modal always opens clean
+      document.getElementById('nml-title').value       = '';
+      document.getElementById('nml-desc').value        = '';
+      document.getElementById('nml-category').value    = 'politics';
+      document.getElementById('nml-importance').value  = '5';
+      document.getElementById('nml-keywords').value    = '';
+      document.getElementById('nml-primary').value     = '';
+      document.getElementById('nml-secondary').value   = '';
+      document.getElementById('nml-backfill').value    = '90';
+      document.getElementById('nml-status').textContent = '';
+      document.getElementById('nml-status').style.color = '#94a3b8';
+      document.getElementById('nml-submit').disabled   = false;
+      document.getElementById('tl-new-modal').classList.remove('hidden');
+      setTimeout(() => document.getElementById('nml-title').focus(), 50);
+    }
+    function closeNewManualLineModal() {
+      document.getElementById('tl-new-modal').classList.add('hidden');
+    }
+
+    async function submitNewManualLine() {
+      const title      = document.getElementById('nml-title').value.trim();
+      const desc       = document.getElementById('nml-desc').value.trim();
+      const category   = document.getElementById('nml-category').value.trim() || 'politics';
+      const importance = parseFloat(document.getElementById('nml-importance').value) || 5;
+      const keywords   = document.getElementById('nml-keywords').value
+                            .split(',').map(s => s.trim()).filter(Boolean);
+      const primary    = document.getElementById('nml-primary').value
+                            .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const secondary  = document.getElementById('nml-secondary').value
+                            .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const backfillDays = parseInt(document.getElementById('nml-backfill').value, 10) || 0;
+      const statusEl = document.getElementById('nml-status');
+      const submit   = document.getElementById('nml-submit');
+
+      if (!title) { statusEl.textContent = 'Title is required.'; statusEl.style.color = '#ef4444'; return; }
+      if (!keywords.length && !primary.length) {
+        statusEl.textContent = 'At least one keyword or primary nation is required (how else would articles match?).';
+        statusEl.style.color = '#ef4444';
+        return;
+      }
+
+      submit.disabled = true;
+      statusEl.style.color = '#94a3b8';
+      statusEl.textContent = 'Creating…';
+
+      try {
+        const r = await fetch(`${API_BASE}/api/admin/timelines`, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            name:              title,
+            description:       desc,
+            primary_category:  category,
+            importance,
+            keywords,
+            primary_nations:   primary,
+            secondary_nations: secondary,
+          }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        const newId = data.timeline?.id;
+        statusEl.style.color = '#10b981';
+        statusEl.textContent = `✓ Created Line #${newId}. ${backfillDays > 0 ? `Backfilling ${backfillDays} days…` : ''}`;
+
+        if (backfillDays > 0 && newId) {
+          const bf = await fetch(
+            `${API_BASE}/api/admin/timelines/${newId}/backfill-articles?days=${backfillDays}`,
+            { method: 'POST', headers: authHeaders() }
+          );
+          const bfd = await bf.json();
+          if (!bf.ok) throw new Error(bfd.error || `Backfill HTTP ${bf.status}`);
+          statusEl.textContent = `✓ Created Line #${newId}. Backfill: scanned ${bfd.scanned}, attached ${bfd.attached}.`;
+        }
+
+        // Refresh the admin timeline list + auto-close after a beat
+        setTimeout(() => {
+          closeNewManualLineModal();
+          loadAdminTimelines();
+        }, 1500);
+      } catch (e) {
+        statusEl.style.color = '#ef4444';
+        statusEl.textContent = 'Error: ' + e.message;
+        submit.disabled = false;
       }
     }
 

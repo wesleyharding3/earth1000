@@ -51,6 +51,13 @@ function isGarbledText(str) {
 }
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
+// --sanity-check-articles runs a Claude pass per active/cooling thread
+// that asks "which of these articles don't match the thread's theme?"
+// Default is DRY RUN (log only) unless --sanity-check-articles-write is
+// also passed. Opt-in because it spends Claude tokens; expected cost is
+// ~1 Haiku call per active thread.
+const SANITY_CHECK_ARTICLES       = process.argv.includes('--sanity-check-articles');
+const SANITY_CHECK_ARTICLES_WRITE = process.argv.includes('--sanity-check-articles-write');
 const CLAUDE_BATCH    = 30;    // articles per Claude call
 const MIN_CLUSTER     = 2;     // min articles to form a cluster (Claude sees singletons too)
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
@@ -243,8 +250,156 @@ async function run() {
   console.log(`  threads_updated      : ${updated}`);
   console.log(`  input_tokens         : std=${metrics.stdIn}  cache_read=${metrics.cacheReadIn}  cache_write=${metrics.cacheWriteIn}  (cache_hit=${cacheHitRate}%)`);
   console.log(`  output_tokens        : ${metrics.outTokens}`);
+
+  // ─── Final-phase: thread article sanity check (opt-in) ────────────────
+  // Runs "at the very end" per the design. For each active/cooling thread
+  // with >= 3 articles, Claude Haiku judges which articles don't fit the
+  // thread's theme and flags them for detach. Dry-run by default; actual
+  // detaching requires the companion --sanity-check-articles-write flag.
+  if (SANITY_CHECK_ARTICLES) {
+    console.log(`\n─── Article sanity check${SANITY_CHECK_ARTICLES_WRITE ? '' : ' (DRY RUN)'} ───`);
+    try {
+      const sc = await runThreadArticleSanityCheck({
+        dryRun: !SANITY_CHECK_ARTICLES_WRITE,
+      });
+      console.log(`  threads scanned       : ${sc.threadsScanned}`);
+      console.log(`  articles flagged      : ${sc.articlesFlagged}`);
+      console.log(`  articles detached     : ${sc.articlesDetached}${sc.dryRun ? '  (dry run — no writes)' : ''}`);
+      console.log(`  claude_calls (sanity) : ${sc.claudeCalls}`);
+      console.log(`  tokens                : in=${sc.inputTokens} out=${sc.outputTokens}`);
+    } catch (err) {
+      console.warn(`  ⚠ sanity check failed: ${err.message}`);
+    }
+  }
+
   console.log(`✅ Done.\n`);
   await pool.end();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// THREAD ARTICLE SANITY CHECK
+// Load each active / cooling thread with its attached articles. Ask Claude
+// Haiku "which of these articles don't belong to this thread's theme?"
+// Prompt is strict-but-not-pedantic: when in doubt, keep the article.
+// Detachment removes the sta row only; the article itself stays in the
+// global pool and can still be attached to other threads.
+// ═════════════════════════════════════════════════════════════════════════
+async function runThreadArticleSanityCheck({ dryRun = true } = {}) {
+  const stats = {
+    threadsScanned:  0,
+    articlesFlagged: 0,
+    articlesDetached: 0,
+    claudeCalls:     0,
+    inputTokens:     0,
+    outputTokens:    0,
+    dryRun,
+  };
+
+  const { rows: threads } = await pool.query(`
+    SELECT id, title, description, primary_category, keywords, primary_nations, article_count
+    FROM story_threads
+    WHERE status IN ('active', 'cooling')
+      AND article_count >= 3
+    ORDER BY article_count DESC
+    LIMIT 200
+  `);
+
+  for (const t of threads) {
+    // Pull the thread's articles. Cap at 40 to keep prompt size bounded
+    // per thread (most threads have fewer; the 40 cap only kicks in on
+    // unusually large ones and picks the most-recent + anchor articles).
+    const { rows: articles } = await pool.query(`
+      SELECT a.id, COALESCE(a.translated_title, a.title) AS title, sta.is_anchor
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      WHERE sta.thread_id = $1
+      ORDER BY sta.is_anchor DESC NULLS LAST, a.published_at DESC
+      LIMIT 40
+    `, [t.id]);
+    if (articles.length < 3) continue;
+
+    stats.threadsScanned++;
+
+    const prompt =
+`You are auditing articles attached to a news thread. Identify articles that
+do NOT belong to this thread's theme.
+
+THREAD:
+  title: ${t.title}
+  description: ${(t.description || '').slice(0, 300)}
+  keywords: ${(t.keywords || []).slice(0, 8).join(', ')}
+  primary_nations: ${(t.primary_nations || []).join(', ') || '(none)'}
+  category: ${t.primary_category || ''}
+
+ARTICLES ATTACHED:
+${articles.map(a => `  ${a.id}${a.is_anchor ? ' [ANCHOR]' : ''}: ${String(a.title || '').slice(0, 160)}`).join('\n')}
+
+Rules:
+  - Article belongs if it covers the same event, story, or ongoing subject.
+  - Tangential keyword mentions DON'T count — if the article is mainly
+    about a different country's unrelated story that happens to mention a
+    shared term, flag it for detach.
+  - NEVER flag an anchor article. Anchors define the thread.
+  - Be strict but not pedantic. False-positive detachments (removing a
+    legit article) are WORSE than false-negatives. When in doubt, keep.
+
+Return ONLY this JSON, no prose, no markdown fences:
+{"detach": [12345, 67890], "reason": "one sentence summary"}`;
+
+    let detachIds = [];
+    try {
+      const r = await client.messages.create({
+        model:      'claude-haiku-4-5',
+        max_tokens: 400,
+        messages:   [{ role: 'user', content: prompt }],
+      });
+      stats.claudeCalls++;
+      stats.inputTokens  += r.usage?.input_tokens || 0;
+      stats.inputTokens  += r.usage?.cache_read_input_tokens || 0;
+      stats.outputTokens += r.usage?.output_tokens || 0;
+      const raw = r.content?.[0]?.text || '';
+      const match = raw.match(/\{[\s\S]*?\}/);
+      if (!match) continue;
+      let parsed;
+      try { parsed = JSON.parse(match[0]); } catch { continue; }
+      const anchorIds = new Set(articles.filter(a => a.is_anchor).map(a => a.id));
+      const attachedIds = new Set(articles.map(a => a.id));
+      detachIds = (Array.isArray(parsed.detach) ? parsed.detach : [])
+        .map(n => parseInt(n, 10))
+        .filter(n => Number.isFinite(n) && attachedIds.has(n) && !anchorIds.has(n));
+    } catch (err) {
+      console.warn(`  thread ${t.id}: claude call failed — ${err.message}`);
+      continue;
+    }
+
+    if (!detachIds.length) continue;
+    stats.articlesFlagged += detachIds.length;
+
+    // Show what Claude flagged for each thread so the user can eyeball it
+    const flaggedTitles = detachIds
+      .map(id => articles.find(a => a.id === id)?.title || '(unknown)')
+      .map(s => s.slice(0, 80));
+    console.log(`  thread #${t.id} "${String(t.title || '').slice(0, 40)}" — flag ${detachIds.length}:`);
+    flaggedTitles.forEach(tt => console.log(`      · ${tt}`));
+
+    if (!dryRun) {
+      const { rowCount } = await pool.query(
+        `DELETE FROM story_thread_articles WHERE thread_id = $1 AND article_id = ANY($2::int[])`,
+        [t.id, detachIds]
+      );
+      stats.articlesDetached += rowCount || 0;
+      // Recount article_count to stay accurate
+      await pool.query(
+        `UPDATE story_threads SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1) WHERE id = $1`,
+        [t.id]
+      );
+    }
+
+    // Light throttle so 200-thread sweep doesn't burst Anthropic TPS
+    await new Promise(r => setTimeout(r, 150));
+  }
+
+  return stats;
 }
 
 // ─── SQL Pre-Clustering ───────────────────────────────────────────────────────

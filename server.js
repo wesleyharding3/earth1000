@@ -5280,6 +5280,311 @@ app.patch('/api/admin/regions/:id', requireAdmin, express.json({ limit: '2mb' })
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Manual (curator-created) Lines
+//
+// Create Lines that the organic thread→line pipeline would never surface
+// because their constituent stories never spike hard enough for 3-sources-
+// in-24h thread creation. Once created, the normal umbrella phase in
+// storyTimelineBuilder picks them up on every run and attaches matching
+// articles from the last 7 days. For historical catchup at creation
+// time, POST /backfill-articles runs a one-shot scan over a wider
+// window. Manual Lines are immune to the multi-thread quality gate
+// (story_timelines.is_manual = TRUE).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Same umbrella scoring the builder uses (entityTierClassifier + loop in
+// storyTimelineBuilder.runArticleUmbrellaPhase). Duplicated here to keep
+// the builder's internal IIFE clean.
+//
+// Threshold note: the real-time umbrella phase uses 4.0 but also scores
+// on entity overlap (+2.5 per shared entity). This backfill path skips
+// entities (loading deep_context for thousands of candidates would be
+// expensive), so 3.0 here compensates — equivalent to "nation match +
+// at least one keyword or title-token hit" instead of requiring the
+// stronger entity signal.
+const UMBRELLA_ATTACH_THRESHOLD_FOR_BACKFILL = 3.0;
+const UMBRELLA_CAP_PER_BACKFILL_RUN          = 500;
+
+function _parseIsoListField(v) {
+  const arr = Array.isArray(v) ? v : String(v || '').split(',');
+  return arr.map(k => String(k || '').trim().toUpperCase())
+            .filter(k => /^[A-Z]{2,3}$/.test(k));
+}
+function _normKwList(v) {
+  const arr = Array.isArray(v) ? v : String(v || '').split(',');
+  return arr.map(k => String(k || '').trim()).filter(Boolean);
+}
+
+function _slugifyName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .replace(/\s+/g, '-')
+    .slice(0, 80);
+}
+
+// POST /api/admin/timelines — create a manual Line.
+//
+// Body:
+//   {
+//     name, description, keywords: [], primary_category,
+//     geographic_scope, importance,
+//     primary_nations: [], secondary_nations: []
+//   }
+//
+// On success: returns the new row. Caller can immediately POST to
+// /api/admin/timelines/:id/backfill-articles to pull historical coverage.
+app.post('/api/admin/timelines', requireAdmin, express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'name required' });
+
+    const keywords        = _normKwList(b.keywords);
+    const primaryNations  = _parseIsoListField(b.primary_nations);
+    const secondaryNations = _parseIsoListField(b.secondary_nations);
+    const slug            = b.slug ? _slugifyName(b.slug) : _slugifyName(name);
+    if (!slug) return res.status(400).json({ error: 'could not derive slug from name' });
+
+    // Guard: avoid slug collisions with existing rows. Append -manual or
+    // -manual-N until a free slot is found.
+    let finalSlug = slug;
+    let suffix = 0;
+    while (true) {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM story_timelines WHERE scope = $1 LIMIT 1`,
+        [finalSlug]
+      );
+      if (!rows.length) break;
+      suffix++;
+      finalSlug = `${slug}-manual${suffix > 1 ? `-${suffix}` : ''}`;
+      if (suffix > 20) return res.status(409).json({ error: 'slug collision — pick a different name' });
+    }
+
+    const { rows } = await pool.query(`
+      INSERT INTO story_timelines
+        (title, description, scope, status, importance, primary_category,
+         geographic_scope, keywords, primary_nations, secondary_nations,
+         article_count, first_seen_at, last_updated_at,
+         is_manual, created_by)
+      VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9,
+              0, NOW(), NOW(),
+              TRUE, $10)
+      RETURNING id, title, scope, status, importance, primary_category,
+                geographic_scope, keywords, primary_nations, secondary_nations,
+                article_count, first_seen_at, last_updated_at, is_manual, created_by
+    `, [
+      name,
+      String(b.description || '').slice(0, 2000),
+      finalSlug,
+      parseFloat(b.importance) || 5,
+      b.primary_category || 'politics',
+      b.geographic_scope || 'global',
+      keywords,
+      primaryNations,
+      secondaryNations,
+      req.user?.id || req.user?.email || 'admin',
+    ]);
+
+    const created = rows[0];
+
+    // Log for audit parity with the rest of the editor.
+    try {
+      logEditorEvent(pool, {
+        eventType: 'timeline.manual_create',
+        entityType: 'timeline',
+        entityId: created.id,
+        editorId: req.user?.id || null,
+        before: null,
+        after: created,
+      });
+    } catch (_) {}
+
+    res.json({ ok: true, timeline: created });
+  } catch (err) {
+    console.error('[admin/timelines] manual create error:', err.message);
+    res.status(500).json({ error: 'Failed to create manual Line: ' + err.message });
+  }
+});
+
+// POST /api/admin/timelines/:id/backfill-articles?days=90
+//
+// One-shot historical catch-up for manual (or any) Line. Pulls articles
+// published in the last N days that match the Line's primary_nations
+// ∪ keywords, scores them against the Line's umbrella, and attaches
+// anything scoring >= UMBRELLA_ATTACH_THRESHOLD_FOR_BACKFILL (4.0).
+//
+// Same algorithm and thresholds as storyTimelineBuilder's umbrella
+// phase, just with a configurable (wider) lookback window. Returns
+// { scanned, attached, lookback_days }.
+app.post('/api/admin/timelines/:id/backfill-articles', requireAdmin, async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.id, 10);
+    if (!timelineId) return res.status(400).json({ error: 'Invalid ID' });
+    const days = Math.min(Math.max(parseInt(req.query.days, 10) || 90, 1), 365);
+
+    const { rows: tlRows } = await pool.query(`
+      SELECT id, title, keywords, primary_nations, secondary_nations
+      FROM story_timelines WHERE id = $1
+    `, [timelineId]);
+    if (!tlRows.length) return res.status(404).json({ error: 'Timeline not found' });
+    const line = tlRows[0];
+
+    const nations = (line.primary_nations || []).concat(line.secondary_nations || [])
+      .map(s => String(s || '').trim().toUpperCase())
+      .filter(s => /^[A-Z]{2,3}$/.test(s));
+    // Normalize keywords the same way keywordNormalizer does — lowercase,
+    // strip diacritics, strip punctuation. This matches what's stored in
+    // article_keywords.normalized_keyword so the pre-filter actually hits.
+    const keywords = (line.keywords || [])
+      .map(k => String(k || '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      )
+      .filter(Boolean);
+
+    if (!nations.length && !keywords.length) {
+      return res.status(400).json({ error: 'Line has no primary_nations or keywords to match articles against' });
+    }
+
+    // Pre-filter: articles published in the window, attached-nowhere-yet
+    // on this Line, that share at least one nation OR normalized keyword.
+    // UNION of two indexed branches keeps this fast even at 365 days.
+    const { rows: candidates } = await pool.query(`
+      SELECT DISTINCT ON (id) id, title, published_at, iso_code
+      FROM (
+        SELECT a.id, a.title, a.published_at, co.iso_code
+        FROM news_articles a
+        JOIN countries co ON co.id = a.country_id
+        WHERE cardinality($2::text[]) > 0
+          AND a.published_at >= NOW() - ($4 * INTERVAL '1 day')
+          AND co.iso_code = ANY($2::text[])
+          AND NOT EXISTS (
+            SELECT 1 FROM story_timeline_articles sta
+            WHERE sta.timeline_id = $1 AND sta.article_id = a.id
+          )
+        UNION
+        SELECT a.id, a.title, a.published_at, co.iso_code
+        FROM article_keywords ak
+        JOIN news_articles a ON a.id = ak.article_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE cardinality($3::text[]) > 0
+          AND ak.normalized_keyword = ANY($3::text[])
+          AND a.published_at >= NOW() - ($4 * INTERVAL '1 day')
+          AND NOT EXISTS (
+            SELECT 1 FROM story_timeline_articles sta
+            WHERE sta.timeline_id = $1 AND sta.article_id = a.id
+          )
+      ) u
+      ORDER BY id, published_at DESC
+      LIMIT ${UMBRELLA_CAP_PER_BACKFILL_RUN * 4}
+    `, [timelineId, nations, keywords, days]);
+
+    if (!candidates.length) {
+      return res.json({ ok: true, scanned: 0, attached: 0, lookback_days: days });
+    }
+
+    // Per-article scoring mirrors storyTimelineBuilder's umbrella scoring.
+    // We pull article_keywords for the candidate set in bulk (one query).
+    const candIds = candidates.map(c => Number(c.id));
+    const { rows: akRows } = await pool.query(`
+      SELECT article_id, COALESCE(normalized_keyword, LOWER(keyword)) AS kw
+      FROM article_keywords WHERE article_id = ANY($1::int[])
+    `, [candIds]);
+    const kwByArticle = new Map();
+    for (const r of akRows) {
+      if (!kwByArticle.has(r.article_id)) kwByArticle.set(r.article_id, new Set());
+      kwByArticle.get(r.article_id).add(r.kw);
+    }
+
+    // Title tokenizer matching storyTimelineBuilder (drops stopwords, min 3 chars)
+    const TITLE_STOP = new Set([
+      'the','a','an','of','in','on','at','to','for','and','or','but','is','are','was','were',
+      'with','from','by','as','that','this','its','it','after','before','over','under',
+      'new','old','first','last','top','all','some','any','news','report','update',
+      'coverage','story','analysis',
+    ]);
+    const tokTitle = (t) => new Set(String(t || '').toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 2 && !TITLE_STOP.has(w)));
+
+    const lineNationSet  = new Set(nations);
+    const lineKwSet      = new Set(keywords);
+    // Title tokens come from the Line's own title (e.g. "Ethiopia Tigray
+    // Recovery" → {"ethiopia","tigray","recovery"}) so articles whose
+    // titles mention those words score higher.
+    const lineTitleToks  = tokTitle(line.title || '');
+    const intersect = (a, b) => { let n = 0; for (const x of a) if (b.has(x)) n++; return n; };
+
+    // Weights identical to the builder (see W_* constants).
+    const W_ENTITY = 2.5, W_NATION = 2.5, W_KEYWORD = 1.0, W_TITLE = 0.4;
+    const ENTITY_CAP = 6, KEYWORD_CAP = 8;
+
+    const qualified = [];
+    for (const c of candidates) {
+      const artNations = new Set(c.iso_code ? [String(c.iso_code).toUpperCase()] : []);
+      const artKws     = kwByArticle.get(Number(c.id)) || new Set();
+      const artTtk     = tokTitle(c.title);
+
+      const nat = intersect(artNations, lineNationSet);
+      const kw  = Math.min(KEYWORD_CAP, intersect(artKws, lineKwSet));
+      const ttk = intersect(artTtk, lineTitleToks);
+      // No entity scoring in this lightweight path — article_deep_context
+      // for every candidate would be expensive; keywords + nations +
+      // title tokens is enough to score honestly for backfill.
+
+      const score = nat * W_NATION + kw * W_KEYWORD + ttk * W_TITLE;
+      if (score >= UMBRELLA_ATTACH_THRESHOLD_FOR_BACKFILL) {
+        qualified.push({ articleId: Number(c.id), score });
+      }
+    }
+
+    // Rank + cap. Strongest matches in first.
+    qualified.sort((a, b) => b.score - a.score);
+    const toAttach = qualified.slice(0, UMBRELLA_CAP_PER_BACKFILL_RUN);
+
+    let attached = 0;
+    if (toAttach.length) {
+      const ids  = toAttach.map(a => a.articleId);
+      const rels = toAttach.map(a => a.score);
+      const r = await pool.query(`
+        INSERT INTO story_timeline_articles
+          (timeline_id, article_id, relevance_score, parabolic_weight, is_anchor, added_at)
+        SELECT $1, unnest($2::int[]), unnest($3::float8[]), 1.0, false, NOW()
+        ON CONFLICT (timeline_id, article_id) DO NOTHING
+      `, [timelineId, ids, rels]);
+      attached = r.rowCount || 0;
+
+      // Bump last_updated_at + article_count.
+      await pool.query(`
+        UPDATE story_timelines
+           SET last_updated_at = NOW(),
+               article_count   = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
+         WHERE id = $1
+      `, [timelineId]);
+    }
+
+    res.json({
+      ok: true,
+      scanned: candidates.length,
+      qualified: qualified.length,
+      attached,
+      lookback_days: days,
+    });
+  } catch (err) {
+    console.error('[admin/timelines] backfill error:', err.message);
+    res.status(500).json({ error: 'Backfill failed: ' + err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Editorial rule miner — Layer 3
 // Trigger a fresh mine of editor_events → editorial_rules.
 // Also expose a read endpoint so the admin UI can inspect / toggle rules.
@@ -6421,11 +6726,12 @@ app.get("/api/timelines/latest", async (req, res) => {
         SELECT
           t.id AS timeline_id, t.title, t.description, t.scope,
           t.primary_category, t.geographic_scope, t.importance, t.keywords,
-          t.primary_nations, t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
-          t.historical_anchors, t.status, t.last_updated_at
+          t.primary_nations, t.secondary_nations, t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
+          t.historical_anchors, t.status, t.last_updated_at,
+          COALESCE(t.is_manual, FALSE) AS is_manual
         FROM story_timelines t
         WHERE t.status IN ('active','cooling','dormant')
-          AND t.article_count >= 2
+          AND (t.article_count >= 2 OR COALESCE(t.is_manual, FALSE) = TRUE)
         ORDER BY
           CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
           CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0

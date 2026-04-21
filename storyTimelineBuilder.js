@@ -1368,11 +1368,14 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
 //  enforcement. Fresh Lines younger than GATE_GRACE_HOURS are skipped.
 // ═════════════════════════════════════════════════════════════════════════════
 async function runLineQualityGatePhase({ dryRun = false } = {}) {
-  // Evaluate every timeline with thread / article metrics.
+  // Evaluate every timeline with thread / article metrics. Manual
+  // (curator-created) Lines are excluded — they're immune to the gate
+  // by design (see migration 20260421_manual_timelines.sql).
   const { rows } = await pool.query(`
     WITH tl AS (
       SELECT id, title, status, first_seen_at, last_updated_at
       FROM story_timelines
+      WHERE COALESCE(is_manual, FALSE) = FALSE
     ),
     thr AS (
       SELECT
