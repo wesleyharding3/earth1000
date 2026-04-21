@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Region Editor · earth00</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+
+  <!-- Leaflet base map. CDN-served; cached aggressively by browsers. -->
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+        crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+          crossorigin=""></script>
+
+  <!-- Turf.js — geometry primitives (nearest point on line, distance, etc). -->
+  <script src="https://unpkg.com/@turf/turf@7.1.0/turf.min.js"></script>
+
+  <style>
+    :root {
+      --bg:          #0b0f1a;
+      --panel:       #141a2a;
+      --panel-hi:    #1c2440;
+      --border:      #29324d;
+      --fg:          #e6ebf5;
+      --fg-dim:      #8a95b3;
+      --accent:      #64f0a0;
+      --accent-dim:  #3aa870;
+      --warn:        #f5a54a;
+      --danger:      #ef4444;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--fg);
+      overflow: hidden;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      grid-template-rows: 100vh;     /* single row pinned to viewport */
+      height: 100vh;
+      overflow: hidden;              /* prevent grid cells from growing past viewport */
+    }
+
+    /* ── sidebar ───────────────────────────────────────────── */
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      min-width: 0;
+      min-height: 0;                 /* let flex children (sb-list) scroll */
+      overflow: hidden;
+    }
+    .sb-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sb-title { font-size: 14px; font-weight: 700; letter-spacing: 0.04em; }
+    .sb-sub {
+      font-size: 10px; color: var(--fg-dim);
+      text-transform: uppercase; letter-spacing: 0.1em; margin-top: 2px;
+    }
+    .sb-search {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sb-search input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .sb-search input:focus { outline: none; border-color: var(--accent-dim); }
+    .sb-list { flex: 1; overflow-y: auto; }
+    .sb-row {
+      padding: 7px 14px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .sb-row:hover { background: var(--panel-hi); }
+    .sb-row.active {
+      background: var(--panel-hi);
+      border-left: 3px solid var(--accent);
+      padding-left: 11px;
+    }
+    .sb-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .sb-dot.has   { background: var(--accent); }
+    .sb-dot.empty { background: var(--fg-dim); opacity: 0.4; }
+    .sb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-count { font-size: 10px; color: var(--fg-dim); }
+
+    /* ── map area ─────────────────────────────────────────── */
+    .map-wrap {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+    #map {
+      position: absolute;            /* take the whole wrap regardless of flow */
+      inset: 0;
+      background: #0e1423;
+    }
+    /* CartoDB dark tiles are already dark — no filter needed */
+
+    /* ── active region toolbar (top-right of map) ─────────── */
+    .toolbar {
+      position: absolute;
+      top: 10px; right: 10px;
+      background: rgba(20,26,42,0.96);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      min-width: 240px;
+      z-index: 1000;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .tb-name {
+      font-size: 14px; font-weight: 600; margin-bottom: 4px;
+    }
+    .tb-slug {
+      font-size: 10px; color: var(--fg-dim);
+      letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 10px;
+    }
+    .tb-stat {
+      font-size: 11px; color: var(--fg-dim);
+      display: flex; justify-content: space-between;
+      padding: 2px 0;
+    }
+    .tb-stat strong { color: var(--fg); font-weight: 500; }
+    .tb-toggle {
+      display: flex; align-items: center; gap: 8px;
+      margin: 10px 0 4px;
+      font-size: 11px; cursor: pointer; user-select: none;
+    }
+    .tb-toggle input { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
+    .tb-help {
+      font-size: 10px; color: var(--fg-dim); line-height: 1.4;
+      margin: 6px 0 0; padding-left: 22px;
+    }
+    .tb-btns {
+      display: flex; gap: 6px; margin-top: 12px;
+    }
+    .btn {
+      flex: 1; padding: 7px 10px;
+      background: var(--panel-hi);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-size: 11px; font-weight: 500;
+      border-radius: 4px; cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .btn:hover { background: var(--border); }
+    .btn.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #0a1f13; }
+    .btn.primary:hover { background: var(--accent); }
+    .btn.danger { border-color: var(--danger); color: var(--danger); }
+    .btn.danger:hover { background: var(--danger); color: #fff; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Undo / Redo — compact icon buttons pinned inside the toolbar. */
+    .tb-undo-row {
+      display: flex; gap: 6px; margin-top: 10px;
+    }
+    .btn.icon {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      min-width: 38px;
+      font-size: 14px; font-weight: 600;
+      font-family: ui-monospace, monospace;
+    }
+    .tb-undo-label {
+      flex: 1;
+      display: flex; align-items: center;
+      font-size: 10px; color: var(--fg-dim);
+      padding-left: 4px;
+    }
+
+    .tb-dirty {
+      font-size: 10px; color: var(--warn);
+      margin-top: 6px; min-height: 14px;
+    }
+
+    /* ── help footer (bottom-left of map) ─────────────────── */
+    .help {
+      position: absolute;
+      bottom: 10px; left: 10px;
+      background: rgba(20,26,42,0.9);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 10px; color: var(--fg-dim);
+      z-index: 1000;
+      max-width: 320px;
+      line-height: 1.5;
+    }
+    .help kbd {
+      background: var(--panel-hi);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      padding: 1px 5px; border-radius: 3px;
+      font-family: ui-monospace, monospace;
+      font-size: 10px;
+    }
+
+    /* ── empty state when no region selected ──────────────── */
+    .empty-state {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--fg-dim);
+      font-size: 13px;
+      z-index: 900;
+      pointer-events: none;
+      text-align: center;
+    }
+
+    /* ── Leaflet overrides ────────────────────────────────── */
+    .leaflet-container { background: #0e1423; }
+    .leaflet-control-attribution {
+      background: rgba(0,0,0,0.5) !important;
+      color: rgba(255,255,255,0.4) !important;
+      font-size: 10px !important;
+    }
+    .leaflet-control-attribution a { color: rgba(100,200,255,0.6) !important; }
+
+    /* Active polygon — bright, editable */
+    .active-fill {
+      fill:#64f0a0; fill-opacity:0.18;
+      stroke:#64f0a0; stroke-width:2; stroke-opacity:1;
+    }
+    /* Other regions — dim, non-interactive */
+    .other-fill {
+      fill:#3aa870; fill-opacity:0.08;
+      stroke:#3aa870; stroke-width:1; stroke-opacity:0.5;
+    }
+    /* Draft (current drawing before 3 vertices) — dashed */
+    .draft-line {
+      fill:none;
+      stroke:#f5a54a; stroke-width:2; stroke-dasharray:4,3;
+    }
+
+    /* Vertex markers — rendered as divIcon */
+    .vertex-marker {
+      width: 10px; height: 10px;
+      background: #0b0f1a;
+      border: 2px solid #64f0a0;
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+      cursor: grab;
+    }
+    .vertex-marker:hover {
+      background: #64f0a0;
+      transform: scale(1.2);
+    }
+    .vertex-marker.dragging { cursor: grabbing; background: #64f0a0; }
+
+    /* Snap preview indicator */
+    .snap-preview {
+      width: 14px; height: 14px;
+      border: 2px solid #f5a54a;
+      background: rgba(245,165,74,0.25);
+      border-radius: 50%;
+      pointer-events: none;
+      margin: -7px 0 0 -7px;
+    }
+    .snap-preview.neighbor { border-color: #7eb5ff; background: rgba(126,181,255,0.3); }
+  </style>
+</head>
+<body>
+<div class="app">
+  <!-- ── SIDEBAR: region list ─────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sb-header">
+      <div class="sb-title">Region Editor</div>
+      <div class="sb-sub" id="sbCountLabel">Loading…</div>
+    </div>
+    <div class="sb-search">
+      <input type="text" id="sbSearch" placeholder="Search regions…" autocomplete="off">
+    </div>
+    <div class="sb-list" id="sbList"></div>
+  </aside>
+
+  <!-- ── MAP + TOOLBAR ────────────────────────────────────────── -->
+  <div class="map-wrap">
+    <div id="map"></div>
+
+    <!-- Active region toolbar (hidden until a region is selected) -->
+    <div class="toolbar" id="toolbar" style="display:none;">
+      <div class="tb-name" id="tbName">—</div>
+      <div class="tb-slug" id="tbSlug"></div>
+      <div class="tb-stat"><span>Vertices</span><strong id="tbVtx">0</strong></div>
+      <div class="tb-stat"><span>Rings</span><strong id="tbRings">0</strong></div>
+      <div class="tb-stat"><span>Updated</span><strong id="tbUpdated">never</strong></div>
+
+      <label class="tb-toggle">
+        <input type="checkbox" id="tbSnapCoast">
+        <span>Snap to coastline</span>
+      </label>
+      <div class="tb-help">
+        Off for oceanic regions (British Isles, Polynesia). On for
+        land-bound regions (Maghreb, Chilean coast).
+      </div>
+
+      <div class="tb-undo-row">
+        <button class="btn icon" id="tbUndo" title="Undo last edit (⌘Z)">↶</button>
+        <button class="btn icon" id="tbRedo" title="Redo (⇧⌘Z)">↷</button>
+        <span class="tb-undo-label" id="tbUndoLabel">0 / 0</span>
+      </div>
+      <div class="tb-btns">
+        <button class="btn" id="tbNewRing" title="Start a new disjoint polygon (e.g. island chain)">+ Ring</button>
+        <button class="btn" id="tbRevert">Revert</button>
+        <button class="btn primary" id="tbSave">Save</button>
+      </div>
+      <div class="tb-btns" style="margin-top:6px;">
+        <button class="btn danger" id="tbClear" title="Delete all geometry for this region">Clear polygon</button>
+      </div>
+      <div class="tb-dirty" id="tbDirty"></div>
+    </div>
+
+    <!-- Help footer -->
+    <div class="help">
+      <kbd>Click</kbd> empty map: add vertex ·
+      <kbd>Drag</kbd> vertex: move ·
+      <kbd>Dbl-click</kbd> vertex: delete ·
+      <kbd>Click edge</kbd>: insert vertex
+      <br>
+      <kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd>: undo ·
+      <kbd>⇧⌘Z</kbd> / <kbd>Ctrl+Y</kbd>: redo ·
+      Snap: <span style="color:#f5a54a">coastline</span> /
+      <span style="color:#7eb5ff">neighbor</span> within 12 px.
+    </div>
+
+    <div class="empty-state" id="emptyState">
+      Pick a region from the sidebar to edit its boundary.
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═════════════════════════════════════════════════════════════════════════
+   Region editor — click-to-add, drag-to-move, edge-to-insert, dbl-to-delete.
+   Coastline-aware + neighbor-aware snapping. Always-editable for the active
+   polygon; other regions paint as dim context. GeoJSON on wire, PostGIS
+   MultiPolygon under the hood (auto-upcast via ST_Multi on save).
+   ═════════════════════════════════════════════════════════════════════════ */
+
+const API_BASE = ''; // same-origin — the static server proxies or you hit the API directly
+const COAST_URL = '/api/land/geojson'; // server.js route that reads ne_50m_land.geojson from disk
+const SNAP_PIXELS = 12;
+const SNAP_NEIGHBOR_PIXELS = 14;
+
+// ─── map + base layers ─────────────────────────────────────────────────
+const map = L.map('map', {
+  zoomControl: true,
+  worldCopyJump: true,
+  doubleClickZoom: false,          // we use dbl-click for vertex delete
+}).setView([20, 0], 2);
+
+// Expose map + state on window for debugging / programmatic testing.
+// Safe by convention (double-underscore). Lets Claude Preview drop test
+// vertices and us inspect state from the devtools console.
+window.__editorMap = map;
+
+// CartoDB dark_all — free, no key, designed for dark UIs. Attribution
+// includes both Carto and OpenStreetMap (the upstream data). If we ever
+// want to swap to Mapbox Dark or a custom style, only this block changes.
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap · © CARTO',
+  subdomains: 'abcd',
+  maxZoom: 19,
+}).addTo(map);
+
+// ─── state ──────────────────────────────────────────────────────────────
+// Exposed as window.__editorState so test harnesses + dev inspectors can
+// read it without hunting through Leaflet internals.
+const state = window.__editorState = {
+  regions: [],        // FeatureCollection, full list
+  activeId: null,     // currently edited region id
+  active: null,       // working copy of the active Feature (edits happen here)
+  activeSnapshot: null,  // JSON-serialized original for revert
+  coast: null,        // ne_50m_land.geojson, turf-ready
+  neighbors: null,    // FeatureCollection of other regions w/ geom, near the bbox
+  snapPreview: null,  // Leaflet marker showing the current snap target
+  dragging: null,     // { ring, idx, marker } while a vertex is being dragged
+  // Undo / redo stacks — each entry is a JSON.stringify'd geometry snapshot
+  // (or the string "null" for no-geom). Bounded to UNDO_CAP entries so the
+  // memory footprint never runs away on a long session. Reset on region
+  // switch (undo doesn't cross regions).
+  undoStack: [],
+  redoStack: [],
+};
+
+const UNDO_CAP = 60;
+
+// ─── Leaflet layers ────────────────────────────────────────────────────
+// otherLayer: all regions except the active one, non-interactive dim fill
+// activeLayer: the active region's polygon(s)
+// vertexLayer: vertex markers for the active region
+// draftLine: polyline shown before the active ring has 3 vertices
+const otherLayer  = L.layerGroup().addTo(map);
+const activeLayer = L.layerGroup().addTo(map);
+const vertexLayer = L.layerGroup().addTo(map);
+
+// ─── DOM refs ──────────────────────────────────────────────────────────
+const els = {
+  sbList:        document.getElementById('sbList'),
+  sbSearch:      document.getElementById('sbSearch'),
+  sbCountLabel:  document.getElementById('sbCountLabel'),
+  toolbar:       document.getElementById('toolbar'),
+  tbName:        document.getElementById('tbName'),
+  tbSlug:        document.getElementById('tbSlug'),
+  tbVtx:         document.getElementById('tbVtx'),
+  tbRings:       document.getElementById('tbRings'),
+  tbUpdated:     document.getElementById('tbUpdated'),
+  tbSnapCoast:   document.getElementById('tbSnapCoast'),
+  tbNewRing:     document.getElementById('tbNewRing'),
+  tbRevert:      document.getElementById('tbRevert'),
+  tbSave:        document.getElementById('tbSave'),
+  tbClear:       document.getElementById('tbClear'),
+  tbDirty:       document.getElementById('tbDirty'),
+  tbUndo:        document.getElementById('tbUndo'),
+  tbRedo:        document.getElementById('tbRedo'),
+  tbUndoLabel:   document.getElementById('tbUndoLabel'),
+  emptyState:    document.getElementById('emptyState'),
+};
+
+// ═════════════════════════════════════════════════════════════════════════
+// BOOT
+// ═════════════════════════════════════════════════════════════════════════
+(async () => {
+  try {
+    await Promise.all([
+      loadRegions(),
+      loadCoast(),
+    ]);
+    renderSidebar();
+  } catch (err) {
+    console.error('boot failed', err);
+    els.sbCountLabel.textContent = 'Error: ' + err.message;
+  }
+})();
+
+async function loadRegions() {
+  const r = await fetch(API_BASE + '/api/admin/regions', { credentials: 'include' });
+  if (!r.ok) throw new Error('regions list HTTP ' + r.status);
+  const data = await r.json();
+  state.regions = data.features || [];
+}
+
+async function loadCoast() {
+  try {
+    const r = await fetch(COAST_URL);
+    if (!r.ok) { console.warn('coastline not available at ' + COAST_URL); return; }
+    state.coast = await r.json();
+  } catch (e) { console.warn('coastline load failed:', e.message); }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// SIDEBAR
+// ═════════════════════════════════════════════════════════════════════════
+function renderSidebar() {
+  const q = (els.sbSearch.value || '').toLowerCase().trim();
+  const filtered = state.regions.filter(f => !q
+    || f.properties.name.toLowerCase().includes(q)
+    || f.properties.slug.toLowerCase().includes(q));
+
+  const painted = state.regions.filter(f => f.properties.has_geom).length;
+  els.sbCountLabel.textContent = `${painted} of ${state.regions.length} painted`;
+
+  els.sbList.innerHTML = filtered.map(f => `
+    <div class="sb-row ${f.id === state.activeId ? 'active' : ''}" data-id="${f.id}">
+      <span class="sb-dot ${f.properties.has_geom ? 'has' : 'empty'}"></span>
+      <span class="sb-name">${escapeHtml(f.properties.name)}</span>
+    </div>
+  `).join('');
+
+  // Wire click handlers
+  els.sbList.querySelectorAll('.sb-row').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = parseInt(el.dataset.id, 10);
+      selectRegion(id);
+    });
+  });
+
+  paintAllOthers();
+}
+
+els.sbSearch.addEventListener('input', renderSidebar);
+
+// ═════════════════════════════════════════════════════════════════════════
+// REGION SELECTION
+// ═════════════════════════════════════════════════════════════════════════
+async function selectRegion(id) {
+  // Commit any in-progress drag first
+  state.dragging = null;
+
+  // Deep-clone the row so edits don't touch the cached list until save
+  const match = state.regions.find(f => f.id === id);
+  if (!match) return;
+  state.activeId = id;
+  state.active = JSON.parse(JSON.stringify(match));
+  state.activeSnapshot = JSON.stringify(match);
+  resetUndo();   // undo history is per-region; switching = fresh stack
+
+  els.emptyState.style.display = 'none';
+  els.toolbar.style.display = '';
+
+  els.tbName.textContent = state.active.properties.name;
+  els.tbSlug.textContent = state.active.properties.slug;
+  els.tbSnapCoast.checked = !!state.active.properties.snap_to_coast;
+  updateMetaStats();
+  updateDirty(false);
+
+  // Center on region's centroid (or polygon centroid if present) so editing
+  // a region always starts where the region actually is.
+  const centroid = state.active.properties.centroid;
+  if (centroid && centroid[0] != null && centroid[1] != null) {
+    map.setView([centroid[1], centroid[0]], state.active.geometry ? 5 : 4);
+  }
+
+  renderSidebar();    // refresh active highlight
+  redrawActive();
+  await refreshNeighbors();
+}
+
+function updateMetaStats() {
+  const g = state.active?.geometry;
+  const rings = g?.type === 'MultiPolygon'
+    ? g.coordinates.length
+    : g?.type === 'Polygon' ? 1 : 0;
+  const vtx = !g ? 0
+    : g.type === 'MultiPolygon'
+      ? g.coordinates.reduce((s, poly) => s + (poly[0]?.length || 0), 0)
+      : g.coordinates[0]?.length || 0;
+  els.tbVtx.textContent = String(vtx);
+  els.tbRings.textContent = String(rings);
+  els.tbUpdated.textContent = state.active.properties.geom_updated_at
+    ? new Date(state.active.properties.geom_updated_at).toLocaleDateString()
+    : 'never';
+}
+
+function updateDirty(isDirty) {
+  els.tbDirty.textContent = isDirty ? '● unsaved changes' : '';
+  els.tbSave.disabled = !isDirty;
+  els.tbRevert.disabled = !isDirty;
+}
+
+function markDirty() { updateDirty(true); updateMetaStats(); }
+
+// ═════════════════════════════════════════════════════════════════════════
+// UNDO / REDO
+// Every user mutation (add vertex, delete, drag commit, edge-insert, + Ring,
+// Clear polygon) calls pushUndo() BEFORE changing state. Drag commits use
+// pushUndo on mousedown (drag-start), NOT on every mousemove, so one drag
+// is one undo entry — not one-per-frame. Region switches reset both stacks.
+// ═════════════════════════════════════════════════════════════════════════
+function pushUndo() {
+  if (!state.active) return;
+  const snap = JSON.stringify(state.active.geometry ?? null);
+  // Skip no-op pushes (pushing identical state to the top would waste a slot)
+  const top = state.undoStack[state.undoStack.length - 1];
+  if (snap === top) return;
+  state.undoStack.push(snap);
+  if (state.undoStack.length > UNDO_CAP) state.undoStack.shift();
+  state.redoStack.length = 0;   // new action invalidates forward history
+  updateUndoButtons();
+}
+
+function applyHistorySnap(snapStr) {
+  if (!state.active) return;
+  state.active.geometry = snapStr === 'null' ? null : JSON.parse(snapStr);
+  redrawActive();
+  updateMetaStats();
+  updateDirty(JSON.stringify(state.active.geometry ?? null) !==
+              JSON.stringify(JSON.parse(state.activeSnapshot)?.geometry ?? null));
+}
+
+function undo() {
+  if (!state.undoStack.length || !state.active) return;
+  // Save current to redo, then apply previous
+  state.redoStack.push(JSON.stringify(state.active.geometry ?? null));
+  applyHistorySnap(state.undoStack.pop());
+  updateUndoButtons();
+}
+
+function redo() {
+  if (!state.redoStack.length || !state.active) return;
+  state.undoStack.push(JSON.stringify(state.active.geometry ?? null));
+  applyHistorySnap(state.redoStack.pop());
+  updateUndoButtons();
+}
+
+function resetUndo() {
+  state.undoStack.length = 0;
+  state.redoStack.length = 0;
+  updateUndoButtons();
+}
+
+function updateUndoButtons() {
+  els.tbUndo.disabled = !state.undoStack.length;
+  els.tbRedo.disabled = !state.redoStack.length;
+  els.tbUndoLabel.textContent = `${state.undoStack.length} / ${state.redoStack.length}`;
+}
+
+els.tbUndo.addEventListener('click', undo);
+els.tbRedo.addEventListener('click', redo);
+
+// Keyboard shortcuts. Guard against firing while typing in an input
+// (the sidebar search field would otherwise eat backspace/Z keys).
+document.addEventListener('keydown', (e) => {
+  if (e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA') return;
+  const mod = e.metaKey || e.ctrlKey;
+  if (!mod) return;
+  const key = e.key.toLowerCase();
+  if (key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+  if ((key === 'z' && e.shiftKey) || key === 'y') { e.preventDefault(); redo(); return; }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// GEOMETRY RENDERING
+// ═════════════════════════════════════════════════════════════════════════
+
+// Paint ALL non-active regions as dim polygons. Rebuild whenever the
+// region list changes (save, load).
+function paintAllOthers() {
+  otherLayer.clearLayers();
+  for (const f of state.regions) {
+    if (!f.geometry || f.id === state.activeId) continue;
+    L.geoJSON(f.geometry, {
+      className: 'other-fill',
+      interactive: false,
+    }).addTo(otherLayer);
+  }
+}
+
+// Redraw the active polygon + its vertex markers.
+function redrawActive() {
+  activeLayer.clearLayers();
+  vertexLayer.clearLayers();
+
+  const g = state.active?.geometry;
+  if (!g) {
+    // No geometry yet — show nothing, user will click to start drawing
+    paintAllOthers();
+    return;
+  }
+
+  const rings = geomRings(g);
+
+  // Paint polygon(s). Each ring with <3 vertices renders as dashed draft.
+  for (let ri = 0; ri < rings.length; ri++) {
+    const ring = rings[ri];
+    if (ring.length < 3) {
+      // draft — just a polyline
+      L.polyline(ring.map(c => [c[1], c[0]]), { className: 'draft-line', interactive: false }).addTo(activeLayer);
+    } else {
+      // closed polygon with fill. Use ring + close
+      const pts = ring.map(c => [c[1], c[0]]);
+      L.polygon(pts, { className: 'active-fill' })
+        .on('click', (e) => onActivePolygonClick(e, ri))
+        .addTo(activeLayer);
+    }
+    // vertex markers for every point in every ring
+    for (let i = 0; i < ring.length; i++) {
+      const pt = ring[i];
+      const m = L.marker([pt[1], pt[0]], {
+        icon: L.divIcon({ className: 'vertex-marker', iconSize: [10, 10] }),
+        draggable: false,     // we handle drag manually for snap integration
+        interactive: true,
+      });
+      m._ringIdx = ri;
+      m._vtxIdx = i;
+      attachVertexHandlers(m);
+      m.addTo(vertexLayer);
+    }
+  }
+
+  // repaint others without the active one
+  paintAllOthers();
+}
+
+/** Return an array of rings from a Polygon or MultiPolygon. Each ring is
+ *  the outer ring only (we don't edit interior holes in V1). */
+function geomRings(g) {
+  if (!g) return [];
+  if (g.type === 'Polygon')      return [g.coordinates[0]];
+  if (g.type === 'MultiPolygon') return g.coordinates.map(poly => poly[0]);
+  return [];
+}
+
+/** Write a new ring set back to state.active.geometry. Always stored as
+ *  MultiPolygon to match the column type. */
+function setRings(rings) {
+  if (!state.active) return;
+  if (!rings.length || rings.every(r => r.length === 0)) {
+    state.active.geometry = null;
+    return;
+  }
+  state.active.geometry = {
+    type: 'MultiPolygon',
+    // Each ring is a polygon with just the outer ring (no holes)
+    coordinates: rings.filter(r => r.length).map(r => [r]),
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// VERTEX INTERACTIONS — drag, dbl-click delete
+// ═════════════════════════════════════════════════════════════════════════
+function attachVertexHandlers(marker) {
+  marker.on('mousedown', (e) => {
+    L.DomEvent.stopPropagation(e);
+    L.DomEvent.preventDefault(e);
+    pushUndo();   // snapshot BEFORE the drag so the whole gesture is one undo step
+    marker._icon?.classList.add('dragging');
+    state.dragging = { ring: marker._ringIdx, idx: marker._vtxIdx, marker };
+    map.dragging.disable();
+  });
+
+  marker.on('dblclick', (e) => {
+    L.DomEvent.stopPropagation(e);
+    L.DomEvent.preventDefault(e);
+    deleteVertex(marker._ringIdx, marker._vtxIdx);
+  });
+}
+
+map.on('mousemove', (e) => {
+  // Continuous snap preview while NOT dragging — shows where a click would
+  // land if the user clicks right now.
+  if (!state.active) return;
+
+  if (state.dragging) {
+    const snapped = computeSnap(e.latlng) || e.latlng;
+    const rings = geomRings(state.active.geometry);
+    if (rings[state.dragging.ring]) {
+      rings[state.dragging.ring][state.dragging.idx] = [snapped.lng, snapped.lat];
+      setRings(rings);
+      redrawActive();
+      markDirty();
+      showSnapPreview(snapped, snapped !== e.latlng ? snapTypeFor(snapped) : null);
+    }
+    return;
+  }
+
+  const snap = computeSnap(e.latlng);
+  if (snap) showSnapPreview(snap, snapTypeFor(snap));
+  else      hideSnapPreview();
+});
+
+map.on('mouseup', (e) => {
+  if (!state.dragging) return;
+  state.dragging.marker?._icon?.classList.remove('dragging');
+  state.dragging = null;
+  map.dragging.enable();
+});
+
+function deleteVertex(ringIdx, vtxIdx) {
+  if (!state.active?.geometry) return;
+  const rings = geomRings(state.active.geometry);
+  if (!rings[ringIdx]) return;
+  pushUndo();
+  rings[ringIdx].splice(vtxIdx, 1);
+  // Drop empty rings entirely
+  const cleaned = rings.filter(r => r.length > 0);
+  setRings(cleaned);
+  redrawActive();
+  markDirty();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// CLICK-TO-ADD / CLICK-ON-EDGE insert
+// ═════════════════════════════════════════════════════════════════════════
+map.on('click', (e) => {
+  if (!state.active) return;
+  if (state.dragging) return;
+
+  pushUndo();
+
+  const snapped = computeSnap(e.latlng) || e.latlng;
+  const coord = [snapped.lng, snapped.lat];
+  const rings = geomRings(state.active.geometry);
+
+  if (rings.length === 0) {
+    // first vertex of the first ring
+    setRings([[coord]]);
+  } else {
+    // append to the currently-active ring (= the most-recently-started one)
+    const i = rings.length - 1;
+    rings[i].push(coord);
+    setRings(rings);
+  }
+  redrawActive();
+  markDirty();
+  hideSnapPreview();
+});
+
+// Click on the filled polygon interior: insert a new vertex on the nearest
+// edge at the click point. Only fires for closed polygons (≥3 vertices).
+function onActivePolygonClick(e, ringIdx) {
+  L.DomEvent.stopPropagation(e);
+  const rings = geomRings(state.active.geometry);
+  const ring = rings[ringIdx];
+  if (!ring || ring.length < 3) return;
+
+  pushUndo();
+
+  // Find nearest edge midpoint. Use turf.nearestPointOnLine after
+  // synthesizing a LineString from the ring (closed).
+  const closed = ring.slice();
+  closed.push(closed[0]);
+  const line = turf.lineString(closed);
+  const snapped = computeSnap(e.latlng) || e.latlng;
+  const pt = turf.point([snapped.lng, snapped.lat]);
+  const nearest = turf.nearestPointOnLine(line, pt);
+  const insertAfter = nearest.properties.index;   // 0-based segment index
+  // Insert the clicked point right after segment start
+  ring.splice(insertAfter + 1, 0, [snapped.lng, snapped.lat]);
+  rings[ringIdx] = ring;
+  setRings(rings);
+  redrawActive();
+  markDirty();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// SNAP — coast (toggled per-region) + neighbor (always on)
+// ═════════════════════════════════════════════════════════════════════════
+/** Returns a LatLng (snapped) or null (no snap in range).
+ *  Search order: neighbor borders first (priority), then coastline. */
+function computeSnap(latlng) {
+  if (!state.active) return null;
+
+  const origin = map.latLngToLayerPoint(latlng);
+  let best = null, bestPx = Infinity, bestKind = null;
+
+  // Neighbor snap — always on
+  for (const f of (state.neighbors?.features || [])) {
+    const candidate = nearestGeometryPoint(f.geometry, latlng);
+    if (!candidate) continue;
+    const p = map.latLngToLayerPoint(candidate);
+    const px = p.distanceTo(origin);
+    if (px < bestPx && px < SNAP_NEIGHBOR_PIXELS) {
+      bestPx = px; best = candidate; bestKind = 'neighbor';
+    }
+  }
+
+  // Coast snap — respect toggle
+  if (state.active.properties.snap_to_coast && state.coast) {
+    const candidate = nearestGeometryPoint(state.coast, latlng);
+    if (candidate) {
+      const p = map.latLngToLayerPoint(candidate);
+      const px = p.distanceTo(origin);
+      if (px < bestPx && px < SNAP_PIXELS) {
+        bestPx = px; best = candidate; bestKind = 'coast';
+      }
+    }
+  }
+
+  if (best) best._kind = bestKind;
+  return best;
+}
+
+function snapTypeFor(latlng) { return latlng?._kind || null; }
+
+/** Return the nearest point on ANY LineString / Polygon ring inside a
+ *  GeoJSON geometry or FeatureCollection. Cheap iteration — turf does the
+ *  per-line heavy lifting. */
+function nearestGeometryPoint(geomOrFC, latlng) {
+  if (!geomOrFC) return null;
+  const pt = turf.point([latlng.lng, latlng.lat]);
+  let bestDist = Infinity, bestCoord = null;
+
+  function consider(line) {
+    try {
+      const r = turf.nearestPointOnLine(line, pt, { units: 'kilometers' });
+      const d = r.properties.dist;
+      if (d < bestDist) { bestDist = d; bestCoord = r.geometry.coordinates; }
+    } catch (_) {}
+  }
+
+  const features = geomOrFC.type === 'FeatureCollection'
+    ? geomOrFC.features
+    : [{ type: 'Feature', geometry: geomOrFC }];
+
+  for (const f of features) {
+    const g = f.geometry;
+    if (!g) continue;
+    if (g.type === 'LineString') {
+      consider(g);
+    } else if (g.type === 'MultiLineString') {
+      for (const ls of g.coordinates) consider({ type: 'LineString', coordinates: ls });
+    } else if (g.type === 'Polygon') {
+      for (const ring of g.coordinates) consider({ type: 'LineString', coordinates: ring });
+    } else if (g.type === 'MultiPolygon') {
+      for (const poly of g.coordinates)
+        for (const ring of poly) consider({ type: 'LineString', coordinates: ring });
+    }
+  }
+
+  if (!bestCoord) return null;
+  return L.latLng(bestCoord[1], bestCoord[0]);
+}
+
+function showSnapPreview(latlng, kind) {
+  if (!state.snapPreview) {
+    const icon = L.divIcon({ className: 'snap-preview', iconSize: [0, 0] });
+    state.snapPreview = L.marker([0, 0], { icon, interactive: false }).addTo(map);
+  }
+  state.snapPreview.setLatLng(latlng);
+  const el = state.snapPreview._icon;
+  if (el) el.classList.toggle('neighbor', kind === 'neighbor');
+}
+function hideSnapPreview() {
+  if (state.snapPreview) {
+    map.removeLayer(state.snapPreview);
+    state.snapPreview = null;
+  }
+}
+
+// Neighbor refresh — called on region switch + on map pan/zoom end.
+async function refreshNeighbors() {
+  if (!state.activeId) { state.neighbors = null; return; }
+  const b = map.getBounds();
+  const bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(',');
+  try {
+    const r = await fetch(
+      `${API_BASE}/api/admin/regions/near?bbox=${bbox}&exclude=${state.activeId}`,
+      { credentials: 'include' }
+    );
+    if (r.ok) state.neighbors = await r.json();
+  } catch (_) {}
+}
+map.on('moveend', () => { refreshNeighbors(); });
+
+// ═════════════════════════════════════════════════════════════════════════
+// TOOLBAR ACTIONS
+// ═════════════════════════════════════════════════════════════════════════
+els.tbSnapCoast.addEventListener('change', () => {
+  if (!state.active) return;
+  state.active.properties.snap_to_coast = !!els.tbSnapCoast.checked;
+  markDirty();
+});
+
+els.tbNewRing.addEventListener('click', () => {
+  if (!state.active) return;
+  pushUndo();
+  const rings = geomRings(state.active.geometry);
+  rings.push([]);   // new empty ring, user clicks to populate
+  setRings(rings);
+  redrawActive();
+  markDirty();
+});
+
+els.tbRevert.addEventListener('click', () => {
+  if (!state.activeSnapshot) return;
+  state.active = JSON.parse(state.activeSnapshot);
+  els.tbSnapCoast.checked = !!state.active.properties.snap_to_coast;
+  // Revert nukes the whole session — also clear undo history so the new
+  // baseline is the current (reverted) state.
+  resetUndo();
+  redrawActive();
+  updateDirty(false);
+});
+
+els.tbClear.addEventListener('click', () => {
+  if (!state.active) return;
+  if (!confirm(`Clear polygon for "${state.active.properties.name}"?`)) return;
+  pushUndo();
+  state.active.geometry = null;
+  redrawActive();
+  markDirty();
+});
+
+els.tbSave.addEventListener('click', async () => {
+  if (!state.active) return;
+  els.tbSave.disabled = true;
+  els.tbDirty.textContent = 'Saving…';
+  els.tbDirty.style.color = 'var(--fg-dim)';
+  try {
+    const body = {
+      geometry:      state.active.geometry,
+      snap_to_coast: state.active.properties.snap_to_coast,
+    };
+    const r = await fetch(`${API_BASE}/api/admin/regions/${state.activeId}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.error || ('HTTP ' + r.status));
+    }
+    const saved = await r.json();
+
+    // Merge back into the list + refresh all visuals
+    const i = state.regions.findIndex(f => f.id === state.activeId);
+    if (i >= 0) state.regions[i] = saved;
+    state.activeSnapshot = JSON.stringify(saved);
+    state.active = JSON.parse(state.activeSnapshot);
+    updateDirty(false);
+    els.tbDirty.textContent = '✓ saved';
+    els.tbDirty.style.color = 'var(--accent)';
+    setTimeout(() => { if (!els.tbSave.disabled) return;  els.tbDirty.textContent = ''; }, 1500);
+    redrawActive();
+    renderSidebar();
+  } catch (err) {
+    els.tbDirty.textContent = 'Save failed: ' + err.message;
+    els.tbDirty.style.color = 'var(--danger)';
+    els.tbSave.disabled = false;
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════
+// utilities
+// ═════════════════════════════════════════════════════════════════════════
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+</script>
+</body>
+</html>

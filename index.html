@@ -19068,6 +19068,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
         textEl.after(cur);
       }
 
+      // ── Dynamic typewriter ─────────────────────────────────────────
+      // `newBlock.text` = all text received from the server so far
+      //                  (source of truth, cached for future re-renders).
+      // `textEl.textContent` = the typed-out portion currently visible.
+      // A 60fps tick advances the DOM forward with an adaptive step size:
+      // fast when lagging far behind the stream, one char per tick when
+      // nearly caught up. This smooths out bursty server chunks into a
+      // continuous typing effect regardless of API delta granularity.
+      let streamDone = false;
+      let typeTimer = null;
+      const ensureTypeLoop = () => {
+        if (typeTimer) return;
+        typeTimer = setInterval(() => {
+          if (!textEl || !document.contains(textEl)) {
+            clearInterval(typeTimer); typeTimer = null;
+            return;
+          }
+          const target = newBlock.text;
+          const typed = textEl.textContent.length;
+          if (typed >= target.length) {
+            if (streamDone) { clearInterval(typeTimer); typeTimer = null; }
+            return;
+          }
+          const lag = target.length - typed;
+          const step = lag > 400 ? 8 : lag > 160 ? 4 : lag > 60 ? 2 : 1;
+          textEl.textContent = target.slice(0, typed + step);
+          if (body) body.scrollTop = body.scrollHeight;
+        }, 16);
+      };
+
       try {
         const API = window.__API || 'https://earth-wjr6.onrender.com';
         const payload = {
@@ -19143,12 +19173,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 const delta = obj.delta ?? obj.text ?? '';
                 if (delta) {
                   newBlock.text += delta;
-                  if (textEl) textEl.textContent = newBlock.text;
-                  if (body) body.scrollTop = body.scrollHeight;
+                  ensureTypeLoop();
                 }
               } catch (_) {
                 newBlock.text += data;
-                if (textEl) textEl.textContent = newBlock.text;
+                ensureTypeLoop();
               }
             }
           };
@@ -19177,8 +19206,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
           body2.appendChild(err);
         }
       } finally {
+        streamDone = true;
         if (_arcCtxStreamAbort === abort) _arcCtxStreamAbort = null;
-        document.querySelectorAll('#arcCtxBody .arcCtxCursor').forEach(n => n.remove());
+        // If user aborted (switched scope / closed panel), stop the typewriter
+        // now — the DOM will be replaced by _arcCtxRenderBlocks anyway.
+        if (abort.signal.aborted && typeTimer) {
+          clearInterval(typeTimer); typeTimer = null;
+        }
+        // Remove blinking cursor once the typewriter has caught up to the
+        // full streamed text. Keeps the caret visible while text is still
+        // being typed out, then retires it cleanly.
+        const finalizeCursor = () => {
+          if (typeTimer) { setTimeout(finalizeCursor, 40); return; }
+          document.querySelectorAll('#arcCtxBody .arcCtxCursor').forEach(n => n.remove());
+        };
+        finalizeCursor();
         if (_arcCtxTimelinePaused) {
           _arcCtxTimelinePaused = false;
           try { window.__timelineResumeAfterSelection?.(); } catch(_) {}

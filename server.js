@@ -3655,6 +3655,14 @@ app.all("/api/admin/refresh-heatmap", async (req, res) => {
 
 // ── Briefing Editor Admin Routes ──────────────────────────────────────────
 async function requireAdmin(req, res, next) {
+  // Local-dev bypass — let the Claude Preview / localhost editor pages
+  // hit admin endpoints without Supabase auth. Gated on an env flag so
+  // production deploys never accidentally enable it.
+  if (process.env.DEV_EDITOR_BYPASS === '1') {
+    req.user = req.user || {};
+    req.user.is_admin = true;
+    return next();
+  }
   // optionalAuth may fail for ES256 tokens — fall back to Supabase API
   if (!req.user?.id) {
     const authUser = await resolveSupabaseUserFromRequest(req);
@@ -5046,6 +5054,232 @@ app.delete('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Regions editor — polygon boundaries for the middle-ground story layer
+//
+// The regions table (164 rows) has centroid_lat/lng for each cultural /
+// geographic region. These endpoints expose + mutate the new polygon
+// `geom` column so the in-browser editor (www/region-editor.html) can
+// enrich each region with a proper boundary. All read/write on wire is
+// GeoJSON; PostGIS is the storage layer via ST_GeomFromGeoJSON /
+// ST_AsGeoJSON. snap_to_coast is a per-region flag the editor honors
+// (land-bounded regions default TRUE; oceanic / archipelago regions
+// flipped FALSE so the ocean can be part of the polygon).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// GET /api/admin/regions — full FeatureCollection. Regions with no geom
+// drawn yet come back with geometry=null so the editor can show them in
+// the "empty" list.
+app.get('/api/admin/regions', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        id, name, slug, continent_id, color, population,
+        centroid_lng::float AS centroid_lng,
+        centroid_lat::float AS centroid_lat,
+        snap_to_coast,
+        geom_updated_at,
+        CASE WHEN geom IS NULL THEN NULL
+             ELSE ST_AsGeoJSON(geom)::json END AS geometry
+      FROM regions
+      ORDER BY name
+    `);
+    const features = rows.map(r => ({
+      type: 'Feature',
+      id: r.id,
+      geometry: r.geometry,
+      properties: {
+        id: r.id, name: r.name, slug: r.slug,
+        continent_id: r.continent_id,
+        color: r.color, population: r.population,
+        centroid: [r.centroid_lng, r.centroid_lat],
+        snap_to_coast: r.snap_to_coast,
+        geom_updated_at: r.geom_updated_at,
+        has_geom: !!r.geometry,
+      },
+    }));
+    res.json({ type: 'FeatureCollection', features });
+  } catch (err) {
+    console.error('[admin/regions] list error:', err.message);
+    res.status(500).json({ error: 'Failed to list regions' });
+  }
+});
+
+// GET /api/admin/regions/near — MUST come before /:id so "near" isn't
+// treated as a numeric id. Returns neighbor polygons overlapping the
+// given bbox for editor snap targeting.
+app.get('/api/admin/regions/near', requireAdmin, async (req, res) => {
+  try {
+    const parts = String(req.query.bbox || '').split(',').map(Number);
+    if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) {
+      return res.status(400).json({ error: 'bbox=minLng,minLat,maxLng,maxLat required' });
+    }
+    const [minLng, minLat, maxLng, maxLat] = parts;
+    const excludeId = parseInt(req.query.exclude, 10) || 0;
+    const { rows } = await pool.query(`
+      SELECT
+        id, name, slug,
+        ST_AsGeoJSON(geom)::json AS geometry
+      FROM regions
+      WHERE geom IS NOT NULL
+        AND id <> $5
+        AND geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+      LIMIT 80
+    `, [minLng, minLat, maxLng, maxLat, excludeId]);
+    res.json({
+      type: 'FeatureCollection',
+      features: rows.map(r => ({
+        type: 'Feature', id: r.id,
+        geometry: r.geometry,
+        properties: { id: r.id, name: r.name, slug: r.slug },
+      })),
+    });
+  } catch (err) {
+    console.error('[admin/regions/near] error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch neighbor regions' });
+  }
+});
+
+// GET /api/admin/regions/:id — single region as GeoJSON Feature.
+app.get('/api/admin/regions/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+    const { rows } = await pool.query(`
+      SELECT
+        id, name, slug, continent_id, color, population,
+        centroid_lng::float AS centroid_lng,
+        centroid_lat::float AS centroid_lat,
+        snap_to_coast,
+        geom_updated_at,
+        CASE WHEN geom IS NULL THEN NULL
+             ELSE ST_AsGeoJSON(geom)::json END AS geometry
+      FROM regions WHERE id = $1
+    `, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Region not found' });
+    const r = rows[0];
+    res.json({
+      type: 'Feature',
+      id: r.id,
+      geometry: r.geometry,
+      properties: {
+        id: r.id, name: r.name, slug: r.slug,
+        continent_id: r.continent_id,
+        color: r.color, population: r.population,
+        centroid: [r.centroid_lng, r.centroid_lat],
+        snap_to_coast: r.snap_to_coast,
+        geom_updated_at: r.geom_updated_at,
+        has_geom: !!r.geometry,
+      },
+    });
+  } catch (err) {
+    console.error('[admin/regions] get error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch region' });
+  }
+});
+
+// PATCH /api/admin/regions/:id — save geom and/or flags.
+//
+// Body accepts any subset of:
+//   { geometry: <GeoJSON Polygon | MultiPolygon | null>,
+//     snap_to_coast: boolean,
+//     color: string,
+//     name: string, slug: string, continent_id: int, population: int }
+//
+// Polygon geometries are auto-upcast to MultiPolygon via ST_Multi so the
+// column type stays consistent regardless of how the editor serialized.
+// Passing geometry=null clears the geom (unpaints the region).
+app.patch('/api/admin/regions/:id', requireAdmin, express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid ID' });
+
+    const b = req.body || {};
+    const sets = []; const params = []; let pi = 1;
+    let geomTouched = false;
+
+    if ('geometry' in b) {
+      geomTouched = true;
+      if (b.geometry === null) {
+        sets.push(`geom = NULL`);
+        sets.push(`geom_updated_at = NOW()`);
+      } else {
+        if (typeof b.geometry !== 'object' || !b.geometry.type) {
+          return res.status(400).json({ error: 'geometry must be a GeoJSON Polygon or MultiPolygon' });
+        }
+        // Sanitize on the way in so the column (strict MultiPolygon) is
+        // always satisfied regardless of editor state:
+        //   ST_SetSRID            — tag input as WGS84 (4326)
+        //   ST_MakeValid          — heal self-intersections from sloppy drags
+        //                           (returns a GeometryCollection when it has to
+        //                           split a bowtie polygon into multiple parts,
+        //                           or demote a degenerate edge to a LineString)
+        //   ST_CollectionExtract  — pull only the polygon components (type=3)
+        //                           out of that collection, discarding any
+        //                           stray LineStrings / Points the fix produced
+        //   ST_Multi              — ensure result is always MultiPolygon, never
+        //                           a bare Polygon, so the column type is stable
+        // This combo is the canonical PostGIS recipe for "save whatever the
+        // editor drew, no matter how messy."
+        sets.push(`geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($${pi++}::text), 4326)), 3))`);
+        params.push(JSON.stringify(b.geometry));
+        sets.push(`geom_updated_at = NOW()`);
+      }
+    }
+    if ('snap_to_coast' in b) { sets.push(`snap_to_coast = $${pi++}`); params.push(!!b.snap_to_coast); }
+    if ('color' in b)         { sets.push(`color = $${pi++}`);         params.push(b.color || null); }
+    if ('name' in b)          { sets.push(`name = $${pi++}`);          params.push(String(b.name || '').trim()); }
+    if ('slug' in b)          { sets.push(`slug = $${pi++}`);          params.push(String(b.slug || '').trim()); }
+    if ('continent_id' in b)  { sets.push(`continent_id = $${pi++}`);  params.push(b.continent_id); }
+    if ('population' in b)    { sets.push(`population = $${pi++}`);    params.push(b.population); }
+
+    if (!sets.length) return res.status(400).json({ error: 'No fields to update' });
+
+    params.push(id);
+    try {
+      await pool.query(`UPDATE regions SET ${sets.join(', ')} WHERE id = $${pi}`, params);
+    } catch (err) {
+      // Invalid GeoJSON from the editor shows up as a Postgres error here;
+      // surface the message to the editor so the user sees why save failed.
+      if (geomTouched && /geojson|linear ring|self-intersection|invalid/i.test(err.message)) {
+        return res.status(400).json({ error: 'Invalid polygon geometry: ' + err.message });
+      }
+      throw err;
+    }
+
+    // Return the saved row back, rendered the same way as GET. Editor can
+    // drop it straight in place without re-querying.
+    const { rows } = await pool.query(`
+      SELECT
+        id, name, slug, continent_id, color, population,
+        centroid_lng::float AS centroid_lng,
+        centroid_lat::float AS centroid_lat,
+        snap_to_coast, geom_updated_at,
+        CASE WHEN geom IS NULL THEN NULL
+             ELSE ST_AsGeoJSON(geom)::json END AS geometry
+      FROM regions WHERE id = $1
+    `, [id]);
+    const r = rows[0];
+    res.json({
+      type: 'Feature',
+      id: r.id,
+      geometry: r.geometry,
+      properties: {
+        id: r.id, name: r.name, slug: r.slug,
+        continent_id: r.continent_id,
+        color: r.color, population: r.population,
+        centroid: [r.centroid_lng, r.centroid_lat],
+        snap_to_coast: r.snap_to_coast,
+        geom_updated_at: r.geom_updated_at,
+        has_geom: !!r.geometry,
+      },
+    });
+  } catch (err) {
+    console.error('[admin/regions] patch error:', err.message);
+    res.status(500).json({ error: 'Failed to save region' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Editorial rule miner — Layer 3
 // Trigger a fresh mine of editor_events → editorial_rules.
 // Also expose a read endpoint so the admin UI can inspect / toggle rules.
@@ -5544,6 +5778,11 @@ app.get('/tweet-curator', (req, res) => {
 // Serve unified editor platform
 app.get('/editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'earth-editor.html'));
+});
+
+// Serve region polygon editor
+app.get('/region-editor', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'region-editor.html'));
 });
 
 /* =========================================
@@ -7458,11 +7697,11 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
   }
 
   try {
-    // Resolve theme + description from story_threads (timelines in this app
+    // Resolve theme + nation tiers from story_threads (timelines in this app
     // also key into the story_threads table via the /api/threads/:id/timeline
     // endpoint, so the same lookup works for both modes).
     const { rows: threadRows } = await pool.query(
-      `SELECT title, description, primary_category, keywords
+      `SELECT title, primary_nations, secondary_nations
        FROM story_threads WHERE id = $1`,
       [entityId]
     );
@@ -7484,18 +7723,13 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
         SELECT DISTINCT
           a.id, COALESCE(a.translated_title, a.title) AS title,
           COALESCE(a.translated_summary, a.summary) AS summary,
-          a.published_at,
-          COALESCE(ns.name, ys.name) AS source_name,
-          co.name AS country_name
+          a.published_at
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
         JOIN article_locations al1 ON al1.article_id = a.id
         JOIN countries c1 ON c1.id = al1.country_id
         JOIN article_locations al2 ON al2.article_id = a.id
         JOIN countries c2 ON c2.id = al2.country_id
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.thread_id = $1
           AND c1.iso_code = $2
           AND c2.iso_code = $3
@@ -7509,13 +7743,8 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
       const { rows } = await pool.query(`
         SELECT a.id, COALESCE(a.translated_title, a.title) AS title,
                COALESCE(a.translated_summary, a.summary) AS summary,
-               a.published_at,
-               COALESCE(ns.name, ys.name) AS source_name,
-               co.name AS country_name
+               a.published_at
         FROM news_articles a
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        LEFT JOIN countries co ON co.id = a.country_id
         WHERE a.id = ANY($1::int[])
         ORDER BY a.published_at ASC
         LIMIT 20
@@ -7527,14 +7756,9 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
       const { rows } = await pool.query(`
         SELECT a.id, COALESCE(a.translated_title, a.title) AS title,
                COALESCE(a.translated_summary, a.summary) AS summary,
-               a.published_at,
-               COALESCE(ns.name, ys.name) AS source_name,
-               co.name AS country_name
+               a.published_at
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-        LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.thread_id = $1
         ORDER BY sta.is_anchor DESC, a.published_at ASC
         LIMIT 20
@@ -7542,75 +7766,42 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
       articles = rows;
     }
 
-    // Map visible ISO codes to country names for the prompt.
-    let visibleNames = [];
-    const isoList = Array.isArray(visible_entities) ? visible_entities.filter(Boolean) : [];
-    if (isoList.length) {
-      const { rows: nameRows } = await pool.query(
+    // Resolve secondary-nation ISO codes → country names for the prompt.
+    // These are the supporters / commenters / affected parties that the
+    // AI must explicitly name and explain the role of.
+    let secondaryNames = [];
+    const secIsos = Array.isArray(threadMeta?.secondary_nations)
+      ? threadMeta.secondary_nations.filter(Boolean)
+      : [];
+    if (secIsos.length) {
+      const { rows: secRows } = await pool.query(
         `SELECT iso_code, name FROM countries WHERE iso_code = ANY($1::text[])`,
-        [isoList]
+        [secIsos]
       );
-      const isoToName = new Map(nameRows.map(r => [r.iso_code, r.name]));
-      visibleNames = isoList.map(iso => isoToName.get(iso) || iso);
+      const map = new Map(secRows.map(r => [r.iso_code, r.name]));
+      secondaryNames = secIsos.map(iso => map.get(iso) || iso);
     }
 
-    // Resolve arc endpoint country names (if arc scope).
-    let arcNames = null;
-    if (scope === "flow" && active_arc?.src_iso && active_arc?.dst_iso) {
-      const { rows: arcRows } = await pool.query(
-        `SELECT iso_code, name FROM countries WHERE iso_code = ANY($1::text[])`,
-        [[active_arc.src_iso, active_arc.dst_iso]]
-      );
-      const map = new Map(arcRows.map(r => [r.iso_code, r.name]));
-      arcNames = {
-        src: map.get(active_arc.src_iso) || active_arc.src_iso,
-        dst: map.get(active_arc.dst_iso) || active_arc.dst_iso,
-      };
-    }
-
-    // Build the article context block.
+    // Article block: title + summary only, no sources/dates/countries.
     const articleContext = articles.slice(0, 20).map((a, i) => {
-      const date = a.published_at ? new Date(a.published_at).toISOString().slice(0, 10) : "";
-      const source = a.source_name || "Unknown";
-      const country = a.country_name || "";
       const summary = (a.summary || "").slice(0, 260).replace(/\s+/g, " ");
-      return `${i + 1}. "${a.title || "Untitled"}" — ${source}${country ? `, ${country}` : ""}${date ? ` (${date})` : ""}\n   ${summary}`;
+      return `${i + 1}. "${a.title || "Untitled"}"\n   ${summary}`;
     }).join("\n");
 
     const themeLine = theme || threadMeta?.title || "Untitled story";
-    const descLine = threadMeta?.description ? `Story description: ${threadMeta.description}` : "";
-    const keywordsLine = Array.isArray(threadMeta?.keywords) && threadMeta.keywords.length
-      ? `Story keywords: ${threadMeta.keywords.slice(0, 15).join(", ")}`
+    const kindLabel = mode === "timeline" ? "line" : "thread";
+    const secondariesLine = secondaryNames.length
+      ? ` Also discuss each of the following secondary nations individually and the role each one plays in this ${kindLabel}: ${secondaryNames.join(", ")}.`
       : "";
 
-    let taskLine = "";
-    if (scope === "entities") {
-      taskLine = [
-        `Explain the relationship between the countries currently on screen — ${visibleNames.join(", ") || "(none)"} — in the context of this ${mode === "timeline" ? "timeline" : "thread"}.`,
-        `Ground the explanation in the story's theme and the articles listed. Focus on how these entities interact in this story, not their general geopolitical relationship.`,
-      ].join(" ");
-    } else {
-      if (mode === "timeline" && Number.isInteger(segment_idx)) {
-        const segTitle = segment?.title ? ` "${segment.title}"` : "";
-        const segDate = segment?.date ? ` (${segment.date})` : "";
-        taskLine = `Explain what is happening in segment ${segment_idx + 1}${segTitle}${segDate} of this timeline. Draw from the articles that make up this segment and situate the event in the arc of the broader story.`;
-      } else if (arcNames) {
-        taskLine = `Explain the specific relationship between ${arcNames.src} and ${arcNames.dst} within this ${mode}. Use the article evidence to describe how these two entities are linked in this story.`;
-      } else {
-        taskLine = `Explain the most important active flow in this ${mode} using the article evidence.`;
-      }
-    }
+    const prompt = `You are an impartial geopolitical analyst. Write plain-prose sentences (no markdown, no bullets, no introductory phrases, no speculation, no opinions). Be factual and specific.
 
-    const prompt = `You are an impartial geopolitical analyst. Write 3–5 concise, plain-prose sentences (no markdown, no bullets, no introductory phrases, no speculation, no opinions). Be factual and specific.
+${kindLabel === "line" ? "Line" : "Thread"} title: ${themeLine}
 
-Story theme: ${themeLine}
-${descLine}
-${keywordsLine}
+Constituent articles:
+${articleContext || "(no article context available)"}
 
-${taskLine}
-
-Articles backing this story:
-${articleContext || "(no article context available)"}`;
+Explain what this ${kindLabel} is about, grounded only in the titles and summaries above.${secondariesLine}`;
 
     // Open the SSE stream.
     res.writeHead(200, {
