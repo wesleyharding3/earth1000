@@ -768,6 +768,50 @@ app.use(optionalAuth);
 app.use("/api/payments", payments.router);
 
 /* =========================================
+   Internal hero-cache invalidation — called by heroImageValidator.js
+   after it marks article images dead / alive. Drops the relevant
+   thread/timeline keys from the in-process _ttlCache so the next user
+   request re-runs the hero SQL (which already filters on image_dead_at)
+   instead of serving the cached response that still points at the dead
+   URL. Protected by INTERNAL_CACHE_INVALIDATE_SECRET header so it's not
+   a public DoS surface. Called once per validator run, small body.
+========================================= */
+app.post("/api/internal/cache/invalidate-hero", express.json(), (req, res) => {
+  const secret = process.env.INTERNAL_CACHE_INVALIDATE_SECRET;
+  if (!secret) return res.status(503).json({ error: "not configured" });
+  if (req.headers['x-internal-secret'] !== secret) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  const threadIds   = Array.isArray(req.body?.threadIds)   ? req.body.threadIds.map(n => parseInt(n, 10)).filter(Boolean)   : [];
+  const timelineIds = Array.isArray(req.body?.timelineIds) ? req.body.timelineIds.map(n => parseInt(n, 10)).filter(Boolean) : [];
+  let cleared = 0;
+
+  // Per-entity keys used by the flow + hero builders. Clear every
+  // variant so the next request misses cache and re-runs the SQL.
+  for (const id of threadIds) {
+    for (const k of [`flows/thread:${id}`, `threads/${id}/articles`]) {
+      if (_ttlCache.delete(k)) cleared++;
+    }
+  }
+  for (const id of timelineIds) {
+    for (const k of [`flows/timeline:${id}`]) {
+      if (_ttlCache.delete(k)) cleared++;
+    }
+  }
+
+  // The LATEST-list endpoints (/api/threads/latest, /api/timelines/latest)
+  // cache a single key each. The hero URLs inside those payloads may now
+  // be dead — clear them too so the next fetch rebuilds.
+  for (const k of [..._ttlCache.keys()].filter(k =>
+       k.startsWith('threads/latest:') || k.startsWith('timelines/latest:'))) {
+    _ttlCache.delete(k);
+    cleared++;
+  }
+
+  res.json({ ok: true, cleared, threads: threadIds.length, timelines: timelineIds.length });
+});
+
+/* =========================================
    Video embed proxy — serves YouTube embed in
    an HTTPS HTML page so Capacitor/WKWebView
    gets a valid origin (fixes error 153 on mobile)
@@ -4186,7 +4230,8 @@ app.get('/api/admin/threads/:id', requireAdmin, async (req, res) => {
 
     const { rows: threadRows } = await pool.query(`
       SELECT id, title, description, primary_category, geographic_scope,
-             importance, keywords, primary_nations, article_count, status, last_updated_at,
+             importance, keywords, primary_nations, secondary_nations,
+             article_count, status, last_updated_at,
              distinct_source_count, breaking_signal_score,
              NULL::text AS image_url   -- column doesn't exist on story_threads
       FROM story_threads WHERE id = $1
@@ -4223,16 +4268,27 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Invalid ID' });
 
-    const { title, description, primary_category, importance, keywords, primary_nations, status, geographic_scope, image_url } = req.body;
+    const { title, description, primary_category, importance, keywords, primary_nations, secondary_nations, status, geographic_scope, image_url } = req.body;
     const sets = []; const params = [];
     let pi = 1;
+
+    // Shared ISO-list normalizer: accept array or comma-separated string,
+    // uppercase/trim each code, drop empties + anything that isn't a
+    // plausible ISO 2-3 letter code. Keeps admin curation tolerant of
+    // pasted formats while rejecting garbage.
+    const _parseIsoList = (v) => {
+      const arr = Array.isArray(v) ? v : String(v || '').split(',');
+      return arr.map(k => String(k || '').trim().toUpperCase())
+                .filter(k => /^[A-Z]{2,3}$/.test(k));
+    };
 
     if (title !== undefined)            { sets.push(`title = $${pi++}`);            params.push(title); }
     if (description !== undefined)      { sets.push(`description = $${pi++}`);      params.push(description); }
     if (primary_category !== undefined) { sets.push(`primary_category = $${pi++}`); params.push(primary_category); }
     if (importance !== undefined)       { sets.push(`importance = $${pi++}`);       params.push(parseFloat(importance) || 5); }
     if (keywords !== undefined)         { sets.push(`keywords = $${pi++}`);         params.push(Array.isArray(keywords) ? keywords : keywords.split(',').map(k => k.trim())); }
-    if (primary_nations !== undefined)  { sets.push(`primary_nations = $${pi++}`);  params.push(Array.isArray(primary_nations) ? primary_nations : primary_nations.split(',').map(k => k.trim().toUpperCase())); }
+    if (primary_nations !== undefined)   { sets.push(`primary_nations = $${pi++}`);   params.push(_parseIsoList(primary_nations)); }
+    if (secondary_nations !== undefined) { sets.push(`secondary_nations = $${pi++}`); params.push(_parseIsoList(secondary_nations)); }
     if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
     if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
     // image_url intentionally skipped — story_threads has no image_url column.
@@ -4554,8 +4610,8 @@ app.get('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
 
     const { rows: tlRows } = await pool.query(`
       SELECT id, title, description, scope, status, importance, primary_category,
-             geographic_scope, keywords, primary_nations, article_count,
-             distinct_source_count, last_updated_at,
+             geographic_scope, keywords, primary_nations, secondary_nations,
+             article_count, distinct_source_count, last_updated_at,
              NULL::text AS image_url
       FROM story_timelines WHERE id = $1
     `, [id]);
@@ -4594,11 +4650,19 @@ app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
 
     const {
       title, description, scope, primary_category, importance,
-      keywords, primary_nations, status, geographic_scope
+      keywords, primary_nations, secondary_nations, status, geographic_scope
     } = req.body || {};
 
     const sets = []; const params = [];
     let pi = 1;
+
+    // Tolerant ISO-list parser — accept array or comma string, normalize
+    // to uppercase, drop anything that isn't a 2-3 letter ISO code.
+    const _parseIsoList = (v) => {
+      const arr = Array.isArray(v) ? v : String(v || '').split(',');
+      return arr.map(k => String(k || '').trim().toUpperCase())
+                .filter(k => /^[A-Z]{2,3}$/.test(k));
+    };
 
     if (title !== undefined)            { sets.push(`title = $${pi++}`);            params.push(title); }
     if (description !== undefined)      { sets.push(`description = $${pi++}`);      params.push(description); }
@@ -4609,10 +4673,8 @@ app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
       sets.push(`keywords = $${pi++}`);
       params.push(Array.isArray(keywords) ? keywords : String(keywords || '').split(',').map(k=>k.trim()).filter(Boolean));
     }
-    if (primary_nations !== undefined) {
-      sets.push(`primary_nations = $${pi++}`);
-      params.push(Array.isArray(primary_nations) ? primary_nations : String(primary_nations || '').split(',').map(k=>k.trim().toUpperCase()).filter(Boolean));
-    }
+    if (primary_nations !== undefined)   { sets.push(`primary_nations = $${pi++}`);   params.push(_parseIsoList(primary_nations)); }
+    if (secondary_nations !== undefined) { sets.push(`secondary_nations = $${pi++}`); params.push(_parseIsoList(secondary_nations)); }
     if (status !== undefined)           { sets.push(`status = $${pi++}`);           params.push(status); }
     if (geographic_scope !== undefined) { sets.push(`geographic_scope = $${pi++}`); params.push(geographic_scope); }
 
@@ -6157,9 +6219,14 @@ app.get("/api/timelines/latest", async (req, res) => {
       const { rows: heroes } = await pool.query(`
         SELECT DISTINCT ON (sta.timeline_id)
           sta.timeline_id,
+          -- Dead-URL aware COALESCE: pick alive scraped first, alive
+          -- catalog second. heroImageValidator.js marks dead URLs on
+          -- news_articles.image_dead_at / image_assets.dead_at; this
+          -- filter makes the DISTINCT ON natural fallback (next-most-
+          -- recent alive article) kick in automatically.
           COALESCE(
-            NULLIF(a.image_url, ''),
-            img.public_url
+            NULLIF(CASE WHEN a.image_dead_at IS NULL THEN a.image_url END, ''),
+            CASE WHEN img.dead_at IS NULL THEN img.public_url END
           ) AS hero_image_url,
           COALESCE(ns.name, ys.name) AS hero_source_name,
           co.iso_code AS hero_iso_code
@@ -6172,11 +6239,11 @@ app.get("/api/timelines/latest", async (req, res) => {
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.timeline_id = ANY($1)
           AND (
-            (a.image_url IS NOT NULL AND a.image_url <> '')
-            OR img.public_url IS NOT NULL
+            (a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL)
+            OR (img.public_url IS NOT NULL AND img.dead_at IS NULL)
           )
         ORDER BY sta.timeline_id,
-          CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+          CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL THEN 0 ELSE 1 END,
           a.published_at DESC
       `, [timelineIds]);
 
@@ -6827,7 +6894,10 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       FROM ranked_threads rt
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
+          COALESCE(
+            NULLIF(CASE WHEN a.image_dead_at IS NULL THEN a.image_url END, ''),
+            CASE WHEN img.dead_at IS NULL THEN img.public_url END
+          ) AS hero_image_url,
           co.iso_code AS hero_iso_code
         FROM story_thread_articles sta
         JOIN news_articles a ON a.id = sta.article_id
@@ -6836,11 +6906,11 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
         LEFT JOIN countries co ON co.id = a.country_id
         WHERE sta.thread_id = rt.thread_id
           AND (
-            (a.image_url IS NOT NULL AND a.image_url <> '')
-            OR img.public_url IS NOT NULL
+            (a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL)
+            OR (img.public_url IS NOT NULL AND img.dead_at IS NULL)
           )
         ORDER BY
-          CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+          CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL THEN 0 ELSE 1 END,
           a.published_at DESC
         LIMIT 1
       ) h ON TRUE
@@ -6910,7 +6980,10 @@ app.get("/api/threads/id/:id", async (req, res) => {
     const thread = rows[0];
     const { rows: heroRows } = await pool.query(`
       SELECT
-        COALESCE(NULLIF(a.image_url, ''), img.public_url) AS hero_image_url,
+        COALESCE(
+          NULLIF(CASE WHEN a.image_dead_at IS NULL THEN a.image_url END, ''),
+          CASE WHEN img.dead_at IS NULL THEN img.public_url END
+        ) AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
@@ -6919,11 +6992,11 @@ app.get("/api/threads/id/:id", async (req, res) => {
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = $1
         AND (
-          (a.image_url IS NOT NULL AND a.image_url <> '')
-          OR img.public_url IS NOT NULL
+          (a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL)
+          OR (img.public_url IS NOT NULL AND img.dead_at IS NULL)
         )
       ORDER BY
-        CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+        CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL THEN 0 ELSE 1 END,
         a.published_at DESC
       LIMIT 1
     `, [threadId]);
@@ -7127,8 +7200,8 @@ app.get("/api/threads/latest", async (req, res) => {
       SELECT DISTINCT ON (sta.thread_id)
         sta.thread_id,
         COALESCE(
-          NULLIF(a.image_url, ''),
-          img.public_url
+          NULLIF(CASE WHEN a.image_dead_at IS NULL THEN a.image_url END, ''),
+          CASE WHEN img.dead_at IS NULL THEN img.public_url END
         ) AS hero_image_url,
         co.iso_code AS hero_iso_code
       FROM story_thread_articles sta
@@ -7138,11 +7211,11 @@ app.get("/api/threads/latest", async (req, res) => {
       LEFT JOIN countries co ON co.id = a.country_id
       WHERE sta.thread_id = ANY($1)
         AND (
-          (a.image_url IS NOT NULL AND a.image_url <> '')
-          OR img.public_url IS NOT NULL
+          (a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL)
+          OR (img.public_url IS NOT NULL AND img.dead_at IS NULL)
         )
       ORDER BY sta.thread_id,
-        CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' THEN 0 ELSE 1 END,
+        CASE WHEN a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL THEN 0 ELSE 1 END,
         a.published_at DESC
     `, [threadIds]);
 

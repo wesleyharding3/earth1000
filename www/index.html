@@ -25265,12 +25265,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/thread/${threadId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        // Backend returned no flows — most likely the articles behind this
-        // thread lack rich article_locations data. The CARD almost always
-        // names 2+ countries via primary_nations / geographic_scope (see
-        // the Kinahan "Ireland, EU, UAE" case). Synthesize hub-and-spoke
-        // arcs from those ISOs so the user still sees the connection
-        // structure the card promised.
+        // No flows drawn — several handling paths in order of authority:
+
+        //  1. Tier info present on the response (new tiered endpoint)
+        //     — illuminate each tier country on the globe and focus on
+        //     the first primary. Covers single-primary-no-secondary
+        //     stories like "Mexico Farm Crisis" where tier_primary=['MX']
+        //     is explicit: the thread IS the story of one country, so we
+        //     light it up without synthesizing fake hub-and-spoke arcs.
+        const tierIsos = [
+          ...(Array.isArray(data.tier_primary)   ? data.tier_primary   : []),
+          ...(Array.isArray(data.tier_secondary) ? data.tier_secondary : []),
+        ].map(s => String(s || '').toUpperCase()).filter(s => /^[A-Z]{2,3}$/.test(s));
+        if (tierIsos.length) {
+          window.__flowHighlightCountries?.(new Set(tierIsos));
+          const firstIso = tierIsos[0];
+          const _c = (window.__globeCountries || []).find(
+            c => c && (c.iso_code || '').toUpperCase() === firstIso
+          );
+          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+          const backLabel = originPage === 2 ? "Back to Threads" : originPage === 0 ? "Back to Briefing" : "Back";
+          showFlowArcBackBtn(backLabel);
+          return;
+        }
+
+        //  2. Legacy fallback — synthesize hub-and-spoke from card ISOs
+        //     when tier classification isn't available (pre-tier threads
+        //     or extraction gap).
         const synthFlows = _synthesizeFlowsFromCardIsos(_ctxThread || data.thread);
         if (synthFlows.length) {
           _renderSynthesizedFlows(synthFlows, { sourceType: 'thread', threadId });
@@ -25280,8 +25301,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           showFlowArcBackBtn(backLabel);
           return;
         }
-        // Truly single-location (only one resolvable ISO on the card):
-        // fall back to the original behavior — highlight + focus.
+
+        //  3. Truly single-ISO — highlight + focus the card's own country.
         const _originIso = _ctxThread?.iso_code || data.thread?.iso_code || _ctxThread?.country_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
@@ -26361,10 +26382,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API}/api/flows/timeline/${timelineId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
-        // Same fallback path as showThreadFlows: synthesize arcs from the
-        // card's primary_nations / geographic_scope ISO list when the
-        // backend returns no flows. See _synthesizeFlowsFromCardIsos
-        // above for the hub-and-spoke shape.
+        // Priority 1: tier-aware highlight. When a Line is classified
+        // as single-primary-no-secondary (or any tier state where the
+        // backend legitimately returns zero arcs), illuminate those
+        // countries authoritatively. No synthetic arcs.
+        const tierIsos = [
+          ...(Array.isArray(data.tier_primary)   ? data.tier_primary   : []),
+          ...(Array.isArray(data.tier_secondary) ? data.tier_secondary : []),
+        ].map(s => String(s || '').toUpperCase()).filter(s => /^[A-Z]{2,3}$/.test(s));
+        if (tierIsos.length) {
+          window.__flowHighlightCountries?.(new Set(tierIsos));
+          const firstIso = tierIsos[0];
+          const _c = (window.__globeCountries || []).find(
+            c => c && (c.iso_code || '').toUpperCase() === firstIso
+          );
+          if (_c && _c.lat != null) window.startFocus?.(parseFloat(_c.lat), parseFloat(_c.lon));
+          showFlowArcBackBtn(backLabel);
+          return;
+        }
+
+        // Priority 2: legacy hub-and-spoke from card ISO list.
         const synthFlows = _synthesizeFlowsFromCardIsos(_ctxTimeline || data.timeline);
         if (synthFlows.length) {
           _renderSynthesizedFlows(synthFlows, { sourceType: 'thread', timelineId });
@@ -26373,6 +26410,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           showFlowArcBackBtn(backLabel);
           return;
         }
+
+        // Priority 3: single-ISO final fallback.
         const _originIso = _ctxTimeline?.iso_code || data.timeline?.iso_code || _ctxTimeline?.country_code;
         if (_originIso) {
           const iso = String(_originIso).toUpperCase();
