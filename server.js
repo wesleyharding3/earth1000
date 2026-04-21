@@ -2822,110 +2822,13 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
     const _cached = await ttlCached(`flows/thread:${threadId}`, 300_000, async () => {
-    // PREFERRED: curated primary_nations on the thread row.
-    // generate_subscripts preserves curator order (usually most-central first).
-    // mention_count is pulled from article_entity_mentions restricted to the
-    // curated ISOs so arc thickness still reflects coverage weight.
-    const { rows: curatedCountries } = await pool.query(`
-      WITH focal AS (
-        SELECT UPPER(TRIM(iso)) AS iso_upper,
-               ord
-        FROM story_threads t,
-             LATERAL unnest(t.primary_nations) WITH ORDINALITY AS u(iso, ord)
-        WHERE t.id = $1
-          AND t.primary_nations IS NOT NULL
-          AND array_length(t.primary_nations, 1) > 0
-      )
-      SELECT
-        co.id,
-        co.name      AS place,
-        co.latitude  AS lat,
-        co.longitude AS lon,
-        co.iso_code  AS iso,
-        'country'    AS type,
-        f.ord,
-        COALESCE((
-          SELECT COUNT(DISTINCT aem.article_id)
-          FROM story_thread_articles sta
-          JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
-          JOIN entities e ON e.id = aem.entity_id
-          WHERE sta.thread_id = $1
-            AND e.entity_type = 'location'
-            AND UPPER(e.country_code) = f.iso_upper
-        ), 0) AS mention_count
-      FROM focal f
-      JOIN countries co ON UPPER(co.iso_code) = f.iso_upper
-      ORDER BY f.ord
-      LIMIT 10
-    `, [threadId]);
-
-    let involvedCountries = curatedCountries;
-
-    // FALLBACK 1: thread has no primary_nations → use entity extraction,
-    // but tighten to subject/actor only (drop the noisy 'location' role)
-    // and raise confidence floor to 0.7.
-    if (involvedCountries.length < 2) {
-      const { rows: entityCountries } = await pool.query(`
-        SELECT DISTINCT
-          co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
-          co.iso_code AS iso,
-          'country' AS type,
-          MIN(CASE aem.role WHEN 'subject' THEN 1 WHEN 'actor' THEN 2 ELSE 3 END) AS role_rank,
-          COUNT(DISTINCT sta.article_id) AS mention_count
-        FROM story_thread_articles sta
-        JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
-        JOIN entities e ON e.id = aem.entity_id
-        JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
-        WHERE sta.thread_id = $1
-          AND e.entity_type = 'location'
-          AND aem.role IN ('subject', 'actor')
-          AND aem.confidence >= 0.7
-        GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
-        ORDER BY role_rank, mention_count DESC
-        LIMIT 10
-      `, [threadId]);
-      involvedCountries = entityCountries;
-    }
-
-    // FALLBACK 2: still nothing → content-routed article_locations
-    // (country↔country, not source→country).
-    if (involvedCountries.length < 2) {
-      const { rows: contentCountries } = await pool.query(`
-        SELECT
-          co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
-          co.iso_code AS iso,
-          'country' AS type,
-          COUNT(DISTINCT al.article_id) AS mention_count
-        FROM story_thread_articles sta
-        JOIN article_locations al ON al.article_id = sta.article_id
-        JOIN countries co ON co.id = al.country_id
-        WHERE sta.thread_id = $1
-          AND al.routing_type = 'content'
-        GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
-        ORDER BY mention_count DESC
-        LIMIT 10
-      `, [threadId]);
-      involvedCountries = contentCountries;
-    }
-
-    if (involvedCountries.length < 2) return { flows: [], maxCount: 0 };
-
-    // Consecutive pairs — curator order preserved when primary_nations drove it.
-    const flows = [];
-    for (let i = 0; i < involvedCountries.length - 1; i++) {
-      const src = involvedCountries[i];
-      const dst = involvedCountries[i + 1];
-      flows.push({
-        src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
-               place: src.place, id: src.id, type: 'country', iso: src.iso },
-        dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
-               place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
-        count: (parseInt(src.mention_count) || 0) + (parseInt(dst.mention_count) || 0)
+      return await _buildTieredFlows({
+        kind: 'thread',
+        id: threadId,
+        rowTable: 'story_threads',
+        articleJoinTable: 'story_thread_articles',
+        articleJoinKey: 'thread_id',
       });
-    }
-
-    const maxCount = flows.length ? Math.max(...flows.map(f => f.count), 1) : 1;
-    return { flows, maxCount };
     });
     res.json(_cached);
   } catch (err) {
@@ -2933,6 +2836,218 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch thread flows", detail: req.user?.is_admin ? err.message : undefined });
   }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tier-aware flow builder, shared between /api/flows/thread/:id and
+// /api/flows/timeline/:id.
+//
+// Model (per product design):
+//   • primary_nations   = 1–3 countries the story is fundamentally about
+//   • secondary_nations = up to 8 supporters/commenters/downstream actors
+//   • Flow topology:
+//       - primary mesh:    all N*(N-1)/2 pairs among primaries → `_tier:'primary'`
+//       - primary→secondary spider: each primary × each secondary → `_tier:'secondary'`
+//       - single-primary:  skip mesh entirely, only draw spider
+//   • Arc-count cap (design decision C): if total > MAX_ARCS, drop weakest
+//     spider edges first. Primary mesh is always preserved.
+//
+// Legacy fallback: if the row has empty primary + secondary (pre-tier data or
+// extraction gap), fall through to the old entity-extraction / content-routing
+// logic and return untiered flows so the frontend can render them as plain
+// routing arcs (pre-tier behavior).
+// ═══════════════════════════════════════════════════════════════════════════
+const TIER_MAX_ARCS           = 20;   // hard cap per endpoint response
+const TIER_MAX_SECONDARIES    = 8;    // matches classifier's cap
+const TIER_FALLBACK_LIMIT     = 10;   // for legacy linear-chain fallback
+
+async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, articleJoinKey }) {
+  // 1. Pull tier arrays + use them to compute involved country coords.
+  const { rows: rowRs } = await pool.query(
+    `SELECT primary_nations, secondary_nations FROM ${rowTable} WHERE id = $1`,
+    [id]
+  );
+  if (!rowRs.length) return { flows: [], maxCount: 0, tier_primary: [], tier_secondary: [] };
+
+  const primaryIsos   = _normIsoArr(rowRs[0].primary_nations);
+  const secondaryIsos = _normIsoArr(rowRs[0].secondary_nations).slice(0, TIER_MAX_SECONDARIES);
+  const tieredIsos    = [...primaryIsos, ...secondaryIsos];
+
+  // If the row has ANY tier info (primary or secondary), use the tier
+  // path — even when it can't produce ≥2 arcs. A single-primary / no-
+  // secondary row represents an explicit "this story is about ONE
+  // country" classification; falling through to the legacy entity
+  // chain would inject noise (e.g. Mexico story suddenly showing arcs
+  // to EC/SD/ML from incidental mentions). Returning empty tier flows
+  // lets the frontend's single-country highlight path take over.
+  if (primaryIsos.length + secondaryIsos.length >= 1) {
+    // 2. Fetch coords + per-country mention_count in one shot so arc weights
+    //    reflect how loudly each country figures in the thread/line's articles.
+    const { rows: coords } = await pool.query(`
+      WITH focal AS (
+        SELECT UPPER(TRIM(iso)) AS iso_upper
+        FROM unnest($1::text[]) AS iso
+      )
+      SELECT
+        co.id, co.name AS place,
+        co.latitude AS lat, co.longitude AS lon,
+        co.iso_code AS iso,
+        COALESCE((
+          SELECT COUNT(DISTINCT aem.article_id)
+          FROM ${articleJoinTable} sta
+          JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+          JOIN entities e ON e.id = aem.entity_id
+          WHERE sta.${articleJoinKey} = $2
+            AND e.entity_type = 'location'
+            AND UPPER(e.country_code) = f.iso_upper
+        ), 0)::int AS mention_count
+      FROM focal f
+      JOIN countries co ON UPPER(co.iso_code) = f.iso_upper
+    `, [tieredIsos, id]);
+
+    // Index by ISO for topology building; skip any ISO we can't resolve
+    // to coordinates (supranational entries like "EU" won't have a row).
+    const byIso = new Map();
+    for (const c of coords) {
+      const iso = String(c.iso || '').toUpperCase();
+      byIso.set(iso, {
+        id: c.id, place: c.place, iso,
+        lat: parseFloat(c.lat), lon: parseFloat(c.lon),
+        type: 'country',
+        mention_count: Number(c.mention_count || 0),
+      });
+    }
+    const resolvedPrimaries  = primaryIsos.filter(i => byIso.has(i));
+    const resolvedSecondaries = secondaryIsos.filter(i => byIso.has(i));
+
+    // Even when we can't produce ≥2 arcs, still return tier-aware shape
+    // so the frontend can honor the "don't fall back to routing noise"
+    // contract above. Only the arc-building branches require ≥2 nodes.
+    {
+      const flows = [];
+
+      // 3a. Primary mesh — all pairs among primaries. Skip entirely when
+      // there's only one primary (per design decision Q3:B).
+      if (resolvedPrimaries.length >= 2) {
+        for (let i = 0; i < resolvedPrimaries.length; i++) {
+          for (let j = i + 1; j < resolvedPrimaries.length; j++) {
+            const a = byIso.get(resolvedPrimaries[i]);
+            const b = byIso.get(resolvedPrimaries[j]);
+            flows.push({
+              src: { lat: a.lat, lon: a.lon, place: a.place, id: a.id, type: 'country', iso: a.iso },
+              dst: { lat: b.lat, lon: b.lon, place: b.place, id: b.id, type: 'country', iso: b.iso },
+              count: (a.mention_count + b.mention_count) || 1,
+              _tier: 'primary',
+            });
+          }
+        }
+      }
+
+      // 3b. Primary→secondary spider — each primary to each secondary.
+      const spiderFlows = [];
+      for (const pIso of resolvedPrimaries) {
+        const p = byIso.get(pIso);
+        for (const sIso of resolvedSecondaries) {
+          const s = byIso.get(sIso);
+          spiderFlows.push({
+            src: { lat: p.lat, lon: p.lon, place: p.place, id: p.id, type: 'country', iso: p.iso },
+            dst: { lat: s.lat, lon: s.lon, place: s.place, id: s.id, type: 'country', iso: s.iso },
+            count: s.mention_count || 1,
+            _tier: 'secondary',
+          });
+        }
+      }
+
+      // 3c. Arc cap — keep all primary mesh; drop weakest spider edges
+      // until total fits under TIER_MAX_ARCS (design decision Q6:C).
+      spiderFlows.sort((a, b) => b.count - a.count);
+      const spiderBudget = Math.max(0, TIER_MAX_ARCS - flows.length);
+      flows.push(...spiderFlows.slice(0, spiderBudget));
+
+      const maxCount = flows.length ? Math.max(...flows.map(f => f.count), 1) : 1;
+      return {
+        flows,
+        maxCount,
+        tier_primary:   resolvedPrimaries,
+        tier_secondary: resolvedSecondaries,
+      };
+    }
+  }
+
+  // ── LEGACY FALLBACK ────────────────────────────────────────────────────
+  // Row has empty/sparse tier data (pre-sweep row or extraction gap). Use
+  // the old entity → content-routing chain and return untiered flows so
+  // the frontend renders them as plain routing arcs.
+  const { rows: entityCountries } = await pool.query(`
+    SELECT DISTINCT
+      co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+      co.iso_code AS iso,
+      'country' AS type,
+      MIN(CASE aem.role WHEN 'subject' THEN 1 WHEN 'actor' THEN 2 ELSE 3 END) AS role_rank,
+      COUNT(DISTINCT sta.article_id) AS mention_count
+    FROM ${articleJoinTable} sta
+    JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+    JOIN entities e ON e.id = aem.entity_id
+    JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
+    WHERE sta.${articleJoinKey} = $1
+      AND e.entity_type = 'location'
+      AND aem.role IN ('subject', 'actor')
+      AND aem.confidence >= 0.7
+    GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+    ORDER BY role_rank, mention_count DESC
+    LIMIT ${TIER_FALLBACK_LIMIT}
+  `, [id]);
+
+  let involvedCountries = entityCountries;
+
+  if (involvedCountries.length < 2) {
+    const { rows: contentCountries } = await pool.query(`
+      SELECT
+        co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
+        co.iso_code AS iso,
+        'country' AS type,
+        COUNT(DISTINCT al.article_id) AS mention_count
+      FROM ${articleJoinTable} sta
+      JOIN article_locations al ON al.article_id = sta.article_id
+      JOIN countries co ON co.id = al.country_id
+      WHERE sta.${articleJoinKey} = $1
+        AND al.routing_type = 'content'
+      GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
+      ORDER BY mention_count DESC
+      LIMIT ${TIER_FALLBACK_LIMIT}
+    `, [id]);
+    involvedCountries = contentCountries;
+  }
+
+  if (involvedCountries.length < 2) {
+    return { flows: [], maxCount: 0, tier_primary: [], tier_secondary: [] };
+  }
+
+  // Legacy: consecutive pairs, no tier markers.
+  const flows = [];
+  for (let i = 0; i < involvedCountries.length - 1; i++) {
+    const src = involvedCountries[i];
+    const dst = involvedCountries[i + 1];
+    flows.push({
+      src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
+             place: src.place, id: src.id, type: 'country', iso: src.iso },
+      dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
+             place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
+      count: (parseInt(src.mention_count) || 0) + (parseInt(dst.mention_count) || 0)
+    });
+  }
+  const maxCount = flows.length ? Math.max(...flows.map(f => f.count), 1) : 1;
+  return { flows, maxCount, tier_primary: [], tier_secondary: [] };
+}
+
+function _normIsoArr(arr) {
+  if (!Array.isArray(arr)) return [];
+  const seen = new Set();
+  for (const v of arr) {
+    const iso = String(v || '').trim().toUpperCase();
+    if (/^[A-Z]{2,3}$/.test(iso)) seen.add(iso);
+  }
+  return [...seen];
+}
 
 /* =========================================
    Articles constituent of a thread.
@@ -6354,84 +6469,13 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
     const _cached = await ttlCached(`flows/timeline:${timelineId}`, 300_000, async () => {
-    // Find distinct countries directly involved in this timeline's story
-    const { rows: involvedCountries } = await pool.query(`
-      SELECT DISTINCT
-        co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
-        co.iso_code AS iso,
-        'country' AS type,
-        MIN(CASE aem.role
-          WHEN 'subject'  THEN 1
-          WHEN 'actor'    THEN 2
-          WHEN 'location' THEN 3
-          ELSE 4
-        END) AS role_rank,
-        COUNT(DISTINCT sta.article_id) AS mention_count
-      FROM story_timeline_articles sta
-      JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
-      JOIN entities e ON e.id = aem.entity_id
-      JOIN countries co ON LOWER(co.iso_code) = LOWER(e.country_code)
-      WHERE sta.timeline_id = $1
-        AND e.entity_type = 'location'
-        AND aem.role IN ('subject', 'actor', 'location')
-        AND aem.confidence >= 0.6
-      GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
-      ORDER BY role_rank, mention_count DESC
-      LIMIT 10
-    `, [timelineId]);
-
-    if (involvedCountries.length < 2) {
-      // Fallback: find distinct content-routed countries across all articles
-      // in this timeline, then draw arcs between them (country↔country).
-      const { rows: contentCountries } = await pool.query(`
-        SELECT
-          co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
-          co.iso_code AS iso,
-          COUNT(DISTINCT al.article_id) AS mention_count
-        FROM story_timeline_articles sta
-        JOIN article_locations al ON al.article_id = sta.article_id
-        JOIN countries co ON co.id = al.country_id
-        WHERE sta.timeline_id = $1
-          AND al.routing_type = 'content'
-        GROUP BY co.id, co.name, co.latitude, co.longitude, co.iso_code
-        ORDER BY mention_count DESC
-        LIMIT 10
-      `, [timelineId]);
-
-      if (contentCountries.length < 2) return { flows: [], maxCount: 0 };
-
-      const flows = [];
-      for (let i = 0; i < contentCountries.length - 1; i++) {
-        const src = contentCountries[i];
-        const dst = contentCountries[i + 1];
-        flows.push({
-          src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
-                 place: src.place, id: src.id, type: 'country', iso: src.iso },
-          dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
-                 place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
-          count: parseInt(src.mention_count) + parseInt(dst.mention_count)
-        });
-      }
-      const maxCount = Math.max(...flows.map(f => f.count));
-      return { flows, maxCount };
-    }
-
-    // Build arcs between involved countries (consecutive pairs by role importance)
-    const flows = [];
-    for (let i = 0; i < involvedCountries.length - 1; i++) {
-      const src = involvedCountries[i];
-      const dst = involvedCountries[i + 1];
-      flows.push({
-        src: { lat: parseFloat(src.lat), lon: parseFloat(src.lon),
-               place: src.place, id: src.id, type: 'country', iso: src.iso },
-        dst: { lat: parseFloat(dst.lat), lon: parseFloat(dst.lon),
-               place: dst.place, id: dst.id, type: 'country', iso: dst.iso },
-        count: parseInt(src.mention_count) + parseInt(dst.mention_count)
+      return await _buildTieredFlows({
+        kind: 'timeline',
+        id: timelineId,
+        rowTable: 'story_timelines',
+        articleJoinTable: 'story_timeline_articles',
+        articleJoinKey: 'timeline_id',
       });
-    }
-
-    const maxCount = flows.length ? Math.max(...flows.map(f => f.count)) : 1;
-    return { flows, maxCount };
     });
     res.json(_cached);
   } catch (err) {

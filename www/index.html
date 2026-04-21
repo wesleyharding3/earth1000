@@ -18421,7 +18421,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   function uniformColor() { return new THREE.Color(0.9, 0.85, 1.0); }
 
+  // Tier palette — green for primary actors, light blue for secondary.
+  // Checked FIRST so tier arcs win over routing / sentiment / uniform
+  // color modes on thread & line flow arcs. News Flows and article flow
+  // arcs never carry flow._tier so they fall through to existing modes.
+  const TIER_COLOR_PRIMARY   = new THREE.Color(0x22c55e); // emerald-500
+  const TIER_COLOR_SECONDARY = new THREE.Color(0x38bdf8); // sky-400
   function pickColor(flow) {
+    if (flow._tier === 'primary')   return TIER_COLOR_PRIMARY.clone();
+    if (flow._tier === 'secondary') return TIER_COLOR_SECONDARY.clone();
     if (colorMode === "sentiment") return sentimentColor(flow.sentiment || flow.avgSentiment);
     if (colorMode === "uniform")   return uniformColor();
     return routingColor(flow);
@@ -18442,8 +18450,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return Math.max(0, Math.min(1, value));
   }
 
-  /* ── Build great-circle arc curve ── */
-  function buildArcCurve(srcLat, srcLon, dstLat, dstLon, laneOffset = 0) {
+  /* ── Build great-circle arc curve ──
+     heightMult scales the arc's arch. 1.0 = default. Tier arcs use this
+     to separate primaries (~0.75, hug the globe as the story's spine)
+     from secondaries (~1.15, ride above the spine to read as supporting
+     players). News Flows / article flow arcs never pass a multiplier so
+     their arcs are unchanged. */
+  function buildArcCurve(srcLat, srcLon, dstLat, dstLon, laneOffset = 0, heightMult = 1) {
     const src = latLonToV3(srcLat, srcLon, GLOBE_RADIUS);
     const dst = latLonToV3(dstLat, dstLon, GLOBE_RADIUS);
     
@@ -18465,7 +18478,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       shortAxis.normalize();
       const laneVector = shortAxis.multiplyScalar(laneOffset);
       const mid = src.clone().add(dst).normalize();
-      const lift = GLOBE_RADIUS + ARC_HEIGHT * 0.3;
+      const lift = GLOBE_RADIUS + ARC_HEIGHT * 0.3 * heightMult;
       mid.multiplyScalar(lift);
       return new THREE.QuadraticBezierCurve3(
         src.clone().add(laneVector),
@@ -18495,7 +18508,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     
     // Lift profile: parabolic, higher in the middle
     // Scale lift with arc length
-    const maxLift = ARC_HEIGHT * (0.4 + (angularDist / Math.PI) * 0.6);
+    const maxLift = ARC_HEIGHT * (0.4 + (angularDist / Math.PI) * 0.6) * heightMult;
     
     for (let i = 0; i <= numPoints; i++) {
       const t = i / numPoints;
@@ -18540,12 +18553,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Create arc mesh from flow data ── */
   function createArc(flow, maxCount = 1) {
     let arc;
-    const tubeRadius = flow.count ? calcTubeRadius(flow.count, maxCount) : TUBE_RADIUS_BASE;
+    // ── Tier rendering for thread / line flow arcs ────────────────────
+    // flow._tier is set only by the backend's _buildTieredFlows response
+    // for thread + timeline endpoints. Presence toggles the primary/
+    // secondary visual treatment (color via pickColor, thickness via
+    // tubeRadius multiplier, arch height via buildArcCurve's heightMult).
+    const _tier = flow._tier || null;
+    const _tierThicknessMult = _tier === 'primary' ? 1.4 : (_tier === 'secondary' ? 1.0 : 1.0);
+    const _tierHeightMult    = _tier === 'primary' ? 0.75 : (_tier === 'secondary' ? 1.15 : 1.0);
+    const tubeRadius = (flow.count ? calcTubeRadius(flow.count, maxCount) : TUBE_RADIUS_BASE) * _tierThicknessMult;
     const laneOffset = flow.__laneOffset || 0;
 
     if (arcPool.length > 0) {
       arc = arcPool.pop();
-      arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon, laneOffset);
+      arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon, laneOffset, _tierHeightMult);
       arc.mesh.geometry.dispose();
       arc.mesh.geometry = new THREE.TubeGeometry(arc.curve, ARC_SEGMENTS, tubeRadius, TUBE_RADIAL, false);
       arc.mesh.visible = true;
@@ -18619,7 +18640,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       : 0.55;
     arc.orbBaseScale = Math.max(PARTICLE_SIZE * 0.8, tubeRadius * 3.4);
 
-    arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon, laneOffset);
+    arc.curve = buildArcCurve(flow.src.lat, flow.src.lon, flow.dst.lat, flow.dst.lon, laneOffset, _tierHeightMult);
 
     // Update geometry with correct radius
     arc.mesh.geometry.dispose();
@@ -26432,14 +26453,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   /* ── Persistent node labels for flow arc visualization ── */
   let _flowLabelFlows = null;
+  // Tier ISO sets for the currently-displayed flow set. Populated by
+  // __flowShowLabelsForCardTrigger (and the card triggers that wrap it)
+  // from the backend's tier_primary / tier_secondary arrays. Non-tier
+  // flows (News Flows, article flow arcs) leave this null → label
+  // renderer falls back to ORIGIN/DEST eyebrows.
+  let _flowLabelTiers = null;
   const FLAG_CDN_LABEL = "https://flagcdn.com/w20/";
 
-  function showFlowNodeLabels(flows) {
+  function showFlowNodeLabels(flows, opts = {}) {
     _clearFlowNodeLabelsImpl();
     _flowLabelFlows = flows;
+    // Stash tier ISO sets so the master-toggle re-render path can reuse
+    // the last tiering without the caller having to re-pass them.
+    _flowLabelTiers = opts && (opts.tier_primary || opts.tier_secondary)
+      ? {
+          primary:   new Set((opts.tier_primary   || []).map(s => String(s).toUpperCase())),
+          secondary: new Set((opts.tier_secondary || []).map(s => String(s).toUpperCase())),
+        }
+      : _flowLabelTiers;   // keep previous if caller didn't pass (e.g. master re-toggle)
 
     const chk = document.getElementById("flowLabelsToggle");
     if (chk && !chk.checked) return;
+
+    // Tiered labels skip the ORIGIN/DEST role semantics entirely —
+    // primary↔primary arcs are bidirectional by nature. Per-node tier
+    // is looked up by ISO from the tier sets above.
+    const tiers = _flowLabelTiers;
+    const hasTiers = !!(tiers && (tiers.primary?.size || tiers.secondary?.size));
 
     const nodeMap = new Map();
     for (const f of flows) {
@@ -26462,8 +26503,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const label = document.createElement("div");
       label.className = "flowNodeLabel";
       const iso = (node.iso || "").toLowerCase();
+      const isoUp = iso.toUpperCase();
       const flagImg = iso ? `<img class="fnlFlag" src="${FLAG_CDN_LABEL}${iso}.png" width="14" height="10" alt="" style="vertical-align:middle;">` : "";
-      const typeTxt = node._role === "origin" ? "ORIGIN" : "DEST";
+
+      let typeTxt, tierClass = '';
+      if (hasTiers) {
+        if (tiers.primary.has(isoUp))       { typeTxt = "PRIMARY";   tierClass = ' fnl-tier-primary'; }
+        else if (tiers.secondary.has(isoUp)) { typeTxt = "SECONDARY"; tierClass = ' fnl-tier-secondary'; }
+        else                                  { typeTxt = node._role === "origin" ? "ORIGIN" : "DEST"; }
+      } else {
+        typeTxt = node._role === "origin" ? "ORIGIN" : "DEST";
+      }
+      label.className = `flowNodeLabel${tierClass}`;
+
       label.innerHTML = `<div class="fnlType">${typeTxt}</div><div class="fnlName">${flagImg}${node.place || "?"}</div>`;
       container.appendChild(label);
       label.__flowNode = node;
@@ -26674,6 +26726,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.clearFlowNodeLabels = function() {
     _clearFlowNodeLabelsImpl();
     _flowLabelFlows = null;
+    _flowLabelTiers = null;   // reset tier cache too, so next open
+                              // starts from a clean slate (avoids stale
+                              // PRIMARY labels persisting across card
+                              // navigations into non-tier flows).
   };
 
   // ── Checkbox toggle for flow node labels ──
@@ -26713,10 +26769,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   };
 
-  window.__flowShowLabelsForCardTrigger = function(flows) {
+  window.__flowShowLabelsForCardTrigger = function(flows, tiers = null) {
     const chk = document.getElementById("flowLabelsToggle");
     if (chk) chk.checked = true;
-    showFlowNodeLabels(flows);
+    // tiers: { tier_primary: [...], tier_secondary: [...] } from the
+    // flows endpoint response. Two entry cases:
+    //   1. Caller explicitly passes tiers (freshly fetched from endpoint)
+    //   2. Caller doesn't pass — derive from flow._tier tags on the
+    //      individual flows. Re-entry / micro-view paths that reuse
+    //      flows which already carry _tier pick up tier labels
+    //      automatically without the caller needing to be updated.
+    //   3. Neither available (News Flows, article flow arcs) — tiers
+    //      stays null, labels fall back to ORIGIN/DEST eyebrows.
+    if (!tiers && Array.isArray(flows) && flows.some(f => f && f._tier)) {
+      const p = new Set(), s = new Set();
+      for (const f of flows) {
+        if (!f) continue;
+        const sIso = f.src?.iso ? String(f.src.iso).toUpperCase() : null;
+        const dIso = f.dst?.iso ? String(f.dst.iso).toUpperCase() : null;
+        if (f._tier === 'primary') {
+          if (sIso) p.add(sIso);
+          if (dIso) p.add(dIso);
+        } else if (f._tier === 'secondary') {
+          // Spider topology: src is a primary, dst is the secondary.
+          if (sIso) p.add(sIso);
+          if (dIso) s.add(dIso);
+        }
+      }
+      tiers = { tier_primary: [...p], tier_secondary: [...s] };
+    }
+    showFlowNodeLabels(flows, tiers || {});
   };
 
   /* ── Thread Flow Timeline ── */
@@ -26823,6 +26905,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
   color: rgba(255,200,140,0.9);
   margin-bottom: 1px;
 }
+/* Tiered eyebrow palette for thread / line flow arcs. Green border
+   accent on primaries hugs the arc color; sky-blue on secondaries
+   mirrors their arcs. Applied via fnl-tier-primary / fnl-tier-secondary
+   class set by showFlowNodeLabels when a tier classification is active. */
+.flowNodeLabel.fnl-tier-primary .fnlType   { color: rgba(100,240,160,0.95); }
+.flowNodeLabel.fnl-tier-secondary .fnlType { color: rgba(120,200,250,0.95); }
+.flowNodeLabel.fnl-tier-primary   { border-color: rgba(80,220,140,0.4); }
+.flowNodeLabel.fnl-tier-secondary { border-color: rgba(100,180,240,0.34); }
 /* Place name — matches .flowCtxTitle palette (12px, 600, tight leading). */
 .flowNodeLabel .fnlName {
   font-size: 12px;

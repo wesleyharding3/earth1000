@@ -36,6 +36,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 // deepAnalyzeArticle for any stray callers.
 const { enrichArticle } = require("./articleDeepEnrichment");
 const { loadRulesBlock } = require("./editorialRuleInjector");
+const { classifyAndTierThread } = require("./entityTierWiring");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -1713,11 +1714,17 @@ async function deepAnalyzeTopPerThread() {
   }
   await Promise.all(workers);
 
-  // After enrichment lands in article_deep_context, populate
-  // story_threads.primary_nations for every thread that just got fresh
-  // enrichment on one of its articles. Only affects threads whose
-  // primary_nations is currently NULL/empty (respects admin curation).
+  // After enrichment lands in article_deep_context, populate nation
+  // tiers on every thread that just got fresh enrichment:
+  //   Step 1 — backfillThreadPrimaryNations (if primary_nations is empty,
+  //            populate from deep-context union). Respects admin curation
+  //            via the NULL-only guard.
+  //   Step 2 — classifyAndTierThread: split the current primary_nations
+  //            into a narrowed primary tier (1–3 principals) and a
+  //            secondary tier (supporters / commenters / downstream actors,
+  //            up to 8). Claude Haiku, ~1 call per threadsTouched.
   let natPopulated = 0;
+  let natClassified = 0;
   for (const threadId of threadsTouched) {
     try {
       const before = await pool.query(
@@ -1730,10 +1737,21 @@ async function deepAnalyzeTopPerThread() {
         [threadId]
       );
       if ((before.rows[0]?.len || 0) === 0 && (after.rows[0]?.len || 0) > 0) natPopulated++;
+
+      // Tier classification runs AFTER backfill so we're classifying the
+      // fully-populated candidate list. Idempotent: rows that already have
+      // a tiered split get reclassified from primary∪secondary as the
+      // candidate pool, picking up any new country additions or dropping
+      // ones the latest article mix no longer supports.
+      const result = await classifyAndTierThread(pool, threadId);
+      if (result && result.primary && !result.skipped) natClassified++;
     } catch (_) {}
   }
   if (natPopulated) {
     console.log(`   Populated primary_nations on ${natPopulated} thread(s) from fresh deep-context`);
+  }
+  if (natClassified) {
+    console.log(`   Tier-classified ${natClassified} thread(s) (primary vs secondary)`);
   }
 
   return completed;

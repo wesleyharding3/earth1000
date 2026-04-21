@@ -102,10 +102,11 @@
 
 'use strict';
 
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const pool = require('./db');
 const Anthropic = require('@anthropic-ai/sdk');
 const { loadContextForArticles } = require('./articleDeepEnrichment');
+const { classifyAndTierTimeline, classifyAndTierThread } = require('./entityTierWiring');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -131,6 +132,14 @@ const SKIP_UMBRELLA = process.argv.includes('--skip-umbrella');
 // the rewriter, or after tuning the prompt. Costs ~1 Claude Haiku call
 // per Line.
 const RETITLE_ALL   = process.argv.includes('--retitle-all');
+// --reclassify-actors runs the entityTierClassifier across every existing
+// thread + line, splitting each primary_nations into a narrowed primary
+// tier and a new secondary tier. One-shot sweep; safe to re-run. Costs
+// ~1 Haiku call per multi-country thread/line (~$0.03 total).
+const RECLASSIFY_ACTORS = process.argv.includes('--reclassify-actors');
+// --dry-run-reclassify prints what --reclassify-actors WOULD write without
+// committing. Useful as a final gate before the destructive sweep.
+const DRY_RUN_RECLASSIFY = process.argv.includes('--dry-run-reclassify');
 
 // ─── Promotion gates ──────────────────────────────────────────────────────────
 // The thread → timeline graduation criteria. Tuned so that a storm that
@@ -256,6 +265,9 @@ async function run() {
     claudeCallsEvent:              0,
     claudeCallsTitle:              0,
     linesRetitled:                 0,
+    claudeCallsTier:               0,
+    threadsReclassified:           0,
+    linesReclassified:             0,
     inputTokens:                   0,
     outputTokens:                  0,
   };
@@ -300,6 +312,15 @@ async function run() {
     console.log(`   ${metrics.linesRetitled} Line(s) retitled`);
   }
 
+  // One-shot actor-tier reclassify pass. Sweeps every existing thread +
+  // line, splitting primary_nations into a narrowed primary tier +
+  // secondary tier. Safe to re-run. Respects --dry-run-reclassify for a
+  // preview-only pass.
+  if (RECLASSIFY_ACTORS) {
+    console.log(`\n   [${elapsed()}] Actor tier reclassify${DRY_RUN_RECLASSIFY ? ' (DRY RUN)' : ''}...`);
+    await runReclassifyActorsPhase(metrics, { dryRun: DRY_RUN_RECLASSIFY });
+  }
+
   // ── End-of-run summary ───────────────────────────────────────────────────
   console.log(`\n═══ TIMELINE RUN SUMMARY (${elapsed()}) ═══`);
   console.log(`  candidate_threads       : ${metrics.candidateThreads}`);
@@ -319,6 +340,9 @@ async function run() {
   console.log(`  claude_calls (events)   : ${metrics.claudeCallsEvent}`);
   console.log(`  claude_calls (titles)   : ${metrics.claudeCallsTitle || 0}`);
   console.log(`  lines_retitled          : ${metrics.linesRetitled || 0}`);
+  console.log(`  claude_calls (tiers)    : ${metrics.claudeCallsTier || 0}`);
+  console.log(`  threads_reclassified    : ${metrics.threadsReclassified || 0}`);
+  console.log(`  lines_reclassified      : ${metrics.linesReclassified || 0}`);
   console.log(`  claude_tokens           : in=${metrics.inputTokens}  out=${metrics.outputTokens}`);
   if (!SKIP_GATE) {
     console.log(`  quality_gate_evaluated  : ${gateResult.evaluated}`);
@@ -777,6 +801,17 @@ async function attachThreadToTimeline(thread, timelineId, reawaken) {
     }
 
     await tx.query('COMMIT');
+
+    // Re-classify the timeline's tiers now that a new thread's nations
+    // have been merged into its primary_nations (line 781's UNION adds
+    // thread.primary_nations to timeline.primary_nations). Runs outside
+    // the transaction so a classification failure can't roll back the
+    // attach itself.
+    try {
+      await classifyAndTierTimeline(pool, timelineId);
+    } catch (err) {
+      console.warn(`   ⚠ tier reclassify failed after attach to Line ${timelineId}: ${err.message}`);
+    }
   } catch (err) {
     await tx.query('ROLLBACK').catch(() => {});
     throw err;
@@ -858,6 +893,26 @@ async function createTimelineFromThread(thread, metrics = null) {
     `, [timelineId]);
 
     await tx.query('COMMIT');
+
+    // Tier classification — splits primary_nations into narrowed primary
+    // + new secondary tier. Runs AFTER commit (non-transactional) so a
+    // failure here never blocks timeline creation. Reads the constituent
+    // thread's primary + secondary nations to build candidates.
+    try {
+      const tiers = await classifyAndTierTimeline(pool, timelineId);
+      if (metrics && tiers && !tiers.skipped) {
+        metrics.claudeCallsTitle = (metrics.claudeCallsTitle || 0) + (tiers._claudeCalls || 0);
+        if (tiers._usage) {
+          metrics.inputTokens  += tiers._usage.input_tokens        || 0;
+          metrics.inputTokens  += tiers._usage.cache_read_input_tokens || 0;
+          metrics.inputTokens  += tiers._usage.cache_creation_input_tokens || 0;
+          metrics.outputTokens += tiers._usage.output_tokens       || 0;
+        }
+      }
+    } catch (err) {
+      console.warn(`   ⚠ tier classification failed for new Line ${timelineId}: ${err.message}`);
+    }
+
     return timelineId;
   } catch (err) {
     await tx.query('ROLLBACK').catch(() => {});
@@ -1487,6 +1542,156 @@ async function runRetitleExistingLinesPhase(metrics) {
     // doesn't burst Claude rate-limits.
     await sleep(250);
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  RECLASSIFY ACTOR TIERS (opt-in via --reclassify-actors)
+//
+//  One-shot sweep: tier-classify every thread + line in the DB. The pure
+//  classifier is in entityTierClassifier.js; the DB-aware wrapper lives
+//  in entityTierWiring.js. On --dry-run-reclassify, runs the classifier
+//  but suppresses writes — prints diffs for audit.
+// ═════════════════════════════════════════════════════════════════════════════
+async function runReclassifyActorsPhase(metrics, { dryRun = false } = {}) {
+  const { classifyActorTiers } = require('./entityTierClassifier');
+  const throttle = 100;   // ms between Claude calls — keeps Haiku TPS sane
+
+  // ── Threads ────────────────────────────────────────────────────────────
+  const { rows: threads } = await pool.query(`
+    SELECT id, title, description, primary_category, keywords,
+           primary_nations, secondary_nations, article_count, status
+    FROM story_threads
+    WHERE COALESCE(array_length(primary_nations, 1), 0) > 0
+    ORDER BY article_count DESC, importance DESC NULLS LAST
+  `);
+  console.log(`   threads to reclassify: ${threads.length}`);
+
+  let tChanged = 0, tSkipped = 0;
+  for (const r of threads) {
+    const candidates = _mergeCandidates(r.primary_nations, r.secondary_nations);
+    if (!candidates.length) { tSkipped++; continue; }
+
+    let tiers;
+    if (candidates.length <= 1) {
+      tiers = { primary: candidates, secondary: [], _claudeCalls: 0 };
+    } else {
+      tiers = await classifyActorTiers({
+        title: r.title,
+        description: r.description,
+        keywords: r.keywords,
+        primary_category: r.primary_category,
+        candidateIsos: candidates,
+      });
+      metrics.claudeCallsTier = (metrics.claudeCallsTier || 0) + (tiers._claudeCalls || 0);
+      if (tiers._usage) {
+        metrics.inputTokens  += tiers._usage.input_tokens        || 0;
+        metrics.inputTokens  += tiers._usage.cache_read_input_tokens || 0;
+        metrics.inputTokens  += tiers._usage.cache_creation_input_tokens || 0;
+        metrics.outputTokens += tiers._usage.output_tokens       || 0;
+      }
+    }
+
+    const beforeP = (r.primary_nations || []).map(s => String(s).toUpperCase());
+    const beforeS = (r.secondary_nations || []).map(s => String(s).toUpperCase());
+    const changed = !_isoEqual(beforeP, tiers.primary) || !_isoEqual(beforeS, tiers.secondary);
+
+    if (changed) {
+      tChanged++;
+      if (!dryRun) {
+        await pool.query(
+          `UPDATE story_threads SET primary_nations = $1, secondary_nations = $2 WHERE id = $3`,
+          [tiers.primary, tiers.secondary, r.id]
+        );
+      }
+      if (tChanged <= 20 || (r.status === 'active' && tChanged <= 100)) {
+        console.log(
+          `   ${dryRun ? '[DRY]' : '[WR]'} thread ${r.id} [${r.status}] ` +
+          `p=[${tiers.primary.join(',')}] s=[${tiers.secondary.join(',')}]  "${(r.title||'').slice(0,55)}"`
+        );
+      }
+    }
+    if (throttle > 0 && tiers._claudeCalls) await sleep(throttle);
+  }
+  metrics.threadsReclassified = tChanged;
+
+  // ── Lines ──────────────────────────────────────────────────────────────
+  const { rows: lines } = await pool.query(`
+    SELECT id, title, description, primary_category, keywords,
+           primary_nations, secondary_nations, article_count, status
+    FROM story_timelines
+    WHERE COALESCE(array_length(primary_nations, 1), 0) > 0
+    ORDER BY article_count DESC NULLS LAST, importance DESC NULLS LAST
+  `);
+  console.log(`   lines to reclassify: ${lines.length}`);
+
+  let lChanged = 0;
+  for (const r of lines) {
+    const candidates = _mergeCandidates(r.primary_nations, r.secondary_nations);
+    if (!candidates.length) continue;
+
+    let tiers;
+    if (candidates.length <= 1) {
+      tiers = { primary: candidates, secondary: [], _claudeCalls: 0 };
+    } else {
+      tiers = await classifyActorTiers({
+        title: r.title,
+        description: r.description,
+        keywords: r.keywords,
+        primary_category: r.primary_category,
+        candidateIsos: candidates,
+      });
+      metrics.claudeCallsTier = (metrics.claudeCallsTier || 0) + (tiers._claudeCalls || 0);
+      if (tiers._usage) {
+        metrics.inputTokens  += tiers._usage.input_tokens        || 0;
+        metrics.inputTokens  += tiers._usage.cache_read_input_tokens || 0;
+        metrics.inputTokens  += tiers._usage.cache_creation_input_tokens || 0;
+        metrics.outputTokens += tiers._usage.output_tokens       || 0;
+      }
+    }
+
+    const beforeP = (r.primary_nations || []).map(s => String(s).toUpperCase());
+    const beforeS = (r.secondary_nations || []).map(s => String(s).toUpperCase());
+    const changed = !_isoEqual(beforeP, tiers.primary) || !_isoEqual(beforeS, tiers.secondary);
+
+    if (changed) {
+      lChanged++;
+      if (!dryRun) {
+        await pool.query(
+          `UPDATE story_timelines SET primary_nations = $1, secondary_nations = $2 WHERE id = $3`,
+          [tiers.primary, tiers.secondary, r.id]
+        );
+      }
+      console.log(
+        `   ${dryRun ? '[DRY]' : '[WR]'} line ${r.id} [${r.status}] ` +
+        `p=[${tiers.primary.join(',')}] s=[${tiers.secondary.join(',')}]  "${(r.title||'').slice(0,55)}"`
+      );
+    }
+    if (throttle > 0 && tiers._claudeCalls) await sleep(throttle);
+  }
+  metrics.linesReclassified = lChanged;
+
+  console.log(`   done: threads changed=${tChanged}/${threads.length}  lines changed=${lChanged}/${lines.length}` +
+              (dryRun ? '  (no writes — dry run)' : ''));
+}
+
+function _mergeCandidates(...lists) {
+  const s = new Set();
+  for (const l of lists) {
+    if (!Array.isArray(l)) continue;
+    for (const v of l) {
+      const k = String(v || '').trim().toUpperCase();
+      if (/^[A-Z]{2,3}$/.test(k)) s.add(k);
+    }
+  }
+  return [...s];
+}
+function _isoEqual(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
