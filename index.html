@@ -5395,6 +5395,24 @@ body.flow-maximized #flowArcList {
   margin-bottom: 24px;
 }
 
+/* Deep-analysis block inside the article detail panel — visually matches
+   the flow-context (.arcCtxBody) panel. The inner #adpAnalysisBody reuses
+   the .arcCtxBody / .arcCtxBlock styling directly, so this wrapper just
+   gives it a rounded frame + spacing inside the article scroll. */
+.adpAnalysis {
+  margin-top: 12px;
+  margin-bottom: 24px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.adpAnalysis > .arcCtxBody {
+  max-height: none;
+  min-height: 120px;
+  padding: 14px 14px 16px;
+  overflow: visible;
+}
+
 .adpContextTitle {
   font-size: 12px;
   font-weight: 600;
@@ -28312,6 +28330,190 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let returnContext = null; // { type: 'flow'|'feed'|'panel', state: any }
   let flowStateBeforeOpen = null; // For flow animation return
   let contentCleanupTimer = null;
+  let adpAnalysisAbort = null;
+
+  // ── Article analysis (auto-streamed on open) ──────────────────────────
+  // Reuses the flow-context panel's .arcCtxBody / .arcCtxBlock styling so
+  // the visual language is identical across the two surfaces. Fetches
+  // /api/explain with full article context; server returns structured
+  // blocks {kind, badge, title, text}. No gate — this fires automatically.
+  function _adpEscAnalysis(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+  function _adpAnalysisShowLoading() {
+    const body = document.getElementById('adpAnalysisBody');
+    if (!body) return;
+    body.className = 'arcCtxBody arcCtxStateLoading';
+    body.innerHTML =
+      `<div class="arcCtxShell">` +
+        `<div class="arcCtxSignalBadge">Deep Analysis</div>` +
+        `<div class="arcCtxShellTitle">Reading the article and its framing</div>` +
+        `<div class="arcCtxShellSub">Weighing the subject, the source, and the editorial slant.</div>` +
+        `<div class="arcCtxShellLines">` +
+          `<div class="arcCtxShellLine"></div>` +
+          `<div class="arcCtxShellLine"></div>` +
+          `<div class="arcCtxShellLine"></div>` +
+        `</div>` +
+      `</div>`;
+    body.scrollTop = 0;
+  }
+  function _adpAnalysisShowMessage(cls, html) {
+    const body = document.getElementById('adpAnalysisBody');
+    if (!body) return;
+    body.className = 'arcCtxBody arcCtxStateSettled';
+    body.innerHTML = `<div class="${cls}">${html}</div>`;
+  }
+  function _adpAnalysisRenderBlocks(blocks) {
+    const body = document.getElementById('adpAnalysisBody');
+    if (!body) return;
+    const anyTyping = blocks.some(b => b.status !== 'done');
+    body.className = 'arcCtxBody ' + (anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
+    body.innerHTML = blocks.map((block, index) => {
+      const kindClass = block.kind === 'primary' || block.kind === 'secondary' ? block.kind : 'summary';
+      const badge = _adpEscAnalysis(block.badge || '');
+      const title = _adpEscAnalysis(block.title || '');
+      const text  = _adpEscAnalysis(block.typedText || '');
+      const statusClass = block.status === 'done' ? 'is-done' : 'is-typing';
+      return (
+        `<section class="arcCtxBlock arcCtxBlock--${kindClass} ${statusClass}">` +
+          `<div class="arcCtxBlockHead">` +
+            `<span class="arcCtxSignalBadge">${badge}</span>` +
+            `${block.status === 'done' ? '' : `<span class="arcCtxLiveTag">Analyzing</span>`}` +
+          `</div>` +
+          `<div class="arcCtxBlockTitle">${title}</div>` +
+          `<div class="arcCtxText" data-block="${index}">${text}</div>` +
+        `</section>`
+      );
+    }).join('');
+    body.scrollTop = body.scrollHeight;
+  }
+  function _adpAnalysisSleep(ms, signal) {
+    return new Promise((resolve) => {
+      if (signal?.aborted) { resolve(false); return; }
+      let settled = false;
+      const finish = (v) => { if (settled) return; settled = true; resolve(v); };
+      const t = setTimeout(() => finish(true), ms);
+      signal?.addEventListener('abort', () => { clearTimeout(t); finish(false); }, { once: true });
+    });
+  }
+  async function _adpAnalysisTypeBlock(blocks, index, signal) {
+    const block = blocks[index];
+    if (!block) return false;
+    block.status = 'typing';
+    block.typedText = '';
+    _adpAnalysisRenderBlocks(blocks);
+    const target = block.text || '';
+    let typed = 0;
+    while (typed < target.length) {
+      if (signal?.aborted) return false;
+      const remaining = target.length - typed;
+      const step = remaining > 280 ? 10 : remaining > 160 ? 6 : remaining > 80 ? 4 : 2;
+      typed = Math.min(target.length, typed + step);
+      block.typedText = target.slice(0, typed);
+      const body = document.getElementById('adpAnalysisBody');
+      const textEl = body?.querySelector(`[data-block="${index}"]`);
+      if (textEl) textEl.textContent = block.typedText;
+      if (body) body.scrollTop = body.scrollHeight;
+      const keepGoing = await _adpAnalysisSleep(typed < 48 ? 18 : typed < 180 ? 22 : 28, signal);
+      if (!keepGoing) return false;
+    }
+    block.typedText = target;
+    block.status = 'done';
+    _adpAnalysisRenderBlocks(blocks);
+    return true;
+  }
+  async function _adpAnalysisStartRender(rawBlocks, signal) {
+    const normalized = (Array.isArray(rawBlocks) ? rawBlocks : [])
+      .map(b => ({
+        kind: b?.kind === 'primary' || b?.kind === 'secondary' ? b.kind : 'summary',
+        badge: String(b?.badge || '').trim() || 'Insight',
+        title: String(b?.title || '').trim() || 'Analysis',
+        text: String(b?.text || '').trim(),
+        typedText: '',
+        status: 'typing',
+      }))
+      .filter(b => b.text);
+    if (!normalized.length) {
+      _adpAnalysisShowMessage('arcCtxEmpty', 'Analysis unavailable for this article.');
+      return;
+    }
+    const live = [];
+    for (let i = 0; i < normalized.length; i += 1) {
+      if (signal?.aborted) break;
+      live.push({ ...normalized[i] });
+      _adpAnalysisRenderBlocks(live);
+      const done = await _adpAnalysisTypeBlock(live, live.length - 1, signal);
+      if (!done) break;
+    }
+    live.forEach(b => { b.typedText = b.text; b.status = 'done'; });
+    _adpAnalysisRenderBlocks(live);
+  }
+
+  async function _adpAnalysisRender(article) {
+    if (adpAnalysisAbort) { try { adpAnalysisAbort.abort(); } catch (_) {} }
+    const abort = new AbortController();
+    adpAnalysisAbort = abort;
+    _adpAnalysisShowLoading();
+
+    try {
+      if (!window.__authToken) {
+        _adpAnalysisShowMessage('arcCtxLock',
+          `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+          `<span>Sign in to see the deep analysis.</span>`);
+        document.querySelector('#adpAnalysisBody .arcCtxLock')
+          ?.addEventListener('click', () => window.__openAuthModal?.());
+        return;
+      }
+      try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
+
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const body = {
+        type: 'article',
+        title: article.translated_title || article.title || '',
+        summary: (article.translated_summary || article.summary || '').slice(0, 600),
+        source_name: article.source_name || '',
+        country_name: article.country_name || '',
+        city_name: article.city_name || '',
+        iso_code: article.iso_code || '',
+      };
+      const res = await fetch(`${API}/api/explain`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      });
+      if (abort.signal.aborted) return;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 429 && data.limitReached) {
+          const msg = data.requiredTier
+            ? 'Deep analysis requires Pro or Enterprise.'
+            : `${data.used}/${data.limit} analyses used today. ${data.resetNote || 'Resets at midnight.'}`;
+          _adpAnalysisShowMessage('arcCtxLock',
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+            `<span>${_adpEscAnalysis(msg)}</span>`);
+          document.querySelector('#adpAnalysisBody .arcCtxLock')
+            ?.addEventListener('click', () => window.__openPricing?.(msg));
+          return;
+        }
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (abort.signal.aborted) return;
+      await _adpAnalysisStartRender(data.blocks, abort.signal);
+    } catch (e) {
+      if (e?.name === 'AbortError') return;
+      console.error('[adp analysis]', e);
+      _adpAnalysisShowMessage('arcCtxError', 'Tap to retry.');
+      document.querySelector('#adpAnalysisBody .arcCtxError')
+        ?.addEventListener('click', () => {
+          if (currentArticle) _adpAnalysisRender(currentArticle);
+        });
+    } finally {
+      if (adpAnalysisAbort === abort) adpAnalysisAbort = null;
+    }
+  }
 
   function stopArticlePlayback() {
     content.querySelectorAll('.adpVideoFrame').forEach(frame => {
@@ -28393,18 +28595,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
          </div>`
       : '';
     
-    // Context section — AI Explain button. Server-side quota decides
-    // whether the signed-in user gets a result, a daily-limit message,
-    // or an upgrade nudge.
+    // Analysis section — auto-streams structured blocks on panel open.
+    // Styled with the same .arcCtxBody / .arcCtxBlock components used by
+    // the flow-context panel. Fires after render via _adpAnalysisRender.
     const contextHTML = `
-      <div class="adpContext" id="adpExplainWrap" data-article-id="${article.id}"
-           data-title="${(article.translated_title || article.title || '').replace(/"/g,'&quot;')}"
-           data-summary="${((article.translated_summary || article.summary || '')).slice(0,400).replace(/"/g,'&quot;')}">
-        <button class="aiAnalysisCta explainBtn" onclick="window.__triggerExplain(this,'article')" ${!window.__authToken ? 'data-needsauth="1"' : ''}>
-          <span class="aiAnalysisDot"></span>
-          <span>✦ Analysis</span>
-        </button>
-        <div class="explainResult" id="adpExplainResult" style="display:none"></div>
+      <div class="adpAnalysis" id="adpAnalysisWrap">
+        <div class="arcCtxBody" id="adpAnalysisBody"></div>
       </div>
     `;
     
@@ -28511,6 +28707,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     
     renderArticleDetail(article);
+    // Auto-fire the deep analysis stream. No click gate — the analysis
+    // begins rendering the moment the panel opens.
+    try { _adpAnalysisRender(article); } catch (_) {}
     panel.classList.add('visible');
 
     // Flow-return visual: fade the top-left back arrow in only when
@@ -28543,6 +28742,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // ── Close article detail panel ─────────────────────────────────────────────
   function closeArticlePanel() {
     stopArticlePlayback();
+    if (adpAnalysisAbort) { try { adpAnalysisAbort.abort(); } catch (_) {} adpAnalysisAbort = null; }
     // If a swipe left an inline transform, snap the element back to its
     // current rendered position before the slide-out so the transition has
     // a defined starting point. Then explicitly animate to translateY(100%).

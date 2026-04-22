@@ -8983,13 +8983,69 @@ app.post("/api/explain", async (req, res) => {
     });
   }
 
-  const { type, title, summary, keywords = [], description } = req.body || {};
+  const {
+    type, title, summary, keywords = [], description,
+    source_name, country_name, city_name, iso_code,
+  } = req.body || {};
   if (!title) return res.status(400).json({ error: "title is required" });
 
   try {
-    const context = type === "thread"
-      ? `Story thread: "${title}"\nDescription: ${description || summary || ""}\nKeywords: ${(keywords || []).slice(0, 10).join(", ")}`
-      : `Article: "${title}"\nSummary: ${(summary || "").slice(0, 400)}`;
+    if (type === "article") {
+      const sourceLine = source_name ? `Source: ${source_name}` : "Source: (unknown)";
+      const originParts = [];
+      if (city_name) originParts.push(city_name);
+      if (country_name) originParts.push(country_name);
+      else if (iso_code) originParts.push(String(iso_code).toUpperCase());
+      const originLine = originParts.length ? `Origin: ${originParts.join(", ")}` : "Origin: (unknown)";
+
+      const prompt = `You are an impartial media analyst. Return ONLY valid JSON. No markdown, no code fences, no prose outside the JSON object.
+
+Schema:
+{
+  "framing": "string",
+  "subject_matter": "string",
+  "editorial_bias": "string"
+}
+
+Rules:
+- framing: ~400 characters. Deeply consider the article as a unit — how its title and summary frame the event, together with the source and its origin city/country. What is foregrounded, what is omitted, what angle does the piece take given who is publishing it and from where.
+- subject_matter: ~400 characters. Analyze the subject itself, independent of this article — the real-world event, actors, stakes, and broader significance. Treat it as context a reader would need to make sense of the story.
+- editorial_bias: ~350 characters. Identify the editorial bias present in THIS article. Bias is present in 99 out of 100 cases — look hard: slant, loaded language, selective framing, sympathetic vs hostile sourcing, omissions, the source's known orientation, national perspective, or institutional incentives. Name it directly and concretely. Only return "No discernible editorial bias in this piece." in the rare case the writing is genuinely neutral and balanced.
+- Factual, specific, no hedging filler. No bullets, no quotes around field values beyond normal usage.
+
+Article title: "${title}"
+Summary: ${(summary || "").slice(0, 600)}
+${sourceLine}
+${originLine}`;
+
+      const response = await Anthropic.messages.create({
+        model:      "claude-haiku-4-5",
+        max_tokens: 900,
+        messages:   [{ role: "user", content: prompt }],
+      });
+      const rawText = (response?.content || [])
+        .map((part) => typeof part?.text === "string" ? part.text : "")
+        .join("")
+        .trim();
+      const structured = _flowCtxExtractJson(rawText) || {};
+      const framing = String(structured?.framing || "").trim();
+      const subject = String(structured?.subject_matter || "").trim();
+      const bias    = String(structured?.editorial_bias || "").trim();
+
+      const blocks = [];
+      if (framing) blocks.push({ kind: "summary",   badge: "Framing",        title: "Story & origin",    text: framing });
+      if (subject) blocks.push({ kind: "primary",   badge: "Subject",        title: "Subject matter",    text: subject });
+      if (bias)    blocks.push({ kind: "secondary", badge: "Editorial bias", title: "Editorial bias",    text: bias });
+      if (!blocks.length) {
+        blocks.push({
+          kind: "summary", badge: "Framing", title: "Story & origin",
+          text: String(rawText || "Analysis unavailable right now.").slice(0, 900),
+        });
+      }
+      return res.json({ blocks, used: access.used, limit: access.limit });
+    }
+
+    const context = `Story thread: "${title}"\nDescription: ${description || summary || ""}\nKeywords: ${(keywords || []).slice(0, 10).join(", ")}`;
 
     const response = await Anthropic.messages.create({
       model:      "claude-haiku-4-5",
