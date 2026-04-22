@@ -4348,8 +4348,13 @@ body.flow-maximized #flowArcList {
   margin: 0;
   flex-shrink: 0;
 }
-/* Article flow arcs don't use origin/destination labeling — hide there. */
-#flowCtxCard.articleOrigin .flowCtxLabelsChk { display: none; }
+/* Labels toggle is only meaningful when the arcs originate from a
+   specific thread, line, or article — those are the contexts with named
+   origin/destination endpoints worth calling out. When News Flows is
+   opened directly from the globe nav button (`noInfoOrigin`) the arcs
+   are a generic aggregate; the per-arc labels crowd the view, so hide
+   the toggle entirely in that mode. */
+#flowCtxCard.noInfoOrigin .flowCtxLabelsChk { display: none; }
 /* Minimize collapses the card; the label toggle would crowd the title. */
 #flowCtxCard.flowCtxMinimized .flowCtxLabelsChk { display: none; }
 #flowCtxCard.view-ctx .flowCtxLabelsChk { display: none; }
@@ -11059,7 +11064,11 @@ if (typeof window._threadImgFail !== 'function') {
         <div class="viewOption" data-mode="city">
           <span class="viewOptionDot"></span>City
         </div>
-        <div class="viewOption" data-mode="regions">
+        <!-- Regions view hidden pending revamp. All downstream wiring
+             (loadRegions, syncRegionsVisibility, regionPanel handlers,
+             viewMode === "regions" branches) is retained so the feature
+             can be re-enabled by restoring this option. -->
+        <div class="viewOption" data-mode="regions" style="display:none;">
           <span class="viewOptionDot"></span>Regions
         </div>
       </div>
@@ -31538,6 +31547,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (typeof typewriterText === 'function') typewriterText(target, summary);
       else target.textContent = summary;
     } catch (err) {
+      // Aborted fetches are expected when the user closes/switches panels
+      // mid-request. Swallow them silently — no error UI, no log noise.
+      const aborted = err?.name === 'AbortError'
+        || /aborted|abort/i.test(err?.message || '');
+      if (aborted) return;
       console.warn('[cluster-analysis] failed:', err.message);
       btn.classList.remove('loading');
       btn.classList.add('error');

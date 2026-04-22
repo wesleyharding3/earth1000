@@ -7937,17 +7937,65 @@ app.post("/api/cluster-node/summary", async (req, res) => {
       ? `${kindLabel}: "${meta.title}"\nCategory: ${meta.primary_category || "General"}\nDescription: ${meta.description || ""}\nKeywords: ${(meta.keywords || []).slice(0, 15).join(", ")}`
       : "";
 
+    const prompt = `You are an impartial global news analyst. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
+
+Schema:
+{
+  "overview": "string",
+  "primary_actors":   [ { "name": "United States", "context": "string" } ],
+  "secondary_actors": [ { "name": "Germany",        "context": "string" } ]
+}
+
+Rules:
+- overview: ~400 characters summarizing the broader geopolitical or societal arc of this ${kindLabel}, synthesizing the most important developments from the articles below.
+- primary_actors: 1–3 entries for the countries / institutions / parties most central to the story. Each context ~250 characters covering their role, stakes, and exposure.
+- secondary_actors: 0–4 entries for actors with meaningful but non-central roles. Each context ~200 characters explaining the relationship to the primary actors.
+- Factual, neutral, specific. No speculation, no opinions, no bullets. Keep proper noun casing consistent in the "name" field.
+
+${entityContext}
+
+Articles:
+${articleContext}`;
+
     const response = await Anthropic.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 400,
-      messages: [{
-        role: "user",
-        content: `You are an impartial global news analyst. Using ONLY the article data below, write exactly 200 words (no more, no less). Structure: first paragraph provides the broader geopolitical or societal context; second paragraph summarizes the specific events and developments. Be factual, neutral, and unbiased — no opinions, no speculation, no markdown formatting, no introductory phrases.\n\n${entityContext}\n\nArticles:\n${articleContext}`,
-      }],
+      max_tokens: 1400,
+      messages: [{ role: "user", content: prompt }],
     });
 
-    const summary = (response.content[0]?.text || "").trim();
-    return { summary };
+    const rawText = (response?.content || [])
+      .map((part) => typeof part?.text === "string" ? part.text : "")
+      .join("")
+      .trim();
+    const structured = _flowCtxExtractJson(rawText) || {};
+    const overview = String(structured?.overview || "").trim();
+    const primary = Array.isArray(structured?.primary_actors)   ? structured.primary_actors   : [];
+    const secondary = Array.isArray(structured?.secondary_actors) ? structured.secondary_actors : [];
+
+    const blocks = [];
+    if (overview) {
+      blocks.push({ kind: "summary", badge: "Story", title: "Overview", text: overview });
+    }
+    for (const a of primary) {
+      const name = String(a?.name || "").trim();
+      const ctx  = String(a?.context || "").trim();
+      if (!ctx) continue;
+      blocks.push({ kind: "primary", badge: "Primary actor", title: name || "Primary actor", text: ctx });
+    }
+    for (const a of secondary) {
+      const name = String(a?.name || "").trim();
+      const ctx  = String(a?.context || "").trim();
+      if (!ctx) continue;
+      blocks.push({ kind: "secondary", badge: "Secondary actor", title: name || "Secondary actor", text: ctx });
+    }
+    if (!blocks.length) {
+      blocks.push({
+        kind: "summary", badge: "Story", title: "Overview",
+        text: String(rawText || "Analysis unavailable for this entity right now.").slice(0, 900),
+      });
+    }
+
+    return { blocks };
     });
 
     if (cached?._notFound) return res.status(404).json({ error: `No data found for this ${mode}` });
