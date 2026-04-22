@@ -4179,12 +4179,24 @@ body.flow-maximized #flowArcList {
    bar panel's footprint. `.arcContextPanel` already has min-height:0 +
    overflow:hidden, and .arcCtxBody has overflow-y:auto + touch-action
    pan-y, so the body content scrolls cleanly inside the capped window.
-   Desktop keeps the full-height default — enough real estate to flow
-   naturally. */
+   Desktop cap is larger but still finite so .arcCtxBody always triggers
+   overflow-y:auto when the analysis is longer than the viewport. Also
+   set overscroll-behavior so trackpad bounce at the scroll edges doesn't
+   chain up to the globe's window-level wheel listener. */
 @media (pointer: coarse), (max-width: 700px) {
   #flowCtxCard.view-ctx #arcContextPanel {
     max-height: 210px;
   }
+}
+@media (pointer: fine) and (min-width: 701px) {
+  #flowCtxCard.view-ctx #arcContextPanel {
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - 160px);
+  }
+}
+#flowCtxCard,
+.arcContextPanel,
+.arcCtxBody {
+  overscroll-behavior: contain;
 }
 /* Pill bar is always visible across all views. */
 #flowCtxCard .flowCtxPillBar { display: flex; }
@@ -24327,6 +24339,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         el.appendChild(ctxPanel);
       }
     } catch (_) {}
+    // Input events over the card must NOT reach the window-level globe
+    // listeners (wheel zoom, touch-drag rotate, gesture pinch). Stop
+    // propagation at the card boundary so desktop trackpad scrolling,
+    // mouse-wheel scrolling, iPad two-finger scroll, and macOS pinch
+    // gestures over the card all stay local to the scrollable body.
+    const _flowCtxStopBubble = (e) => { e.stopPropagation(); };
+    ['wheel','touchmove','gesturestart','gesturechange','gestureend']
+      .forEach(ev => el.addEventListener(ev, _flowCtxStopBubble, { passive: false }));
     // Pinned density-ruler footer. Appended AFTER arcContextPanel so it's
     // the last child of #flowCtxCard — visible across every tab view
     // (info, arcs, ctx) instead of only while the arcs panel is open.
