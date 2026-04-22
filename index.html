@@ -28059,8 +28059,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
          </div>`
       : '';
     
-    // Context section — AI Explain button (Pro/Enterprise feature)
-    const canExplain = window.__checkTier && window.__checkTier('pro');
+    // Context section — AI Explain button. Server-side quota decides
+    // whether the signed-in user gets a result, a daily-limit message,
+    // or an upgrade nudge.
     const contextHTML = `
       <div class="adpContext" id="adpExplainWrap" data-article-id="${article.id}"
            data-title="${(article.translated_title || article.title || '').replace(/"/g,'&quot;')}"
@@ -30078,14 +30079,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       textSpan.textContent = '✦ Analysis';
       btn.onclick = (ev) => window.__triggerExplain(ev.currentTarget, type);
     };
-
-    if (!window.__checkTier('pro')) {
-      btn.classList.remove('loading', 'error');
-      btn.classList.add('locked');
-      textSpan.textContent = '🔒 Upgrade to unlock';
-      btn.onclick = () => window.__openPricing('Context explanations require a Pro or Enterprise plan.');
-      return;
-    }
 
     btn.classList.add('loading');
     btn.classList.remove('error');

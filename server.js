@@ -8787,7 +8787,7 @@ app.post("/api/translate", async (req, res) => {
 /* =========================================
    AI Context Explanation
    Generates a ≤250-char contextual writeup for an article or story thread.
-   Tier limits: Pro = 5/day, Enterprise = 20/day, Free = restricted.
+   Tier limits: Free = 1/day, Pro = 5/day, Enterprise = 20/day.
 ========================================= */
 app.post("/api/explain", async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
@@ -8801,7 +8801,7 @@ app.post("/api/explain", async (req, res) => {
       limitReached: true,
       used:      access.used,
       limit:     access.limit,
-      requiredTier: tier === "free" ? "pro" : null,
+      requiredTier: access.limit === 0 ? "pro" : null,
     });
   }
 

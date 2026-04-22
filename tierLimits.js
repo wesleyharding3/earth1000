@@ -8,7 +8,7 @@ const LIMITS = {
     briefingsPerWeek:        2,
     translationsPerDay:      5,
     translationsPerMonth:    null,   // daily cap applies
-    explanationsPerDay:      0,      // feature restricted
+    explanationsPerDay:      1,      // small daily taste of AI context
     customBriefingsPerMonth: 0,      // pay-per-use at $2.50
     kwExplanationsPerDay:    0,      // enterprise-only feature
   },

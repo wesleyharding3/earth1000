@@ -28743,11 +28743,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
          </div>`
       : '';
     
-    // Context section — AI Explain pill (Pro/Enterprise, click-gated).
-    // Uses the shared .aiAnalysisCta component so the visual language
-    // matches the cluster-detail Analysis section. Already click-gated;
-    // no auto-fire, so no Claude cost until the user taps.
-    const canExplain = window.__checkTier && window.__checkTier('pro');
+    // Context section — AI Explain pill. Uses the shared .aiAnalysisCta
+    // component so the visual language matches the cluster-detail
+    // Analysis section. Server-side quota decides whether the signed-in
+    // user gets a result, a daily-limit message, or an upgrade nudge.
     const contextHTML = `
       <div class="adpContext" id="adpExplainWrap" data-article-id="${article.id}"
            data-title="${(article.translated_title || article.title || '').replace(/"/g,'&quot;')}"
@@ -30965,8 +30964,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const resultEl  = wrap?.querySelector('.explainResult');
     if (!wrap || !resultEl) return;
 
-    // Wait for tier barrier so enterprise/admin aren't false-locked on
-    // first open (matches the cluster-analysis handler).
+    // Wait for account bootstrap so the request runs after auth/tier
+    // state has settled, matching the other AI CTA handlers.
     try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
 
     // Find the text span inside the CTA (last span child). Support both
@@ -30978,14 +30977,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
       textSpan.textContent = '✦ Analysis';
       btn.onclick = (ev) => window.__triggerExplain(ev.currentTarget, type);
     };
-
-    if (!window.__checkTier('pro')) {
-      btn.classList.remove('loading', 'error');
-      btn.classList.add('locked');
-      textSpan.textContent = '🔒 Upgrade to unlock';
-      btn.onclick = () => window.__openPricing('Context explanations require a Pro or Enterprise plan.');
-      return;
-    }
 
     btn.classList.add('loading');
     btn.classList.remove('error');
