@@ -7974,8 +7974,121 @@ app.post("/api/cluster-node/summary", async (req, res) => {
 //   visible_entities: string[] (ISO codes currently lit on screen)
 //   active_arc?:      { src_iso, dst_iso, count } (flow scope only)
 //
-// Streams Server-Sent Events: `data: {"delta":"..."}\n\n`, terminates
-// with `data: [DONE]\n\n`.
+// Streams Server-Sent Events with a structured payload:
+//   data: {"type":"structured","blocks":[...]}\n\n
+// then terminates with `data: [DONE]\n\n`.
+function _flowCtxNormalizeIso(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function _flowCtxNormalizeName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function _flowCtxExtractJson(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+
+  const unfenced = raw
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  try { return JSON.parse(unfenced); } catch (_) {}
+
+  const start = unfenced.indexOf('{');
+  const end = unfenced.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try { return JSON.parse(unfenced.slice(start, end + 1)); } catch (_) {}
+  }
+  return null;
+}
+
+function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
+  const expected = Array.isArray(expectedCountries) ? expectedCountries : [];
+  const contexts = Array.isArray(rawContexts) ? rawContexts : [];
+  const unused = new Set(contexts.map((_, idx) => idx));
+
+  return expected.map((country, idx) => {
+    const isoCode = _flowCtxNormalizeIso(country?.iso_code || country?.iso);
+    const countryName = String(country?.country || country?.name || isoCode).trim();
+    const normalizedName = _flowCtxNormalizeName(countryName);
+
+    let matchIdx = contexts.findIndex((entry, entryIdx) =>
+      unused.has(entryIdx) &&
+      _flowCtxNormalizeIso(entry?.iso_code || entry?.iso) === isoCode
+    );
+
+    if (matchIdx < 0) {
+      matchIdx = contexts.findIndex((entry, entryIdx) =>
+        unused.has(entryIdx) &&
+        _flowCtxNormalizeName(entry?.country || entry?.name) === normalizedName
+      );
+    }
+
+    if (matchIdx < 0 && unused.has(idx) && contexts[idx]) {
+      matchIdx = idx;
+    }
+
+    const match = matchIdx >= 0 ? contexts[matchIdx] : null;
+    if (matchIdx >= 0) unused.delete(matchIdx);
+
+    return {
+      iso_code: isoCode,
+      country: countryName,
+      context: String(match?.context || match?.summary || '').trim(),
+    };
+  }).filter((entry) => entry.context);
+}
+
+function _flowCtxBuildStructuredBlocks(eventSummary, primaryContexts, secondaryContexts) {
+  const blocks = [];
+  const summary = String(eventSummary || '').trim();
+  if (summary) {
+    blocks.push({
+      kind: 'summary',
+      badge: 'Story',
+      title: 'Event summary',
+      text: summary,
+    });
+  }
+
+  for (const ctx of primaryContexts || []) {
+    if (!ctx?.context) continue;
+    blocks.push({
+      kind: 'primary',
+      badge: 'Primary country',
+      title: ctx.country || ctx.iso_code || 'Primary country',
+      text: String(ctx.context).trim(),
+    });
+  }
+
+  for (const ctx of secondaryContexts || []) {
+    if (!ctx?.context) continue;
+    blocks.push({
+      kind: 'secondary',
+      badge: 'Secondary country',
+      title: ctx.country || ctx.iso_code || 'Secondary country',
+      text: String(ctx.context).trim(),
+    });
+  }
+
+  if (!blocks.length) {
+    blocks.push({
+      kind: 'summary',
+      badge: 'Story',
+      title: 'Event summary',
+      text: 'Context unavailable for this story right now.',
+    });
+  }
+
+  return blocks;
+}
+
 app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
   const {
     scope,
@@ -8072,21 +8185,43 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
       articles = rows;
     }
 
-    // Resolve secondary-nation ISO codes → country names for the prompt.
-    // These are the supporters / commenters / affected parties that the
-    // AI must explicitly name and explain the role of.
-    let secondaryNames = [];
-    const secIsos = Array.isArray(threadMeta?.secondary_nations)
-      ? threadMeta.secondary_nations.filter(Boolean)
+    const primaryIsos = Array.isArray(threadMeta?.primary_nations)
+      ? threadMeta.primary_nations.filter(Boolean).map(_flowCtxNormalizeIso)
       : [];
-    if (secIsos.length) {
-      const { rows: secRows } = await pool.query(
+    const secondaryIsos = Array.isArray(threadMeta?.secondary_nations)
+      ? threadMeta.secondary_nations.filter(Boolean).map(_flowCtxNormalizeIso)
+      : [];
+    const visibleIsos = Array.isArray(visible_entities)
+      ? visible_entities.filter(Boolean).map(_flowCtxNormalizeIso)
+      : [];
+    const scopedIsos = [
+      ...primaryIsos,
+      ...secondaryIsos,
+      ...visibleIsos,
+      _flowCtxNormalizeIso(active_arc?.src_iso),
+      _flowCtxNormalizeIso(active_arc?.dst_iso),
+    ].filter(Boolean);
+
+    const isoNameMap = new Map();
+    if (scopedIsos.length) {
+      const { rows: countryRows } = await pool.query(
         `SELECT iso_code, name FROM countries WHERE iso_code = ANY($1::text[])`,
-        [secIsos]
+        [[...new Set(scopedIsos)]]
       );
-      const map = new Map(secRows.map(r => [r.iso_code, r.name]));
-      secondaryNames = secIsos.map(iso => map.get(iso) || iso);
+      countryRows.forEach((row) => isoNameMap.set(_flowCtxNormalizeIso(row.iso_code), row.name));
     }
+
+    const primaryCountries = primaryIsos.map((iso) => ({
+      iso_code: iso,
+      country: isoNameMap.get(iso) || iso,
+    }));
+    const secondaryCountries = secondaryIsos.map((iso) => ({
+      iso_code: iso,
+      country: isoNameMap.get(iso) || iso,
+    }));
+    const visibleCountryNames = visibleIsos
+      .map((iso) => isoNameMap.get(iso) || iso)
+      .filter(Boolean);
 
     // Article block: title + summary only, no sources/dates/countries.
     const articleContext = articles.slice(0, 20).map((a, i) => {
@@ -8096,18 +8231,56 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
 
     const themeLine = theme || threadMeta?.title || "Untitled story";
     const kindLabel = mode === "timeline" ? "line" : "thread";
-    const secondariesLine = secondaryNames.length
-      ? ` Also discuss each of the following secondary nations individually and the role each one plays in this ${kindLabel}: ${secondaryNames.join(", ")}.`
-      : "";
+    const primaryLine = primaryCountries.length
+      ? primaryCountries.map((c) => `${c.country} (${c.iso_code})`).join(", ")
+      : "None supplied";
+    const secondaryLine = secondaryCountries.length
+      ? secondaryCountries.map((c) => `${c.country} (${c.iso_code})`).join(", ")
+      : "None supplied";
+    const visibleLine = visibleCountryNames.length
+      ? visibleCountryNames.join(", ")
+      : "None supplied";
+    const focusLine = scope === "flow"
+      ? (active_arc?.src_iso && active_arc?.dst_iso
+          ? `Focus on the active route between ${isoNameMap.get(_flowCtxNormalizeIso(active_arc.src_iso)) || active_arc.src_iso} and ${isoNameMap.get(_flowCtxNormalizeIso(active_arc.dst_iso)) || active_arc.dst_iso}, while keeping it anchored in the broader ${kindLabel}.`
+          : segment?.title
+            ? `Focus on the current ${kindLabel} segment "${segment.title}"${segment?.date ? ` (${segment.date})` : ""}, while keeping it anchored in the broader story.`
+            : `Focus on the currently selected slice of the ${kindLabel}.`)
+      : `Focus on the overall ${kindLabel}.`;
 
-    const prompt = `You are an impartial geopolitical analyst. Write plain-prose sentences (no markdown, no bullets, no introductory phrases, no speculation, no opinions). Be factual and specific.
+    const prompt = `You are an impartial geopolitical analyst. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
 
-${kindLabel === "line" ? "Line" : "Thread"} title: ${themeLine}
+Schema:
+{
+  "event_summary": "string",
+  "primary_country_contexts": [
+    { "iso_code": "US", "country": "United States", "context": "string" }
+  ],
+  "secondary_country_contexts": [
+    { "iso_code": "DE", "country": "Germany", "context": "string" }
+  ]
+}
+
+Rules:
+- Use ONLY the article titles and summaries provided below.
+- event_summary: aim for about 400 characters describing the event itself and the latest developments.
+- For each primary country listed below, include exactly one object in primary_country_contexts, in the same order. Each context should be around 250 characters and explain that country's role, stakes, or exposure in the story.
+- For each secondary country listed below, include exactly one object in secondary_country_contexts, in the same order. Each context should be around 200 characters.
+- Every secondary country context must explicitly explain how that secondary country is related to the primary countries and to the story overall. If the relationship is indirect or limited, say so directly.
+- Clarity matters more than exact character counts. It is okay to go over when needed.
+- Keep the prose factual, neutral, and specific. No speculation, no opinions, no bullets.
+
+Story title: ${themeLine}
+Story type: ${kindLabel}
+Scope focus: ${focusLine}
+Primary countries: ${primaryLine}
+Secondary countries: ${secondaryLine}
+Visible countries on screen: ${visibleLine}
+Selected route: ${active_arc?.src_iso && active_arc?.dst_iso ? `${isoNameMap.get(_flowCtxNormalizeIso(active_arc.src_iso)) || active_arc.src_iso} -> ${isoNameMap.get(_flowCtxNormalizeIso(active_arc.dst_iso)) || active_arc.dst_iso}` : "None"}
+Current segment: ${segment?.title ? `${segment.title}${segment?.date ? ` (${segment.date})` : ""}` : "None"}
 
 Constituent articles:
-${articleContext || "(no article context available)"}
-
-Explain what this ${kindLabel} is about, grounded only in the titles and summaries above.${secondariesLine}`;
+${articleContext || "(no article context available)"}`;
 
     // Open the SSE stream.
     res.writeHead(200, {
@@ -8116,34 +8289,39 @@ Explain what this ${kindLabel} is about, grounded only in the titles and summari
       "Connection": "keep-alive",
       "X-Accel-Buffering": "no",
     });
-    const sendDelta = (delta) => res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+    const sendEvent = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
     const sendDone = () => res.write(`data: [DONE]\n\n`);
 
     let streamClosed = false;
     req.on("close", () => { streamClosed = true; });
 
-    const stream = await Anthropic.messages.stream({
+    const response = await Anthropic.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 450,
+      max_tokens: 1400,
       messages: [{ role: "user", content: prompt }],
     });
-
-    stream.on("text", (text) => {
-      if (streamClosed) return;
-      if (text) sendDelta(text);
-    });
-    stream.on("error", (err) => {
-      console.error("[ai/flow-context stream error]", err?.message || err);
-      if (!streamClosed) {
-        try { res.write(`data: ${JSON.stringify({ error: "stream error" })}\n\n`); } catch (_) {}
-      }
-    });
-
-    await stream.finalMessage().catch((err) => {
-      console.error("[ai/flow-context finalMessage]", err?.message || err);
-    });
+    const rawText = (response?.content || [])
+      .map((part) => typeof part?.text === "string" ? part.text : "")
+      .join("")
+      .trim();
+    const structured = _flowCtxExtractJson(rawText) || {};
+    const eventSummary = String(structured?.event_summary || rawText || "").trim();
+    const normalizedPrimaryContexts = _flowCtxNormalizeCountryContexts(
+      primaryCountries,
+      structured?.primary_country_contexts
+    );
+    const normalizedSecondaryContexts = _flowCtxNormalizeCountryContexts(
+      secondaryCountries,
+      structured?.secondary_country_contexts
+    );
+    const blocks = _flowCtxBuildStructuredBlocks(
+      eventSummary,
+      normalizedPrimaryContexts,
+      normalizedSecondaryContexts
+    );
 
     if (!streamClosed) {
+      sendEvent({ type: "structured", blocks });
       sendDone();
       res.end();
     }

@@ -2639,60 +2639,265 @@ body.flow-maximized #flowArcList {
   opacity: 0.4; cursor: not-allowed;
 }
 .arcCtxBody {
+  position: relative;
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
   padding: 10px 12px 14px;
-  font-size: 12px; line-height: 1.55;
-  color: rgba(255,255,255,0.82);
+  font-size: 12px; line-height: 1.62;
+  color: rgba(255,255,255,0.84);
+  background:
+    radial-gradient(140% 110% at 50% -10%, rgba(255,184,92,0.12), transparent 48%),
+    radial-gradient(120% 90% at 100% 0%, rgba(145,104,255,0.14), transparent 42%),
+    linear-gradient(180deg, rgba(10,14,24,0.80), rgba(6,10,18,0.60));
+  border-top: 1px solid rgba(255,255,255,0.05);
   scrollbar-width: thin;
   scrollbar-color: rgba(180,120,255,0.25) transparent;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
-.arcCtxBody .arcCtxBlock + .arcCtxBlock {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed rgba(180,120,255,0.2);
+.arcCtxBody.arcCtxStateLoading { overflow: hidden; }
+.arcCtxShell {
+  position: relative;
+  overflow: hidden;
+  padding: 14px 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: linear-gradient(135deg, rgba(12,18,30,0.82), rgba(9,13,24,0.58));
+  box-shadow: 0 14px 34px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.05);
 }
-.arcCtxBody .arcCtxMeta {
-  font-size: 9.5px; font-weight: 700; letter-spacing: 0.09em;
+.arcCtxShell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(160,110,255,0.16), transparent 38%),
+    radial-gradient(circle at left center, rgba(255,184,92,0.16), transparent 42%);
+  pointer-events: none;
+}
+.arcCtxShell::after {
+  content: '';
+  position: absolute;
+  inset: -30% -45%;
+  background: linear-gradient(110deg, transparent 0%, rgba(255,255,255,0.07) 46%, transparent 54%);
+  transform: translateX(-55%);
+  animation: arcCtxShellSweep 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes arcCtxShellSweep {
+  from { transform: translateX(-55%); }
+  to   { transform: translateX(55%); }
+}
+.arcCtxShellTitle {
+  position: relative;
+  z-index: 1;
+  margin-top: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+  color: rgba(255,244,230,0.96);
+}
+.arcCtxShellSub {
+  position: relative;
+  z-index: 1;
+  margin-top: 6px;
+  max-width: 92%;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.54);
+}
+.arcCtxSignalBadge {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.06);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(180,140,220,0.7);
-  margin-bottom: 4px;
+  color: rgba(255,224,185,0.88);
+}
+.arcCtxSignalBadge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 10px currentColor;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.arcCtxShellLines {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.arcCtxShellLine {
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.10), rgba(255,255,255,0.24), rgba(255,255,255,0.10));
+  box-shadow: 0 0 16px rgba(255,184,92,0.10);
+  animation: arcCtxLineBreathe 1.7s ease-in-out infinite;
+}
+.arcCtxShellLine:nth-child(2) { width: 84%; animation-delay: 0.12s; }
+.arcCtxShellLine:nth-child(3) { width: 62%; animation-delay: 0.24s; }
+@keyframes arcCtxLineBreathe {
+  0%, 100% { opacity: 0.38; transform: translateX(0); }
+  50%      { opacity: 0.90; transform: translateX(3px); }
+}
+.arcCtxBody .arcCtxBlock + .arcCtxBlock { margin-top: 10px; }
+.arcCtxBlock {
+  position: relative;
+  overflow: hidden;
+  padding: 12px 12px 13px;
+  border-radius: 15px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: linear-gradient(180deg, rgba(12,17,28,0.70), rgba(8,12,22,0.54));
+  box-shadow: 0 14px 28px rgba(0,0,0,0.26);
+  --arcCtxAccent: rgba(255,188,96,0.92);
+  transition: border-color 0.28s ease, box-shadow 0.28s ease, background 0.28s ease, transform 0.28s ease;
+}
+.arcCtxBlock::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 90% at 100% 0%, var(--arcCtxAccent), transparent 52%);
+  opacity: 0.12;
+  pointer-events: none;
+}
+.arcCtxBlock::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--arcCtxAccent), transparent);
+  opacity: 0.72;
+  pointer-events: none;
+}
+.arcCtxBlock--summary { --arcCtxAccent: rgba(255,188,96,0.95); }
+.arcCtxBlock--primary { --arcCtxAccent: rgba(88,255,180,0.90); }
+.arcCtxBlock--secondary { --arcCtxAccent: rgba(186,150,255,0.90); }
+.arcCtxBlockHead {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.arcCtxBlock .arcCtxSignalBadge {
+  color: var(--arcCtxAccent);
+  border-color: rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.015);
+}
+.arcCtxLiveTag {
+  position: relative;
+  z-index: 1;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.42);
+  white-space: nowrap;
+}
+.arcCtxBlockTitle {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: rgba(255,255,255,0.94);
 }
 .arcCtxBody .arcCtxText {
-  white-space: pre-wrap; word-wrap: break-word;
+  position: relative;
+  z-index: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: rgba(255,255,255,0.84);
+  text-shadow: 0 0 18px rgba(0,0,0,0.10);
 }
-.arcCtxBody .arcCtxCursor {
-  display: inline-block;
-  width: 6px; height: 12px;
-  background: rgba(210,170,255,0.8);
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  animation: arcCtxBlink 0.85s steps(1, end) infinite;
+.arcCtxBlock.is-typing {
+  border-color: rgba(255,255,255,0.14);
+  box-shadow: 0 18px 34px rgba(0,0,0,0.32), inset 0 0 0 1px rgba(255,255,255,0.02);
+  transform: translateY(-1px);
 }
-@keyframes arcCtxBlink { 50% { opacity: 0; } }
+.arcCtxBlock.is-typing::before {
+  opacity: 0.20;
+  animation: arcCtxBlockPulse 2.1s ease-in-out infinite;
+}
+.arcCtxBlock.is-typing .arcCtxSignalBadge {
+  animation: arcCtxBadgePulse 1.7s ease-in-out infinite;
+}
+.arcCtxBlock.is-typing .arcCtxLiveTag {
+  color: rgba(255,244,230,0.78);
+}
+@keyframes arcCtxBlockPulse {
+  0%, 100% { opacity: 0.12; }
+  50%      { opacity: 0.24; }
+}
+@keyframes arcCtxBadgePulse {
+  0%, 100% { transform: translateY(0); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.015); }
+  50%      { transform: translateY(-1px); box-shadow: 0 0 12px rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,255,255,0.015); }
+}
+.arcCtxStateSettled .arcCtxBlock.is-done {
+  background: linear-gradient(180deg, rgba(10,14,24,0.56), rgba(8,12,20,0.44));
+  border-color: rgba(255,255,255,0.07);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.18);
+}
+.arcCtxStateSettled .arcCtxBlock.is-done::before { opacity: 0.08; }
+.arcCtxStateSettled .arcCtxBlock.is-done .arcCtxLiveTag { display: none; }
+.arcCtxBody .arcCtxCursor { display: none; }
 .arcCtxBody .arcCtxEmpty {
-  padding: 16px 8px;
+  padding: 16px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(10,14,24,0.50);
   text-align: center;
   font-size: 11px;
-  color: rgba(255,255,255,0.35);
-  font-style: italic;
+  color: rgba(255,255,255,0.40);
 }
 .arcCtxBody .arcCtxError {
-  color: rgba(255,160,160,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,120,120,0.18);
+  background: linear-gradient(180deg, rgba(40,12,16,0.44), rgba(18,8,12,0.30));
+  color: rgba(255,175,175,0.92);
   font-size: 11px;
-  padding: 10px 0;
+  padding: 14px 12px;
 }
 .arcCtxBody .arcCtxLock {
   display: flex; align-items: center; gap: 8px;
-  padding: 14px 10px;
-  opacity: 0.78; cursor: pointer;
+  padding: 14px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,195,70,0.14);
+  background: linear-gradient(180deg, rgba(28,18,8,0.46), rgba(16,10,6,0.28));
+  box-shadow: 0 10px 22px rgba(0,0,0,0.22);
+  opacity: 0.88;
+  cursor: pointer;
   font-size: 11.5px;
-  color: rgba(255,255,255,0.7);
+  color: rgba(255,240,210,0.76);
 }
-.arcCtxBody .arcCtxLock:hover { opacity: 1; }
+.arcCtxBody .arcCtxLock:hover {
+  opacity: 1;
+  border-color: rgba(255,195,70,0.28);
+}
 .arcCtxBody .arcCtxLock strong { color: rgba(255,195,70,1); }
 
 
@@ -3949,6 +4154,7 @@ body.flow-maximized #flowArcList {
 }
 #flowCtxCard.articleOrigin .flowCtxLabelsChk { display: none; }
 #flowCtxCard.flowCtxMinimized .flowCtxLabelsChk { display: none; }
+#flowCtxCard.view-ctx .flowCtxLabelsChk { display: none; }
 
 /* ── Tab-driven view switching inside flowCtxCard ───────────────────
    Three sibling views share the same card body. The active view is
@@ -19061,24 +19267,95 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }[c]));
     }
 
+    function _arcCtxApplyBodyState(state) {
+      const body = document.getElementById('arcCtxBody');
+      if (!body) return null;
+      body.classList.remove('arcCtxStateLoading', 'arcCtxStateTyping', 'arcCtxStateSettled');
+      if (state) body.classList.add(state);
+      return body;
+    }
+
+    function _arcCtxShowLoadingShell() {
+      const body = _arcCtxApplyBodyState('arcCtxStateLoading');
+      if (!body) return;
+      body.innerHTML =
+        `<div class="arcCtxShell">` +
+          `<div class="arcCtxSignalBadge">Deep Context</div>` +
+          `<div class="arcCtxShellTitle">Mapping actors and routes</div>` +
+          `<div class="arcCtxShellSub">Synthesizing the event and the country roles around it.</div>` +
+          `<div class="arcCtxShellLines">` +
+            `<div class="arcCtxShellLine"></div>` +
+            `<div class="arcCtxShellLine"></div>` +
+            `<div class="arcCtxShellLine"></div>` +
+          `</div>` +
+        `</div>`;
+      body.scrollTop = 0;
+    }
+
+    function _arcCtxNormalizeBlock(raw) {
+      const kind = raw?.kind === 'primary' || raw?.kind === 'secondary' ? raw.kind : 'summary';
+      const fallbackBadge = kind === 'summary'
+        ? 'Story'
+        : kind === 'primary'
+          ? 'Primary country'
+          : 'Secondary country';
+      const fallbackTitle = kind === 'summary' ? 'Event summary' : 'Country context';
+      return {
+        kind,
+        badge: String(raw?.badge || fallbackBadge).trim() || fallbackBadge,
+        title: String(raw?.title || fallbackTitle).trim() || fallbackTitle,
+        text: String(raw?.text || '').trim(),
+        typedText: '',
+        status: 'typing'
+      };
+    }
+
+    function _arcCtxFinalizeBlocks(key, overrideBlocks) {
+      const source = Array.isArray(overrideBlocks) ? overrideBlocks : (_arcCtxCache.get(key) || []);
+      const finalized = source.map((block) => ({
+        ...block,
+        typedText: block.text || block.typedText || '',
+        status: 'done'
+      }));
+      _arcCtxCache.set(key, finalized);
+      if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
+    }
+
     function _arcCtxRenderBlocks(key) {
+      if (key && _arcCtxCurrentKey && key !== _arcCtxCurrentKey) return;
       const body = document.getElementById('arcCtxBody');
       if (!body) return;
       const blocks = _arcCtxCache.get(key) || [];
       if (!blocks.length) {
-        body.innerHTML = '';
+        _arcCtxApplyBodyState('');
+        body.innerHTML = `<div class="arcCtxEmpty">Open AI Context to map this selection.</div>`;
+        body.scrollTop = 0;
         return;
       }
-      body.innerHTML = blocks.map((b, i) =>
-        `<div class="arcCtxBlock">` +
-          `<div class="arcCtxText" data-block="${i}">${_esc(b.text)}</div>` +
-        `</div>`
-      ).join('');
+      const anyTyping = blocks.some((block) => block.status !== 'done');
+      _arcCtxApplyBodyState(anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
+      body.innerHTML = blocks.map((block, index) => {
+        const kindClass = block.kind === 'primary' || block.kind === 'secondary' ? block.kind : 'summary';
+        const badge = _esc(block.badge || (kindClass === 'summary' ? 'Story' : kindClass === 'primary' ? 'Primary country' : 'Secondary country'));
+        const title = _esc(block.title || (kindClass === 'summary' ? 'Event summary' : 'Country context'));
+        const text = _esc(block.typedText || '');
+        const statusClass = block.status === 'done' ? 'is-done' : 'is-typing';
+        return (
+          `<section class="arcCtxBlock arcCtxBlock--${kindClass} ${statusClass}">` +
+            `<div class="arcCtxBlockHead">` +
+              `<span class="arcCtxSignalBadge">${badge}</span>` +
+              `${block.status === 'done' ? '' : `<span class="arcCtxLiveTag">Mapping actors and routes</span>`}` +
+            `</div>` +
+            `<div class="arcCtxBlockTitle">${title}</div>` +
+            `<div class="arcCtxText" data-block="${index}">${text}</div>` +
+          `</section>`
+        );
+      }).join('');
       body.scrollTop = body.scrollHeight;
     }
 
     function _arcCtxShowLock() {
-      const body = document.getElementById('arcCtxBody');
+      const body = _arcCtxApplyBodyState('arcCtxStateSettled');
       if (!body) return;
       body.innerHTML =
         `<div class="arcCtxLock">` +
@@ -19098,6 +19375,82 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
 
+    function _arcCtxSleep(ms, signal) {
+      return new Promise((resolve) => {
+        if (signal?.aborted) { resolve(false); return; }
+        let settled = false;
+        let timer = null;
+        let onAbort = null;
+        const finish = (result) => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          if (onAbort) signal?.removeEventListener('abort', onAbort);
+          resolve(result);
+        };
+        onAbort = () => finish(false);
+        timer = setTimeout(() => finish(true), ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+
+    async function _arcCtxTypeIntoBlock(key, blockIndex, signal) {
+      const blocks = _arcCtxCache.get(key) || [];
+      const block = blocks[blockIndex];
+      if (!block) return false;
+      block.status = 'typing';
+      block.typedText = '';
+      if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
+      const targetText = block.text || '';
+      let typed = 0;
+      while (typed < targetText.length) {
+        if (signal?.aborted) return false;
+        const remaining = targetText.length - typed;
+        const step = remaining > 280 ? 10 : remaining > 160 ? 6 : remaining > 80 ? 4 : 2;
+        typed = Math.min(targetText.length, typed + step);
+        block.typedText = targetText.slice(0, typed);
+        if (_arcCtxCurrentKey === key) {
+          const body = document.getElementById('arcCtxBody');
+          const textEl = body?.querySelector(`[data-block="${blockIndex}"]`);
+          if (textEl) textEl.textContent = block.typedText;
+          if (body) body.scrollTop = body.scrollHeight;
+        }
+        const keepGoing = await _arcCtxSleep(typed < 48 ? 18 : typed < 180 ? 22 : 28, signal);
+        if (!keepGoing) return false;
+      }
+      block.typedText = targetText;
+      block.status = 'done';
+      if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
+      return true;
+    }
+
+    async function _arcCtxStartStructuredRender(key, rawBlocks, signal) {
+      const normalizedBlocks = (Array.isArray(rawBlocks) ? rawBlocks : [])
+        .map(_arcCtxNormalizeBlock)
+        .filter((block) => block.text);
+      _arcCtxCache.set(key, []);
+      if (!normalizedBlocks.length) {
+        if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
+        return;
+      }
+      for (let i = 0; i < normalizedBlocks.length; i += 1) {
+        if (signal?.aborted) {
+          _arcCtxFinalizeBlocks(key, normalizedBlocks);
+          return;
+        }
+        const current = _arcCtxCache.get(key) || [];
+        current.push({ ...normalizedBlocks[i] });
+        _arcCtxCache.set(key, current);
+        if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
+        const finished = await _arcCtxTypeIntoBlock(key, current.length - 1, signal);
+        if (!finished) {
+          _arcCtxFinalizeBlocks(key, normalizedBlocks);
+          return;
+        }
+      }
+      _arcCtxFinalizeBlocks(key);
+    }
+
 
     async function _arcCtxStream(scope) {
       if (!_arcCtxSession) return;
@@ -19109,56 +19462,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       const key = _arcCtxKey(scope);
       _arcCtxCurrentKey = key;
-
-      // Meta is intentionally blank — the panel is headerless now.
-      const blocks = _arcCtxCache.get(key) || [];
-      const newBlock = { meta: '', text: '' };
-      blocks.push(newBlock);
-      _arcCtxCache.set(key, blocks);
-      _arcCtxRenderBlocks(key);
+      _arcCtxCache.delete(key);
+      _arcCtxShowLoadingShell();
 
       if (_arcCtxSession.mode === 'timeline' && !_arcCtxTimelinePaused) {
         _arcCtxTimelinePaused = true;
         try { window.__timelinePauseForSelection?.(); } catch(_) {}
       }
-
-      const body = document.getElementById('arcCtxBody');
-      const textEl = body?.querySelector(`[data-block="${blocks.length - 1}"]`);
-      if (textEl) {
-        const cur = document.createElement('span');
-        cur.className = 'arcCtxCursor';
-        textEl.after(cur);
-      }
-
-      // ── Dynamic typewriter ─────────────────────────────────────────
-      // `newBlock.text` = all text received from the server so far
-      //                  (source of truth, cached for future re-renders).
-      // `textEl.textContent` = the typed-out portion currently visible.
-      // A 60fps tick advances the DOM forward with an adaptive step size:
-      // fast when lagging far behind the stream, one char per tick when
-      // nearly caught up. This smooths out bursty server chunks into a
-      // continuous typing effect regardless of API delta granularity.
-      let streamDone = false;
-      let typeTimer = null;
-      const ensureTypeLoop = () => {
-        if (typeTimer) return;
-        typeTimer = setInterval(() => {
-          if (!textEl || !document.contains(textEl)) {
-            clearInterval(typeTimer); typeTimer = null;
-            return;
-          }
-          const target = newBlock.text;
-          const typed = textEl.textContent.length;
-          if (typed >= target.length) {
-            if (streamDone) { clearInterval(typeTimer); typeTimer = null; }
-            return;
-          }
-          const lag = target.length - typed;
-          const step = lag > 400 ? 8 : lag > 160 ? 4 : lag > 60 ? 2 : 1;
-          textEl.textContent = target.slice(0, typed + step);
-          if (body) body.scrollTop = body.scrollHeight;
-        }, 16);
-      };
+      let typingPromise = null;
+      let receivedStructured = false;
+      let legacyText = '';
 
       try {
         const API = window.__API || 'https://earth-wjr6.onrender.com';
@@ -19232,57 +19545,68 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (!data || data === '[DONE]') continue;
               try {
                 const obj = JSON.parse(data);
-                const delta = obj.delta ?? obj.text ?? '';
-                if (delta) {
-                  newBlock.text += delta;
-                  ensureTypeLoop();
+                if (obj?.error) throw new Error(obj.error);
+                if (obj?.type === 'structured' && Array.isArray(obj.blocks)) {
+                  receivedStructured = true;
+                  if (!typingPromise) {
+                    typingPromise = _arcCtxStartStructuredRender(key, obj.blocks, abort.signal);
+                  }
+                  continue;
                 }
-              } catch (_) {
-                newBlock.text += data;
-                ensureTypeLoop();
+                const delta = obj.delta ?? obj.text ?? '';
+                if (delta) legacyText += String(delta);
+              } catch (err) {
+                if (data.startsWith('{')) throw err;
+                legacyText += data;
               }
             }
           };
-          xhr.onprogress = () => drain(false);
+          xhr.onprogress = () => {
+            try {
+              drain(false);
+            } catch (err) {
+              reject(err);
+            }
+          };
           xhr.onload = () => {
             if (xhr.status === 402 || xhr.status === 403) { _arcCtxShowLock(); resolve(); return; }
             if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(`HTTP ${xhr.status}`)); return; }
-            drain(true);
-            resolve();
+            try {
+              drain(true);
+              if (!receivedStructured) {
+                const trimmed = legacyText.trim();
+                typingPromise = _arcCtxStartStructuredRender(
+                  key,
+                  trimmed
+                    ? [{ kind: 'summary', badge: 'Story', title: 'Event summary', text: trimmed }]
+                    : [],
+                  abort.signal
+                );
+              }
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
           };
           xhr.onerror = () => reject(new Error('network error'));
           xhr.onabort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
           abort.signal.addEventListener('abort', () => { try { xhr.abort(); } catch(_) {} });
           xhr.send(JSON.stringify(payload));
         });
+        if (typingPromise) await typingPromise;
       } catch (e) {
         if (e.name === 'AbortError') return;
         console.error('arcCtx stream error:', e);
-        const body2 = document.getElementById('arcCtxBody');
-        if (body2 && !newBlock.text) {
-          const err = document.createElement('div');
-          err.className = 'arcCtxError';
-          err.textContent = 'Tap to retry.';
-          err.style.cursor = 'pointer';
-          err.addEventListener('click', () => window.__arcAiContextRefresh?.());
-          body2.appendChild(err);
+        const body2 = _arcCtxApplyBodyState('arcCtxStateSettled');
+        if (body2) {
+          body2.innerHTML = `<div class="arcCtxError">Tap to retry.</div>`;
+          body2.querySelector('.arcCtxError')?.addEventListener('click', () => window.__arcAiContextRefresh?.());
         }
       } finally {
-        streamDone = true;
         if (_arcCtxStreamAbort === abort) _arcCtxStreamAbort = null;
-        // If user aborted (switched scope / closed panel), stop the typewriter
-        // now — the DOM will be replaced by _arcCtxRenderBlocks anyway.
-        if (abort.signal.aborted && typeTimer) {
-          clearInterval(typeTimer); typeTimer = null;
+        if (abort.signal.aborted && (_arcCtxCache.get(key) || []).length) {
+          _arcCtxFinalizeBlocks(key);
         }
-        // Remove blinking cursor once the typewriter has caught up to the
-        // full streamed text. Keeps the caret visible while text is still
-        // being typed out, then retires it cleanly.
-        const finalizeCursor = () => {
-          if (typeTimer) { setTimeout(finalizeCursor, 40); return; }
-          document.querySelectorAll('#arcCtxBody .arcCtxCursor').forEach(n => n.remove());
-        };
-        finalizeCursor();
         if (_arcCtxTimelinePaused) {
           _arcCtxTimelinePaused = false;
           try { window.__timelineResumeAfterSelection?.(); } catch(_) {}
@@ -19297,6 +19621,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       const key = _arcCtxKey(scope);
       _arcCtxCurrentKey = key;
+      const card = document.getElementById('flowCtxCard');
+      const blocks = _arcCtxCache.get(key);
+      if ((!blocks || !blocks.length) && card?.classList.contains('view-ctx')) {
+        _arcCtxStream(scope);
+        return;
+      }
       _arcCtxRenderBlocks(key);
     }
 
@@ -19361,6 +19691,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxSession = session || null;
       _arcCtxSegment = null;
       _arcCtxScope = 'entities';
+      _arcCtxCurrentKey = null;
       _arcCtxUpdateButtonVisibility();
     };
     window.__arcAiSetSegment = function(segInfo) {
@@ -19370,13 +19701,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (card?.classList.contains('view-ctx') && _arcCtxScope === 'flow') {
         const key = _arcCtxKey('flow');
         _arcCtxCurrentKey = key;
-        _arcCtxRenderBlocks(key);
+        const blocks = _arcCtxCache.get(key);
+        if (blocks && blocks.length) _arcCtxRenderBlocks(key);
+        else _arcCtxStream('flow');
       }
     };
     window.__arcAiClearSession = function() {
       window.__arcAiContextClose?.();
       _arcCtxSession = null;
       _arcCtxSegment = null;
+      _arcCtxCurrentKey = null;
       _arcCtxCache.clear();
       _arcCtxUpdateButtonVisibility();
     };
