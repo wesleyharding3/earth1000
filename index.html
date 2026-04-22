@@ -10198,6 +10198,50 @@ window.sourceBiasBadgeHTML = function(bias) {
   return `<span class="sourceBiasBadge ${normalized}" aria-label="${label}" title="${label}"></span>`;
 };
 
+/* ── Global helper: normalize an ISO country code to its flagcdn
+   filename. The United Kingdom's ISO 3166-1 alpha-2 code is `GB`, but
+   some upstream feeds store it as `UK` — flagcdn doesn't publish a
+   `uk.png`, so those flag lookups 404 and the country gets dropped
+   from downstream joins. This helper lowercases and remaps `uk → gb`;
+   use it for any flag URL construction. */
+window._flagIso = function(iso) {
+  const c = String(iso == null ? '' : iso).toLowerCase().trim();
+  if (!c) return '';
+  if (c === 'uk') return 'gb';
+  return c;
+};
+/* Safety net for existing call sites that still use raw `.toLowerCase()`
+   against `iso_code`. If flagcdn.com 404s on `/uk.png`, rewrite the src
+   to `/gb.png` once. Capture-phase listener on the document so we catch
+   errors from images added anywhere in the tree. */
+document.addEventListener('error', (e) => {
+  const el = e.target;
+  if (!el || el.tagName !== 'IMG' || !el.src) return;
+  if (el.dataset.ukRewritten) return;
+  const m = el.src.match(/^(https?:\/\/flagcdn\.com\/[^/]+\/)uk\.png(\?.*)?$/i);
+  if (!m) return;
+  el.dataset.ukRewritten = '1';
+  el.src = m[1] + 'gb.png' + (m[2] || '');
+}, true);
+
+/* ── Global helper: broken thread/timeline card image fallback ──
+   Hoisted to top-level so inline `onload="…window._threadImgFail(this)…"`
+   attributes always resolve, even when images fire before the news-panel
+   init IIFE has run. The full-featured copy inside that IIFE overrides
+   this one — kept here only so early-firing handlers don't throw. */
+if (typeof window._threadImgFail !== 'function') {
+  window._threadImgFail = function(el) {
+    if (!el || el.dataset?.replaced) return;
+    try { el.dataset.replaced = '1'; el.style.display = 'none'; } catch (_) {}
+    if (el.parentElement) {
+      const ph = document.createElement('div');
+      ph.className = 'nfThreadCardImgPh';
+      ph.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg>';
+      el.parentElement.insertBefore(ph, el);
+    }
+  };
+}
+
 (function() {
   const canvas = document.getElementById('loaderStarfield');
   if (!canvas) return;
@@ -25203,6 +25247,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       }
 
+      // Register the AI-context session eagerly. Previously this happened
+      // only in the main success branch below — so every fallback path
+      // (tier-highlight, synthesized flows, single-iso) left _arcCtxSession
+      // null and the ✦ button stayed hidden. Set it up-front; the later
+      // enrichment (articleIds from /api/flows/thread/*) just overwrites
+      // the same key with a fuller payload.
+      try {
+        window.__arcAiSetSession?.({
+          mode: 'thread',
+          id: threadId,
+          theme: _ctxThread?.title || _ctxThread?.translated_title || null,
+          articleIds: Array.isArray(_ctxThread?.article_ids) ? _ctxThread.article_ids : [],
+        });
+      } catch (_) {}
+
       const res = await fetch(`${API}/api/flows/thread/${threadId}`);
       const data = await res.json();
       if (!data.flows || !data.flows.length) {
@@ -26233,6 +26292,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
           meta: _ctxTimeline.category || _ctxTimeline.status || "",
         });
       }
+
+      // Register the AI-context session eagerly so the ✦ button surfaces
+      // on every fallback branch (segments / flat-flows / tier-highlight /
+      // synthesized / single-iso) — not just the main segmented path.
+      try {
+        window.__arcAiSetSession?.({
+          mode: 'timeline',
+          id: timelineId,
+          theme: _ctxTimeline?.title || _ctxTimeline?.translated_title || null,
+          articleIds: Array.isArray(_ctxTimeline?.article_ids) ? _ctxTimeline.article_ids : [],
+        });
+      } catch (_) {}
 
       // Mount the density ruler unconditionally for timeline flows. The
       // branching below (segmented, flat flows, synth fallback, single-
