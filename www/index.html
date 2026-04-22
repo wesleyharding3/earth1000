@@ -3654,6 +3654,75 @@ body.flow-maximized #flowArcList {
       .fadeInCard.inView { transform: none; }
     }
 
+    /* ──────────────────────────────────────────────────────────────────
+       Pull-to-refresh indicator
+       Sits absolutely-positioned inside a scroll container's parent.
+       Starts hidden above the container (translateY -100%). When the
+       user pulls past scrollTop = 0, it slides down proportionally.
+       At the threshold it "arms" (color shift); on release it spins
+       while the reload fetches, then eases back up.
+       Shared by: city/country panel, region panel, News Flow feed,
+       Threads + Lines feed.
+       ────────────────────────────────────────────────────────────── */
+    .ptr-indicator {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 36px;
+      height: 36px;
+      margin-left: -18px;
+      margin-top: -44px;       /* start hidden just above the scroll container */
+      z-index: 50;
+      pointer-events: none;
+      opacity: 0;
+      transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+                  opacity 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(12, 18, 32, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .ptr-indicator.pulling {
+      opacity: 1;
+      transition: transform 0.05s linear, opacity 0.15s;
+    }
+    .ptr-indicator.armed {
+      background: rgba(30, 90, 40, 0.92);
+      border-color: rgba(80, 255, 160, 0.6);
+    }
+    .ptr-indicator svg {
+      width: 18px; height: 18px;
+      stroke: rgba(255, 255, 255, 0.85);
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: transform 0.15s;
+    }
+    .ptr-indicator.armed svg { stroke: rgba(80, 255, 160, 1); }
+    /* Arrow rotates 180° as pull exceeds threshold */
+    .ptr-indicator.armed svg { transform: rotate(180deg); }
+    /* Refreshing state — spinner animation replaces the arrow */
+    .ptr-indicator.refreshing {
+      opacity: 1;
+      background: rgba(12, 18, 32, 0.92);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+    .ptr-indicator.refreshing svg {
+      animation: ptr-spin 0.9s linear infinite;
+      stroke: rgba(80, 255, 160, 1);
+    }
+    @keyframes ptr-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .ptr-indicator svg, .ptr-indicator { transition: none; }
+      .ptr-indicator.refreshing svg { animation: none; }
+    }
+
     .articleCard {
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.09);
@@ -11490,6 +11559,10 @@ window.sourceBiasBadgeHTML = function(bias) {
 
     const FLAG_CDN_BASE = "https://flagcdn.com/w80/";
 
+    // attachPullToRefresh lives in the classic <script> block further
+    // down — a module script like this one runs deferred per the HTML
+    // spec, which is too late for the threads/lines IIFE that uses it.
+
     /* ──────────────────────────────────────────────────────────────────
        Scroll-reveal fade-in for card grids.
 
@@ -15999,14 +16072,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         track.innerHTML = skeletonCards(8);
 
         function loadMore() {
-          if (loading || !hasMore) return;
+          if (loading || !hasMore) return Promise.resolve();
           loading = true;
           const tagParam = currentTag ? `&tag=${currentTag}` : "";
           const entity = isCity ? "city" : "country";
           const url = currentSort === "global"
             ? `https://earth-wjr6.onrender.com/api/news/${entity}/${node.id}/global?limit=${limit}&offset=${offset}${tagParam}`
             : `https://earth-wjr6.onrender.com/api/news/${entity}/${node.id}?limit=${limit}&offset=${offset}${tagParam}`;
-          fetch(url)
+          // Return the fetch chain so callers (pull-to-refresh) can await it
+          return fetch(url)
             .then(res => res.json())
             .then(articles => {
               if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
@@ -16022,6 +16096,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Native touch scroll — touch-action: pan-y on #articlesViewport handles momentum.
         // stopPropagation prevents the globe-drag touchmove from also firing.
         viewport.addEventListener("touchmove", (e) => { e.stopPropagation(); }, { passive: true });
+
+        // Pull-to-refresh — wipe local cache of this feed's first page,
+        // reset pagination, re-fetch. No endpoint-side cache bust needed
+        // because these URLs aren't routed through cachedFetch.
+        if (window.attachPullToRefresh) {
+          window.attachPullToRefresh(viewport, async () => {
+            allArticles = [];
+            offset = 0;
+            hasMore = true;
+            loading = false;
+            track.innerHTML = skeletonCards(8);
+            await loadMore();
+          });
+        }
 
         // ── Weather + Time pills (city only) ──
         if (isCity) {
@@ -22383,6 +22471,98 @@ const settingsToggle     = document.getElementById("settingsToggle");
   </div>
 
   <script>
+  /* ══════════════════════════════════════════════════════════════════
+     Pull-to-refresh helper — registered in a CLASSIC script so the
+     threads/lines IIFE (further down) finds window.attachPullToRefresh
+     at evaluation time. The module-script block above runs deferred
+     per the HTML spec, which is too late for that IIFE.
+     Contract: attachPullToRefresh(scrollEl, onRefresh, opts?)
+     ══════════════════════════════════════════════════════════════════ */
+  (function setupPullToRefreshClassic() {
+    const ATTACHED = new WeakMap();
+    function attachPullToRefresh(scrollEl, onRefresh, opts) {
+      if (!scrollEl) return () => {};
+      const prev = ATTACHED.get(scrollEl);
+      if (prev) prev();
+      const threshold = (opts && opts.threshold) || 70;
+      const minSpin   = (opts && opts.minSpin)   || 500;
+      const parent = scrollEl.parentElement;
+      if (!parent) return () => {};
+      if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+      const indicator = document.createElement('div');
+      indicator.className = 'ptr-indicator';
+      indicator.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5 v14 M6 13 l6 6 6-6"/></svg>';
+      parent.appendChild(indicator);
+      let startY = null, pulling = false, armed = false, refreshing = false;
+      const setIndicator = (pullDist) => {
+        const y = pullDist * 0.55;
+        indicator.style.transform = 'translateY(' + y + 'px)';
+        indicator.classList.add('pulling');
+        const nowArmed = y >= threshold;
+        if (nowArmed !== armed) { armed = nowArmed; indicator.classList.toggle('armed', armed); }
+      };
+      const resetIndicator = () => {
+        indicator.classList.remove('pulling', 'armed');
+        indicator.style.transform = '';
+        armed = false;
+      };
+      const fireRefresh = async () => {
+        if (refreshing) return;
+        refreshing = true;
+        indicator.classList.remove('pulling', 'armed');
+        indicator.classList.add('refreshing');
+        indicator.style.transform = 'translateY(' + threshold + 'px)';
+        const start = Date.now();
+        try { await Promise.resolve(onRefresh(scrollEl)); }
+        catch (err) { console.warn('[ptr] refresh handler threw:', err); }
+        const elapsed = Date.now() - start;
+        if (elapsed < minSpin) await new Promise(r => setTimeout(r, minSpin - elapsed));
+        refreshing = false;
+        indicator.classList.remove('refreshing');
+        resetIndicator();
+      };
+      const onTouchStart = (e) => {
+        if (refreshing) return;
+        if (scrollEl.scrollTop > 0) { startY = null; return; }
+        startY = e.touches ? e.touches[0].clientY : e.clientY;
+        pulling = false;
+      };
+      const onTouchMove = (e) => {
+        if (refreshing || startY === null) return;
+        if (scrollEl.scrollTop > 0) { startY = null; resetIndicator(); return; }
+        const y = e.touches ? e.touches[0].clientY : e.clientY;
+        const deltaY = y - startY;
+        if (deltaY <= 0) { if (pulling) resetIndicator(); pulling = false; return; }
+        if (e.cancelable) { try { e.preventDefault(); } catch (_) {} }
+        pulling = true;
+        setIndicator(deltaY);
+      };
+      const onTouchEnd = () => {
+        if (refreshing) return;
+        if (!pulling) { startY = null; return; }
+        pulling = false; startY = null;
+        if (armed) fireRefresh(); else resetIndicator();
+      };
+      scrollEl.addEventListener('touchstart', onTouchStart, { passive: true });
+      scrollEl.addEventListener('touchmove',  onTouchMove,  { passive: false });
+      scrollEl.addEventListener('touchend',   onTouchEnd);
+      scrollEl.addEventListener('touchcancel', onTouchEnd);
+      const cleanup = () => {
+        scrollEl.removeEventListener('touchstart', onTouchStart);
+        scrollEl.removeEventListener('touchmove',  onTouchMove);
+        scrollEl.removeEventListener('touchend',   onTouchEnd);
+        scrollEl.removeEventListener('touchcancel', onTouchEnd);
+        if (indicator.parentElement) indicator.parentElement.removeChild(indicator);
+        ATTACHED.delete(scrollEl);
+      };
+      ATTACHED.set(scrollEl, cleanup);
+      return cleanup;
+    }
+    window.attachPullToRefresh = attachPullToRefresh;
+  })();
+  </script>
+
+  <script>
   /* ──────────────────────────────────────────────────────────────
      Grid-view toggle wiring
      ──────────────────────────────────────────────────────────────
@@ -23587,6 +23767,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       };
       window.__openThread = window.openThreadInPanel;
+
+      // ── Pull-to-refresh on the Threads + Lines viewport ─────────────
+      // Same viewport serves both tabs; refresh targets whichever is
+      // visible. Cache is invalidated first so the re-fetch hits network
+      // instead of the 5-min cached copy.
+      if (window.attachPullToRefresh && threadsVp) {
+        window.attachPullToRefresh(threadsVp, async () => {
+          if (currentView === 'timelines') {
+            window.invalidateApiCache?.('/api/timelines/latest');
+            timelinesLoaded = false;
+            await loadTimelines();
+          } else if (currentView === 'threads') {
+            window.invalidateApiCache?.('/api/threads/latest');
+            threadsLoaded = false;
+            await loadThreads();
+          }
+        });
+      }
     })();
 
     function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
