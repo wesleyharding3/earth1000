@@ -10247,6 +10247,119 @@ if (typeof window._threadImgFail !== 'function') {
   };
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   Shared structured-analysis renderer
+   ══════════════════════════════════════════════════════════════════
+   Powers the typewriter-with-badges visual used by:
+     • flow-context panel (globe arcs AI Context tab)
+     • article-detail panel Analysis section
+     • cluster-detail (Threads / Lines) Analysis section */
+window.__earthAnalysis = (function() {
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+  function showLoading(body, title, sub) {
+    if (!body) return;
+    body.className = 'arcCtxBody arcCtxStateLoading';
+    body.innerHTML =
+      '<div class="arcCtxShell">' +
+        '<div class="arcCtxSignalBadge">Deep Analysis</div>' +
+        '<div class="arcCtxShellTitle">' + esc(title || 'Synthesizing analysis') + '</div>' +
+        '<div class="arcCtxShellSub">' + esc(sub || 'Weighing actors, context, and framing.') + '</div>' +
+        '<div class="arcCtxShellLines"><div class="arcCtxShellLine"></div><div class="arcCtxShellLine"></div><div class="arcCtxShellLine"></div></div>' +
+      '</div>';
+    body.scrollTop = 0;
+  }
+  function showMessage(body, cls, html) {
+    if (!body) return;
+    body.className = 'arcCtxBody arcCtxStateSettled';
+    body.innerHTML = '<div class="' + cls + '">' + html + '</div>';
+  }
+  function renderBlocks(body, blocks) {
+    if (!body) return;
+    const anyTyping = blocks.some(b => b.status !== 'done');
+    body.className = 'arcCtxBody ' + (anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
+    body.innerHTML = blocks.map((b, i) => {
+      const kindClass = b.kind === 'primary' || b.kind === 'secondary' ? b.kind : 'summary';
+      const statusClass = b.status === 'done' ? 'is-done' : 'is-typing';
+      return (
+        '<section class="arcCtxBlock arcCtxBlock--' + kindClass + ' ' + statusClass + '">' +
+          '<div class="arcCtxBlockHead">' +
+            '<span class="arcCtxSignalBadge">' + esc(b.badge || '') + '</span>' +
+            (b.status === 'done' ? '' : '<span class="arcCtxLiveTag">Analyzing</span>') +
+          '</div>' +
+          '<div class="arcCtxBlockTitle">' + esc(b.title || '') + '</div>' +
+          '<div class="arcCtxText" data-block="' + i + '">' + esc(b.typedText || '') + '</div>' +
+        '</section>'
+      );
+    }).join('');
+    body.scrollTop = body.scrollHeight;
+  }
+  function sleep(ms, signal) {
+    return new Promise((resolve) => {
+      if (signal?.aborted) { resolve(false); return; }
+      let settled = false;
+      const finish = (v) => { if (settled) return; settled = true; resolve(v); };
+      const t = setTimeout(() => finish(true), ms);
+      signal?.addEventListener('abort', () => { clearTimeout(t); finish(false); }, { once: true });
+    });
+  }
+  async function typeBlock(body, blocks, index, signal) {
+    const b = blocks[index];
+    if (!b) return false;
+    b.status = 'typing';
+    b.typedText = '';
+    renderBlocks(body, blocks);
+    const target = b.text || '';
+    let typed = 0;
+    while (typed < target.length) {
+      if (signal?.aborted) return false;
+      const remaining = target.length - typed;
+      const step = remaining > 280 ? 10 : remaining > 160 ? 6 : remaining > 80 ? 4 : 2;
+      typed = Math.min(target.length, typed + step);
+      b.typedText = target.slice(0, typed);
+      const textEl = body?.querySelector('[data-block="' + index + '"]');
+      if (textEl) textEl.textContent = b.typedText;
+      if (body) body.scrollTop = body.scrollHeight;
+      const keepGoing = await sleep(typed < 48 ? 18 : typed < 180 ? 22 : 28, signal);
+      if (!keepGoing) return false;
+    }
+    b.typedText = target;
+    b.status = 'done';
+    renderBlocks(body, blocks);
+    return true;
+  }
+  async function stream(body, rawBlocks, { signal } = {}) {
+    const normalized = (Array.isArray(rawBlocks) ? rawBlocks : [])
+      .map(b => ({
+        kind: b?.kind === 'primary' || b?.kind === 'secondary' ? b.kind : 'summary',
+        badge: String(b?.badge || '').trim() || 'Insight',
+        title: String(b?.title || '').trim() || 'Analysis',
+        text: String(b?.text || '').trim(),
+        typedText: '',
+        status: 'typing',
+      }))
+      .filter(b => b.text);
+    if (!normalized.length) {
+      showMessage(body, 'arcCtxEmpty', 'Analysis unavailable.');
+      return;
+    }
+    const live = [];
+    for (let i = 0; i < normalized.length; i += 1) {
+      if (signal?.aborted) break;
+      live.push({ ...normalized[i] });
+      renderBlocks(body, live);
+      const done = await typeBlock(body, live, live.length - 1, signal);
+      if (!done) break;
+    }
+    live.forEach(b => { b.typedText = b.text; b.status = 'done'; });
+    renderBlocks(body, live);
+  }
+  return { showLoading, showMessage, renderBlocks, stream, esc };
+})();
+
 (function() {
   const canvas = document.getElementById('loaderStarfield');
   if (!canvas) return;
@@ -30630,6 +30743,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
     textSpan.textContent = force ? 'Regenerating…' : 'Generating…';
 
     try {
+      const container = btn.closest('#cdSummaryBody') || btn.parentElement;
+      if (!container) return;
+
+      // Swap the pill for the analysis body immediately + show the shimmer
+      // shell while the request is in flight. Same visual language as the
+      // flow-context and article-detail analysis panels.
+      container.innerHTML = `
+        <div class="adpAnalysis" style="position:relative">
+          <button class="aiAnalysisRegen" title="Regenerate"
+                  data-thread-id="${threadId}"
+                  data-is-timeline="${isTimeline ? '1' : '0'}"
+                  data-entity-label="${entityLabel}"
+                  onclick="window.__regenClusterAnalysis?.(this)"
+                  style="position:absolute;top:8px;right:8px;z-index:2">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="14 3 14 7 10 7"></polyline>
+              <path d="M13.5 11.5A6 6 0 1 1 14 8"></path>
+            </svg>
+          </button>
+          <div class="arcCtxBody" id="cdAnalysisBody"></div>
+        </div>`;
+      const bodyEl = container.querySelector('#cdAnalysisBody');
+      window.__earthAnalysis?.showLoading(
+        bodyEl,
+        `Reading the ${entityLabel} and its context`,
+        'Weighing the story arc, primary actors, and supporting players.'
+      );
+
       const res = await fetch(`${BASE}/api/cluster-node/summary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -30637,33 +30778,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const summary = data.summary || null;
 
-      const container = btn.closest('#cdSummaryBody') || btn.parentElement;
-      if (!container) return;
-
-      if (!summary) {
-        container.innerHTML = `<div class="cdSummaryText" style="opacity:0.4">Summary unavailable for this ${entityLabel}.</div>`;
+      // Server now returns { blocks: [...] }. Legacy { summary: "..." }
+      // shape is tolerated — wrap the flat text as a single summary block.
+      let blocks = Array.isArray(data.blocks) ? data.blocks : null;
+      if (!blocks && typeof data.summary === 'string' && data.summary.trim()) {
+        blocks = [{ kind: 'summary', badge: 'Story', title: 'Overview', text: data.summary.trim() }];
+      }
+      if (!blocks || !blocks.length) {
+        window.__earthAnalysis?.showMessage(bodyEl, 'arcCtxEmpty', `Analysis unavailable for this ${entityLabel}.`);
         return;
       }
-      container.innerHTML = `
-        <div style="position:relative">
-          <button class="aiAnalysisRegen" title="Regenerate"
-                  data-thread-id="${threadId}"
-                  data-is-timeline="${isTimeline ? '1' : '0'}"
-                  data-entity-label="${entityLabel}"
-                  onclick="window.__regenClusterAnalysis?.(this)"
-                  style="position:absolute;top:0;right:0;z-index:2">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="14 3 14 7 10 7"></polyline>
-              <path d="M13.5 11.5A6 6 0 1 1 14 8"></path>
-            </svg>
-          </button>
-          <div class="cdSummaryText" style="padding-right:24px"></div>
-        </div>`;
-      const target = container.querySelector('.cdSummaryText');
-      if (typeof typewriterText === 'function') typewriterText(target, summary);
-      else target.textContent = summary;
+      await window.__earthAnalysis?.stream(bodyEl, blocks);
     } catch (err) {
       // Aborted fetches are expected when the user closes/switches panels
       // mid-request. Swallow them silently — no error UI, no log noise.
@@ -30671,10 +30797,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         || /aborted|abort/i.test(err?.message || '');
       if (aborted) return;
       console.warn('[cluster-analysis] failed:', err.message);
-      btn.classList.remove('loading');
-      btn.classList.add('error');
-      textSpan.textContent = 'Retry';
-      btn.onclick = () => window.__triggerClusterAnalysis(btn);
+      // The original pill was replaced with the analysis body on click, so
+      // `btn` is detached. Re-mount a fresh error-state pill inside the
+      // cluster-detail Summary body so the user can click to retry.
+      const container = document.getElementById('cdSummaryBody');
+      if (container) {
+        container.innerHTML = `
+          <button class="aiAnalysisCta error"
+                  data-thread-id="${threadId}"
+                  data-is-timeline="${isTimeline ? '1' : '0'}"
+                  data-entity-label="${entityLabel}"
+                  onclick="window.__triggerClusterAnalysis?.(this)">
+            <span class="aiAnalysisDot"></span>
+            <span>Retry</span>
+          </button>`;
+      }
     }
   };
 

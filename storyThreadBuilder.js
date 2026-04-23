@@ -33,12 +33,33 @@ const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees si
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
-const FRESH_PRIORITY_HOURS = 6;
-const FRESH_PRIORITY_LIMIT = 100;
 const TOTAL_ARTICLE_LIMIT  = 1200;
 const REFRESH_MIN_ARTICLES = 5;
 const REFRESH_MIN_NEW_KWS  = 3;
 const RECENCY_HALF_LIFE_HOURS = 36;
+
+// ─── Stratified-sampling tiers (Phase 1 architecture) ─────────────────────────
+// The old "ORDER BY published_at DESC LIMIT 1200" sampler was recency-biased,
+// which meant Western wires (Reuters / AP / BBC etc. publishing every few
+// minutes) shoved out every slower-publishing non-Western source. The tiered
+// sampler below guarantees geographic floors:
+//
+//   Tier 1 — GLOBAL           stories with ≥2 country mentions in
+//                             article_locations (cross-border reporting)
+//   Tier 2 — COUNTRY QUOTA    up to TIER_COUNTRY_PER per country_iso, so
+//                             Bolivia and Tajikistan each get slots even if
+//                             the US has 50k articles in the window
+//   Tier 3 — FRESH FILL       articles < FRESH_PRIORITY_HOURS old, any country
+//   Tier 4 — BACKLOG FILL     remaining capacity, newest-first
+//
+// Total target = TOTAL_ARTICLE_LIMIT.
+const TIER_GLOBAL_LIMIT    = 200;
+const TIER_COUNTRY_PER     = 12;   // per-country ceiling in tier 2
+const TIER_COUNTRY_LIMIT   = 700;
+const TIER_FRESH_LIMIT     = 200;
+const TIER_BACKLOG_LIMIT   = 200;
+const FRESH_PRIORITY_HOURS = 6;
+const PER_BATCH_THREAD_LIMIT = 150;  // existing threads shown to Claude per batch
 const SKIP_KEYWORDS   = new Set([ // too generic to cluster on
   "government","minister","president","official","said","year","people",
   "new","first","last","will","also","one","two","three","could","would",
@@ -87,19 +108,34 @@ async function run() {
 
   let created = 0, updated = 0;
   const refreshThreadIds = new Set();
-  const allGroups = [...clusters, ...chunkSingletons(singletons, 20)];
-  const totalBatches = Math.ceil(allGroups.length / 3);
-  console.log(`   [${elapsed()}] Sending ${totalBatches} batch(es) to Claude...\n`);
 
-  for (let i = 0; i < allGroups.length; i += 3) {
-    const batchNum = Math.floor(i/3) + 1;
-    const batch = allGroups.slice(i, i + 3).flat().slice(0, CLAUDE_BATCH);
+  // Cluster-preserving batching + country round-robin for singletons.
+  // Each cluster stays intact in a single batch (split only if it exceeds
+  // CLAUDE_BATCH); small clusters pack first-fit-decreasing into a shared
+  // batch. Singletons are interleaved by country so any 100-article batch
+  // sees a geographic mix instead of a block of US / Western wires.
+  const batches = planBatches(clusters, singletons, CLAUDE_BATCH);
+  const allThreads = [...existingThreadMap.values()];
+  console.log(`   [${elapsed()}] Sending ${batches.length} batch(es) to Claude...\n`);
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
     if (!batch.length) continue;
 
-    process.stdout.write(`   [${elapsed()}] Batch ${batchNum}/${totalBatches} (${batch.length} articles) → Claude... `);
+    // Show Claude the existing threads most relevant to THIS batch —
+    // prioritized by country overlap + keyword overlap + global importance.
+    // Replaces the old "first 150 by importance" window that dropped any
+    // extension candidate past #150.
+    const filteredThreads = filterThreadsForBatch(batch, allThreads, PER_BATCH_THREAD_LIMIT);
+    const batchCountries = new Set(batch.map(a => a.country_iso || 'ZZ'));
+
+    process.stdout.write(
+      `   [${elapsed()}] Batch ${i+1}/${batches.length} ` +
+      `(${batch.length} articles, ${batchCountries.size} countries) → Claude... `
+    );
     try {
       const validIdSet = new Set(batch.map(a => Number(a.id)));
-      const defs = await evaluateWithClaude(batch, [...existingThreadMap.values()]);
+      const defs = await evaluateWithClaude(batch, filteredThreads);
       const { c, u, refreshIds } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
       created += c; updated += u;
       refreshIds.forEach(id => refreshThreadIds.add(Number(id)));
@@ -189,6 +225,113 @@ function chunkSingletons(singletons, size) {
     chunks.push(singletons.slice(i, i + size));
   }
   return chunks;
+}
+
+// ─── Phase 1 batching helpers ────────────────────────────────────────────────
+// Country round-robin: interleave articles so any N-length slice contains a
+// geographic mix instead of a US / Reuters block. Buckets by country_iso,
+// shuffles the country order (so the same country doesn't always go first),
+// then drains one article per country per round until empty.
+function roundRobinByCountry(articles) {
+  const buckets = new Map();
+  for (const a of articles) {
+    const k = a.country_iso || 'ZZ';
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(a);
+  }
+  const countries = [...buckets.keys()];
+  for (let i = countries.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [countries[i], countries[j]] = [countries[j], countries[i]];
+  }
+  const out = [];
+  let any = true;
+  while (any) {
+    any = false;
+    for (const c of countries) {
+      const arr = buckets.get(c);
+      if (arr.length) { out.push(arr.shift()); any = true; }
+    }
+  }
+  return out;
+}
+
+// Cluster-preserving batch planner. Produces two kinds of batches:
+//   (a) cluster batches — packed first-fit-decreasing from `clusters`, never
+//       splitting a cluster across batches unless the cluster itself exceeds
+//       `size`. Small clusters are packed together until the batch is full,
+//       so Claude never sees a lone 4-article cluster in a half-empty batch
+//       but also never sees two unrelated stories mashed into one.
+//   (b) singleton batches — round-robin-by-country interleaved, then sliced
+//       into `size`-sized batches. Ensures Claude's singleton passes see
+//       cross-regional signal instead of a block of one country's wires.
+function planBatches(clusters, singletons, size) {
+  const batches = [];
+
+  const sorted = [...clusters].sort((a, b) => b.length - a.length);
+  const clusterBatches = [];
+  for (const cluster of sorted) {
+    if (cluster.length >= size) {
+      // Cluster bigger than the batch ceiling — split into near-equal chunks
+      // so Claude still sees each half as a coherent story.
+      const n = Math.ceil(cluster.length / size);
+      const chunk = Math.ceil(cluster.length / n);
+      for (let i = 0; i < cluster.length; i += chunk) {
+        clusterBatches.push(cluster.slice(i, i + chunk));
+      }
+      continue;
+    }
+    let placed = false;
+    for (const batch of clusterBatches) {
+      if (batch.length + cluster.length <= size) {
+        batch.push(...cluster);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) clusterBatches.push([...cluster]);
+  }
+  batches.push(...clusterBatches);
+
+  const rr = roundRobinByCountry(singletons);
+  for (let i = 0; i < rr.length; i += size) {
+    batches.push(rr.slice(i, i + size));
+  }
+
+  return batches;
+}
+
+// Per-batch existing-thread filter. Scores every active thread against the
+// batch's country set + keyword set + global importance baseline, then
+// returns the top `limit`. This replaces the old "top 150 by importance"
+// window which dropped any extension candidate beyond the first 150 — so a
+// Honduras article that should have extended thread #173 ("Central America
+// Migration Wave") would spawn a duplicate instead.
+function filterThreadsForBatch(batch, allThreads, limit) {
+  const batchCountries = new Set(
+    batch.map(a => String(a.country_iso || '').toUpperCase()).filter(Boolean)
+  );
+  const batchKeywords = new Set(
+    batch.flatMap(a => (a.keywords || []).map(normalizeKeyword)).filter(Boolean)
+  );
+
+  const scored = allThreads.map(t => {
+    const threadIsos = [
+      ...(Array.isArray(t.primary_nations)   ? t.primary_nations   : []),
+      ...(Array.isArray(t.secondary_nations) ? t.secondary_nations : []),
+    ].map(s => String(s || '').toUpperCase()).filter(Boolean);
+    const threadKws = (t.keywords || []).map(normalizeKeyword);
+    let score = 0;
+    for (const iso of new Set(threadIsos)) if (batchCountries.has(iso)) score += 3;
+    for (const kw of threadKws)            if (batchKeywords.has(kw))  score += 1;
+    // Importance baseline (0–3) so top global threads always surface even
+    // when a batch has no country overlap with them.
+    score += Math.min(3, (Number(t.importance) || 0) / 3);
+    return { thread: t, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map(s => s.thread);
 }
 
 // ─── Claude Evaluation ────────────────────────────────────────────────────────
@@ -541,9 +684,14 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   ]);
   const CONCRETE_SIGNAL_RE = new RegExp([
     String.raw`\d`,
-    String.raw`\b(killed|kills|kill|dies|died|dead|injured|wounded|attacks?|attacked|strikes?|struck|bombed|shot|shoots?|arrested|elected|fired|resigns?|resigned|signed|signs?|launched|launches?|invaded|invades?|seized|seizes?|captured|captures?|sanctioned|imposed|imposes?|raids?|raided|protests?|protested|votes?|voted|wins?|won|loses?|lost|meets?|met|visits?|visited|announced|announces?|declared|declares?|approved|approves?|rejected|rejects?|condemned|condemns?|denounced|denies|denied|calls?|called|orders?|ordered|halts?|halted|suspends?|suspended|releases?|released|frees?|freed|expels?|expelled|deports?|deported|evacuates?|evacuated|destroyed|destroys?|crashes?|crashed|erupts?|erupted|hits?|hit|topples?|toppled|ousts?|ousted|deploys?|deployed|withdraws?|withdrew|escalates?|escalated|threatens?|threatened|warns?|warned|sues?|sued|charges?|charged|indicts?|indicted|jails?|jailed|negotiates?|negotiated|brokers?|brokered|ratifies?|ratified|vetoes?|vetoed|invokes?|invoked|files?|filed)\b`,
-    String.raw`\b(president|prime\s+minister|minister|chancellor|king|queen|sultan|emir|general|admiral|colonel|ambassador|envoy|spokesperson|secretary|premier|governor|senator|deputy|mp)\b`,
-    String.raw`\b(coup|war|invasion|airstrike|missile|drone|ceasefire|treaty|summit|election|referendum|sanctions|tariff|tariffs|protest|riot|earthquake|tsunami|wildfire|flood|hurricane|cyclone|outbreak|epidemic|pandemic|hostage|kidnap|kidnapped|shooting|massacre|assassination|raid|blockade|embargo|deal|accord|pact|verdict|ruling|indictment|impeachment|crash|explosion|attack|strike|offensive|withdrawal|retreat|surge|breakthrough|deadlock)\b`
+    String.raw`\b(killed|kills|kill|dies|died|dead|injured|wounded|attacks?|attacked|strikes?|struck|bombed|shot|shoots?|arrests?|arrested|elected|fired|resigns?|resigned|signed|signs?|launched|launches?|invaded|invades?|seized|seizes?|captured|captures?|sanctioned|imposed|imposes?|raids?|raided|protests?|protested|votes?|voted|wins?|won|loses?|lost|meets?|met|visits?|visited|announced|announces?|declared|declares?|approved|approves?|rejected|rejects?|condemned|condemns?|denounced|denies|denied|calls?|called|orders?|ordered|halts?|halted|suspends?|suspended|releases?|released|frees?|freed|expels?|expelled|deports?|deported|evacuates?|evacuated|destroyed|destroys?|crashes?|crashed|erupts?|erupted|hits?|hit|topples?|toppled|ousts?|ousted|deploys?|deployed|withdraws?|withdrew|escalates?|escalated|threatens?|threatened|warns?|warned|sues?|sued|charges?|charged|indicts?|indicted|jails?|jailed|negotiates?|negotiated|brokers?|brokered|ratifies?|ratified|vetoes?|vetoed|invokes?|invoked|files?|filed|reveals?|revealed|revealing|exposes?|exposed|leaked|leaks?|uncovered|uncovers?|ambushed|ambush|intercepts?|intercepted)\b`,
+    String.raw`\b(president|prime\s+minister|minister|chancellor|king|queen|sultan|emir|general|admiral|colonel|ambassador|envoy|spokesperson|secretary|premier|governor|senator|deputy|mp|congressman|congresswoman)\b`,
+    // Concrete state / security / paramilitary actors. These are always
+    // event-bearing when they appear in a headline, regardless of any
+    // abstract nouns also present (e.g. "CIA Operations" is about the CIA,
+    // not the abstract concept "operations").
+    String.raw`\b(cia|fbi|nsa|dhs|mossad|kgb|fsb|gru|mi5|mi6|gchq|isi|ra[wa]|sbu|idf|ira|eta|farc|hezbollah|hamas|isis|isil|daesh|taliban|houthis?|boko\s+haram|wagner|mujahideen|interpol|europol|unsc|nato|un|eu|opec|cartel|cartels)\b`,
+    String.raw`\b(coup|war|invasion|airstrike|missile|drone|ceasefire|treaty|summit|election|referendum|sanctions|tariff|tariffs|protest|riot|earthquake|tsunami|wildfire|flood|hurricane|cyclone|outbreak|epidemic|pandemic|hostage|kidnap|kidnapped|shooting|massacre|assassination|raid|blockade|embargo|deal|accord|pact|verdict|ruling|indictment|impeachment|crash|explosion|attack|strike|offensive|withdrawal|retreat|surge|breakthrough|deadlock|ambush|ambushes|ambushed)\b`
   ].join('|'), 'i');
   function looksLikeTopicBucket(title) {
     if (!title) return false;
@@ -1036,7 +1184,7 @@ async function coolDownInactiveThreads() {
   // becomes dormant so the historical arc is preserved.
   const b = await pool.query(`
     UPDATE story_threads
-    SET status = 'dormant
+    SET status = 'dormant'
     WHERE status = 'archived'
   `);
 
@@ -1046,15 +1194,17 @@ async function coolDownInactiveThreads() {
 // ─── DB Queries ───────────────────────────────────────────────────────────────
 
 async function getUnthreadedArticles(hours) {
-  // Step 1: keep the 48h window, but bias selection toward the freshest articles.
-  // We still cap at 5 per source, then reserve the first tranche for the last 6h
-  // before filling the rest from the older remainder of the 48h window.
-  const { rows: baseRows } = await pool.query(`
+  // Phase 1 stratified sampler. Fetches a generous candidate pool (source-
+  // capped at 5 per source) then tiers the selection in JS so we get clean
+  // per-tier logging and the ability to iterate on tier weights without
+  // writing five-level-nested CTEs.
+  const { rows: candidates } = await pool.query(`
     WITH ranked AS (
       SELECT
         a.id, a.title, a.summary, a.translated_summary,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
+        co.iso_code AS country_iso,
         co.name AS country_name,
         ci.name AS city_name,
         ROW_NUMBER() OVER (
@@ -1072,54 +1222,109 @@ async function getUnthreadedArticles(hours) {
         AND NOT EXISTS (
           SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
         )
-    ),
-    fresh AS (
-      SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
-      FROM ranked
-      WHERE source_rank <= 5
-        AND published_at > NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
-      ORDER BY published_at DESC, RANDOM()
-      LIMIT ${FRESH_PRIORITY_LIMIT}
-    ),
-    backlog AS (
-      SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
-      FROM ranked
-      WHERE source_rank <= 5
-        AND published_at <= NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
-      ORDER BY published_at DESC, RANDOM()
-      LIMIT ${TOTAL_ARTICLE_LIMIT - FRESH_PRIORITY_LIMIT}
     )
-    SELECT *
-    FROM (
-      SELECT * FROM fresh
-      UNION ALL
-      SELECT * FROM backlog
-    ) sampled
-    ORDER BY published_at DESC, RANDOM()
-    LIMIT ${TOTAL_ARTICLE_LIMIT}
+    SELECT id, title, summary, translated_summary, published_at,
+           source_name, country_iso, country_name, city_name
+    FROM ranked
+    WHERE source_rank <= 5
+    ORDER BY published_at DESC
+    LIMIT 5000
   `);
 
-  if (!baseRows.length) return [];
+  if (!candidates.length) return [];
 
-  // Step 2: fetch keywords for just those article IDs
-  const ids = baseRows.map(r => r.id);
+  // Cross-border stories — any article mentioning ≥2 distinct ISOs in
+  // article_locations qualifies as a Tier-1 "global" story. These are the
+  // articles most likely to anchor breaking meta-stories, so they skip the
+  // per-country quota and land in the sample unconditionally.
+  const candidateIds = candidates.map(r => r.id);
+  const { rows: locRows } = await pool.query(`
+    SELECT al.article_id
+    FROM article_locations al
+    JOIN countries co ON co.id = al.country_id
+    WHERE al.article_id = ANY($1::int[])
+    GROUP BY al.article_id
+    HAVING COUNT(DISTINCT co.iso_code) >= 2
+  `, [candidateIds]);
+  const globalStoryIds = new Set(locRows.map(r => r.article_id));
+
+  const used = new Set();
+
+  // Tier 1 — global cross-border stories.
+  const tier1 = [];
+  for (const a of candidates) {
+    if (tier1.length >= TIER_GLOBAL_LIMIT) break;
+    if (!globalStoryIds.has(a.id)) continue;
+    tier1.push(a); used.add(a.id);
+  }
+
+  // Tier 2 — per-country quota. Walks candidates newest-first and stops
+  // adding from a country once TIER_COUNTRY_PER is hit, guaranteeing every
+  // country that produced anything in the window gets representation.
+  const tier2 = [];
+  const countryCount = new Map();
+  for (const a of candidates) {
+    if (tier2.length >= TIER_COUNTRY_LIMIT) break;
+    if (used.has(a.id)) continue;
+    const iso = a.country_iso || 'ZZ';
+    const n = countryCount.get(iso) || 0;
+    if (n >= TIER_COUNTRY_PER) continue;
+    tier2.push(a); used.add(a.id);
+    countryCount.set(iso, n + 1);
+  }
+
+  // Tier 3 — fresh fill. Articles under FRESH_PRIORITY_HOURS that weren't
+  // claimed by tier 1/2. Guarantees the breaking-right-now signal isn't
+  // starved by the per-country quota.
+  const freshCutoff = Date.now() - FRESH_PRIORITY_HOURS * 3600 * 1000;
+  const tier3 = [];
+  for (const a of candidates) {
+    if (tier3.length >= TIER_FRESH_LIMIT) break;
+    if (used.has(a.id)) continue;
+    const t = a.published_at ? new Date(a.published_at).getTime() : 0;
+    if (!t || t < freshCutoff) continue;
+    tier3.push(a); used.add(a.id);
+  }
+
+  // Tier 4 — backlog fill to top up to TOTAL_ARTICLE_LIMIT.
+  const tier4 = [];
+  for (const a of candidates) {
+    if (tier4.length >= TIER_BACKLOG_LIMIT) break;
+    if (used.has(a.id)) continue;
+    tier4.push(a); used.add(a.id);
+  }
+
+  const combined = [...tier1, ...tier2, ...tier3, ...tier4].slice(0, TOTAL_ARTICLE_LIMIT);
+
+  console.log(
+    `   Tiered sample: global=${tier1.length} country=${tier2.length} ` +
+    `fresh=${tier3.length} backlog=${tier4.length} total=${combined.length} ` +
+    `(distinct_countries=${new Set(combined.map(a => a.country_iso || 'ZZ')).size})`
+  );
+
+  // Fetch keywords for the finalized set only.
+  const ids = combined.map(a => a.id);
   const { rows: kwRows } = await pool.query(`
     SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
     FROM article_keywords
     WHERE article_id = ANY($1::int[])
     GROUP BY article_id
   `, [ids]);
-
   const kwMap = new Map(kwRows.map(r => [r.article_id, r.keywords]));
 
-  return baseRows
+  return combined
     .map(a => ({ ...a, keywords: kwMap.get(a.id) || [] }))
     .filter(a => a.keywords.length > 0);
 }
 
 async function getActiveThreads() {
+  // primary_nations / secondary_nations are needed so filterThreadsForBatch
+  // can score each thread by country overlap with the batch. The old query
+  // didn't select these, which is why per-batch filtering couldn't work
+  // before Phase 1.
   const { rows } = await pool.query(`
-    SELECT id, title, description, keywords, primary_category, geographic_scope, importance, article_count
+    SELECT id, title, description, keywords, primary_category, geographic_scope,
+           primary_nations, secondary_nations, importance, article_count
     FROM story_threads
     WHERE status = 'active'
       AND last_updated_at > NOW() - INTERVAL '30 days'
