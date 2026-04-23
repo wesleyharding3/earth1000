@@ -28,7 +28,7 @@ const { normalizeRecentKeywords } = require("./keywordNormalizer");
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
-const CLAUDE_BATCH    = 120;    // articles per Claude call
+const CLAUDE_BATCH    = 100;    // articles per Claude call
 const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees singletons too)
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
