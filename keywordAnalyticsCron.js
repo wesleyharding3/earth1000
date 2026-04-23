@@ -60,35 +60,40 @@ async function main() {
   console.log(`\n📊 Keyword Analytics Cron — ${new Date().toISOString()}`);
   console.log(`   mode: ${DRY_RUN ? "DRY RUN" : "WRITE"} | trail=${TRAIL_DAYS}d | min_recent=${MIN_RECENT}${KEYWORD_FILTER ? ` | keyword="${KEYWORD_FILTER}"` : ""}`);
 
-  // Step 1 — find qualifying keywords. Normalized form is preferred when
-  // present so translations / case variants roll up into a single row.
-  // We gate on recent_mentions because older keywords without a recent
-  // surge don't need to be regenerated every run (old rows stay valid).
-  const keywordQuery = KEYWORD_FILTER
-    ? `AND LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $2`
-    : ``;
-  const params = [TRAIL_DAYS, ...(KEYWORD_FILTER ? [KEYWORD_FILTER] : [])];
+  // Step 1 — find qualifying keywords. Bump statement_timeout on a
+  // dedicated session because the GROUP BY over ak × articles can take
+  // a few minutes on large corpora and the default (~60s on Render) was
+  // failing the cron. Per-keyword queries below are cheap → pool default.
+  let keywords;
+  {
+    const client = await pool.connect();
+    try {
+      await client.query(`SET statement_timeout = '10min'`);
+      const keywordQuery = KEYWORD_FILTER
+        ? `AND LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $2`
+        : ``;
+      const params = [TRAIL_DAYS, ...(KEYWORD_FILTER ? [KEYWORD_FILTER] : [])];
 
-  console.log(`   [${elapsed()}] Finding qualifying keywords...`);
-  const { rows: keywords } = await pool.query(`
-    SELECT
-      LOWER(COALESCE(ak.normalized_keyword, ak.keyword))                          AS keyword,
-      (ARRAY_AGG(ak.keyword ORDER BY a.published_at DESC))[1]                     AS display_keyword,
-      COUNT(DISTINCT a.id)                                                        AS total_mentions,
-      COUNT(DISTINCT a.id) FILTER (
+      console.log(`   [${elapsed()}] Finding qualifying keywords (scan window: ${TRAIL_DAYS}d)...`);
+      const { rows } = await client.query(`
+        SELECT
+          LOWER(COALESCE(ak.normalized_keyword, ak.keyword))      AS keyword,
+          (ARRAY_AGG(ak.keyword ORDER BY a.published_at DESC))[1] AS display_keyword,
+          COUNT(DISTINCT a.id)                                    AS recent_mentions
+        FROM article_keywords ak
+        JOIN news_articles a ON a.id = ak.article_id
         WHERE a.published_at > NOW() - ($1 || ' days')::interval
-      )                                                                           AS recent_mentions
-    FROM article_keywords ak
-    JOIN news_articles a ON a.id = ak.article_id
-    WHERE a.published_at > NOW() - '60 days'::interval
-      ${keywordQuery}
-    GROUP BY LOWER(COALESCE(ak.normalized_keyword, ak.keyword))
-    HAVING COUNT(DISTINCT a.id) FILTER (
-      WHERE a.published_at > NOW() - ($1 || ' days')::interval
-    ) >= ${MIN_RECENT}
-    ORDER BY recent_mentions DESC
-    LIMIT ${MAX_KEYWORDS}
-  `, params);
+          ${keywordQuery}
+        GROUP BY LOWER(COALESCE(ak.normalized_keyword, ak.keyword))
+        HAVING COUNT(DISTINCT a.id) >= ${MIN_RECENT}
+        ORDER BY COUNT(DISTINCT a.id) DESC
+        LIMIT ${MAX_KEYWORDS}
+      `, params);
+      keywords = rows;
+    } finally {
+      client.release();
+    }
+  }
 
   console.log(`   [${elapsed()}] ${keywords.length} qualifying keywords (min ${MIN_RECENT} recent mentions in last ${TRAIL_DAYS}d)`);
   if (!keywords.length) {
@@ -170,17 +175,21 @@ async function main() {
 
       if (DRY_RUN) {
         if (i < 10) {
-          console.log(`   [plan ${kwLower}] recent=${kw.recent_mentions} total=${kw.total_mentions} countries=${countryRows.length} (top: ${top.slice(0, 3).map(r => `${r.iso_code}:${r.n}`).join(', ')}) samples=${sampleIds.length}`);
+          console.log(`   [plan ${kwLower}] recent=${kw.recent_mentions} countries=${countryRows.length} (top: ${top.slice(0, 3).map(r => `${r.iso_code}:${r.n}`).join(', ')}) samples=${sampleIds.length}`);
         }
         written++;
         continue;
       }
 
+      // total_mentions left at the same value as recent_mentions — the
+      // historical full-corpus count was expensive to compute and unused
+      // downstream. The /api/keywords/explain endpoint displays recent_mentions
+      // prominently; users get an accurate "mentions in last 7d" number.
       await pool.query(`
         INSERT INTO keyword_analytics
           (keyword, display_keyword, total_mentions, recent_mentions,
            country_breakdown, sample_article_ids, refreshed_at)
-        VALUES ($1, $2, $3, $4, $5::jsonb, $6::int[], NOW())
+        VALUES ($1, $2, $3, $3, $4::jsonb, $5::int[], NOW())
         ON CONFLICT (keyword) DO UPDATE SET
           display_keyword   = EXCLUDED.display_keyword,
           total_mentions    = EXCLUDED.total_mentions,
@@ -188,7 +197,7 @@ async function main() {
           country_breakdown = EXCLUDED.country_breakdown,
           sample_article_ids= EXCLUDED.sample_article_ids,
           refreshed_at      = NOW()
-      `, [kwLower, display, Number(kw.total_mentions), Number(kw.recent_mentions), JSON.stringify(breakdown), sampleIds]);
+      `, [kwLower, display, Number(kw.recent_mentions), JSON.stringify(breakdown), sampleIds]);
 
       written++;
       if (written % 100 === 0) console.log(`   [${elapsed()}] processed ${written}/${keywords.length}`);

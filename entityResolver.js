@@ -608,6 +608,54 @@ async function runCLI() {
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+/**
+ * persistPreExtracted(articleId, extracted, opts)
+ *
+ * Same state-machine + persistence as processArticleById, but skips the
+ * Claude extraction step (the caller batched extraction for multiple
+ * articles and is now writing each article's results). Used by
+ * articleListener.js's batched entity-extraction path — cuts Claude cost
+ * ~60–70% vs. calling processArticleById per article.
+ *
+ * Still idempotent: checks extraction_state, marks processing → done,
+ * writes failed on error.
+ */
+async function persistPreExtracted(articleId, extracted, opts = {}) {
+  // Idempotency check — if another worker already processed, skip.
+  const { rows: stateRows } = await pool.query(
+    `SELECT status FROM article_entity_extraction_state WHERE article_id = $1`,
+    [articleId]
+  );
+  if (stateRows[0] && (stateRows[0].status === 'done' || stateRows[0].status === 'processing')) {
+    return { skipped: true, reason: stateRows[0].status };
+  }
+  await pool.query(
+    `INSERT INTO article_entity_extraction_state (article_id, status, processed_at)
+     VALUES ($1, 'processing', NOW())
+     ON CONFLICT (article_id) DO UPDATE
+       SET status = 'processing', processed_at = NOW()
+     WHERE article_entity_extraction_state.status NOT IN ('done', 'processing')`,
+    [articleId]
+  );
+
+  // Empty-extraction shortcut: still mark 'done' so the article isn't
+  // re-attempted. No entities == the article was empty or Claude returned
+  // nothing qualifying; either way there's nothing to save.
+  if (!extracted || (!extracted.entities?.length && !extracted.referenced_dates?.length)) {
+    await pool.query(
+      `INSERT INTO article_entity_extraction_state (article_id, status, entities_found, dates_found, processed_at)
+       VALUES ($1, 'done', 0, 0, NOW())
+       ON CONFLICT (article_id) DO UPDATE
+         SET status = 'done', entities_found = 0, dates_found = 0, processed_at = NOW()`,
+      [articleId]
+    );
+    return { summary: { entities: [], dates_inserted: 0, mentions_inserted: 0 } };
+  }
+
+  const summary = await saveArticleExtraction(articleId, extracted, opts);
+  return { summary };
+}
+
 module.exports = {
   searchWikidata,
   findLocalEntity,
@@ -615,6 +663,7 @@ module.exports = {
   saveArticleExtraction,
   processArticle,
   processArticleById,
+  persistPreExtracted,
 };
 
 if (require.main === module) {

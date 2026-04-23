@@ -8,7 +8,8 @@ const { resolveImageForArticle } = require("./imageResolver");
 // via storyThreadBuilder. Deep enrichment now lives in
 // articleDeepEnrichment.js. Import left out entirely so we don't pull
 // the Anthropic client init for nothing.
-const { processArticleById: extractEntitiesForArticle } = require("./entityResolver");
+const { persistPreExtracted } = require("./entityResolver");
+const { extractEntitiesBatch } = require("./entityExtractor");
 const { scoreArticle: lexiconScoreArticle } = require("./sentimentLexicon");
 
 // ── Lexicon-based sentiment (zero-cost, 100% coverage) ─────────────────────
@@ -123,6 +124,88 @@ function _drain() {
 const recentlySeen = new Map(); // articleId → timestamp
 const DEDUP_TTL_MS = 10_000;
 
+// ── Batched entity extraction ──────────────────────────────────────────────
+// Articles come in one-at-a-time via pg_notify, but each entity-extraction
+// Claude call re-sends the ~4K-token rules/examples preamble. Batching 15
+// articles per call + using prompt caching on the preamble reduces
+// per-article Claude cost by ~60-70%. See entityExtractor.extractEntitiesBatch.
+//
+// Flush triggers (whichever hits first):
+//   - BATCH_SIZE articles buffered
+//   - BATCH_IDLE_MS since the last article was added (end-of-fetch-run flush)
+//
+// Articles stay in memory until flush — if the process dies mid-batch, they
+// get picked up on the next fetch cycle because the listener is re-fed and
+// extraction_state stays 'pending' (never marked 'processing' pre-flush).
+const BATCH_SIZE    = parseInt(process.env.ENTITY_BATCH_SIZE || '15', 10);
+const BATCH_IDLE_MS = parseInt(process.env.ENTITY_BATCH_IDLE_MS || '45000', 10);
+const _entityQueue = [];
+let _entityFlushTimer = null;
+let _entityFlushing = false;
+
+function _scheduleEntityFlush() {
+  if (_entityFlushTimer) return;
+  _entityFlushTimer = setTimeout(() => { _entityFlushTimer = null; _flushEntityQueue(); }, BATCH_IDLE_MS);
+  _entityFlushTimer.unref?.();
+}
+
+function _enqueueForEntityExtraction(articleId) {
+  _entityQueue.push(articleId);
+  if (_entityQueue.length >= BATCH_SIZE) {
+    if (_entityFlushTimer) { clearTimeout(_entityFlushTimer); _entityFlushTimer = null; }
+    _flushEntityQueue();
+  } else {
+    _scheduleEntityFlush();
+  }
+}
+
+async function _flushEntityQueue() {
+  if (_entityFlushing) { _scheduleEntityFlush(); return; } // overlap — retry next idle
+  if (!_entityQueue.length) return;
+  _entityFlushing = true;
+  const ids = _entityQueue.splice(0, BATCH_SIZE);
+  try {
+    // Fetch all in one query. Also filter out anything already processed
+    // so we don't waste Claude tokens on articles another worker already
+    // handled between enqueue + flush.
+    const { rows: articles } = await pool.query(`
+      SELECT a.id, a.title, a.summary, a.translated_summary, a.published_at
+        FROM news_articles a
+        LEFT JOIN article_entity_extraction_state s ON s.article_id = a.id
+       WHERE a.id = ANY($1::int[])
+         AND (s.status IS NULL OR s.status NOT IN ('done','processing'))
+         AND (a.title IS NOT NULL OR a.summary IS NOT NULL OR a.translated_summary IS NOT NULL)
+    `, [ids]);
+    if (!articles.length) { _entityFlushing = false; return; }
+
+    const batchResult = await extractEntitiesBatch(articles);
+
+    // Persist each article's results sequentially. saveArticleExtraction
+    // takes its own tx per article; keeping it serial avoids flooding the
+    // entities table with concurrent upserts of the same canonical name.
+    for (const a of articles) {
+      try {
+        const r = batchResult[a.id];
+        if (!r) continue;
+        await persistPreExtracted(a.id, r);
+      } catch (err) {
+        console.warn(`⚠️  Entity persist failed [${a.id}]: ${err.message}`);
+      }
+    }
+    const entCount = Object.values(batchResult).reduce((s, r) => s + (r?.entities?.length || 0), 0);
+    console.log(`🧬 Entity batch [${articles.length} articles → ${entCount} entities]`);
+  } catch (err) {
+    console.warn(`⚠️  Entity batch failed (${ids.length} articles): ${err.message}`);
+    // Leave articles unmarked — they'll be retried next NOTIFY burst if
+    // the fetcher re-touches them, otherwise the backfill script picks
+    // them up later. Don't individually fall back here; that would erase
+    // the batching savings on every transient Claude hiccup.
+  } finally {
+    _entityFlushing = false;
+    if (_entityQueue.length) _scheduleEntityFlush();
+  }
+}
+
 function isDuplicate(articleId) {
   const now = Date.now();
   // Prune stale entries to prevent unbounded growth
@@ -168,27 +251,18 @@ async function startArticleListener() {
         // builder (primary_nations backfill) and briefingGenerator
         // (cached thread.deepContext via DB read, no re-scrape).
 
-        // ─── Timelines knowledge-graph extraction (PAUSED) ──────────────────
-        // Fire-and-forget call to entityResolver.processArticleById, which:
-        //   • runs Claude entity extraction (entityExtractor.js)
-        //   • resolves Wikidata QIDs via wbsearchentities (entityResolver.js)
-        //   • persists to entities / article_entity_mentions / article_referenced_dates
-        //   • is idempotent (skips already-processed articles)
+        // ─── Timelines knowledge-graph extraction (BATCHED) ─────────────────
+        // Buffers this article id for the next entity-extraction flush.
+        // Flush fires on BATCH_SIZE (default 15) or BATCH_IDLE_MS (default
+        // 45s) — whichever comes first. Inside the flush, a single Claude
+        // call extracts entities + referenced_dates for the whole batch
+        // with prompt caching on the rules preamble, then persists each
+        // article's results via entityResolver.persistPreExtracted.
         //
-        // CURRENTLY DISABLED to avoid Claude costs until we have paying users
-        // to justify the spend. The full pipeline is wired and tested — flip
-        // the env var TIMELINES_EXTRACTION_ENABLED=true to turn it on. No code
-        // changes required. The backfill script (backfillEntities.js) is also
-        // ready and gated behind --go / --limit flags.
+        // Gated on TIMELINES_EXTRACTION_ENABLED=true. When off, entities
+        // stay unextracted — no Claude cost. Flip env var to enable.
         if (process.env.TIMELINES_EXTRACTION_ENABLED === 'true') {
-          extractEntitiesForArticle(articleId)
-            .then(r => {
-              if (r?.skipped) return;
-              const ents = r?.summary?.entities?.length ?? 0;
-              const dates = r?.summary?.dates_inserted ?? 0;
-              if (ents || dates) console.log(`🧬 Entities extracted [${articleId}]: ${ents} entity mention(s), ${dates} historical date(s)`);
-            })
-            .catch(err => console.warn(`⚠️  Entity extraction failed [${articleId}]: ${err.message}`));
+          _enqueueForEntityExtraction(articleId);
         }
 
         // Resolve image after classify+route so article_tags and article_locations

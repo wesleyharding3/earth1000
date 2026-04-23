@@ -433,10 +433,127 @@ async function runCLI() {
   await pool.end();
 }
 
+// ─── Batched extraction ──────────────────────────────────────────────────────
+// Big cost saver: instead of one Claude call per article (which re-sends
+// the 4K-token rules+examples preamble every time), pack up to ~20 articles
+// into a single call, using Anthropic's prompt caching so the preamble is
+// billed at $0.10/M after its first use instead of $1/M. Per-article cost
+// drops by roughly 60–70%.
+//
+// Caller passes an array of article rows (id, title, summary,
+// translated_summary, published_at). Returns a map keyed by article_id,
+// where each value has the same shape as extractEntities()'s return.
+// Articles Claude didn't return a result for fall back to empty arrays
+// (caller can re-queue them individually if desired).
+const BATCH_MAX_BODY_CHARS = 3000;   // tighter per-article cap when batching
+async function extractEntitiesBatch(articles) {
+  const byId = {};
+  if (!Array.isArray(articles) || !articles.length) return byId;
+
+  for (const a of articles) {
+    byId[a.id] = { entities: [], referenced_dates: [], raw: null, usage: null };
+  }
+
+  // ── Build the two-part content: cached rules preamble + per-call articles.
+  // The preamble is reused by every batch call within the 5-minute prompt-
+  // cache TTL, so high-volume listeners hit cache_read ($0.10/M) instead of
+  // standard input pricing ($1/M) on the bulk of their tokens.
+  const rulesPreamble = buildBatchRulesPreamble();
+  const articlesBlock = articles.map(a => {
+    const title = a.title || '';
+    const body  = (a.translated_summary || a.summary || '').slice(0, BATCH_MAX_BODY_CHARS);
+    const pubDate = a.published_at
+      ? new Date(a.published_at).toISOString().slice(0, 10)
+      : 'unknown';
+    return `ARTICLE_ID: ${a.id}
+PUBLISHED: ${pubDate}
+TITLE: ${title}
+BODY: ${body}`;
+  }).join('\n\n---\n\n');
+
+  const userInstruction = `Extract entities and referenced dates from each of the ${articles.length} articles below. Follow the RULES + EXAMPLES above exactly. Return ONLY valid JSON matching this schema — no prose, no markdown fences:
+
+{
+  "results": [
+    {
+      "article_id": <integer, must match one of the ARTICLE_ID values below>,
+      "entities": [ /* same shape as the examples above */ ],
+      "referenced_dates": [ /* same shape as the examples above */ ]
+    }
+  ]
+}
+
+Emit one result per article. If an article has no extractable entities or dates, still emit a result with empty arrays. Preserve article_id → result mapping faithfully.
+
+═══ ARTICLES ═══
+
+${articlesBlock}`;
+
+  let response;
+  try {
+    response = await client.messages.create({
+      model:      MODEL,
+      // Scale the token ceiling with batch size. Average article entity
+      // payload is ~600 tokens; we budget 800 per article plus 400 slack.
+      max_tokens: Math.min(8192, 400 + articles.length * 800),
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: rulesPreamble, cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: userInstruction },
+        ],
+      }],
+    });
+  } catch (err) {
+    // Surface the error up to the caller; it will mark each article as
+    // failed and/or retry individually per its policy.
+    err.batchArticleIds = articles.map(a => a.id);
+    throw err;
+  }
+
+  const text = response.content[0]?.text || '';
+  let parsed;
+  try {
+    parsed = parseClaudeJSON(text);
+  } catch (err) {
+    const e = new Error(`entityExtractor.extractEntitiesBatch: failed to parse response: ${err.message}`);
+    e.raw = text;
+    e.batchArticleIds = articles.map(a => a.id);
+    throw e;
+  }
+
+  const results = Array.isArray(parsed.results) ? parsed.results : [];
+  for (const r of results) {
+    const id = Number(r?.article_id);
+    if (!Number.isFinite(id) || !byId[id]) continue;
+    byId[id] = {
+      entities:         sanitizeEntities(r.entities),
+      referenced_dates: sanitizeDates(r.referenced_dates),
+      raw:              r,
+      usage:            response.usage || null,
+    };
+  }
+  return byId;
+}
+
+// The batch variant's preamble is the single-article prompt's rules +
+// examples block MINUS the per-article placeholders (those are appended
+// fresh per call as the uncached second content block). Kept verbose so
+// Claude's output quality doesn't regress from the single-article path.
+function buildBatchRulesPreamble() {
+  // We just reuse the single-article prompt with synthetic placeholders so
+  // the text of the rules/examples matches exactly — stable string =
+  // cache hit. The inline "ARTICLE PUBLISHED/TITLE/BODY" header at the
+  // top is a no-op for the batch caller (overridden by the articles block
+  // below) but keeps the preamble byte-identical across callers.
+  return buildPrompt({ title: '', summary: '', translated_summary: '', published_at: null });
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 module.exports = {
   extractEntities,
+  extractEntitiesBatch,
   buildPrompt,           // exposed for prompt-tuning experiments
   CONFIDENCE_FLOOR,
 };
