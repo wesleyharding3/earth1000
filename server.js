@@ -9250,9 +9250,13 @@ ${originLine}`;
 
 /* =========================================
    Keyword AI Context  —  POST /api/keywords/explain
-   Enterprise-only. 25 calls/user/day.
-   Fetches recent articles for the keyword, then asks
-   Claude Haiku to explain significance and context.
+   Reads per-keyword analytics (country breakdown + curated article IDs)
+   from `keyword_analytics` (populated 2×/day by keywordAnalyticsCron.js),
+   then asks Claude Haiku for a STRUCTURED response the UI renders as an
+   inline panel. The country breakdown is NOT asked of Claude — it was
+   computed against the real article set in the cron, and comes back to
+   the client verbatim. Claude only contributes the "about" + "surge"
+   natural-language fields.
 ========================================= */
 app.post("/api/keywords/explain", async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
@@ -9270,72 +9274,136 @@ app.post("/api/keywords/explain", async (req, res) => {
     });
   }
 
-  const { keyword, topKeywords = [], locationCountry } = req.body || {};
-  if (!keyword && !topKeywords.length) {
-    return res.status(400).json({ error: "keyword or topKeywords is required" });
-  }
+  const { keyword } = req.body || {};
+  if (!keyword) return res.status(400).json({ error: "keyword is required" });
 
   try {
-    // ttlCached key: normalize inputs so two users hitting the same keyword
-    // (or top-keyword set) within the window share a single Claude call.
-    // Rate-limit accounting already happened above via checkKwExplanation —
-    // the cache only trims redundant model invocations, not user quota.
-    const _kwKey = (keyword || '').toLowerCase().trim();
-    const _topKey = [...topKeywords].map(k => String(k).toLowerCase().trim()).sort().slice(0, 8).join(',');
-    const _locKey = (locationCountry || '').toUpperCase();
-    const _cacheKey = `kw-explain:${_kwKey}|${_topKey}|${_locKey}`;
+    const kwLower = String(keyword).toLowerCase().trim();
+    // 10-minute cache — same keyword hit by multiple users in a short
+    // window shares one Claude call. checkKwExplanation already counted
+    // this user's daily quota above.
+    const cacheKey = `kw-explain-v2:${kwLower}`;
 
-    const explanation = await ttlCached(_cacheKey, 300_000, async () => {
-    let context = "";
+    const payload = await ttlCached(cacheKey, 600_000, async () => {
+      // 1. Pull precomputed rollup from keyword_analytics.
+      const { rows: kwRows } = await pool.query(`
+        SELECT keyword, display_keyword, total_mentions, recent_mentions,
+               country_breakdown, sample_article_ids, refreshed_at
+          FROM keyword_analytics
+         WHERE keyword = $1
+      `, [kwLower]);
+      const row = kwRows[0];
 
-    if (keyword) {
-      // Fetch recent articles mentioning this keyword (last 7 days)
-      const { rows: articles } = await pool.query(`
-        SELECT DISTINCT ON (a.id)
-               COALESCE(a.translated_title, a.title)        AS title,
-               COALESCE(a.translated_summary, a.summary)    AS summary,
-               a.published_at,
-               ns.name AS source
-        FROM news_articles a
-        JOIN article_keywords ak ON ak.article_id = a.id
-        LEFT JOIN news_sources ns ON ns.id = a.source_id
-        WHERE ak.keyword = $1
-          AND a.published_at > NOW() - INTERVAL '7 days'
-          ${locationCountry ? "AND a.about_country_id = (SELECT id FROM countries WHERE iso_code_2 = $2 LIMIT 1)" : ""}
-        ORDER BY a.id, a.base_priority DESC
-        LIMIT 10
-      `, locationCountry ? [keyword, locationCountry] : [keyword]);
+      // Fallback for brand-new keywords the cron hasn't touched yet:
+      // compute country breakdown + sample ids inline (slower path).
+      let countryBreakdown = row?.country_breakdown || [];
+      let sampleIds = row?.sample_article_ids || [];
+      let totalMentions = row?.total_mentions ?? 0;
+      let recentMentions = row?.recent_mentions ?? 0;
+      let display = row?.display_keyword || keyword;
 
-      const articleLines = articles.map(a =>
-        `- "${(a.title || '').slice(0, 100)}" (${a.source || 'Unknown'}, ${new Date(a.published_at).toLocaleDateString()})`
+      if (!row) {
+        const { rows: fb } = await pool.query(`
+          SELECT co.iso_code, co.name, COUNT(DISTINCT a.id)::int AS n,
+                 ARRAY_AGG(a.id ORDER BY a.published_at DESC) AS art_ids
+            FROM article_keywords ak
+            JOIN news_articles a ON a.id = ak.article_id
+            LEFT JOIN countries co ON co.id = a.country_id
+           WHERE LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $1
+             AND a.published_at > NOW() - INTERVAL '7 days'
+             AND co.iso_code IS NOT NULL
+           GROUP BY co.iso_code, co.name
+           ORDER BY n DESC
+           LIMIT 32
+        `, [kwLower]);
+        const total = fb.reduce((s, r) => s + r.n, 0) || 1;
+        const top = fb.slice(0, 8);
+        countryBreakdown = top.map(r => ({
+          iso: r.iso_code, name: r.name || r.iso_code, n: r.n,
+          pct: Math.round((r.n / total) * 1000) / 10,
+        }));
+        const restN = fb.slice(8).reduce((s, r) => s + r.n, 0);
+        if (restN) countryBreakdown.push({ iso: null, name: `+${fb.length - 8} more`, n: restN, pct: Math.round((restN / total) * 1000) / 10 });
+        sampleIds = fb.flatMap(r => r.art_ids || []).slice(0, 10);
+        recentMentions = total;
+      }
+
+      // 2. Hydrate article titles + summaries for the Claude prompt.
+      let sampleArticles = [];
+      if (sampleIds.length) {
+        const { rows } = await pool.query(`
+          SELECT a.id,
+                 COALESCE(a.translated_title, a.title)     AS title,
+                 COALESCE(a.translated_summary, a.summary) AS summary,
+                 COALESCE(ns.name, ys.name)                AS source,
+                 co.iso_code, co.name AS country_name,
+                 a.published_at
+            FROM news_articles a
+            LEFT JOIN news_sources ns   ON ns.id = a.source_id
+            LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+            LEFT JOIN countries co      ON co.id = a.country_id
+           WHERE a.id = ANY($1::int[])
+        `, [sampleIds]);
+        const byId = new Map(rows.map(r => [r.id, r]));
+        sampleArticles = sampleIds.map(id => byId.get(id)).filter(Boolean);
+      }
+
+      // 3. Claude prompt — structured JSON, no prose outside the object.
+      const articleBlock = sampleArticles.slice(0, 10).map(a =>
+        `- [${a.source || '?'}${a.country_name ? ', ' + a.country_name : ''}, ${new Date(a.published_at).toISOString().slice(0,10)}] "${(a.title || '').slice(0, 160)}"\n  ${(a.summary || '').slice(0, 220).replace(/\s+/g, ' ')}`
       ).join('\n');
+      const countryBlock = countryBreakdown.length
+        ? countryBreakdown.map(c => `${c.name} ${c.pct}%`).join(' · ')
+        : '(no country breakdown)';
 
-      context = `Keyword: "${keyword}"
-${locationCountry ? `Geographic focus: ${locationCountry}` : ""}
-Recent articles (${articles.length} found, last 7 days):
-${articleLines || "No recent articles found — keyword may be older trending data."}`;
-    } else {
-      // Trending context — explain the overall keyword landscape
-      context = `Top trending keywords right now: ${topKeywords.slice(0, 8).join(', ')}
-${locationCountry ? `Geographic focus: ${locationCountry}` : "Global view"}`;
-    }
+      const prompt = `You are a geopolitical analyst writing an inline context panel for a trending keyword in a news-intelligence dashboard. Return ONLY valid JSON. No markdown fences, no prose outside the object.
 
-    const response = await Anthropic.messages.create({
-      model:      "claude-haiku-4-5",
-      max_tokens: 200,
-      messages:   [{
-        role:    "user",
-        content: `You are a senior geopolitical analyst providing keyword intelligence context.
-Write 2-3 plain sentences explaining: what broader story or trend this keyword represents, why it is significant right now, and what underlying forces are driving it. Be specific and analytical. No markdown, no bullet points, no introductory phrases.
+Schema:
+{
+  "about":       "string (≈350 chars, what the keyword represents right now)",
+  "surge_reason":"string (≈280 chars, why it's spiking in mentions now)"
+}
 
-${context}`,
-      }],
+Rules:
+- "about": explain what this keyword is referring to in the current news cycle. Ground it in the articles below — reference the actual events, actors, or stories driving the keyword. Don't define the word generically; describe its news relevance right now.
+- "surge_reason": explain why the keyword is trending this week. If the articles point to a specific triggering event (attack, ruling, announcement, release), name it. If it's a slow accumulation of coverage rather than a single spike, say so.
+- Both fields: factual, analytical, specific. No filler. No "this keyword refers to" / "this is about" openings — jump straight into the substance.
+- Do NOT repeat the country breakdown — it's rendered separately from precomputed data.
+
+Keyword: "${display}"
+Mentions last 7 days: ${recentMentions}${totalMentions ? ` (${totalMentions} all-time)` : ''}
+Geographic distribution: ${countryBlock}
+
+Sample articles (${sampleArticles.length}):
+${articleBlock || '(no articles available)'}`;
+
+      const response = await Anthropic.messages.create({
+        model: "claude-haiku-4-5",
+        max_tokens: 600,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const raw = (response?.content || []).map(p => typeof p?.text === 'string' ? p.text : '').join('').trim();
+      let structured = {};
+      try {
+        const unfenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        structured = JSON.parse(unfenced);
+      } catch (_) {
+        const m = raw.match(/\{[\s\S]*\}/);
+        if (m) { try { structured = JSON.parse(m[0]); } catch (_) {} }
+      }
+
+      return {
+        keyword:           display,
+        about:             String(structured.about || raw || 'Context unavailable.').trim(),
+        surge_reason:      String(structured.surge_reason || '').trim(),
+        country_breakdown: countryBreakdown,
+        total_mentions:    totalMentions,
+        recent_mentions:   recentMentions,
+        refreshed_at:      row?.refreshed_at || null,
+      };
     });
 
-    return (response.content[0]?.text || "").trim().slice(0, 450);
-    });
-
-    res.json({ explanation, used: access.used, limit: access.limit });
+    res.json({ ...payload, used: access.used, limit: access.limit });
   } catch (err) {
     console.error("[api/keywords/explain]", err.message);
     res.status(500).json({ error: "Keyword explanation generation failed" });

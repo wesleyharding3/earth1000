@@ -9816,6 +9816,87 @@ body.flow-maximized #flowArcList {
 .kwi-ai-btn:hover { background: rgba(139,92,246,0.24); color: #a78bfa; border-color: rgba(139,92,246,0.6); }
 .kwi-ai-btn:disabled { opacity: 0.4; cursor: default; }
 .kwi-ai-btn.loading { opacity: 0.7; }
+
+/* ── Per-row context button + inline expansion ──
+   Lives inside each .kwi-trending-item. Clicking it fetches the structured
+   keyword context from /api/keywords/explain and renders an inline panel
+   (sibling .kwi-row-ctx) with: about text, surge reason, and a mini country
+   bar chart. Toggle on second click. */
+.kwi-trending-row { display: flex; flex-direction: column; }
+.kwi-row-ctx-btn {
+  margin-left: 6px;
+  width: 22px; height: 22px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(139,92,246,0.35);
+  background: rgba(139,92,246,0.12);
+  color: rgba(167,139,250,0.95);
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.kwi-row-ctx-btn:hover {
+  background: rgba(139,92,246,0.28);
+  border-color: rgba(139,92,246,0.65);
+  color: #c4a6ff;
+}
+.kwi-row-ctx-btn.loading { opacity: 0.6; animation: kwiCtxPulse 1.2s ease-in-out infinite; }
+.kwi-row-ctx-btn.active {
+  background: rgba(139,92,246,0.38);
+  border-color: rgba(139,92,246,0.75);
+  color: #e9dfff;
+}
+@keyframes kwiCtxPulse {
+  0%,100% { opacity: 0.5; }
+  50%     { opacity: 1; }
+}
+
+.kwi-row-ctx {
+  display: none;
+  margin: 0 8px 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(139,92,246,0.06);
+  border: 1px solid rgba(139,92,246,0.22);
+  font-size: 11px;
+  color: rgba(255,255,255,0.82);
+  line-height: 1.5;
+}
+.kwi-row-ctx.open { display: block; animation: kwiCtxFadeIn 0.22s ease; }
+@keyframes kwiCtxFadeIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
+
+.kwi-ctx-section { margin-bottom: 8px; }
+.kwi-ctx-section:last-child { margin-bottom: 0; }
+.kwi-ctx-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(167,139,250,0.85);
+  margin-bottom: 3px;
+}
+.kwi-ctx-text { color: rgba(255,255,255,0.88); }
+
+.kwi-ctx-bars { display: flex; flex-direction: column; gap: 3px; }
+.kwi-ctx-bar-row { display: flex; align-items: center; gap: 6px; font-size: 10px; }
+.kwi-ctx-bar-name { flex-shrink: 0; width: 74px; color: rgba(255,255,255,0.75); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kwi-ctx-bar-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.kwi-ctx-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(167,139,250,0.7), rgba(96,200,255,0.8));
+  border-radius: 3px;
+}
+.kwi-ctx-bar-pct { flex-shrink: 0; width: 38px; text-align: right; color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; }
+.kwi-ctx-error { color: rgba(255,175,175,0.85); font-size: 10px; }
+.kwi-ctx-upgrade {
+  color: rgba(255,195,70,1); cursor: pointer; font-size: 10px;
+  text-decoration: underline;
+}
 /* KWI explain panel */
 .kwi-explain-panel {
   margin: 0 12px 8px;
@@ -10906,32 +10987,16 @@ window.__earthAnalysis = (function() {
       <div class="stats-row">
 
 
-      <!-- Keyword Intelligence Widget -->
+      <!-- Keyword Intelligence Widget.
+           The global "✦ Context" button has moved. Each trending row now
+           has its own ✦ that expands an inline context panel for just that
+           keyword (about / surge / where). See kwiExplainInlineForKeyword
+           in the JS below. -->
       <div class="kwi-widget" id="kwi">
         <div class="kwi-header">
           <div class="kwi-header-left">
             <div class="kwi-pulse"></div>
             <span class="kwi-title">Keyword Intelligence</span>
-          </div>
-          <div class="kwi-header-right">
-            <button class="kwi-ai-btn" id="kwiAiBtn" onclick="window.kwiExplainKeyword()" title="Keyword Context">
-              ✦ Context
-            </button>
-          </div>
-        </div>
-
-        <!-- AI Explain Panel (hidden by default) -->
-        <div class="kwi-explain-panel" id="kwiExplainPanel" style="display:none;">
-          <div class="kwi-explain-header">
-            <span class="kwi-explain-badge">✦ Keyword Context</span>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <button class="kwi-explain-close" id="kwiMinBtn" onclick="window.kwiToggleMinimize()" title="Minimize">─</button>
-              <button class="kwi-explain-close" onclick="window.kwiCloseExplain()" title="Close">✕</button>
-            </div>
-          </div>
-          <div class="kwi-explain-body">
-            <div class="kwi-explain-text" id="kwiExplainText"></div>
-            <div class="kwi-explain-usage" id="kwiExplainUsage"></div>
           </div>
         </div>
 
@@ -28231,12 +28296,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const momentum = Number(r.momentum ?? 0);
       const growth = baselineCount > 0 ? `${momentum >= 10 ? momentum.toFixed(0) : momentum.toFixed(1)}x` : 'NEW';
       const badgeClass = baselineCount > 0 ? 'kwi-badge-rising' : 'kwi-badge-new';
+      const kwEsc = escapeForSingleQuotedJs(r.keyword);
       return `
-        <div class="kwi-trending-item" onclick="kwiTrendingClick('${escapeForSingleQuotedJs(r.keyword)}', event)">
-          <div class="kwi-trending-rank">${i + 1}</div>
-          <div class="kwi-trending-keyword">${r.keyword}</div>
-          <span class="kwi-trending-badge ${badgeClass}">${growth}</span>
-          <div class="kwi-trending-mentions">${recentMentions.toLocaleString()}</div>
+        <div class="kwi-trending-row" data-kw="${r.keyword.replace(/"/g,'&quot;')}">
+          <div class="kwi-trending-item" onclick="kwiTrendingClick('${kwEsc}', event)">
+            <div class="kwi-trending-rank">${i + 1}</div>
+            <div class="kwi-trending-keyword">${r.keyword}</div>
+            <span class="kwi-trending-badge ${badgeClass}">${growth}</span>
+            <div class="kwi-trending-mentions">${recentMentions.toLocaleString()}</div>
+            <button class="kwi-row-ctx-btn" onclick="event.stopPropagation(); window.kwiExplainInlineForKeyword('${kwEsc}', this)" title="Context">✦</button>
+          </div>
+          <div class="kwi-row-ctx"></div>
         </div>
       `;
     }).join('');
@@ -28258,10 +28328,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const isRising = risingSet.has(t.keyword);
       const kwEsc = escapeForSingleQuotedJs(t.keyword);
       return `
-        <div class="kwi-trending-item" data-kw="${t.keyword.replace(/"/g,'&quot;')}" onclick="kwiTrendingClick('${kwEsc}', event)">
-          <div class="kwi-trending-rank">${i + 1}</div>
-          <div class="kwi-trending-keyword">${t.keyword}${isRising ? ' 🔥' : ''}</div>
-          <div class="kwi-trending-mentions">${parseInt(t.mentions).toLocaleString()}</div>
+        <div class="kwi-trending-row" data-kw="${t.keyword.replace(/"/g,'&quot;')}">
+          <div class="kwi-trending-item" onclick="kwiTrendingClick('${kwEsc}', event)">
+            <div class="kwi-trending-rank">${i + 1}</div>
+            <div class="kwi-trending-keyword">${t.keyword}${isRising ? ' 🔥' : ''}</div>
+            <div class="kwi-trending-mentions">${parseInt(t.mentions).toLocaleString()}</div>
+            <button class="kwi-row-ctx-btn" onclick="event.stopPropagation(); window.kwiExplainInlineForKeyword('${kwEsc}', this)" title="Context">✦</button>
+          </div>
+          <div class="kwi-row-ctx"></div>
         </div>
       `;
     }).join('');
@@ -28950,99 +29024,115 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // ── Expose globally ───────────────────────────────────────────────────────
   // (all onclick handlers already use window.kwi* so nothing extra needed)
 
-  // ── Enterprise AI: keyword context explain ────────────────────────────────
-  let kwiExplaining = false;
+  // ── Inline per-row keyword context ──────────────────────────────────────
+  // Replaces the old widget-header "✦ Context" button. Each trending row
+  // has a ✦ now; clicking it fetches structured context (about / surge /
+  // country breakdown) from /api/keywords/explain and renders an inline
+  // panel directly under that keyword's row. Second click closes. Cache
+  // per-keyword in memory so flipping open→closed→open is instant.
+  const _kwiCtxCache = new Map(); // keyword (lowercased) → payload
+  const _kwiCtxInflight = new Set();
 
-  window.kwiCloseExplain = function() {
-    const panel = document.getElementById('kwiExplainPanel');
-    panel.style.display = 'none';
-    panel.classList.remove('minimized');
-    const btn = document.getElementById('kwiMinBtn');
-    if (btn) btn.textContent = '─';
-  };
+  function _kwiEscText(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
 
-  window.kwiToggleMinimize = function() {
-    const panel = document.getElementById('kwiExplainPanel');
-    const btn = document.getElementById('kwiMinBtn');
-    panel.classList.toggle('minimized');
-    if (btn) btn.textContent = panel.classList.contains('minimized') ? '▢' : '─';
-  };
+  function _kwiRenderCtxPanel(payload) {
+    const about = _kwiEscText(payload.about || '—');
+    const surge = payload.surge_reason ? _kwiEscText(payload.surge_reason) : '';
+    const bars = (payload.country_breakdown || []).map(c =>
+      `<div class="kwi-ctx-bar-row">
+         <span class="kwi-ctx-bar-name">${_kwiEscText(c.name || c.iso || '')}</span>
+         <span class="kwi-ctx-bar-track"><span class="kwi-ctx-bar-fill" style="width:${Math.max(2, Math.min(100, c.pct || 0)).toFixed(1)}%"></span></span>
+         <span class="kwi-ctx-bar-pct">${(c.pct || 0).toFixed(1)}%</span>
+       </div>`
+    ).join('');
+    return `
+      <div class="kwi-ctx-section">
+        <div class="kwi-ctx-label">About</div>
+        <div class="kwi-ctx-text">${about}</div>
+      </div>
+      ${surge ? `<div class="kwi-ctx-section">
+        <div class="kwi-ctx-label">Why it's surging</div>
+        <div class="kwi-ctx-text">${surge}</div>
+      </div>` : ''}
+      ${bars ? `<div class="kwi-ctx-section">
+        <div class="kwi-ctx-label">Where (${payload.country_breakdown?.length || 0} countries · ${payload.recent_mentions || 0} articles/7d)</div>
+        <div class="kwi-ctx-bars">${bars}</div>
+      </div>` : ''}
+    `;
+  }
 
-  window.kwiExplainKeyword = async function() {
-    if (!window.__authToken) {
-      window.__openAuthModal?.();
+  window.kwiExplainInlineForKeyword = async function(keyword, btn) {
+    const kw = String(keyword || '').trim();
+    if (!kw) return;
+    const row = btn?.closest('.kwi-trending-row');
+    const ctxEl = row?.querySelector('.kwi-row-ctx');
+    if (!row || !ctxEl) return;
+
+    // Toggle off if already open for this keyword
+    if (ctxEl.classList.contains('open')) {
+      ctxEl.classList.remove('open');
+      btn.classList.remove('active');
       return;
     }
+    // Close any other open context panels in the list — one at a time.
+    document.querySelectorAll('.kwi-row-ctx.open').forEach(el => el.classList.remove('open'));
+    document.querySelectorAll('.kwi-row-ctx-btn.active').forEach(el => el.classList.remove('active'));
 
-    // Client-side tier check — immediate feedback
+    // Auth + tier gates mirror the old widget-level button's behavior.
+    if (!window.__authToken) { window.__openAuthModal?.(); return; }
     if (!window.__checkTier || !window.__checkTier('pro')) {
       window.__openPricing?.('AI Keyword Context requires a Pro or Enterprise plan.');
       return;
     }
 
-    if (kwiExplaining) return;
-    kwiExplaining = true;
+    // Cache hit: just render and open.
+    const cached = _kwiCtxCache.get(kw.toLowerCase());
+    if (cached) {
+      ctxEl.innerHTML = _kwiRenderCtxPanel(cached);
+      ctxEl.classList.add('open');
+      btn.classList.add('active');
+      return;
+    }
 
-    const btn      = document.getElementById('kwiAiBtn');
-    const panel    = document.getElementById('kwiExplainPanel');
-    const textEl   = document.getElementById('kwiExplainText');
-    const usageEl  = document.getElementById('kwiExplainUsage');
+    // De-dupe concurrent clicks on the same keyword.
+    if (_kwiCtxInflight.has(kw.toLowerCase())) return;
+    _kwiCtxInflight.add(kw.toLowerCase());
 
-    // Show panel with loading state
-    textEl.textContent  = '';
-    usageEl.textContent = '';
-    panel.style.display = 'block';
-    textEl.innerHTML = '<span style="color:rgba(167,139,250,0.5);font-style:italic">Analysing keyword context…</span>';
-    btn.disabled = true;
-    btn.classList.add('loading');
-    btn.textContent = '✦ Thinking…';
+    btn.classList.add('loading', 'active');
+    ctxEl.innerHTML = `<span style="color:rgba(167,139,250,0.55);font-style:italic;">Analysing “${_kwiEscText(kw)}”…</span>`;
+    ctxEl.classList.add('open');
 
     try {
-      // Collect context — active searched keyword OR top visible trending keywords
-      let keyword    = kwiKeyword || null;
-      let topKeywords = [];
-
-      if (!keyword) {
-        // Scrape top 8 keyword labels from the currently visible list
-        const items = document.querySelectorAll('.kwi-trending-keyword');
-        topKeywords = Array.from(items).slice(0, 8).map(el => el.textContent.replace('🔥','').trim()).filter(Boolean);
-      }
-
-      const locationIso = kwiLocationCountry?.iso || null;
-
-      const res  = await fetch(`https://earth-wjr6.onrender.com/api/keywords/explain`, {
-        method:  'POST',
+      const res = await fetch('https://earth-wjr6.onrender.com/api/keywords/explain', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ keyword, topKeywords, locationCountry: locationIso }),
+        body: JSON.stringify({ keyword: kw }),
       });
       const data = await res.json();
-
       if (!res.ok) {
         if (res.status === 429 && data.limitReached) {
-          textEl.innerHTML = '';
           if (data.requiredTier === 'enterprise') {
-            window.__openPricing?.('AI Keyword Context is an Enterprise feature.');
-            panel.style.display = 'none';
+            ctxEl.innerHTML = `<div class="kwi-ctx-error">Enterprise feature. <span class="kwi-ctx-upgrade" onclick="window.__openPricing?.('AI Keyword Context is an Enterprise feature.')">Upgrade →</span></div>`;
           } else {
-            textEl.textContent = `Daily limit reached (${data.used}/${data.limit}). ${data.resetNote || 'Resets at midnight.'}`;
+            ctxEl.innerHTML = `<div class="kwi-ctx-error">Daily limit reached (${data.used}/${data.limit}).</div>`;
           }
         } else {
-          textEl.textContent = 'Could not generate analysis. Try again.';
+          ctxEl.innerHTML = `<div class="kwi-ctx-error">Could not load context. Try again.</div>`;
         }
       } else {
-        textEl.textContent = data.explanation || '—';
-        if (data.limit && data.limit !== Infinity) {
-          usageEl.textContent = `${data.used} / ${data.limit} uses today`;
-        }
+        _kwiCtxCache.set(kw.toLowerCase(), data);
+        ctxEl.innerHTML = _kwiRenderCtxPanel(data);
       }
     } catch (err) {
-      console.error('[kwi-explain]', err);
-      textEl.textContent = 'Network error. Please try again.';
+      console.error('[kwi-inline-ctx]', err);
+      ctxEl.innerHTML = `<div class="kwi-ctx-error">Network error.</div>`;
     } finally {
-      btn.disabled = false;
       btn.classList.remove('loading');
-      btn.textContent = '✦ Context';
-      kwiExplaining = false;
+      _kwiCtxInflight.delete(kw.toLowerCase());
     }
   };
 
