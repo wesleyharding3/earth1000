@@ -30,7 +30,24 @@
 require("dotenv").config({ override: true });
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
-const { sanitizeIsos } = require("./storyThreadBuilder");
+
+// Inline (intentionally — avoids a circular require with storyThreadBuilder
+// once it imports THIS module for in-cron dedup). Mirrors the canonical
+// implementation's behavior: case-fix, UK→GB, drop malformed entries.
+function sanitizeIsos(input) {
+  if (!Array.isArray(input)) return [];
+  const out = [], seen = new Set();
+  for (const raw of input) {
+    if (raw == null) continue;
+    const s = String(raw).trim();
+    if (!/^[A-Za-z]{2}$/.test(s)) continue;
+    let code = s.toUpperCase();
+    if (code === 'UK') code = 'GB';
+    if (seen.has(code)) continue;
+    seen.add(code); out.push(code);
+  }
+  return out;
+}
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -279,4 +296,77 @@ function extractJson(text) {
   return null;
 }
 
-main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+// ─── Exported entry point for in-cron invocation ────────────────────────────
+// storyThreadBuilder.js calls this at the end of its run, scoped to the
+// thread IDs it just created/updated. Scoping keeps Claude cost at a
+// handful of clusters per run (~$0.05-$0.10) instead of the full 19-cluster
+// semantic pass (which costs ~$0.40/run and is better run manually every
+// few hours).
+//
+// Options:
+//   touchedIds : Set<number> | Array<number> — ids created/updated this run
+//   maxClusters: number — hard cap on Claude calls (default 5)
+//   apply      : boolean  — actually merge (default true in cron)
+//   log        : console-like object for progress logs (default console)
+async function runScopedDedup({ touchedIds, maxClusters = 5, apply = true, log = console } = {}) {
+  const idSet = touchedIds instanceof Set ? touchedIds : new Set([...(touchedIds || [])].map(Number));
+  if (!idSet.size) return { proposed: 0, merged: 0, claudeCalls: 0 };
+
+  const { rows: threads } = await pool.query(`
+    SELECT id, title, description, keywords, primary_category,
+           primary_nations, secondary_nations, importance,
+           article_count, last_updated_at
+      FROM story_threads
+     WHERE status IN ('active','cooling')
+       AND article_count >= 2
+  `);
+  if (!threads.length) return { proposed: 0, merged: 0, claudeCalls: 0 };
+
+  const all = buildClusters(threads);
+  // Keep only clusters that contain at least one touched thread, have
+  // at least 2 threads total, and sort by size DESC so the biggest
+  // potential-dup clusters get the budget.
+  const scoped = all
+    .filter(c => c.length >= 2 && c.some(t => idSet.has(Number(t.id))))
+    .sort((a, b) => b.length - a.length)
+    .slice(0, maxClusters);
+
+  let proposed = 0;
+  let merged   = 0;
+  let claudeCalls = 0;
+
+  for (const cluster of scoped) {
+    claudeCalls++;
+    const cat = cluster[0].primary_category || '?';
+    log.log(`   [claude-dedup] cluster cat=${cat} threads=${cluster.length} (touched: ${cluster.filter(t => idSet.has(Number(t.id))).length})`);
+    let groups;
+    try { groups = await askClaude(cluster); }
+    catch (err) { log.warn(`   [claude-dedup] error: ${err.message}`); continue; }
+
+    for (const g of groups) {
+      const winner = cluster.find(t => t.id === g.winner_id);
+      if (!winner) continue;
+      const loserIds = (g.loser_ids || []).filter(id => id !== g.winner_id);
+      for (const loserId of loserIds) {
+        const loser = cluster.find(t => t.id === loserId);
+        if (!loser) continue;
+        proposed++;
+        log.log(`   [claude-dedup] ${apply ? '✂' : '[dry]'}  ${loserId} "${(loser.title || '').slice(0,60)}" → ${winner.id} "${(winner.title || '').slice(0,60)}"`);
+        if (apply) {
+          try { await mergeThread(winner, loser); merged++; }
+          catch (err) { log.warn(`   [claude-dedup] merge failed: ${err.message}`); }
+        }
+      }
+    }
+  }
+
+  return { proposed, merged, claudeCalls };
+}
+
+module.exports = { runScopedDedup };
+
+// Only auto-run the CLI main() when invoked directly via
+// `node dedupThreadsWithClaude.js`, never when required as a module.
+if (require.main === module) {
+  main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+}

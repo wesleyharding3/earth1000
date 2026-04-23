@@ -34173,11 +34173,24 @@ body.ticker-active .gTickerLabel {
     const data = (typeof p.data === 'string') ? JSON.parse(p.data) : (p.data || {});
     const series = Array.isArray(data.series) ? data.series : [];
     const labels = Array.isArray(data.labels) ? data.labels : [];
-    const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b'];
+    const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b', '#6ba6ff', '#ff9e9e', '#b58cff'];
     const svg = renderChartSVG(p.chart_type, labels, series, colors, data.unit);
-    const legend = series.length > 1 ? series.map((s, i) =>
-      `<span class="bDataPanelLegendItem"><span class="bDataPanelLegendDot" style="background:${colors[i % colors.length]}"></span>${escapeHtmlDP(s.name || '')}</span>`
-    ).join('') : '';
+    // Pie charts only use one series but need a per-LABEL legend so the
+    // user knows which slice is which country. Other chart types continue
+    // to use the per-series legend (only shown when > 1 series).
+    let legend = '';
+    if (p.chart_type === 'pie' && labels.length) {
+      const total = (series[0]?.values || []).reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+      legend = labels.map((lab, i) => {
+        const v = Number(series[0]?.values?.[i]) || 0;
+        const pct = ((v / total) * 100).toFixed(0);
+        return `<span class="bDataPanelLegendItem"><span class="bDataPanelLegendDot" style="background:${colors[i % colors.length]}"></span>${escapeHtmlDP(lab)} <span style="opacity:0.6;">${pct}%</span></span>`;
+      }).join('');
+    } else if (series.length > 1) {
+      legend = series.map((s, i) =>
+        `<span class="bDataPanelLegendItem"><span class="bDataPanelLegendDot" style="background:${colors[i % colors.length]}"></span>${escapeHtmlDP(s.name || '')}</span>`
+      ).join('');
+    }
     const estimateBadge = p.generated_by === 'ai_composed'
       ? '<span class="bDataPanelEstimate">Estimate</span>' : '';
     const sourceLink = p.source_url
@@ -36459,12 +36472,17 @@ body.ticker-active .gTickerLabel {
     // definition further below in the module scope.
 
     // ── Data analytics panels (lazy-generated server-side, cached in DB) ──
-    // Threads-only for now. Timelines will get their own panels once we
-    // wire the generator; for timeline views we just skip the section.
-    if (threadId && !isTimeline && window.__renderDataPanelHTML) {
+    // Threads always have both the computed "Coverage by source country"
+    // pie + any generator-built analytics panels. Timelines currently get
+    // just the coverage pie (no generator integration yet — computed
+    // server-side on every request).
+    if (threadId && window.__renderDataPanelHTML) {
+      const panelsUrl = isTimeline
+        ? `${BASE}/api/timelines/${threadId}/panels`
+        : `${BASE}/api/threads/${threadId}/panels`;
       (async () => {
         try {
-          const res = await fetch(`${BASE}/api/threads/${threadId}/panels`);
+          const res = await fetch(panelsUrl);
           if (!res.ok) return;
           const json = await res.json();
           if (_selected !== node) return;

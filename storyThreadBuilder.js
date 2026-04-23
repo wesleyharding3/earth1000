@@ -108,6 +108,10 @@ async function run() {
 
   let created = 0, updated = 0;
   const refreshThreadIds = new Set();
+  // Thread IDs touched (created or updated) this run — feeds the scoped
+  // Claude dedup pass so we only spend Claude calls on clusters containing
+  // at least one just-modified thread, not the entire 240-thread universe.
+  const allTouchedIds = new Set();
 
   // Cluster-preserving batching + country round-robin for singletons.
   // Each cluster stays intact in a single batch (split only if it exceeds
@@ -136,9 +140,10 @@ async function run() {
     try {
       const validIdSet = new Set(batch.map(a => Number(a.id)));
       const defs = await evaluateWithClaude(batch, filteredThreads);
-      const { c, u, refreshIds } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
+      const { c, u, refreshIds, touchedIds } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
       created += c; updated += u;
       refreshIds.forEach(id => refreshThreadIds.add(Number(id)));
+      (touchedIds || []).forEach(id => allTouchedIds.add(Number(id)));
       console.log(`✓ ${defs.length} threads (${c} new, ${u} updated)`);
     } catch (err) {
       console.log(`✗ ERROR: ${err.message}`);
@@ -159,6 +164,31 @@ async function run() {
   console.log(`\n   [${elapsed()}] Running cross-batch similarity dedup...`);
   const merged = await dedupSimilarThreads();
   console.log(`   [${elapsed()}] Merged ${merged} duplicate thread(s)`);
+
+  // Claude-assisted scoped dedup. Catches paraphrased duplicates that the
+  // structural dedup above misses (different vocabulary, same story). Kept
+  // CHEAP by:
+  //   - only running on clusters containing a thread touched THIS run
+  //   - capping Claude calls via CLAUDE_DEDUP_MAX_CLUSTERS (default 5)
+  //   - gated on env flag CLAUDE_DEDUP_IN_CRON = 'true' so it can be
+  //     flipped off without redeploying
+  // Expected cost at ~5 clusters/run × 24 runs/day × $0.02 ≈ $2.40/day.
+  if (process.env.CLAUDE_DEDUP_IN_CRON === 'true' && allTouchedIds.size) {
+    try {
+      const { runScopedDedup } = require('./dedupThreadsWithClaude');
+      const maxClusters = parseInt(process.env.CLAUDE_DEDUP_MAX_CLUSTERS || '5', 10);
+      console.log(`\n   [${elapsed()}] Running Claude scoped dedup (touched=${allTouchedIds.size}, max_clusters=${maxClusters})...`);
+      const { proposed, merged: mergedC, claudeCalls } = await runScopedDedup({
+        touchedIds: allTouchedIds,
+        maxClusters,
+        apply: true,
+        log: console,
+      });
+      console.log(`   [${elapsed()}] Claude dedup: ${claudeCalls} call(s), ${proposed} proposed, ${mergedC} merged`);
+    } catch (err) {
+      console.warn(`   ⚠ Claude dedup failed: ${err.message}`);
+    }
+  }
 
   console.log(`\n   [${elapsed()}] Cooling down inactive threads...`);
   await coolDownInactiveThreads();
@@ -612,6 +642,10 @@ function parseClaudeJsonArray(text) {
 async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()) {
   let created = 0, updated = 0;
   const refreshIds = new Set();
+  // IDs created or updated in this call — exported so the caller can pass
+  // them to the scoped Claude dedup pass at end-of-run. Used to keep dedup
+  // Claude cost bounded to the threads that actually changed this cron.
+  const touchedIds = new Set();
 
   // Hard reject categories that don't belong on a geopolitical platform.
   // Acts as a server-side safety net in case Claude ignores the prompt rules.
@@ -865,6 +899,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           });
         }
         updated++;
+        touchedIds.add(threadId);
       } else {
         // Create new thread — persist Claude's nation tags up-front so the
         // thread is regionally scoped from birth. Previously the INSERT
@@ -909,13 +944,14 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           secondary_nations: secondaryIsos,
         });
         created++;
+        touchedIds.add(Number(threadId));
       }
     } catch (err) {
       console.error(`   ⚠ Failed to persist thread "${def.title}": ${err.message}`);
     }
   }
 
-  return { c: created, u: updated, refreshIds: [...refreshIds] };
+  return { c: created, u: updated, refreshIds: [...refreshIds], touchedIds: [...touchedIds] };
 }
 
 async function insertArticles(threadId, articleIds, anchorId, importance, validIdSet) {

@@ -8814,18 +8814,82 @@ app.get("/api/briefing/:episodeId/panels", async (req, res) => {
   }
 });
 
-// GET /api/threads/:threadId/panels — returns cached panels only (auto-generation disabled to cut Claude costs)
+// GET /api/threads/:threadId/panels — returns cached panels + a computed
+// "Coverage by source country" pie prepended. The pie is computed live on
+// the thread's article set each request (cheap GROUP BY) so it's always
+// current; the generator-built analytics panels (loadPanels) come from the
+// data_panels table behind it.
 app.get("/api/threads/:threadId/panels", async (req, res) => {
   try {
     const threadId = parseInt(req.params.threadId, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
-    const rows = await dataPanels.loadPanels(pool, { type: 'thread', id: threadId });
-    res.json({ thread_id: threadId, panels: rows, count: rows.length });
+    const [coverage, rows] = await Promise.all([
+      computeCoveragePiePanel(pool, { type: 'thread', id: threadId }),
+      dataPanels.loadPanels(pool, { type: 'thread', id: threadId }),
+    ]);
+    const panels = [...(coverage ? [coverage] : []), ...rows];
+    res.json({ thread_id: threadId, panels, count: panels.length });
   } catch (err) {
     console.error("[threads/panels]", err.message);
     res.status(500).json({ error: "Failed to load thread panels" });
   }
 });
+
+// GET /api/timelines/:timelineId/panels — coverage pie only for now
+// (timelines don't have generator-built analytics panels yet).
+app.get("/api/timelines/:timelineId/panels", async (req, res) => {
+  try {
+    const timelineId = parseInt(req.params.timelineId, 10);
+    if (!Number.isFinite(timelineId)) return res.status(400).json({ error: "bad id" });
+    const coverage = await computeCoveragePiePanel(pool, { type: 'timeline', id: timelineId });
+    const panels = coverage ? [coverage] : [];
+    res.json({ timeline_id: timelineId, panels, count: panels.length });
+  } catch (err) {
+    console.error("[timelines/panels]", err.message);
+    res.status(500).json({ error: "Failed to load timeline panels" });
+  }
+});
+
+// Coverage-by-source-country pie. One aggregate query joins the thread /
+// timeline's articles to `countries` on news_articles.country_id (the
+// source country at ingestion). Top 8 slices named; everything past 8 is
+// collapsed into a single "+N more" slice so the chart stays readable for
+// threads with 30+ source countries in their long tail.
+async function computeCoveragePiePanel(pool, { type, id }) {
+  const table = type === 'timeline' ? 'story_timeline_articles' : 'story_thread_articles';
+  const col   = type === 'timeline' ? 'timeline_id' : 'thread_id';
+  const { rows } = await pool.query(`
+    SELECT co.iso_code, co.name, COUNT(DISTINCT a.id)::int AS n
+      FROM ${table} sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN countries co ON co.id = a.country_id
+     WHERE sta.${col} = $1 AND co.iso_code IS NOT NULL
+     GROUP BY co.iso_code, co.name
+     ORDER BY n DESC
+     LIMIT 32
+  `, [id]);
+  if (!rows.length) return null;
+
+  const TOP_N = 8;
+  const top = rows.slice(0, TOP_N);
+  const rest = rows.slice(TOP_N);
+  const labels = top.map(r => r.name || r.iso_code);
+  const values = top.map(r => r.n);
+  if (rest.length) {
+    labels.push(`+${rest.length} more`);
+    values.push(rest.reduce((s, r) => s + r.n, 0));
+  }
+  const total = values.reduce((a, b) => a + b, 0);
+  return {
+    title:      'Coverage by source country',
+    subtitle:   `${rows.length} countr${rows.length === 1 ? 'y' : 'ies'} · ${total} article${total === 1 ? '' : 's'}`,
+    caption:    'Distribution of the thread\u2019s articles across the source countries they were published in.',
+    chart_type: 'pie',
+    data:       { labels, series: [{ name: 'Articles', values }], unit: 'articles' },
+    source_name: 'earth00 (computed)',
+    generated_by: 'computed_stats',
+  };
+}
 
 // POST /api/briefing/location — on-demand briefing for a city or country node
 app.post("/api/briefing/location", async (req, res) => {
