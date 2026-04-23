@@ -14075,7 +14075,20 @@ function computeCityTiers(cities) {
         if (window.__currentPage !== 1) return;
         if (e.touches.length !== 1) return;
         const touchTarget = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
-        if (touchTarget?.tagName === "INPUT" || touchTarget?.tagName === "BUTTON" || touchTarget?.closest("#settingsSidebar") || touchTarget?.closest("#infoPanel")) return;
+        if (
+          touchTarget?.tagName === "INPUT" ||
+          touchTarget?.tagName === "BUTTON" ||
+          touchTarget?.closest("#settingsSidebar") ||
+          touchTarget?.closest("#infoPanel") ||
+          // Flow-context card (and its scrollable AI-context body). On
+          // mobile a touch-drag on the analysis panel should scroll the
+          // panel, never rotate the globe. The card also installs its own
+          // stopPropagation listeners for redundancy — this elementFrom-
+          // Point check catches the case where the card is in the DOM but
+          // hasn't had its listeners attached yet.
+          touchTarget?.closest("#flowCtxCard") ||
+          touchTarget?.closest("#articleDetailPanel")
+        ) return;
 
         // Don't start dragging if panel is active - let touch handler close it first
         if (isPanelActive()) return;
@@ -25158,13 +25171,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     } catch (_) {}
     // Input events over the card must NOT reach the window-level globe
-    // listeners (wheel zoom, touch-drag rotate, gesture pinch). Stop
-    // propagation at the card boundary so desktop trackpad scrolling,
-    // mouse-wheel scrolling, iPad two-finger scroll, and macOS pinch
-    // gestures over the card all stay local to the scrollable body.
+    // listeners (wheel zoom, touch-drag rotate, gesture pinch, mouse-drag
+    // rotate). The globe's rotate handler lives on `window.addEventListener
+    // ("touchstart" | "touchmove" | "mousedown" | "mousemove", …)` and does
+    // NOT bail for targets inside #flowCtxCard — so without stopPropagation
+    // a touch-drag to scroll the flow-context analysis would simultaneously
+    // spin the globe. stopPropagation at the card boundary (bubble phase)
+    // prevents the event from ever reaching window, while still letting
+    // child button/input handlers on the card fire normally.
     const _flowCtxStopBubble = (e) => { e.stopPropagation(); };
-    ['wheel','touchmove','gesturestart','gesturechange','gestureend']
-      .forEach(ev => el.addEventListener(ev, _flowCtxStopBubble, { passive: false }));
+    [
+      'wheel',
+      'touchstart','touchmove','touchend','touchcancel',
+      'pointerdown','pointermove','pointerup','pointercancel',
+      'mousedown','mousemove','mouseup',
+      'gesturestart','gesturechange','gestureend',
+    ].forEach(ev => el.addEventListener(ev, _flowCtxStopBubble, { passive: false }));
     // Pinned density-ruler footer. Appended AFTER arcContextPanel so it's
     // the last child of #flowCtxCard — visible across every tab view
     // (info, arcs, ctx) instead of only while the arcs panel is open.

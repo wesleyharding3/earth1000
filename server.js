@@ -1004,47 +1004,59 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
-    const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
+    // Inner ORDER BY controls the DISTINCT-ON dedup (pick the most recent
+    // row per article_id when multiple article_locations rows collide).
+    // Outer ORDER BY controls the user-visible ordering. These used to be
+    // combined in one clause which sorted the final result by a.id ASC
+    // (oldest article ids first) — hence the "showing oldest articles"
+    // bug report. Splitting them fixes that while preserving dedup.
+    const tagInnerTie = tagId ? `at.score DESC` : `a.published_at DESC`;
+    const tagOuter    = tagId ? `sub.score DESC NULLS LAST, sub.published_at DESC NULLS LAST`
+                              : `sub.published_at DESC NULLS LAST`;
 
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
-        a.published_at,
-        COALESCE(ns.name, ys.name) AS source_name,
-        ns.source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        COALESCE(ns.site_url, ys.site_url) AS site_url,
-        COALESCE(ns.popularity_score, 0) AS popularity_score,
-          l.iso_code_2 AS language,
-        co.iso_code,
-        co.name          AS country_name,
-        ci.name          AS city_name,
-        a.media_type,
-        a.video_id,
-        a.duration_seconds
-      FROM article_locations al
-      JOIN news_articles a   ON a.id  = al.article_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN languages  l  ON l.id = ns.language_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities    ci ON ci.id = a.city_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      ${tagJoin}
-      WHERE al.city_id        = $1
-        AND al.routing_type   IN ('content', 'source')
-        AND a.city_id        != $1
-        ${tagWhere}
-      ORDER BY a.id, ${tagOrder}
+      SELECT sub.*
+      FROM (
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          a.title,
+          a.translated_title,
+          a.url,
+          a.article_url,
+          a.summary,
+          a.translated_summary,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          a.published_at,
+          COALESCE(ns.name, ys.name) AS source_name,
+          ns.source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          COALESCE(ns.popularity_score, 0) AS popularity_score,
+            l.iso_code_2 AS language,
+          co.iso_code,
+          co.name          AS country_name,
+          ci.name          AS city_name,
+          a.media_type,
+          a.video_id,
+          a.duration_seconds${tagId ? ",\n          at.score AS score" : ""}
+        FROM article_locations al
+        JOIN news_articles a   ON a.id  = al.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities    ci ON ci.id = a.city_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        ${tagJoin}
+        WHERE al.city_id        = $1
+          AND al.routing_type   IN ('content', 'source')
+          AND a.city_id        != $1
+          ${tagWhere}
+        ORDER BY a.id, ${tagInnerTie}
+      ) sub
+      ORDER BY ${tagOuter}
       ${limit ? "LIMIT $2" : ""}
       OFFSET $${limit ? 3 : 2}
     `, limit ? [req.params.cityId, limit, offset] : [req.params.cityId, offset]);
@@ -1099,47 +1111,54 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
-    const tagOrder = tagId ? `at.score DESC` : `a.published_at DESC`;
+    // See the city/global handler for the DISTINCT-ON ordering note.
+    const tagInnerTie = tagId ? `at.score DESC` : `a.published_at DESC`;
+    const tagOuter    = tagId ? `sub.score DESC NULLS LAST, sub.published_at DESC NULLS LAST`
+                              : `sub.published_at DESC NULLS LAST`;
 
     const { rows } = await pool.query(`
-      SELECT DISTINCT ON (a.id)
-        a.id,
-        a.title,
-        a.translated_title,
-        a.url,
-        a.article_url,
-        a.summary,
-        a.translated_summary,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
-        a.published_at,
-        COALESCE(ns.name, ys.name) AS source_name,
-        ns.source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        COALESCE(ns.site_url, ys.site_url) AS site_url,
-        COALESCE(ns.popularity_score, 0) AS popularity_score,
-          l.iso_code_2 AS language,
-        co.iso_code,
-        co.name          AS country_name,
-        ci.name          AS city_name,
-        a.media_type,
-        a.video_id,
-        a.duration_seconds
-      FROM article_locations al
-      JOIN news_articles a   ON a.id  = al.article_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN languages  l  ON l.id = ns.language_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities    ci ON ci.id = a.city_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      ${tagJoin}
-      WHERE al.country_id     = $1
-        AND al.routing_type   IN ('content', 'source')
-        AND a.country_id     != $1
-        ${tagWhere}
-      ORDER BY a.id, ${tagOrder}
+      SELECT sub.*
+      FROM (
+        SELECT DISTINCT ON (a.id)
+          a.id,
+          a.title,
+          a.translated_title,
+          a.url,
+          a.article_url,
+          a.summary,
+          a.translated_summary,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          a.published_at,
+          COALESCE(ns.name, ys.name) AS source_name,
+          ns.source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          COALESCE(ns.site_url, ys.site_url) AS site_url,
+          COALESCE(ns.popularity_score, 0) AS popularity_score,
+            l.iso_code_2 AS language,
+          co.iso_code,
+          co.name          AS country_name,
+          ci.name          AS city_name,
+          a.media_type,
+          a.video_id,
+          a.duration_seconds${tagId ? ",\n          at.score AS score" : ""}
+        FROM article_locations al
+        JOIN news_articles a   ON a.id  = al.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN languages  l  ON l.id = ns.language_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities    ci ON ci.id = a.city_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        ${tagJoin}
+        WHERE al.country_id     = $1
+          AND al.routing_type   IN ('content', 'source')
+          AND a.country_id     != $1
+          ${tagWhere}
+        ORDER BY a.id, ${tagInnerTie}
+      ) sub
+      ORDER BY ${tagOuter}
       ${limit ? "LIMIT $2" : ""}
       OFFSET $${limit ? 3 : 2}
     `, limit ? [req.params.countryId, limit, offset] : [req.params.countryId, offset]);

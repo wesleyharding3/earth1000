@@ -514,20 +514,97 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and
     "primary_category": "politics|economy|military|diplomacy|environment|technology",
     "geographic_scope": "global|regional|local",
     "importance": 7,
-    "keywords": ["array", "of", "5-10", "core", "keywords"]
+    "keywords": ["array", "of", "5-10", "core", "keywords"],
+    "primary_nations":   ["ISO", "codes", "of", "countries", "central", "to", "this", "story", "— 1-4 entries"],
+    "secondary_nations": ["ISO", "codes", "of", "countries", "with", "meaningful", "but", "non-central", "roles", "— 0-6 entries"]
   }
-]`;
+]
+
+═══ NATION TAGGING ═══
+primary_nations = the 1-4 ISO 3166-1 alpha-2 country codes most central to the story. Named actors, the site of the event, the state doing the action, the state being acted upon. Example: a US airstrike on Iran → ["US","IR"]. A China-Taiwan summit → ["CN","TW"]. A Hungarian internal election → ["HU"].
+secondary_nations = countries with meaningful but NOT central roles. Allies, transit states, affected economies, rhetorical actors, diplomatic intermediaries. Keep this tight — do not list every country mentioned in passing. Example for Hormuz shipping attack: primary ["IR","US"], secondary ["AE","SA","OM","CN"] (affected shippers + regional powers).
+USE CORRECT ISO CODES: United Kingdom = GB (not UK), South Korea = KR, North Korea = KP, United States = US, Russia = RU, Czech Republic = CZ, etc.`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
-    max_tokens: 3072,
+    // Bumped from 3072 → 8192 because CLAUDE_BATCH=100 regularly produces
+    // JSON arrays that overran the old cap mid-object ("Expected ',' or
+    // '}' after property value"). 8192 gives ~6× the old headroom.
+    max_tokens: 8192,
     messages:   [{ role: "user", content: prompt }]
   });
 
   const text = response.content[0].text.trim();
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) throw new Error(`No JSON array in Claude response: ${text.slice(0, 200)}`);
-  return JSON.parse(jsonMatch[0]);
+  return parseClaudeJsonArray(text);
+}
+
+// Resilient JSON array parser for Claude responses. Handles:
+//   • Wrapping commentary / code fences / trailing prose
+//   • Truncated responses where max_tokens cut the tail mid-object —
+//     we walk the bracket depth and keep only complete top-level objects,
+//     so a batch that returns 15 good defs + a half-finished 16th still
+//     persists the 15.
+function parseClaudeJsonArray(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+
+  // Strip code-fence wrappers if present.
+  const unfenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // Fast path: whole response is a valid array.
+  try {
+    const parsed = JSON.parse(unfenced);
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+
+  // Locate the opening [ of the array. Anything before it is prose.
+  const startIdx = unfenced.indexOf('[');
+  if (startIdx < 0) {
+    throw new Error(`No JSON array in Claude response: ${unfenced.slice(0, 200)}`);
+  }
+
+  // Walk forward character-by-character, respecting string literals and
+  // escape sequences, to find every top-level object boundary. At each
+  // complete {...} at depth 1, attempt to JSON.parse it and collect.
+  const out = [];
+  let depth = 0;       // bracket depth, counting the outer [ as 1
+  let objStart = -1;
+  let inString = false;
+  let escape = false;
+  for (let i = startIdx; i < unfenced.length; i++) {
+    const ch = unfenced[i];
+    if (inString) {
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { escape = true; continue; }
+      if (ch === '"')  { inString = false; }
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '[') { depth++; continue; }
+    if (ch === '{') {
+      if (depth === 1 && objStart < 0) objStart = i;
+      depth++;
+      continue;
+    }
+    if (ch === '}') {
+      depth--;
+      if (depth === 1 && objStart >= 0) {
+        const slice = unfenced.slice(objStart, i + 1);
+        try { out.push(JSON.parse(slice)); } catch (_) { /* skip malformed object */ }
+        objStart = -1;
+      }
+      continue;
+    }
+    if (ch === ']') {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+
+  if (!out.length) {
+    throw new Error(`Could not recover any JSON objects from Claude response: ${unfenced.slice(0, 200)}`);
+  }
+  return out;
 }
 
 // ─── Persist ─────────────────────────────────────────────────────────────────
@@ -734,12 +811,31 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     try {
       if (def.existing_thread_id) {
         const threadId = Number(def.existing_thread_id);
+        // Guard against Claude hallucinating a dead thread id. If the
+        // referenced thread isn't in the active map we loaded from Postgres
+        // at the top of the run, reroute the def as NEW — otherwise the
+        // UPDATE below silently no-ops and insertArticles FK-violates.
+        if (!existingThreadMap.has(threadId)) {
+          console.log(`   ⚠ Claude referenced unknown thread id ${threadId} for "${def.title}" — routing as NEW`);
+          def.existing_thread_id = null;
+          // Fall through to the "else" branch by re-entering the loop
+          // iteration. Easiest way without restructuring: duplicate the
+          // NEW-thread path inline below.
+        }
+      }
+
+      if (def.existing_thread_id) {
+        const threadId = Number(def.existing_thread_id);
         const current = existingThreadMap.get(threadId);
         if (shouldRefreshThreadContext(current, def.keywords || [])) {
           refreshIds.add(threadId);
         }
 
-        // Update existing thread
+        // Update existing thread — merge incoming country codes into the
+        // thread's existing primary/secondary nation arrays so a thread's
+        // geographic scope grows as new articles add new actors.
+        const primaryIsos   = sanitizeIsos(def.primary_nations);
+        const secondaryIsos = sanitizeIsos(def.secondary_nations);
         await pool.query(`
           UPDATE story_threads
           SET last_updated_at = NOW(),
@@ -747,9 +843,15 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
               article_count   = article_count + $2,
               keywords        = (
                 SELECT ARRAY(SELECT DISTINCT unnest(keywords || $3::text[]))
+              ),
+              primary_nations = (
+                SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(primary_nations,   ARRAY[]::text[]) || $5::text[]))
+              ),
+              secondary_nations = (
+                SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(secondary_nations, ARRAY[]::text[]) || $6::text[]))
               )
           WHERE id = $4
-        `, [def.importance, def.article_ids.length, def.keywords || [], threadId]);
+        `, [def.importance, def.article_ids.length, def.keywords || [], threadId, primaryIsos, secondaryIsos]);
 
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
@@ -764,11 +866,20 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         }
         updated++;
       } else {
-        // Create new thread
+        // Create new thread — persist Claude's nation tags up-front so the
+        // thread is regionally scoped from birth. Previously the INSERT
+        // omitted primary/secondary_nations entirely, so every new thread
+        // started with NULL and only a minority got back-filled later by
+        // deep enrichment. Visible symptom: new threads rendered with no
+        // country badges in the UI.
+        const primaryIsos   = sanitizeIsos(def.primary_nations);
+        const secondaryIsos = sanitizeIsos(def.secondary_nations);
         const { rows } = await pool.query(`
           INSERT INTO story_threads
-            (title, description, primary_category, geographic_scope, importance, keywords, article_count)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (title, description, primary_category, geographic_scope,
+             importance, keywords, article_count,
+             primary_nations, secondary_nations)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           RETURNING id
         `, [
           def.title,
@@ -777,7 +888,9 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           def.geographic_scope || "global",
           def.importance       || 5,
           def.keywords         || [],
-          def.article_ids.length
+          def.article_ids.length,
+          primaryIsos,
+          secondaryIsos,
         ]);
 
         const threadId = rows[0].id;
@@ -791,7 +904,9 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           geographic_scope: def.geographic_scope || "global",
           importance: def.importance || 5,
           keywords: def.keywords || [],
-          article_count: def.article_ids.length
+          article_count: def.article_ids.length,
+          primary_nations: primaryIsos,
+          secondary_nations: secondaryIsos,
         });
         created++;
       }
@@ -1039,9 +1154,30 @@ function jaccard(setA, setB) {
   return union ? intersect / union : 0;
 }
 
+function countIntersect(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+  const [small, big] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
+  let n = 0;
+  for (const x of small) if (big.has(x)) n++;
+  return n;
+}
+
+// Overlap coefficient / Szymkiewicz-Simpson: |A∩B| / min(|A|,|B|). Useful
+// when one set is meaningfully shorter than the other (e.g. a 4-token
+// title like "Denmark Train Collision: 17 Injured" vs a 7-token title
+// "Train Collision in Denmark Kills Five, Injures Eighteen") — Jaccard
+// penalizes that asymmetry, containment doesn't.
+function containment(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+  const n = countIntersect(setA, setB);
+  const denom = Math.min(setA.size, setB.size);
+  return denom ? n / denom : 0;
+}
+
 async function dedupSimilarThreads() {
   const { rows: threads } = await pool.query(`
-    SELECT id, title, keywords, primary_category, importance, article_count, last_updated_at
+    SELECT id, title, keywords, primary_category, primary_nations, secondary_nations,
+           importance, article_count, last_updated_at
     FROM story_threads
     WHERE status = 'active'
       AND last_updated_at > NOW() - INTERVAL '21 days'
@@ -1050,11 +1186,15 @@ async function dedupSimilarThreads() {
 
   if (threads.length < 2) return 0;
 
-  // Pre-compute token/keyword sets
+  // Pre-compute token / keyword / nation sets
   const enriched = threads.map(t => ({
     ...t,
     _titleTokens: tokenizeTitle(t.title),
-    _kwSet: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean))
+    _kwSet: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean)),
+    _primaryNations: new Set(
+      (Array.isArray(t.primary_nations) ? t.primary_nations : [])
+        .map(s => String(s || '').toUpperCase()).filter(Boolean)
+    ),
   }));
 
   // Union-Find: group all transitively-similar threads
@@ -1074,9 +1214,29 @@ async function dedupSimilarThreads() {
       // Require category match to avoid e.g. politics ↔ sports false merges
       if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) continue;
 
+      // ── Three similarity signals (ANY triggers a merge) ─────────────
+      // Jaccard alone at 0.60 was empirically too strict for Claude's
+      // re-wordings in separate batches — e.g. "Trump Orders Naval
+      // Action…" vs "Trump Escalates Hormuz Blockade With Shoot-to-Kill
+      // Orders" only scored 0.40. Add containment (|A∩B|/min(|A|,|B|))
+      // which forgives length differences, and a nation-overlap shortcut
+      // so two same-category threads sharing primary nations + ≥3 title
+      // tokens merge. All thresholds lowered but each still requires ≥3
+      // token overlap to avoid short-title false positives.
+      const titleTokenOverlap = countIntersect(a._titleTokens, b._titleTokens);
       const titleSim = jaccard(a._titleTokens, b._titleTokens);
+      const titleContainment = containment(a._titleTokens, b._titleTokens);
       const kwSim    = jaccard(a._kwSet, b._kwSet);
-      if (titleSim >= 0.60 || kwSim >= 0.70) {
+      const nationOverlap = countIntersect(a._primaryNations, b._primaryNations);
+
+      const similarTitle = (titleSim >= 0.40 && titleTokenOverlap >= 3)
+                         || (titleContainment >= 0.55 && titleTokenOverlap >= 3);
+      const similarKeywords = kwSim >= 0.55;
+      const nationalAndTitleHints = nationOverlap >= 1
+                                 && titleTokenOverlap >= 3
+                                 && (titleSim >= 0.30 || kwSim >= 0.35);
+
+      if (similarTitle || similarKeywords || nationalAndTitleHints) {
         union(a.id, b.id);
       }
     }
@@ -1338,6 +1498,51 @@ async function getActiveThreads() {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Normalize an iterable of ISO 3166-1 alpha-2 codes as they come back from
+// Claude. Handles the common Claude mistakes: full country names instead of
+// codes, lowercase, UK→GB, blank strings. Returns a deduped uppercase array
+// ready to drop into a TEXT[] column.
+const _ISO_NAME_FIX = new Map([
+  ['united kingdom','GB'], ['uk','GB'], ['great britain','GB'], ['britain','GB'], ['england','GB'],
+  ['united states','US'], ['usa','US'], ['u.s.','US'], ['u.s.a.','US'], ['america','US'],
+  ['united arab emirates','AE'], ['uae','AE'],
+  ['south korea','KR'], ['republic of korea','KR'],
+  ['north korea','KP'], ['dprk','KP'],
+  ['russia','RU'], ['russian federation','RU'],
+  ['china','CN'], ["people's republic of china",'CN'], ['prc','CN'],
+  ['iran','IR'], ['islamic republic of iran','IR'],
+  ['czech republic','CZ'], ['czechia','CZ'],
+  ['ivory coast','CI'], ["cote d'ivoire",'CI'],
+  ['democratic republic of the congo','CD'], ['drc','CD'], ['dr congo','CD'],
+  ['vatican','VA'], ['holy see','VA'],
+  ['east timor','TL'], ['timor-leste','TL'],
+  ['myanmar','MM'], ['burma','MM'],
+  ['taiwan','TW'], ['republic of china','TW'],
+]);
+function sanitizeIsos(input) {
+  if (!Array.isArray(input)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of input) {
+    if (raw == null) continue;
+    const s = String(raw).trim();
+    if (!s) continue;
+    let code;
+    if (/^[A-Za-z]{2}$/.test(s)) {
+      code = s.toUpperCase();
+      if (code === 'UK') code = 'GB';
+    } else {
+      const fix = _ISO_NAME_FIX.get(s.toLowerCase());
+      if (fix) code = fix;
+      else continue; // 3-letter / malformed inputs are dropped rather than guessed
+    }
+    if (seen.has(code)) continue;
+    seen.add(code);
+    out.push(code);
+  }
+  return out;
+}
+
 function normalizeKeyword(keyword) {
   return String(keyword || "")
     .normalize("NFKD")
@@ -1383,7 +1588,22 @@ function computeArticleRelevanceScore(importance, publishedAt) {
   return Number((base * recencyFactor).toFixed(4));
 }
 
-run().catch(err => {
-  console.error("Fatal:", err);
-  process.exit(1);
-});
+// Export a handful of helpers so one-shot maintenance scripts
+// (backfillThreadNations.js, auditDedupThreads.js, etc.) can reuse the
+// same logic without drifting. Don't auto-run `run()` when required as a
+// module — only when invoked directly via `node storyThreadBuilder.js`.
+module.exports = {
+  dedupSimilarThreads,
+  sanitizeIsos,
+  tokenizeTitle,
+  jaccard,
+  containment,
+  countIntersect,
+};
+
+if (require.main === module) {
+  run().catch(err => {
+    console.error("Fatal:", err);
+    process.exit(1);
+  });
+}
