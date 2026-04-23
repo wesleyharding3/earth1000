@@ -23,57 +23,19 @@
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
-// Note: keyword normalization used to run inline here (4× / day, capped at
-// 800 kw / 80 k chars / run, silent-catch). It gave us <1% non-English
-// normalization coverage and silo'd every non-English article from the
-// language bridge. Normalization is now a dedicated cron —
-// keywordNormalizerCron.js — that runs hourly with 5× the cap and no
-// silent-catch. The builder assumes translations are already populated.
-// Deep enrichment moved to articleDeepEnrichment.js — one scrape + one
-// Claude call per article, output persisted to article_deep_context so
-// briefingGenerator can read cached context instead of re-scraping.
-// deepAnalyzer.js is deprecated but still re-exports enrichArticle as
-// deepAnalyzeArticle for any stray callers.
-const { enrichArticle } = require("./articleDeepEnrichment");
-const { loadRulesBlock } = require("./editorialRuleInjector");
-const { classifyAndTierThread } = require("./entityTierWiring");
+const { normalizeRecentKeywords } = require("./keywordNormalizer");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Detect garbled/mojibake text (e.g. Cyrillic stored as Latin-1)
-function isGarbledText(str) {
-  if (!str) return false;
-  // Contains Unicode replacement characters
-  if (str.includes('\uFFFD')) return true;
-  // High ratio of non-ASCII non-letter characters suggests encoding corruption
-  const nonPrintable = str.replace(/[\x20-\x7E\u00A0-\u024F\u0400-\u04FF\u0600-\u06FF\u4E00-\u9FFF\u3000-\u303F\uAC00-\uD7AF\u0E00-\u0E7F]/g, '');
-  return nonPrintable.length > str.length * 0.3;
-}
-
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
-// --sanity-check-articles runs a Claude pass per active/cooling thread
-// that asks "which of these articles don't match the thread's theme?"
-// Default is DRY RUN (log only) unless --sanity-check-articles-write is
-// also passed. Opt-in because it spends Claude tokens; expected cost is
-// ~1 Haiku call per active thread.
-const SANITY_CHECK_ARTICLES       = process.argv.includes('--sanity-check-articles');
-const SANITY_CHECK_ARTICLES_WRITE = process.argv.includes('--sanity-check-articles-write');
-const CLAUDE_BATCH    = 30;    // articles per Claude call
-const MIN_CLUSTER     = 2;     // min articles to form a cluster (Claude sees singletons too)
+const CLAUDE_BATCH    = 120;    // articles per Claude call
+const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees singletons too)
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
 const FRESH_PRIORITY_HOURS = 6;
-// Capacity bump (2026-04-19): pipeline audit showed attach_rate of 0.1–1.5%
-// of daily ingest. Builder was processing 300/run × 4 runs/day = 1 200/day
-// against 60–120 k/day ingestion. Combined with an 8× cron cadence bump on
-// Render (every 3h instead of every 6h) this lifts capacity to ≈ 5 000/day,
-// covering the actual breaking-story stream instead of a thin sliver.
-// Budget impact at Haiku 4.5: ~$5.85/day builder + $1.80/day normalizer,
-// before prompt caching. Caching on the rules+existing-threads prefix
-// trims another ~40 % off builder input cost.
-const FRESH_PRIORITY_LIMIT = 200;
-const TOTAL_ARTICLE_LIMIT  = 625;
+const FRESH_PRIORITY_LIMIT = 100;
+const TOTAL_ARTICLE_LIMIT  = 1200;
 const REFRESH_MIN_ARTICLES = 5;
 const REFRESH_MIN_NEW_KWS  = 3;
 const RECENCY_HALF_LIFE_HOURS = 36;
@@ -91,29 +53,20 @@ async function run() {
   const elapsed = () => `+${((Date.now()-t0)/1000).toFixed(1)}s`;
 
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
-  console.log(`   lookback=${LOOKBACK_HOURS}h  fresh_limit=${FRESH_PRIORITY_LIMIT}  total_limit=${TOTAL_ARTICLE_LIMIT}  claude_batch=${CLAUDE_BATCH}`);
+  console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
 
-  // Report normalization coverage at run start. If it's collapsed (e.g.
-  // keywordNormalizerCron stopped firing or is failing) we want the
-  // builder log to surface it — not silently cluster on un-bridged
-  // source-language keywords and pretend that's fine.
-  try {
-    const { rows: cov } = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE ak.source_language IS DISTINCT FROM 'en')::int AS non_en_rows,
-        COUNT(*) FILTER (WHERE ak.source_language IS DISTINCT FROM 'en' AND ak.normalized_keyword IS NOT NULL)::int AS non_en_normalized
-      FROM article_keywords ak
-      JOIN news_articles a ON a.id = ak.article_id
-      WHERE a.published_at > NOW() - ($1 * INTERVAL '1 hour')
-    `, [LOOKBACK_HOURS]);
-    const { non_en_rows, non_en_normalized } = cov[0] || {};
-    const pct = non_en_rows ? (100 * non_en_normalized / non_en_rows).toFixed(1) : '0.0';
-    console.log(`   [${elapsed()}] non-en normalization coverage (last ${LOOKBACK_HOURS}h): ${non_en_normalized}/${non_en_rows} = ${pct}%`);
-    if (non_en_rows && (non_en_normalized / non_en_rows) < 0.10) {
-      console.warn(`   ⚠ Non-English normalization coverage is low (<10%). Check keywordNormalizerCron on Render.`);
-    }
-  } catch (e) {
-    console.warn(`   ⚠ Could not read normalization coverage: ${e.message}`);
+  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords...`);
+  const normalization = await normalizeRecentKeywords({
+    pool,
+    anthropicClient: client,
+    logger: console,
+    scope: { hours: LOOKBACK_HOURS }
+  }).catch(err => {
+    console.warn(`   ⚠ Keyword normalization skipped: ${err.message}`);
+    return null;
+  });
+  if (normalization) {
+    console.log(`   [${elapsed()}] Keyword normalization provider=${normalization.provider} updated_keywords=${normalization.updatedKeywords} updated_rows=${normalization.updatedRows}`);
   }
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
@@ -132,46 +85,10 @@ async function run() {
   const existingThreadMap = new Map(existingThreads.map(t => [Number(t.id), { ...t }]));
   console.log(`   [${elapsed()}] Active threads in DB: ${existingThreads.length}`);
 
-  // FROZEN existing-threads snapshot used as Claude's cacheable prompt
-  // prefix. Computing it once per run keeps the prefix byte-identical
-  // across every batch, which is what prompt-caching requires. The
-  // downside — Claude in later batches can't see threads created earlier
-  // in the SAME run — is intentional and tolerated: dedupSimilarThreads
-  // runs at end-of-run (see below) and collapses any duplicate threads a
-  // blind-batch pair might spawn. Same trade-off the code already
-  // assumes: "batch-isolated Claude calls inevitably create duplicates".
-  const frozenExistingData = existingThreads.slice(0, 150).map(t => ({
-    id:    t.id,
-    title: t.title,
-    kw:    (t.keywords || []).slice(0, 3),
-    cat:   t.primary_category
-  }));
-  // Sort by id so the JSON serialization is deterministic — any drift in
-  // Map iteration order would invalidate the cache on every batch.
-  frozenExistingData.sort((a, b) => Number(a.id) - Number(b.id));
-
   let created = 0, updated = 0;
-  // Run-level counters for the end-of-run summary. These are the
-  // diagnostic we were missing before — without them, silent failures
-  // (Claude JSON parse, rate limits, junk-filter rejections) are
-  // indistinguishable from "nothing was threadable this run".
-  const metrics = {
-    batchesTotal:   0,
-    batchesOk:      0,
-    batchesFailed:  0,
-    claudeDefs:     0,  // total thread-defs Claude returned
-    articlesIn:     articles.length,
-    articlesClaudeSent: 0,
-    articlesAttached: 0,
-    cacheReadIn:    0,  // tokens served from cache
-    cacheWriteIn:   0,  // tokens written to cache
-    stdIn:          0,  // uncached input tokens
-    outTokens:      0
-  };
   const refreshThreadIds = new Set();
   const allGroups = [...clusters, ...chunkSingletons(singletons, 20)];
   const totalBatches = Math.ceil(allGroups.length / 3);
-  metrics.batchesTotal = totalBatches;
   console.log(`   [${elapsed()}] Sending ${totalBatches} batch(es) to Claude...\n`);
 
   for (let i = 0; i < allGroups.length; i += 3) {
@@ -180,25 +97,14 @@ async function run() {
     if (!batch.length) continue;
 
     process.stdout.write(`   [${elapsed()}] Batch ${batchNum}/${totalBatches} (${batch.length} articles) → Claude... `);
-    metrics.articlesClaudeSent += batch.length;
     try {
       const validIdSet = new Set(batch.map(a => Number(a.id)));
-      const { defs, usage } = await evaluateWithClaude(batch, frozenExistingData);
-      metrics.claudeDefs += defs.length;
-      if (usage) {
-        metrics.cacheReadIn   += usage.cache_read_input_tokens    || 0;
-        metrics.cacheWriteIn  += usage.cache_creation_input_tokens || 0;
-        metrics.stdIn         += usage.input_tokens               || 0;
-        metrics.outTokens     += usage.output_tokens              || 0;
-      }
-      const { c, u, refreshIds, attachedCount } = await persistThreadDefs(defs, validIdSet, existingThreadMap, batch);
+      const defs = await evaluateWithClaude(batch, [...existingThreadMap.values()]);
+      const { c, u, refreshIds } = await persistThreadDefs(defs, validIdSet, existingThreadMap);
       created += c; updated += u;
-      metrics.articlesAttached += (attachedCount || 0);
       refreshIds.forEach(id => refreshThreadIds.add(Number(id)));
-      metrics.batchesOk += 1;
-      console.log(`✓ ${defs.length} defs (${c} new, ${u} updated)`);
+      console.log(`✓ ${defs.length} threads (${c} new, ${u} updated)`);
     } catch (err) {
-      metrics.batchesFailed += 1;
       console.log(`✗ ERROR: ${err.message}`);
     }
 
@@ -221,185 +127,8 @@ async function run() {
   console.log(`\n   [${elapsed()}] Cooling down inactive threads...`);
   await coolDownInactiveThreads();
 
-  // ── Deep-analyze top 2 articles per active thread ──────────────────────
-  // Replaces the old per-article fire-and-forget in articleListener.js.
-  // Only analyzes the highest-relevance articles that haven't been analyzed
-  // yet, cutting Haiku costs ~90%.
-  console.log(`\n   [${elapsed()}] Deep-analyzing top articles per thread...`);
-  const deepAnalyzed = await deepAnalyzeTopPerThread();
-  console.log(`   [${elapsed()}] Deep-analyzed ${deepAnalyzed} article(s)`);
-
-  // End-of-run summary. Every run now emits one structured block so we
-  // can diff runs over time — and so a collapse in, e.g., Claude JSON
-  // parse success shows up as a concrete number instead of "it feels
-  // like fewer threads lately".
-  const runSec = ((Date.now() - t0) / 1000).toFixed(1);
-  const attachRate = metrics.articlesIn
-    ? (100 * metrics.articlesAttached / metrics.articlesIn).toFixed(1)
-    : '0.0';
-  const cacheHitRate = (metrics.cacheReadIn + metrics.stdIn + metrics.cacheWriteIn)
-    ? (100 * metrics.cacheReadIn / (metrics.cacheReadIn + metrics.stdIn + metrics.cacheWriteIn)).toFixed(1)
-    : '0.0';
-  console.log(`\n═══ RUN SUMMARY (${runSec}s) ═══`);
-  console.log(`  articles_in          : ${metrics.articlesIn}`);
-  console.log(`  articles_claude_sent : ${metrics.articlesClaudeSent}`);
-  console.log(`  articles_attached    : ${metrics.articlesAttached}  (${attachRate}% of in)`);
-  console.log(`  batches              : ${metrics.batchesOk}/${metrics.batchesTotal} ok, ${metrics.batchesFailed} failed`);
-  console.log(`  claude_defs_returned : ${metrics.claudeDefs}`);
-  console.log(`  threads_created      : ${created}`);
-  console.log(`  threads_updated      : ${updated}`);
-  console.log(`  input_tokens         : std=${metrics.stdIn}  cache_read=${metrics.cacheReadIn}  cache_write=${metrics.cacheWriteIn}  (cache_hit=${cacheHitRate}%)`);
-  console.log(`  output_tokens        : ${metrics.outTokens}`);
-
-  // ─── Final-phase: thread article sanity check (opt-in) ────────────────
-  // Runs "at the very end" per the design. For each active/cooling thread
-  // with >= 3 articles, Claude Haiku judges which articles don't fit the
-  // thread's theme and flags them for detach. Dry-run by default; actual
-  // detaching requires the companion --sanity-check-articles-write flag.
-  if (SANITY_CHECK_ARTICLES) {
-    console.log(`\n─── Article sanity check${SANITY_CHECK_ARTICLES_WRITE ? '' : ' (DRY RUN)'} ───`);
-    try {
-      const sc = await runThreadArticleSanityCheck({
-        dryRun: !SANITY_CHECK_ARTICLES_WRITE,
-      });
-      console.log(`  threads scanned       : ${sc.threadsScanned}`);
-      console.log(`  articles flagged      : ${sc.articlesFlagged}`);
-      console.log(`  articles detached     : ${sc.articlesDetached}${sc.dryRun ? '  (dry run — no writes)' : ''}`);
-      console.log(`  claude_calls (sanity) : ${sc.claudeCalls}`);
-      console.log(`  tokens                : in=${sc.inputTokens} out=${sc.outputTokens}`);
-    } catch (err) {
-      console.warn(`  ⚠ sanity check failed: ${err.message}`);
-    }
-  }
-
-  console.log(`✅ Done.\n`);
+  console.log(`\n✅ Done in ${((Date.now()-t0)/1000).toFixed(1)}s — ${created} threads created, ${updated} updated.\n`);
   await pool.end();
-}
-
-// ═════════════════════════════════════════════════════════════════════════
-// THREAD ARTICLE SANITY CHECK
-// Load each active / cooling thread with its attached articles. Ask Claude
-// Haiku "which of these articles don't belong to this thread's theme?"
-// Prompt is strict-but-not-pedantic: when in doubt, keep the article.
-// Detachment removes the sta row only; the article itself stays in the
-// global pool and can still be attached to other threads.
-// ═════════════════════════════════════════════════════════════════════════
-async function runThreadArticleSanityCheck({ dryRun = true } = {}) {
-  const stats = {
-    threadsScanned:  0,
-    articlesFlagged: 0,
-    articlesDetached: 0,
-    claudeCalls:     0,
-    inputTokens:     0,
-    outputTokens:    0,
-    dryRun,
-  };
-
-  const { rows: threads } = await pool.query(`
-    SELECT id, title, description, primary_category, keywords, primary_nations, article_count
-    FROM story_threads
-    WHERE status IN ('active', 'cooling')
-      AND article_count >= 3
-    ORDER BY article_count DESC
-    LIMIT 200
-  `);
-
-  for (const t of threads) {
-    // Pull the thread's articles. Cap at 40 to keep prompt size bounded
-    // per thread (most threads have fewer; the 40 cap only kicks in on
-    // unusually large ones and picks the most-recent + anchor articles).
-    const { rows: articles } = await pool.query(`
-      SELECT a.id, COALESCE(a.translated_title, a.title) AS title, sta.is_anchor
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      WHERE sta.thread_id = $1
-      ORDER BY sta.is_anchor DESC NULLS LAST, a.published_at DESC
-      LIMIT 40
-    `, [t.id]);
-    if (articles.length < 3) continue;
-
-    stats.threadsScanned++;
-
-    const prompt =
-`You are auditing articles attached to a news thread. Identify articles that
-do NOT belong to this thread's theme.
-
-THREAD:
-  title: ${t.title}
-  description: ${(t.description || '').slice(0, 300)}
-  keywords: ${(t.keywords || []).slice(0, 8).join(', ')}
-  primary_nations: ${(t.primary_nations || []).join(', ') || '(none)'}
-  category: ${t.primary_category || ''}
-
-ARTICLES ATTACHED:
-${articles.map(a => `  ${a.id}${a.is_anchor ? ' [ANCHOR]' : ''}: ${String(a.title || '').slice(0, 160)}`).join('\n')}
-
-Rules:
-  - Article belongs if it covers the same event, story, or ongoing subject.
-  - Tangential keyword mentions DON'T count — if the article is mainly
-    about a different country's unrelated story that happens to mention a
-    shared term, flag it for detach.
-  - NEVER flag an anchor article. Anchors define the thread.
-  - Be strict but not pedantic. False-positive detachments (removing a
-    legit article) are WORSE than false-negatives. When in doubt, keep.
-
-Return ONLY this JSON, no prose, no markdown fences:
-{"detach": [12345, 67890], "reason": "one sentence summary"}`;
-
-    let detachIds = [];
-    try {
-      const r = await client.messages.create({
-        model:      'claude-haiku-4-5',
-        max_tokens: 400,
-        messages:   [{ role: 'user', content: prompt }],
-      });
-      stats.claudeCalls++;
-      stats.inputTokens  += r.usage?.input_tokens || 0;
-      stats.inputTokens  += r.usage?.cache_read_input_tokens || 0;
-      stats.outputTokens += r.usage?.output_tokens || 0;
-      const raw = r.content?.[0]?.text || '';
-      const match = raw.match(/\{[\s\S]*?\}/);
-      if (!match) continue;
-      let parsed;
-      try { parsed = JSON.parse(match[0]); } catch { continue; }
-      const anchorIds = new Set(articles.filter(a => a.is_anchor).map(a => a.id));
-      const attachedIds = new Set(articles.map(a => a.id));
-      detachIds = (Array.isArray(parsed.detach) ? parsed.detach : [])
-        .map(n => parseInt(n, 10))
-        .filter(n => Number.isFinite(n) && attachedIds.has(n) && !anchorIds.has(n));
-    } catch (err) {
-      console.warn(`  thread ${t.id}: claude call failed — ${err.message}`);
-      continue;
-    }
-
-    if (!detachIds.length) continue;
-    stats.articlesFlagged += detachIds.length;
-
-    // Show what Claude flagged for each thread so the user can eyeball it
-    const flaggedTitles = detachIds
-      .map(id => articles.find(a => a.id === id)?.title || '(unknown)')
-      .map(s => s.slice(0, 80));
-    console.log(`  thread #${t.id} "${String(t.title || '').slice(0, 40)}" — flag ${detachIds.length}:`);
-    flaggedTitles.forEach(tt => console.log(`      · ${tt}`));
-
-    if (!dryRun) {
-      const { rowCount } = await pool.query(
-        `DELETE FROM story_thread_articles WHERE thread_id = $1 AND article_id = ANY($2::int[])`,
-        [t.id, detachIds]
-      );
-      stats.articlesDetached += rowCount || 0;
-      // Recount article_count to stay accurate
-      await pool.query(
-        `UPDATE story_threads SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1) WHERE id = $1`,
-        [t.id]
-      );
-    }
-
-    // Light throttle so 200-thread sweep doesn't burst Anthropic TPS
-    await new Promise(r => setTimeout(r, 150));
-  }
-
-  return stats;
 }
 
 // ─── SQL Pre-Clustering ───────────────────────────────────────────────────────
@@ -464,18 +193,10 @@ function chunkSingletons(singletons, size) {
 
 // ─── Claude Evaluation ────────────────────────────────────────────────────────
 
-// NOTE: `existingData` is now passed in pre-computed from run(). It's
-// frozen once at run start so the cacheable prompt prefix stays
-// byte-identical across every batch in a run. Claude in later batches
-// won't see threads created earlier in the SAME run — dedupSimilarThreads
-// cleans up any duplicate spawns at end of run, which is the same
-// trade-off the code already assumes for batch-isolated calls.
-async function evaluateWithClaude(articles, existingData) {
-  const articleData = articles
-    .filter(a => !isGarbledText(a.translated_title || a.title))
-    .map(a => ({
+async function evaluateWithClaude(articles, existingThreads) {
+  const articleData = articles.map(a => ({
     id:           a.id,
-    title:        a.translated_title || a.title,
+    title:        a.title,
     summary:      (a.translated_summary || a.summary || "").slice(0, 250),
     keywords:     (a.keywords || []).slice(0, 12),
     country:      a.country_name || null,
@@ -484,22 +205,17 @@ async function evaluateWithClaude(articles, existingData) {
     published_at: a.published_at
   }));
 
-  const rulesBlock = await loadRulesBlock('thread').catch(() => '');
+  // Compact format keeps token usage manageable while letting Claude see
+  // ~150 active threads (vs the old 30) so it can correctly extend duplicates
+  // instead of spawning parallel "Trump-Iran" / "Iran-US war" / etc threads.
+  const existingData = existingThreads.slice(0, 150).map(t => ({
+    id:       t.id,
+    title:    t.title,
+    kw:       (t.keywords || []).slice(0, 3),
+    cat:      t.primary_category
+  }));
 
-  // ── STATIC PREFIX (cacheable across all batches in a run) ──
-  // Everything up to but NOT including the articles-to-analyze block.
-  // Marked with cache_control: ephemeral — first batch writes the cache
-  // (paying 1.25× input rate on ~18 k tokens), every subsequent batch in
-  // the same ~5-min window reads it at 10× discount. With 10 batches
-  // per run this is ~40% off total input cost. See the run summary
-  // block for realized cache_hit% per run.
-  //
-  // This block is ORDER-SENSITIVE. Don't reshuffle sections without
-  // updating the cache invalidation expectations — any byte change
-  // here means the next run pays full price on batch 1 which it would
-  // anyway (fine), but re-ordering mid-refactor can accidentally break
-  // the cache-key identity BETWEEN batches of the same run.
-  const staticPrefix = `${rulesBlock}You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
+  const prompt = `You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
 
 ═══ BREAKING META-STORY DEFINITION ═══
 A thread here is a SHARP, RIGHT-NOW story that has broken from a single report into a multi-source moment:
@@ -522,7 +238,7 @@ A thread is NOT:
   • A news-of-news meta story ("US Election Coverage and Political Communication Strategy")
 
 ═══ REGIONAL ≠ GLOBAL ═══
-If the story deals with a country's INTERNAL politics at a REGIONAL / subnational scale — skip it. Regional cabinet formations, state-level party activities, provincial assembly elections, chamber-of-commerce leadership, youth council recruitment — all REJECT. Exceptions: presidential elections, government changes, coups, major national political shifts with international implications.
+If the story deals with a country's INTERNAL politics at a REGIONAL / subnational scale — skip it. Regional cabinet formations, state-level party activities, provincial assembly elections, chamber-of-commerce leadership, youth council recruitment — all REJECT. Exceptions: presidential elections, regime changes, coups, major national political shifts with international implications.
 
 ═══ GLOBAL-SCALE REGIONAL EVENTS ARE OK ═══
 A regional event CAN be a thread if it has global scope:
@@ -530,7 +246,7 @@ A regional event CAN be a thread if it has global scope:
   • An armed conflict or insurgency, even if geographically contained
   • A refugee crisis
   • A major epidemic outbreak
-  • A national political shift (government change, coup, constitutional crisis)
+  • A national political shift (regime change, coup, constitutional crisis)
   • A cross-border dispute or incident
 
 ═══ MANUFACTURING / COMMERCIAL NEWS ═══
@@ -539,11 +255,14 @@ Obscure information about factories, plants, industries, real estate markets, co
 EXISTING ACTIVE THREADS (check if any articles extend these):
 ${JSON.stringify(existingData, null, 2)}
 
+ARTICLES TO ANALYZE:
+${JSON.stringify(articleData, null, 2)}
+
 ═══ WHAT QUALIFIES AS A THREAD ═══
 A thread MUST be about at least one of:
 - Armed conflict, military operations, terrorism, insurgency, weapons programs
 - Diplomacy, treaties, summits, sanctions, alliances, state-to-state disputes
-- Elections, coups, governance crises, protests with political stakes, government changes
+- Elections, coups, governance crises, protests with political stakes, regime changes
 - Cross-border economics with geopolitical weight (trade wars, tariffs, energy supply, currency crises, critical-mineral disputes)
 - Espionage, cyberattacks attributable to states, information warfare
 - Major natural disasters, disease outbreaks, or humanitarian crises with state-level response
@@ -579,7 +298,7 @@ The most common failure mode is creating a thread that is just "a summary of dev
 
 These all share the same shape: [Country] + [Abstract Topic A] + (and) + [Abstract Topic B]. They name no actor, no event, no decision, no date. They are TOPIC LABELS for "stuff happening in country X right now." That is not what this platform indexes.
 
-A thread is a STORY ARC: a specific event or development unfolding over time, with named actors and verifiable actions. Routine government news from a single country is not an arc — at most it should attach to an existing arc (e.g. an ongoing election, an active conflict, an active sanctions program).
+A thread is a STORY ARC: a specific event or development unfolding over time, with named actors and verifiable actions. Routine government news from a single country is not an arc — at most it should attach to an existing arc (e.g. an ongoing election, an active conflict, an active sanctions regime).
 
 ═══ TITLE FORMAT REQUIREMENTS (CRITICAL) ═══
 A valid thread title MUST contain at least ONE of:
@@ -639,7 +358,7 @@ If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not
 - Check existing threads first — strongly prefer extending them over creating duplicates
 - Detect semantic connections SQL keyword matching would miss (e.g. "tariffs" + "trade war" + "WTO dispute" = same story)
 - A thread should have a sharp, specific title naming the actors/place/event — never a generic category label like "Sports and Entertainment Coverage" or "Higher Education Trends"
-- Importance 1-10: 10 = major global event (war, summit, government change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
+- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
 
 Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and often correct:
 [
@@ -654,123 +373,24 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and
     "importance": 7,
     "keywords": ["array", "of", "5-10", "core", "keywords"]
   }
-]
-
-The articles to analyze appear below. Evaluate them against the rules above and return the JSON array.`;
-
-  // ── VARIABLE SUFFIX (NOT cached — changes every batch) ──
-  // Articles block intentionally placed AFTER staticPrefix so the cache
-  // prefix identity holds. Moving articleData to the tail was the whole
-  // point of the prompt restructure — previously it sat mid-prompt
-  // sandwiched between rules sections, which broke prefix stability.
-  const articlesBlock = `ARTICLES TO ANALYZE:\n${JSON.stringify(articleData, null, 2)}`;
+]`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
     max_tokens: 3072,
-    messages: [{
-      role: "user",
-      content: [
-        // cache_control: ephemeral → 5-min TTL, 10× input discount on
-        // cache-read, 1.25× on cache-write. At 10 batches/run, first
-        // batch writes the cache and the remaining 9 read it → ~40%
-        // total input-side savings per run, zero behaviour change.
-        { type: "text", text: staticPrefix, cache_control: { type: "ephemeral" } },
-        { type: "text", text: articlesBlock }
-      ]
-    }]
+    messages:   [{ role: "user", content: prompt }]
   });
 
   const text = response.content[0].text.trim();
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   if (!jsonMatch) throw new Error(`No JSON array in Claude response: ${text.slice(0, 200)}`);
-  // Return both parsed defs AND the usage block so the caller can
-  // accumulate cache_read / cache_write / std_input / output tokens
-  // across batches for the end-of-run summary.
-  return { defs: JSON.parse(jsonMatch[0]), usage: response.usage || null };
+  return JSON.parse(jsonMatch[0]);
 }
 
 // ─── Persist ─────────────────────────────────────────────────────────────────
 
-// ─── Claude-extension fit check ────────────────────────────────────
-// Defensive post-Claude filter that drops articles Claude wants to
-// attach to an existing thread but which share no meaningful signal
-// with that thread. Catches hallucinated attachments (e.g. a Bukele
-// / El Salvador article routed into an Iraqi-president thread) that
-// the SQL pre-clusterer would never have connected.
-//
-// Permissive on purpose — requires only ≥1 shared non-stopword token
-// between (thread.title + thread.keywords) and (article.translated_title
-// OR article.title, + article.keywords). Articles with mostly non-Latin
-// title text AND no translated_title are SKIPPED (can't fairly compare
-// to English thread keywords without a translation bridge). Dropped
-// articles aren't destroyed — they stay unthreaded and get another
-// chance in the next run.
-function _tokenizeForFit(text, keywords) {
-  const s = new Set();
-  const add = (raw) => {
-    if (!raw) return;
-    const norm = String(raw).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    for (const tok of norm.split(/[^a-z0-9']+/)) {
-      if (!tok || tok.length < 3) continue;
-      if (SKIP_KEYWORDS.has(tok)) continue;
-      s.add(tok);
-    }
-  };
-  add(text);
-  for (const k of (keywords || [])) add(k);
-  return s;
-}
-function _hasLatinSignal(text) {
-  if (!text) return false;
-  const asciiLetters = (String(text).match(/[a-zA-Z]/g) || []).length;
-  return asciiLetters >= 6 && asciiLetters / String(text).length >= 0.25;
-}
-function _filterExtensionByFit(threadId, threadTitle, threadKeywords, articleIds, articlesById) {
-  const threadTokens = _tokenizeForFit(threadTitle, threadKeywords);
-  if (threadTokens.size < 2) return { kept: articleIds, dropped: [] }; // thread too thin to judge; trust Claude
-  const kept = [];
-  const dropped = [];
-  for (const aid of articleIds) {
-    const a = articlesById.get(Number(aid));
-    if (!a) { kept.push(aid); continue; } // article not in this batch (shouldn't happen); keep
-
-    // Carve-out for languages the filter can't fairly test: an article
-    // whose raw title has no Latin signal AND no translated_title can't
-    // be token-compared to an English-tokens thread. Article keywords
-    // may be in the source language too (normalizer often missed CJK /
-    // Arabic / Cyrillic). Trust Claude rather than drop legit articles.
-    const hasTranslation = !!a.translated_title;
-    const latinTitle     = _hasLatinSignal(a.title);
-    if (!hasTranslation && !latinTitle) {
-      kept.push(aid); continue;
-    }
-
-    const comparableText = a.translated_title || a.title;
-    const articleTokens = _tokenizeForFit(comparableText, a.keywords);
-    if (articleTokens.size < 2) {
-      // Sparse data — keep (avoid false-negative on short titles).
-      kept.push(aid); continue;
-    }
-    let overlap = 0;
-    for (const t of articleTokens) { if (threadTokens.has(t)) { overlap++; if (overlap >= 1) break; } }
-    if (overlap >= 1) kept.push(aid);
-    else dropped.push({ aid, title: (a.translated_title || a.title || '').slice(0, 70) });
-  }
-  return { kept, dropped };
-}
-
-async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map(), batchArticles = []) {
+async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()) {
   let created = 0, updated = 0;
-  // Build an articles-by-id map for the fit-check filter below. Cheap —
-  // batch is at most CLAUDE_BATCH (30) entries.
-  const articlesById = new Map(batchArticles.map(a => [Number(a.id), a]));
-  // attachedCount = best-effort estimate of how many batch articles
-  // survived into an actual story_thread_articles row. Sum of
-  // def.article_ids filtered to validIdSet after junk rejection. Upper
-  // bound (ON CONFLICT DO NOTHING duplicates are not deducted) but good
-  // enough for the run-summary attach_rate readout.
-  let attachedCount = 0;
   const refreshIds = new Set();
 
   // Hard reject categories that don't belong on a geopolitical platform.
@@ -953,25 +573,6 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   for (const def of defs) {
     if (!def.article_ids?.length) continue;
 
-    // DEFENSIVE: validate existing_thread_id against the authoritative
-    // thread map BEFORE trusting it. Claude occasionally hallucinates
-    // thread IDs — returns a plausible-looking number that isn't one of
-    // the 150 IDs we actually showed it. Our prior path just trusted
-    // the number, tried to UPDATE a non-existent row (UPDATE silently
-    // matches 0 rows), then hit FK violation on the subsequent
-    // INSERT INTO story_thread_articles and threw, dropping the whole
-    // def — including what was often a legitimate NEW thread that
-    // Claude misrouted. Null the bogus id so we fall through to the
-    // CREATE path and keep the def. Edge case also covered: a thread
-    // deleted by another process between snapshot time and now.
-    if (def.existing_thread_id) {
-      const idNum = Number(def.existing_thread_id);
-      if (!Number.isFinite(idNum) || !existingThreadMap.has(idNum)) {
-        console.log(`   ⚠ Claude referenced unknown thread id ${def.existing_thread_id} for "${def.title}" — routing as NEW`);
-        def.existing_thread_id = null;
-      }
-    }
-
     // Only reject NEW threads — never block extensions of existing threads,
     // since those decisions were already made.
     if (!def.existing_thread_id) {
@@ -990,29 +591,6 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           refreshIds.add(threadId);
         }
 
-        // Fit-check extension: require any proposed article to share at
-        // least one meaningful token with the thread's title+keywords.
-        // Catches Claude hallucinations where an unrelated article
-        // (different country, different story) gets routed into an
-        // established thread. Dropped articles stay unthreaded and get
-        // re-evaluated next run. See _filterExtensionByFit comment above
-        // for the non-Latin-script carve-out that preserves recall on
-        // Arabic/CJK/etc. articles lacking translations.
-        if (current && (current.title || (current.keywords?.length))) {
-          const { kept, dropped } = _filterExtensionByFit(
-            threadId, current.title, current.keywords, def.article_ids, articlesById
-          );
-          if (dropped.length) {
-            console.log(`   🚫 Rejected ${dropped.length} low-fit extension(s) on thread ${threadId} "${current.title}":`);
-            for (const d of dropped) console.log(`      - #${d.aid} "${d.title}"`);
-          }
-          def.article_ids = kept;
-          if (!def.article_ids.length) {
-            console.log(`   ↳ All proposed extensions for thread ${threadId} failed fit-check — skipping def`);
-            continue;
-          }
-        }
-
         // Update existing thread
         await pool.query(`
           UPDATE story_threads
@@ -1027,7 +605,6 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
 
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
-        attachedCount += def.article_ids.filter(id => validIdSet.has(Number(id))).length;
         if (current) {
           existingThreadMap.set(threadId, {
             ...current,
@@ -1058,7 +635,6 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         const threadId = rows[0].id;
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
-        attachedCount += def.article_ids.filter(id => validIdSet.has(Number(id))).length;
         existingThreadMap.set(Number(threadId), {
           id: Number(threadId),
           title: def.title,
@@ -1076,7 +652,7 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     }
   }
 
-  return { c: created, u: updated, refreshIds: [...refreshIds], attachedCount };
+  return { c: created, u: updated, refreshIds: [...refreshIds] };
 }
 
 async function insertArticles(threadId, articleIds, anchorId, importance, validIdSet) {
@@ -1111,23 +687,14 @@ async function insertArticles(threadId, articleIds, anchorId, importance, validI
 // where recency_factor decays from 1.0 (fresh) toward 0.2 over 48h. Threads
 // with distinct_sources_24h < MIN_SOURCES_FOR_BREAKING still persist but
 // are flagged low-signal; the /api/threads/latest ranking weights by score.
-// Non-English languages whose sources should be weighted 1.5x in convergence
-// scoring to compensate for their systematic underrepresentation.
-const NON_ENGLISH_SIGNAL_LANGS = new Set(["ru","zh","fa","uk","ja","ko","ar"]);
-
 async function recomputeBreakingSignal(threadId) {
   try {
-    // Fetch distinct source count AND non-English source count for weighting
     const { rows } = await pool.query(`
       SELECT
         COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) FILTER (
           WHERE a.published_at > NOW() - INTERVAL '${CONVERGENCE_WINDOW_HOURS} hours'
         )::int AS distinct_sources_24h,
         COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id))::int AS distinct_sources_total,
-        COUNT(DISTINCT COALESCE(a.source_id, a.youtube_source_id)) FILTER (
-          WHERE a.published_at > NOW() - INTERVAL '${CONVERGENCE_WINDOW_HOURS} hours'
-            AND a.language IS NOT NULL AND LOWER(LEFT(a.language, 2)) <> 'en'
-        )::int AS non_english_sources_24h,
         COALESCE(AVG(a.base_priority), 0) AS avg_bp,
         COALESCE(MAX(a.base_priority), 0) AS max_bp,
         MAX(a.published_at) AS last_pub
@@ -1138,17 +705,12 @@ async function recomputeBreakingSignal(threadId) {
     const r = rows[0] || {};
     const distinct24 = Number(r.distinct_sources_24h || 0);
     const distinctTotal = Number(r.distinct_sources_total || 0);
-    const nonEnglish24 = Number(r.non_english_sources_24h || 0);
     const avgBp = Number(r.avg_bp || 0);
     const maxBp = Number(r.max_bp || 0);
     const lastPub = r.last_pub ? new Date(r.last_pub).getTime() : Date.now();
     const ageH = Math.max(0, (Date.now() - lastPub) / 3600000);
     const recency = Math.max(0.2, Math.exp(-ageH / 36));
-    // Weighted source count: non-English sources count as 1.5 to compensate
-    // for their lower volume in the system. This helps them reach the
-    // MIN_SOURCES_FOR_BREAKING threshold (3) more easily.
-    const weightedSources24 = distinct24 + (nonEnglish24 * 0.5); // each non-EN source adds 0.5 extra
-    const score = Number((weightedSources24 * recency * (0.4 + avgBp + 0.25 * maxBp)).toFixed(4));
+    const score = Number((distinct24 * recency * (0.4 + avgBp + 0.25 * maxBp)).toFixed(4));
     await pool.query(`
       UPDATE story_threads
       SET distinct_source_count  = $1,
@@ -1235,8 +797,7 @@ async function getThreadRefreshContext(threadId) {
 }
 
 async function reevaluateThreadContext(thread) {
-  const rulesBlock = await loadRulesBlock('thread').catch(() => '');
-  const prompt = `${rulesBlock}You are refreshing the framing of an ongoing news story thread.
+  const prompt = `You are refreshing the framing of an ongoing news story thread.
 
 CURRENT THREAD:
 ${JSON.stringify({
@@ -1251,9 +812,9 @@ ${JSON.stringify({
 }, null, 2)}
 
 MOST RECENT ARTICLES:
-${JSON.stringify(thread.articles.filter(a => !isGarbledText(a.translated_title || a.title)).map(a => ({
+${JSON.stringify(thread.articles.map(a => ({
   id: a.id,
-  title: a.translated_title || a.title,
+  title: a.title,
   summary: (a.translated_summary || a.summary || "").slice(0, 250),
   published_at: a.published_at,
   source: a.source_name || null,
@@ -1291,71 +852,23 @@ Return ONLY valid JSON:
 
 // ─── Similarity Dedup ────────────────────────────────────────────────────────
 //
-// Catches near-duplicate active threads. Three-signal approach:
+// Catches near-duplicate active threads (Issues 3 + 6 from the audit).
+// Pure string/keyword similarity — no Claude. Two threads are considered
+// duplicates when EITHER:
+//   • title-token Jaccard ≥ 0.60      (e.g. "Trump Iran nuclear talks" ≈ "Trump Iran negotiations")
+//   • OR keyword Jaccard ≥ 0.70       (e.g. shared core keywords dominate)
+// AND they share the same primary_category (avoids cross-topic false merges).
 //
-// Signal 1 — Title-token Jaccard ≥ 0.50
-// Signal 2 — Keyword Jaccard ≥ 0.55
-// Signal 3 — Entity-anchor overlap: if two threads share ≥2 high-signal
-//            named entities (country names, leader names, conflict terms)
-//            AND moderate keyword overlap (core-kw Jaccard ≥ 0.30), merge.
-//
-// "Core keyword" Jaccard only considers the first 6 keywords per thread,
-// which are typically the most specific/central. This prevents long keyword
-// arrays from diluting the score.
-//
-// All signals require same primary_category to avoid cross-topic false merges.
-//
-// When duplicates are found, the higher-importance / larger thread "wins" and
-// the loser's articles are reassigned. The loser is marked dormant (not deleted)
-// so historical continuity stays intact.
+// When duplicates are found, the older / higher-importance / larger thread
+// "wins" and the loser's articles are reassigned to the winner. The loser's
+// keywords are merged in and it is marked dormant (not deleted) so historical
+// continuity stays intact.
 
 const TITLE_STOPWORDS = new Set([
   "the","a","an","of","in","on","at","to","for","and","or","but","with","from",
   "by","as","is","are","was","were","be","been","being","it","its","this","that",
   "these","those","over","under","after","before","new","says","say","said",
   "amid","into","out","up","down","off","vs","versus"
-]);
-
-// High-signal named entities that anchor a story's identity.
-// Split into two tiers:
-//   TIER 1 (specific): Countries, regions, leaders — these are strong identity signals
-//   TIER 2 (generic): Conflict/crisis terms — these add weight but alone don't identify a story
-//
-// Scoring: tier1 entity = 1 point, tier2 entity = 0.4 points
-// Merge threshold: entity score ≥ 2.0 (i.e., need 2 specific entities, or 1 specific + 3 generic)
-const ENTITY_TIER1 = new Set([
-  // Countries & regions
-  "iran","iraq","israel","gaza","ukraine","russia","china","taiwan",
-  "syria","yemen","lebanon","pakistan","india","kashmir","korea","dprk","pyongyang",
-  "turkey","saudi","qatar","uae","dubai","japan","mexico","venezuela",
-  "cuba","haiti","afghanistan","somalia","sudan","ethiopia","eritrea","libya",
-  "niger","mali","burkina","chad","congo","mozambique","myanmar","bangladesh",
-  "philippines","indonesia","australia","canada","britain","france","germany",
-  "spain","italy","poland","denmark","sweden","norway","finland",
-  "hormuz","mandeb","suez","malacca",
-  // Leaders & key figures
-  "trump","biden","putin","jinping","zelensky","zelenskyy","netanyahu",
-  "khamenei","erdogan","modi","macron","starmer","scholz","milei","vance",
-  "rubio","blinken","sullivan","lavrov","guterres",
-  // Specific organizations
-  "nato","irgc","hamas","hezbollah","houthi","isis","taliban","wagner",
-]);
-
-const ENTITY_TIER2 = new Set([
-  // Generic conflict/crisis terms — common across many unrelated stories
-  // These add 0.4 pts each; need more of them to trigger a merge
-  "war","ceasefire","strikes","siege","genocide",
-  "sanctions","missile","drone","airstrike","airstrikes",
-  "occupation","annexation","coup","famine","pandemic",
-  "tariff","tariffs","inflation","recession",
-  "gulf","persian","baltic","arctic","mediterranean","pacific","atlantic",
-  "eu","uk","pope",
-]);
-
-// Tier 1.5 — semi-specific terms scored at 0.7 pts
-// These are more distinctive than generic "war"/"ceasefire" but less than country names
-const ENTITY_TIER15 = new Set([
-  "blockade","invasion","nuclear","cartel","oil","crude","opec",
 ]);
 
 function tokenizeTitle(title) {
@@ -1370,66 +883,12 @@ function tokenizeTitle(title) {
   );
 }
 
-/** Extract entity anchors. Returns a Set of entity strings. */
-function extractEntities(text) {
-  const tokens = String(text || "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]+/g, " ")
-    .split(/\s+/);
-  const entities = new Set();
-  for (const t of tokens) {
-    if (ENTITY_TIER1.has(t) || ENTITY_TIER15.has(t) || ENTITY_TIER2.has(t)) {
-      entities.add(t);
-    }
-  }
-  return entities;
-}
-
-/** Score a single entity by tier */
-function entityTierScore(e) {
-  if (ENTITY_TIER1.has(e)) return 1.0;
-  if (ENTITY_TIER15.has(e)) return 0.7;
-  return 0.4; // tier2
-}
-
-/** Compute shared entity score between two entity sets */
-function sharedEntityScore(entitiesA, entitiesB) {
-  let score = 0;
-  for (const e of entitiesA) {
-    if (entitiesB.has(e)) score += entityTierScore(e);
-  }
-  return score;
-}
-
-/** Core-keyword set: first N keywords only (most specific/central) */
-function coreKeywords(keywords, n = 6) {
-  return new Set((keywords || []).slice(0, n).map(normalizeKeyword).filter(Boolean));
-}
-
-/** Tokenize a keyword phrase into individual words for overlap matching */
-function tokenizeKeywords(keywords) {
-  const tokens = new Set();
-  for (const kw of (keywords || [])) {
-    const words = normalizeKeyword(kw).split(/\s+/).filter(w => w.length >= 3 && !TITLE_STOPWORDS.has(w));
-    for (const w of words) tokens.add(w);
-  }
-  return tokens;
-}
-
 function jaccard(setA, setB) {
   if (!setA.size || !setB.size) return 0;
   let intersect = 0;
   for (const x of setA) if (setB.has(x)) intersect++;
   const union = setA.size + setB.size - intersect;
   return union ? intersect / union : 0;
-}
-
-function intersectionCount(setA, setB) {
-  let count = 0;
-  for (const x of setA) if (setB.has(x)) count++;
-  return count;
 }
 
 async function dedupSimilarThreads() {
@@ -1443,21 +902,12 @@ async function dedupSimilarThreads() {
 
   if (threads.length < 2) return 0;
 
-  // Pre-compute token/keyword/entity sets
-  const enriched = threads.map(t => {
-    const titleEnt = extractEntities(t.title);
-    const kwEnt    = extractEntities((t.keywords || []).join(' '));
-    // Combined entities from both title AND keywords
-    const allEntities = new Set([...titleEnt, ...kwEnt]);
-    return {
-      ...t,
-      _titleTokens: tokenizeTitle(t.title),
-      _entities:    allEntities,
-      _kwSet:       new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean)),
-      _coreKwSet:   coreKeywords(t.keywords, 6),
-      _kwTokens:    tokenizeKeywords(t.keywords),
-    };
-  });
+  // Pre-compute token/keyword sets
+  const enriched = threads.map(t => ({
+    ...t,
+    _titleTokens: tokenizeTitle(t.title),
+    _kwSet: new Set((t.keywords || []).map(normalizeKeyword).filter(Boolean))
+  }));
 
   // Union-Find: group all transitively-similar threads
   const parent = new Map(enriched.map(t => [t.id, t.id]));
@@ -1476,31 +926,9 @@ async function dedupSimilarThreads() {
       // Require category match to avoid e.g. politics ↔ sports false merges
       if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) continue;
 
-      const titleSim      = jaccard(a._titleTokens, b._titleTokens);
-      const kwSim         = jaccard(a._kwSet, b._kwSet);
-      const coreKwSim     = jaccard(a._coreKwSet, b._coreKwSet);
-      const entityScore   = sharedEntityScore(a._entities, b._entities);
-      const kwTokenSim    = jaccard(a._kwTokens, b._kwTokens);
-      const kwTokenShared = intersectionCount(a._kwTokens, b._kwTokens);
-
-      let shouldMerge = false;
-
-      // Signal 1: classic title similarity
-      if (titleSim >= 0.50) shouldMerge = true;
-
-      // Signal 2: classic keyword similarity
-      if (kwSim >= 0.55) shouldMerge = true;
-
-      // Signal 3: entity score + keyword word overlap (tiered)
-      // Higher entity scores need less keyword confirmation
-      if (entityScore >= 2.0 && kwTokenShared >= 5) shouldMerge = true;
-      if (entityScore >= 2.5 && kwTokenShared >= 2) shouldMerge = true;  // strong entity identity
-      if (entityScore >= 3.0 && kwTokenShared >= 1) shouldMerge = true;  // very strong
-
-      // Signal 4: strong core-keyword overlap (first 6 keywords)
-      if (coreKwSim >= 0.40) shouldMerge = true;
-
-      if (shouldMerge) {
+      const titleSim = jaccard(a._titleTokens, b._titleTokens);
+      const kwSim    = jaccard(a._kwSet, b._kwSet);
+      if (titleSim >= 0.60 || kwSim >= 0.70) {
         union(a.id, b.id);
       }
     }
@@ -1514,26 +942,7 @@ async function dedupSimilarThreads() {
     groups.get(r).push(t);
   }
 
-  // ── Anti-chaining: verify each member connects directly to the winner ────
-  // Union-find creates transitive chains (A↔B, B↔C → all one group) which
-  // can merge unrelated stories. Re-verify each member against the winner.
-  function shouldPairDirect(a, b) {
-    if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) return false;
-    const ts = jaccard(a._titleTokens, b._titleTokens);
-    const ks = jaccard(a._kwSet, b._kwSet);
-    const cks = jaccard(a._coreKwSet, b._coreKwSet);
-    const es = sharedEntityScore(a._entities, b._entities);
-    const kts = intersectionCount(a._kwTokens, b._kwTokens);
-    if (ts >= 0.50) return true;
-    if (ks >= 0.55) return true;
-    if (es >= 2.0 && kts >= 5) return true;
-    if (es >= 2.5 && kts >= 2) return true;
-    if (es >= 3.0 && kts >= 1) return true;
-    if (cks >= 0.40) return true;
-    return false;
-  }
-
-  // For each group with >1 thread, pick a winner and merge verified losers
+  // For each group with >1 thread, pick a winner and merge losers into it
   let merged = 0;
   for (const group of groups.values()) {
     if (group.length < 2) continue;
@@ -1547,9 +956,7 @@ async function dedupSimilarThreads() {
       return new Date(b.last_updated_at).getTime() - new Date(a.last_updated_at).getTime();
     });
     const winner = group[0];
-    // Only merge threads that directly match the winner (anti-chaining)
-    const losers = group.slice(1).filter(m => shouldPairDirect(winner, m));
-    if (!losers.length) continue;
+    const losers = group.slice(1);
 
     for (const loser of losers) {
       try {
@@ -1629,7 +1036,7 @@ async function coolDownInactiveThreads() {
   // becomes dormant so the historical arc is preserved.
   const b = await pool.query(`
     UPDATE story_threads
-    SET status = 'dormant'
+    SET status = 'dormant
     WHERE status = 'archived'
   `);
 
@@ -1642,49 +1049,10 @@ async function getUnthreadedArticles(hours) {
   // Step 1: keep the 48h window, but bias selection toward the freshest articles.
   // We still cap at 5 per source, then reserve the first tranche for the last 6h
   // before filling the rest from the older remainder of the 48h window.
-  // Use a dedicated client with extended timeout for this heavy query.
-  const client = await pool.connect();
-  try {
-    await client.query("SET statement_timeout = 180000"); // 3 min for heavy query
-    const freshHours = Math.min(hours, FRESH_PRIORITY_HOURS);
-    // Two independent scans — each over a smaller window — so ROW_NUMBER's
-    // window doesn't have to cover the full 48h. Anti-join uses NOT EXISTS
-    // (backed by idx_sta_article_id) instead of LEFT JOIN … IS NULL, which
-    // the planner handles more efficiently on a large sta.
-    const { rows: baseRows } = await client.query(`
-    WITH fresh_ranked AS (
+  const { rows: baseRows } = await pool.query(`
+    WITH ranked AS (
       SELECT
-        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
-        a.published_at,
-        COALESCE(ns.name, ys.name) AS source_name,
-        co.name AS country_name,
-        ci.name AS city_name,
-        ROW_NUMBER() OVER (
-          PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
-          ORDER BY a.published_at DESC
-        ) AS source_rank
-      FROM news_articles a
-      LEFT JOIN countries co       ON co.id = a.country_id
-      LEFT JOIN cities    ci       ON ci.id = a.city_id
-      LEFT JOIN news_sources ns    ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      WHERE a.published_at > NOW() - INTERVAL '${freshHours} hours'
-        AND a.published_at < NOW()
-        AND a.title IS NOT NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
-        )
-    ),
-    fresh AS (
-      SELECT id, title, translated_title, summary, translated_summary, published_at, source_name, country_name, city_name
-      FROM fresh_ranked
-      WHERE source_rank <= 5
-      ORDER BY published_at DESC, RANDOM()
-      LIMIT ${FRESH_PRIORITY_LIMIT}
-    ),
-    backlog_ranked AS (
-      SELECT
-        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+        a.id, a.title, a.summary, a.translated_summary,
         a.published_at,
         COALESCE(ns.name, ys.name) AS source_name,
         co.name AS country_name,
@@ -1699,16 +1067,25 @@ async function getUnthreadedArticles(hours) {
       LEFT JOIN news_sources ns    ON ns.id = a.source_id
       LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
       WHERE a.published_at > NOW() - INTERVAL '${hours} hours'
-        AND a.published_at <= NOW() - INTERVAL '${freshHours} hours'
+        AND a.published_at < NOW()
         AND a.title IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM story_thread_articles sta WHERE sta.article_id = a.id
         )
     ),
-    backlog AS (
-      SELECT id, title, translated_title, summary, translated_summary, published_at, source_name, country_name, city_name
-      FROM backlog_ranked
+    fresh AS (
+      SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
+      FROM ranked
       WHERE source_rank <= 5
+        AND published_at > NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
+      ORDER BY published_at DESC, RANDOM()
+      LIMIT ${FRESH_PRIORITY_LIMIT}
+    ),
+    backlog AS (
+      SELECT id, title, summary, translated_summary, published_at, source_name, country_name, city_name
+      FROM ranked
+      WHERE source_rank <= 5
+        AND published_at <= NOW() - INTERVAL '${Math.min(hours, FRESH_PRIORITY_HOURS)} hours'
       ORDER BY published_at DESC, RANDOM()
       LIMIT ${TOTAL_ARTICLE_LIMIT - FRESH_PRIORITY_LIMIT}
     )
@@ -1724,9 +1101,9 @@ async function getUnthreadedArticles(hours) {
 
   if (!baseRows.length) return [];
 
-  // Step 2: fetch keywords for just those article IDs (still on the extended-timeout client)
+  // Step 2: fetch keywords for just those article IDs
   const ids = baseRows.map(r => r.id);
-  const { rows: kwRows } = await client.query(`
+  const { rows: kwRows } = await pool.query(`
     SELECT article_id, ARRAY_AGG(COALESCE(normalized_keyword, keyword) ORDER BY frequency DESC) AS keywords
     FROM article_keywords
     WHERE article_id = ANY($1::int[])
@@ -1738,9 +1115,6 @@ async function getUnthreadedArticles(hours) {
   return baseRows
     .map(a => ({ ...a, keywords: kwMap.get(a.id) || [] }))
     .filter(a => a.keywords.length > 0);
-  } finally {
-    client.release();
-  }
 }
 
 async function getActiveThreads() {
@@ -1802,168 +1176,6 @@ function computeArticleRelevanceScore(importance, publishedAt) {
   const ageHours = ageMs / (1000 * 60 * 60);
   const recencyFactor = Math.exp(-ageHours / RECENCY_HALF_LIFE_HOURS);
   return Number((base * recencyFactor).toFixed(4));
-}
-
-// ─── Post-threading deep analysis: top 2 per thread ─────────────────────────
-// For each active/cooling thread, find the top 2 articles (by relevance_score)
-// that haven't been deep-analyzed yet and run deepAnalyzeArticle on them.
-// This replaces the old fire-and-forget per-article approach, cutting costs ~90%.
-const TOP_PER_THREAD = 2;
-const DEEP_CONCURRENCY = 3;
-
-async function deepAnalyzeTopPerThread() {
-  // Get top un-analyzed articles per active thread in one query
-  const { rows } = await pool.query(`
-    SELECT sta.article_id
-    FROM (
-      SELECT sta.thread_id, sta.article_id, sta.relevance_score,
-             ROW_NUMBER() OVER (
-               PARTITION BY sta.thread_id
-               ORDER BY sta.relevance_score DESC, a.published_at DESC
-             ) AS rn
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      JOIN story_threads t ON t.id = sta.thread_id
-      WHERE t.status IN ('active', 'cooling')
-        AND a.deep_analyzed_at IS NULL
-    ) sta
-    WHERE sta.rn <= $1
-  `, [TOP_PER_THREAD]);
-
-  if (!rows.length) return 0;
-
-  const articleIds = rows.map(r => r.article_id);
-  console.log(`   Found ${articleIds.length} article(s) to deep-enrich across active threads`);
-
-  // Track which threads touched which newly-enriched articles so we can
-  // backfill story_threads.primary_nations at the end — single pass per
-  // thread rather than one UPDATE per article.
-  const threadsTouched = new Set();
-  {
-    const { rows: tmap } = await pool.query(`
-      SELECT DISTINCT sta.thread_id
-      FROM story_thread_articles sta
-      WHERE sta.article_id = ANY($1::int[])
-    `, [articleIds]);
-    for (const r of tmap) threadsTouched.add(Number(r.thread_id));
-  }
-
-  // Process with limited concurrency
-  let completed = 0;
-  let i = 0;
-  async function worker() {
-    while (i < articleIds.length) {
-      const id = articleIds[i++];
-      try {
-        await enrichArticle(id, { skipThreshold: true });
-        completed++;
-      } catch (err) {
-        console.warn(`   ⚠️  Deep enrichment failed [${id}]: ${err.message}`);
-      }
-    }
-  }
-
-  const workers = [];
-  for (let w = 0; w < Math.min(DEEP_CONCURRENCY, articleIds.length); w++) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
-
-  // After enrichment lands in article_deep_context, populate nation
-  // tiers on every thread that just got fresh enrichment:
-  //   Step 1 — backfillThreadPrimaryNations (if primary_nations is empty,
-  //            populate from deep-context union). Respects admin curation
-  //            via the NULL-only guard.
-  //   Step 2 — classifyAndTierThread: split the current primary_nations
-  //            into a narrowed primary tier (1–3 principals) and a
-  //            secondary tier (supporters / commenters / downstream actors,
-  //            up to 8). Claude Haiku, ~1 call per threadsTouched.
-  let natPopulated = 0;
-  let natClassified = 0;
-  for (const threadId of threadsTouched) {
-    try {
-      const before = await pool.query(
-        `SELECT COALESCE(array_length(primary_nations, 1), 0) AS len FROM story_threads WHERE id = $1`,
-        [threadId]
-      );
-      await backfillThreadPrimaryNations(threadId);
-      const after = await pool.query(
-        `SELECT COALESCE(array_length(primary_nations, 1), 0) AS len FROM story_threads WHERE id = $1`,
-        [threadId]
-      );
-      if ((before.rows[0]?.len || 0) === 0 && (after.rows[0]?.len || 0) > 0) natPopulated++;
-
-      // Tier classification runs AFTER backfill so we're classifying the
-      // fully-populated candidate list. Idempotent: rows that already have
-      // a tiered split get reclassified from primary∪secondary as the
-      // candidate pool, picking up any new country additions or dropping
-      // ones the latest article mix no longer supports.
-      const result = await classifyAndTierThread(pool, threadId);
-      if (result && result.primary && !result.skipped) natClassified++;
-    } catch (_) {}
-  }
-  if (natPopulated) {
-    console.log(`   Populated primary_nations on ${natPopulated} thread(s) from fresh deep-context`);
-  }
-  if (natClassified) {
-    console.log(`   Tier-classified ${natClassified} thread(s) (primary vs secondary)`);
-  }
-
-  return completed;
-}
-
-// Helper used after thread creation: pull primary_nations from the most
-// recently-enriched articles in this thread and write the result back
-// onto story_threads. This is the "builder populates primary_nations"
-// promise from the audit — before this, every builder-created thread
-// shipped with primary_nations = NULL, which forced the flow-arc +
-// flag-chip path to fall back to noisy entity-mention extraction.
-//
-// Strategy: take the union of primary_nations across the thread's
-// anchor + top-relevance articles (limited to the ones with
-// article_deep_context rows), weight by frequency so countries that
-// appear in multiple articles rise to the top, cap at 6. We don't
-// overwrite a curated primary_nations — only populate if it's NULL or
-// empty, so admin edits stay sacred.
-async function backfillThreadPrimaryNations(threadId) {
-  try {
-    const { rows } = await pool.query(`
-      SELECT adc.primary_nations
-      FROM story_thread_articles sta
-      JOIN article_deep_context adc ON adc.article_id = sta.article_id
-      WHERE sta.thread_id = $1
-        AND COALESCE(array_length(adc.primary_nations, 1), 0) > 0
-      ORDER BY sta.is_anchor DESC NULLS LAST,
-               sta.relevance_score DESC
-      LIMIT 8
-    `, [threadId]);
-    if (!rows.length) return;
-
-    const freq = new Map();
-    for (const r of rows) {
-      for (const code of (r.primary_nations || [])) {
-        const key = String(code || '').trim().toUpperCase();
-        if (!/^[A-Z]{2}$/.test(key)) continue;
-        freq.set(key, (freq.get(key) || 0) + 1);
-      }
-    }
-    if (!freq.size) return;
-    const ranked = [...freq.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([code]) => code);
-
-    // Only populate — never overwrite a non-empty existing value (might
-    // be a manual admin curation).
-    await pool.query(`
-      UPDATE story_threads
-         SET primary_nations = $1
-       WHERE id = $2
-         AND (primary_nations IS NULL OR array_length(primary_nations, 1) IS NULL)
-    `, [ranked, threadId]);
-  } catch (err) {
-    console.warn(`   ⚠ backfillThreadPrimaryNations [${threadId}]: ${err.message}`);
-  }
 }
 
 run().catch(err => {
