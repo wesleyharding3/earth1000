@@ -33686,43 +33686,59 @@ body.ticker-active .gTickerLabel {
         }
       }
 
-      // Illuminate country polygons for primary + arc + secondary countries
+      // Illuminate country polygons for primary + arc + secondary countries.
+      //
+      // Prefer the pre-computed ISO fields the generator now emits
+      // (primary_country_iso, primary_city_country_iso,
+      // secondary_country_isos, flow_arc_isos). Fall back to the older
+      // name/lat-lon lookup for briefings produced before the generator
+      // change. ALWAYS call __flowHighlightCountries — even with an empty
+      // set — so leftover highlights from the previous segment clear
+      // (previously we only called when isoSet had entries, which let
+      // stale highlights persist into non-matching segments).
       {
         const isoSet = new Set();
-        const globeC = window.__globeCountries || [];
-        // Find nearest country by lat/lon
-        const _nearestIso = (lat, lon) => {
-          if (lat == null || lon == null) return null;
-          let best = null, bestD = Infinity;
-          for (const c of globeC) {
-            if (c.lat == null) continue;
-            const d = Math.abs(c.lat - lat) + Math.abs((c.lon ?? c.lng ?? 0) - lon);
-            if (d < bestD) { bestD = d; best = c; }
+        const addIso = (iso) => { if (iso) isoSet.add(String(iso).toUpperCase()); };
+
+        // Pre-computed fields (new briefings)
+        addIso(seg.primary_country_iso);
+        addIso(seg.primary_city_country_iso);
+        (seg.secondary_country_isos || []).forEach(addIso);
+        (seg.flow_arc_isos || []).forEach(addIso);
+
+        // Legacy fallback (old briefings without ISO fields): do the fuzzy
+        // match the way we used to. Scoped inside this block so we don't
+        // run it when pre-computed ISOs are already present.
+        if (!isoSet.size) {
+          const globeC = window.__globeCountries || [];
+          const _nearestIso = (lat, lon) => {
+            if (lat == null || lon == null) return null;
+            let best = null, bestD = Infinity;
+            for (const c of globeC) {
+              if (c.lat == null) continue;
+              const d = Math.abs(c.lat - lat) + Math.abs((c.lon ?? c.lng ?? 0) - lon);
+              if (d < bestD) { bestD = d; best = c; }
+            }
+            return best ? (best.iso_code || best.key || '').toUpperCase() : null;
+          };
+          const _findIso = (name) => {
+            if (!name) return null;
+            const n = name.trim().toLowerCase();
+            const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
+            return c ? (c.iso_code || c.key || '').toUpperCase() : null;
+          };
+          if (seg.primary_country) addIso(_findIso(seg.primary_country.name) || _nearestIso(seg.primary_country.lat, seg.primary_country.lon));
+          if (seg.primary_city)    addIso(_nearestIso(seg.primary_city.lat, seg.primary_city.lon));
+          for (const arc of (seg.flow_arcs || [])) {
+            addIso(_findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon));
+            addIso(_findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon));
           }
-          return best ? (best.iso_code || best.key || '').toUpperCase() : null;
-        };
-        // By name fallback
-        const _findIso = (name) => {
-          if (!name) return null;
-          const n = name.trim().toLowerCase();
-          const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
-          return c ? (c.iso_code || c.key || '').toUpperCase() : null;
-        };
-        if (seg.primary_country) {
-          const iso = _findIso(seg.primary_country.name) || _nearestIso(seg.primary_country.lat, seg.primary_country.lon);
-          if (iso) isoSet.add(iso);
+          for (const loc of secondary) {
+            addIso(_findIso(loc.name) || _nearestIso(loc.lat, loc.lon));
+          }
         }
-        for (const arc of (seg.flow_arcs || [])) {
-          const fromIso = _findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon);
-          const toIso   = _findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon);
-          if (fromIso) isoSet.add(fromIso);
-          if (toIso)   isoSet.add(toIso);
-        }
-        for (const loc of secondary) {
-          const iso = _findIso(loc.name) || _nearestIso(loc.lat, loc.lon);
-          if (iso) isoSet.add(iso);
-        }
-        if (isoSet.size && window.__flowHighlightCountries) {
+
+        if (window.__flowHighlightCountries) {
           window.__flowHighlightCountries(isoSet);
         }
       }
@@ -33883,11 +33899,15 @@ body.ticker-active .gTickerLabel {
       }, ms(0.95)));
 
     } else if (seg.type === 'keywords' || seg.type === 'summary') {
-      // Slow globe rotation only — no city/country focus for recap segments
+      // Recap segments — no single country in focus, so clear polygon
+      // highlights explicitly. Previously these inherited the last story
+      // segment's lit countries, which looked like stale state.
+      if (window.__flowClearHighlights) window.__flowClearHighlights();
       if (window.setBriefingViewMode) window.setBriefingViewMode('country');
       // Non-story: show data panels immediately (no article cards to sequence)
       renderDataPanelsForSegment(idx);
     } else if (seg.globe_animate && window.startFocus) {
+      if (window.__flowClearHighlights) window.__flowClearHighlights();
       window.startFocus(seg.globe_animate.lat, seg.globe_animate.lng || 0);
       renderDataPanelsForSegment(idx);
     }
@@ -34507,6 +34527,15 @@ body.ticker-active .gTickerLabel {
   // Supports YouTube videos, Twitter posts, and Twitter videos.
   let _focalActive = false;
   let _focalCaptionsWereOff = false; // track if we auto-enabled captions
+  // Saved parent + sibling so we can restore #bVideoCard into the article
+  // panel after the focal pass. We reparent to <body> during focal because
+  // #bArticlePanel has `transform: translateY(-50%)` which creates a new
+  // containing block for fixed-positioned descendants — that's what was
+  // making the focal video render half-off-screen. Moving the card out of
+  // that transform's scope lets `position: fixed; left:50%; top:50%` resolve
+  // against the viewport like it's supposed to.
+  let _focalOrigParent = null;
+  let _focalOrigNextSibling = null;
 
   function _postYTCommand(iframe, func, args) {
     if (!iframe?.contentWindow) return;
@@ -34531,6 +34560,21 @@ body.ticker-active .gTickerLabel {
     // Pause narrator audio and mute background music for video
     if (audio) { try { audio.pause(); } catch (_) {} }
     bgMusicVideoStart();
+
+    // Lift the card out of #bArticlePanel (which has a CSS `transform`
+    // that would otherwise anchor our `position: fixed` centering to the
+    // panel's narrow left-edge box instead of the viewport). Save the
+    // original parent + next-sibling so we can reinsert at the same spot
+    // when focal ends. appendChild preserves the iframe — the video keeps
+    // playing through the reparent; we just swap the containing element.
+    if (card.parentNode !== document.body) {
+      _focalOrigParent = card.parentNode;
+      _focalOrigNextSibling = card.nextSibling;
+      document.body.appendChild(card);
+    } else {
+      _focalOrigParent = null;
+      _focalOrigNextSibling = null;
+    }
 
     // Enlarge media card to focal mode
     card.classList.add('bFocalVideo');
@@ -34593,7 +34637,22 @@ body.ticker-active .gTickerLabel {
     // Shrink card back
     if (card) {
       card.classList.remove('focal-in');
-      setTimeout(() => card.classList.remove('bFocalVideo'), 600);
+      setTimeout(() => {
+        card.classList.remove('bFocalVideo');
+        // Return the card to its original slot inside #bArticlePanel (or
+        // wherever it was before we hoisted it to <body> in startFocalVideo).
+        if (_focalOrigParent && card.parentNode === document.body) {
+          try {
+            if (_focalOrigNextSibling && _focalOrigNextSibling.parentNode === _focalOrigParent) {
+              _focalOrigParent.insertBefore(card, _focalOrigNextSibling);
+            } else {
+              _focalOrigParent.appendChild(card);
+            }
+          } catch (_) {}
+        }
+        _focalOrigParent = null;
+        _focalOrigNextSibling = null;
+      }, 600);
     }
     if (scrim) scrim.classList.remove('visible');
 

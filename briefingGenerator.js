@@ -242,43 +242,77 @@ async function run() {
       return;
     }
 
-    // Build one text piece per segment (voiceover + optional transition)
-    const textPieces = segments.map(seg => {
-      const base = seg.voiceover_text || '';
-      const tr   = seg.transition ? (' ' + seg.transition) : '';
-      return (base + tr).trim();
-    });
-
+    // Same voice / transition split as the main path — see comment there.
     const audioBuffers     = [];
     const pieceDurationsMs = [];
     const pieceWordTimings = [];
 
-    console.log(`   [${elapsed(t0)}] Synthesising ${textPieces.length} audio pieces with ElevenLabs...`);
+    console.log(`   [${elapsed(t0)}] Synthesising ${segments.length} audio pieces with ElevenLabs (voice+transition split)...`);
 
-    for (let pi = 0; pi < textPieces.length; pi++) {
-      const text = textPieces[pi];
-      if (!text) { audioBuffers.push(Buffer.alloc(0)); pieceDurationsMs.push(0); pieceWordTimings.push([]); continue; }
-      try {
-        const { buffer, wordTimings, durationMs } = await synthesiseAudio(text);
-        audioBuffers.push(buffer);
-        pieceDurationsMs.push(durationMs);
-        pieceWordTimings.push(wordTimings || []);
-        console.log(`   [${elapsed(t0)}] Piece ${pi + 1}/${textPieces.length} — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(wordTimings || []).length}w · ${(durationMs/1000).toFixed(1)}s`);
-      } catch (err) {
-        console.warn(`   ⚠ Audio piece ${pi} failed: ${err.message}`);
+    let pieceNum = 0;
+    for (let si = 0; si < segments.length; si++) {
+      const seg = segments[si];
+      const voiceoverText = (seg.voiceover_text || '').trim();
+      const transitionText = (seg.transition || '').trim();
+
+      if (voiceoverText) {
+        pieceNum++;
+        try {
+          const { buffer, wordTimings, durationMs } = await synthesiseAudio(voiceoverText);
+          audioBuffers.push(buffer);
+          pieceDurationsMs.push(durationMs);
+          pieceWordTimings.push(wordTimings || []);
+          console.log(`   [${elapsed(t0)}] Piece ${pieceNum} (seg ${si} voice) — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(durationMs/1000).toFixed(1)}s`);
+        } catch (err) {
+          console.warn(`   ⚠ Voiceover audio for seg ${si} failed: ${err.message}`);
+          audioBuffers.push(Buffer.alloc(0));
+          pieceDurationsMs.push(0);
+          pieceWordTimings.push([]);
+        }
+      } else {
+        audioBuffers.push(Buffer.alloc(0));
+        pieceDurationsMs.push(0);
+        pieceWordTimings.push([]);
+      }
+
+      if (transitionText) {
+        pieceNum++;
+        try {
+          const { buffer, wordTimings, durationMs } = await synthesiseAudio(transitionText);
+          audioBuffers.push(buffer);
+          pieceDurationsMs.push(durationMs);
+          pieceWordTimings.push(wordTimings || []);
+          console.log(`   [${elapsed(t0)}] Piece ${pieceNum} (seg ${si} trans) — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(durationMs/1000).toFixed(1)}s`);
+        } catch (err) {
+          console.warn(`   ⚠ Transition audio for seg ${si} failed: ${err.message}`);
+          audioBuffers.push(Buffer.alloc(0));
+          pieceDurationsMs.push(0);
+          pieceWordTimings.push([]);
+        }
+      } else {
         audioBuffers.push(Buffer.alloc(0));
         pieceDurationsMs.push(0);
         pieceWordTimings.push([]);
       }
     }
 
-    // Stamp each segment with its audio start offset and per-word timings
+    // Stamp each segment with its audio start offset + split breakdown.
     let cumMs = 0;
     for (let si = 0; si < segments.length; si++) {
-      segments[si].start_ms     = cumMs;
-      segments[si].duration_ms  = pieceDurationsMs[si];
-      segments[si].word_timings = pieceWordTimings[si] || [];
-      cumMs += pieceDurationsMs[si];
+      const voiceIdx = si * 2;
+      const transIdx = si * 2 + 1;
+      const vms = pieceDurationsMs[voiceIdx] || 0;
+      const tms = pieceDurationsMs[transIdx] || 0;
+      const vwords = pieceWordTimings[voiceIdx] || [];
+      const twords = (pieceWordTimings[transIdx] || []).map(w => ({ ...w, start: w.start + vms, end: w.end + vms }));
+      segments[si].start_ms           = cumMs;
+      segments[si].duration_ms        = vms + tms;
+      segments[si].voiceover_start_ms = cumMs;
+      segments[si].voiceover_ms       = vms;
+      segments[si].transition_start_ms= cumMs + vms;
+      segments[si].transition_ms      = tms;
+      segments[si].word_timings       = [...vwords, ...twords];
+      cumMs += vms + tms;
     }
 
     // Concatenate all non-empty buffers into one MP3 file
@@ -652,52 +686,109 @@ async function run() {
     if (!NO_AUDIO && ELEVENLABS_KEY && !audioData) {
       console.log(`   [${elapsed(t0)}] Synthesising ${segments.length} audio pieces with ElevenLabs...`);
 
-      // Build one text piece per segment (voiceover + optional transition)
-      const textPieces = segments.map(seg => {
-        const base = seg.voiceover_text || '';
-        const tr   = seg.transition ? (' ' + seg.transition) : '';
-        return (base + tr).trim();
-      });
-
+      // Audio synthesis is now TWO pieces per segment: voiceover and
+      // transition. Previously they were concatenated into one TTS input,
+      // which meant the transition's audio was locked to that segment's
+      // mp3 forever — a segment reorder left transitions pointing at the
+      // wrong adjacent story.
+      //
+      // Keeping them separate lets a future /rewrite-transitions endpoint
+      // re-synthesize just the transition slices when segments reorder,
+      // without touching any voiceover audio. The concatenated output
+      // remains one mp3 (voice_0 + trans_0 + voice_1 + trans_1 + ...) so
+      // the player pipeline is unchanged — only the segment metadata gains
+      // new breakdown fields.
       const audioBuffers    = [];
       const pieceDurationsMs = [];
       const pieceWordTimings = [];
+      // Per-segment breakdown: [{ voiceover_ms, transition_ms, voiceover_words, transition_words }]
+      const segmentBreakdowns = [];
 
-      for (let pi = 0; pi < textPieces.length; pi++) {
-        const text = textPieces[pi];
-        if (!text) { audioBuffers.push(Buffer.alloc(0)); pieceDurationsMs.push(0); pieceWordTimings.push([]); continue; }
-        try {
-          const { buffer, wordTimings, durationMs } = await synthesiseAudio(text);
-          audioBuffers.push(buffer);
-          pieceDurationsMs.push(durationMs);
-          pieceWordTimings.push(wordTimings || []);
-          console.log(`   [${elapsed(t0)}] Piece ${pi + 1}/${textPieces.length} — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(wordTimings || []).length}w · ${(durationMs/1000).toFixed(1)}s`);
-        } catch (err) {
-          console.warn(`   ⚠ Audio piece ${pi} failed: ${err.message}`);
+      let pieceNum = 0;
+      for (let si = 0; si < segments.length; si++) {
+        const seg = segments[si];
+        const voiceoverText = (seg.voiceover_text || '').trim();
+        const transitionText = (seg.transition || '').trim();
+        const breakdown = { voiceover_ms: 0, transition_ms: 0, voiceover_words: [], transition_words: [] };
+
+        if (voiceoverText) {
+          pieceNum++;
+          try {
+            const { buffer, wordTimings, durationMs } = await synthesiseAudio(voiceoverText);
+            audioBuffers.push(buffer);
+            pieceDurationsMs.push(durationMs);
+            pieceWordTimings.push(wordTimings || []);
+            breakdown.voiceover_ms = durationMs;
+            breakdown.voiceover_words = wordTimings || [];
+            console.log(`   [${elapsed(t0)}] Piece ${pieceNum} (seg ${si} voice) — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(durationMs/1000).toFixed(1)}s`);
+          } catch (err) {
+            console.warn(`   ⚠ Voiceover audio for seg ${si} failed: ${err.message}`);
+            audioBuffers.push(Buffer.alloc(0));
+            pieceDurationsMs.push(0);
+            pieceWordTimings.push([]);
+          }
+        } else {
           audioBuffers.push(Buffer.alloc(0));
           pieceDurationsMs.push(0);
           pieceWordTimings.push([]);
         }
+
+        if (transitionText) {
+          pieceNum++;
+          try {
+            const { buffer, wordTimings, durationMs } = await synthesiseAudio(transitionText);
+            audioBuffers.push(buffer);
+            pieceDurationsMs.push(durationMs);
+            pieceWordTimings.push(wordTimings || []);
+            breakdown.transition_ms = durationMs;
+            breakdown.transition_words = wordTimings || [];
+            console.log(`   [${elapsed(t0)}] Piece ${pieceNum} (seg ${si} trans) — ${(buffer.byteLength / 1024).toFixed(0)}KB · ${(durationMs/1000).toFixed(1)}s`);
+          } catch (err) {
+            console.warn(`   ⚠ Transition audio for seg ${si} failed: ${err.message}`);
+            audioBuffers.push(Buffer.alloc(0));
+            pieceDurationsMs.push(0);
+            pieceWordTimings.push([]);
+          }
+        } else {
+          // Still push a zero-byte placeholder so piece index math stays paired.
+          audioBuffers.push(Buffer.alloc(0));
+          pieceDurationsMs.push(0);
+          pieceWordTimings.push([]);
+        }
+
+        segmentBreakdowns.push(breakdown);
       }
 
-      // Stamp each segment with its audio start offset and per-word timings
-      // (relative to segment start) so the player can type captions in sync.
+      // Stamp each segment with its audio start offset + per-word timings
+      // spanning BOTH voice and transition, for captions. Also expose the
+      // voice/transition split so the player (and a future
+      // rewrite-transitions endpoint) can slice independently.
       let cumMs = 0;
       for (let si = 0; si < segments.length; si++) {
-        segments[si].start_ms     = cumMs;
-        segments[si].duration_ms  = pieceDurationsMs[si];
-        segments[si].word_timings = pieceWordTimings[si] || [];
-        cumMs += pieceDurationsMs[si];
+        const voiceIdx = si * 2;
+        const transIdx = si * 2 + 1;
+        const vms = pieceDurationsMs[voiceIdx] || 0;
+        const tms = pieceDurationsMs[transIdx] || 0;
+        const vwords = pieceWordTimings[voiceIdx] || [];
+        const twords = (pieceWordTimings[transIdx] || []).map(w => ({ ...w, start: w.start + vms, end: w.end + vms }));
+        segments[si].start_ms           = cumMs;
+        segments[si].duration_ms        = vms + tms;
+        segments[si].voiceover_start_ms = cumMs;
+        segments[si].voiceover_ms       = vms;
+        segments[si].transition_start_ms= cumMs + vms;
+        segments[si].transition_ms      = tms;
+        segments[si].word_timings       = [...vwords, ...twords];
+        cumMs += vms + tms;
       }
 
-      // Concatenate all non-empty buffers into one MP3 file
+      // Concatenate every piece into one MP3 (order: v0, t0, v1, t1, …)
       const concatted = Buffer.concat(audioBuffers.filter(b => b.byteLength > 0));
       if (concatted.byteLength === 0) {
         console.warn(`   ⚠ All audio pieces failed — storing episode without audio (check ELEVENLABS_VOICE_ID and API key)`);
         audioData = null;
       } else {
         audioData = concatted;
-        console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB total, ${(cumMs / 1000).toFixed(1)}s estimated`);
+        console.log(`   [${elapsed(t0)}] Audio ready — ${(audioData.length / 1024).toFixed(0)}KB total, ${(cumMs / 1000).toFixed(1)}s estimated (voice+transition split)`);
       }
     } else if (!NO_AUDIO && !ELEVENLABS_KEY) {
       console.warn(`   ⚠ ELEVENLABS_API_KEY not set — skipping audio`);
@@ -1454,7 +1545,7 @@ Return ONLY valid JSON in this exact structure:
     {
       "thread_id": <must be one of the exact integers listed above>,
       "voiceover": "Story segment text",
-      "transition": "Transition to next story (omit for last segment)",
+      "transition": "Generic outbound transition (see TRANSITION RULES)",
       "entities": [
         { "name": "Russia", "type": "country" },
         { "name": "Kyiv", "type": "city" }
@@ -1463,6 +1554,13 @@ Return ONLY valid JSON in this exact structure:
   ],
   "outro": "Closing paragraph text"
 }
+
+TRANSITION RULES (critical for play-order robustness):
+- Transitions must be ORDER-AGNOSTIC. Do NOT name the next country, topic, or segment. Segments get reordered in the editor and the transitions stay with their OWN segment, not the one that follows them.
+- BAD: "Now we turn to Brazil." / "Next, the situation in Lebanon." / "Moving on to the Korean peninsula..."
+- GOOD: "Onward." / "Let's shift focus." / "Moving on." / "And there's more tonight." / "Up next."
+- Keep transitions short (3-8 words). They're the bridge between story N's audio and story N+1's audio; they should close N gracefully without predicting N+1.
+- Omit transition entirely for the final story segment (transition to outro, handled separately).
 
 ENTITY RULES (critical for globe arc visualisation):
 - "entities" lists 2–4 geographic locations the story IS ABOUT (not where news sources are from).
@@ -1613,6 +1711,63 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
   const segments = [];
   const usedArticleIds = new Set();   // prevents same article appearing in two segments
 
+  // Resolve country ISOs for every location attached to every segment. Done
+  // once up-front so each segment can cheaply attach pre-computed iso_code /
+  // country_iso fields that the runtime just reads — no more fuzzy lookups
+  // against window.__globeCountries at playback time. Strategy:
+  //   1. Load every row of the countries table (id, iso_code, name, lat, lon)
+  //   2. Build a lowercase-name → iso lookup
+  //   3. For any location without a name match, fall back to nearest centroid
+  // Returns a function (name, lat, lon) → iso string or null.
+  const _isoResolver = await (async () => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT iso_code, name, latitude, longitude
+           FROM countries
+          WHERE iso_code IS NOT NULL`
+      );
+      const byName = new Map();
+      const centroids = [];
+      for (const r of rows) {
+        const iso = String(r.iso_code || '').toUpperCase();
+        if (!iso) continue;
+        if (r.name) byName.set(String(r.name).trim().toLowerCase(), iso);
+        if (r.latitude != null && r.longitude != null) {
+          centroids.push({ iso, lat: +r.latitude, lon: +r.longitude });
+        }
+      }
+      // A handful of common aliases that don't appear as canonical names.
+      const aliases = {
+        'usa': 'US', 'u.s.': 'US', 'u.s.a.': 'US', 'united states': 'US', 'america': 'US',
+        'uk': 'GB', 'britain': 'GB', 'u.k.': 'GB', 'great britain': 'GB', 'united kingdom': 'GB',
+        'south korea': 'KR', 'north korea': 'KP', 'dprk': 'KP',
+        'uae': 'AE', 'emirates': 'AE',
+        'russia': 'RU', 'china': 'CN', 'iran': 'IR',
+      };
+      for (const [k, v] of Object.entries(aliases)) if (!byName.has(k)) byName.set(k, v);
+
+      const nearest = (lat, lon) => {
+        if (lat == null || lon == null) return null;
+        let best = null, bestD = Infinity;
+        for (const c of centroids) {
+          const d = Math.abs(c.lat - lat) + Math.abs(c.lon - lon);
+          if (d < bestD) { bestD = d; best = c; }
+        }
+        return best ? best.iso : null;
+      };
+      return (name, lat, lon) => {
+        if (name) {
+          const hit = byName.get(String(name).trim().toLowerCase());
+          if (hit) return hit;
+        }
+        return nearest(lat, lon);
+      };
+    } catch (err) {
+      console.warn(`   ⚠ ISO resolver init failed: ${err.message}`);
+      return () => null;
+    }
+  })();
+
   // Intro segment
   const introSeg = { type: 'intro', voiceover_text: narrative.intro, globe_animate: { lat: 20, lng: 0, zoom: 0.9 } };
   console.log(`\n── SEGMENT 0 BUILD: INTRO ───────────────────────────────────`);
@@ -1726,6 +1881,27 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       primary_country:     primaryCountry,
       flow_arcs:           arcs,
       secondary_locations: filteredSecondaries,
+      // Pre-computed ISOs so the runtime doesn't have to fuzzy-match names
+      // at playback time. See Fix 4 in the briefing-system refactor: the
+      // old name-lookup was case-sensitive and unreliable ("USA" vs "United
+      // States of America"), leaving segments without highlights.
+      primary_country_iso: primaryCountry
+        ? _isoResolver(primaryCountry.name, primaryCountry.lat, primaryCountry.lon)
+        : null,
+      primary_city_country_iso: primaryCity
+        ? _isoResolver(primaryCity.country_name, primaryCity.lat, primaryCity.lon)
+        : null,
+      secondary_country_isos: Array.from(new Set(
+        filteredSecondaries
+          .map(s => _isoResolver(s.name, s.lat, s.lon))
+          .filter(Boolean)
+      )),
+      flow_arc_isos: Array.from(new Set(
+        arcs.flatMap(a => [
+          _isoResolver(a.from_name, a.from_lat, a.from_lng),
+          _isoResolver(a.to_name,   a.to_lat,   a.to_lng),
+        ]).filter(Boolean)
+      )),
     };
 
     console.log(`\n── SEGMENT ${i+1} BUILD: "${thread.title}" ──────────────────`);

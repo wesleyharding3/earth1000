@@ -1417,7 +1417,7 @@
       list.innerHTML = '';
       orderedIds.forEach((id, idx) => {
         const thread = allThreads.find(t => (t.thread_id || t.id) === id);
-        if (!enrichData[id]) enrichData[id] = { youtube_url: '', video_meta: null, steering_hint: '' };
+        if (!enrichData[id]) enrichData[id] = { youtube_url: '', video_meta: null, steering_hint: '', featured_video: null };
         const d = enrichData[id];
         const videoPreviewHtml = d.video_meta
           ? `<div class="video-preview visible" id="vp-${id}">
@@ -1425,6 +1425,44 @@
               <div class="video-info"><div class="video-title">${escHtml(d.video_meta.title || '')}</div><div class="video-id">${escHtml(d.video_meta.video_id || '')}</div></div>
             </div>`
           : `<div class="video-preview" id="vp-${id}"></div>`;
+        // Featured-media controls — live in Step 2 so the narrative
+        // generator can WRITE the script around the video cue (split at
+        // [VIDEO_HANDOFF]). Setting featured after script generation won't
+        // re-cue narration; the locked banner in Step 3 makes that clear.
+        const fv = d.featured_video || {};
+        const fvEnabled = !!fv.enabled;
+        const canFeature = !!d.video_meta;   // can only feature a resolved video
+        const featuredBlock = `
+          <div class="featured-block" style="margin-top:10px;padding:10px;border:1px solid rgba(96,200,255,0.2);border-radius:6px;background:rgba(96,200,255,0.04);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <input type="checkbox" id="fv-enabled-${id}" ${fvEnabled ? 'checked' : ''} ${canFeature ? '' : 'disabled'} onchange="setFeatured(${id}, this.checked)" />
+              <label for="fv-enabled-${id}" style="font-size:12px;font-weight:600;color:#60c8ff;">Featured media moment</label>
+              ${canFeature ? '' : '<span style="font-size:10px;color:rgba(255,255,255,0.4);">(resolve a video first)</span>'}
+            </div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:8px;line-height:1.4;">
+              When enabled, the narrator will hand off to this video mid-segment. The script is written AROUND the handoff — must be set before generation. Changing this after Step 3 requires a regenerate.
+            </div>
+            <div id="fv-fields-${id}" style="display:${fvEnabled ? 'block' : 'none'};">
+              <div style="margin-bottom:8px;">
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Narrator transition (optional — Claude will write one if blank)</label>
+                <input type="text" id="fv-transition-${id}" placeholder="e.g. Here's a clip from the press conference..." value="${escHtml(fv.narrator_transition || '')}" onchange="enrichData[${id}].featured_video.narrator_transition = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+              </div>
+              <div style="display:flex;gap:8px;">
+                <div style="flex:1;">
+                  <label style="font-size:10px;color:rgba(255,255,255,0.4);">Clip duration (sec)</label>
+                  <input type="number" id="fv-duration-${id}" min="3" max="60" step="1" value="${fv.duration_sec || 15}" onchange="enrichData[${id}].featured_video.duration_sec = parseInt(this.value) || 15" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                </div>
+                <div style="flex:1;">
+                  <label style="font-size:10px;color:rgba(255,255,255,0.4);">Media type</label>
+                  <select id="fv-media-${id}" onchange="enrichData[${id}].featured_video.media_type = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
+                    <option value="youtube" ${(fv.media_type || 'youtube') === 'youtube' ? 'selected' : ''}>YouTube</option>
+                    <option value="twitter_post" ${fv.media_type === 'twitter_post' ? 'selected' : ''}>X post</option>
+                    <option value="twitter_video" ${fv.media_type === 'twitter_video' ? 'selected' : ''}>X video</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>`;
         const card = document.createElement('div');
         card.className = 'enrich-card'; card.dataset.id = id; card.id = `enrich-${id}`;
         card.innerHTML = `
@@ -1444,6 +1482,7 @@
               <button class="btn-primary btn-small" onclick="resolveVideo(${id})">Resolve</button>
             </div>
             ${videoPreviewHtml}
+            ${featuredBlock}
             <label>Steering hint</label>
             <textarea id="hint-${id}" placeholder="e.g., Focus on economic impact"
               onchange="enrichData[${id}].steering_hint = this.value">${escHtml(d.steering_hint)}</textarea>
@@ -1451,6 +1490,23 @@
         list.appendChild(card);
       });
     }
+
+    // Toggle the featured-video block per thread. Creates the config object
+    // lazily — only written to when the user actually enables featured, so
+    // threads without featured media don't carry a stub record in the
+    // manifest.
+    window.setFeatured = function(id, enabled) {
+      if (!enrichData[id]) return;
+      if (!enrichData[id].featured_video) {
+        enrichData[id].featured_video = {
+          enabled: false, duration_sec: 15, narrator_transition: '',
+          media_type: (enrichData[id].video_meta ? 'youtube' : 'youtube'),
+        };
+      }
+      enrichData[id].featured_video.enabled = !!enabled;
+      const fields = document.getElementById(`fv-fields-${id}`);
+      if (fields) fields.style.display = enabled ? 'block' : 'none';
+    };
 
     function toggleEnrich(id) {
       const card = document.getElementById(`enrich-${id}`);
@@ -1632,8 +1688,35 @@
           </div>
           <div class="seg-field" style="padding-left:12px;border-left:2px solid rgba(96,200,255,0.2);">
             <div class="seg-label" style="color:#60c8ff;">Featured Media Moment</div>
+            ${(() => {
+              // Script cue-in for a featured video depends on [VIDEO_HANDOFF]
+              // being in the voiceover, which is written during narrative
+              // generation based on the Step 2 featured_video flag. Step 3 is
+              // AFTER generation — toggling featured here does NOT rewrite
+              // the script. We surface that truth with a banner when the
+              // narrator script doesn't have a split point, and we lock the
+              // toggle when Step 2 already set the featured state so the two
+              // don't fight each other.
+              const threadIdForSeg = seg.thread_id;
+              const lockedFromStep2 = !!(threadIdForSeg != null && enrichData[threadIdForSeg]?.featured_video?.enabled);
+              const hasHandoff = !!(seg.voiceover_before_video && seg.voiceover_after_video);
+              if (lockedFromStep2) {
+                return `<div style="padding:8px 10px;margin-bottom:8px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:11px;color:#86efac;">
+                  &#128274; Featured locked in from Step 2 — narrator script was written with a video handoff. Change it in Step 2 and regenerate to update.
+                </div>`;
+              }
+              if (focalEnabled && !hasHandoff) {
+                return `<div style="padding:8px 10px;margin-bottom:8px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:4px;font-size:11px;color:#fcd34d;">
+                  &#9888; Featured was enabled here (after generation). The narrator script was NOT written to cue this video. Return to Step 2, enable featured there, and regenerate for proper hand-off timing.
+                </div>`;
+              }
+              return '';
+            })()}
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <input type="checkbox" data-seg="${idx}" data-field="focal_enabled" ${focalEnabled ? 'checked' : ''} onchange="toggleFeaturedFields(${idx}, this.checked)" />
+              <input type="checkbox" data-seg="${idx}" data-field="focal_enabled" ${focalEnabled ? 'checked' : ''} ${(() => {
+                const threadIdForSeg = seg.thread_id;
+                return (threadIdForSeg != null && enrichData[threadIdForSeg]?.featured_video?.enabled) ? 'disabled' : '';
+              })()} onchange="toggleFeaturedFields(${idx}, this.checked)" />
               <span style="font-size:11px;color:rgba(255,255,255,0.5);">Featured — narrator hands off to media, expands fullscreen with audio</span>
             </div>
             <div id="featured-fields-${idx}" style="display:${focalEnabled ? 'block' : 'none'};">
@@ -1971,8 +2054,23 @@
         if (d.video_meta) {
           entry.youtube_video = { url: d.youtube_url, title: d.video_meta.title || '', video_id: d.video_meta.video_id || '' };
         }
-        // Include featured video / focal settings if configured in segments
-        if (editableSegments?.length) {
+        // Featured video precedence:
+        //   1. enrichData[id].featured_video  (Step 2 — primary source of truth)
+        //      This is what lets the narrative generator write the script
+        //      WITH a [VIDEO_HANDOFF] marker, because generation runs AFTER
+        //      Step 2 but BEFORE Step 3's segments exist.
+        //   2. Step 3's segment-level video_focal  (legacy / backstop)
+        //      Kept for backwards compatibility with briefings that had
+        //      featured toggled in Step 3 before this refactor.
+        if (d.featured_video?.enabled) {
+          entry.featured_video = {
+            enabled: true,
+            duration_sec: d.featured_video.duration_sec || 15,
+            narrator_transition: d.featured_video.narrator_transition || '',
+            media_type: d.featured_video.media_type || 'youtube',
+            twitter_url: d.featured_video.twitter_url || null,
+          };
+        } else if (editableSegments?.length) {
           const seg = editableSegments.find(s => String(s.thread_id) === String(id));
           if (seg?.video_focal?.enabled) {
             entry.featured_video = {

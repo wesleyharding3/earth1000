@@ -6089,10 +6089,10 @@ app.post('/api/admin/rankings/:entityType/retrain', requireAdmin, async (req, re
   }
 });
 
-// Serve briefing editor page
-app.get('/briefing-editor', (req, res) => {
-  res.sendFile(path.join(__dirname, 'www', 'briefing-editor.html'));
-});
+// The standalone /briefing-editor page was retired — all briefing editing
+// now lives in the unified /editor (www/earth-editor.html). Redirect any
+// stale bookmarks instead of 404ing.
+app.get('/briefing-editor', (_req, res) => res.redirect(301, '/editor'));
 
 // Serve tweet curator page
 app.get('/tweet-curator', (req, res) => {
