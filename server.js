@@ -16,6 +16,7 @@ const jwt = require("jsonwebtoken");
 const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
+const credits = require("./creditLedger");
 const { extractArticleSignals } = require("./sentimentLexicon");
 const { findBucketImage, guaranteeHeroImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
@@ -7929,6 +7930,23 @@ app.post("/api/cluster-node/summary", async (req, res) => {
   const id   = isTimeline ? timelineId : threadId;
   const cacheKey = `cluster-node-summary:${mode}:${id}`;
 
+  // Credit gate. Cluster analysis is the most expensive call type
+  // (Haiku ~$0.013 per response) — 13 credits. Signed-in required.
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  const _access = await credits.consumeCredits(user.id, user.tier || 'free', 'cluster_analysis', { referenceId: `${mode}:${id}` })
+    .catch(() => ({ allowed: false }));
+  if (!_access.allowed) {
+    return res.status(429).json({
+      error:        'Not enough credits for Cluster Analysis',
+      limitReached: true,
+      cost:         _access.cost,
+      remaining:    _access.remaining,
+      weekly_limit: _access.weekly_limit,
+      resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
+    });
+  }
+
   // `force: true` comes from the regenerate ↻ icon in the UI —
   // invalidate the in-process TTL cache so the next producer call
   // hits Claude fresh instead of serving the stale analysis.
@@ -8071,7 +8089,16 @@ ${articleContext}`;
     });
 
     if (cached?._notFound) return res.status(404).json({ error: `No data found for this ${mode}` });
-    res.json(cached);
+    res.json({
+      ...cached,
+      credits: {
+        cost:            _access.cost,
+        remaining:       _access.remaining,
+        base_remaining:  _access.base_remaining,
+        addon_remaining: _access.addon_remaining,
+        weekly_limit:    _access.weekly_limit,
+      },
+    });
   } catch (err) {
     console.error("[cluster-node/summary]", err.message);
     res.status(500).json({ error: "Summary generation failed" });
@@ -8233,6 +8260,24 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
   const entityId = mode === "thread" ? parseInt(thread_id, 10) : parseInt(timeline_id, 10);
   if (!entityId) {
     return res.status(400).json({ error: `${mode}_id required` });
+  }
+
+  // Credit gate. Flow context = 10 credits per call. Happens BEFORE the
+  // SSE stream opens — 429 is a plain JSON if the user can't afford it.
+  // The deducted balance is echoed back in the `structured` SSE frame.
+  const _user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!_user?.id) return res.status(401).json({ error: "Authentication required" });
+  const _fcAccess = await credits.consumeCredits(_user.id, _user.tier || 'free', 'flow_context', { referenceId: `${mode}:${entityId}` })
+    .catch(() => ({ allowed: false }));
+  if (!_fcAccess.allowed) {
+    return res.status(429).json({
+      error:        'Not enough credits for Flow Context',
+      limitReached: true,
+      cost:         _fcAccess.cost,
+      remaining:    _fcAccess.remaining,
+      weekly_limit: _fcAccess.weekly_limit,
+      resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
+    });
   }
 
   try {
@@ -8441,7 +8486,17 @@ ${articleContext || "(no article context available)"}`;
     );
 
     if (!streamClosed) {
-      sendEvent({ type: "structured", blocks });
+      sendEvent({
+        type: "structured",
+        blocks,
+        credits: {
+          cost:            _fcAccess.cost,
+          remaining:       _fcAccess.remaining,
+          base_remaining:  _fcAccess.base_remaining,
+          addon_remaining: _fcAccess.addon_remaining,
+          weekly_limit:    _fcAccess.weekly_limit,
+        },
+      });
       sendDone();
       res.end();
     }
@@ -8814,6 +8869,21 @@ app.get("/api/briefing/:episodeId/panels", async (req, res) => {
   }
 });
 
+// GET /api/credits/me — current user's credit balance + costs per feature.
+// Used by the frontend to render a "X credits left this week" meter and
+// inline cost hints on each AI button.
+app.get("/api/credits/me", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const bal = await credits.getBalance(user.id, user.tier || 'free');
+    res.json(bal);
+  } catch (err) {
+    console.error('[credits/me]', err.message);
+    res.status(500).json({ error: 'Failed to load credit balance' });
+  }
+});
+
 // GET /api/threads/:threadId/panels — returns cached panels + a computed
 // "Coverage by source country" pie prepended. The pie is computed live on
 // the thread's article set each request (cheap GROUP BY) so it's always
@@ -9156,14 +9226,18 @@ app.post("/api/explain", async (req, res) => {
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
   const tier = user.tier || "free";
-  const access = await checkExplanation(user.id, tier).catch(() => ({ allowed: false }));
+  // Credit-based gate (replaces checkExplanation hard cap). Deducts
+  // CREDIT_COSTS.article_analysis = 8 credits atomically; 429 on empty.
+  const access = await credits.consumeCredits(user.id, tier, 'article_analysis').catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({
-      error:     access.resetNote || "Daily explanation limit reached",
+      error:        'Not enough credits for Analysis',
       limitReached: true,
-      used:      access.used,
-      limit:     access.limit,
-      requiredTier: access.limit === 0 ? "pro" : null,
+      cost:         access.cost,
+      remaining:    access.remaining,
+      weekly_limit: access.weekly_limit,
+      requiredTier: access.weekly_limit === 0 ? 'pro' : null,
+      resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
     });
   }
 
@@ -9226,7 +9300,16 @@ ${originLine}`;
           text: String(rawText || "Analysis unavailable right now.").slice(0, 900),
         });
       }
-      return res.json({ blocks, used: access.used, limit: access.limit });
+      return res.json({
+        blocks,
+        credits: {
+          cost:            access.cost,
+          remaining:       access.remaining,
+          base_remaining:  access.base_remaining,
+          addon_remaining: access.addon_remaining,
+          weekly_limit:    access.weekly_limit,
+        },
+      });
     }
 
     const context = `Story thread: "${title}"\nDescription: ${description || summary || ""}\nKeywords: ${(keywords || []).slice(0, 10).join(", ")}`;
@@ -9241,7 +9324,16 @@ ${originLine}`;
     });
 
     const explanation = (response.content[0]?.text || "").trim().slice(0, 250);
-    res.json({ explanation, used: access.used, limit: access.limit });
+    res.json({
+      explanation,
+      credits: {
+        cost:            access.cost,
+        remaining:       access.remaining,
+        base_remaining:  access.base_remaining,
+        addon_remaining: access.addon_remaining,
+        weekly_limit:    access.weekly_limit,
+      },
+    });
   } catch (err) {
     console.error("[api/explain]", err.message);
     res.status(500).json({ error: "Explanation generation failed" });
@@ -9263,14 +9355,17 @@ app.post("/api/keywords/explain", async (req, res) => {
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
   const tier = user.tier || "free";
-  const access = await checkKwExplanation(user.id, tier).catch(() => ({ allowed: false }));
+  // Credit gate (replaces checkKwExplanation). 7 credits per keyword context.
+  const access = await credits.consumeCredits(user.id, tier, 'keyword_context').catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({
-      error:        access.resetNote || "Daily keyword explanation limit reached",
+      error:        'Not enough credits for Keyword Context',
       limitReached: true,
-      used:         access.used,
-      limit:        access.limit,
-      requiredTier: tier !== "enterprise" ? "enterprise" : null,
+      cost:         access.cost,
+      remaining:    access.remaining,
+      weekly_limit: access.weekly_limit,
+      requiredTier: access.weekly_limit === 0 ? 'pro' : null,
+      resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
     });
   }
 
@@ -9403,7 +9498,16 @@ ${articleBlock || '(no articles available)'}`;
       };
     });
 
-    res.json({ ...payload, used: access.used, limit: access.limit });
+    res.json({
+      ...payload,
+      credits: {
+        cost:            access.cost,
+        remaining:       access.remaining,
+        base_remaining:  access.base_remaining,
+        addon_remaining: access.addon_remaining,
+        weekly_limit:    access.weekly_limit,
+      },
+    });
   } catch (err) {
     console.error("[api/keywords/explain]", err.message);
     res.status(500).json({ error: "Keyword explanation generation failed" });

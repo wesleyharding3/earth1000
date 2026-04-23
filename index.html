@@ -9873,6 +9873,73 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   color: rgba(255,100,100,0.75);
 }
 .acctDpBtn.signout:hover { background: rgba(255,50,50,0.08); color: rgba(255,130,130,1); }
+/* Credit meter + 429 shortfall panel — see www/index.html for the full
+   comment. Styles kept in sync across both entry points. */
+.acctDpCreditBox {
+  margin: 10px 12px 8px; padding: 10px 12px;
+  background: rgba(96,200,255,0.05);
+  border: 1px solid rgba(96,200,255,0.18);
+  border-radius: 10px;
+}
+.acctDpCreditHeader {
+  display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px;
+}
+.acctDpCreditLabel {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  text-transform: uppercase; color: rgba(96,200,255,0.85);
+}
+.acctDpCreditValue {
+  font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.92);
+  font-variant-numeric: tabular-nums;
+}
+.acctDpCreditValue .acctDpCreditDenom {
+  font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.4); margin-left: 2px;
+}
+.acctDpCreditBar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.acctDpCreditBarFill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, rgba(96,200,255,0.85), rgba(139,92,246,0.85));
+  transition: width 0.3s ease, background 0.3s ease;
+}
+.acctDpCreditBarFill.low  { background: linear-gradient(90deg, rgba(255,180,80,0.85), rgba(255,220,130,0.85)); }
+.acctDpCreditBarFill.empty{ background: linear-gradient(90deg, rgba(220,80,80,0.85), rgba(255,130,130,0.85)); }
+.acctDpCreditSub {
+  margin-top: 6px; font-size: 10px; color: rgba(255,255,255,0.48);
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.acctDpCreditSub .acctDpBuyMore {
+  color: rgba(212,168,67,0.95); cursor: pointer; font-weight: 600; text-decoration: underline;
+}
+.acctDpCreditSub .acctDpBuyMore:hover { color: #e6c060; }
+
+.creditShortfall {
+  display: flex; gap: 12px; padding: 12px 14px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255,195,70,0.10), rgba(255,160,40,0.06));
+  border: 1px solid rgba(255,195,70,0.28);
+  color: rgba(255,228,170,0.95); font-size: 12px; line-height: 1.5;
+  align-items: flex-start;
+}
+.creditShortfallIcon {
+  flex-shrink: 0; width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center; border-radius: 50%;
+  background: rgba(255,195,70,0.15); color: rgba(255,220,130,1); margin-top: 1px;
+}
+.creditShortfallBody { flex: 1; min-width: 0; }
+.creditShortfallHeadline { font-size: 13px; font-weight: 700; color: rgba(255,230,180,1); margin-bottom: 3px; }
+.creditShortfallDetail { color: rgba(255,230,180,0.85); margin-bottom: 6px; }
+.creditShortfallDetail strong { color: rgba(255,255,255,1); font-variant-numeric: tabular-nums; }
+.creditShortfallSub { font-size: 11px; color: rgba(255,220,160,0.65); margin-bottom: 10px; }
+.creditShortfallCta {
+  display: inline-block; padding: 6px 12px; border-radius: 8px;
+  font-size: 11px; font-weight: 700;
+  background: rgba(212,168,67,0.22); border: 1px solid rgba(212,168,67,0.55);
+  color: rgba(255,230,160,1); cursor: pointer; transition: all 0.15s;
+}
+.creditShortfallCta:hover {
+  background: rgba(212,168,67,0.35); color: #fff;
+  border-color: rgba(255,200,100,0.8); box-shadow: 0 0 16px rgba(212,168,67,0.22);
+}
+
 .acctDpCount {
   margin-left: auto; font-size: 10px; font-weight: 700;
   background: rgba(255,180,80,0.18); color: rgba(255,195,70,0.9);
@@ -10782,6 +10849,16 @@ window.__earthAnalysis = (function() {
         <div class="acctDpHeader">
           <div class="acctDpEmail" id="acctDpEmail">—</div>
           <span class="acctDpTier free" id="acctDpTier">Free</span>
+        </div>
+        <div class="acctDpCreditBox" id="acctDpCreditBox" style="display:none;">
+          <div class="acctDpCreditHeader">
+            <span class="acctDpCreditLabel">AI credits</span>
+            <span class="acctDpCreditValue" id="acctDpCreditValue">—</span>
+          </div>
+          <div class="acctDpCreditBar">
+            <div class="acctDpCreditBarFill" id="acctDpCreditBarFill" style="width:0%"></div>
+          </div>
+          <div class="acctDpCreditSub" id="acctDpCreditSub">—</div>
         </div>
         <div class="acctDpBtn" id="acctDpUpgrade" onclick="window.__openPricing()" style="color:rgba(212,168,67,0.9)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -19774,6 +19851,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 if (obj?.error) throw new Error(obj.error);
                 if (obj?.type === 'structured' && Array.isArray(obj.blocks)) {
                   receivedStructured = true;
+                  if (obj.credits) window.__updateCreditMeterFromResponse?.(obj.credits);
                   if (!typingPromise) {
                     typingPromise = _arcCtxStartStructuredRender(key, obj.blocks, abort.signal);
                   }
@@ -19796,6 +19874,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
           };
           xhr.onload = () => {
             if (xhr.status === 402 || xhr.status === 403) { _arcCtxShowLock(); resolve(); return; }
+            if (xhr.status === 429) {
+              try {
+                const data = JSON.parse(xhr.responseText || '{}');
+                const body = document.getElementById('arcCtxBody');
+                if (body && data.limitReached) {
+                  body.className = 'arcCtxBody arcCtxStateSettled';
+                  body.innerHTML = window.__renderCreditShortfall(data, 'Flow Context');
+                }
+              } catch (_) {}
+              resolve();
+              return;
+            }
             if (xhr.status < 200 || xhr.status >= 300) { reject(new Error(`HTTP ${xhr.status}`)); return; }
             try {
               drain(true);
@@ -28269,17 +28359,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
       if (!res.ok) {
         if (res.status === 429 && data.limitReached) {
-          if (data.requiredTier === 'enterprise') {
-            ctxEl.innerHTML = `<div class="kwi-ctx-error">Enterprise feature. <span class="kwi-ctx-upgrade" onclick="window.__openPricing?.('AI Keyword Context is an Enterprise feature.')">Upgrade →</span></div>`;
-          } else {
-            ctxEl.innerHTML = `<div class="kwi-ctx-error">Daily limit reached (${data.used}/${data.limit}).</div>`;
-          }
+          ctxEl.innerHTML = window.__renderCreditShortfall(data, 'Keyword Context');
         } else {
           ctxEl.innerHTML = `<div class="kwi-ctx-error">Could not load context. Try again.</div>`;
         }
       } else {
         _kwiCtxCache.set(kw.toLowerCase(), data);
         ctxEl.innerHTML = _kwiRenderCtxPanel(data);
+        if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
       }
     } catch (err) {
       console.error('[kwi-inline-ctx]', err);
@@ -29713,6 +29800,93 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   }
 
+  // ── Credit meter + 429 shortfall renderer (mirrors www/index.html) ────
+  const _creditState = { remaining: null, weeklyLimit: null, baseRemaining: null, addonRemaining: null };
+  function _renderCreditMeter() {
+    const box    = document.getElementById('acctDpCreditBox');
+    const valEl  = document.getElementById('acctDpCreditValue');
+    const fillEl = document.getElementById('acctDpCreditBarFill');
+    const subEl  = document.getElementById('acctDpCreditSub');
+    if (!box || !valEl || !fillEl || !subEl) return;
+    if (_creditState.remaining == null) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const remaining = Number(_creditState.remaining) || 0;
+    const limit     = Number(_creditState.weeklyLimit) || 0;
+    const base      = Number(_creditState.baseRemaining) || 0;
+    const addon     = Number(_creditState.addonRemaining) || 0;
+    valEl.innerHTML = `${remaining}<span class="acctDpCreditDenom">/ ${limit}/wk</span>`;
+    const pct = limit > 0 ? Math.max(0, Math.min(100, Math.round((base / limit) * 100))) : 0;
+    fillEl.style.width = pct + '%';
+    fillEl.classList.remove('low', 'empty');
+    if (pct <= 0 && addon <= 0) fillEl.classList.add('empty');
+    else if (pct < 25) fillEl.classList.add('low');
+    const parts = [];
+    parts.push(`<span>Resets Monday</span>`);
+    if (addon > 0) {
+      parts.unshift(`<span style="color:rgba(167,139,250,0.85);">+${addon} from packs</span>`);
+    } else {
+      parts.unshift(`<span class="acctDpBuyMore" onclick="window.__openPricing?.('Add-on credit packs — 500 for \\\$2, 2000 for \\\$6')">Buy more</span>`);
+    }
+    subEl.innerHTML = parts.join('');
+  }
+  window.__refreshCreditMeter = async function() {
+    if (!currentUser) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/credits/me`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const total = (Number(data.base_remaining) || 0) + (Number(data.addon_credits) || 0);
+      _creditState.remaining      = total;
+      _creditState.weeklyLimit    = Number(data.weekly_limit) || 0;
+      _creditState.baseRemaining  = Number(data.base_remaining) || 0;
+      _creditState.addonRemaining = Number(data.addon_credits)  || 0;
+      _renderCreditMeter();
+    } catch (_) {}
+  };
+  window.__updateCreditMeterFromResponse = function(creditsBlock) {
+    if (!creditsBlock) return;
+    if (Number.isFinite(creditsBlock.remaining))       _creditState.remaining      = Number(creditsBlock.remaining);
+    if (Number.isFinite(creditsBlock.weekly_limit))    _creditState.weeklyLimit    = Number(creditsBlock.weekly_limit);
+    if (Number.isFinite(creditsBlock.base_remaining))  _creditState.baseRemaining  = Number(creditsBlock.base_remaining);
+    if (Number.isFinite(creditsBlock.addon_remaining)) _creditState.addonRemaining = Number(creditsBlock.addon_remaining);
+    _renderCreditMeter();
+  };
+  function _esc429(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+  window.__renderCreditShortfall = function(data, featureLabel) {
+    const cost      = Number(data?.cost || 0);
+    const remaining = Number(data?.remaining || 0);
+    const limit     = Number(data?.weekly_limit || 0);
+    const needTier  = !!data?.requiredTier;
+    const label     = _esc429(featureLabel || 'this feature');
+    const primaryAction = needTier
+      ? `<button class="creditShortfallCta" onclick="window.__openPricing?.('${label} needs a Pro plan — upgrade for weekly AI credits.')">Upgrade plan →</button>`
+      : `<button class="creditShortfallCta" onclick="window.__openPricing?.('Out of AI credits — grab an add-on pack to keep going.')">Get more credits →</button>`;
+    return `
+      <div class="creditShortfall">
+        <div class="creditShortfallIcon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+        </div>
+        <div class="creditShortfallBody">
+          <div class="creditShortfallHeadline">${label}: not enough credits</div>
+          <div class="creditShortfallDetail">
+            Costs <strong>${cost}</strong>, you have <strong>${remaining}</strong>${limit ? ` of ${limit}/wk` : ''}.
+          </div>
+          ${needTier
+            ? `<div class="creditShortfallSub">This feature is gated behind Pro — subscribe for your weekly allotment.</div>`
+            : `<div class="creditShortfallSub">Weekly credits reset Monday 00:00 UTC. Add-on packs carry over.</div>`}
+          ${primaryAction}
+        </div>
+      </div>`;
+  };
+
   // ── Load profile/admin state directly from Supabase ───────────
   async function loadProfile() {
     const user = currentUser || window.__currentUser;
@@ -29909,6 +30083,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (e && e.stopPropagation) e.stopPropagation();
     if (currentUser) {
       const opening = !accountDropdown.classList.contains('open');
+      if (opening) { try { window.__refreshCreditMeter?.(); } catch (_) {} }
       accountDropdown.classList.toggle('open');
       if (_topCluster) _topCluster.style.zIndex = opening ? '10001' : '';
       clearTimeout(_acctDropTimer);
@@ -30830,11 +31005,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      // Server now returns { blocks: [...] }. Legacy { summary: "..." }
-      // shape is tolerated — wrap the flat text as a single summary block.
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (res.status === 429 && data.limitReached) {
+          if (bodyEl) {
+            bodyEl.className = 'arcCtxBody arcCtxStateSettled';
+            bodyEl.innerHTML = window.__renderCreditShortfall(data, 'Cluster Analysis');
+          }
+          return;
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       let blocks = Array.isArray(data.blocks) ? data.blocks : null;
       if (!blocks && typeof data.summary === 'string' && data.summary.trim()) {
         blocks = [{ kind: 'summary', badge: 'Story', title: 'Overview', text: data.summary.trim() }];
@@ -30844,6 +31025,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       await window.__earthAnalysis?.stream(bodyEl, blocks);
+      if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
     } catch (err) {
       // Aborted fetches are expected when the user closes/switches panels
       // mid-request. Swallow them silently — no error UI, no log noise.
