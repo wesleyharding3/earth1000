@@ -23539,8 +23539,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           primary_category: t.primary_category || 'politics',
           importance: t.importance || 5,
           article_count: t.article_count || 0,
-          language_count: 0,
-          source_country_count: t.distinct_source_count || 0,
+          // See www/index.html — real counts now come from
+          // /api/threads/latest + /api/timelines/latest (distinct language_id
+          // and distinct source country_id per thread).
+          language_count: t.language_count || 0,
+          source_country_count: t.source_country_count || 0,
           feature_keywords: t.keywords || [],
           top_article_ids: [],
           article_ids: [],

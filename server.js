@@ -6813,9 +6813,32 @@ app.get("/api/timelines/latest", async (req, res) => {
 
       const heroMap = new Map(heroes.map(h => [h.timeline_id, h]));
       const textIsoMap = await resolveHeroIsoFromText(timelines, 'timeline_id');
+
+      // Per-timeline distinct-language and distinct-source-country counts.
+      // Mirrors the thread-latest counts query — see that block for context.
+      const { rows: tlCountsRows } = await pool.query(`
+        SELECT sta.timeline_id,
+               COUNT(DISTINCT a.country_id)
+                 FILTER (WHERE a.country_id IS NOT NULL) AS source_country_count,
+               COUNT(DISTINCT COALESCE(ns.language_id, ys.language_id))
+                 FILTER (WHERE COALESCE(ns.language_id, ys.language_id) IS NOT NULL) AS language_count
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        WHERE sta.timeline_id = ANY($1::int[])
+        GROUP BY sta.timeline_id
+      `, [timelineIds]);
+      const tlCountsMap = new Map(tlCountsRows.map(r => [
+        r.timeline_id,
+        { source_country_count: parseInt(r.source_country_count, 10) || 0,
+          language_count:       parseInt(r.language_count,       10) || 0 },
+      ]));
+
       const mapped = timelines.map(t => {
         const h = heroMap.get(t.timeline_id);
         const subjectIso = textIsoMap.get(t.timeline_id);
+        const counts = tlCountsMap.get(t.timeline_id) || { source_country_count: 0, language_count: 0 };
         return {
           ...t,
           // Expose `id` alongside `timeline_id` / `thread_id`. The SQL aliases
@@ -6828,7 +6851,9 @@ app.get("/api/timelines/latest", async (req, res) => {
           hero_image_url: h?.hero_image_url || null,
           hero_catalog_image_url: null,
           hero_source_name: h?.hero_source_name || null,
-          hero_iso_code: subjectIso || h?.hero_iso_code || null
+          hero_iso_code: subjectIso || h?.hero_iso_code || null,
+          source_country_count: counts.source_country_count,
+          language_count:       counts.language_count,
         };
       });
       // Fallback image search for timelines missing hero images.
@@ -7789,16 +7814,44 @@ app.get("/api/threads/latest", async (req, res) => {
     // so hero flags reflect thread subject countries, not article origin.
     const textIsoMap = await resolveHeroIsoFromText(threads, 'thread_id');
 
+    // Per-thread distinct-language and distinct-source-country counts.
+    // Used by the thread/timeline detail panel to show how many different
+    // languages the thread's articles were written in, and how many
+    // different source countries they came from — a cross-coverage
+    // diversity signal for the reader. Aggregated in one query keyed by
+    // thread_id, then merged into the result map below.
+    const { rows: countsRows } = await pool.query(`
+      SELECT sta.thread_id,
+             COUNT(DISTINCT a.country_id)
+               FILTER (WHERE a.country_id IS NOT NULL) AS source_country_count,
+             COUNT(DISTINCT COALESCE(ns.language_id, ys.language_id))
+               FILTER (WHERE COALESCE(ns.language_id, ys.language_id) IS NOT NULL) AS language_count
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN news_sources ns ON ns.id = a.source_id
+      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+      WHERE sta.thread_id = ANY($1::int[])
+      GROUP BY sta.thread_id
+    `, [threadIds]);
+    const countsMap = new Map(countsRows.map(r => [
+      r.thread_id,
+      { source_country_count: parseInt(r.source_country_count, 10) || 0,
+        language_count:       parseInt(r.language_count,       10) || 0 },
+    ]));
+
     const result = threads.map(t => {
       const h = heroMap.get(t.thread_id);
       const subjectIso = textIsoMap.get(t.thread_id);
+      const counts = countsMap.get(t.thread_id) || { source_country_count: 0, language_count: 0 };
       return {
         ...t,
         latest_published_at: t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
         hero_catalog_image_url: null,
         hero_source_name: null,
-        hero_iso_code: subjectIso || h?.hero_iso_code || null
+        hero_iso_code: subjectIso || h?.hero_iso_code || null,
+        source_country_count: counts.source_country_count,
+        language_count:       counts.language_count,
       };
     });
 
