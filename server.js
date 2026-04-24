@@ -7426,6 +7426,29 @@ app.get("/api/keywords/:keyword/references", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GET /api/country-meta
+//
+// Static country metadata (currency, languages) keyed by ISO 3166-1 alpha-2.
+// Sourced from REST Countries v3.1, baked at build time into
+// data/country-meta.json. Served with a long cache because this data
+// almost never changes — annual at most.
+//
+// Frontend uses this to render the facts header bar on each country panel
+// (population, GDP, language count, currency name).
+const _countryMetaCache = (() => {
+  try {
+    return require('fs').readFileSync('data/country-meta.json', 'utf8');
+  } catch (_) {
+    return JSON.stringify({});
+  }
+})();
+app.get("/api/country-meta", (req, res) => {
+  res.set('Cache-Control', 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800');
+  res.set('Content-Type', 'application/json');
+  res.send(_countryMetaCache);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // GET /api/threads/by-country/:iso
 //
 // Feeds the sentiment/coverage interpanel. Returns every active or cooling

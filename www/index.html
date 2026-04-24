@@ -3489,17 +3489,106 @@ body.flow-maximized #flowArcList {
       min-height: 0;
     }
 
+    /* ── Country flag chip (next to panel title) ──────────────────── */
+    .cpFlagChip {
+      display: inline-block;
+      width: 38px; height: 24px;
+      object-fit: cover;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.40), 0 0 0 1px rgba(0,0,0,0.25) inset;
+      margin-right: 10px;
+      flex-shrink: 0;
+      vertical-align: middle;
+    }
+    @media (max-width: 640px) {
+      .cpFlagChip { width: 30px; height: 20px; margin-right: 8px; }
+    }
+
+    /* ── Facts header bar (population / GDP / languages / currency) ──
+       Sits between the panel title and the local-threads strip. Same
+       glassy gradient + rounded corners as the panel itself so it reads
+       as part of the same surface, not a stuck-on widget. */
+    .cpFactsBar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin: 4px 12px 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background:
+        radial-gradient(120% 130% at 0% 0%, rgba(120,200,255,0.12), transparent 55%),
+        radial-gradient(140% 100% at 100% 100%, rgba(255,200,120,0.06), transparent 60%),
+        linear-gradient(180deg, rgba(20,28,46,0.62), rgba(12,18,32,0.42));
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.02);
+    }
+    .cpFactCell {
+      display: flex; flex-direction: column;
+      align-items: flex-start;
+      min-width: 0;
+    }
+    .cpFactLabel {
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 0.10em; text-transform: uppercase;
+      color: rgba(74,184,255,0.65);
+      margin-bottom: 3px;
+      white-space: nowrap;
+    }
+    .cpFactValue {
+      font-size: 13px; font-weight: 600;
+      color: rgba(120,200,255,1);
+      text-shadow: 0 0 8px rgba(74,184,255,0.30);
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .cpFactValue.empty {
+      color: rgba(255,255,255,0.30);
+      text-shadow: none;
+      font-weight: 400;
+    }
+    @media (max-width: 640px) {
+      .cpFactsBar {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px 10px;
+        margin: 4px 10px 8px;
+        padding: 8px 10px;
+        border-radius: 12px;
+      }
+      .cpFactValue { font-size: 12px; }
+    }
+
     /* ── Local threads strip (country panels only) ──────────────────
        A horizontal carousel of this country's localStoryBuilder threads,
-       pinned at the top of the country panel above the article feed.
-       Each card is a compact pill with importance/article_count/title. */
+       pinned just below the facts bar. Styled to feel like part of the
+       panel surface — same border-radius family, gradient fade instead
+       of a hard divider, glassy backdrop. */
     .cpLocalThreadsStrip {
-      margin: 0 0 10px;
-      padding: 10px 14px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin: 0 12px 10px;
+      padding: 10px 12px 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.06);
       background:
         radial-gradient(120% 100% at 0% 0%, rgba(74,184,255,0.10), transparent 55%),
-        linear-gradient(180deg, rgba(10,14,24,0.46), rgba(10,14,24,0.18));
+        linear-gradient(180deg, rgba(14,20,34,0.55), rgba(10,14,24,0.32));
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(255,255,255,0.02);
+      position: relative;
+    }
+    /* Soft fade at the bottom edge so the strip blends into the panel
+       below instead of cutting off with a hard border. */
+    .cpLocalThreadsStrip::after {
+      content: '';
+      position: absolute; left: 12px; right: 12px; bottom: -1px;
+      height: 14px; pointer-events: none;
+      background: linear-gradient(180deg, transparent, rgba(10,14,24,0.55));
+      opacity: 0.5;
     }
     .cpLocalThreadsHeader {
       display: flex; align-items: baseline; justify-content: space-between;
@@ -3532,6 +3621,17 @@ body.flow-maximized #flowArcList {
       scrollbar-width: thin;
       scrollbar-color: rgba(74,184,255,0.25) transparent;
       -webkit-overflow-scrolling: touch;
+      /* Allow horizontal scroll but tell the browser not to forward
+         touch/drag gestures up to the globe canvas. Combined with the
+         JS handlers below (pointerdown/touchstart stopPropagation) this
+         keeps the globe still while the user pans the thread strip. */
+      touch-action: pan-x;
+      overscroll-behavior-x: contain;
+    }
+    .cpLocalThreadsStrip {
+      /* Same — every pointer interaction inside the strip is contained
+         within the panel; nothing leaks to the globe behind. */
+      touch-action: pan-x;
     }
     .cpLocalThreadsScroller::-webkit-scrollbar { height: 6px; }
     .cpLocalThreadsScroller::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.25); border-radius: 3px; }
@@ -3540,15 +3640,35 @@ body.flow-maximized #flowArcList {
       min-width: 200px; max-width: 300px;
       padding: 9px 12px 10px;
       border: 1px solid rgba(74,184,255,0.22);
-      border-radius: 10px;
-      background: linear-gradient(180deg, rgba(18,26,44,0.78), rgba(12,18,32,0.58));
+      /* Rounded corners that mirror the panel's own border-radius
+         family — feels like part of the surface, not a stuck-on chip. */
+      border-radius: 12px;
+      background:
+        radial-gradient(140% 160% at 0% 0%, rgba(74,184,255,0.08), transparent 60%),
+        linear-gradient(180deg, rgba(20,30,50,0.78), rgba(12,18,32,0.55));
       cursor: pointer;
-      transition: transform 0.12s, border-color 0.12s, box-shadow 0.12s;
+      transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+      position: relative;
     }
-    .cpLocalThreadCard:hover {
+    .cpLocalThreadCard:hover,
+    .cpLocalThreadCard:focus-visible {
       transform: translateY(-1px);
+      border-color: rgba(120,200,255,0.65);
+      box-shadow: 0 6px 18px rgba(74,184,255,0.28);
+      outline: none;
+      animation: cpLocalCardPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes cpLocalCardPulse {
+      0%, 100% { box-shadow: 0 6px 18px rgba(74,184,255,0.22), inset 0 0 0 1px rgba(120,200,255,0.06); }
+      50%      { box-shadow: 0 8px 26px rgba(74,184,255,0.40), inset 0 0 0 1px rgba(120,200,255,0.14); }
+    }
+    /* Active card while scrolling — JS adds .is-active to the card
+       closest to the strip's center so even non-hover devices get a
+       sense of "this is the focused card right now." */
+    .cpLocalThreadCard.is-active {
       border-color: rgba(120,200,255,0.55);
-      box-shadow: 0 4px 14px rgba(74,184,255,0.22);
+      box-shadow: 0 6px 18px rgba(74,184,255,0.26);
+      animation: cpLocalCardPulse 1.8s ease-in-out infinite;
     }
     .cpLocalThreadCardTop {
       display: flex; align-items: center; justify-content: space-between;
@@ -3572,6 +3692,19 @@ body.flow-maximized #flowArcList {
     .cpLocalThreadsEmpty {
       font-size: 11px; color: rgba(255,255,255,0.35);
       padding: 4px 2px;
+    }
+    /* Empty-state placeholder — same blue family as the strip's title.
+       Stays visible (no auto-hide) so the panel layout doesn't reflow
+       jarringly when a country has no local threads yet. */
+    .cpLocalThreadsEmptyMsg {
+      flex: 1 1 auto;
+      padding: 10px 12px;
+      font-size: 11.5px; line-height: 1.5;
+      color: rgba(120,200,255,0.78);
+      background: linear-gradient(90deg, rgba(74,184,255,0.08), rgba(74,184,255,0.02));
+      border: 1px solid rgba(74,184,255,0.18);
+      border-radius: 8px;
+      text-shadow: 0 0 6px rgba(74,184,255,0.20);
     }
     @media (max-width: 768px) {
       .cpLocalThreadsStrip { padding: 8px 10px 10px; }
@@ -16827,6 +16960,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <button class="closePanel" style="position:absolute;top:6px;right:0;z-index:110;pointer-events:all;">✕</button>
             <div class="panelTitleRowDesktop">
               <span class="panelLiveDot" aria-hidden="true"></span>
+              ${(() => {
+                // Country flag chip — img tag against flagcdn.com (already
+                // used elsewhere in the app for source flags). Skipped on
+                // city panels since their `country` is text-only and they
+                // don't carry an ISO of their own.
+                const iso = (!isCity ? (node.iso_code || node.country_iso || '') : '').toString().toLowerCase().trim();
+                if (!iso || iso === '-99') return '';
+                return `<img class="cpFlagChip" src="https://flagcdn.com/w80/${iso === 'uk' ? 'gb' : iso}.png" alt="${node.name} flag" loading="lazy" onerror="this.style.display='none'" />`;
+              })()}
               <div class="panelTitleTextWrap">
                 <h2>${node.name}</h2>
                 ${showCountry ? `<h4>${node.country}</h4>` : ""}
@@ -16844,6 +16986,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
+          ${!isCity ? `<div class="cpFactsBar" id="cpFactsBar"
+                            data-iso="${(node.iso_code || node.country_iso || '').toUpperCase()}"
+                            data-population="${node.population || ''}"
+                            data-gdp="${node.gdp || ''}">
+            <div class="cpFactCell">
+              <div class="cpFactLabel">Pop.</div>
+              <div class="cpFactValue" id="cpFactPop">—</div>
+            </div>
+            <div class="cpFactCell">
+              <div class="cpFactLabel">GDP</div>
+              <div class="cpFactValue" id="cpFactGdp">—</div>
+            </div>
+            <div class="cpFactCell">
+              <div class="cpFactLabel">Languages</div>
+              <div class="cpFactValue" id="cpFactLangs">—</div>
+            </div>
+            <div class="cpFactCell">
+              <div class="cpFactLabel">Currency</div>
+              <div class="cpFactValue" id="cpFactCurrency">—</div>
+            </div>
+          </div>` : ''}
           ${!isCity ? `<div class="cpLocalThreadsStrip" id="cpLocalThreadsStrip" data-iso="${(node.iso_code || node.country_iso || '').toUpperCase()}">
             <div class="cpLocalThreadsHeader">
               <span class="cpLocalThreadsLabel">
@@ -16916,25 +17079,91 @@ const settingsToggle     = document.getElementById("settingsToggle");
         attachPanelResizeHandle();
         triggerNodePanelWhoosh(panel);
 
+        // ── Country facts bar (population / GDP / language count / currency) ──
+        // Reads metadata from /api/country-meta (cached in window.__countryMeta
+        // after first fetch) and the dataset attributes the panel template
+        // already filled in from the country row.
+        (async function fillFactsBar() {
+          const bar = panel.querySelector('#cpFactsBar');
+          if (!bar) return;
+          const iso        = (bar.dataset.iso || '').toUpperCase();
+          const population = bar.dataset.population ? Number(bar.dataset.population) : null;
+          const gdp        = bar.dataset.gdp ? Number(bar.dataset.gdp) : null;
+          const popEl  = bar.querySelector('#cpFactPop');
+          const gdpEl  = bar.querySelector('#cpFactGdp');
+          const langEl = bar.querySelector('#cpFactLangs');
+          const curEl  = bar.querySelector('#cpFactCurrency');
+
+          // Compact number formatter with K/M/B/T scale suffixes — keeps
+          // the value readable in a narrow grid cell.
+          function fmtCompact(n) {
+            if (!Number.isFinite(n) || n <= 0) return null;
+            if (n >= 1e12) return (n / 1e12).toFixed(n >= 1e13 ? 0 : 1).replace(/\.0$/, '') + 'T';
+            if (n >= 1e9)  return (n / 1e9 ).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/, '') + 'B';
+            if (n >= 1e6)  return (n / 1e6 ).toFixed(n >= 1e7  ? 0 : 1).replace(/\.0$/, '') + 'M';
+            if (n >= 1e3)  return (n / 1e3 ).toFixed(n >= 1e4  ? 0 : 1).replace(/\.0$/, '') + 'K';
+            return String(Math.round(n));
+          }
+          function setFact(el, val) {
+            if (val == null || val === '') { el.classList.add('empty'); el.textContent = '—'; }
+            else { el.classList.remove('empty'); el.textContent = val; }
+          }
+
+          setFact(popEl, fmtCompact(population));
+          setFact(gdpEl, gdp ? '$' + fmtCompact(gdp) : null);
+
+          // Lazy-load the country-meta JSON once per session.
+          if (!window.__countryMeta) {
+            try {
+              const API = window.__API || 'https://earth-wjr6.onrender.com';
+              const res = await fetch(`${API}/api/country-meta`);
+              window.__countryMeta = res.ok ? await res.json() : {};
+            } catch (_) { window.__countryMeta = {}; }
+          }
+          const meta = (window.__countryMeta || {})[iso] || null;
+          if (!meta) { setFact(langEl, null); setFact(curEl, null); return; }
+          const langCount = (meta.languages || []).length;
+          setFact(langEl, langCount > 0
+            ? `${langCount} ${langCount === 1 ? 'language' : 'languages'}`
+            : null);
+          setFact(curEl, meta.currency
+            ? `${meta.currency.code}${meta.currency.symbol ? ' ' + meta.currency.symbol : ''}`
+            : null);
+        })();
+
         // ── Local threads strip (country panels only) ──
         // Fetches scope='local' threads for this country and renders
-        // a horizontal card row at the top of the panel. Hidden entirely
-        // (the strip element isn't emitted) on city panels.
+        // a horizontal card row at the top of the panel. The strip is
+        // emitted only on country panels (not city panels). When a
+        // country has no local threads yet, we show a polite blue
+        // placeholder rather than hiding the strip — flashing it
+        // visible-then-gone was visually jarring.
         (async function loadLocalThreads() {
           const strip = panel.querySelector('#cpLocalThreadsStrip');
           if (!strip) return;
           const iso = (strip.dataset.iso || '').toUpperCase();
           if (!iso) { strip.remove(); return; }
           const scroller = strip.querySelector('#cpLocalThreadsScroller');
+
+          // Pointer / touch isolation — every interaction inside the
+          // strip stays in the strip. The globe canvas behind the panel
+          // listens to pointerdown/touchstart globally to drag the
+          // viewport; without these stopPropagation calls a horizontal
+          // swipe on the strip also rotated the globe.
+          ['pointerdown','pointermove','pointerup','touchstart','touchmove','touchend','wheel','mousedown']
+            .forEach(evt => strip.addEventListener(evt, e => e.stopPropagation(), { passive: true }));
+
+          const renderEmpty = (msg) => {
+            scroller.innerHTML = `<div class="cpLocalThreadsEmptyMsg">${msg}</div>`;
+          };
+
           try {
             const API = window.__API || 'https://earth-wjr6.onrender.com';
             const res = await fetch(`${API}/api/threads/by-country/${encodeURIComponent(iso)}?scope=local&days=14&limit=15`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const threads = await res.json();
             if (!Array.isArray(threads) || !threads.length) {
-              // No local threads yet — hide the strip entirely rather
-              // than showing an empty shell.
-              strip.style.display = 'none';
+              renderEmpty('No local threads in the last 14 days. Check back soon — domestic stories are processed nightly.');
               return;
             }
             const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => (
@@ -16953,8 +17182,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>`;
             }).join('');
             // Click-through → open the existing thread detail panel.
-            // window.__openThread / openThreadInPanel is the canonical
-            // opener used by the news feed + search.
             scroller.querySelectorAll('.cpLocalThreadCard').forEach(card => {
               const openHandler = () => {
                 const id = Number(card.dataset.threadId);
@@ -16970,9 +17197,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openHandler(); }
               });
             });
+
+            // Active-card pulse during horizontal scroll — finds the card
+            // whose center is closest to the scroller's center on each
+            // scroll tick. Gives non-hover devices (mobile/touch) a sense
+            // of "this is the focused card right now." Throttled with rAF.
+            const cards = Array.from(scroller.querySelectorAll('.cpLocalThreadCard'));
+            let pulseRaf = null;
+            function updateActiveCard() {
+              pulseRaf = null;
+              const scrollerRect = scroller.getBoundingClientRect();
+              const centerX = scrollerRect.left + scrollerRect.width / 2;
+              let best = null, bestDist = Infinity;
+              for (const c of cards) {
+                const r = c.getBoundingClientRect();
+                const cx = r.left + r.width / 2;
+                const d = Math.abs(cx - centerX);
+                if (d < bestDist) { best = c; bestDist = d; }
+              }
+              for (const c of cards) c.classList.toggle('is-active', c === best);
+            }
+            scroller.addEventListener('scroll', () => {
+              if (!pulseRaf) pulseRaf = requestAnimationFrame(updateActiveCard);
+            }, { passive: true });
+            // Initial active-card mark — first card visible.
+            updateActiveCard();
           } catch (err) {
             console.warn('[localThreads]', err.message);
-            strip.style.display = 'none';
+            renderEmpty('Local threads unavailable. Try refreshing in a moment.');
           }
         })();
 
