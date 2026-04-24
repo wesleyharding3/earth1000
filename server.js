@@ -2809,7 +2809,17 @@ app.get("/api/flows/article/:id", async (req, res) => {
     res.json(_cached);
   } catch (err) {
     console.error("[flows/article]", err.message);
-    res.status(500).json({ error: "Failed to fetch article flows", detail: req.user?.is_admin ? err.message : undefined });
+    // Guard against ERR_HTTP_HEADERS_SENT: if res.json(_cached) started
+    // streaming and then threw (e.g. JSON serialization mid-write, client
+    // disconnect race), setting status/headers here crashes the process
+    // with an unhandled rejection — which was taking down the whole server
+    // and producing 502 storms on queued OPTIONS preflights. Only send an
+    // error response if the response hasn't already been committed.
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to fetch article flows", detail: req.user?.is_admin ? err.message : undefined });
+    } else {
+      try { res.end(); } catch (_) {}
+    }
   }
 });
 

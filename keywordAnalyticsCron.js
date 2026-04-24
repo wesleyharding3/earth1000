@@ -123,16 +123,40 @@ async function main() {
       // Country breakdown + sample article IDs for this keyword, computed
       // in two small queries so each is fast on the per-keyword hot path.
 
-      // 2a. Country counts across the recent window. Join via the article's
-      // source country (news_articles.country_id) — this is the "where the
-      // keyword is being reported FROM" signal the UI wants to visualise.
+      // 2a. Country counts across the recent window.
+      //
+      // Attribution rule (what the UI actually wants):
+      //   • For keywords like "pentagon", "us senate", "kremlin", the user
+      //     expects the breakdown to show US / RU — the SUBJECT country.
+      //     Using news_articles.country_id (publisher) wrongly attributed
+      //     to whichever outlet covered the story (GB for Reuters UK etc.).
+      //   • The correct signal lives in article_locations with
+      //     routing_type = 'content' (entity-extracted subject country).
+      //   • Fall back to the article's source country only when no content
+      //     routing exists (un-extracted articles) so we still contribute
+      //     something rather than dropping the article entirely.
+      //
+      // We pick ONE country per (article_id, keyword) via a LATERAL JOIN so
+      // an article that mentions both US and IR only contributes +1 to the
+      // higher-ranked match — prevents a single cross-border article from
+      // inflating two country buckets at once.
       const { rows: countryRows } = await pool.query(`
         SELECT co.iso_code,
                co.name,
                COUNT(DISTINCT a.id)::int AS n
           FROM article_keywords ak
           JOIN news_articles a ON a.id = ak.article_id
-          LEFT JOIN countries co ON co.id = a.country_id
+          LEFT JOIN LATERAL (
+            SELECT al.country_id
+              FROM article_locations al
+             WHERE al.article_id  = a.id
+               AND al.routing_type = 'content'
+               AND al.country_id IS NOT NULL
+             ORDER BY al.country_id ASC
+             LIMIT 1
+          ) content_loc ON TRUE
+          LEFT JOIN countries co
+                 ON co.id = COALESCE(content_loc.country_id, a.country_id)
          WHERE LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $1
            AND a.published_at > NOW() - ($2 || ' days')::interval
            AND co.iso_code IS NOT NULL
