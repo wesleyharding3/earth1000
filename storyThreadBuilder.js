@@ -378,14 +378,27 @@ async function evaluateWithClaude(articles, existingThreads) {
     published_at: a.published_at
   }));
 
-  // Compact format keeps token usage manageable while letting Claude see
-  // ~150 active threads (vs the old 30) so it can correctly extend duplicates
-  // instead of spawning parallel "Trump-Iran" / "Iran-US war" / etc threads.
-  const existingData = existingThreads.slice(0, 150).map(t => ({
+  // Fetch up to 5 sample member articles per candidate thread so Claude can
+  // verify NEW articles actually cohere with the thread's existing content
+  // (not just the thread's title). Previously Claude only saw the thread's
+  // title + 3 keywords, which meant a bloated vibes-titled thread
+  // ("African Regional Tensions") became a black hole attracting loosely-
+  // related articles forever. Now Claude reads the actual evidence and can
+  // also EJECT articles already in a thread that don't belong.
+  const candidateThreads = existingThreads.slice(0, 150);
+  const threadMembers = await fetchThreadMembers(
+    candidateThreads.map(t => Number(t.id)),
+    5
+  );
+  const existingData = candidateThreads.map(t => ({
     id:       t.id,
     title:    t.title,
-    kw:       (t.keywords || []).slice(0, 3),
-    cat:      t.primary_category
+    cat:      t.primary_category,
+    nations:  [
+      ...(Array.isArray(t.primary_nations)   ? t.primary_nations   : []),
+      ...(Array.isArray(t.secondary_nations) ? t.secondary_nations : []),
+    ].slice(0, 6),
+    members:  threadMembers.get(Number(t.id)) || [],
   }));
 
   const prompt = `You are the editor of the BREAKING META-STORY stream of a geopolitical monitoring platform. Your job is NOT to catalogue umbrella arcs (that is handled elsewhere by the Timelines editor). Your job is to surface the STORIES THE WORLD'S PRESS IS COLLECTIVELY FOREGROUNDING RIGHT NOW — the meta-story that emerges from cross-source signal convergence in the last 48 hours.
@@ -425,7 +438,14 @@ A regional event CAN be a thread if it has global scope:
 ═══ MANUFACTURING / COMMERCIAL NEWS ═══
 Obscure information about factories, plants, industries, real estate markets, commercial launches, research breakthroughs, and tax campaigns is NOT relevant UNLESS it directly connects to a breaking story at the global level (e.g. a factory destroyed in an airstrike, a steel plant sanctioned by the US, a commercial deal at the center of a trade war). Absent that connection, REJECT.
 
-EXISTING ACTIVE THREADS (check if any articles extend these):
+EXISTING ACTIVE THREADS (check if any articles extend these).
+Each entry shows: id, title, category, nation codes, and a \`members\` sample
+(up to 5 of the thread's current articles with title / summary / country).
+YOU MUST read the members before deciding to extend. Only extend when the
+new article belongs alongside those specific members.
+You may also EJECT a member you see listed in a thread's \`members\` if it
+clearly does not belong with the rest — see EJECT ACTION below.
+
 ${JSON.stringify(existingData, null, 2)}
 
 ARTICLES TO ANALYZE:
@@ -496,30 +516,26 @@ A valid thread title MUST contain at least ONE of:
 
 If you cannot write a title with story-centric narrative structure, DO NOT create the thread. Return an empty array if necessary.
 
-═══ AGGRESSIVE CROSS-COUNTRY LINKING ═══
-When articles relate to the same geopolitical development across multiple countries or regions, LINK them into ONE thread rather than splitting them:
+═══ CROSS-COUNTRY LINKING — ONLY WHEN WARRANTED ═══
+Cross-border linking is encouraged WHEN articles actually converge on the SAME underlying event. It is forbidden when they merely share a region, a topic, or a category.
 
-ANTI-PATTERN (wrong — splits the story):
-  • Thread 1: "Poland Demands Investigation Into Citizen Death in Russian Custody"
-  • Thread 2: "Ukraine Detention Center Staffing Under Scrutiny"
-  • Thread 3: "Baltic States Condemn Russian POW Treatment"
+REQUIRED FOR A MERGE (all three must hold):
+  1. The articles describe the SAME underlying event, crisis, or bilateral relationship — not two parallel stories that happen to be nearby on a map.
+  2. A named actor (specific person, specific organization, or specific named event) recurs across the articles — OR one article is a direct reaction/ripple from the event reported in another (e.g. Country A retaliates against Country B's action; the causal link must be explicit in the text).
+  3. A human reading all the articles together would say "yes, same story" — not "yes, both are African", not "yes, both involve a minister".
 
-CORRECT PATTERN (one unified narrative):
+CORRECT CROSS-BORDER MERGE (one unified narrative):
   • Thread: "Eastern Europe POW Crisis: Poland, Ukraine, Baltics Demand Russian Accountability"
-    - Includes Poland citizen death + Ukraine detention + Baltic statements
-    - Shows the regional escalation and coordination
+    — All articles reference the same detention incident, same Russian custody chain, same coordinated Polish/Baltic response.
 
-Another example:
-ANTI-PATTERN:
-  • "Armenia Court Detention Decision David Minasyan"
-  • "Armenia-Azerbaijan Transit Corridor Opening"
-  • "Armenia-Azerbaijani Tensions Over Karabakh Region"
+WRONG MERGE (region/topic alone — REJECT):
+  • "African Diplomatic Tensions" bundling:
+      - Kenyan president mocking Nigeria's Tinubu
+      - South Africa suspending its police chief
+      - Ghana summoning South African envoy over xenophobia
+    These are THREE different stories. Zero shared actors, zero causal links. Africa + "diplomatic" is not a thread. These must be 2-3 separate threads (or some left as singletons if convergence hasn't happened yet).
 
-CORRECT:
-  • "Armenia-Azerbaijan Reconciliation Stalls: Corridor Talks Amid Detention Crackdown"
-    - Links the corridor progress + internal repression + regional tensions into one narrative
-
-The goal: show readers the FULL picture of how a geopolitical development is unfolding, not scattered fragments.
+When deciding whether an article extends an existing thread, READ the \`members\` array shown for that candidate thread. Only extend it if the new article belongs alongside those specific members. Matching the thread's title alone is NOT enough — thread titles drift as they accumulate articles, and you must verify against the actual evidence.
 
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
@@ -550,10 +566,20 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and
   }
 ]
 
-═══ NATION TAGGING ═══
+═══ NATION TAGGING — EXPLICIT MENTION ONLY ═══
+A country goes in primary_nations or secondary_nations ONLY IF it is EXPLICITLY NAMED in the title or summary of at least one constituent article (or in the members of a thread you are extending). Do NOT add countries by inference, geographic proximity, regional affiliation, alliance membership, or "affected economies" hand-wave. If the country isn't literally mentioned in the text you can read, it does NOT go in the array.
+
 primary_nations = the 1-4 ISO 3166-1 alpha-2 country codes most central to the story. Named actors, the site of the event, the state doing the action, the state being acted upon. Example: a US airstrike on Iran → ["US","IR"]. A China-Taiwan summit → ["CN","TW"]. A Hungarian internal election → ["HU"].
-secondary_nations = countries with meaningful but NOT central roles. Allies, transit states, affected economies, rhetorical actors, diplomatic intermediaries. Keep this tight — do not list every country mentioned in passing. Example for Hormuz shipping attack: primary ["IR","US"], secondary ["AE","SA","OM","CN"] (affected shippers + regional powers).
-USE CORRECT ISO CODES: United Kingdom = GB (not UK), South Korea = KR, North Korea = KP, United States = US, Russia = RU, Czech Republic = CZ, etc.`;
+secondary_nations = countries with meaningful but NOT central roles that ARE still explicitly mentioned — allies named in the text, transit states named, rhetorical actors named, intermediaries named. Keep this tight. If you can't point to a sentence in the provided articles that names the country, don't include it.
+USE CORRECT ISO CODES: United Kingdom = GB (not UK), South Korea = KR, North Korea = KP, United States = US, Russia = RU, Czech Republic = CZ, etc.
+
+═══ EJECT ACTION (remove misfit articles from existing threads) ═══
+If a thread's \`members\` array contains an article that clearly does NOT belong with the rest of that thread's members, you may emit an eject entry to remove it. Eject only when you are confident the article was incorrectly grouped — do not eject for minor topical drift or because you'd prefer a different title. Ejected articles simply become unassigned; they will find their proper home in a future run (or stay solo). Do NOT spawn a new thread from ejected articles — just eject them.
+
+Eject entry shape (use INSTEAD OF a normal entry, not in addition):
+  { "action": "eject", "thread_id": <existing thread id>, "eject_article_ids": [<ids from that thread's members list>] }
+
+Eject entries count toward the returned array; you can mix them freely with normal new/extend entries.`;
 
   const response = await client.messages.create({
     model:      "claude-haiku-4-5",
@@ -830,6 +856,43 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   }
 
   for (const def of defs) {
+    // Handle EJECT entries: Claude flags articles in an existing thread's
+    // members list that don't belong. We delete those links only (article
+    // stays in news_articles; thread keeps its remaining members). Ejected
+    // articles become unassigned and will be re-evaluated next run. We do
+    // NOT spawn a new thread from ejected articles — that's how parallel
+    // duplicates get created. If the thread loses all its members here,
+    // coolDownInactiveThreads at end-of-run will deactivate it naturally.
+    if (def && def.action === 'eject') {
+      const threadId = Number(def.thread_id);
+      const ejectIds = Array.isArray(def.eject_article_ids)
+        ? def.eject_article_ids.map(Number).filter(Number.isFinite)
+        : [];
+      if (!threadId || !existingThreadMap.has(threadId) || !ejectIds.length) continue;
+      try {
+        const result = await pool.query(`
+          DELETE FROM story_thread_articles
+           WHERE thread_id = $1 AND article_id = ANY($2::int[])
+        `, [threadId, ejectIds]);
+        if (result.rowCount > 0) {
+          await pool.query(`
+            UPDATE story_threads
+               SET article_count = GREATEST(0, (
+                     SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1
+                   )),
+                   last_updated_at = NOW()
+             WHERE id = $1
+          `, [threadId]);
+          await recomputeBreakingSignal(threadId).catch(() => {});
+          console.log(`   ✂ Ejected ${result.rowCount} article(s) from thread ${threadId} "${def.reason || ''}"`);
+          touchedIds.add(threadId);
+        }
+      } catch (err) {
+        console.warn(`   ⚠ Eject failed for thread ${threadId}: ${err.message}`);
+      }
+      continue;
+    }
+
     if (!def.article_ids?.length) continue;
 
     // Only reject NEW threads — never block extensions of existing threads,
@@ -1511,6 +1574,48 @@ async function getUnthreadedArticles(hours) {
   return combined
     .map(a => ({ ...a, keywords: kwMap.get(a.id) || [] }))
     .filter(a => a.keywords.length > 0);
+}
+
+// Fetch up to `perThread` sample member articles for each thread id.
+// Diversity hint: ORDER BY is_anchor DESC then a published_at spread so
+// Claude sees both the anchor story and a cross-section of sources rather
+// than 5 near-duplicates from the same wire. Returns a Map keyed by the
+// numeric thread id, with each value being an array of compact member
+// objects { id, title, summary, country }.
+async function fetchThreadMembers(threadIds, perThread = 5) {
+  const out = new Map();
+  if (!Array.isArray(threadIds) || !threadIds.length) return out;
+  const ids = threadIds.map(Number).filter(Number.isFinite);
+  if (!ids.length) return out;
+  const { rows } = await pool.query(`
+    SELECT sta.thread_id,
+           a.id           AS article_id,
+           a.title,
+           a.summary,
+           a.translated_summary,
+           a.country_name,
+           sta.is_anchor,
+           a.published_at
+      FROM story_thread_articles sta
+      JOIN news_articles a ON a.id = sta.article_id
+     WHERE sta.thread_id = ANY($1::int[])
+     ORDER BY sta.thread_id,
+              sta.is_anchor DESC NULLS LAST,
+              a.published_at DESC
+  `, [ids]);
+  for (const r of rows) {
+    const tid = Number(r.thread_id);
+    if (!out.has(tid)) out.set(tid, []);
+    const bucket = out.get(tid);
+    if (bucket.length >= perThread) continue;
+    bucket.push({
+      id:       Number(r.article_id),
+      title:    r.title,
+      summary:  String(r.translated_summary || r.summary || '').slice(0, 180),
+      country:  r.country_name || null,
+    });
+  }
+  return out;
 }
 
 async function getActiveThreads() {

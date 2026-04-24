@@ -29018,14 +29018,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     //   • Better to show a rarely-useless button than to hide it from
     //     a user who actually needs it (the card → panel continuity
     //     case that was breaking).
+    // Show the translation button whenever the article's source language
+    // differs from the user's current target language. Previously we hid the
+    // button on English articles outright, which broke the case of a
+    // non-English user viewing English content. We also used to hide it once
+    // `translated_title` was populated — but that meant users couldn't re-
+    // run translation after switching target languages. Keep it visible; the
+    // translate handler is idempotent and backend caches by (id, targetLang).
     const _adpNeedsTrans = (() => {
       if (!article || !article.title) return false;
-      if (article.translated_title) return false;
-      const raw = String(article.language || '').toLowerCase().trim();
-      if (!raw) return true; // unknown → show on panel (permissive)
-      const primary = raw.split(/[-_]/)[0];
-      const ENGLISH_CODES = new Set(['en', 'eng', 'english']);
-      if (ENGLISH_CODES.has(primary) || ENGLISH_CODES.has(raw)) return false;
+      const articleLang = String(article.language || '').toLowerCase().trim().split(/[-_]/)[0];
+      const targetLang  = String(_adpTLang?.code || 'en').toLowerCase().trim().split(/[-_]/)[0];
+      if (!articleLang) return true;
+      if (articleLang === targetLang) return false;
       return true;
     })();
     const adpTranslateBtn = _adpNeedsTrans
