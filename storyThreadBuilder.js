@@ -619,6 +619,15 @@ function parseClaudeJsonArray(text) {
     throw new Error(`No JSON array in Claude response: ${unfenced.slice(0, 200)}`);
   }
 
+  // EMPTY-ARRAY fast path: the response contains an "[]" but the walker
+  // would otherwise treat a legitimate empty array as unparseable. Claude
+  // returns [] when it correctly sees no threadable stories in the batch
+  // — that's a success case (no error), not a parse failure.
+  // Look for a bare [] at the top level, tolerating whitespace between
+  // brackets and any trailing prose Claude may have appended.
+  const emptyMatch = unfenced.slice(startIdx).match(/^\[\s*\]/);
+  if (emptyMatch) return [];
+
   // Walk forward character-by-character, respecting string literals and
   // escape sequences, to find every top-level object boundary. At each
   // complete {...} at depth 1, attempt to JSON.parse it and collect.
@@ -821,14 +830,14 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   ]);
   const CONCRETE_SIGNAL_RE = new RegExp([
     String.raw`\d`,
-    String.raw`\b(killed|kills|kill|dies|died|dead|injured|wounded|attacks?|attacked|strikes?|struck|bombed|shot|shoots?|arrests?|arrested|elected|fired|resigns?|resigned|signed|signs?|launched|launches?|invaded|invades?|seized|seizes?|captured|captures?|sanctioned|imposed|imposes?|raids?|raided|protests?|protested|votes?|voted|wins?|won|loses?|lost|meets?|met|visits?|visited|announced|announces?|declared|declares?|approved|approves?|rejected|rejects?|condemned|condemns?|denounced|denies|denied|calls?|called|orders?|ordered|halts?|halted|suspends?|suspended|releases?|released|frees?|freed|expels?|expelled|deports?|deported|evacuates?|evacuated|destroyed|destroys?|crashes?|crashed|erupts?|erupted|hits?|hit|topples?|toppled|ousts?|ousted|deploys?|deployed|withdraws?|withdrew|escalates?|escalated|threatens?|threatened|warns?|warned|sues?|sued|charges?|charged|indicts?|indicted|jails?|jailed|negotiates?|negotiated|brokers?|brokered|ratifies?|ratified|vetoes?|vetoed|invokes?|invoked|files?|filed|reveals?|revealed|revealing|exposes?|exposed|leaked|leaks?|uncovered|uncovers?|ambushed|ambush|intercepts?|intercepted)\b`,
+    String.raw`\b(killed|kills|kill|dies|died|dead|injured|wounded|attacks?|attacked|strikes?|struck|bombed|shot|shoots?|arrests?|arrested|elected|fired|resigns?|resigned|signed|signs?|launched|launches?|invaded|invades?|seized|seizes?|captured|captures?|sanctioned|imposed|imposes?|raids?|raided|protests?|protested|votes?|voted|wins?|won|loses?|lost|meets?|met|visits?|visited|announced|announces?|declared|declares?|approved|approves?|rejected|rejects?|condemned|condemns?|denounced|denies|denied|calls?|called|orders?|ordered|halts?|halted|suspends?|suspended|releases?|released|frees?|freed|expels?|expelled|deports?|deported|evacuates?|evacuated|destroyed|destroys?|crashes?|crashed|erupts?|erupted|hits?|hit|topples?|toppled|ousts?|ousted|deploys?|deployed|withdraws?|withdrew|escalates?|escalated|threatens?|threatened|warns?|warned|sues?|sued|charges?|charged|indicts?|indicted|jails?|jailed|negotiates?|negotiated|brokers?|brokered|ratifies?|ratified|vetoes?|vetoed|invokes?|invoked|files?|filed|reveals?|revealed|revealing|exposes?|exposed|leaked|leaks?|uncovered|uncovers?|ambushed|ambush|intercepts?|intercepted|forge|forges|forged|forging|pledges?|pledged|endorses?|endorsed|hails?|hailed|unveils?|unveiled|scraps?|scrapped|backs|backed|welcomes?|welcomed|greenlights?|greenlit|rejects?|boycotts?|boycotted|recalls?|recalled)\b`,
     String.raw`\b(president|prime\s+minister|minister|chancellor|king|queen|sultan|emir|general|admiral|colonel|ambassador|envoy|spokesperson|secretary|premier|governor|senator|deputy|mp|congressman|congresswoman)\b`,
     // Concrete state / security / paramilitary actors. These are always
     // event-bearing when they appear in a headline, regardless of any
     // abstract nouns also present (e.g. "CIA Operations" is about the CIA,
     // not the abstract concept "operations").
     String.raw`\b(cia|fbi|nsa|dhs|mossad|kgb|fsb|gru|mi5|mi6|gchq|isi|ra[wa]|sbu|idf|ira|eta|farc|hezbollah|hamas|isis|isil|daesh|taliban|houthis?|boko\s+haram|wagner|mujahideen|interpol|europol|unsc|nato|un|eu|opec|cartel|cartels)\b`,
-    String.raw`\b(coup|war|invasion|airstrike|missile|drone|ceasefire|treaty|summit|election|referendum|sanctions|tariff|tariffs|protest|riot|earthquake|tsunami|wildfire|flood|hurricane|cyclone|outbreak|epidemic|pandemic|hostage|kidnap|kidnapped|shooting|massacre|assassination|raid|blockade|embargo|deal|accord|pact|verdict|ruling|indictment|impeachment|crash|explosion|attack|strike|offensive|withdrawal|retreat|surge|breakthrough|deadlock|ambush|ambushes|ambushed)\b`
+    String.raw`\b(coup|war|invasion|airstrike|missile|drone|ceasefire|treaty|summit|election|referendum|sanctions|tariff|tariffs|protest|riot|earthquake|tsunami|wildfire|flood|hurricane|cyclone|outbreak|epidemic|pandemic|hostage|kidnap|kidnapped|shooting|massacre|assassination|raid|blockade|embargo|deal|accord|pact|verdict|ruling|indictment|impeachment|crash|explosion|attack|strike|offensive|withdrawal|retreat|surge|breakthrough|deadlock|ambush|ambushes|ambushed|partnership|alliance|coalition|memorandum|mou|visit|visits|delegation|delegations|summits|talks|negotiation|negotiations|bilateral|trilateral|multilateral)\b`
   ].join('|'), 'i');
   function looksLikeTopicBucket(title) {
     if (!title) return false;
