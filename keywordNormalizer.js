@@ -83,18 +83,28 @@ async function normalizeRecentKeywords(options) {
     minFrequency
   });
 
-  // Dedicated client with a raised statement_timeout. The candidate query
-  // aggregates over 48h of article_keywords joined to news_articles — on
-  // Render the default ~30-60s timeout kills it mid-plan. 5 minutes is
-  // comfortably over typical run time (~30-90s) without hanging the pool
-  // forever if something genuinely wedges.
-  const candClient = await pool.connect();
+  // Two callers support:
+  //   1. keywordNormalizerCron.js — passes a PRE-CONNECTED client with
+  //      statement_timeout = 5min already set. We must NOT call
+  //      pool.connect() on it (Client.connect throws "already connected").
+  //   2. storyThreadBuilder.js — passes the real Pool. db.js enforces a
+  //      45s per-client statement_timeout, which kills this aggregation.
+  //      For the pool path we grab our own client + raise the timeout.
+  //
+  // Duck-type: a Pool exposes `.totalCount`, a PoolClient does not.
+  const isPool = typeof pool.totalCount === 'number';
   let rows;
-  try {
-    try { await candClient.query(`SET statement_timeout = '5min'`); } catch (_) {}
-    ({ rows } = await candClient.query(sql, params));
-  } finally {
-    candClient.release();
+  if (isPool) {
+    const candClient = await pool.connect();
+    try {
+      try { await candClient.query(`SET statement_timeout = '5min'`); } catch (_) {}
+      ({ rows } = await candClient.query(sql, params));
+    } finally {
+      candClient.release();
+    }
+  } else {
+    // Already a client — cron already set the timeout. Use directly.
+    ({ rows } = await pool.query(sql, params));
   }
   if (!rows.length) {
     return {
