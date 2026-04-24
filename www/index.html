@@ -9946,6 +9946,8 @@ body.flow-maximized #flowArcList {
 .kwi-row-ctx-btn {
   margin-left: 6px;
   width: 22px; height: 22px;
+  padding: 0;
+  box-sizing: border-box;
   flex-shrink: 0;
   border-radius: 6px;
   border: 1px solid rgba(139,92,246,0.35);
@@ -9955,6 +9957,25 @@ body.flow-maximized #flowArcList {
   cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+/* Mobile: shrink the ✦ button to a compact square. On narrow screens
+   the 22×22 desktop size was the tallest element in each row, forcing
+   row height and making the trending list feel unnecessarily long.
+   !important + fixed flex-basis guards against the flex row stretching
+   the button wider. */
+@media (max-width: 768px) {
+  .kwi-row-ctx-btn {
+    margin-left: 4px !important;
+    width: 18px !important;
+    min-width: 18px !important;
+    max-width: 18px !important;
+    height: 18px !important;
+    min-height: 18px !important;
+    max-height: 18px !important;
+    flex: 0 0 18px !important;
+    font-size: 11px !important;
+    border-radius: 5px !important;
+  }
 }
 .kwi-row-ctx-btn:hover {
   background: rgba(139,92,246,0.28);
