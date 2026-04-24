@@ -182,6 +182,13 @@ async function main() {
       const countryExpr = subjectTableReady
         ? `COALESCE(sc.country_id, a.country_id)`
         : `a.country_id`;
+      // Match via plain column equality so btree indexes idx_ak_normalized
+      // and idx_ak_keyword get hit. The previous predicate
+      // `LOWER(COALESCE(normalized_keyword, keyword)) = $1` was index-
+      // hostile — forced a sequential scan of article_keywords for EVERY
+      // keyword, which is why this loop was timing out on every word.
+      // Keywords are already stored lowercased (keywordExtractor.js:80),
+      // so dropping LOWER() is safe.
       const { rows: countryRows } = await perKwClient.query(`
         SELECT co.iso_code,
                co.name,
@@ -190,7 +197,8 @@ async function main() {
           JOIN news_articles a ON a.id = ak.article_id
           ${subjectJoin}
           LEFT JOIN countries co ON co.id = ${countryExpr}
-         WHERE LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $1
+         WHERE (ak.normalized_keyword = $1
+                OR (ak.normalized_keyword IS NULL AND ak.keyword = $1))
            AND a.published_at > NOW() - ($2 || ' days')::interval
            AND co.iso_code IS NOT NULL
          GROUP BY co.iso_code, co.name
@@ -226,7 +234,8 @@ async function main() {
                a.base_priority
           FROM article_keywords ak
           JOIN news_articles a ON a.id = ak.article_id
-         WHERE LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $1
+         WHERE (ak.normalized_keyword = $1
+                OR (ak.normalized_keyword IS NULL AND ak.keyword = $1))
            AND a.published_at > NOW() - ($2 || ' days')::interval
          ORDER BY a.id, a.published_at DESC
          LIMIT 200
