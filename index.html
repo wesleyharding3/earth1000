@@ -2914,6 +2914,29 @@ body.flow-maximized #flowArcList {
   0%, 100% { box-shadow: 0 0 10px rgba(255,200,120,0.40); }
   50%      { box-shadow: 0 0 20px rgba(255,210,140,0.75); }
 }
+/* Mobile: swap bar indicators for little glowing round dots. */
+@media (max-width: 768px) {
+  .arcCtxSegDots { gap: 10px; }
+  .arcCtxSegDot { width: 6px; height: 6px; border-radius: 50%; }
+  .arcCtxSegDot.is-active {
+    transform: scale(1.35);
+    box-shadow: 0 0 10px rgba(255,200,120,0.55);
+  }
+  @keyframes arcCtxSegDotPulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(255,200,120,0.45); }
+    50%      { box-shadow: 0 0 16px rgba(255,210,140,0.80); }
+  }
+}
+/* Pulsing Next arrow when the stream is paused awaiting a user click. */
+.arcCtxSegAwaitingAdvance .arcCtxSegNext {
+  animation: arcCtxSegArrowAwait 0.95s ease-in-out infinite;
+  border-color: rgba(120,210,255,0.60);
+  color: #dff3ff;
+}
+@keyframes arcCtxSegArrowAwait {
+  0%, 100% { box-shadow: 0 0 12px rgba(120,210,255,0.30), inset 0 0 0 1px rgba(255,255,255,0.04); }
+  50%      { box-shadow: 0 0 24px rgba(150,220,255,0.80), inset 0 0 0 1px rgba(255,255,255,0.08); }
+}
 .arcCtxBody .arcCtxCursor { display: none; }
 .arcCtxBody .arcCtxEmpty {
   padding: 16px 12px;
@@ -10508,8 +10531,11 @@ window.__earthAnalysis = (function() {
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
-    // Thread/line detail panels: mobile-only segmented presentation.
-    if (window.__arcCtxSegmented?.isMobile()) {
+    // Thread/line detail panels: always segmented. Mobile = auto-advance,
+    // desktop = manual-only (user clicks Next arrow to reveal next block).
+    if (window.__arcCtxSegmented) {
+      const mobile = window.__arcCtxSegmented.isMobile();
+      window.__arcCtxSegmented.setManualMode(body, !mobile);
       window.__arcCtxSegmented.apply(body);
     }
   }
@@ -10562,6 +10588,7 @@ window.__earthAnalysis = (function() {
       showMessage(body, 'arcCtxEmpty', 'Analysis unavailable.');
       return;
     }
+    const manual = window.__arcCtxSegmented?.isManualMode?.(body) || false;
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
       if (signal?.aborted) break;
@@ -10569,6 +10596,10 @@ window.__earthAnalysis = (function() {
       renderBlocks(body, live);
       const done = await typeBlock(body, live, live.length - 1, signal);
       if (!done) break;
+      if (manual && i < normalized.length - 1) {
+        const proceed = await window.__arcCtxSegmented.awaitAdvance(body, signal);
+        if (!proceed) break;
+      }
     }
     live.forEach(b => { b.typedText = b.text; b.status = 'done'; });
     renderBlocks(body, live);
@@ -10616,6 +10647,7 @@ window.__arcCtxSegmented = (function() {
     const manualIdx = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : null;
     let activeIdx = pickActiveIndex(blocks, manualIdx);
     if (activeIdx < 0 || activeIdx >= blocks.length) activeIdx = blocks.length - 1;
+    const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === activeIdx));
     let nav = body.querySelector('.arcCtxSegNav');
     const needsRebuild = !nav || nav.querySelectorAll('.arcCtxSegDot').length !== blocks.length;
@@ -10626,10 +10658,11 @@ window.__arcCtxSegmented = (function() {
       const dotHtml = blocks.map((b, i) =>
         `<button class="arcCtxSegDot${i === activeIdx ? ' is-active' : ''}${b.classList.contains('is-done') ? ' is-done' : ''}" data-seg="${i}" aria-label="Section ${i + 1}"></button>`
       ).join('');
+      const nextDisabled = (activeIdx >= blocks.length - 1) && !morePending;
       nav.innerHTML =
         `<button class="arcCtxSegArrow arcCtxSegPrev" aria-label="Previous"${activeIdx <= 0 ? ' disabled' : ''}>&lsaquo;</button>` +
         `<div class="arcCtxSegDots">${dotHtml}</div>` +
-        `<button class="arcCtxSegArrow arcCtxSegNext" aria-label="Next"${activeIdx >= blocks.length - 1 ? ' disabled' : ''}>&rsaquo;</button>`;
+        `<button class="arcCtxSegArrow arcCtxSegNext" aria-label="Next"${nextDisabled ? ' disabled' : ''}>&rsaquo;</button>`;
       body.appendChild(nav);
       nav.querySelectorAll('.arcCtxSegDot').forEach(dot => {
         dot.addEventListener('click', (e) => { e.stopPropagation(); setActive(body, Number(dot.dataset.seg)); });
@@ -10641,6 +10674,11 @@ window.__arcCtxSegmented = (function() {
       });
       nav.querySelector('.arcCtxSegNext')?.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (body.dataset.segManual === '1' && body._segAdvanceResolve) {
+          body.classList.remove('arcCtxSegAwaitingAdvance');
+          body._segAdvanceResolve();
+          return;
+        }
         const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
         setActive(body, cur + 1);
       });
@@ -10652,13 +10690,47 @@ window.__arcCtxSegmented = (function() {
       const prev = nav.querySelector('.arcCtxSegPrev');
       const next = nav.querySelector('.arcCtxSegNext');
       if (prev) prev.toggleAttribute('disabled', activeIdx <= 0);
-      if (next) next.toggleAttribute('disabled', activeIdx >= blocks.length - 1);
+      if (next) next.toggleAttribute('disabled', (activeIdx >= blocks.length - 1) && !morePending);
     }
   }
   function isMobile() {
     return (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) || false;
   }
-  return { apply, setActive, isMobile };
+  function setManualMode(body, manual) {
+    if (!body) return;
+    body.dataset.segManual = manual ? '1' : '';
+  }
+  function isManualMode(body) {
+    return body?.dataset.segManual === '1';
+  }
+  function awaitAdvance(body, signal) {
+    return new Promise((resolve) => {
+      if (!body) { resolve(false); return; }
+      if (signal?.aborted) { resolve(false); return; }
+      let settled = false;
+      const finish = (v) => {
+        if (settled) return;
+        settled = true;
+        body._segAdvanceResolve = null;
+        signal?.removeEventListener('abort', onAbort);
+        resolve(v);
+      };
+      const onAbort = () => finish(false);
+      body._segAdvanceResolve = () => finish(true);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      body.classList.add('arcCtxSegAwaitingAdvance');
+      apply(body);
+    });
+  }
+  function tryResolveAdvance(body) {
+    if (!body) return false;
+    const r = body._segAdvanceResolve;
+    if (typeof r !== 'function') return false;
+    body.classList.remove('arcCtxSegAwaitingAdvance');
+    r();
+    return true;
+  }
+  return { apply, setActive, isMobile, setManualMode, isManualMode, awaitAdvance, tryResolveAdvance };
 })();
 
 (function() {
@@ -19897,8 +19969,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }).join('');
       body.scrollTop = body.scrollHeight;
-      // Flow context panel: always segmented.
-      window.__arcCtxSegmented?.apply(body);
+      // Flow context panel: segmented + AUTO-advance on both desktop and
+      // mobile. Never manual mode.
+      if (window.__arcCtxSegmented) {
+        window.__arcCtxSegmented.setManualMode(body, false);
+        window.__arcCtxSegmented.apply(body);
+      }
     }
 
     function _arcCtxShowLock() {
@@ -19980,6 +20056,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
         return;
       }
+      const body = document.getElementById('arcCtxBody');
+      const manual = window.__arcCtxSegmented?.isManualMode?.(body) || false;
       for (let i = 0; i < normalizedBlocks.length; i += 1) {
         if (signal?.aborted) {
           _arcCtxFinalizeBlocks(key, normalizedBlocks);
@@ -19993,6 +20071,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (!finished) {
           _arcCtxFinalizeBlocks(key, normalizedBlocks);
           return;
+        }
+        if (manual && i < normalizedBlocks.length - 1) {
+          const proceed = await window.__arcCtxSegmented.awaitAdvance(body, signal);
+          if (!proceed) {
+            _arcCtxFinalizeBlocks(key, normalizedBlocks);
+            return;
+          }
         }
       }
       _arcCtxFinalizeBlocks(key);
@@ -28986,8 +29071,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
-    // Article detail panel: segmented on MOBILE only.
-    if (window.__arcCtxSegmented?.isMobile()) {
+    // Article detail panel: always segmented. Mobile auto-advances; desktop
+    // is manual-only (user clicks Next arrow to reveal the next block).
+    if (window.__arcCtxSegmented) {
+      const mobile = window.__arcCtxSegmented.isMobile();
+      window.__arcCtxSegmented.setManualMode(body, !mobile);
       window.__arcCtxSegmented.apply(body);
     }
   }
@@ -29041,6 +29129,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _adpAnalysisShowMessage('arcCtxEmpty', 'Analysis unavailable for this article.');
       return;
     }
+    const body = document.getElementById('adpAnalysisBody');
+    const manual = window.__arcCtxSegmented?.isManualMode?.(body) || false;
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
       if (signal?.aborted) break;
@@ -29048,6 +29138,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _adpAnalysisRenderBlocks(live);
       const done = await _adpAnalysisTypeBlock(live, live.length - 1, signal);
       if (!done) break;
+      if (manual && i < normalized.length - 1) {
+        const proceed = await window.__arcCtxSegmented.awaitAdvance(body, signal);
+        if (!proceed) break;
+      }
     }
     live.forEach(b => { b.typedText = b.text; b.status = 'done'; });
     _adpAnalysisRenderBlocks(live);

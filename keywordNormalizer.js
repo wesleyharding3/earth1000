@@ -83,7 +83,19 @@ async function normalizeRecentKeywords(options) {
     minFrequency
   });
 
-  const { rows } = await pool.query(sql, params);
+  // Dedicated client with a raised statement_timeout. The candidate query
+  // aggregates over 48h of article_keywords joined to news_articles — on
+  // Render the default ~30-60s timeout kills it mid-plan. 5 minutes is
+  // comfortably over typical run time (~30-90s) without hanging the pool
+  // forever if something genuinely wedges.
+  const candClient = await pool.connect();
+  let rows;
+  try {
+    try { await candClient.query(`SET statement_timeout = '5min'`); } catch (_) {}
+    ({ rows } = await candClient.query(sql, params));
+  } finally {
+    candClient.release();
+  }
   if (!rows.length) {
     return {
       provider: primaryProvider,
