@@ -3489,6 +3489,47 @@ body.flow-maximized #flowArcList {
       min-height: 0;
     }
 
+    /* ── Inline local-thread card (rendered alongside article cards) ──
+       A `.articleCard` with an extra `.cpLocalThreadInlineCard` modifier
+       so it visually distinguishes (blue accent + "LOCAL THREAD" badge)
+       without breaking the shared grid layout. */
+    .cpLocalThreadInlineCard {
+      position: relative;
+      border: 1px solid rgba(74,184,255,0.30) !important;
+      background:
+        radial-gradient(140% 160% at 0% 0%, rgba(74,184,255,0.10), transparent 60%),
+        linear-gradient(180deg, rgba(20,30,50,0.78), rgba(12,18,32,0.55)) !important;
+      box-shadow: 0 4px 14px rgba(74,184,255,0.16);
+      transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s;
+    }
+    .cpLocalThreadInlineCard:hover,
+    .cpLocalThreadInlineCard:focus-visible {
+      transform: translateY(-1px);
+      border-color: rgba(120,200,255,0.65) !important;
+      box-shadow: 0 6px 20px rgba(74,184,255,0.30);
+      outline: none;
+    }
+    .cpLocalThreadBadge {
+      position: absolute;
+      top: 8px; left: 8px;
+      z-index: 2;
+      padding: 3px 8px 3px 9px;
+      border-radius: 999px;
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 0.10em; text-transform: uppercase;
+      color: #f0f8ff;
+      background: linear-gradient(90deg, rgba(74,184,255,0.85), rgba(120,200,255,0.65));
+      border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: 0 2px 8px rgba(74,184,255,0.45);
+      pointer-events: none;
+    }
+    .cpLocalThreadCardCat {
+      color: rgba(120,200,255,0.92);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
     /* ── Country flag chip (next to panel title) ──────────────────── */
     .cpFlagChip {
       display: inline-block;
@@ -4005,6 +4046,22 @@ body.flow-maximized #flowArcList {
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 100%;
+      /* JS resets font-size via inline style to scale-down long names
+         until they fit. Reset to 1.2 line-height so the wrap-fallback
+         (when minimum size still doesn't fit) doesn't add awkward
+         vertical space. */
+      line-height: 1.18;
+    }
+    /* When the auto-fit helper has switched to wrapping mode (text
+       hit the floor size and still overflowed), allow up to 2 lines
+       and clamp with ellipsis so the panel header doesn't grow tall. */
+    .panelTitleRowDesktop h2.cpTitleWrap {
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: clip;
     }
     .panelTitleRowDesktop h4 {
       margin: 2px 0 0 0;
@@ -13110,6 +13167,73 @@ const loader = new THREE.TextureLoader();
       panel.classList.add("npWhoosh");
     }
 
+    // ── Elastic title fit ──────────────────────────────────────────
+    // Country / city panel headers occasionally hold a long name
+    // ("Saint Vincent and the Grenadines", "Democratic Republic of the
+    // Congo") that ellipsizes under the default size on mobile. This
+    // helper measures the rendered width vs the container's available
+    // width and shrinks the font-size in 0.5px steps until it fits or
+    // hits the floor. If even the floor is too wide it switches the
+    // element to wrap mode (2-line clamp). Idempotent — safe to call
+    // multiple times if the panel reflows.
+    function fitTitleToContainer(el, opts) {
+      if (!el || !el.parentElement) return;
+      const o = Object.assign({
+        // Floor the shrink at 60% of the natural size — anything below
+        // that's unreadable. If it's still too wide, fall through to
+        // wrap mode.
+        minRatio: 0.6,
+        // Resolution of the binary-shrink loop. 0.5px is fine-grained
+        // without being ridiculous.
+        step: 0.5,
+      }, opts || {});
+
+      // Reset any prior fit-state so re-runs measure naturally.
+      el.classList.remove('cpTitleWrap');
+      el.style.fontSize = '';
+      el.style.whiteSpace = '';
+
+      // Read the natural CSS-resolved font-size as the starting point.
+      const cs = window.getComputedStyle(el);
+      const naturalPx = parseFloat(cs.fontSize) || 18;
+      const minPx = Math.max(11, naturalPx * o.minRatio);
+
+      // The container width minus any horizontal padding on the H2 itself.
+      const container = el.parentElement;
+      const cs2 = window.getComputedStyle(container);
+      const padX = (parseFloat(cs2.paddingLeft) || 0) + (parseFloat(cs2.paddingRight) || 0);
+      const available = container.clientWidth - padX;
+      if (!(available > 0)) return;
+
+      // Force single-line measurement. scrollWidth is the full text
+      // width even when overflow is hidden — that's what we compare to.
+      el.style.whiteSpace = 'nowrap';
+      if (el.scrollWidth <= available) {
+        // Fits at natural size — done.
+        el.style.whiteSpace = '';
+        return;
+      }
+
+      // Shrink in steps. Could do binary search but the step count is
+      // ≤ ~30 and each measure is cheap.
+      let size = naturalPx;
+      while (size > minPx) {
+        size = Math.max(minPx, size - o.step);
+        el.style.fontSize = size + 'px';
+        if (el.scrollWidth <= available) {
+          // Even at the chosen size, restore default whiteSpace so
+          // ellipsis-on-overflow remains the catastrophic-fallback path.
+          el.style.whiteSpace = '';
+          return;
+        }
+      }
+
+      // Floor reached and still too wide — switch to 2-line wrap.
+      el.style.whiteSpace = '';
+      el.classList.add('cpTitleWrap');
+    }
+    window.__fitTitleToContainer = fitTitleToContainer;
+
     function applySnapHeight(state, animate = true) {
       snapState = state;
       const h = typeof SNAP[state] === "function" ? SNAP[state]() : SNAP[state];
@@ -16986,28 +17110,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>
           </div>
-          ${!isCity ? `<div class="cpFactsBar" id="cpFactsBar"
-                            data-iso="${(node.iso_code || node.country_iso || '').toUpperCase()}"
-                            data-population="${node.population || ''}"
-                            data-gdp="${node.gdp || ''}">
-            <div class="cpFactCell">
-              <div class="cpFactLabel">Pop.</div>
-              <div class="cpFactValue" id="cpFactPop">—</div>
-            </div>
-            <div class="cpFactCell">
-              <div class="cpFactLabel">GDP</div>
-              <div class="cpFactValue" id="cpFactGdp">—</div>
-            </div>
-            <div class="cpFactCell">
-              <div class="cpFactLabel">Languages</div>
-              <div class="cpFactValue" id="cpFactLangs">—</div>
-            </div>
-            <div class="cpFactCell">
-              <div class="cpFactLabel">Currency</div>
-              <div class="cpFactValue" id="cpFactCurrency">—</div>
-            </div>
-          </div>` : ''}
-          ${!isCity ? `<div class="cpLocalThreadsStrip" id="cpLocalThreadsStrip" data-iso="${(node.iso_code || node.country_iso || '').toUpperCase()}">
+          ${'' /* Facts bar + dedicated local-threads strip removed —
+                     local threads now render inline as cards at the top
+                     of the article list with a "LOCAL THREAD" label. */}
+          ${false ? `<div class="cpLocalThreadsStrip" id="cpLocalThreadsStrip" data-iso="${(node.iso_code || node.country_iso || '').toUpperCase()}">
             <div class="cpLocalThreadsHeader">
               <span class="cpLocalThreadsLabel">
                 <span class="cpLocalThreadsDot"></span>
@@ -17079,154 +17185,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
         attachPanelResizeHandle();
         triggerNodePanelWhoosh(panel);
 
-        // ── Country facts bar (population / GDP / language count / currency) ──
-        // Reads metadata from /api/country-meta (cached in window.__countryMeta
-        // after first fetch) and the dataset attributes the panel template
-        // already filled in from the country row.
-        (async function fillFactsBar() {
-          const bar = panel.querySelector('#cpFactsBar');
-          if (!bar) return;
-          const iso        = (bar.dataset.iso || '').toUpperCase();
-          const population = bar.dataset.population ? Number(bar.dataset.population) : null;
-          const gdp        = bar.dataset.gdp ? Number(bar.dataset.gdp) : null;
-          const popEl  = bar.querySelector('#cpFactPop');
-          const gdpEl  = bar.querySelector('#cpFactGdp');
-          const langEl = bar.querySelector('#cpFactLangs');
-          const curEl  = bar.querySelector('#cpFactCurrency');
-
-          // Compact number formatter with K/M/B/T scale suffixes — keeps
-          // the value readable in a narrow grid cell.
-          function fmtCompact(n) {
-            if (!Number.isFinite(n) || n <= 0) return null;
-            if (n >= 1e12) return (n / 1e12).toFixed(n >= 1e13 ? 0 : 1).replace(/\.0$/, '') + 'T';
-            if (n >= 1e9)  return (n / 1e9 ).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/, '') + 'B';
-            if (n >= 1e6)  return (n / 1e6 ).toFixed(n >= 1e7  ? 0 : 1).replace(/\.0$/, '') + 'M';
-            if (n >= 1e3)  return (n / 1e3 ).toFixed(n >= 1e4  ? 0 : 1).replace(/\.0$/, '') + 'K';
-            return String(Math.round(n));
-          }
-          function setFact(el, val) {
-            if (val == null || val === '') { el.classList.add('empty'); el.textContent = '—'; }
-            else { el.classList.remove('empty'); el.textContent = val; }
-          }
-
-          setFact(popEl, fmtCompact(population));
-          setFact(gdpEl, gdp ? '$' + fmtCompact(gdp) : null);
-
-          // Lazy-load the country-meta JSON once per session.
-          if (!window.__countryMeta) {
-            try {
-              const API = window.__API || 'https://earth-wjr6.onrender.com';
-              const res = await fetch(`${API}/api/country-meta`);
-              window.__countryMeta = res.ok ? await res.json() : {};
-            } catch (_) { window.__countryMeta = {}; }
-          }
-          const meta = (window.__countryMeta || {})[iso] || null;
-          if (!meta) { setFact(langEl, null); setFact(curEl, null); return; }
-          const langCount = (meta.languages || []).length;
-          setFact(langEl, langCount > 0
-            ? `${langCount} ${langCount === 1 ? 'language' : 'languages'}`
-            : null);
-          setFact(curEl, meta.currency
-            ? `${meta.currency.code}${meta.currency.symbol ? ' ' + meta.currency.symbol : ''}`
-            : null);
-        })();
-
-        // ── Local threads strip (country panels only) ──
-        // Fetches scope='local' threads for this country and renders
-        // a horizontal card row at the top of the panel. The strip is
-        // emitted only on country panels (not city panels). When a
-        // country has no local threads yet, we show a polite blue
-        // placeholder rather than hiding the strip — flashing it
-        // visible-then-gone was visually jarring.
-        (async function loadLocalThreads() {
-          const strip = panel.querySelector('#cpLocalThreadsStrip');
-          if (!strip) return;
-          const iso = (strip.dataset.iso || '').toUpperCase();
-          if (!iso) { strip.remove(); return; }
-          const scroller = strip.querySelector('#cpLocalThreadsScroller');
-
-          // Pointer / touch isolation — every interaction inside the
-          // strip stays in the strip. The globe canvas behind the panel
-          // listens to pointerdown/touchstart globally to drag the
-          // viewport; without these stopPropagation calls a horizontal
-          // swipe on the strip also rotated the globe.
-          ['pointerdown','pointermove','pointerup','touchstart','touchmove','touchend','wheel','mousedown']
-            .forEach(evt => strip.addEventListener(evt, e => e.stopPropagation(), { passive: true }));
-
-          const renderEmpty = (msg) => {
-            scroller.innerHTML = `<div class="cpLocalThreadsEmptyMsg">${msg}</div>`;
-          };
-
-          try {
-            const API = window.__API || 'https://earth-wjr6.onrender.com';
-            const res = await fetch(`${API}/api/threads/by-country/${encodeURIComponent(iso)}?scope=local&days=14&limit=15`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const threads = await res.json();
-            if (!Array.isArray(threads) || !threads.length) {
-              renderEmpty('No local threads in the last 14 days. Check back soon — domestic stories are processed nightly.');
+        // Elastic title fit — shrink the H2 if the country/city name is
+        // too long for the available width. rAF defers the measure to the
+        // next frame so the panel has had a chance to lay out (otherwise
+        // container.clientWidth reads 0 when called inline). Re-run on
+        // window resize so a rotation / resize doesn't leave a stale fit.
+        const titleEl = panel.querySelector('.panelTitleRowDesktop h2');
+        if (titleEl && window.__fitTitleToContainer) {
+          requestAnimationFrame(() => window.__fitTitleToContainer(titleEl));
+          // Re-fit on viewport changes; cleaned up next time openNodePanel
+          // runs because the H2 is replaced with the new innerHTML render.
+          const onResize = () => {
+            if (!document.body.contains(titleEl)) {
+              window.removeEventListener('resize', onResize);
               return;
             }
-            const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => (
-              {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
-            ));
-            scroller.innerHTML = threads.map(t => {
-              const cat   = esc(t.primary_category || 'politics');
-              const imp   = Number(t.importance) || 0;
-              const count = Number(t.in_country_articles || t.article_count || 0);
-              return `<div class="cpLocalThreadCard" data-thread-id="${t.thread_id}" role="button" tabindex="0">
-                <div class="cpLocalThreadCardTop">
-                  <span class="cpLocalThreadCardCat">${cat}</span>
-                  <span>${count} art · imp ${imp}</span>
-                </div>
-                <div class="cpLocalThreadCardTitle">${esc(t.title || 'Untitled')}</div>
-              </div>`;
-            }).join('');
-            // Click-through → open the existing thread detail panel.
-            scroller.querySelectorAll('.cpLocalThreadCard').forEach(card => {
-              const openHandler = () => {
-                const id = Number(card.dataset.threadId);
-                if (!id) return;
-                if (typeof window.__openThread === 'function') {
-                  window.__openThread(id);
-                } else if (typeof window.openThreadInPanel === 'function') {
-                  window.openThreadInPanel(id);
-                }
-              };
-              card.addEventListener('click', openHandler);
-              card.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openHandler(); }
-              });
-            });
+            window.__fitTitleToContainer(titleEl);
+          };
+          window.addEventListener('resize', onResize, { passive: true });
+        }
 
-            // Active-card pulse during horizontal scroll — finds the card
-            // whose center is closest to the scroller's center on each
-            // scroll tick. Gives non-hover devices (mobile/touch) a sense
-            // of "this is the focused card right now." Throttled with rAF.
-            const cards = Array.from(scroller.querySelectorAll('.cpLocalThreadCard'));
-            let pulseRaf = null;
-            function updateActiveCard() {
-              pulseRaf = null;
-              const scrollerRect = scroller.getBoundingClientRect();
-              const centerX = scrollerRect.left + scrollerRect.width / 2;
-              let best = null, bestDist = Infinity;
-              for (const c of cards) {
-                const r = c.getBoundingClientRect();
-                const cx = r.left + r.width / 2;
-                const d = Math.abs(cx - centerX);
-                if (d < bestDist) { best = c; bestDist = d; }
+        // Local threads — populated by the IIFE below, prepended to the
+        // article-card list by renderCards. Country panels only.
+        let localThreads = [];
+        const _countryIsoForThreads = (!isCity ? (node.iso_code || node.country_iso || '') : '').toString().toUpperCase();
+
+        // ── Local threads (country panels only) ──
+        // Fetches scope='local' threads for this country and pushes them
+        // into the `localThreads` array, then re-renders the article grid
+        // so the threads appear as cards at the top of the list with a
+        // "LOCAL THREAD" label. No separate strip widget — the threads
+        // sit inline with the articles.
+        if (!isCity && _countryIsoForThreads) {
+          (async function loadLocalThreads() {
+            try {
+              const API = window.__API || 'https://earth-wjr6.onrender.com';
+              const res = await fetch(`${API}/api/threads/by-country/${encodeURIComponent(_countryIsoForThreads)}?scope=local&days=14&limit=15`);
+              if (!res.ok) return;
+              const threads = await res.json();
+              if (Array.isArray(threads) && threads.length) {
+                localThreads = threads;
+                // If the article grid has already rendered, refresh it so
+                // the threads slot in at the top.
+                if (typeof renderCards === 'function') renderCards();
               }
-              for (const c of cards) c.classList.toggle('is-active', c === best);
+            } catch (err) {
+              console.warn('[localThreads]', err.message);
             }
-            scroller.addEventListener('scroll', () => {
-              if (!pulseRaf) pulseRaf = requestAnimationFrame(updateActiveCard);
-            }, { passive: true });
-            // Initial active-card mark — first card visible.
-            updateActiveCard();
-          } catch (err) {
-            console.warn('[localThreads]', err.message);
-            renderEmpty('Local threads unavailable. Try refreshing in a moment.');
-          }
-        })();
+          })();
+        }
 
         // ── Search filter ──
         const panelSearchInput = panel.querySelector("#panelSearchInput");
@@ -17562,6 +17569,58 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div></div>`;
         }
 
+        // Compact card for a local thread — same physical footprint as
+        // an articleCard so the grid stays uniform. A blue "LOCAL THREAD"
+        // pill in the top-left distinguishes it from the article cards
+        // below. Click opens the thread detail panel.
+        function localThreadCardHTML(thread) {
+          const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => (
+            {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+          ));
+          const title    = esc(thread.title || 'Untitled');
+          const desc     = esc(thread.description || '');
+          const cat      = esc(thread.primary_category || 'politics');
+          const imp      = Number(thread.importance) || 0;
+          const count    = Number(thread.in_country_articles || thread.article_count || 0);
+          const heroUrl  = thread.hero_image_url || '';
+          const heroIso  = (thread.hero_iso_code || _countryIsoForThreads || '').toLowerCase();
+          let imageField;
+          if (heroUrl) {
+            imageField = `<img class="articleCardImage" src="${heroUrl}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${FLAG_CDN_BASE}${heroIso}.png'">`;
+          } else if (heroIso) {
+            imageField = `<img class="articleCardImage" src="${FLAG_CDN_BASE}${heroIso}.png" alt="" loading="lazy">`;
+          } else {
+            imageField = `<div class="articleCardImagePlaceholder"></div>`;
+          }
+          return `
+            <div class="articleCard cpLocalThreadInlineCard fadeInCard"
+                 data-thread-id="${thread.thread_id}"
+                 onclick="window.__cpOpenLocalThread(${thread.thread_id})"
+                 role="button" tabindex="0"
+                 style="cursor:pointer;">
+              <span class="cpLocalThreadBadge">Local thread</span>
+              ${imageField}
+              <div class="articleCardBody">
+                <div>
+                  <div class="articleCardSource">
+                    <span class="cpLocalThreadCardCat">${cat}</span>
+                    <span style="opacity:0.55;">· ${count} article${count === 1 ? '' : 's'} · imp ${imp}</span>
+                  </div>
+                  <div class="articleCardTitle">${title}</div>
+                  ${desc ? `<div class="articleCardSummary">${desc}</div>` : ''}
+                </div>
+              </div>
+            </div>`;
+        }
+        // Click handler exposed globally so the inline onclick attribute
+        // can route through the canonical thread opener.
+        window.__cpOpenLocalThread = function(id) {
+          const n = Number(id);
+          if (!n) return;
+          if (typeof window.__openThread === 'function') return window.__openThread(n);
+          if (typeof window.openThreadInPanel === 'function') return window.openThreadInPanel(n);
+        };
+
         function renderCards() {
           const hasMediaNarrowing = !mediaFilter.article || !mediaFilter.video;
           const filtered = allArticles.filter(a => {
@@ -17575,13 +17634,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
               (a.source_name || "").toLowerCase().includes(filterQuery)
             );
           });
-          if (!filtered.length && !loading) {
+          // Filter local threads through the same search query — title +
+          // description text searched case-insensitively.
+          const filteredThreads = (localThreads || []).filter(t => {
+            if (!filterQuery) return true;
+            return (
+              (t.title || "").toLowerCase().includes(filterQuery) ||
+              (t.description || "").toLowerCase().includes(filterQuery)
+            );
+          });
+          if (!filtered.length && !filteredThreads.length && !loading) {
             const emptyLabel = (filterQuery || hasMediaNarrowing) ? "No matching items." : "No recent articles.";
             const emptyHint = (filterQuery || hasMediaNarrowing) ? "<br><span style='opacity:0.5;font-size:11px;font-weight:400;'>Try broadening your filters.</span>" : "";
             track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}${emptyHint}</div>`;
             return;
           }
-          track.innerHTML = filtered.map(articleCardHTML).join("");
+          // Local threads first, then articles. Threads use the same
+          // .articleCard footprint so the grid stays even.
+          const threadsHtml  = filteredThreads.map(localThreadCardHTML).join("");
+          const articlesHtml = filtered.map(articleCardHTML).join("");
+          track.innerHTML = threadsHtml + articlesHtml;
         }
 
         let offset = 0, limit = 12, loading = false, hasMore = true;
