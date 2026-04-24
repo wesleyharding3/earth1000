@@ -120,7 +120,11 @@ async function main() {
   // cover the LATERAL subject-country lookup but still caps the total
   // run at 1500 × 2min = bounded.
   const perKwClient = await pool.connect();
-  try { await perKwClient.query(`SET statement_timeout = '2min'`); } catch (_) {}
+  // 10 min ceiling — batch queries over 7d × chunk of 250 keywords can
+  // legitimately take a few minutes on first run after a deploy when the
+  // planner's stats are cold. Total runtime is still bounded (~6 chunks
+  // × 2 queries × upper bound ≈ 12 min), not 50+ min like per-keyword.
+  try { await perKwClient.query(`SET statement_timeout = '10min'`); } catch (_) {}
 
   // Pre-materialise subject country per article into a TEMP TABLE. Hot
   // keywords ("donald trump", "family", "west") have thousands of matching
@@ -154,58 +158,137 @@ async function main() {
   let written = 0;
   let skipped = 0;
   try {
-  for (let i = 0; i < keywords.length; i++) {
-    const kw = keywords[i];
-    const kwLower = kw.keyword;
-    const display = (kw.display_keyword || kwLower).trim();
+  // ── Batch aggregation — single pass for ALL keywords ──────────────────
+  //
+  // The previous design ran 2 queries per keyword × 1500 keywords = 3000
+  // round-trips, each scanning a non-trivial slice of article_keywords.
+  // Hot keywords ("usa", "trump", "family") have millions of matching
+  // rows, which pushed per-query time past the 2-minute statement_timeout
+  // on Render and broke the cron entirely.
+  //
+  // New design: bulk the work into TWO queries total, chunked by keyword
+  // array. Each query scans article_keywords ⨝ news_articles ONCE over
+  // the window, groups by (keyword, country) or windows per keyword, and
+  // emits rows for every keyword in the chunk. We assemble per-keyword
+  // results in JS.
+  //
+  // Chunk size: 250 keywords per query. Larger chunks = fewer round-trips
+  // but bigger result sets + more planner memory; 250 keeps each query
+  // under 30s even on hot keyword sets.
+  const CHUNK_SIZE = 250;
+  const kwList = keywords.map(k => k.keyword);      // lowercase, normalized
+  const displayByKw = new Map(keywords.map(k => [k.keyword, (k.display_keyword || k.keyword).trim()]));
+  const recentByKw  = new Map(keywords.map(k => [k.keyword, Number(k.recent_mentions) || 0]));
 
+  // Accumulate per-keyword results here, then upsert in one batch pass.
+  const countryRowsByKw = new Map(); // kw -> [{iso_code, name, n}, ...]
+  const sampleIdsByKw   = new Map(); // kw -> [id, id, ...]
+
+  const subjectJoin = subjectTableReady
+    ? `LEFT JOIN _kw_subject_country sc ON sc.article_id = a.id`
+    : ``;
+  const countryExpr = subjectTableReady
+    ? `COALESCE(sc.country_id, a.country_id)`
+    : `a.country_id`;
+
+  for (let start = 0; start < kwList.length; start += CHUNK_SIZE) {
+    const chunk = kwList.slice(start, start + CHUNK_SIZE);
+    const chunkNum = (start / CHUNK_SIZE) | 0;
+    const totalChunks = Math.ceil(kwList.length / CHUNK_SIZE);
+
+    // ── Country breakdown for every keyword in this chunk in ONE query.
+    //    Match via plain column equality so idx_ak_normalized / idx_ak_keyword
+    //    are used. GROUP BY (keyword, country) emits the per-keyword buckets
+    //    for the entire chunk; we bucket in JS.
     try {
-      // Country breakdown + sample article IDs for this keyword, computed
-      // in two small queries so each is fast on the per-keyword hot path.
-
-      // 2a. Country counts across the recent window.
-      //
-      // Attribution rule: prefer the SUBJECT country (entity-extracted from
-      // article_locations, routing_type='content') over the article's
-      // source country, so institutional keywords like "pentagon" or
-      // "us senate" map to US regardless of which country's outlet wrote
-      // the story. Falls back to source country for articles without
-      // content routing so every article still contributes to the
-      // distribution.
-      //
-      // _kw_subject_country is pre-built once at the top of the cron (temp
-      // table with article_id PK). Makes this query a fast PK JOIN instead
-      // of the LATERAL-per-row that timed out on hot keywords.
-      const subjectJoin = subjectTableReady
-        ? `LEFT JOIN _kw_subject_country sc ON sc.article_id = a.id`
-        : ``;
-      const countryExpr = subjectTableReady
-        ? `COALESCE(sc.country_id, a.country_id)`
-        : `a.country_id`;
-      // Match via plain column equality so btree indexes idx_ak_normalized
-      // and idx_ak_keyword get hit. The previous predicate
-      // `LOWER(COALESCE(normalized_keyword, keyword)) = $1` was index-
-      // hostile — forced a sequential scan of article_keywords for EVERY
-      // keyword, which is why this loop was timing out on every word.
-      // Keywords are already stored lowercased (keywordExtractor.js:80),
-      // so dropping LOWER() is safe.
-      const { rows: countryRows } = await perKwClient.query(`
-        SELECT co.iso_code,
-               co.name,
-               COUNT(DISTINCT a.id)::int AS n
+      const { rows: batchCountryRows } = await perKwClient.query(`
+        WITH matched AS (
+          SELECT
+            COALESCE(ak.normalized_keyword, ak.keyword) AS kw,
+            a.id AS article_id,
+            ${countryExpr} AS country_id
           FROM article_keywords ak
           JOIN news_articles a ON a.id = ak.article_id
           ${subjectJoin}
-          LEFT JOIN countries co ON co.id = ${countryExpr}
-         WHERE (ak.normalized_keyword = $1
-                OR (ak.normalized_keyword IS NULL AND ak.keyword = $1))
-           AND a.published_at > NOW() - ($2 || ' days')::interval
-           AND co.iso_code IS NOT NULL
-         GROUP BY co.iso_code, co.name
-         ORDER BY n DESC
-      `, [kwLower, TRAIL_DAYS]);
+          WHERE (ak.normalized_keyword = ANY($1::text[])
+                 OR (ak.normalized_keyword IS NULL AND ak.keyword = ANY($1::text[])))
+            AND a.published_at > NOW() - ($2 || ' days')::interval
+        )
+        SELECT m.kw,
+               co.iso_code,
+               co.name,
+               COUNT(DISTINCT m.article_id)::int AS n
+          FROM matched m
+          JOIN countries co ON co.id = m.country_id
+         WHERE co.iso_code IS NOT NULL
+         GROUP BY m.kw, co.iso_code, co.name
+         ORDER BY m.kw, n DESC
+      `, [chunk, TRAIL_DAYS]);
 
-      const totalRecent = countryRows.reduce((s, r) => s + r.n, 0) || Number(kw.recent_mentions) || 0;
+      for (const r of batchCountryRows) {
+        if (!countryRowsByKw.has(r.kw)) countryRowsByKw.set(r.kw, []);
+        countryRowsByKw.get(r.kw).push({ iso_code: r.iso_code, name: r.name, n: r.n });
+      }
+    } catch (err) {
+      console.warn(`   ⚠ Country batch ${chunkNum + 1}/${totalChunks} failed: ${err.message}`);
+    }
+
+    // ── Sample article IDs for every keyword in the chunk in ONE query.
+    //    Window function ranks articles per keyword by recency × priority.
+    //    Filter rn <= SAMPLE_SIZE, aggregate into per-keyword arrays.
+    try {
+      const { rows: batchSampleRows } = await perKwClient.query(`
+        WITH matched AS (
+          SELECT DISTINCT ON (kw, article_id)
+            kw, article_id, published_at, base_priority
+          FROM (
+            SELECT
+              COALESCE(ak.normalized_keyword, ak.keyword) AS kw,
+              a.id AS article_id,
+              a.published_at,
+              a.base_priority
+            FROM article_keywords ak
+            JOIN news_articles a ON a.id = ak.article_id
+            WHERE (ak.normalized_keyword = ANY($1::text[])
+                   OR (ak.normalized_keyword IS NULL AND ak.keyword = ANY($1::text[])))
+              AND a.published_at > NOW() - ($2 || ' days')::interval
+          ) sub
+          ORDER BY kw, article_id, published_at DESC
+        ),
+        ranked AS (
+          SELECT kw, article_id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY kw
+                   ORDER BY published_at DESC, base_priority DESC NULLS LAST
+                 ) AS rn
+            FROM matched
+        )
+        SELECT kw, array_agg(article_id ORDER BY rn)::int[] AS ids
+          FROM ranked
+         WHERE rn <= $3
+         GROUP BY kw
+      `, [chunk, TRAIL_DAYS, SAMPLE_SIZE]);
+
+      for (const r of batchSampleRows) {
+        sampleIdsByKw.set(r.kw, (r.ids || []).map(Number));
+      }
+    } catch (err) {
+      console.warn(`   ⚠ Sample batch ${chunkNum + 1}/${totalChunks} failed: ${err.message}`);
+    }
+
+    console.log(`   [${elapsed()}] Aggregated chunk ${chunkNum + 1}/${totalChunks} (${chunk.length} keywords)`);
+  }
+
+  // ── Assemble + upsert. The DB writes happen via `pool` (default client),
+  //    one row per keyword, via a single pipelined sequence. This is the
+  //    only per-keyword loop left — UPSERT is O(1) per keyword.
+  console.log(`   [${elapsed()}] Upserting ${keywords.length} keyword_analytics rows...`);
+  for (const kw of keywords) {
+    const kwLower = kw.keyword;
+    const display = displayByKw.get(kwLower);
+    try {
+      const countryRows = countryRowsByKw.get(kwLower) || [];
+      const totalRecent = countryRows.reduce((s, r) => s + r.n, 0) || recentByKw.get(kwLower) || 0;
       const top = countryRows.slice(0, TOP_COUNTRIES);
       const rest = countryRows.slice(TOP_COUNTRIES);
       const breakdown = top.map(r => ({
@@ -223,44 +306,16 @@ async function main() {
           pct: totalRecent ? Math.round((n / totalRecent) * 1000) / 10 : 0,
         });
       }
-
-      // 2b. Sample article IDs — newest-first with base_priority tie-break.
-      // These feed the Claude prompt on /api/keywords/explain when a user
-      // clicks context, so we want representative + recent + high-signal.
-      const { rows: sampleRows } = await perKwClient.query(`
-        SELECT DISTINCT ON (a.id)
-               a.id,
-               a.published_at,
-               a.base_priority
-          FROM article_keywords ak
-          JOIN news_articles a ON a.id = ak.article_id
-         WHERE (ak.normalized_keyword = $1
-                OR (ak.normalized_keyword IS NULL AND ak.keyword = $1))
-           AND a.published_at > NOW() - ($2 || ' days')::interval
-         ORDER BY a.id, a.published_at DESC
-         LIMIT 200
-      `, [kwLower, TRAIL_DAYS]);
-      // Final ordering on the small result set — Postgres's DISTINCT ON
-      // forces an a.id-first ORDER BY, so we rerank after hydration.
-      sampleRows.sort((a, b) => {
-        const d = new Date(b.published_at).getTime() - new Date(a.published_at).getTime();
-        if (d) return d;
-        return (Number(b.base_priority) || 0) - (Number(a.base_priority) || 0);
-      });
-      const sampleIds = sampleRows.slice(0, SAMPLE_SIZE).map(r => Number(r.id));
+      const sampleIds = (sampleIdsByKw.get(kwLower) || []).slice(0, SAMPLE_SIZE);
 
       if (DRY_RUN) {
-        if (i < 10) {
+        if (written < 10) {
           console.log(`   [plan ${kwLower}] recent=${kw.recent_mentions} countries=${countryRows.length} (top: ${top.slice(0, 3).map(r => `${r.iso_code}:${r.n}`).join(', ')}) samples=${sampleIds.length}`);
         }
         written++;
         continue;
       }
 
-      // total_mentions left at the same value as recent_mentions — the
-      // historical full-corpus count was expensive to compute and unused
-      // downstream. The /api/keywords/explain endpoint displays recent_mentions
-      // prominently; users get an accurate "mentions in last 7d" number.
       await pool.query(`
         INSERT INTO keyword_analytics
           (keyword, display_keyword, total_mentions, recent_mentions,
@@ -276,7 +331,7 @@ async function main() {
       `, [kwLower, display, Number(kw.recent_mentions), JSON.stringify(breakdown), sampleIds]);
 
       written++;
-      if (written % 100 === 0) console.log(`   [${elapsed()}] processed ${written}/${keywords.length}`);
+      if (written % 500 === 0) console.log(`   [${elapsed()}] upserted ${written}/${keywords.length}`);
     } catch (err) {
       skipped++;
       console.warn(`   ⚠ ${kwLower}: ${err.message}`);

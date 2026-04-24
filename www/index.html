@@ -2844,7 +2844,7 @@ body.flow-maximized #flowArcList {
    a segment navigator renders at the bottom with pulsing arrows and
    glowing dots. Used by the flow-context panel (always) and by the
    article/thread/line detail panels on mobile only. */
-.arcCtxStateSegmented { position: relative; padding-bottom: 52px; }
+.arcCtxStateSegmented { position: relative; padding-bottom: 60px; }
 .arcCtxStateSegmented .arcCtxBlock + .arcCtxBlock { margin-top: 0; }
 .arcCtxStateSegmented .arcCtxBlock {
   position: absolute;
@@ -2861,15 +2861,24 @@ body.flow-maximized #flowArcList {
   pointer-events: auto;
   transform: translateY(0);
 }
+/* Segment nav is a STICKY bar pinned to the bottom of the scroll area —
+   not absolute-positioned within the content box, which was placing it
+   below the fold on long blocks. Sticky keeps it visible as a fixed bar
+   at the bottom regardless of scroll position. */
 .arcCtxSegNav {
-  position: absolute;
-  left: 0; right: 0; bottom: 10px;
+  position: sticky;
+  bottom: 0;
+  left: 0; right: 0;
+  margin: 10px -12px -14px;
+  padding: 10px 12px 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding: 0 12px;
   z-index: 3;
+  background: linear-gradient(180deg, rgba(8,12,22,0.0) 0%, rgba(8,12,22,0.88) 35%, rgba(8,12,22,0.96) 100%);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 .arcCtxSegArrow {
   width: 28px; height: 28px;
