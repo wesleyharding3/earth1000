@@ -1587,17 +1587,22 @@ async function fetchThreadMembers(threadIds, perThread = 5) {
   if (!Array.isArray(threadIds) || !threadIds.length) return out;
   const ids = threadIds.map(Number).filter(Number.isFinite);
   if (!ids.length) return out;
+  // country_name lives on the `countries` table joined via a.country_id.
+  // The previous version selected a.country_name directly → every batch
+  // errored with "column a.country_name does not exist" and the whole
+  // run produced 0 threads.
   const { rows } = await pool.query(`
     SELECT sta.thread_id,
            a.id           AS article_id,
            a.title,
            a.summary,
            a.translated_summary,
-           a.country_name,
+           co.name AS country_name,
            sta.is_anchor,
            a.published_at
       FROM story_thread_articles sta
       JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN countries co ON co.id = a.country_id
      WHERE sta.thread_id = ANY($1::int[])
      ORDER BY sta.thread_id,
               sta.is_anchor DESC NULLS LAST,
