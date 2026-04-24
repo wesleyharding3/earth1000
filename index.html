@@ -11699,6 +11699,17 @@ window.__earthAnalysis = (function() {
               if (translatedSummary) art.translated_summary = translatedSummary;
             }
           }
+          // Global DOM sweep — see www/index.html for the rationale.
+          try {
+            document.querySelectorAll(`[data-aid="${CSS.escape(String(articleId))}"]`).forEach(el => {
+              const cls = el.className || '';
+              if (translatedTitle && /(Title|Headline)/i.test(cls)) el.textContent = translatedTitle;
+              else if (translatedSummary && /(Summary|Desc)/i.test(cls)) el.textContent = translatedSummary;
+            });
+            document.querySelectorAll(`.articleTranslateBtn[data-id="${CSS.escape(String(articleId))}"]`).forEach(b => {
+              b.textContent = '✓'; b.classList.add('done'); b.disabled = true;
+            });
+          } catch (_) {}
           btn.textContent = "✓"; btn.classList.add("done");
         } catch (err) {
           console.error("Translation failed:", err);
@@ -16021,6 +16032,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 if (translatedSummary) art.translated_summary = translatedSummary;
               }
             });
+            // Global DOM sweep — see www/index.html for the rationale.
+            try {
+              document.querySelectorAll(`[data-aid="${CSS.escape(String(articleId))}"]`).forEach(el => {
+                const cls = el.className || '';
+                if (translatedTitle && /(Title|Headline)/i.test(cls)) el.textContent = translatedTitle;
+                else if (translatedSummary && /(Summary|Desc)/i.test(cls)) el.textContent = translatedSummary;
+              });
+              document.querySelectorAll(`.articleTranslateBtn[data-id="${CSS.escape(String(articleId))}"]`).forEach(b => {
+                b.textContent = '✓'; b.classList.add('done'); b.disabled = true;
+              });
+            } catch (_) {}
             btn.textContent = "✓"; btn.classList.add("done");
           } catch (err) {
             console.error("Translation failed:", err);
@@ -29010,8 +29032,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       content.innerHTML = `
         ${imageHTML}
         ${sourceBlock}
-        <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
-        <div class="adpSummary">${summaryText}</div>
+        <h1 class="adpTitle" data-aid="${article.id}">${article.translated_title || article.title || 'Untitled'}</h1>
+        <div class="adpSummary" data-aid="${article.id}">${summaryText}</div>
         ${metaBlock}
         ${sourceSummaryHTML}
         ${contextHTML}
@@ -29025,9 +29047,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="adpHeroLayout">
           <div class="adpHeroText">
             ${sourceBlock}
-            <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
+            <h1 class="adpTitle" data-aid="${article.id}">${article.translated_title || article.title || 'Untitled'}</h1>
             ${metaBlock}
-            <div class="adpSummary" style="margin-bottom:0">${summaryText}</div>
+            <div class="adpSummary" data-aid="${article.id}" style="margin-bottom:0">${summaryText}</div>
           </div>
           ${thumbHTML}
         </div>
@@ -29808,8 +29830,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const fillEl = document.getElementById('acctDpCreditBarFill');
     const subEl  = document.getElementById('acctDpCreditSub');
     if (!box || !valEl || !fillEl || !subEl) return;
-    if (_creditState.remaining == null) { box.style.display = 'none'; return; }
+    if (_creditState.remaining == null && !_creditState.admin) { box.style.display = 'none'; return; }
     box.style.display = '';
+    if (_creditState.admin) {
+      valEl.innerHTML = `∞<span class="acctDpCreditDenom">/ unlimited</span>`;
+      fillEl.style.width = '100%';
+      fillEl.classList.remove('low', 'empty');
+      fillEl.style.background = 'linear-gradient(90deg, rgba(167,139,250,0.9), rgba(96,200,255,0.9))';
+      subEl.innerHTML = `<span style="color:rgba(167,139,250,0.85);">Admin — unlimited</span><span></span>`;
+      return;
+    }
+    fillEl.style.background = '';
     const remaining = Number(_creditState.remaining) || 0;
     const limit     = Number(_creditState.weeklyLimit) || 0;
     const base      = Number(_creditState.baseRemaining) || 0;
@@ -29835,16 +29866,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API_BASE}/api/credits/me`);
       if (!res.ok) return;
       const data = await res.json();
-      const total = (Number(data.base_remaining) || 0) + (Number(data.addon_credits) || 0);
-      _creditState.remaining      = total;
-      _creditState.weeklyLimit    = Number(data.weekly_limit) || 0;
-      _creditState.baseRemaining  = Number(data.base_remaining) || 0;
-      _creditState.addonRemaining = Number(data.addon_credits)  || 0;
+      if (data.admin) {
+        _creditState.admin          = true;
+        _creditState.remaining      = null;
+        _creditState.weeklyLimit    = null;
+        _creditState.baseRemaining  = null;
+        _creditState.addonRemaining = 0;
+      } else {
+        _creditState.admin          = false;
+        const total = (Number(data.base_remaining) || 0) + (Number(data.addon_credits) || 0);
+        _creditState.remaining      = total;
+        _creditState.weeklyLimit    = Number(data.weekly_limit) || 0;
+        _creditState.baseRemaining  = Number(data.base_remaining) || 0;
+        _creditState.addonRemaining = Number(data.addon_credits)  || 0;
+      }
       _renderCreditMeter();
     } catch (_) {}
   };
   window.__updateCreditMeterFromResponse = function(creditsBlock) {
     if (!creditsBlock) return;
+    if (creditsBlock.admin) {
+      _creditState.admin          = true;
+      _creditState.remaining      = null;
+      _creditState.weeklyLimit    = null;
+      _creditState.baseRemaining  = null;
+      _creditState.addonRemaining = 0;
+      _renderCreditMeter();
+      return;
+    }
+    _creditState.admin = false;
     if (Number.isFinite(creditsBlock.remaining))       _creditState.remaining      = Number(creditsBlock.remaining);
     if (Number.isFinite(creditsBlock.weekly_limit))    _creditState.weeklyLimit    = Number(creditsBlock.weekly_limit);
     if (Number.isFinite(creditsBlock.base_remaining))  _creditState.baseRemaining  = Number(creditsBlock.base_remaining);

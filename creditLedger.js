@@ -91,6 +91,22 @@ async function consumeCredits(userId, tier, feature, opts = {}) {
   if (!Number.isFinite(cost) || cost <= 0) {
     throw new Error(`creditLedger.consumeCredits: unknown feature "${feature}"`);
   }
+
+  // Admin bypass: admins pay no credits and the response advertises an
+  // infinite weekly limit so the frontend meter renders ∞ instead of a
+  // decreasing bar. Ledger entries are NOT written for admin usage — this
+  // keeps the `total_consumed` counter honest as a real-user metric.
+  if (opts.isAdmin) {
+    return {
+      allowed:         true,
+      cost:            0,
+      remaining:       Infinity,
+      base_remaining:  Infinity,
+      addon_remaining: 0,
+      weekly_limit:    Infinity,
+      admin:           true,
+    };
+  }
   const weeklyLimit = baseFor(tier);
   const weekStart   = currentWeekStart();
 
@@ -198,7 +214,22 @@ async function consumeCredits(userId, tier, feature, opts = {}) {
  * credit meter and by endpoint handlers that want to show the user
  * what they'd spend on a click.
  */
-async function getBalance(userId, tier) {
+async function getBalance(userId, tier, { isAdmin = false } = {}) {
+  // Admins get a sentinel "∞" balance so the frontend renders it as
+  // unlimited without special-casing per caller.
+  if (isAdmin) {
+    return {
+      tier:            'admin',
+      weekly_limit:    Infinity,
+      base_used:       0,
+      base_remaining:  Infinity,
+      addon_credits:   0,
+      total:           Infinity,
+      week_start:      currentWeekStart(),
+      costs:           CREDIT_COSTS,
+      admin:           true,
+    };
+  }
   if (!userId) {
     return {
       tier:            tier || 'free',

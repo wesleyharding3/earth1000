@@ -17,6 +17,23 @@ const payments = require("./payments");
 const sba = require("./supabaseAdmin");
 const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
 const credits = require("./creditLedger");
+
+// Turn a creditLedger access object into a JSON-safe block for API
+// responses. Infinity (admins, effectively unlimited) serialises as null
+// and gets an explicit `admin: true` flag so the frontend meter can
+// render "∞" without guessing.
+function _creditsBlock(access) {
+  if (!access) return null;
+  const fix = (v) => (v === Infinity ? null : v);
+  return {
+    cost:            fix(access.cost) ?? 0,
+    remaining:       fix(access.remaining),
+    base_remaining:  fix(access.base_remaining),
+    addon_remaining: fix(access.addon_remaining) ?? 0,
+    weekly_limit:    fix(access.weekly_limit),
+    admin:           !!access.admin,
+  };
+}
 const { extractArticleSignals } = require("./sentimentLexicon");
 const { findBucketImage, guaranteeHeroImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
@@ -7934,7 +7951,7 @@ app.post("/api/cluster-node/summary", async (req, res) => {
   // (Haiku ~$0.013 per response) — 13 credits. Signed-in required.
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
-  const _access = await credits.consumeCredits(user.id, user.tier || 'free', 'cluster_analysis', { referenceId: `${mode}:${id}` })
+  const _access = await credits.consumeCredits(user.id, user.tier || 'free', 'cluster_analysis', { referenceId: `${mode}:${id}`, isAdmin: !!user.is_admin })
     .catch(() => ({ allowed: false }));
   if (!_access.allowed) {
     return res.status(429).json({
@@ -8089,16 +8106,7 @@ ${articleContext}`;
     });
 
     if (cached?._notFound) return res.status(404).json({ error: `No data found for this ${mode}` });
-    res.json({
-      ...cached,
-      credits: {
-        cost:            _access.cost,
-        remaining:       _access.remaining,
-        base_remaining:  _access.base_remaining,
-        addon_remaining: _access.addon_remaining,
-        weekly_limit:    _access.weekly_limit,
-      },
-    });
+    res.json({ ...cached, credits: _creditsBlock(_access) });
   } catch (err) {
     console.error("[cluster-node/summary]", err.message);
     res.status(500).json({ error: "Summary generation failed" });
@@ -8267,7 +8275,7 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
   // The deducted balance is echoed back in the `structured` SSE frame.
   const _user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!_user?.id) return res.status(401).json({ error: "Authentication required" });
-  const _fcAccess = await credits.consumeCredits(_user.id, _user.tier || 'free', 'flow_context', { referenceId: `${mode}:${entityId}` })
+  const _fcAccess = await credits.consumeCredits(_user.id, _user.tier || 'free', 'flow_context', { referenceId: `${mode}:${entityId}`, isAdmin: !!_user.is_admin })
     .catch(() => ({ allowed: false }));
   if (!_fcAccess.allowed) {
     return res.status(429).json({
@@ -8486,17 +8494,7 @@ ${articleContext || "(no article context available)"}`;
     );
 
     if (!streamClosed) {
-      sendEvent({
-        type: "structured",
-        blocks,
-        credits: {
-          cost:            _fcAccess.cost,
-          remaining:       _fcAccess.remaining,
-          base_remaining:  _fcAccess.base_remaining,
-          addon_remaining: _fcAccess.addon_remaining,
-          weekly_limit:    _fcAccess.weekly_limit,
-        },
-      });
+      sendEvent({ type: "structured", blocks, credits: _creditsBlock(_fcAccess) });
       sendDone();
       res.end();
     }
@@ -8876,8 +8874,11 @@ app.get("/api/credits/me", async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
   try {
-    const bal = await credits.getBalance(user.id, user.tier || 'free');
-    res.json(bal);
+    const bal = await credits.getBalance(user.id, user.tier || 'free', { isAdmin: !!user.is_admin });
+    // Serialise Infinity → null with admin:true so JSON survives the round
+    // trip; the frontend meter treats either as "unlimited".
+    const safeBal = JSON.parse(JSON.stringify(bal, (_k, v) => v === Infinity ? null : v));
+    res.json(safeBal);
   } catch (err) {
     console.error('[credits/me]', err.message);
     res.status(500).json({ error: 'Failed to load credit balance' });
@@ -9228,7 +9229,7 @@ app.post("/api/explain", async (req, res) => {
   const tier = user.tier || "free";
   // Credit-based gate (replaces checkExplanation hard cap). Deducts
   // CREDIT_COSTS.article_analysis = 8 credits atomically; 429 on empty.
-  const access = await credits.consumeCredits(user.id, tier, 'article_analysis').catch(() => ({ allowed: false }));
+  const access = await credits.consumeCredits(user.id, tier, 'article_analysis', { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({
       error:        'Not enough credits for Analysis',
@@ -9300,16 +9301,7 @@ ${originLine}`;
           text: String(rawText || "Analysis unavailable right now.").slice(0, 900),
         });
       }
-      return res.json({
-        blocks,
-        credits: {
-          cost:            access.cost,
-          remaining:       access.remaining,
-          base_remaining:  access.base_remaining,
-          addon_remaining: access.addon_remaining,
-          weekly_limit:    access.weekly_limit,
-        },
-      });
+      return res.json({ blocks, credits: _creditsBlock(access) });
     }
 
     const context = `Story thread: "${title}"\nDescription: ${description || summary || ""}\nKeywords: ${(keywords || []).slice(0, 10).join(", ")}`;
@@ -9324,16 +9316,7 @@ ${originLine}`;
     });
 
     const explanation = (response.content[0]?.text || "").trim().slice(0, 250);
-    res.json({
-      explanation,
-      credits: {
-        cost:            access.cost,
-        remaining:       access.remaining,
-        base_remaining:  access.base_remaining,
-        addon_remaining: access.addon_remaining,
-        weekly_limit:    access.weekly_limit,
-      },
-    });
+    res.json({ explanation, credits: _creditsBlock(access) });
   } catch (err) {
     console.error("[api/explain]", err.message);
     res.status(500).json({ error: "Explanation generation failed" });
@@ -9356,7 +9339,7 @@ app.post("/api/keywords/explain", async (req, res) => {
 
   const tier = user.tier || "free";
   // Credit gate (replaces checkKwExplanation). 7 credits per keyword context.
-  const access = await credits.consumeCredits(user.id, tier, 'keyword_context').catch(() => ({ allowed: false }));
+  const access = await credits.consumeCredits(user.id, tier, 'keyword_context', { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({
       error:        'Not enough credits for Keyword Context',
@@ -9498,16 +9481,7 @@ ${articleBlock || '(no articles available)'}`;
       };
     });
 
-    res.json({
-      ...payload,
-      credits: {
-        cost:            access.cost,
-        remaining:       access.remaining,
-        base_remaining:  access.base_remaining,
-        addon_remaining: access.addon_remaining,
-        weekly_limit:    access.weekly_limit,
-      },
-    });
+    res.json({ ...payload, credits: _creditsBlock(access) });
   } catch (err) {
     console.error("[api/keywords/explain]", err.message);
     res.status(500).json({ error: "Keyword explanation generation failed" });

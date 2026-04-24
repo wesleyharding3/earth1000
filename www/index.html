@@ -12133,6 +12133,22 @@ window.__earthAnalysis = (function() {
               if (translatedSummary) art.translated_summary = translatedSummary;
             }
           }
+
+          // Global sweep — mirror changes into EVERY [data-aid="<id>"]
+          // node in the DOM (feed cards, thread/line expansions, flow
+          // arcs, article-detail panels). See the primary translateCard
+          // definition for the full rationale.
+          try {
+            document.querySelectorAll(`[data-aid="${CSS.escape(String(articleId))}"]`).forEach(el => {
+              const cls = el.className || '';
+              if (translatedTitle && /(Title|Headline)/i.test(cls)) el.textContent = translatedTitle;
+              else if (translatedSummary && /(Summary|Desc)/i.test(cls)) el.textContent = translatedSummary;
+            });
+            document.querySelectorAll(`.articleTranslateBtn[data-id="${CSS.escape(String(articleId))}"]`).forEach(b => {
+              b.textContent = '✓'; b.classList.add('done'); b.disabled = true;
+            });
+          } catch (_) {}
+
           btn.textContent = "✓"; btn.classList.add("done");
         } catch (err) {
           console.error("Translation failed:", err);
@@ -16572,6 +16588,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 if (s) s.textContent = translatedSummary;
               }
             }
+
+            // Global sweep — patch EVERY currently-rendered card for this
+            // article across the DOM. Feed cards, thread rows, flow-arc
+            // expansions, and article-detail panels all tag their title/
+            // summary nodes with data-aid="<article.id>". Without this,
+            // translating from the article-detail panel would only update
+            // the detail view; the originating feed card would still show
+            // the original title until the next re-render. This is what
+            // "translation reflects everywhere" requires.
+            try {
+              if (translatedTitle) {
+                document.querySelectorAll(`[data-aid="${CSS.escape(String(articleId))}"]`).forEach(el => {
+                  // Heuristic: if the element is a title element or contains
+                  // the original title, patch title; if it's summary-styled,
+                  // patch summary. We tag with data-aid on both title and
+                  // summary slots.
+                  const cls = el.className || '';
+                  if (/(Title|Headline)/i.test(cls)) el.textContent = translatedTitle;
+                  else if (translatedSummary && /(Summary|Desc)/i.test(cls)) el.textContent = translatedSummary;
+                });
+              }
+              // Also blank the translate buttons for this article id — user
+              // already translated once, button can retire.
+              document.querySelectorAll(`.articleTranslateBtn[data-id="${CSS.escape(String(articleId))}"]`).forEach(b => {
+                b.textContent = '✓';
+                b.classList.add('done');
+                b.disabled = true;
+              });
+            } catch (_) { /* CSS.escape not available in very old browsers — silent */ }
 
             // Stamp translation into data-article so later panel opens
             // from this card get the translated fields immediately.
@@ -29794,8 +29839,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       content.innerHTML = `
         ${imageHTML}
         ${sourceBlock}
-        <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
-        <div class="adpSummary">${summaryText}</div>
+        <h1 class="adpTitle" data-aid="${article.id}">${article.translated_title || article.title || 'Untitled'}</h1>
+        <div class="adpSummary" data-aid="${article.id}">${summaryText}</div>
         ${metaBlock}
         ${sourceSummaryHTML}
         ${contextHTML}
@@ -29809,9 +29854,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="adpHeroLayout">
           <div class="adpHeroText">
             ${sourceBlock}
-            <h1 class="adpTitle">${article.translated_title || article.title || 'Untitled'}</h1>
+            <h1 class="adpTitle" data-aid="${article.id}">${article.translated_title || article.title || 'Untitled'}</h1>
             ${metaBlock}
-            <div class="adpSummary" style="margin-bottom:0">${summaryText}</div>
+            <div class="adpSummary" data-aid="${article.id}" style="margin-bottom:0">${summaryText}</div>
           </div>
           ${thumbHTML}
         </div>
@@ -30762,8 +30807,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const fillEl = document.getElementById('acctDpCreditBarFill');
     const subEl  = document.getElementById('acctDpCreditSub');
     if (!box || !valEl || !fillEl || !subEl) return;
-    if (_creditState.remaining == null) { box.style.display = 'none'; return; }
+    if (_creditState.remaining == null && !_creditState.admin) { box.style.display = 'none'; return; }
     box.style.display = '';
+
+    // Admin short-circuit: show ∞ + "Admin" subnote, full bar tinted purple.
+    if (_creditState.admin) {
+      valEl.innerHTML = `∞<span class="acctDpCreditDenom">/ unlimited</span>`;
+      fillEl.style.width = '100%';
+      fillEl.classList.remove('low', 'empty');
+      fillEl.style.background = 'linear-gradient(90deg, rgba(167,139,250,0.9), rgba(96,200,255,0.9))';
+      subEl.innerHTML = `<span style="color:rgba(167,139,250,0.85);">Admin — unlimited</span><span></span>`;
+      return;
+    }
+    // Reset any inline style the admin branch may have set.
+    fillEl.style.background = '';
 
     const remaining = Number(_creditState.remaining) || 0;
     const limit     = Number(_creditState.weeklyLimit) || 0;
@@ -30794,11 +30851,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const res = await fetch(`${API_BASE}/api/credits/me`);
       if (!res.ok) return;
       const data = await res.json();
-      const total = (Number(data.base_remaining) || 0) + (Number(data.addon_credits) || 0);
-      _creditState.remaining      = total;
-      _creditState.weeklyLimit    = Number(data.weekly_limit) || 0;
-      _creditState.baseRemaining  = Number(data.base_remaining) || 0;
-      _creditState.addonRemaining = Number(data.addon_credits)  || 0;
+      if (data.admin) {
+        // Server serialises Infinity → null for JSON; admin:true carries the
+        // signal. Treat everything numeric as unlimited.
+        _creditState.admin          = true;
+        _creditState.remaining      = null;
+        _creditState.weeklyLimit    = null;
+        _creditState.baseRemaining  = null;
+        _creditState.addonRemaining = 0;
+      } else {
+        _creditState.admin          = false;
+        const total = (Number(data.base_remaining) || 0) + (Number(data.addon_credits) || 0);
+        _creditState.remaining      = total;
+        _creditState.weeklyLimit    = Number(data.weekly_limit) || 0;
+        _creditState.baseRemaining  = Number(data.base_remaining) || 0;
+        _creditState.addonRemaining = Number(data.addon_credits)  || 0;
+      }
       _renderCreditMeter();
     } catch (_) { /* silent — meter stays hidden */ }
   };
@@ -30809,6 +30877,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // the new balance without a round-trip.
   window.__updateCreditMeterFromResponse = function(creditsBlock) {
     if (!creditsBlock) return;
+    if (creditsBlock.admin) {
+      _creditState.admin          = true;
+      _creditState.remaining      = null;
+      _creditState.weeklyLimit    = null;
+      _creditState.baseRemaining  = null;
+      _creditState.addonRemaining = 0;
+      _renderCreditMeter();
+      return;
+    }
+    _creditState.admin = false;
     if (Number.isFinite(creditsBlock.remaining))       _creditState.remaining      = Number(creditsBlock.remaining);
     if (Number.isFinite(creditsBlock.weekly_limit))    _creditState.weeklyLimit    = Number(creditsBlock.weekly_limit);
     if (Number.isFinite(creditsBlock.base_remaining))  _creditState.baseRemaining  = Number(creditsBlock.base_remaining);
