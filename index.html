@@ -2922,18 +2922,25 @@ body.flow-maximized #flowArcList {
   0%, 100% { box-shadow: 0 0 10px rgba(255,200,120,0.40); }
   50%      { box-shadow: 0 0 20px rgba(255,210,140,0.75); }
 }
-/* Mobile: swap bar indicators for little glowing round dots. */
+/* Mobile: swap bar indicators for little glowing round dots. !important
+   needed because desktop's scaleY(1.4) on is-active would warp the
+   6×6 circle back into an ellipse. */
 @media (max-width: 768px) {
-  .arcCtxSegDots { gap: 10px; }
-  .arcCtxSegDot { width: 6px; height: 6px; border-radius: 50%; }
+  .arcCtxSegDots { gap: 10px !important; }
+  .arcCtxSegDot {
+    width: 7px !important;
+    height: 7px !important;
+    border-radius: 50% !important;
+  }
   .arcCtxSegDot.is-active {
-    transform: scale(1.35);
-    box-shadow: 0 0 10px rgba(255,200,120,0.55);
+    transform: scale(1.4) !important;
+    box-shadow: 0 0 10px rgba(255,200,120,0.55) !important;
+    animation: arcCtxSegDotPulseMobile 1.6s ease-in-out infinite !important;
   }
-  @keyframes arcCtxSegDotPulse {
-    0%, 100% { box-shadow: 0 0 8px rgba(255,200,120,0.45); }
-    50%      { box-shadow: 0 0 16px rgba(255,210,140,0.80); }
-  }
+}
+@keyframes arcCtxSegDotPulseMobile {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,200,120,0.45); }
+  50%      { box-shadow: 0 0 16px rgba(255,210,140,0.80); }
 }
 /* Pulsing Next arrow when the stream is paused awaiting a user click. */
 .arcCtxSegAwaitingAdvance .arcCtxSegNext {
@@ -10539,11 +10546,9 @@ window.__earthAnalysis = (function() {
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
-    // Thread/line detail panels: always segmented. Mobile = auto-advance,
-    // desktop = manual-only (user clicks Next arrow to reveal next block).
+    // Thread/line detail panels: always segmented + always manual.
     if (window.__arcCtxSegmented) {
-      const mobile = window.__arcCtxSegmented.isMobile();
-      window.__arcCtxSegmented.setManualMode(body, !mobile);
+      window.__arcCtxSegmented.setManualMode(body, true);
       window.__arcCtxSegmented.apply(body);
     }
   }
@@ -10596,9 +10601,9 @@ window.__earthAnalysis = (function() {
       showMessage(body, 'arcCtxEmpty', 'Analysis unavailable.');
       return;
     }
-    // Arm manual mode BEFORE the loop (thread/line detail body only).
+    // Thread/line detail: always manual (mobile + desktop).
     if (window.__arcCtxSegmented && (body?.id === 'cdAnalysisBody')) {
-      window.__arcCtxSegmented.setManualMode(body, !window.__arcCtxSegmented.isMobile());
+      window.__arcCtxSegmented.setManualMode(body, true);
     }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
@@ -29096,11 +29101,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
-    // Article detail panel: always segmented. Mobile auto-advances; desktop
-    // is manual-only (user clicks Next arrow to reveal the next block).
+    // Article detail panel: always segmented + always manual.
     if (window.__arcCtxSegmented) {
-      const mobile = window.__arcCtxSegmented.isMobile();
-      window.__arcCtxSegmented.setManualMode(body, !mobile);
+      window.__arcCtxSegmented.setManualMode(body, true);
       window.__arcCtxSegmented.apply(body);
     }
   }
@@ -29155,9 +29158,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       return;
     }
     const body = document.getElementById('adpAnalysisBody');
-    // Arm mode BEFORE loop — mobile auto, desktop manual.
+    // Always manual (both mobile + desktop).
     if (window.__arcCtxSegmented) {
-      window.__arcCtxSegmented.setManualMode(body, !window.__arcCtxSegmented.isMobile());
+      window.__arcCtxSegmented.setManualMode(body, true);
     }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {

@@ -2927,21 +2927,24 @@ body.flow-maximized #flowArcList {
   50%      { box-shadow: 0 0 20px rgba(255,210,140,0.75); }
 }
 /* Mobile: swap the bar-shaped indicators for tiny round glowing dots.
-   Same color system, just a different footprint — less visual weight on
-   narrow screens where arrows + 3–4 segment bars looked clunky. */
+   !important because the desktop rules set transform: scaleY(1.4) on
+   is-active, which on a 6×6 dot would warp it back into an ellipse. */
 @media (max-width: 768px) {
-  .arcCtxSegDots { gap: 10px; }
+  .arcCtxSegDots { gap: 10px !important; }
   .arcCtxSegDot {
-    width: 6px; height: 6px; border-radius: 50%;
+    width: 7px !important;
+    height: 7px !important;
+    border-radius: 50% !important;
   }
   .arcCtxSegDot.is-active {
-    transform: scale(1.35);
-    box-shadow: 0 0 10px rgba(255,200,120,0.55);
+    transform: scale(1.4) !important;  /* uniform, not scaleY */
+    box-shadow: 0 0 10px rgba(255,200,120,0.55) !important;
+    animation: arcCtxSegDotPulseMobile 1.6s ease-in-out infinite !important;
   }
-  @keyframes arcCtxSegDotPulse {
-    0%, 100% { box-shadow: 0 0 8px rgba(255,200,120,0.45); }
-    50%      { box-shadow: 0 0 16px rgba(255,210,140,0.80); }
-  }
+}
+@keyframes arcCtxSegDotPulseMobile {
+  0%, 100% { box-shadow: 0 0 8px rgba(255,200,120,0.45); }
+  50%      { box-shadow: 0 0 16px rgba(255,210,140,0.80); }
 }
 /* When the stream is paused waiting on the user to click Next, make
    the Next arrow pulse harder so the affordance is obvious. */
@@ -11021,12 +11024,9 @@ window.__earthAnalysis = (function() {
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
-    // Thread / line detail panels: always segmented. Mobile = auto-advance
-    // (current behavior). Desktop = manual-only — user must click the
-    // Next arrow to reveal the following block; text doesn't auto-print.
+    // Thread / line detail panels: always segmented + always manual.
     if (window.__arcCtxSegmented) {
-      const mobile = window.__arcCtxSegmented.isMobile();
-      window.__arcCtxSegmented.setManualMode(body, !mobile);
+      window.__arcCtxSegmented.setManualMode(body, true);
       window.__arcCtxSegmented.apply(body);
     }
   }
@@ -11079,13 +11079,10 @@ window.__earthAnalysis = (function() {
       showMessage(body, 'arcCtxEmpty', 'Analysis unavailable.');
       return;
     }
-    // Manual mode: arm it BEFORE the loop so the first block's renderer
-    // sees the flag set (it was being captured-as-false earlier because
-    // the renderer is what sets the flag). Mobile: auto. Desktop: manual.
-    // Flow context body IDs differ, so only touch modes for the two panels
-    // that actually go through this shared helper — thread/line details.
+    // Thread/line detail panels via the shared helper: always manual,
+    // mobile + desktop. Users tap the Next arrow between segments.
     if (window.__arcCtxSegmented && (body?.id === 'cdAnalysisBody')) {
-      window.__arcCtxSegmented.setManualMode(body, !window.__arcCtxSegmented.isMobile());
+      window.__arcCtxSegmented.setManualMode(body, true);
     }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
@@ -30015,11 +30012,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
-    // Article detail panel: always segmented. Mobile auto-advances; desktop
-    // is manual-only (user clicks the Next arrow to reveal the next block).
+    // Article detail panel: always segmented + always manual.
     if (window.__arcCtxSegmented) {
-      const mobile = window.__arcCtxSegmented.isMobile();
-      window.__arcCtxSegmented.setManualMode(body, !mobile);
+      window.__arcCtxSegmented.setManualMode(body, true);
       window.__arcCtxSegmented.apply(body);
     }
   }
@@ -30074,10 +30069,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       return;
     }
     const body = document.getElementById('adpAnalysisBody');
-    // Arm manual mode BEFORE the loop so the first iteration sees it.
-    // Mobile: auto-advance. Desktop: manual-only.
+    // Arm manual mode BEFORE the loop. Every segmented Deep Analysis
+    // panel pauses between blocks now (mobile + desktop). Users tap the
+    // Next arrow to advance.
     if (window.__arcCtxSegmented) {
-      window.__arcCtxSegmented.setManualMode(body, !window.__arcCtxSegmented.isMobile());
+      window.__arcCtxSegmented.setManualMode(body, true);
     }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
