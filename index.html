@@ -10588,7 +10588,10 @@ window.__earthAnalysis = (function() {
       showMessage(body, 'arcCtxEmpty', 'Analysis unavailable.');
       return;
     }
-    const manual = window.__arcCtxSegmented?.isManualMode?.(body) || false;
+    // Arm manual mode BEFORE the loop (thread/line detail body only).
+    if (window.__arcCtxSegmented && (body?.id === 'cdAnalysisBody')) {
+      window.__arcCtxSegmented.setManualMode(body, !window.__arcCtxSegmented.isMobile());
+    }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
       if (signal?.aborted) break;
@@ -10596,7 +10599,8 @@ window.__earthAnalysis = (function() {
       renderBlocks(body, live);
       const done = await typeBlock(body, live, live.length - 1, signal);
       if (!done) break;
-      if (manual && i < normalized.length - 1) {
+      const manualNow = window.__arcCtxSegmented?.isManualMode?.(body) || false;
+      if (manualNow && i < normalized.length - 1) {
         const proceed = await window.__arcCtxSegmented.awaitAdvance(body, signal);
         if (!proceed) break;
       }
@@ -20057,7 +20061,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       const body = document.getElementById('arcCtxBody');
-      const manual = window.__arcCtxSegmented?.isManualMode?.(body) || false;
+      // Flow context is always AUTO.
+      if (window.__arcCtxSegmented) {
+        window.__arcCtxSegmented.setManualMode(body, false);
+      }
       for (let i = 0; i < normalizedBlocks.length; i += 1) {
         if (signal?.aborted) {
           _arcCtxFinalizeBlocks(key, normalizedBlocks);
@@ -20072,7 +20079,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           _arcCtxFinalizeBlocks(key, normalizedBlocks);
           return;
         }
-        if (manual && i < normalizedBlocks.length - 1) {
+        const manualNow = window.__arcCtxSegmented?.isManualMode?.(body) || false;
+        if (manualNow && i < normalizedBlocks.length - 1) {
           const proceed = await window.__arcCtxSegmented.awaitAdvance(body, signal);
           if (!proceed) {
             _arcCtxFinalizeBlocks(key, normalizedBlocks);
@@ -29130,7 +29138,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       return;
     }
     const body = document.getElementById('adpAnalysisBody');
-    const manual = window.__arcCtxSegmented?.isManualMode?.(body) || false;
+    // Arm mode BEFORE loop — mobile auto, desktop manual.
+    if (window.__arcCtxSegmented) {
+      window.__arcCtxSegmented.setManualMode(body, !window.__arcCtxSegmented.isMobile());
+    }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
       if (signal?.aborted) break;
@@ -29138,7 +29149,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _adpAnalysisRenderBlocks(live);
       const done = await _adpAnalysisTypeBlock(live, live.length - 1, signal);
       if (!done) break;
-      if (manual && i < normalized.length - 1) {
+      const manualNow = window.__arcCtxSegmented?.isManualMode?.(body) || false;
+      if (manualNow && i < normalized.length - 1) {
         const proceed = await window.__arcCtxSegmented.awaitAdvance(body, signal);
         if (!proceed) break;
       }
