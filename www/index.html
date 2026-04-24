@@ -11133,8 +11133,40 @@ window.__arcCtxSegmented = (function() {
     if (next) next.toggleAttribute('disabled', clamped >= blocks.length - 1);
   }
 
+  // Event delegation on the body so nav click handlers survive every full
+  // re-render (renderBlocks wipes innerHTML, which also wipes the nav and
+  // any listeners attached directly to its buttons — causing "clicks do
+  // nothing after the first segment" symptoms). Attach the delegate once
+  // per body lifetime.
+  function ensureDelegate(body) {
+    if (!body || body._segDelegateAttached) return;
+    body._segDelegateAttached = true;
+    body.addEventListener('click', (e) => {
+      const nextEl = e.target.closest('.arcCtxSegNext');
+      const prevEl = e.target.closest('.arcCtxSegPrev');
+      const dotEl  = e.target.closest('.arcCtxSegDot');
+      if (!nextEl && !prevEl && !dotEl) return;
+      e.stopPropagation();
+      // Manual mode + awaiting advance: any Next click resolves the waiter
+      // so the stream loop can push the next block.
+      if (nextEl && body.dataset.segManual === '1' && body._segAdvanceResolve) {
+        body.classList.remove('arcCtxSegAwaitingAdvance');
+        body._segAdvanceResolve();
+        return;
+      }
+      const blocksNow = Array.from(body.querySelectorAll('.arcCtxBlock'));
+      const cur = body.dataset.segManualIdx != null
+        ? Number(body.dataset.segManualIdx)
+        : pickActiveIndex(blocksNow, null);
+      if (nextEl) setActive(body, cur + 1);
+      else if (prevEl) setActive(body, cur - 1);
+      else if (dotEl) setActive(body, Number(dotEl.dataset.seg));
+    });
+  }
+
   function apply(body) {
     if (!body) return;
+    ensureDelegate(body);
     const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
     if (blocks.length < 2) {
       // Only one block — no need for segments; strip any prior segmented
@@ -11181,31 +11213,8 @@ window.__arcCtxSegmented = (function() {
         `<div class="arcCtxSegDots">${dotHtml}</div>` +
         `<button class="arcCtxSegArrow arcCtxSegNext" aria-label="Next"${nextDisabled ? ' disabled' : ''}>&rsaquo;</button>`;
       body.appendChild(nav);
-      nav.querySelectorAll('.arcCtxSegDot').forEach(dot => {
-        dot.addEventListener('click', (e) => {
-          e.stopPropagation();
-          setActive(body, Number(dot.dataset.seg));
-        });
-      });
-      nav.querySelector('.arcCtxSegPrev')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
-        setActive(body, cur - 1);
-      });
-      nav.querySelector('.arcCtxSegNext')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Manual mode: if the stream loop is paused waiting for advance,
-        // resolve the waiter instead of just moving the active index —
-        // resolving fires the next block's typewriter, which in turn
-        // re-renders the nav and auto-advances the active segment.
-        if (body.dataset.segManual === '1' && body._segAdvanceResolve) {
-          body.classList.remove('arcCtxSegAwaitingAdvance');
-          body._segAdvanceResolve();
-          return;
-        }
-        const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
-        setActive(body, cur + 1);
-      });
+      // No per-button listeners — ensureDelegate() attached one click
+      // handler to the body that survives nav rebuilds.
     } else {
       // Cheap refresh without rebuilding — sync dot states + arrow disable.
       nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
@@ -20727,11 +20736,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }).join('');
       body.scrollTop = body.scrollHeight;
-      // Flow context panel: segmented + AUTO-advance (never manual) on
-      // both desktop and mobile. Typewriter rolls straight through all
-      // blocks without a user click.
+      // Flow context panel: segmented + MANUAL (always). Each block
+      // types to completion, then waits for the user to click Next.
       if (window.__arcCtxSegmented) {
-        window.__arcCtxSegmented.setManualMode(body, false);
+        window.__arcCtxSegmented.setManualMode(body, true);
         window.__arcCtxSegmented.apply(body);
       }
     }
@@ -20816,9 +20824,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       const body = document.getElementById('arcCtxBody');
-      // Flow context is always AUTO mode. Explicitly clear any stale flag.
+      // Flow context is always MANUAL — each segment types, finishes, and
+      // waits for the user to click the Next arrow before the following
+      // block begins. Same behavior as the detail panels on desktop.
       if (window.__arcCtxSegmented) {
-        window.__arcCtxSegmented.setManualMode(body, false);
+        window.__arcCtxSegmented.setManualMode(body, true);
       }
       for (let i = 0; i < normalizedBlocks.length; i += 1) {
         if (signal?.aborted) {

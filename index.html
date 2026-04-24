@@ -10637,8 +10637,34 @@ window.__arcCtxSegmented = (function() {
     if (prev) prev.toggleAttribute('disabled', clamped <= 0);
     if (next) next.toggleAttribute('disabled', clamped >= blocks.length - 1);
   }
+  // Event delegation — one click handler per body, survives nav rebuilds.
+  function ensureDelegate(body) {
+    if (!body || body._segDelegateAttached) return;
+    body._segDelegateAttached = true;
+    body.addEventListener('click', (e) => {
+      const nextEl = e.target.closest('.arcCtxSegNext');
+      const prevEl = e.target.closest('.arcCtxSegPrev');
+      const dotEl  = e.target.closest('.arcCtxSegDot');
+      if (!nextEl && !prevEl && !dotEl) return;
+      e.stopPropagation();
+      if (nextEl && body.dataset.segManual === '1' && body._segAdvanceResolve) {
+        body.classList.remove('arcCtxSegAwaitingAdvance');
+        body._segAdvanceResolve();
+        return;
+      }
+      const blocksNow = Array.from(body.querySelectorAll('.arcCtxBlock'));
+      const cur = body.dataset.segManualIdx != null
+        ? Number(body.dataset.segManualIdx)
+        : pickActiveIndex(blocksNow, null);
+      if (nextEl) setActive(body, cur + 1);
+      else if (prevEl) setActive(body, cur - 1);
+      else if (dotEl) setActive(body, Number(dotEl.dataset.seg));
+    });
+  }
+
   function apply(body) {
     if (!body) return;
+    ensureDelegate(body);
     const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
     if (blocks.length < 2) {
       body.classList.remove('arcCtxStateSegmented');
@@ -10668,24 +10694,7 @@ window.__arcCtxSegmented = (function() {
         `<div class="arcCtxSegDots">${dotHtml}</div>` +
         `<button class="arcCtxSegArrow arcCtxSegNext" aria-label="Next"${nextDisabled ? ' disabled' : ''}>&rsaquo;</button>`;
       body.appendChild(nav);
-      nav.querySelectorAll('.arcCtxSegDot').forEach(dot => {
-        dot.addEventListener('click', (e) => { e.stopPropagation(); setActive(body, Number(dot.dataset.seg)); });
-      });
-      nav.querySelector('.arcCtxSegPrev')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
-        setActive(body, cur - 1);
-      });
-      nav.querySelector('.arcCtxSegNext')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (body.dataset.segManual === '1' && body._segAdvanceResolve) {
-          body.classList.remove('arcCtxSegAwaitingAdvance');
-          body._segAdvanceResolve();
-          return;
-        }
-        const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
-        setActive(body, cur + 1);
-      });
+      // No per-button listeners — ensureDelegate attached one on the body.
     } else {
       nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
         d.classList.toggle('is-active', i === activeIdx);
@@ -19973,10 +19982,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }).join('');
       body.scrollTop = body.scrollHeight;
-      // Flow context panel: segmented + AUTO-advance on both desktop and
-      // mobile. Never manual mode.
+      // Flow context: segmented + MANUAL (always).
       if (window.__arcCtxSegmented) {
-        window.__arcCtxSegmented.setManualMode(body, false);
+        window.__arcCtxSegmented.setManualMode(body, true);
         window.__arcCtxSegmented.apply(body);
       }
     }
@@ -20061,9 +20069,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       const body = document.getElementById('arcCtxBody');
-      // Flow context is always AUTO.
+      // Flow context: always MANUAL — each segment types, waits for the
+      // user to click Next before the following block begins.
       if (window.__arcCtxSegmented) {
-        window.__arcCtxSegmented.setManualMode(body, false);
+        window.__arcCtxSegmented.setManualMode(body, true);
       }
       for (let i = 0; i < normalizedBlocks.length; i += 1) {
         if (signal?.aborted) {
