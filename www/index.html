@@ -2837,6 +2837,86 @@ body.flow-maximized #flowArcList {
 }
 .arcCtxStateSettled .arcCtxBlock.is-done::before { opacity: 0.08; }
 .arcCtxStateSettled .arcCtxBlock.is-done .arcCtxLiveTag { display: none; }
+
+/* ── Segmented layout — one block at a time with glowing bottom nav ──
+   Triggered by adding .arcCtxStateSegmented to the body. All blocks
+   stack on the same Z, only the .arcCtxBlock--active one is visible;
+   a segment navigator renders at the bottom with pulsing arrows and
+   glowing dots. Used by the flow-context panel (always) and by the
+   article/thread/line detail panels on mobile only. */
+.arcCtxStateSegmented { position: relative; padding-bottom: 52px; }
+.arcCtxStateSegmented .arcCtxBlock + .arcCtxBlock { margin-top: 0; }
+.arcCtxStateSegmented .arcCtxBlock {
+  position: absolute;
+  left: 12px; right: 12px; top: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 0.32s ease, transform 0.32s ease;
+}
+.arcCtxStateSegmented .arcCtxBlock.arcCtxBlock--active {
+  position: relative;
+  left: 0; right: 0;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.arcCtxSegNav {
+  position: absolute;
+  left: 0; right: 0; bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 0 12px;
+  z-index: 3;
+}
+.arcCtxSegArrow {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(12,17,28,0.70);
+  color: rgba(255,255,255,0.85);
+  font-size: 16px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, opacity 0.2s ease;
+  box-shadow: 0 0 10px rgba(88,180,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02);
+  animation: arcCtxSegArrowPulse 1.8s ease-in-out infinite;
+}
+.arcCtxSegArrow:hover { background: rgba(20,28,46,0.85); border-color: rgba(255,255,255,0.24); transform: scale(1.08); }
+.arcCtxSegArrow:active { transform: scale(0.96); }
+.arcCtxSegArrow[disabled] { opacity: 0.30; cursor: default; animation: none; box-shadow: none; }
+@keyframes arcCtxSegArrowPulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(88,180,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02); }
+  50%      { box-shadow: 0 0 18px rgba(120,210,255,0.38), inset 0 0 0 1px rgba(255,255,255,0.04); }
+}
+.arcCtxSegDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.arcCtxSegDot {
+  width: 22px; height: 4px;
+  border-radius: 2px;
+  border: 0;
+  padding: 0;
+  background: rgba(255,255,255,0.14);
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.arcCtxSegDot:hover { background: rgba(255,255,255,0.28); }
+.arcCtxSegDot.is-done { background: rgba(255,188,96,0.55); }
+.arcCtxSegDot.is-active {
+  background: linear-gradient(90deg, rgba(255,188,96,0.95), rgba(120,210,255,0.95));
+  box-shadow: 0 0 10px rgba(255,200,120,0.48);
+  transform: scaleY(1.4);
+  animation: arcCtxSegDotPulse 1.6s ease-in-out infinite;
+}
+@keyframes arcCtxSegDotPulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(255,200,120,0.40); }
+  50%      { box-shadow: 0 0 20px rgba(255,210,140,0.75); }
+}
 .arcCtxBody .arcCtxCursor { display: none; }
 .arcCtxBody .arcCtxEmpty {
   padding: 16px 12px;
@@ -10904,6 +10984,12 @@ window.__earthAnalysis = (function() {
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
+    // Thread / line detail panels: use segmented "one at a time + bottom
+    // nav" presentation on MOBILE only. Desktop keeps the stacked layout
+    // since there's enough vertical room for all blocks side-by-side.
+    if (window.__arcCtxSegmented?.isMobile()) {
+      window.__arcCtxSegmented.apply(body);
+    }
   }
   function sleep(ms, signal) {
     return new Promise((resolve) => {
@@ -10966,6 +11052,120 @@ window.__earthAnalysis = (function() {
     renderBlocks(body, live);
   }
   return { showLoading, showMessage, renderBlocks, stream, esc };
+})();
+
+/* Segmented-layout post-processor for any .arcCtxBody. Converts a stacked
+   multi-block render into a "one block at a time + glowing bottom nav"
+   presentation. Idempotent — safe to call after every renderBlocks tick.
+   The active block is whichever is currently typing, falling back to the
+   last rendered block when all are done. User can tap arrows/dots to
+   navigate; as new blocks arrive from the typewriter stream, the active
+   index follows them automatically (unless the user has manually paged
+   away, tracked via body dataset). */
+window.__arcCtxSegmented = (function() {
+  function pickActiveIndex(blocks, manualIdx) {
+    if (manualIdx != null && manualIdx >= 0 && manualIdx < blocks.length) return manualIdx;
+    for (let i = 0; i < blocks.length; i++) {
+      if (blocks[i].classList.contains('is-typing')) return i;
+    }
+    return blocks.length - 1;
+  }
+
+  function setActive(body, idx) {
+    const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
+    if (!blocks.length) return;
+    const clamped = Math.max(0, Math.min(blocks.length - 1, idx));
+    body.dataset.segManualIdx = String(clamped);
+    blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === clamped));
+    const nav = body.querySelector('.arcCtxSegNav');
+    if (!nav) return;
+    nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
+      d.classList.toggle('is-active', i === clamped);
+      d.classList.toggle('is-done',   blocks[i]?.classList.contains('is-done'));
+    });
+    const prev = nav.querySelector('.arcCtxSegPrev');
+    const next = nav.querySelector('.arcCtxSegNext');
+    if (prev) prev.toggleAttribute('disabled', clamped <= 0);
+    if (next) next.toggleAttribute('disabled', clamped >= blocks.length - 1);
+  }
+
+  function apply(body) {
+    if (!body) return;
+    const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
+    if (blocks.length < 2) {
+      // Only one block — no need for segments; strip any prior segmented
+      // state so single-block renders look normal.
+      body.classList.remove('arcCtxStateSegmented');
+      body.querySelector('.arcCtxSegNav')?.remove();
+      blocks.forEach(b => b.classList.remove('arcCtxBlock--active'));
+      delete body.dataset.segManualIdx;
+      return;
+    }
+    body.classList.add('arcCtxStateSegmented');
+    // User's manual page selection is tracked on the body dataset; clear
+    // it when the user hasn't chosen a page yet, so the active index
+    // follows the typewriter.
+    const manualIdx = body.dataset.segManualIdx != null
+      ? Number(body.dataset.segManualIdx)
+      : null;
+    let activeIdx = pickActiveIndex(blocks, manualIdx);
+    // If the manual page no longer maps to an existing block (rare race),
+    // re-derive.
+    if (activeIdx < 0 || activeIdx >= blocks.length) activeIdx = blocks.length - 1;
+
+    blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === activeIdx));
+
+    // Build / update nav. Reuses the existing .arcCtxSegNav node when
+    // present so we don't blow away user focus / click handlers every
+    // typewriter tick — which fires ~50 times per block.
+    let nav = body.querySelector('.arcCtxSegNav');
+    const needsRebuild = !nav || nav.querySelectorAll('.arcCtxSegDot').length !== blocks.length;
+    if (needsRebuild) {
+      if (nav) nav.remove();
+      nav = document.createElement('div');
+      nav.className = 'arcCtxSegNav';
+      const dotHtml = blocks.map((b, i) =>
+        `<button class="arcCtxSegDot${i === activeIdx ? ' is-active' : ''}${b.classList.contains('is-done') ? ' is-done' : ''}" data-seg="${i}" aria-label="Section ${i + 1}"></button>`
+      ).join('');
+      nav.innerHTML =
+        `<button class="arcCtxSegArrow arcCtxSegPrev" aria-label="Previous"${activeIdx <= 0 ? ' disabled' : ''}>&lsaquo;</button>` +
+        `<div class="arcCtxSegDots">${dotHtml}</div>` +
+        `<button class="arcCtxSegArrow arcCtxSegNext" aria-label="Next"${activeIdx >= blocks.length - 1 ? ' disabled' : ''}>&rsaquo;</button>`;
+      body.appendChild(nav);
+      nav.querySelectorAll('.arcCtxSegDot').forEach(dot => {
+        dot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          setActive(body, Number(dot.dataset.seg));
+        });
+      });
+      nav.querySelector('.arcCtxSegPrev')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
+        setActive(body, cur - 1);
+      });
+      nav.querySelector('.arcCtxSegNext')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cur = body.dataset.segManualIdx != null ? Number(body.dataset.segManualIdx) : pickActiveIndex(Array.from(body.querySelectorAll('.arcCtxBlock')), null);
+        setActive(body, cur + 1);
+      });
+    } else {
+      // Cheap refresh without rebuilding — sync dot states + arrow disable.
+      nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
+        d.classList.toggle('is-active', i === activeIdx);
+        d.classList.toggle('is-done',   blocks[i]?.classList.contains('is-done'));
+      });
+      const prev = nav.querySelector('.arcCtxSegPrev');
+      const next = nav.querySelector('.arcCtxSegNext');
+      if (prev) prev.toggleAttribute('disabled', activeIdx <= 0);
+      if (next) next.toggleAttribute('disabled', activeIdx >= blocks.length - 1);
+    }
+  }
+
+  function isMobile() {
+    return (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) || false;
+  }
+
+  return { apply, setActive, isMobile };
 })();
 
 (function() {
@@ -19867,31 +20067,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
           continue;
         }
 
-        // Phase B — arc is fully drawn. While other waves are still drawing
-        // in, sit fully visible and idle. Once all waves have finished, the
-        // looping-pulse phase begins.
+        // Phase B — arc is fully drawn. Start an independent continuous
+        // pulse loop on EVERY arc, src→dst. Previously only one arc
+        // pulsed at a time (during its wave turn), which meant the map
+        // looked static most of the cycle. Now each arc picks its own
+        // period + phase so the fleet pulses in parallel without being
+        // in lockstep: primaries flow to secondaries (and between
+        // primaries) simultaneously, all the time.
         arc.tubeMat.uniforms.uVisibleStart.value = 0;
         arc.tubeMat.uniforms.uVisibleEnd.value = 1;
         arc.tubeMat.uniforms.uOpacity.value = arc.baseOpacity;
         arc.orb.material.opacity = 0;
         arc.orb.visible = false;
 
-        if (elapsed < totalDraw) {
-          // Still waiting for the other waves to finish their draw-in.
-          arc.tubeMat.uniforms.uPulsePos.value = -2.0;
-        } else {
-          // Looping pulse: replay the wave sequence continuously. Pulse
-          // is active only while it's this arc's wave turn inside the
-          // cycle; otherwise the arc rests, still fully drawn.
-          const cycleLen = totalDraw;
-          const cycleT   = (elapsed - totalDraw) % cycleLen;
-          if (cycleT >= waveStart && cycleT < waveEnd) {
-            const localT = clamp01((cycleT - waveStart) / waveDuration);
-            arc.tubeMat.uniforms.uPulsePos.value = localT;
-          } else {
-            arc.tubeMat.uniforms.uPulsePos.value = -2.0;
-          }
+        if (arc.threadPulsePeriod == null) {
+          // 1.8–2.7s per cycle — slow enough to read, fast enough to
+          // feel alive. Random phase offset prevents visual lockstep.
+          arc.threadPulsePeriod = 1.8 + Math.random() * 0.9;
+          arc.threadPulsePhase  = Math.random() * arc.threadPulsePeriod;
         }
+        const _sinceDrawn = Math.max(0, elapsed - waveEnd);
+        arc.tubeMat.uniforms.uPulsePos.value =
+          ((_sinceDrawn + arc.threadPulsePhase) % arc.threadPulsePeriod) / arc.threadPulsePeriod;
 
         if (flow.src?.iso) frameContactISOs.add(flow.src.iso.toUpperCase());
         if (flow.dst?.iso) frameContactISOs.add(flow.dst.iso.toUpperCase());
@@ -20429,6 +20626,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         );
       }).join('');
       body.scrollTop = body.scrollHeight;
+      // Flow context panel: always switch to the segmented "one block at
+      // a time + bottom nav" presentation. Helper is a no-op for single-
+      // block renders.
+      window.__arcCtxSegmented?.apply(body);
     }
 
     function _arcCtxShowLock() {
@@ -29677,6 +29878,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       );
     }).join('');
     body.scrollTop = body.scrollHeight;
+    // Article detail panel: segmented presentation on MOBILE only.
+    if (window.__arcCtxSegmented?.isMobile()) {
+      window.__arcCtxSegmented.apply(body);
+    }
   }
   function _adpAnalysisSleep(ms, signal) {
     return new Promise((resolve) => {
