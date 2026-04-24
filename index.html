@@ -6142,7 +6142,9 @@ body.flow-maximized #flowArcList {
     }
     .gs-widget-value {
       font-size: 20px; font-weight: 700;
-      color: rgba(255,255,255,0.9);
+      /* Match the stat title's blue but brighter, with a soft glow. */
+      color: rgba(120,200,255,1);
+      text-shadow: 0 0 12px rgba(74,184,255,0.35);
       margin-bottom: 4px;
     }
     .gs-widget-sub {
@@ -28952,7 +28954,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         card.id = 'gs-' + w.id;
         card.innerHTML = `
           <div class="gs-widget-title">${w.label}</div>
-          <div class="gs-widget-value" style="color:rgba(255,255,255,0.2);">—</div>
+          <div class="gs-widget-value" style="color:rgba(120,200,255,0.22);text-shadow:none;">—</div>
           <div class="gs-widget-sub">${w.unit}</div>`;
         grid.appendChild(card);
       });
@@ -28981,6 +28983,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // Simple scalar value
           if (typeof val === 'number') {
             valEl.style.color = '';
+            valEl.style.textShadow = '';
             valEl.textContent = fmtNum(val);
             return;
           }
@@ -28991,6 +28994,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const firstSeries = val.series[0];
             const latestVal = [...firstSeries.values].reverse().find(v => v != null);
             valEl.style.color = '';
+            valEl.style.textShadow = '';
             valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
             if (subEl) subEl.textContent = val.unit || w.unit;
 
@@ -29016,6 +29020,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // String value
           if (typeof val === 'string') {
             valEl.style.color = '';
+            valEl.style.textShadow = '';
             valEl.textContent = val;
           }
         });

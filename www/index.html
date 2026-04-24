@@ -6450,7 +6450,11 @@ body.flow-maximized #flowArcList {
     }
     .gs-widget-value {
       font-size: 20px; font-weight: 700;
-      color: rgba(255,255,255,0.9);
+      /* Match the stat title's blue (rgba(74,184,255, …)) but brighter
+         and with a subtle glow so the number pops while still reading
+         as part of the same color family as the label above it. */
+      color: rgba(120,200,255,1);
+      text-shadow: 0 0 12px rgba(74,184,255,0.35);
       margin-bottom: 4px;
     }
     .gs-widget-sub {
@@ -29915,7 +29919,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const card = document.createElement('div');
         card.className = 'gs-widget';
         card.id = 'gs-' + w.id;
-        card.innerHTML = `<div class="gs-widget-title">${w.label}</div><div class="gs-widget-value" style="color:rgba(255,255,255,0.2);">—</div><div class="gs-widget-sub">${w.unit}</div>`;
+        card.innerHTML = `<div class="gs-widget-title">${w.label}</div><div class="gs-widget-value" style="color:rgba(120,200,255,0.22);text-shadow:none;">—</div><div class="gs-widget-sub">${w.unit}</div>`;
         grid.appendChild(card);
       });
     }
@@ -29935,11 +29939,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (val == null) return;
           const valEl = card.querySelector('.gs-widget-value');
           const subEl = card.querySelector('.gs-widget-sub');
-          if (typeof val === 'number') { valEl.style.color = ''; valEl.textContent = fmtNum(val); return; }
+          if (typeof val === 'number') { valEl.style.color = ''; valEl.style.textShadow = ''; valEl.textContent = fmtNum(val); return; }
           if (val.series && val.labels) {
             const firstSeries = val.series[0];
             const latestVal = [...firstSeries.values].reverse().find(v => v != null);
-            valEl.style.color = ''; valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
+            valEl.style.color = ''; valEl.style.textShadow = ''; valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
             if (subEl) subEl.textContent = val.unit || w.unit;
             if (val.series.length > 1) {
               let existing = card.querySelector('.gs-series-list');
