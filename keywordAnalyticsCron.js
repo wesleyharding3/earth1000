@@ -75,6 +75,12 @@ async function main() {
       const params = [TRAIL_DAYS, ...(KEYWORD_FILTER ? [KEYWORD_FILTER] : [])];
 
       console.log(`   [${elapsed()}] Finding qualifying keywords (scan window: ${TRAIL_DAYS}d)...`);
+      // Stopword filter matches the server's /api/keywords/trending endpoint
+      // (server.js ~9857): `NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)`.
+      // Previously the cron computed analytics for ~50-100 stopword keywords
+      // on every tick that the UI filtered out at read time — wasted rows,
+      // wasted Claude calls on per-keyword `about` summaries, and bloat in
+      // keyword_analytics. Matching the server filter eliminates that.
       const { rows } = await client.query(`
         SELECT
           LOWER(COALESCE(ak.normalized_keyword, ak.keyword))      AS keyword,
@@ -83,6 +89,10 @@ async function main() {
         FROM article_keywords ak
         JOIN news_articles a ON a.id = ak.article_id
         WHERE a.published_at > NOW() - ($1 || ' days')::interval
+          AND NOT EXISTS (
+            SELECT 1 FROM stopwords sw
+             WHERE sw.word = LOWER(COALESCE(ak.normalized_keyword, ak.keyword))
+          )
           ${keywordQuery}
         GROUP BY LOWER(COALESCE(ak.normalized_keyword, ak.keyword))
         HAVING COUNT(DISTINCT a.id) >= ${MIN_RECENT}
