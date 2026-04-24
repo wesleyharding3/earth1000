@@ -7439,6 +7439,81 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     if (!iso) return res.status(400).json({ error: "iso required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 40, 100);
     const days  = Math.min(parseInt(req.query.days,  10) || 7,  30);
+    // scope=local  → only scope='local' threads, matched via primary_nations
+    //                (fast — localStoryBuilder sets primary_nations=[iso]
+    //                directly so no entity-mention scan is needed)
+    // scope=global → only existing global threads, via entity matching
+    //                (original behaviour)
+    // scope=<anything else / absent> → global-only (backwards compat)
+    const scope = String(req.query.scope || "").toLowerCase().trim();
+
+    // ── Fast path: local threads are explicitly tagged with
+    //    primary_nations=[iso], so skip the entity-mention CTE entirely
+    //    and just filter story_threads directly.
+    if (scope === 'local') {
+      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 45_000, async () => {
+        const { rows } = await pool.query(`
+          SELECT
+            t.id                    AS thread_id,
+            t.title,
+            t.description,
+            t.importance,
+            t.article_count,
+            t.status,
+            t.primary_category,
+            t.keywords,
+            t.geographic_scope,
+            t.first_seen_at,
+            t.last_updated_at,
+            t.breaking_signal_score,
+            t.distinct_source_count,
+            (SELECT COUNT(*) FROM story_thread_articles sta
+              JOIN news_articles a ON a.id = sta.article_id
+             WHERE sta.thread_id = t.id
+               AND a.published_at > NOW() - ($2 || ' days')::interval)::int AS in_country_articles,
+            NULL::numeric AS avg_sentiment,
+            t.last_updated_at AS last_in_country_at,
+            COALESCE(t.importance, 0) * 1000
+              + COALESCE(t.breaking_signal_score, 0) * 100 AS feed_score
+          FROM story_threads t
+          WHERE t.scope = 'local'
+            AND t.status IN ('active', 'cooling')
+            AND t.primary_nations @> ARRAY[$1]::text[]
+            AND t.last_updated_at > NOW() - ($2 || ' days')::interval
+          ORDER BY t.importance DESC NULLS LAST, t.last_updated_at DESC
+          LIMIT $3
+        `, [iso, String(days), limit]);
+        // Attach hero images + flag fallback so these render with the
+        // same card shape as the global list.
+        for (const row of rows) {
+          const { rows: hero } = await pool.query(`
+            SELECT
+              COALESCE(
+                NULLIF(CASE WHEN a.image_dead_at IS NULL THEN a.image_url END, ''),
+                CASE WHEN img.dead_at IS NULL THEN img.public_url END
+              ) AS hero_image_url,
+              co.iso_code AS hero_iso_code
+            FROM story_thread_articles sta
+            JOIN news_articles a ON a.id = sta.article_id
+            LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+            LEFT JOIN image_assets img ON img.id = aia.image_id
+            LEFT JOIN countries co ON co.id = a.country_id
+            WHERE sta.thread_id = $1
+              AND (
+                (a.image_url IS NOT NULL AND a.image_url <> '' AND a.image_dead_at IS NULL)
+                OR (img.public_url IS NOT NULL AND img.dead_at IS NULL)
+              )
+            ORDER BY a.published_at DESC
+            LIMIT 1
+          `, [row.thread_id]);
+          row.hero_image_url = hero[0]?.hero_image_url || null;
+          row.hero_iso_code  = hero[0]?.hero_iso_code  || iso;
+        }
+        rows.forEach(guaranteeHeroImage);
+        return rows;
+      });
+      return res.json(rows);
+    }
 
     const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 45_000, async () => {
     const { rows } = await pool.query(`
