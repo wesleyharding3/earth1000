@@ -31098,6 +31098,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__isAdmin   = false;
   window.__userTier  = 'free';
 
+  // Tier cache: persist admin / tier to localStorage whenever we resolve
+  // them from the server, then hydrate synchronously on next page load.
+  // Before this cache, returning users had a 500ms–2s gap between page
+  // load and the async tier fetch landing — during that gap
+  // __checkTier('pro') returned false, gated UI silently failed, and
+  // thread-flow fetches got aborted with "Fetch is aborted".
+  const _TIER_CACHE_KEY = 'earth00:tierCache:v1';
+  function _loadTierCache() {
+    try {
+      const raw = localStorage.getItem(_TIER_CACHE_KEY);
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      // Invalidate after 30 days — a tier downgrade should take effect
+      // within a reasonable window even if the server fetch fails.
+      if (!d || typeof d !== 'object') return null;
+      if (!d.savedAt || (Date.now() - d.savedAt) > 30 * 24 * 3600 * 1000) return null;
+      return d;
+    } catch (_) { return null; }
+  }
+  function _saveTierCache(userId, isAdmin, userTier) {
+    try {
+      localStorage.setItem(_TIER_CACHE_KEY, JSON.stringify({
+        userId: userId || null,
+        isAdmin: !!isAdmin,
+        userTier: userTier || 'free',
+        savedAt: Date.now(),
+      }));
+    } catch (_) {}
+  }
+  // Hydrate immediately from cache. The async fetch will refresh this
+  // moments later; if the cached tier disagrees with the server, the
+  // live fetch wins.
+  (function hydrateTierFromCache() {
+    const cached = _loadTierCache();
+    if (cached) {
+      window.__isAdmin  = !!cached.isAdmin;
+      window.__userTier = cached.userTier || 'free';
+    }
+  })();
+
   // Tier-readiness signal. Consumers that gate UI on tier (deep analysis,
   // translate, AI context, etc.) should `await window.__tierReady` before
   // checking. Resolves when:
@@ -31269,6 +31309,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.__isAdmin = data.is_admin || window.__isAdmin || false;
         }
         _tierLoadedFor = userId;
+        _saveTierCache(userId, window.__isAdmin, window.__userTier);
         window.__markTierReady?.();
         return;
       } catch (err) {
@@ -31489,6 +31530,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     } finally {
       // Profile complete (success or fail) — admin flag is final. Unblock
       // any consumers that were awaiting tier-readiness to gate UI.
+      // Also persist to localStorage so the next page load can hydrate
+      // __isAdmin synchronously and avoid the tier-fetch race entirely.
+      try { _saveTierCache(user?.id, window.__isAdmin, window.__userTier); } catch (_) {}
       window.__markTierReady?.();
     }
   }
@@ -31513,6 +31557,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__authToken = null;
     window.__isAdmin = false;
     window.__userTier = 'free';
+    // Clear the tier cache so we don't hydrate the next visitor (or the
+    // same user after re-login with a different account) with stale
+    // admin status.
+    try { localStorage.removeItem(_TIER_CACHE_KEY); } catch (_) {}
     const badge = accountDropdown.querySelector('.acctAdminBadge');
     if (badge) badge.remove();
     updateAccountUI(null);
@@ -31933,6 +31981,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function applySession(session, event) {
     const user = session?.user ?? null;
     window.__authToken = session?.access_token ?? null;
+    // Guard against tier-cache leak across accounts: if the cache was
+    // saved for a different user, wipe it synchronously before any
+    // UI has a chance to gate on the wrong admin flag. The async
+    // loadUserTier / loadProfile calls below will write the correct
+    // values for THIS user into the cache.
+    try {
+      const cached = _loadTierCache();
+      if (cached && user && cached.userId && cached.userId !== user.id) {
+        window.__isAdmin = false;
+        window.__userTier = 'free';
+        localStorage.removeItem(_TIER_CACHE_KEY);
+      }
+    } catch (_) {}
     if (user) {
       updateAccountUI(user);
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }

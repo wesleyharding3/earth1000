@@ -30014,6 +30014,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__isAdmin   = false;
   window.__userTier  = 'free';
 
+  // Tier cache (see www/index.html for rationale).
+  const _TIER_CACHE_KEY = 'earth00:tierCache:v1';
+  function _loadTierCache() {
+    try {
+      const raw = localStorage.getItem(_TIER_CACHE_KEY);
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (!d || typeof d !== 'object') return null;
+      if (!d.savedAt || (Date.now() - d.savedAt) > 30 * 24 * 3600 * 1000) return null;
+      return d;
+    } catch (_) { return null; }
+  }
+  function _saveTierCache(userId, isAdmin, userTier) {
+    try {
+      localStorage.setItem(_TIER_CACHE_KEY, JSON.stringify({
+        userId: userId || null, isAdmin: !!isAdmin, userTier: userTier || 'free', savedAt: Date.now(),
+      }));
+    } catch (_) {}
+  }
+  (function hydrateTierFromCache() {
+    const cached = _loadTierCache();
+    if (cached) { window.__isAdmin = !!cached.isAdmin; window.__userTier = cached.userTier || 'free'; }
+  })();
+
+
   // Tier-readiness signal. Consumers that gate UI on tier (deep analysis,
   // translate, AI context, etc.) should `await window.__tierReady` before
   // checking. Resolves when:
@@ -30174,6 +30199,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.__isAdmin = data.is_admin || window.__isAdmin || false;
         }
         _tierLoadedFor = userId;
+        _saveTierCache(userId, window.__isAdmin, window.__userTier);
         window.__markTierReady?.();
         return;
       } catch (err) {
@@ -30352,8 +30378,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__isAdmin = false;
       console.warn('[auth] profile load failed:', e.message);
     } finally {
-      // Profile complete (success or fail) — admin flag is final. Unblock
-      // any consumers that were awaiting tier-readiness to gate UI.
+      // Persist to localStorage so next page load hydrates synchronously.
+      try { _saveTierCache(user?.id, window.__isAdmin, window.__userTier); } catch (_) {}
       window.__markTierReady?.();
     }
   }
@@ -30378,6 +30404,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__authToken = null;
     window.__isAdmin = false;
     window.__userTier = 'free';
+    try { localStorage.removeItem(_TIER_CACHE_KEY); } catch (_) {}
     const badge = accountDropdown.querySelector('.acctAdminBadge');
     if (badge) badge.remove();
     updateAccountUI(null);
@@ -30769,6 +30796,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function applySession(session, event) {
     const user = session?.user ?? null;
     window.__authToken = session?.access_token ?? null;
+    // Invalidate tier cache if it was saved for a different user.
+    try {
+      const cached = _loadTierCache();
+      if (cached && user && cached.userId && cached.userId !== user.id) {
+        window.__isAdmin = false;
+        window.__userTier = 'free';
+        localStorage.removeItem(_TIER_CACHE_KEY);
+      }
+    } catch (_) {}
     if (user) {
       updateAccountUI(user);
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }

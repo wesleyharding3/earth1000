@@ -2973,26 +2973,42 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
   if (primaryIsos.length + secondaryIsos.length >= 1) {
     // 2. Fetch coords + per-country mention_count in one shot so arc weights
     //    reflect how loudly each country figures in the thread/line's articles.
+    //
+    // Performance: the previous version ran a CORRELATED subquery inside
+    // the SELECT list, meaning it re-scanned
+    // story_thread_articles ⨝ article_entity_mentions ⨝ entities ONCE PER
+    // focal country (up to 11× per request). For a 100-article thread
+    // that's ~11 × thousands of joined rows. On Render this pushed past
+    // the client's 45s fetch ceiling and produced AbortError storms.
+    //
+    // Rewrite: compute all per-country counts in a SINGLE pass via CTE
+    // with GROUP BY, then LEFT JOIN the focal list. One scan, one group.
+    // Complements the partial index on entities(country_code) added in
+    // migrations/20260424_thread_flows_indexes.sql.
     const { rows: coords } = await pool.query(`
       WITH focal AS (
         SELECT UPPER(TRIM(iso)) AS iso_upper
         FROM unnest($1::text[]) AS iso
+      ),
+      counts AS (
+        SELECT UPPER(e.country_code) AS iso_upper,
+               COUNT(DISTINCT aem.article_id)::int AS mention_count
+          FROM ${articleJoinTable} sta
+          JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
+          JOIN entities e ON e.id = aem.entity_id
+         WHERE sta.${articleJoinKey} = $2
+           AND e.entity_type = 'location'
+           AND e.country_code IS NOT NULL
+         GROUP BY UPPER(e.country_code)
       )
       SELECT
         co.id, co.name AS place,
         co.latitude AS lat, co.longitude AS lon,
         co.iso_code AS iso,
-        COALESCE((
-          SELECT COUNT(DISTINCT aem.article_id)
-          FROM ${articleJoinTable} sta
-          JOIN article_entity_mentions aem ON aem.article_id = sta.article_id
-          JOIN entities e ON e.id = aem.entity_id
-          WHERE sta.${articleJoinKey} = $2
-            AND e.entity_type = 'location'
-            AND UPPER(e.country_code) = f.iso_upper
-        ), 0)::int AS mention_count
+        COALESCE(c.mention_count, 0)::int AS mention_count
       FROM focal f
       JOIN countries co ON UPPER(co.iso_code) = f.iso_upper
+      LEFT JOIN counts c ON c.iso_upper = f.iso_upper
     `, [tieredIsos, id]);
 
     // Index by ISO for topology building; skip any ISO we can't resolve
