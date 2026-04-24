@@ -90,22 +90,63 @@ function extractDescription(item) {
   return null;
 }
 
+// Classify a fetch error as either PERMANENT (channel is gone / unreachable in
+// a way that won't recover on retry) or TRANSIENT (timeouts, 5xx, rate limits,
+// transient DNS hiccups — probably fine tomorrow).
+//
+// Permanent triggers are worth short-circuiting because otherwise the 5-strike
+// counter below would take up to 5 cron runs to deactivate a dead channel,
+// burning fetch attempts + log noise in the meantime.
+function classifyYouTubeError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  // rss-parser surfaces HTTP status as "Status code <N>" in the message.
+  const statusMatch = msg.match(/status code[: ]+(\d{3})/i);
+  const status = statusMatch ? parseInt(statusMatch[1], 10) : null;
+  if (status === 404 || status === 410) return 'PERMANENT';      // channel deleted / gone
+  if (status === 403) return 'PERMANENT';                         // channel blocked / terminated
+  if (status === 401) return 'PERMANENT';                         // requires auth — will never work
+  if (/channel\s*(not\s*found|does\s*not\s*exist|unavailable|terminated|deleted)/i.test(msg)) return 'PERMANENT';
+  if (/enotfound|dns lookup failed/i.test(msg)) return 'PERMANENT'; // host resolution permanently broken
+  if (/invalid (rss|xml|feed)/i.test(msg)) return 'PERMANENT';     // malformed feed shape
+  return 'TRANSIENT';
+}
+
 async function logError(source, err, type = "YOUTUBE_FETCH_ERROR") {
   try {
+    const kind = classifyYouTubeError(err);
     console.error("❌ YouTube ERROR:", {
       source_id: source.id,
       channel_id: source.channel_id,
       name: source.name,
       error_type: type,
+      classification: kind,
       message: err.message,
       timestamp: new Date().toISOString()
     });
 
+    // Permanent errors → deactivate immediately and stamp last_error with a
+    // human-readable note so we can audit later. Transient errors fall
+    // through to the 5-strike counter as before.
+    if (kind === 'PERMANENT') {
+      await pool.query(
+        `UPDATE youtube_sources
+           SET last_error    = $1,
+               last_failed_at= NOW(),
+               failure_count = failure_count + 1,
+               is_active     = false
+         WHERE id = $2`,
+        [`[AUTO-DEACTIVATED: ${type}] ${err.message?.substring(0, 960) || ''}`.substring(0, 1000), source.id]
+      );
+      console.warn(`   ⛔ Auto-deactivated youtube_source ${source.id} (${source.name}) — permanent error`);
+      return;
+    }
+
     await pool.query(
-      `UPDATE youtube_sources 
-       SET last_error = $1, last_failed_at = NOW(),
-           failure_count = failure_count + 1,
-           is_active = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
+      `UPDATE youtube_sources
+         SET last_error    = $1,
+             last_failed_at= NOW(),
+             failure_count = failure_count + 1,
+             is_active     = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
        WHERE id = $2`,
       [err.message?.substring(0, 1000), source.id]
     );
@@ -301,6 +342,13 @@ async function fetchYouTube() {
     } catch (err) {
       console.error(`[YT:${source.channel_handle || source.channel_id}] Unexpected error:`, err.message);
       errors++;
+      // Unexpected errors at the top level bypass fetchChannel's internal
+      // logError call. Route them through the same classifier so a
+      // permanently-broken channel still gets auto-deactivated instead of
+      // sitting at failure_count=0 forever.
+      try {
+        await logError(source, err, "YOUTUBE_UNEXPECTED_ERROR");
+      } catch (_) {}
     }
   }
 

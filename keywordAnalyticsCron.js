@@ -122,6 +122,35 @@ async function main() {
   const perKwClient = await pool.connect();
   try { await perKwClient.query(`SET statement_timeout = '2min'`); } catch (_) {}
 
+  // Pre-materialise subject country per article into a TEMP TABLE. Hot
+  // keywords ("donald trump", "family", "west") have thousands of matching
+  // articles; a per-row LATERAL subselect timed out on Render. Building
+  // one indexed temp table up front turns every per-keyword query into a
+  // cheap PK lookup. Session-scoped — goes away when perKwClient releases.
+  console.log(`   [${elapsed()}] Materialising subject-country lookup...`);
+  let subjectTableReady = false;
+  try {
+    await perKwClient.query(`
+      CREATE TEMP TABLE _kw_subject_country (
+        article_id int PRIMARY KEY,
+        country_id int NOT NULL
+      )
+    `);
+    await perKwClient.query(`
+      INSERT INTO _kw_subject_country (article_id, country_id)
+      SELECT DISTINCT ON (article_id) article_id, country_id
+        FROM article_locations
+       WHERE routing_type = 'content'
+         AND country_id IS NOT NULL
+       ORDER BY article_id, country_id ASC
+    `);
+    const { rows: cntRows } = await perKwClient.query(`SELECT COUNT(*)::int AS n FROM _kw_subject_country`);
+    console.log(`   [${elapsed()}] Subject-country table: ${cntRows[0].n} articles`);
+    subjectTableReady = true;
+  } catch (err) {
+    console.warn(`   ⚠ Subject-country build failed (${err.message}) — falling back to source country attribution`);
+  }
+
   let written = 0;
   let skipped = 0;
   try {
@@ -136,38 +165,31 @@ async function main() {
 
       // 2a. Country counts across the recent window.
       //
-      // Attribution rule (what the UI actually wants):
-      //   • For keywords like "pentagon", "us senate", "kremlin", the user
-      //     expects the breakdown to show US / RU — the SUBJECT country.
-      //     Using news_articles.country_id (publisher) wrongly attributed
-      //     to whichever outlet covered the story (GB for Reuters UK etc.).
-      //   • The correct signal lives in article_locations with
-      //     routing_type = 'content' (entity-extracted subject country).
-      //   • Fall back to the article's source country only when no content
-      //     routing exists (un-extracted articles) so we still contribute
-      //     something rather than dropping the article entirely.
+      // Attribution rule: prefer the SUBJECT country (entity-extracted from
+      // article_locations, routing_type='content') over the article's
+      // source country, so institutional keywords like "pentagon" or
+      // "us senate" map to US regardless of which country's outlet wrote
+      // the story. Falls back to source country for articles without
+      // content routing so every article still contributes to the
+      // distribution.
       //
-      // We pick ONE country per (article_id, keyword) via a LATERAL JOIN so
-      // an article that mentions both US and IR only contributes +1 to the
-      // higher-ranked match — prevents a single cross-border article from
-      // inflating two country buckets at once.
+      // _kw_subject_country is pre-built once at the top of the cron (temp
+      // table with article_id PK). Makes this query a fast PK JOIN instead
+      // of the LATERAL-per-row that timed out on hot keywords.
+      const subjectJoin = subjectTableReady
+        ? `LEFT JOIN _kw_subject_country sc ON sc.article_id = a.id`
+        : ``;
+      const countryExpr = subjectTableReady
+        ? `COALESCE(sc.country_id, a.country_id)`
+        : `a.country_id`;
       const { rows: countryRows } = await perKwClient.query(`
         SELECT co.iso_code,
                co.name,
                COUNT(DISTINCT a.id)::int AS n
           FROM article_keywords ak
           JOIN news_articles a ON a.id = ak.article_id
-          LEFT JOIN LATERAL (
-            SELECT al.country_id
-              FROM article_locations al
-             WHERE al.article_id  = a.id
-               AND al.routing_type = 'content'
-               AND al.country_id IS NOT NULL
-             ORDER BY al.country_id ASC
-             LIMIT 1
-          ) content_loc ON TRUE
-          LEFT JOIN countries co
-                 ON co.id = COALESCE(content_loc.country_id, a.country_id)
+          ${subjectJoin}
+          LEFT JOIN countries co ON co.id = ${countryExpr}
          WHERE LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $1
            AND a.published_at > NOW() - ($2 || ' days')::interval
            AND co.iso_code IS NOT NULL

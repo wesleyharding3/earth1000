@@ -9485,9 +9485,31 @@ body.flow-maximized #flowArcList {
 }
 .kwi-row-ctx.open { display: block; animation: kwiCtxFadeIn 0.22s ease; }
 @keyframes kwiCtxFadeIn { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: translateY(0); } }
-.kwi-ctx-section { margin-bottom: 8px; }
+.kwi-ctx-section { margin-bottom: 10px; }
 .kwi-ctx-section:last-child { margin-bottom: 0; }
-.kwi-ctx-label { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(167,139,250,0.85); margin-bottom: 3px; }
+/* Gradient pill badges for section labels — matches the app's badge vocabulary
+   (credit meter, tier chips, admin ∞ badge) and gives each section its own
+   hue so About / Surge / Where read as distinct taxonomy. */
+.kwi-ctx-label {
+  display: inline-block; padding: 3px 10px 3px 9px; border-radius: 999px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: #f3ecff;
+  background: linear-gradient(90deg, rgba(139,92,246,0.32), rgba(96,200,255,0.28));
+  border: 1px solid rgba(167,139,250,0.38); margin-bottom: 6px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, 0 0 10px rgba(139,92,246,0.18);
+}
+.kwi-ctx-label.surge {
+  color: #ffe8d0;
+  background: linear-gradient(90deg, rgba(255,160,80,0.34), rgba(255,110,180,0.28));
+  border-color: rgba(255,180,120,0.42);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 0 10px rgba(255,150,100,0.18);
+}
+.kwi-ctx-label.where {
+  color: #d6fff0;
+  background: linear-gradient(90deg, rgba(80,220,180,0.32), rgba(96,200,255,0.30));
+  border-color: rgba(120,230,200,0.40);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 0 10px rgba(80,220,180,0.16);
+}
 .kwi-ctx-text { color: rgba(255,255,255,0.88); }
 .kwi-ctx-bars { display: flex; flex-direction: column; gap: 3px; }
 .kwi-ctx-bar-row { display: flex; align-items: center; gap: 6px; font-size: 10px; }
@@ -9616,6 +9638,19 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 .authGoogleBtn:active { transform: scale(0.98); }
 .authGoogleBtn:disabled { opacity: 0.55; cursor: not-allowed; }
 .authGoogleBtn svg { flex: 0 0 auto; }
+/* Apple OAuth button — solid black per Apple HIG. Sits below Google. */
+.authAppleBtn {
+  width: 100%; padding: 11px 13px; background: #000; color: #fff;
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  margin: 6px 0 2px;
+}
+.authAppleBtn:hover  { background: #1a1a1a; box-shadow: 0 1px 3px rgba(0,0,0,0.35); }
+.authAppleBtn:active { transform: scale(0.98); }
+.authAppleBtn:disabled { opacity: 0.55; cursor: not-allowed; }
+.authAppleBtn svg { flex: 0 0 auto; fill: #fff; }
 .authOrDivider {
   display: flex; align-items: center; gap: 10px;
   margin: 14px 0 10px; color: rgba(255,255,255,0.35);
@@ -10899,7 +10934,8 @@ window.__earthAnalysis = (function() {
           </svg>
           History
         </div>
-        <div class="acctDpBtn" id="acctDpPreferences" onclick="window.__openPreferences?.()">
+        <!-- Onboarding questionnaire temporarily hidden; code intact. -->
+        <div class="acctDpBtn" id="acctDpPreferences" style="display:none" onclick="window.__openPreferences?.()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
           </svg>
@@ -11052,8 +11088,9 @@ window.__earthAnalysis = (function() {
               <span class="sliderLabel">Theme</span>
             </div>
             <div class="themePill" data-theme-pill>
-              <button class="themePillBtn active" data-theme="light">Light</button>
+              <button class="themePillBtn" data-theme="light">Light</button>
               <button class="themePillBtn" data-theme="dark">Dark</button>
+              <button class="themePillBtn active" data-theme="auto" title="Follows your local time — light by day, dark by night">Auto</button>
             </div>
           </div>
         </div>
@@ -11152,8 +11189,9 @@ window.__earthAnalysis = (function() {
               <span class="sliderLabel">Theme</span>
             </div>
             <div class="themePill" data-theme-pill>
-              <button class="themePillBtn active" data-theme="light">Light</button>
+              <button class="themePillBtn" data-theme="light">Light</button>
               <button class="themePillBtn" data-theme="dark">Dark</button>
+              <button class="themePillBtn active" data-theme="auto" title="Follows your local time — light by day, dark by night">Auto</button>
             </div>
           </div>
         </div>
@@ -11252,8 +11290,9 @@ window.__earthAnalysis = (function() {
               <span class="sliderLabel">Theme</span>
             </div>
             <div class="themePill" data-theme-pill>
-              <button class="themePillBtn active" data-theme="light">Light</button>
+              <button class="themePillBtn" data-theme="light">Light</button>
               <button class="themePillBtn" data-theme="dark">Dark</button>
+              <button class="themePillBtn active" data-theme="auto" title="Follows your local time — light by day, dark by night">Auto</button>
             </div>
           </div>
         </div>
@@ -14083,28 +14122,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       syncBiomeOverlayControls();
 
-      // ── Theme pill (Light / Dark) ──────────────────────────────────
+      // ── Theme pill (Light / Dark / Auto) ──────────────────────────────
+      // Theme MODE is what the user picks — 'light', 'dark', or 'auto'.
+      // 'auto' resolves to light during local daytime (hours 7–18 inclusive)
+      // and dark otherwise; it re-evaluates every 5 minutes so the globe
+      // flips at the user's local sunset/sunrise without a reload.
       const themePillBtns = Array.from(document.querySelectorAll(".themePillBtn"));
+      const THEME_MODE_KEY = "earth00:themeMode";
+      function resolveAutoTheme() {
+        const h = new Date().getHours(); // local hour
+        return (h >= 7 && h < 19) ? "light" : "dark";
+      }
+      function getThemeMode() {
+        try {
+          const m = localStorage.getItem(THEME_MODE_KEY);
+          if (m === "light" || m === "dark" || m === "auto") return m;
+        } catch (_) {}
+        return "auto";
+      }
+      function applyThemeMode(mode) {
+        try { localStorage.setItem(THEME_MODE_KEY, mode); } catch (_) {}
+        const resolved = (mode === "auto") ? resolveAutoTheme() : mode;
+        if (typeof window.__setGlobeTheme === "function") {
+          window.__setGlobeTheme(resolved);
+        }
+        syncGlobeThemeControls();
+        syncBiomeOverlayControls();
+      }
+      window.__applyThemeMode = applyThemeMode;
+
       function syncGlobeThemeControls() {
-        const theme = window.__globeTheme || "light";
+        const mode = getThemeMode();
         themePillBtns.forEach(btn => {
-          btn.classList.toggle("active", btn.dataset.theme === theme);
+          btn.classList.toggle("active", btn.dataset.theme === mode);
         });
       }
       window.__syncGlobeThemeControls = syncGlobeThemeControls;
       themePillBtns.forEach(btn => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          const theme = btn.dataset.theme === "dark" ? "dark" : "light";
-          if (typeof window.__setGlobeTheme === "function") {
-            window.__setGlobeTheme(theme);
-          }
-          syncGlobeThemeControls();
-          syncBiomeOverlayControls();
+          const raw = btn.dataset.theme;
+          const mode = (raw === "dark" || raw === "auto") ? raw : "light";
+          applyThemeMode(mode);
         });
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
-      syncGlobeThemeControls();
+      applyThemeMode(getThemeMode());
+      setInterval(() => {
+        if (getThemeMode() === "auto") applyThemeMode("auto");
+      }, 5 * 60 * 1000);
 
       // ──────────────────────────────────────────────────────────
       //  TRANSPORTATION VIEW
@@ -28348,11 +28414,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="kwi-ctx-text">${about}</div>
       </div>
       ${surge ? `<div class="kwi-ctx-section">
-        <div class="kwi-ctx-label">Why it's surging</div>
+        <div class="kwi-ctx-label surge">Why it's surging</div>
         <div class="kwi-ctx-text">${surge}</div>
       </div>` : ''}
       ${bars ? `<div class="kwi-ctx-section">
-        <div class="kwi-ctx-label">Where (${payload.country_breakdown?.length || 0} countries · ${payload.recent_mentions || 0} articles/7d)</div>
+        <div class="kwi-ctx-label where">Where · ${payload.country_breakdown?.length || 0} countries · ${payload.recent_mentions || 0} articles/7d</div>
         <div class="kwi-ctx-bars">${bars}</div>
       </div>` : ''}
     `;
@@ -29477,6 +29543,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </svg>
       <span>Continue with Google</span>
     </button>
+    <button class="authAppleBtn" id="authAppleBtn" type="button">
+      <svg width="16" height="16" viewBox="0 0 384 512" aria-hidden="true">
+        <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zM258.5 71.4c29-34.4 26.4-65.7 25.6-77-25.7 1.5-55.4 17.5-72.3 37.2-18.6 21.1-29.5 47.2-27.2 76.4 27.8 2.1 53.1-12.2 73.9-36.6z"/>
+      </svg>
+      <span>Continue with Apple</span>
+    </button>
     <div class="authOrDivider"><span>or</span></div>
     <!-- Sign In form -->
     <div id="authFormSignin">
@@ -30268,6 +30340,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   const authGoogleBtn = document.getElementById('authGoogleBtn');
   if (authGoogleBtn) authGoogleBtn.addEventListener('click', signInWithGoogle);
+
+  // Apple OAuth — Apple auto-verifies the email, no confirmation round-trip.
+  // First consent returns the real email; subsequent sign-ins return an
+  // @privaterelay.appleid.com relay address — Supabase handles transparently.
+  async function signInWithApple() {
+    const btn = document.getElementById('authAppleBtn');
+    try {
+      if (btn) btn.disabled = true;
+      authMsg.className = 'authMsg';
+      authMsg.textContent = '';
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: 'apple',
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) throw error;
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      authMsg.className = 'authMsg show error';
+      authMsg.textContent = (err && err.message) || 'Apple sign-in failed.';
+    }
+  }
+  const authAppleBtn = document.getElementById('authAppleBtn');
+  if (authAppleBtn) authAppleBtn.addEventListener('click', signInWithApple);
+
   acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
 
   /* ── Library (Saved / History) ── */
@@ -30404,8 +30500,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
       try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
       try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
-      // Only show onboarding for brand-new accounts (SIGNED_UP event), never on regular login
-      if (event === 'SIGNED_UP' && !_onboardingShownThisSession) {
+      // Onboarding questionnaire temporarily disabled (flip ONBOARDING_ENABLED
+      // back to true once revised). All underlying code left intact.
+      const ONBOARDING_ENABLED = false;
+      if (ONBOARDING_ENABLED && event === 'SIGNED_UP' && !_onboardingShownThisSession) {
         try { await maybeShowOnboarding(user.id); } catch (e) { console.warn('[auth] onboarding:', e.message); }
       }
     } else if (event === 'SIGNED_OUT' && _userInitiatedSignOut) {
