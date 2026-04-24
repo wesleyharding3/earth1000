@@ -112,8 +112,19 @@ async function main() {
     return;
   }
 
+  // Use a dedicated client for the per-keyword loop with a higher
+  // statement_timeout. Render's Postgres default kills long-running
+  // statements at ~30-60s, which was cancelling the country-breakdown
+  // query for high-traffic keywords (e.g. "usa", "oil") whose article
+  // sets are huge. A 2-minute per-keyword ceiling is generous enough to
+  // cover the LATERAL subject-country lookup but still caps the total
+  // run at 1500 × 2min = bounded.
+  const perKwClient = await pool.connect();
+  try { await perKwClient.query(`SET statement_timeout = '2min'`); } catch (_) {}
+
   let written = 0;
   let skipped = 0;
+  try {
   for (let i = 0; i < keywords.length; i++) {
     const kw = keywords[i];
     const kwLower = kw.keyword;
@@ -140,7 +151,7 @@ async function main() {
       // an article that mentions both US and IR only contributes +1 to the
       // higher-ranked match — prevents a single cross-border article from
       // inflating two country buckets at once.
-      const { rows: countryRows } = await pool.query(`
+      const { rows: countryRows } = await perKwClient.query(`
         SELECT co.iso_code,
                co.name,
                COUNT(DISTINCT a.id)::int AS n
@@ -186,7 +197,7 @@ async function main() {
       // 2b. Sample article IDs — newest-first with base_priority tie-break.
       // These feed the Claude prompt on /api/keywords/explain when a user
       // clicks context, so we want representative + recent + high-signal.
-      const { rows: sampleRows } = await pool.query(`
+      const { rows: sampleRows } = await perKwClient.query(`
         SELECT DISTINCT ON (a.id)
                a.id,
                a.published_at,
@@ -239,6 +250,10 @@ async function main() {
       skipped++;
       console.warn(`   ⚠ ${kwLower}: ${err.message}`);
     }
+  }
+  } finally {
+    // Release the dedicated client even if the loop throws.
+    try { perKwClient.release(); } catch (_) {}
   }
 
   console.log(`\n✅ ${DRY_RUN ? 'Dry run' : 'Done'} in ${elapsed()} — written=${written} skipped=${skipped}`);
