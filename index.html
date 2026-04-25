@@ -31354,8 +31354,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const terms     = document.getElementById('acctDpTerms');
     if (!main || !settings || !openBtn || !backBtn) return;
 
-    function showSettings() { main.style.display = 'none';  settings.style.display = ''; }
-    function showMain()     { main.style.display = '';      settings.style.display = 'none'; }
+    function showSettings() {
+      main.style.display = 'none';
+      settings.style.display = '';
+      // Kill the dropdown's 5s auto-close while in Settings — Settings flows
+      // (legal doc reading, DELETE typing) easily exceed 5 seconds.
+      try { clearTimeout(_acctDropTimer); } catch (_) {}
+    }
+    function showMain() {
+      main.style.display = '';
+      settings.style.display = 'none';
+    }
     window.__acctDpResetView = showMain;
 
     openBtn.addEventListener('click', e => { e.stopPropagation(); showSettings(); });
@@ -31368,6 +31377,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const Purchases = window.Capacitor?.Plugins?.Purchases;
         if (!Purchases) {
           window.__showToast?.('Restore is unavailable on this device.');
+          return;
+        }
+        // RevenueCat must be configured first; if the user opened Settings
+        // before ever opening the pricing modal, _rcInit hasn't run yet.
+        if (!window.__currentUser?.id) {
+          window.__openAuthModal?.();
+          return;
+        }
+        const inited = await window.__initRevenueCat?.(window.__currentUser.id);
+        if (!inited) {
+          window.__showToast?.('Apple subscriptions are unavailable right now.');
           return;
         }
         try {
@@ -31467,8 +31487,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try {
         const apiBase = window.__API || 'https://earth-wjr6.onrender.com';
         const headers = { 'Content-Type': 'application/json' };
-        const tok = window.__authToken;
-        if (tok) headers['Authorization'] = `Bearer ${tok}`;
+        // Always pull a fresh access token from Supabase (refresh if needed)
+        // rather than relying on cached window.__authToken — sessions can
+        // silently expire after ~1h and this request only ever runs once.
+        let tok = null;
+        try {
+          const { data } = await sb.auth.getSession();
+          let session = data?.session || null;
+          if (!session?.access_token && session?.refresh_token) {
+            const refreshed = await sb.auth.refreshSession().catch(() => ({ data: null }));
+            session = refreshed?.data?.session || session;
+          }
+          tok = session?.access_token || window.__authToken || null;
+        } catch (_) {
+          tok = window.__authToken || null;
+        }
+        if (!tok) {
+          if (errBox) errBox.textContent = 'Your session expired. Please sign in again.';
+          confirm.disabled = false;
+          confirm.textContent = 'Delete forever';
+          return;
+        }
+        headers['Authorization'] = `Bearer ${tok}`;
         const res = await fetch(`${apiBase}/api/account`, { method: 'DELETE', headers });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
