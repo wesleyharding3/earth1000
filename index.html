@@ -9842,9 +9842,14 @@ body.flow-maximized #flowArcList {
 
 /* Per-row context (see www/index.html for full comment).
    Block container so the row grows tall enough to contain item + graph
-   + ctx text. Earlier flex-column setup let percentage min-heights on
-   .kwi-ref-interpanel push the ctx text out of the row's box. */
-.kwi-trending-row { display: block; }
+   + ctx text. flex-shrink: 0 is required because the parent
+   .kwi-trending-list is a flex column with overflow-y: auto — without
+   it the row gets squeezed under flex pressure when ctx + graph are
+   both open and the ctx text overlays the next row. */
+.kwi-trending-row {
+  display: block;
+  flex-shrink: 0;
+}
 .kwi-row-ctx-btn {
   margin-left: 6px; width: 22px; height: 22px; flex-shrink: 0;
   border-radius: 6px; border: 1px solid rgba(139,92,246,0.35);
@@ -16631,9 +16636,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (parts.length) originLabel = `<div class="articleCardOrigin">${parts.join(", ")}</div>`;
           }
 
+          const _cpSaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(article.id));
           return `
             <div style="position:relative">
               <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
+              <button class="cardSaveBtn${_cpSaved ? ' saved' : ''}" data-saved-article-id="${article.id}" onclick="toggleBookmark(event,this,${article.id})" title="${_cpSaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_cpSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
                 <div class="articleCardBody">
@@ -18105,8 +18112,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const translateBtn = needsTranslation
               ? `<button class="articleTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate to ${_tLang.label}">${_tLang.short}</button>`
               : "";
+            const _ctySaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(a.id));
             return `<div style="position:relative">
               <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
+              <button class="cardSaveBtn${_ctySaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_ctySaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_ctySaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
               <div class="articleCardBody">
@@ -24010,10 +24019,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const date = a.published_at ? fmtDate(a.published_at) : "";
       const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
       const _isSaved = window.__libraryIsSaved && window.__libraryIsSaved(a.id);
-      const bookmarkBtn = `<button class="nfBookmarkBtn${_isSaved ? ' saved' : ''}" onclick="toggleBookmark(event,this,${a.id})" title="${_isSaved ? 'Remove bookmark' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
+      const bookmarkBtn = `<button class="nfBookmarkBtn${_isSaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_isSaved ? 'Remove bookmark' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
+      const cardSaveBtnFeed = `<button class="cardSaveBtn${_isSaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_isSaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
       return `
       <div style="position:relative">
-        ${flowArcBtn}
+        ${flowArcBtn}${cardSaveBtnFeed}
         <div class="nfCard fadeInCard" onclick="openFeedArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
           ${img}
           <div class="nfCardBody">
@@ -24042,22 +24052,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
     };
 
     window.toggleBookmark = function(e, btn, articleId) {
-      e.stopPropagation();
-      const card = btn.closest('.nfCard');
+      if (e) { e.stopPropagation(); e.preventDefault(); }
+      // Accept any card root — feed (nfCard), country/city (articleCard),
+      // thread detail (cdCard) all carry data-article on the card root.
+      // The new cardSaveBtn lives as a SIBLING of the card inside the
+      // position:relative wrapper, so closest() walks up and misses it;
+      // fall back to a wrapper-sibling lookup so both placements work.
+      const card = btn.closest('.nfCard, .articleCard, .nfThreadCard, .cdCard')
+        || btn.parentElement?.querySelector('.nfCard, .articleCard, .nfThreadCard, .cdCard');
       if (!card) return;
       try {
         const a = JSON.parse(card.dataset.article);
-        if (window.__libraryIsSaved && window.__libraryIsSaved(articleId)) {
-          window.__libraryUnsave(articleId);
-          btn.classList.remove('saved');
-          btn.querySelector('svg').setAttribute('fill', 'none');
-          btn.title = 'Save';
-        } else {
-          window.__librarySave(a);
-          btn.classList.add('saved');
-          btn.querySelector('svg').setAttribute('fill', 'currentColor');
-          btn.title = 'Remove bookmark';
-        }
+        const wasSaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(articleId));
+        if (wasSaved) window.__libraryUnsave(articleId);
+        else window.__librarySave(a);
+        // Sync EVERY save-affordance button for this article so the
+        // visual state stays consistent across the footer bookmark and
+        // the new top-right circular save.
+        const sel = `[data-saved-article-id="${articleId}"]`;
+        document.querySelectorAll(sel).forEach(b => {
+          if (wasSaved) {
+            b.classList.remove('saved');
+            b.querySelector('svg')?.setAttribute('fill', 'none');
+            b.title = 'Save';
+          } else {
+            b.classList.add('saved');
+            b.querySelector('svg')?.setAttribute('fill', 'currentColor');
+            b.title = 'Remove from saved';
+          }
+        });
       } catch (err) { console.warn('Bookmark toggle error:', err); }
     };
 
@@ -25270,7 +25293,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       // Any transition AWAY from globe (to feed or stats) should tear down
       // the floating flow-context card and any active flow arcs / heatmap
-      // so the origin page is clean.
+      // so the origin page is clean. The country/city #infoPanel is
+      // anchored to the globe surface and has no meaning on stats/news,
+      // so close it too — otherwise it stays pinned over the new page.
       if (prevPage === 1 && (idx === 0 || idx === 2)) {
         try {
           if (window.__flowIsOpen?.()) {
@@ -25286,6 +25311,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         } catch (_) {}
         try { window.hideFlowArcBackBtn?.(); } catch (_) {}
         try { window.hideFlowCtxCard?.(); } catch (_) {}
+        try {
+          const ip = document.getElementById('infoPanel');
+          if (ip && ip.classList.contains('active')) {
+            const closeBtn = ip.querySelector('.closePanel');
+            if (closeBtn) closeBtn.click();
+            else { ip.classList.remove('active'); document.body.classList.remove('panel-open'); }
+          }
+        } catch (_) {}
         window.__flowArcOriginForHeat = null;
       }
       current = idx;
