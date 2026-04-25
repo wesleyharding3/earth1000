@@ -24568,9 +24568,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     function apply(view) {
       view = view || getView();
+      // Mobile-only: also set the inline style so we beat any cascade
+      // surprise (the @media (max-width:640px) "default 2-col" rule lists
+      // the bare .articlesGrid selector with !important, and that was
+      // shadowing the .gridView-1col class rule on some renders). Inline
+      // style + !important is the only thing guaranteed to win.
+      const isMobile = window.matchMedia && window.matchMedia('(max-width: 640px)').matches;
+      const tpl = view === '1col' ? '1fr' : 'repeat(2, minmax(0, 1fr))';
       document.querySelectorAll(GRID_SELECTOR).forEach(el => {
         el.classList.remove('gridView-1col', 'gridView-2col');
         el.classList.add('gridView-' + view);
+        if (isMobile) {
+          el.style.setProperty('grid-template-columns', tpl, 'important');
+        } else {
+          el.style.removeProperty('grid-template-columns');
+        }
       });
       document.querySelectorAll('.gridViewToggle').forEach(toggle => {
         toggle.querySelectorAll('button').forEach(btn => {
