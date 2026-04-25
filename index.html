@@ -12058,6 +12058,7 @@ window.__arcCtxSegmented = (function() {
         <div class="semHeatCtlTabs" id="semHeatCtlTabs">
           <div class="semHeatCtlTab active" data-ctl="keyword">Keyword</div>
           <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
+          <div class="semHeatCtlTab" data-ctl="ask">Ask AI</div>
         </div>
 
         <div class="semHeatCtlPanel active" data-panel="keyword">
@@ -12097,6 +12098,25 @@ window.__arcCtxSegmented = (function() {
             <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1" />
           </div>
           <div class="semHeatTsLabel" id="semHeatTsLabel" style="text-align:left;">—</div>
+        </div>
+
+        <!-- Ask-AI panel: free-form question → Claude tool call → heat. -->
+        <div class="semHeatCtlPanel" data-panel="ask">
+          <div class="semHeatKwRow">
+            <input type="text" class="semHeatInput" id="semHeatAskInput"
+                   placeholder="e.g. which countries are majority Muslim?" autocomplete="off" maxlength="280" />
+            <button type="button" class="semHeatGoBtn" id="semHeatAskGoBtn">Ask</button>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:9px;letter-spacing:0.05em;text-transform:uppercase;color:rgba(255,255,255,0.45);">Mode</span>
+            <select class="semHeatSelect" id="semHeatAskMode" style="flex:1;">
+              <option value="percent" selected>Percent (0–100)</option>
+              <option value="rank">Rank (lower = stronger)</option>
+              <option value="binary">Binary (yes / no)</option>
+            </select>
+          </div>
+          <div id="semHeatAskStatus" style="font-size:10px;color:rgba(255,255,255,0.55);min-height:14px;line-height:1.4;"></div>
+          <div id="semHeatAskNote" style="font-size:9px;color:rgba(255,200,140,0.75);font-style:italic;line-height:1.4;display:none;"></div>
         </div>
       </div>
 
@@ -37895,8 +37915,152 @@ body.ticker-active .gTickerLabel {
       p.classList.toggle('active', p.dataset.panel === which);
     });
     state.ctl = which;
-    reload();
+    // The Ask AI tab waits for the user to submit a question; no implicit
+    // data source, so do NOT call reload() (it would hit the keyword
+    // endpoint and clobber any QA paint already on the globe).
+    if (which !== 'ask') reload();
   });
+
+  /* ── Ask AI: paint a custom country→value map onto the heat sphere
+     by bypassing fetchSnapshot. /api/heatmap/ask returns
+     { values: [{iso, value}], legend, source_note, refusal, mode }. ── */
+  function _heatQAToCountryPoints(values, mode) {
+    const arr = Array.isArray(values) ? values : [];
+    if (mode === 'rank') {
+      const maxRank = arr.reduce((m, v) => Math.max(m, Number(v.value) || 0), 1);
+      return arr
+        .filter(v => v.iso && Number.isFinite(Number(v.value)) && Number(v.value) >= 1)
+        .map(v => ({
+          iso: String(v.iso).toUpperCase(),
+          n: maxRank - Number(v.value) + 1,
+          _qaValue: Number(v.value), _qaUnit: 'rank',
+        }));
+    }
+    if (mode === 'binary') {
+      return arr
+        .filter(v => v.iso && Number(v.value) === 1)
+        .map(v => ({ iso: String(v.iso).toUpperCase(), n: 1, _qaValue: 1, _qaUnit: '' }));
+    }
+    return arr
+      .filter(v => v.iso && Number.isFinite(Number(v.value)) && Number(v.value) > 0)
+      .map(v => ({
+        iso: String(v.iso).toUpperCase(),
+        n: Math.max(0.01, Number(v.value)),
+        _qaValue: Number(v.value), _qaUnit: '%',
+      }));
+  }
+
+  window.__semHeatRenderQA = function(opts) {
+    if (!opts) return;
+    const { values, legend, mode, source_note, question, refusal } = opts;
+    if (!window.__semHeatActive) {
+      window.__semHeatActive = true;
+      document.body.classList.add('sem-heatmap-active');
+      panel.classList.remove('minimized');
+      panel.classList.add('visible');
+      try { hideNodeMarkers(); } catch (_) {}
+      try { enableHeatClickInspector(); } catch (_) {}
+    }
+    [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t => t.classList.toggle('active', t.dataset.ctl === 'ask'));
+    [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p => p.classList.toggle('active', p.dataset.panel === 'ask'));
+    state.ctl = 'ask';
+    state.mode = 'coverage';
+    document.querySelectorAll('#semHeatModeRow .semHeatPill').forEach(p =>
+      p.classList.toggle('active', p.dataset.mode === 'coverage')
+    );
+
+    if (refusal) {
+      state.countryPoints = []; state.cityPoints = []; state.points = [];
+      try { renderPoints({ country_points: [], city_points: [] }); } catch (_) {}
+      const status = document.getElementById('semHeatAskStatus');
+      if (status) status.textContent = '⚠ ' + refusal;
+      const note = document.getElementById('semHeatAskNote');
+      if (note) { note.textContent = ''; note.style.display = 'none'; }
+      return;
+    }
+
+    const pts = _heatQAToCountryPoints(values, mode);
+    state.countryPoints = pts;
+    state.cityPoints = [];
+    state.points = pts;
+    state.qaActive = true;
+    state.qaLegend = legend || question || '';
+    state.qaSourceNote = source_note || '';
+    state.qaMode = mode || 'percent';
+    try { renderPoints({ country_points: pts, city_points: [] }); } catch (_) {}
+    try { updateLegend(); } catch (_) {}
+
+    const left = document.getElementById('semHeatLegendLeft');
+    const right = document.getElementById('semHeatLegendRight');
+    if (left)  left.textContent  = state.qaMode === 'binary' ? 'no' : 'low';
+    if (right) right.textContent = state.qaMode === 'binary' ? 'yes' : (state.qaMode === 'rank' ? 'rank 1' : 'high');
+    const status = document.getElementById('semHeatAskStatus');
+    if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
+    const note = document.getElementById('semHeatAskNote');
+    if (note) {
+      if (state.qaSourceNote) { note.textContent = state.qaSourceNote; note.style.display = ''; }
+      else { note.textContent = ''; note.style.display = 'none'; }
+    }
+  };
+
+  (function wireAskAi() {
+    const inp  = document.getElementById('semHeatAskInput');
+    const btn  = document.getElementById('semHeatAskGoBtn');
+    const sel  = document.getElementById('semHeatAskMode');
+    const stat = document.getElementById('semHeatAskStatus');
+    if (!inp || !btn) return;
+    let inflight = false;
+    async function submit() {
+      const q = (inp.value || '').trim();
+      if (!q || inflight) return;
+      const mode = sel?.value || 'percent';
+      inflight = true;
+      btn.disabled = true;
+      const prevLabel = btn.textContent;
+      btn.textContent = '…';
+      if (stat) stat.textContent = 'Asking…';
+      try {
+        const apiBase = window.__API || 'https://earth-wjr6.onrender.com';
+        const headers = { 'Content-Type': 'application/json' };
+        const tok = window.__authToken;
+        if (tok) headers['Authorization'] = `Bearer ${tok}`;
+        const res = await fetch(`${apiBase}/api/heatmap/ask`, {
+          method: 'POST', headers, body: JSON.stringify({ question: q, mode }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (res.status === 401) {
+            if (stat) stat.textContent = 'Sign in to ask questions.';
+            window.__openAuthModal?.();
+            return;
+          }
+          if (res.status === 429 && data.limitReached) {
+            if (stat) stat.textContent = `Out of credits (${data.cost} needed).`;
+            return;
+          }
+          if (stat) stat.textContent = `Error: ${data.error || res.statusText}`;
+          return;
+        }
+        window.__semHeatRenderQA({
+          values: data.values || [],
+          legend: data.legend,
+          mode: data.mode || mode,
+          source_note: data.source_note,
+          question: q,
+          refusal: data.refusal,
+        });
+        if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
+      } catch (err) {
+        if (stat) stat.textContent = `Network error: ${err.message}`;
+      } finally {
+        inflight = false;
+        btn.disabled = false;
+        btn.textContent = prevLabel;
+      }
+    }
+    btn.addEventListener('click', submit);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  })();
 
   let _kwTimer = null;
   kwInput.addEventListener('input', () => {

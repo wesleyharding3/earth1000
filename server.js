@@ -11009,6 +11009,220 @@ app.get("/api/globe-stats", async (req, res) => {
 });
 
 /* =========================================
+   Heatmap Q&A  —  POST /api/heatmap/ask
+   Free-form question → Claude tool-use call → country-indexed values.
+   Frontend pipes the result into the existing semantic-heatmap renderer.
+
+   Flow:
+     1. Hash the normalized question + mode, look up heatmap_qa_cache.
+        Hit  → return cached (free, no Claude call, increment hit_count).
+        Miss → continue.
+     2. Charge credits via creditLedger.
+     3. Build the country whitelist from the `countries` table so we can
+        validate Claude's output and reject hallucinated ISOs.
+     4. Call Claude with a `set_country_values` tool. Tool use locks the
+        output shape — no JSON parsing of free text.
+     5. Validate, persist to cache, return to client.
+
+   On refusal: Claude can call `decline_question({ reason })` instead of
+   `set_country_values`. We persist the refusal so subsequent identical
+   asks return instantly without burning credits a second time.
+========================================= */
+app.post("/api/heatmap/ask", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+
+  const rawQuestion = String(req.body?.question || "").trim();
+  const mode = String(req.body?.mode || "percent").toLowerCase();
+  if (!rawQuestion) return res.status(400).json({ error: "question is required" });
+  if (rawQuestion.length > 280) return res.status(400).json({ error: "question too long (max 280 chars)" });
+  if (!["percent", "rank", "binary"].includes(mode)) {
+    return res.status(400).json({ error: "mode must be percent | rank | binary" });
+  }
+
+  // Normalize for stable cache key.
+  const normalized = rawQuestion.toLowerCase().replace(/\s+/g, " ").trim();
+  const crypto = require('crypto');
+  const questionHash = crypto.createHash('sha256').update(`${mode}|${normalized}`).digest('hex');
+
+  try {
+    // 1. Cache lookup. Pinned curated rows + recent Claude rows both live here.
+    const cached = await pool.query(
+      `SELECT id, mode, legend, unit, source_note, values, refusal, source, hit_count
+         FROM heatmap_qa_cache
+        WHERE question_hash = $1 AND mode = $2
+        LIMIT 1`,
+      [questionHash, mode]
+    );
+    if (cached.rows.length) {
+      const row = cached.rows[0];
+      // Fire-and-forget hit accounting.
+      pool.query(
+        `UPDATE heatmap_qa_cache SET hit_count = hit_count + 1, last_hit_at = NOW() WHERE id = $1`,
+        [row.id]
+      ).catch(() => {});
+      return res.json({
+        question: rawQuestion,
+        mode: row.mode,
+        legend: row.legend,
+        unit: row.unit,
+        source_note: row.source_note,
+        values: row.values,
+        refusal: row.refusal,
+        source: row.source,        // 'claude' | 'curated'
+        cache: 'hit',
+      });
+    }
+
+    // 2. Credit gate (only on miss — cache hits are free).
+    const tier = user.tier || "free";
+    const access = await credits.consumeCredits(user.id, tier, 'heatmap_qa', { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
+    if (!access.allowed) {
+      return res.status(429).json({
+        error:        'Not enough credits for Heatmap Q&A',
+        limitReached: true,
+        cost:         access.cost,
+        remaining:    access.remaining,
+        weekly_limit: access.weekly_limit,
+        requiredTier: access.weekly_limit === 0 ? 'pro' : null,
+        resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
+      });
+    }
+
+    // 3. Country whitelist — Claude is told to ONLY use ISOs from this set.
+    const { rows: countryRows } = await pool.query(
+      `SELECT iso_code, name FROM countries WHERE iso_code IS NOT NULL AND length(iso_code) = 2 ORDER BY name`
+    );
+    const isoSet = new Set(countryRows.map(c => c.iso_code.toUpperCase()));
+    const isoCatalog = countryRows.map(c => `${c.iso_code.toUpperCase()} ${c.name}`).join('\n');
+
+    // 4. Claude call with a structured tool. Two tool options: emit values,
+    //    or decline with a reason. Either path produces a usable response.
+    const modeGuidance = mode === 'percent'
+      ? 'Each value is a percentage 0–100 (e.g. 87.2 means 87.2% of that country\'s population/area/whatever the question asks).'
+      : mode === 'rank'
+      ? 'Each value is an integer rank starting at 1 (lower = stronger). Only include the ranked countries; omit unranked ones.'
+      : /* binary */ 'Each value is 0 or 1. Include only countries where the answer is 1.';
+
+    const tools = [
+      {
+        name: 'set_country_values',
+        description: 'Return a per-country value map answering the user question.',
+        input_schema: {
+          type: 'object',
+          required: ['legend', 'values'],
+          properties: {
+            legend: { type: 'string', description: 'Short label for the legend chip (e.g. "Muslim population %", "Press freedom rank").' },
+            unit:   { type: 'string', description: 'Unit string for tooltips, e.g. "%", "rank", or empty.' },
+            source_note: { type: 'string', description: 'Brief attribution / data vintage (e.g. "Pew 2020 estimates"). Always include "AI estimate — verify before citing" if uncertain.' },
+            values: {
+              type: 'array',
+              description: 'Array of { iso, value } objects. ISOs MUST be drawn from the catalog provided.',
+              items: {
+                type: 'object',
+                required: ['iso', 'value'],
+                properties: {
+                  iso:   { type: 'string', description: '2-letter ISO 3166-1 country code (uppercase).' },
+                  value: { type: 'number' },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        name: 'decline_question',
+        description: 'Decline the question — use when it is biased, unanswerable, or has no meaningful per-country mapping.',
+        input_schema: {
+          type: 'object',
+          required: ['reason'],
+          properties: {
+            reason: { type: 'string', description: 'Brief, neutral explanation shown to the user.' },
+          },
+        },
+      },
+    ];
+
+    const systemPrompt = `You answer geographic questions for a globe-based news intelligence dashboard. Your output paints a heatmap.
+
+Available countries (use ONLY these 2-letter ISO codes):
+${isoCatalog}
+
+Output rules:
+- Mode: ${mode}. ${modeGuidance}
+- Use the set_country_values tool when the question has a meaningful per-country answer.
+- Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
+- Numbers are estimates — include data vintage in source_note (year, source). When uncertain, say so explicitly in source_note.
+- Do not include countries you have no information about.`;
+
+    const claudeResp = await Anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      system: systemPrompt,
+      tools,
+      tool_choice: { type: 'any' },   // force one of the two tools
+      messages: [{ role: 'user', content: rawQuestion }],
+    });
+
+    // 5. Extract the tool call.
+    const toolUse = (claudeResp.content || []).find(b => b.type === 'tool_use');
+    if (!toolUse) {
+      return res.status(502).json({ error: 'Model returned no tool call', cache: 'miss' });
+    }
+
+    let payload = {
+      legend: null, unit: null, source_note: null, values: [], refusal: null,
+    };
+    if (toolUse.name === 'decline_question') {
+      payload.refusal = String(toolUse.input?.reason || 'Question cannot be answered as a heatmap.');
+    } else if (toolUse.name === 'set_country_values') {
+      const raw = toolUse.input || {};
+      payload.legend      = String(raw.legend || rawQuestion).slice(0, 120);
+      payload.unit        = raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : ''));
+      payload.source_note = String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240);
+      // Validate ISOs against the whitelist; drop hallucinated codes.
+      const seen = new Set();
+      payload.values = (Array.isArray(raw.values) ? raw.values : [])
+        .map(v => ({ iso: String(v.iso || '').toUpperCase().trim(), value: Number(v.value) }))
+        .filter(v => v.iso && isoSet.has(v.iso) && Number.isFinite(v.value) && !seen.has(v.iso) && (seen.add(v.iso) || true));
+    }
+
+    // 6. Persist (Claude row, source='claude'). Pinned curated rows are
+    //    inserted out-of-band by your seeding scripts.
+    await pool.query(
+      `INSERT INTO heatmap_qa_cache
+         (question_hash, question_text, mode, legend, unit, source_note, values, refusal, source, hit_count, last_hit_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'claude', 1, NOW())
+       ON CONFLICT (question_hash, mode) DO UPDATE SET
+         legend       = EXCLUDED.legend,
+         unit         = EXCLUDED.unit,
+         source_note  = EXCLUDED.source_note,
+         values       = EXCLUDED.values,
+         refusal      = EXCLUDED.refusal,
+         hit_count    = heatmap_qa_cache.hit_count + 1,
+         last_hit_at  = NOW()`,
+      [questionHash, rawQuestion, mode, payload.legend, payload.unit, payload.source_note, JSON.stringify(payload.values), payload.refusal]
+    );
+
+    return res.json({
+      question: rawQuestion,
+      mode,
+      legend: payload.legend,
+      unit: payload.unit,
+      source_note: payload.source_note,
+      values: payload.values,
+      refusal: payload.refusal,
+      source: 'claude',
+      cache: 'miss',
+      credits: access.remaining != null ? { remaining: access.remaining, weekly_limit: access.weekly_limit } : undefined,
+    });
+  } catch (err) {
+    console.error('[heatmap-ask]', err);
+    return res.status(500).json({ error: 'Heatmap Q&A failed', detail: err.message });
+  }
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
