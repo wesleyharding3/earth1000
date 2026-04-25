@@ -4804,7 +4804,7 @@ button.arcCtxSegDot,
    chain up to the globe's window-level wheel listener. */
 @media (pointer: coarse), (max-width: 700px) {
   #flowCtxCard.view-ctx #arcContextPanel {
-    max-height: 210px;
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - 220px);
   }
 }
 @media (pointer: fine) and (min-width: 701px) {
@@ -10346,7 +10346,12 @@ button.arcCtxSegDot,
    keyword context from /api/keywords/explain and renders an inline panel
    (sibling .kwi-row-ctx) with: about text, surge reason, and a mini country
    bar chart. Toggle on second click. */
-.kwi-trending-row { display: flex; flex-direction: column; }
+/* Plain block container so each child (item, graph, ctx) stacks
+   naturally and the row grows tall enough to contain all of them.
+   Earlier flex-column setup let percentage min-heights on the inner
+   .kwi-ref-interpanel compete for space and pushed the ctx text out of
+   the row's box, where it overlaid the next list row. */
+.kwi-trending-row { display: block; }
 .kwi-row-ctx-btn {
   margin-left: 6px;
   width: 22px; height: 22px;
