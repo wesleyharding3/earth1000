@@ -10313,6 +10313,104 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   color: rgba(255,100,100,0.75);
 }
 .acctDpBtn.signout:hover { background: rgba(255,50,50,0.08); color: rgba(255,130,130,1); }
+.acctDpBtn.delete {
+  color: rgba(255,80,80,0.65);
+  font-size: 11px;
+}
+.acctDpBtn.delete:hover { background: rgba(255,40,40,0.10); color: rgba(255,140,140,1); }
+.acctDpBtn.delete svg { opacity: 0.55; }
+.acctDpBtn.delete:hover svg { opacity: 0.95; }
+
+/* ── Delete-account confirmation modal — App Store guideline 5.1.1(v).
+   Two-step: must type DELETE in the input to arm the destructive button. */
+#deleteAccountModal {
+  display: none;
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(2,4,10,0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  align-items: center; justify-content: center;
+  padding: 16px;
+}
+#deleteAccountModal.open { display: flex; animation: dacFadeIn 0.18s ease; }
+@keyframes dacFadeIn { from { opacity: 0; } to { opacity: 1; } }
+.dacBox {
+  width: 100%; max-width: 360px;
+  background: rgba(14,18,28,0.96);
+  border: 1px solid rgba(255,80,80,0.32);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.6), 0 0 30px rgba(255,40,40,0.08);
+}
+.dacTitle {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.05em;
+  text-transform: uppercase; color: rgba(255,140,140,1);
+  margin-bottom: 12px;
+}
+.dacBody {
+  font-size: 12px; line-height: 1.55;
+  color: rgba(255,255,255,0.78);
+  margin-bottom: 14px;
+}
+.dacList {
+  margin: 8px 0 12px;
+  padding-left: 16px;
+  color: rgba(255,255,255,0.6);
+  font-size: 11px;
+}
+.dacList li { margin-bottom: 3px; }
+.dacConfirmRow {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-bottom: 14px;
+}
+.dacConfirmRow label {
+  font-size: 11px; color: rgba(255,255,255,0.5);
+}
+.dacConfirmRow input {
+  background: rgba(0,0,0,0.45);
+  border: 1px solid rgba(255,80,80,0.30);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #fff; font-size: 13px; font-family: monospace;
+  letter-spacing: 0.08em;
+  outline: none;
+}
+.dacConfirmRow input:focus { border-color: rgba(255,140,140,0.65); }
+.dacBtnRow {
+  display: flex; gap: 8px; justify-content: flex-end;
+}
+.dacBtn {
+  padding: 8px 16px; border-radius: 6px;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; border: 1px solid transparent;
+  transition: all 0.15s;
+}
+.dacBtn.cancel {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.75);
+  border-color: rgba(255,255,255,0.12);
+}
+.dacBtn.cancel:hover { background: rgba(255,255,255,0.10); color: #fff; }
+.dacBtn.confirm {
+  background: rgba(255,40,40,0.18);
+  color: rgba(255,160,160,0.6);
+  border-color: rgba(255,80,80,0.30);
+  cursor: not-allowed;
+}
+.dacBtn.confirm.armed {
+  background: rgba(255,40,40,0.28);
+  color: #fff;
+  border-color: rgba(255,80,80,0.65);
+  cursor: pointer;
+}
+.dacBtn.confirm.armed:hover { background: rgba(255,50,50,0.42); }
+.dacBtn:disabled { opacity: 0.5; cursor: wait; }
+.dacError {
+  margin-top: 10px;
+  font-size: 11px;
+  color: rgba(255,140,140,0.95);
+  min-height: 14px;
+}
 /* Credit meter + 429 shortfall panel — see www/index.html for the full
    comment. Styles kept in sync across both entry points. */
 .acctDpCreditBox {
@@ -11492,6 +11590,17 @@ window.__arcCtxSegmented = (function() {
             <line x1="21" y1="12" x2="9" y2="12"/>
           </svg>
           Sign Out
+        </div>
+        <!-- App Store guideline 5.1.1(v): in-app account deletion. -->
+        <div class="acctDpBtn delete" id="acctDpDelete">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6"/>
+            <path d="M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+          Delete Account
         </div>
       </div>
     </div>
@@ -31163,6 +31272,94 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
 
+  /* ── Delete Account (App Store guideline 5.1.1(v)) ──
+     Two-step destructive flow: opens a modal that requires the user to
+     type DELETE before the destructive button arms. On confirm, calls
+     DELETE /api/account → wipes Supabase auth + Render Postgres rows
+     → clears local saved/history → forces sign-out → reloads.
+     Deferred via DOMContentLoaded because the modal markup lives near
+     the bottom of the document (after this script tag) — without the
+     defer, getElementById returns null and the IIFE silently no-ops. */
+  function _wireDeleteAccount() {
+    const dropBtn = document.getElementById('acctDpDelete');
+    const modal   = document.getElementById('deleteAccountModal');
+    const input   = document.getElementById('dacConfirmInput');
+    const cancel  = document.getElementById('dacCancelBtn');
+    const confirm = document.getElementById('dacConfirmBtn');
+    const errBox  = document.getElementById('dacError');
+    if (!dropBtn || !modal || !input || !cancel || !confirm) return;
+
+    function openModal() {
+      input.value = '';
+      if (errBox) errBox.textContent = '';
+      confirm.classList.remove('armed');
+      confirm.disabled = true;
+      confirm.textContent = 'Delete forever';
+      modal.classList.add('open');
+      setTimeout(() => input.focus(), 50);
+    }
+    function closeModal() {
+      modal.classList.remove('open');
+      input.value = '';
+      if (errBox) errBox.textContent = '';
+    }
+
+    // Exact-match (case-sensitive) — the prompt shows "DELETE" in caps,
+    // so accept only the exact string. Avoids accidental arming from a
+    // sloppy lowercase tap.
+    input.addEventListener('input', () => {
+      const armed = input.value.trim() === 'DELETE';
+      confirm.classList.toggle('armed', armed);
+      confirm.disabled = !armed;
+    });
+
+    dropBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      try { document.getElementById('accountDropdown')?.classList.remove('open'); } catch (_) {}
+      openModal();
+    });
+    cancel.addEventListener('click', closeModal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && modal.classList.contains('open')) closeModal();
+    });
+
+    confirm.addEventListener('click', async () => {
+      if (!confirm.classList.contains('armed') || confirm.disabled) return;
+      confirm.disabled = true;
+      confirm.textContent = 'Deleting…';
+      if (errBox) errBox.textContent = '';
+      try {
+        const apiBase = window.__API || 'https://earth-wjr6.onrender.com';
+        const headers = { 'Content-Type': 'application/json' };
+        const tok = window.__authToken;
+        if (tok) headers['Authorization'] = `Bearer ${tok}`;
+        const res = await fetch(`${apiBase}/api/account`, { method: 'DELETE', headers });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (errBox) errBox.textContent = data.error || `Failed (${res.status})`;
+          confirm.disabled = false;
+          confirm.textContent = 'Delete forever';
+          return;
+        }
+        try { localStorage.removeItem('earth00_saved'); } catch (_) {}
+        try { localStorage.removeItem('earth00_history'); } catch (_) {}
+        try { sessionStorage.clear(); } catch (_) {}
+        try { await sb.auth.signOut({ scope: 'local' }); } catch (_) {}
+        location.replace('/');
+      } catch (err) {
+        if (errBox) errBox.textContent = `Network error: ${err.message}`;
+        confirm.disabled = false;
+        confirm.textContent = 'Delete forever';
+      }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _wireDeleteAccount);
+  } else {
+    _wireDeleteAccount();
+  }
+
   /* ── Library (Saved / History) ── */
   // Lazy lookups — these DOM elements appear later in the HTML
   function getLibPanel()   { return document.getElementById('libraryPanel'); }
@@ -40336,6 +40533,32 @@ body.ticker-active .gTickerLabel {
     <div class="libTab" data-lib="history">History</div>
   </div>
   <div class="libContent" id="libContent"></div>
+</div>
+
+<!-- Delete-account confirmation modal — App Store guideline 5.1.1(v). -->
+<div id="deleteAccountModal" role="dialog" aria-modal="true" aria-labelledby="dacTitle">
+  <div class="dacBox">
+    <div class="dacTitle" id="dacTitle">Delete Account</div>
+    <div class="dacBody">
+      This permanently removes your account and all associated data.
+      This cannot be undone.
+    </div>
+    <ul class="dacList">
+      <li>Your saved articles, threads, and lines</li>
+      <li>Your browsing history and preferences</li>
+      <li>Your AI credit balance and usage records</li>
+      <li>Your sign-in identity</li>
+    </ul>
+    <div class="dacConfirmRow">
+      <label for="dacConfirmInput">Type <strong>DELETE</strong> to confirm:</label>
+      <input type="text" id="dacConfirmInput" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+    </div>
+    <div class="dacError" id="dacError"></div>
+    <div class="dacBtnRow">
+      <button class="dacBtn cancel" id="dacCancelBtn">Cancel</button>
+      <button class="dacBtn confirm" id="dacConfirmBtn" disabled>Delete forever</button>
+    </div>
+  </div>
 </div>
 
 </body>

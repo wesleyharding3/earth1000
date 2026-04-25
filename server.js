@@ -11223,6 +11223,84 @@ Output rules:
 });
 
 /* =========================================
+   Account deletion  —  DELETE /api/account
+   Required by App Store guideline 5.1.1(v) (since 2022): if a user can
+   create an account in the app, they must be able to delete it from
+   inside the app. GDPR also requires erasure of personal data.
+
+   What we delete:
+     1. Supabase auth user (sba.auth.admin.deleteUser). This triggers
+        the ON DELETE CASCADE on user_preferences (see migration #25).
+     2. Render Postgres user-keyed tables: user_usage,
+        briefing_access_log, custom_briefing_usage, user_credit_balance,
+        credit_ledger.
+     3. editor_events.editor_id is NULLed (not row-deleted) so the
+        editorial audit log preserves the action history without the
+        personal identifier — required for editorial-rule mining and
+        legitimately within the GDPR allowance for retained anonymized
+        records.
+
+   Order matters: Supabase first. If it fails, no data is touched. If
+   Postgres steps partially fail after, we still return success —
+   auth is gone, the user can't access leftover rows, and a periodic
+   cleanup job can sweep orphans later.
+
+   TODO: when Stripe is wired, cancel any active subscription before
+   step 1 to prevent further charges.
+========================================= */
+app.delete("/api/account", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+
+  const userId = user.id;
+  const errors = [];
+
+  // 1. Supabase auth — most critical step. If this fails, abort.
+  try {
+    const { error } = await sba.auth.admin.deleteUser(userId);
+    if (error) {
+      // 404 from Supabase = user already deleted; treat as success so
+      // a retried delete from a stuck client can complete cleanly.
+      const msg = String(error.message || error);
+      const alreadyGone = /not found|user not found/i.test(msg) || error.status === 404;
+      if (!alreadyGone) {
+        return res.status(502).json({ error: 'Failed to delete auth account', detail: msg });
+      }
+    }
+  } catch (err) {
+    return res.status(502).json({ error: 'Failed to delete auth account', detail: err.message });
+  }
+
+  // 2. Render Postgres — best-effort. Log failures but don't block the
+  //    response; the user's auth is gone and they have no path back to
+  //    their data anyway.
+  const wipes = [
+    ['user_usage',           `DELETE FROM user_usage           WHERE user_id = $1`],
+    ['briefing_access_log',  `DELETE FROM briefing_access_log  WHERE user_id = $1`],
+    ['custom_briefing_usage',`DELETE FROM custom_briefing_usage WHERE user_id = $1`],
+    ['user_credit_balance',  `DELETE FROM user_credit_balance  WHERE user_id = $1`],
+    ['credit_ledger',        `DELETE FROM credit_ledger        WHERE user_id = $1`],
+    // Editor events: anonymize rather than delete (see header).
+    ['editor_events',        `UPDATE editor_events SET editor_id = NULL WHERE editor_id = $1`],
+  ];
+  for (const [name, sql] of wipes) {
+    try {
+      await pool.query(sql, [userId]);
+    } catch (err) {
+      // Table may not exist in all environments — log and continue.
+      errors.push(`${name}: ${err.message}`);
+      console.warn(`[account-delete] ${name}: ${err.message}`);
+    }
+  }
+
+  return res.json({
+    deleted: true,
+    user_id: userId,
+    warnings: errors.length ? errors : undefined,
+  });
+});
+
+/* =========================================
    Health Check
 ========================================= */
 app.get("/", (req, res) => res.send("API is running"));
