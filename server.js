@@ -3762,6 +3762,7 @@ app.get('/api/admin/briefing-editor/threads', requireAdmin, async (req, res) => 
         WHERE status = 'active'
           AND last_updated_at > NOW() - INTERVAL '3 days'
           AND COALESCE(article_count, 0) >= 1
+          AND COALESCE(scope, 'global') = 'global'
         ORDER BY importance DESC, article_count DESC
         LIMIT 100
       `);
@@ -5716,9 +5717,12 @@ app.post('/api/admin/backfill-nations', requireAdmin, async (req, res) => {
     const gaz = await loadNationGazetteer(pool);
 
     let threadCount = 0;
+    // Skip local-scope threads — they already have explicit
+    // primary_nations from localStoryBuilder (one country per thread).
     const { rows: threads } = await pool.query(`
       SELECT id, title, description FROM story_threads
       WHERE status IN ('active','cooling','dormant')
+        AND COALESCE(scope, 'global') = 'global'
     `);
     for (const t of threads) {
       const arr = extractNations((t.title || '') + ' \n ' + (t.description || ''), gaz);
@@ -7786,6 +7790,12 @@ app.get("/api/threads/latest", async (req, res) => {
     if (toDate)   { params.push(toDate);   dateClauses.push(`st.last_updated_at <  ($${params.length}::date + INTERVAL '1 day')`); }
     const dateWhere = dateClauses.length ? `AND ${dateClauses.join(' AND ')}` : '';
 
+    // Exclude scope='local' rows — those are domestic single-country
+    // threads produced by localStoryBuilder.js and are surfaced ONLY on
+    // the country panels (via /api/threads/by-country/:iso?scope=local).
+    // The main feed is global threads only — that's the project's focus
+    // surface and locals were burying it. COALESCE handles legacy rows
+    // created before the `scope` column existed (default = 'global').
     const { rows: threads } = await pool.query(`
       SELECT
         st.id AS thread_id, st.title, st.description, st.primary_category,
@@ -7794,6 +7804,7 @@ app.get("/api/threads/latest", async (req, res) => {
       FROM story_threads st
       WHERE st.article_count >= 2
         AND st.status IN ('active', 'cooling', 'dormant')
+        AND COALESCE(st.scope, 'global') = 'global'
         ${dateWhere}
       ORDER BY
         CASE st.status

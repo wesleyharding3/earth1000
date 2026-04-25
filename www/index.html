@@ -4220,10 +4220,18 @@ body.flow-maximized #flowArcList {
       border: 1px solid rgba(255,255,255,0.08);
       flex-shrink: 0;
     }
+    /* Square buttons — explicit width/height pin both dimensions to the
+       same value so the icon sits in a snug square, not the older
+       rectangle that came from asymmetric padding (3px vertical, 6px
+       horizontal). One global rule reaches every panel that hosts the
+       toggle: article detail, thread / line detail, country, city. */
     .gridViewToggle button {
+      box-sizing: border-box;
+      width: 22px;
+      height: 22px;
+      padding: 0;
       background: transparent;
       border: none;
-      padding: 3px 6px;
       border-radius: 5px;
       cursor: pointer;
       color: rgba(255,255,255,0.40);
@@ -5683,6 +5691,26 @@ body.flow-maximized #flowArcList {
   border-right: 1px solid rgba(255,190,80,0.35);
   border-bottom: 1px solid rgba(255,190,80,0.35);
   box-shadow: 2px 2px 10px rgba(0,0,0,0.4);
+}
+/* Flipped placement — fan opens BELOW the tap point when there isn't
+   enough room above (e.g. tap near the top of the viewport). JS adds
+   .cfBelow when it detects the clip; mirror the transform + arrow. */
+#countryFan.cfBelow {
+  transform: translate(-50%, 14px);
+  animation: countryFanInBelow 0.18s cubic-bezier(0.18,0.9,0.32,1.2);
+}
+@keyframes countryFanInBelow {
+  from { opacity: 0; transform: translate(-50%, 6px) scale(0.92); }
+  to   { opacity: 1; transform: translate(-50%, 14px) scale(1); }
+}
+#countryFan.cfBelow::after {
+  bottom: auto;
+  top: -7px;
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid rgba(255,190,80,0.35);
+  border-top:  1px solid rgba(255,190,80,0.35);
+  box-shadow: -2px -2px 10px rgba(0,0,0,0.4);
 }
 .countryFanCard {
   pointer-events: all;
@@ -11011,6 +11039,11 @@ window.fmtDate = function(d) {
   const _origFetch = window.fetch;
   const DEFAULT_TIMEOUT = 20000;
   const LONG_TIMEOUT = 45000;
+  // Claude-call endpoints have a wider tail than long-SQL endpoints —
+  // Render cold-start (5-30s) + Claude generation (3-15s) can pass 45s.
+  // Give them headroom; the user-facing failure mode for an over-eager
+  // abort is much worse than waiting an extra 15s for a real result.
+  const CLAUDE_TIMEOUT = 75000;
   // Endpoints that hit heavy DB queries under load get a longer leash
   // /api/payments/subscription-status was getting stuck at the default
   // 20 s timeout on first-load when the backend was under contention,
@@ -11018,16 +11051,20 @@ window.fmtDate = function(d) {
   // the console and forcing the Supabase direct-read fallback path.
   // Put it on the long-timeout list so genuine slowness doesn't flip
   // the abort.
-  // /api/keywords/explain + /api/cluster-node/summary + /api/explain +
-  // /api/ai/flow-context all hit Claude on cache miss — easily 8–20s
-  // even on a warm DB. Default 20s timeout was triggering false-abort
-  // on first-click cold misses.
-  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status', '/api/keywords/explain', '/api/cluster-node/summary', '/api/explain', '/api/ai/flow-context', '/api/threads/by-country/'];
+  // SQL-heavy endpoints — long but bounded.
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status', '/api/threads/by-country/'];
+  // Claude-call endpoints — wider timeout headroom because Render cold
+  // start + Claude generation can compound past 45s. Order before the
+  // LONG list so a URL matching both gets the Claude timeout.
+  const CLAUDE_TIMEOUT_PATTERNS = ['/api/keywords/explain', '/api/cluster-node/summary', '/api/explain', '/api/ai/flow-context'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
     const url = typeof input === 'string' ? input : input?.url || '';
-    const ms = LONG_TIMEOUT_PATTERNS.some(p => url.includes(p)) ? LONG_TIMEOUT : DEFAULT_TIMEOUT;
+    const ms =
+      CLAUDE_TIMEOUT_PATTERNS.some(p => url.includes(p)) ? CLAUDE_TIMEOUT :
+      LONG_TIMEOUT_PATTERNS.some(p => url.includes(p))   ? LONG_TIMEOUT   :
+      DEFAULT_TIMEOUT;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ms);
     const opts = Object.assign({}, init, { signal: controller.signal });
@@ -16644,7 +16681,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function cityFanRadiusMi() {
         const DEFAULT_CAM = _isMobileView ? 3.6 : 3.0;
         const zf = DEFAULT_CAM / Math.max(0.1, camera.position.length());
-        const BASE = 50, MIN_MI = 2, MAX_MI = 65;
+        // Mobile fingers are fatter than mouse cursors AND tap precision
+        // is naturally lower — bumping all three constants here so the
+        // disambiguation fan reliably triggers when nearby cities are
+        // close. Desktop also gets a small bump.
+        //   • BASE: at default zoom, this is the geodesic radius the
+        //     click sweeps. Mobile +20mi over desktop.
+        //   • MIN_MI: floor as zoom-in compresses the radius. Mobile
+        //     keeps it at 14mi (two adjacent cities can still both
+        //     register at extreme zoom-in).
+        //   • MAX_MI: ceiling as zoom-out expands the radius.
+        const BASE   = _isMobileView ? 90  : 60;
+        const MIN_MI = _isMobileView ? 14  : 8;
+        const MAX_MI = _isMobileView ? 110 : 80;
         return Math.max(MIN_MI, Math.min(MAX_MI, BASE / Math.max(0.35, zf)));
       }
       function collectCityHits(clickLat, clickLon, radiusMi) {
@@ -16678,7 +16727,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const fanEl = document.getElementById('countryFan');
         if (!fanEl) return;
         fanEl.innerHTML = '';
-        hits.forEach((h, i) => {
+        // Cap the visible card count — beyond ~6 the fan becomes a wall
+        // of text. Sorted by distance already, so the closest 6 win.
+        const visible = hits.slice(0, 6);
+        visible.forEach((h, i) => {
           const card = document.createElement('div');
           card.className = 'countryFanCard' + (i === 0 ? ' primary' : '');
           const label = document.createElement('span');
@@ -16690,13 +16742,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
             dist.textContent = h.dist_mi.toFixed(0) + ' mi';
             card.appendChild(dist);
           }
-          card.addEventListener('click', (ev) => {
+          // pointerup wins over click on iOS WKWebView in some Capacitor
+          // builds — bind both so the card always resolves.
+          const onPick = (ev) => {
             ev.stopPropagation();
+            ev.preventDefault();
             fanEl.classList.remove('visible');
             commitCityHit(h);
-          });
+          };
+          card.addEventListener('click', onPick);
+          card.addEventListener('pointerup', onPick);
           fanEl.appendChild(card);
         });
+        // Position the fan so it stays on-screen. Default is "above the
+        // tap point" via the CSS transform (translate-Y: -100% - 14px).
+        // If that would clip the top of the viewport, flip it to
+        // "below the tap point" by toggling a modifier class.
+        fanEl.classList.remove('cfBelow');
+        const ESTIMATED_FAN_H = Math.min(visible.length * 44 + 14, 320);
+        if (y - ESTIMATED_FAN_H < 12) {
+          fanEl.classList.add('cfBelow');
+        }
         fanEl.style.left = x + 'px';
         fanEl.style.top  = y + 'px';
         fanEl.classList.add('visible');
