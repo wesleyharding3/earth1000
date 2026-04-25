@@ -33570,10 +33570,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById('pricingSubtitle').textContent =
       nudgeMsg || 'Unlock the full Earth intelligence platform.';
     if (window.__currentUser && typeof window.__refreshSubscriptionState === 'function') {
-      window.__refreshSubscriptionState().catch((err) => {
-        console.warn('[pricing] subscription refresh failed:', err.message);
-        _updatePricingCtaState();
-      });
+      window.__refreshSubscriptionState()
+        .catch((err) => console.warn('[pricing] subscription refresh failed:', err.message))
+        .finally(() => _updatePricingCtaState());
     } else {
       _updatePricingCtaState();
     }
