@@ -9516,13 +9516,19 @@ app.post("/api/keywords/explain", async (req, res) => {
       let display = row?.display_keyword || keyword;
 
       if (!row) {
+        // The fallback path runs when keyword_analytics has no entry —
+        // e.g. brand-new keyword the cron hasn't touched yet. Use plain
+        // column equality so idx_ak_normalized / idx_ak_keyword are
+        // hit; the previous `LOWER(COALESCE(...))` predicate was
+        // index-hostile and timed out, surfacing as a 500.
         const { rows: fb } = await pool.query(`
           SELECT co.iso_code, co.name, COUNT(DISTINCT a.id)::int AS n,
                  ARRAY_AGG(a.id ORDER BY a.published_at DESC) AS art_ids
             FROM article_keywords ak
             JOIN news_articles a ON a.id = ak.article_id
             LEFT JOIN countries co ON co.id = a.country_id
-           WHERE LOWER(COALESCE(ak.normalized_keyword, ak.keyword)) = $1
+           WHERE (ak.normalized_keyword = $1
+                  OR (ak.normalized_keyword IS NULL AND ak.keyword = $1))
              AND a.published_at > NOW() - INTERVAL '7 days'
              AND co.iso_code IS NOT NULL
            GROUP BY co.iso_code, co.name
@@ -9618,8 +9624,11 @@ ${articleBlock || '(no articles available)'}`;
 
     res.json({ ...payload, credits: _creditsBlock(access) });
   } catch (err) {
-    console.error("[api/keywords/explain]", err.message);
-    res.status(500).json({ error: "Keyword explanation generation failed" });
+    console.error("[api/keywords/explain]", err.message, err.stack || '');
+    res.status(500).json({
+      error: "Keyword explanation generation failed",
+      detail: req.user?.is_admin ? err.message : undefined,
+    });
   }
 });
 

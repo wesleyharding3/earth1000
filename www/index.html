@@ -2873,15 +2873,20 @@ body.flow-maximized #flowArcList {
   pointer-events: auto;
   transform: translateY(0);
 }
-/* Segment nav is a STICKY bar pinned to the bottom of the scroll area —
-   not absolute-positioned within the content box, which was placing it
-   below the fold on long blocks. Sticky keeps it visible as a fixed bar
-   at the bottom regardless of scroll position. */
-.arcCtxSegNav {
-  position: sticky;
+/* Segment nav — sibling of .arcCtxBody, mounted into the body's parent
+   panel (".arcCtxSegHost"). Absolute-positioned at the bottom of the
+   panel so it always sits at the visual bottom of the surface,
+   independent of the body's scroll state. Earlier sticky/inside-body
+   placements were unreliable across flow ctx / cluster / article
+   panels because each had different overflow behavior. */
+.arcCtxSegHost {
+  position: relative; /* anchor for the absolutely-positioned nav */
+}
+.arcCtxSegHost > .arcCtxSegNav {
+  position: absolute;
   bottom: 0;
   left: 0; right: 0;
-  margin: 10px -12px -14px;
+  margin: 0;
   padding: 10px 12px 12px;
   display: flex;
   align-items: center;
@@ -2891,6 +2896,7 @@ body.flow-maximized #flowArcList {
   background: linear-gradient(180deg, rgba(8,12,22,0.0) 0%, rgba(8,12,22,0.88) 35%, rgba(8,12,22,0.96) 100%);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  pointer-events: auto;
 }
 .arcCtxSegArrow {
   width: 28px; height: 28px;
@@ -4955,6 +4961,31 @@ body.flow-maximized #flowArcList {
     opacity 0.28s ease-out,
     margin 0.42s cubic-bezier(0.32, 0.72, 0, 1);
 }
+/* "Routes" section title — appears at the top of the live-arcs slot
+   across all three flow contexts (Article / Thread / Timeline). */
+.flowCtxLiveArcsTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,200,120,0.85);
+  text-shadow: 0 0 8px rgba(255,180,60,0.30);
+  flex-shrink: 0;
+}
+.flowCtxLiveArcsDot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: rgba(255,210,140,0.9);
+  box-shadow: 0 0 8px rgba(255,180,60,0.65);
+  animation: flowCtxArcsDotPulse 1.6s ease-in-out infinite;
+}
+@keyframes flowCtxArcsDotPulse {
+  0%,100% { opacity: 0.55; box-shadow: 0 0 6px rgba(255,180,60,0.45); }
+  50%     { opacity: 1;    box-shadow: 0 0 12px rgba(255,210,140,0.85); }
+}
 /* Pre-play (News Flows direct): show only the pill-bar header, live
    arcs slot collapsed. */
 #flowCtxCard.view-arcs.noInfoOrigin.liveArcsPrePlay .flowCtxLiveArcsSlot {
@@ -5711,6 +5742,59 @@ body.flow-maximized #flowArcList {
   border-left: 1px solid rgba(255,190,80,0.35);
   border-top:  1px solid rgba(255,190,80,0.35);
   box-shadow: -2px -2px 10px rgba(0,0,0,0.4);
+}
+
+/* Leader lines from each fan card to its city's screen position. */
+#cityFanLineSvg .cfLeader {
+  fill: none;
+  stroke: rgba(255,190,80,0.40);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-dasharray: 3 4;
+  filter: drop-shadow(0 0 4px rgba(255,180,60,0.30));
+  animation: cfLeaderDash 1.4s linear infinite;
+}
+#cityFanLineSvg .cfLeader.is-primary {
+  stroke: rgba(255,210,120,0.75);
+  stroke-width: 1.7;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 6px rgba(255,200,100,0.55));
+  animation: none;
+}
+#cityFanLineSvg .cfLeader.is-hover {
+  stroke: rgba(255,235,170,0.95);
+  stroke-width: 2.0;
+  stroke-dasharray: none;
+  filter: drop-shadow(0 0 10px rgba(255,210,120,0.85));
+}
+@keyframes cfLeaderDash {
+  to { stroke-dashoffset: -14; }
+}
+#cityFanLineSvg .cfLeaderDot {
+  fill: none;
+  stroke: rgba(255,190,80,0.55);
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 5px rgba(255,180,60,0.45));
+  animation: cfLeaderDotPulse 1.3s ease-in-out infinite;
+}
+#cityFanLineSvg .cfLeaderDot.is-primary {
+  stroke: rgba(255,220,140,0.95);
+  stroke-width: 1.7;
+  filter: drop-shadow(0 0 8px rgba(255,200,100,0.80));
+}
+#cityFanLineSvg .cfLeaderDot.is-hover {
+  stroke: rgba(255,240,180,1);
+  stroke-width: 2.1;
+  filter: drop-shadow(0 0 12px rgba(255,225,140,1));
+  animation: none;
+}
+@keyframes cfLeaderDotPulse {
+  0%,100% { transform: scale(1);    opacity: 0.55; }
+  50%     { transform: scale(1.18); opacity: 0.95; }
+}
+#cityFanLineSvg .cfLeaderDot {
+  transform-origin: center;
+  transform-box: fill-box;
 }
 .countryFanCard {
   pointer-events: all;
@@ -11508,14 +11592,25 @@ window.__arcCtxSegmented = (function() {
   function ensureDelegate(body) {
     if (!body || body._segDelegateAttached) return;
     body._segDelegateAttached = true;
-    body.addEventListener('click', (e) => {
+    // Listen on the body's PARENT so clicks on the sibling nav also
+    // route through here. Some panels swap the body's parent later
+    // (e.g. flow ctx reparents arcContextPanel) — re-attach on the
+    // current parent each time apply() runs by pinning the listener
+    // to a stable wrapper via document.body delegation.
+    document.addEventListener('click', (e) => {
+      const navEl = e.target.closest('.arcCtxSegNav');
+      if (!navEl) return;
+      // Verify this nav belongs to our body (sibling of body OR
+      // descendant of body — we support both placements during
+      // migration).
+      const ownerHost = navEl.parentElement;
+      const owns = ownerHost === body || ownerHost?.contains?.(body) || body.contains?.(navEl);
+      if (!owns) return;
       const nextEl = e.target.closest('.arcCtxSegNext');
       const prevEl = e.target.closest('.arcCtxSegPrev');
       const dotEl  = e.target.closest('.arcCtxSegDot');
       if (!nextEl && !prevEl && !dotEl) return;
       e.stopPropagation();
-      // Manual mode + awaiting advance: any Next click resolves the waiter
-      // so the stream loop can push the next block.
       if (nextEl && body.dataset.segManual === '1' && body._segAdvanceResolve) {
         body.classList.remove('arcCtxSegAwaitingAdvance');
         body._segAdvanceResolve();
@@ -11535,37 +11630,43 @@ window.__arcCtxSegmented = (function() {
     if (!body) return;
     ensureDelegate(body);
     const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
+    // The nav lives as a SIBLING of the body, not inside it. Reason:
+    // putting it inside .arcCtxBody (which has overflow-y: auto) made
+    // sticky/absolute positioning unreliable across our three host
+    // surfaces — flow ctx panel, cluster detail, article detail —
+    // because each has different parent overflow behavior. Mounting
+    // outside the scroll container makes positioning bulletproof:
+    // we anchor to the nearest non-scrolling ancestor (the panel
+    // itself), which always has a fixed visual bottom.
+    const navHost = body.parentElement || body;
     if (blocks.length < 2) {
-      // Only one block — no need for segments; strip any prior segmented
-      // state so single-block renders look normal.
       body.classList.remove('arcCtxStateSegmented');
-      body.querySelector('.arcCtxSegNav')?.remove();
+      // Remove any existing nav from EITHER body (legacy) or host.
+      body.querySelector(':scope > .arcCtxSegNav')?.remove();
+      navHost.querySelector(':scope > .arcCtxSegNav')?.remove();
       blocks.forEach(b => b.classList.remove('arcCtxBlock--active'));
       delete body.dataset.segManualIdx;
       return;
     }
     body.classList.add('arcCtxStateSegmented');
-    // User's manual page selection is tracked on the body dataset; clear
-    // it when the user hasn't chosen a page yet, so the active index
-    // follows the typewriter.
+    // Mark the nav host so scoped CSS can target it without leaking.
+    navHost.classList.add('arcCtxSegHost');
+
     const manualIdx = body.dataset.segManualIdx != null
       ? Number(body.dataset.segManualIdx)
       : null;
     let activeIdx = pickActiveIndex(blocks, manualIdx);
-    // If the manual page no longer maps to an existing block (rare race),
-    // re-derive.
     if (activeIdx < 0 || activeIdx >= blocks.length) activeIdx = blocks.length - 1;
-    // In manual mode with a pending advance waiter, there's another block
-    // coming after the last-rendered one — keep the Next arrow enabled so
-    // the user can click to reveal it.
     const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
 
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === activeIdx));
 
-    // Build / update nav. Reuses the existing .arcCtxSegNav node when
-    // present so we don't blow away user focus / click handlers every
-    // typewriter tick — which fires ~50 times per block.
-    let nav = body.querySelector('.arcCtxSegNav');
+    // Migrate any legacy nav that was inserted INSIDE the body (from
+    // earlier code) — pull it out so we don't have two navs.
+    const stale = body.querySelector(':scope > .arcCtxSegNav');
+    if (stale) stale.remove();
+
+    let nav = navHost.querySelector(':scope > .arcCtxSegNav');
     const needsRebuild = !nav || nav.querySelectorAll('.arcCtxSegDot').length !== blocks.length;
     if (needsRebuild) {
       if (nav) nav.remove();
@@ -11579,11 +11680,8 @@ window.__arcCtxSegmented = (function() {
         `<button class="arcCtxSegArrow arcCtxSegPrev" aria-label="Previous"${activeIdx <= 0 ? ' disabled' : ''}>&lsaquo;</button>` +
         `<div class="arcCtxSegDots">${dotHtml}</div>` +
         `<button class="arcCtxSegArrow arcCtxSegNext" aria-label="Next"${nextDisabled ? ' disabled' : ''}>&rsaquo;</button>`;
-      body.appendChild(nav);
-      // No per-button listeners — ensureDelegate() attached one click
-      // handler to the body that survives nav rebuilds.
+      navHost.appendChild(nav);
     } else {
-      // Cheap refresh without rebuilding — sync dot states + arrow disable.
       nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
         d.classList.toggle('is-active', i === activeIdx);
         d.classList.toggle('is-done',   blocks[i]?.classList.contains('is-done'));
@@ -16699,6 +16797,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function collectCityHits(clickLat, clickLon, radiusMi) {
         if (!window.__haversineMi) return [];
         const hits = [];
+        // Compute the canvas rect once so we can return per-hit screen
+        // coords for the leader-line overlay rendered by showCityFanUI.
+        const canvasRect = renderer.domElement.getBoundingClientRect();
         for (let i = 0; i < cities.length; i++) {
           if (cityPopMask && !cityPopMask[i]) continue;
           if (cityGdpMask && !cityGdpMask[i]) continue;
@@ -16711,7 +16812,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ).applyMatrix4(cityPoints.matrixWorld);
           if (!isCityVisible(np, camera)) continue;
           const d = window.__haversineMi(clickLat, clickLon, cLat, cLon);
-          if (d <= radiusMi) hits.push({ city: c, idx: i, dist_mi: d });
+          if (d > radiusMi) continue;
+          // Project to viewport coordinates so the fan can draw a leader
+          // line from each card to its city dot.
+          const proj = np.clone().project(camera);
+          const sx = canvasRect.left + (proj.x + 1) / 2 * canvasRect.width;
+          const sy = canvasRect.top  + (-proj.y + 1) / 2 * canvasRect.height;
+          hits.push({ city: c, idx: i, dist_mi: d, sx, sy });
         }
         hits.sort((a, b) => a.dist_mi - b.dist_mi);
         return hits;
@@ -16727,9 +16834,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const fanEl = document.getElementById('countryFan');
         if (!fanEl) return;
         fanEl.innerHTML = '';
-        // Cap the visible card count — beyond ~6 the fan becomes a wall
-        // of text. Sorted by distance already, so the closest 6 win.
         const visible = hits.slice(0, 6);
+        const cardEls = [];
         visible.forEach((h, i) => {
           const card = document.createElement('div');
           card.className = 'countryFanCard' + (i === 0 ? ' primary' : '');
@@ -16742,22 +16848,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
             dist.textContent = h.dist_mi.toFixed(0) + ' mi';
             card.appendChild(dist);
           }
-          // pointerup wins over click on iOS WKWebView in some Capacitor
-          // builds — bind both so the card always resolves.
           const onPick = (ev) => {
             ev.stopPropagation();
             ev.preventDefault();
             fanEl.classList.remove('visible');
+            hideCityFanLines();
             commitCityHit(h);
           };
           card.addEventListener('click', onPick);
           card.addEventListener('pointerup', onPick);
+          // Hover/touch-active highlights the corresponding leader line
+          // and its city dot ring so the user gets visual confirmation
+          // of which dot the card refers to.
+          card.addEventListener('pointerenter', () => highlightCityFanLine(i));
+          card.addEventListener('pointerleave', () => highlightCityFanLine(-1));
           fanEl.appendChild(card);
+          cardEls.push(card);
         });
-        // Position the fan so it stays on-screen. Default is "above the
-        // tap point" via the CSS transform (translate-Y: -100% - 14px).
-        // If that would clip the top of the viewport, flip it to
-        // "below the tap point" by toggling a modifier class.
         fanEl.classList.remove('cfBelow');
         const ESTIMATED_FAN_H = Math.min(visible.length * 44 + 14, 320);
         if (y - ESTIMATED_FAN_H < 12) {
@@ -16766,6 +16873,73 @@ const settingsToggle     = document.getElementById("settingsToggle");
         fanEl.style.left = x + 'px';
         fanEl.style.top  = y + 'px';
         fanEl.classList.add('visible');
+        // Render leader lines after the fan is visible so we can measure
+        // each card's actual on-screen rect.
+        requestAnimationFrame(() => drawCityFanLines(cardEls, visible));
+      }
+
+      // ── Leader-line overlay ─────────────────────────────────────────
+      // Each card in the fan gets a thin SVG line connecting its near
+      // edge to its city's screen position. Disambiguates which dot
+      // each label refers to without relying on geographic distance.
+      let _cityFanLineSvg = null;
+      function ensureCityFanLineSvg() {
+        if (_cityFanLineSvg && document.body.contains(_cityFanLineSvg)) return _cityFanLineSvg;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('id', 'cityFanLineSvg');
+        svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:719;pointer-events:none;display:none;';
+        document.body.appendChild(svg);
+        _cityFanLineSvg = svg;
+        return svg;
+      }
+      function hideCityFanLines() {
+        if (_cityFanLineSvg) {
+          _cityFanLineSvg.style.display = 'none';
+          while (_cityFanLineSvg.firstChild) _cityFanLineSvg.removeChild(_cityFanLineSvg.firstChild);
+        }
+      }
+      function drawCityFanLines(cardEls, hits) {
+        const svg = ensureCityFanLineSvg();
+        while (svg.firstChild) svg.removeChild(svg.firstChild);
+        svg.setAttribute('viewBox', `0 0 ${window.innerWidth} ${window.innerHeight}`);
+        for (let i = 0; i < cardEls.length; i++) {
+          const card = cardEls[i];
+          const h = hits[i];
+          if (!card || !h || !Number.isFinite(h.sx) || !Number.isFinite(h.sy)) continue;
+          const r = card.getBoundingClientRect();
+          // Anchor the line on whichever card edge is nearest the dot
+          // — produces a clean leader that doesn't cross the card.
+          const anchorX = h.sx <= r.left + r.width / 2 ? r.left : r.right;
+          const anchorY = r.top + r.height / 2;
+          // Quadratic curve so the line gently bends toward the dot
+          // rather than lying flat on the screen.
+          const dx = h.sx - anchorX;
+          const dy = h.sy - anchorY;
+          const cx = anchorX + dx * 0.35 + (dx >= 0 ? 12 : -12);
+          const cy = anchorY + dy * 0.65;
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          path.setAttribute('d', `M ${anchorX.toFixed(1)} ${anchorY.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${h.sx.toFixed(1)} ${h.sy.toFixed(1)}`);
+          path.setAttribute('class', 'cfLeader' + (i === 0 ? ' is-primary' : ''));
+          path.setAttribute('data-card-idx', String(i));
+          // Target dot ring at the city node — pulses to draw the eye.
+          const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          dot.setAttribute('cx', h.sx.toFixed(1));
+          dot.setAttribute('cy', h.sy.toFixed(1));
+          dot.setAttribute('r', i === 0 ? '6' : '5');
+          dot.setAttribute('class', 'cfLeaderDot' + (i === 0 ? ' is-primary' : ''));
+          dot.setAttribute('data-card-idx', String(i));
+          svg.appendChild(path);
+          svg.appendChild(dot);
+        }
+        svg.style.display = 'block';
+      }
+      function highlightCityFanLine(idx) {
+        if (!_cityFanLineSvg) return;
+        const all = _cityFanLineSvg.querySelectorAll('.cfLeader, .cfLeaderDot');
+        all.forEach(el => {
+          const i = Number(el.getAttribute('data-card-idx'));
+          el.classList.toggle('is-hover', i === idx);
+        });
       }
 
       window.addEventListener("click", event => {
@@ -16872,10 +17046,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (currentViewMode === "city" && typeof window.__screenToLatLon === "function") {
           const ll = window.__screenToLatLon(event.clientX, event.clientY);
           const fanEl = document.getElementById('countryFan');
-          if (!ll) { if (fanEl) fanEl.classList.remove('visible'); return; }
+          if (!ll) { if (fanEl) fanEl.classList.remove('visible'); hideCityFanLines(); return; }
           const hits = collectCityHits(ll.lat, ll.lon, cityFanRadiusMi());
-          if (hits.length === 0) { if (fanEl) fanEl.classList.remove('visible'); return; }
-          if (hits.length === 1) { if (fanEl) fanEl.classList.remove('visible'); commitCityHit(hits[0]); return; }
+          if (hits.length === 0) { if (fanEl) fanEl.classList.remove('visible'); hideCityFanLines(); return; }
+          if (hits.length === 1) { if (fanEl) fanEl.classList.remove('visible'); hideCityFanLines(); commitCityHit(hits[0]); return; }
           showCityFanUI(hits, event.clientX, event.clientY);
           return;
         }
@@ -26425,7 +26599,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="flowCtxTitle"></div>
         <div class="flowCtxMeta"></div>
       </div>
-      <div class="flowCtxLiveArcsSlot"></div>
+      <div class="flowCtxLiveArcsSlot">
+        <!-- Section title for the live arcs panel. Same DOM is reused
+             across Article / Thread / Timeline flows, so this single
+             label surfaces in all three contexts. -->
+        <div class="flowCtxLiveArcsTitle">
+          <span class="flowCtxLiveArcsDot"></span>
+          <span>Routes</span>
+        </div>
+      </div>
       <label class="flowCtxLabelsChk" title="Show origin &amp; destination labels on the globe">
         <input type="checkbox" id="flowCtxLabelsToggle" checked>
         <span>Labels</span>
