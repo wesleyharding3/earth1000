@@ -11630,18 +11630,15 @@ window.__arcCtxSegmented = (function() {
     if (!body) return;
     ensureDelegate(body);
     const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
-    // The nav lives as a SIBLING of the body, not inside it. Reason:
-    // putting it inside .arcCtxBody (which has overflow-y: auto) made
-    // sticky/absolute positioning unreliable across our three host
-    // surfaces — flow ctx panel, cluster detail, article detail —
-    // because each has different parent overflow behavior. Mounting
-    // outside the scroll container makes positioning bulletproof:
-    // we anchor to the nearest non-scrolling ancestor (the panel
-    // itself), which always has a fixed visual bottom.
     const navHost = body.parentElement || body;
-    if (blocks.length < 2) {
+    // Manual-mode streams pause AFTER each block finishes typing, then
+    // wait for the user to click Next before pushing the next block.
+    // Without showing the nav at this point, the very first block has
+    // no Next arrow to click and the stream is stuck forever. So when
+    // morePending is true we keep the nav visible even with one block.
+    const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
+    if (blocks.length < 2 && !morePending) {
       body.classList.remove('arcCtxStateSegmented');
-      // Remove any existing nav from EITHER body (legacy) or host.
       body.querySelector(':scope > .arcCtxSegNav')?.remove();
       navHost.querySelector(':scope > .arcCtxSegNav')?.remove();
       blocks.forEach(b => b.classList.remove('arcCtxBlock--active'));
@@ -11649,7 +11646,6 @@ window.__arcCtxSegmented = (function() {
       return;
     }
     body.classList.add('arcCtxStateSegmented');
-    // Mark the nav host so scoped CSS can target it without leaking.
     navHost.classList.add('arcCtxSegHost');
 
     const manualIdx = body.dataset.segManualIdx != null
@@ -11657,7 +11653,6 @@ window.__arcCtxSegmented = (function() {
       : null;
     let activeIdx = pickActiveIndex(blocks, manualIdx);
     if (activeIdx < 0 || activeIdx >= blocks.length) activeIdx = blocks.length - 1;
-    const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
 
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === activeIdx));
 
