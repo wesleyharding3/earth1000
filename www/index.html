@@ -10964,6 +10964,25 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 .acctDpBtn.delete svg { opacity: 0.55; }
 .acctDpBtn.delete:hover svg { opacity: 0.95; }
 
+/* ── Settings sub-view header (back button + title) ── */
+.acctDpSettingsHeader {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 12px 9px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+.acctDpBack {
+  background: none; border: none; padding: 4px 6px;
+  color: rgba(255,255,255,0.55); cursor: pointer;
+  display: inline-flex; align-items: center; border-radius: 6px;
+  transition: background 0.14s, color 0.14s;
+}
+.acctDpBack:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.acctDpBack svg { width: 14px; height: 14px; }
+.acctDpSettingsTitle {
+  font-size: 11px; color: rgba(255,255,255,0.55);
+  letter-spacing: 0.09em; text-transform: uppercase; font-weight: 700;
+}
+
 /* ── Delete-account confirmation modal ──
    Two-step destructive flow per App Store guideline 5.1.1(v):
    user must type DELETE to enable the destructive button. */
@@ -12258,73 +12277,125 @@ window.__arcCtxSegmented = (function() {
         <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
       </svg>
       <div id="accountDropdown">
-        <div class="acctDpHeader">
-          <div class="acctDpEmail" id="acctDpEmail">—</div>
-          <span class="acctDpTier free" id="acctDpTier">Free</span>
-        </div>
-        <!-- Credit meter — populated by window.__refreshCreditMeter() every
-             time the dropdown opens. Hidden until the first fetch resolves
-             so there's no flicker of a zero meter for fresh sessions. -->
-        <div class="acctDpCreditBox" id="acctDpCreditBox" style="display:none;">
-          <div class="acctDpCreditHeader">
-            <span class="acctDpCreditLabel">AI credits</span>
-            <span class="acctDpCreditValue" id="acctDpCreditValue">—</span>
+        <!-- ── Main view ─────────────────────────────────────────────── -->
+        <div id="acctDpMain">
+          <div class="acctDpHeader">
+            <div class="acctDpEmail" id="acctDpEmail">—</div>
+            <span class="acctDpTier free" id="acctDpTier">Free</span>
           </div>
-          <div class="acctDpCreditBar">
-            <div class="acctDpCreditBarFill" id="acctDpCreditBarFill" style="width:0%"></div>
+          <!-- Credit meter — populated by window.__refreshCreditMeter() every
+               time the dropdown opens. Hidden until the first fetch resolves
+               so there's no flicker of a zero meter for fresh sessions. -->
+          <div class="acctDpCreditBox" id="acctDpCreditBox" style="display:none;">
+            <div class="acctDpCreditHeader">
+              <span class="acctDpCreditLabel">AI credits</span>
+              <span class="acctDpCreditValue" id="acctDpCreditValue">—</span>
+            </div>
+            <div class="acctDpCreditBar">
+              <div class="acctDpCreditBarFill" id="acctDpCreditBarFill" style="width:0%"></div>
+            </div>
+            <div class="acctDpCreditSub" id="acctDpCreditSub">—</div>
           </div>
-          <div class="acctDpCreditSub" id="acctDpCreditSub">—</div>
+          <div class="acctDpBtn" id="acctDpUpgrade" onclick="window.__openPricing()" style="color:rgba(212,168,67,0.9)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/>
+            </svg>
+            Upgrade Plan
+          </div>
+          <div class="acctDpBtn" id="acctDpSaved">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            </svg>
+            Saved
+            <span class="acctDpCount" id="acctDpSavedCount" style="display:none">0</span>
+          </div>
+          <div class="acctDpBtn" id="acctDpHistory">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+            History
+          </div>
+          <!-- Preferences / onboarding questionnaire is temporarily disabled.
+               Hidden via style="display:none" rather than deleted so we can
+               re-enable simply by removing the style once the questionnaire
+               is revised. All underlying code (window.__openPreferences,
+               showOnboarding, _obData, etc.) remains intact. -->
+          <div class="acctDpBtn" id="acctDpPreferences" style="display:none" onclick="window.__openPreferences?.()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+            </svg>
+            Preferences
+          </div>
+          <div class="acctDpBtn" id="acctDpSettingsOpen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+            </svg>
+            Settings
+          </div>
+          <div class="acctDpBtn signout" id="acctDpSignOut">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            Sign Out
+          </div>
         </div>
-        <div class="acctDpBtn" id="acctDpUpgrade" onclick="window.__openPricing()" style="color:rgba(212,168,67,0.9)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/>
-          </svg>
-          Upgrade Plan
-        </div>
-        <div class="acctDpBtn" id="acctDpSaved">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-          </svg>
-          Saved
-          <span class="acctDpCount" id="acctDpSavedCount" style="display:none">0</span>
-        </div>
-        <div class="acctDpBtn" id="acctDpHistory">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-          History
-        </div>
-        <!-- Preferences / onboarding questionnaire is temporarily disabled.
-             Hidden via style="display:none" rather than deleted so we can
-             re-enable simply by removing the style once the questionnaire
-             is revised. All underlying code (window.__openPreferences,
-             showOnboarding, _obData, etc.) remains intact. -->
-        <div class="acctDpBtn" id="acctDpPreferences" style="display:none" onclick="window.__openPreferences?.()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-          </svg>
-          Preferences
-        </div>
-        <div class="acctDpBtn signout" id="acctDpSignOut">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
-          Sign Out
-        </div>
-        <!-- App Store guideline 5.1.1(v): in-app account deletion is
-             required since 2022. Hidden until signed in (the dropdown
-             itself is gated upstream). -->
-        <div class="acctDpBtn delete" id="acctDpDelete">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-            <path d="M10 11v6"/>
-            <path d="M14 11v6"/>
-            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-          </svg>
-          Delete Account
+
+        <!-- ── Settings sub-view ─────────────────────────────────────── -->
+        <!-- Houses iOS-only Restore Purchases (App Store 3.1.1), legal
+             docs (privacy + terms), and the destructive Delete Account
+             flow (App Store 5.1.1(v)). Toggled via acctDpSettingsOpen /
+             acctDpSettingsBack; reset to main when the dropdown closes. -->
+        <div id="acctDpSettings" style="display:none;">
+          <div class="acctDpSettingsHeader">
+            <button class="acctDpBack" id="acctDpSettingsBack" type="button" aria-label="Back">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 18l-6-6 6-6"/>
+              </svg>
+            </button>
+            <span class="acctDpSettingsTitle">Settings</span>
+          </div>
+          <!-- Restore Purchases — iOS-only, shown by JS when running inside
+               the Capacitor iOS shell. App Store guideline 3.1.1 requires
+               this for any subscription app. Calls Purchases.restorePurchases()
+               then refreshes tier from /subscription-status. -->
+          <div class="acctDpBtn" id="acctDpRestore" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15A9 9 0 1 1 5.64 7.76L9.36 11.5"/>
+            </svg>
+            Restore Purchases
+          </div>
+          <div class="acctDpBtn" id="acctDpPrivacy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+            Privacy Policy
+          </div>
+          <div class="acctDpBtn" id="acctDpTerms">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+              <polyline points="10 9 9 9 8 9"/>
+            </svg>
+            Terms of Service
+          </div>
+          <!-- App Store guideline 5.1.1(v): in-app account deletion is
+               required since 2022. Hidden until signed in (the dropdown
+               itself is gated upstream). -->
+          <div class="acctDpBtn delete" id="acctDpDelete">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6"/>
+              <path d="M14 11v6"/>
+              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+            </svg>
+            Delete Account
+          </div>
         </div>
       </div>
     </div>
@@ -32710,6 +32781,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const opening = !accountDropdown.classList.contains('open');
       if (opening) positionAccountDropdown();
       if (opening) { try { window.__refreshCreditMeter?.(); } catch (_) {} }
+      // Always reopen at the main view, never stuck on Settings.
+      if (opening) { try { window.__acctDpResetView?.(); } catch (_) {} }
       accountDropdown.classList.toggle('open');
       if (_topCluster) _topCluster.style.zIndex = opening ? '10001' : '';
       clearTimeout(_acctDropTimer);
@@ -32849,6 +32922,88 @@ const settingsToggle     = document.getElementById("settingsToggle");
   if (authAppleBtn) authAppleBtn.addEventListener('click', signInWithApple);
 
   acctDpSignOut.addEventListener('click', e => { e.stopPropagation(); signOut(); });
+
+  /* ── Account settings sub-panel ──
+     Toggles the dropdown between the main view and a Settings sub-view
+     containing Restore Purchases (iOS-only), Privacy, Terms, and the
+     destructive Delete Account flow. The Restore button is shown only
+     inside the Capacitor iOS shell since web users have nothing to
+     restore (their PayPal sub state is already in the DB). The sub-view
+     resets to main whenever the dropdown closes so the next open is
+     always at the top level. */
+  (function _wireAccountSettings() {
+    const main      = document.getElementById('acctDpMain');
+    const settings  = document.getElementById('acctDpSettings');
+    const openBtn   = document.getElementById('acctDpSettingsOpen');
+    const backBtn   = document.getElementById('acctDpSettingsBack');
+    const restore   = document.getElementById('acctDpRestore');
+    const privacy   = document.getElementById('acctDpPrivacy');
+    const terms     = document.getElementById('acctDpTerms');
+    if (!main || !settings || !openBtn || !backBtn) return;
+
+    function showSettings() { main.style.display = 'none';  settings.style.display = ''; }
+    function showMain()     { main.style.display = '';      settings.style.display = 'none'; }
+    window.__acctDpResetView = showMain;
+
+    openBtn.addEventListener('click', e => { e.stopPropagation(); showSettings(); });
+    backBtn.addEventListener('click', e => { e.stopPropagation(); showMain(); });
+
+    // iOS-only: surface Restore Purchases when running inside Capacitor.
+    // _isCapIos() lives in the pricing block; if it's not loaded yet
+    // (script ordering), guard with optional chaining.
+    if (restore && (window.Capacitor?.getPlatform?.() === 'ios')) {
+      restore.style.display = '';
+      restore.addEventListener('click', async e => {
+        e.stopPropagation();
+        const Purchases = window.Capacitor?.Plugins?.Purchases;
+        if (!Purchases) {
+          window.__showToast?.('Restore is unavailable on this device.');
+          return;
+        }
+        try {
+          window.__showToast?.('Restoring purchases…');
+          await Purchases.restorePurchases();
+          // RevenueCat fires INITIAL_PURCHASE on the first restore for an
+          // install, RENEWAL/UNCANCELLATION on subsequent ones — all land
+          // on /revenuecat/webhook and update the DB. Wait briefly for
+          // the round-trip, then pull fresh tier from our backend.
+          setTimeout(() => {
+            const before = window.__userTier || 'free';
+            window.__refreshSubscriptionState?.().then(() => {
+              const after = window.__userTier || 'free';
+              if (after !== 'free' && after !== before) {
+                window.__showToast?.(`Subscription restored: ${after}`);
+              } else if (after === 'free') {
+                window.__showToast?.('No purchases to restore.');
+              } else {
+                window.__showToast?.('Already up to date.');
+              }
+            });
+          }, 1500);
+        } catch (err) {
+          if (err?.userCancelled) return;
+          console.error('[rc] restore failed:', err);
+          window.__showToast?.(`Restore failed: ${err?.message || 'unknown error'}`);
+        }
+      });
+    }
+
+    // Legal docs — Privacy + Terms. Open via Capacitor Browser plugin
+    // when available (gives the user a Safari sheet with a Done button
+    // to return), otherwise fall back to window.open. Internal pages
+    // bundled at /privacy.html and /terms.html.
+    function openLegalDoc(path) {
+      const url = new URL(path, window.location.origin).href;
+      const Browser = window.Capacitor?.Plugins?.Browser;
+      if (Browser?.open) {
+        Browser.open({ url, presentationStyle: 'popover' }).catch(() => window.open(url, '_blank'));
+      } else {
+        window.open(url, '_blank');
+      }
+    }
+    privacy?.addEventListener('click', e => { e.stopPropagation(); openLegalDoc('/privacy.html'); });
+    terms?.addEventListener('click',   e => { e.stopPropagation(); openLegalDoc('/terms.html');   });
+  })();
 
   /* ── Delete Account (App Store guideline 5.1.1(v)) ──
      Two-step destructive flow:
