@@ -10457,7 +10457,8 @@ window.fmtDate = function(d) {
   // 20 s on first-load under contention, surfacing as "[auth] backend
   // tier load failed: Fetch is aborted" in the console and forcing
   // the Supabase direct-read fallback. Put it on the long-timeout list.
-  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status'];
+  // Claude-backed endpoints can take 8-20s on cache miss; bump these to long timeout.
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status', '/api/keywords/explain', '/api/cluster-node/summary', '/api/explain', '/api/ai/flow-context', '/api/threads/by-country/'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);

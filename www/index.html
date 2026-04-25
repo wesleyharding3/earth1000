@@ -11018,7 +11018,11 @@ window.fmtDate = function(d) {
   // the console and forcing the Supabase direct-read fallback path.
   // Put it on the long-timeout list so genuine slowness doesn't flip
   // the abort.
-  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status'];
+  // /api/keywords/explain + /api/cluster-node/summary + /api/explain +
+  // /api/ai/flow-context all hit Claude on cache miss — easily 8–20s
+  // even on a warm DB. Default 20s timeout was triggering false-abort
+  // on first-click cold misses.
+  const LONG_TIMEOUT_PATTERNS = ['/api/news/search', '/api/threads/latest', '/api/timelines/latest', '/api/flows', '/api/countries', '/api/cities', '/api/payments/subscription-status', '/api/keywords/explain', '/api/cluster-node/summary', '/api/explain', '/api/ai/flow-context', '/api/threads/by-country/'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);

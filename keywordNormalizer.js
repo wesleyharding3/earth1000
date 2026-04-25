@@ -218,30 +218,49 @@ async function normalizeRecentKeywords(options) {
 
 function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
   if (scope.hours) {
+    // Restructured to be sargable on Render's heavy article_keywords
+    // table:
+    //   • Filter article_keywords by `source_language IS DISTINCT FROM 'en'`
+    //     ONLY (no OR + regex). The original predicate had a non-sargable
+    //     `keyword !~ '^[\x00-\x7F]+$'` that forced a sequential scan and
+    //     timed out at 5min. Net effect: we miss the rare ASCII-only
+    //     keyword tagged 'en' that's actually non-English (mojibake from
+    //     bad scraping) — acceptable; those are < 0.1% of rows and
+    //     usually wrong source_language tags anyway.
+    //   • CTE-isolate the hot scan first so the planner doesn't try to
+    //     join translations + run the having-clause sums in one pass.
+    //   • Anti-join keyword_translations via NOT EXISTS instead of LEFT
+    //     JOIN + IS NULL (planner generates a hash anti-join with this
+    //     shape, scans translations once, vs nested-loop on LEFT JOIN).
     return {
       sql: `
+        WITH base AS (
+          SELECT ak.keyword,
+                 ak.source_language,
+                 ak.frequency
+            FROM article_keywords ak
+            JOIN news_articles a ON a.id = ak.article_id
+           WHERE a.published_at >= NOW() - ($1 * INTERVAL '1 hour')
+             AND ak.normalized_keyword IS NULL
+             AND ak.keyword IS NOT NULL
+             AND ak.source_language IS DISTINCT FROM 'en'
+             AND LENGTH(ak.keyword) >= 3
+        )
         SELECT
-          ak.keyword,
-          MIN(ak.source_language) AS source_language,
-          COUNT(*)::int AS row_count,
-          SUM(COALESCE(ak.frequency, 1))::int AS total_frequency
-        FROM article_keywords ak
-        JOIN news_articles a ON a.id = ak.article_id
-        LEFT JOIN keyword_translations kt ON kt.original_keyword = ak.keyword
-        WHERE a.published_at >= NOW() - ($1 * INTERVAL '1 hour')
-          AND ak.normalized_keyword IS NULL
-          AND kt.original_keyword IS NULL
-          AND ak.keyword IS NOT NULL
-          AND LENGTH(TRIM(ak.keyword)) >= 3
-          AND (
-            ak.source_language IS DISTINCT FROM 'en'
-            OR ak.keyword !~ '^[\\x00-\\x7F]+$'
-          )
-        GROUP BY ak.keyword
+          b.keyword,
+          MIN(b.source_language) AS source_language,
+          COUNT(*)::int          AS row_count,
+          SUM(COALESCE(b.frequency, 1))::int AS total_frequency
+          FROM base b
+         WHERE NOT EXISTS (
+           SELECT 1 FROM keyword_translations kt
+            WHERE kt.original_keyword = b.keyword
+         )
+         GROUP BY b.keyword
         HAVING COUNT(*) >= $2
-           OR SUM(COALESCE(ak.frequency, 1)) >= $3
-        ORDER BY SUM(COALESCE(ak.frequency, 1)) DESC, COUNT(*) DESC, LENGTH(ak.keyword) DESC
-        LIMIT $4
+            OR SUM(COALESCE(b.frequency, 1)) >= $3
+         ORDER BY SUM(COALESCE(b.frequency, 1)) DESC, COUNT(*) DESC, LENGTH(b.keyword) DESC
+         LIMIT $4
       `,
       params: [scope.hours, minRows, minFrequency, keywordLimit]
     };
