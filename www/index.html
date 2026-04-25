@@ -4192,17 +4192,21 @@ button.arcCtxSegDot,
         min-height: 0;
         overflow: hidden;
       }
-      /* Title expands to fill the room the summary vacated. cdCardTitle
-         already has no summary sibling so the extra clamp gives it room
-         to breathe across two or three lines. */
+      /* Cap the title at 3 lines AND a hard max-height. Without the
+         max-height a long title in iOS WebView (where -webkit-line-clamp
+         is sometimes flaky) can balloon and shove the source/date row
+         off the bottom of the 280px card. The 58px cap ≈ 3 × 19px line-
+         height; anything taller gets clipped silently. */
       .gridView-2col .articleCardTitle,
       .gridView-2col .nfCardTitle,
       .gridView-2col .nfThreadCardTitle,
       .gridView-2col .cdCardTitle {
-        -webkit-line-clamp: 4 !important;
+        -webkit-line-clamp: 3 !important;
         display: -webkit-box !important;
         -webkit-box-orient: vertical !important;
-        overflow: hidden;
+        overflow: hidden !important;
+        max-height: 58px !important;
+        flex-shrink: 0 !important;
       }
     }
 
@@ -4505,9 +4509,18 @@ button.arcCtxSegDot,
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  padding: 3px 7px;
+  /* Fixed-square footprint so "EN" sits centered in a small button
+     instead of an asymmetric pill. Padding-based sizing produced a
+     rectangle that read as a "tag" rather than a control. */
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  line-height: 1.3;
+  line-height: 1;
   transition: color 0.15s, border-color 0.15s, opacity 0.15s;
   white-space: nowrap;
   pointer-events: all;
@@ -4517,13 +4530,20 @@ button.arcCtxSegDot,
 .articleTranslateBtn.done  { color: rgba(100,220,130,0.7);  border-color: rgba(100,220,130,0.3); cursor: default; }
 .articleTranslateBtn.error { color: rgba(220,100,100,0.7);  border-color: rgba(220,100,100,0.3); cursor: default; }
 
-/* ── Flow Arc button on cards ── */
+/* ── Flow Arc button on cards ──
+   iOS WebView ignores width/height on <button> unless box-sizing +
+   min/max are pinned (same trick used for .flowCtxAiBtn). Without
+   these the 30×30 spec elongated to a rectangle on mobile. */
 .cardFlowArcBtn {
   position: absolute;
   top: 8px;
   right: 8px;
   z-index: 12;
-  width: 30px; height: 30px;
+  box-sizing: border-box;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px; max-width: 30px;
+  min-height: 30px; max-height: 30px;
   background: rgba(0,0,0,0.60);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 50%;
@@ -4543,6 +4563,45 @@ button.arcCtxSegDot,
 .cardFlowArcBtn:active { transform: scale(0.95); }
 .cardFlowArcBtn svg { width: 16px; height: 16px; color: rgba(255,255,255,0.55); }
 .cardFlowArcBtn:hover svg { color: rgba(100,200,255,0.9); }
+
+/* ── Save button on thread/line cards — sits directly under the flow-
+   arc button, same shape, gold accent when saved. Saves into the same
+   localStorage 'earth00_saved' that the account panel "Saved" item
+   surfaces. */
+.cardSaveBtn {
+  position: absolute;
+  top: 46px;
+  right: 8px;
+  z-index: 12;
+  box-sizing: border-box;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px; max-width: 30px;
+  min-height: 30px; max-height: 30px;
+  background: rgba(0,0,0,0.60);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, transform 0.15s;
+  pointer-events: all;
+  padding: 0;
+}
+.cardSaveBtn:hover {
+  background: rgba(255,195,70,0.22);
+  border-color: rgba(255,195,70,0.55);
+  transform: scale(1.12);
+}
+.cardSaveBtn:active { transform: scale(0.95); }
+.cardSaveBtn svg { width: 16px; height: 16px; color: rgba(255,255,255,0.55); transition: color 0.15s, fill 0.15s; }
+.cardSaveBtn:hover svg { color: rgba(255,210,140,0.95); }
+.cardSaveBtn.saved {
+  background: rgba(255,195,70,0.30);
+  border-color: rgba(255,195,70,0.65);
+}
+.cardSaveBtn.saved svg { color: rgba(255,210,140,0.95); fill: currentColor; }
 
 /* Thread card flow button — position differently since thread cards have different layout */
 .nfThreadCard .cardFlowArcBtn { top: 8px; right: 8px; }
@@ -24605,6 +24664,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Click delegation — one handler covers every .gridViewToggle
     // instance on the page, including ones added later via innerHTML.
+    // CAPTURE phase: the country/city #infoPanel installs a bubble-phase
+    // click handler that calls stopPropagation() to keep panel clicks from
+    // leaking to the globe behind. A bubble-phase delegate here would
+    // never fire for toggles inside infoPanel. Capture intercepts on the
+    // way down before infoPanel's bubble handler runs.
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('.gridViewToggle button');
       if (!btn) return;
@@ -24613,7 +24677,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       e.preventDefault();
       e.stopPropagation();
       setView(view);
-    });
+    }, true);
 
     // MutationObserver: re-apply whenever a new grid or toggle appears.
     // Rate-limited with rAF to avoid thrashing on large innerHTML
@@ -25562,8 +25626,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // panel-open path fetched /api/threads/id/undefined/... — both
         // silently fail. Coalesce so both shapes resolve cleanly.
         const entityId = t.thread_id ?? t.timeline_id ?? t.id;
+        const saveKind = isTimeline ? 'timeline' : 'thread';
+        const isSavedNow = !!(window.__libraryIsSaved && window.__libraryIsSaved(entityId, saveKind));
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
-        return `<div style="position:relative">${threadFlowBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
+        const threadSaveBtn = `<button class="cardSaveBtn${isSavedNow ? ' saved' : ''}" data-save-id="${entityId}" data-save-kind="${saveKind}" title="${isSavedNow ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${isSavedNow ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
+        return `<div style="position:relative">${threadFlowBtn}${threadSaveBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
@@ -25676,6 +25743,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 const t = JSON.parse(this.dataset.thread);
                 openThreadInPanel(t);
               } catch(e) { console.warn('Failed to open item:', e); }
+            });
+          }
+          // Save button — sits as a sibling of .nfThreadCard inside the
+          // wrapper, so its clicks don't bubble through the card open
+          // handler. Resolve the entity from the card's data-thread.
+          const saveBtn = wrapper.querySelector?.('.cardSaveBtn');
+          if (saveBtn && inner) {
+            saveBtn.addEventListener('click', function(e) {
+              try {
+                const t = JSON.parse(inner.dataset.thread);
+                const kind = saveBtn.dataset.saveKind || 'thread';
+                window.toggleSaveThread(e, saveBtn, t, kind);
+              } catch(err) { console.warn('Save toggle failed:', err); }
             });
           }
           fragment.appendChild(wrapper);
@@ -32644,10 +32724,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       return;
     }
     lc.innerHTML = items.map((it, i) => `
-      <div class="libItem" data-idx="${i}" data-url="${it.url || ''}">
+      <div class="libItem" data-idx="${i}" data-url="${it.url || ''}" data-type="${it.type || 'article'}">
         <div class="libItemBody">
           <div class="libItemTitle">${it.title || 'Untitled'}</div>
-          <div class="libItemMeta">${it.source || ''} · ${it.date || ''}</div>
+          <div class="libItemMeta">${it.source || (it.type === 'thread' ? 'Thread' : it.type === 'timeline' ? 'Line' : '')}${(it.source || it.type) && it.date ? ' · ' : ''}${it.date || ''}</div>
         </div>
         ${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}
       </div>`).join('');
@@ -32655,8 +32735,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
     lc.querySelectorAll('.libItem').forEach(el => {
       el.addEventListener('click', e => {
         if (e.target.closest('.libItemRemove')) return;
-        const url = el.dataset.url;
-        if (url) window.open(url, '_blank');
+        const idx = parseInt(el.dataset.idx);
+        const it = items[idx];
+        if (!it) return;
+        // Threads + lines reopen in their cluster panel via the saved
+        // payload (we stored the full thread/timeline object on save so
+        // this works without a network fetch and without needing
+        // separate fetch endpoints per type).
+        if ((it.type === 'thread' || it.type === 'timeline') && it.data && window.openThreadInPanel) {
+          window.openThreadInPanel(it.data);
+          getLibPanel()?.classList.remove('open');
+          return;
+        }
+        if (it.url) window.open(it.url, '_blank');
       });
     });
     lc.querySelectorAll('.libItemRemove').forEach(btn => {
@@ -32690,18 +32781,60 @@ const settingsToggle     = document.getElementById("settingsToggle");
   document.getElementById('acctDpSaved').addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
   document.getElementById('acctDpHistory').addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
 
-  // Public API for other parts of the app to save/track items
+  // Public API for other parts of the app to save/track items.
+  // Items now carry a `type` ('article' | 'thread' | 'timeline') so a
+  // thread with id=42 doesn't collide with an article id=42. For
+  // threads/timelines we also stash the full source object on `data`
+  // so reopening from the library doesn't need a network fetch (and
+  // works for timelines, which lack a /api/timelines/id/{id} endpoint).
   window.__librarySave = function(item) {
-    if (_savedItems.some(s => s.id === item.id)) return;
-    _savedItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: item.url || '', date: item.published_at ? item.published_at.slice(0, 10) : '' });
+    const t = item.type || 'article';
+    if (_savedItems.some(s => s.id === item.id && (s.type || 'article') === t)) return;
+    _savedItems.unshift({
+      id: item.id,
+      type: t,
+      title: item.title,
+      source: item.source_name || item.source || '',
+      url: item.url || '',
+      date: item.published_at ? item.published_at.slice(0, 10) : (item.date || ''),
+      data: t === 'article' ? null : (item.data || item),
+    });
     if (_savedItems.length > 200) _savedItems.length = 200;
     _persistSaved(); _updateSavedCount();
   };
-  window.__libraryUnsave = function(id) {
-    _savedItems = _savedItems.filter(s => s.id !== id);
+  window.__libraryUnsave = function(id, type) {
+    const t = type || 'article';
+    _savedItems = _savedItems.filter(s => !(s.id === id && (s.type || 'article') === t));
     _persistSaved(); _updateSavedCount(); if (libraryPanel.classList.contains('open') && _libTab === 'saved') _renderLib();
   };
-  window.__libraryIsSaved = function(id) { return _savedItems.some(s => s.id === id); };
+  window.__libraryIsSaved = function(id, type) {
+    const t = type || 'article';
+    return _savedItems.some(s => s.id === id && (s.type || 'article') === t);
+  };
+  // Toggle helper for the .cardSaveBtn rendered on thread/line cards.
+  // `entity` is the full thread/timeline object (so we can stash it
+  // on the saved item's `data` field for reopen).
+  window.toggleSaveThread = function(e, btn, entity, kind) {
+    if (e) { e.stopPropagation(); e.preventDefault(); }
+    if (!entity) return;
+    const id = entity.thread_id ?? entity.timeline_id ?? entity.id;
+    if (id == null) return;
+    if (window.__libraryIsSaved(id, kind)) {
+      window.__libraryUnsave(id, kind);
+      btn.classList.remove('saved');
+      btn.title = 'Save';
+    } else {
+      window.__librarySave({
+        id,
+        type: kind,
+        title: entity.title || entity.name || (kind === 'timeline' ? 'Line' : 'Thread'),
+        date: entity.last_event_at || entity.updated_at || entity.created_at || '',
+        data: entity,
+      });
+      btn.classList.add('saved');
+      btn.title = 'Remove from saved';
+    }
+  };
   window.__libraryTrackView = function(item) {
     _historyItems = _historyItems.filter(h => h.id !== item.id);
     _historyItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: item.url || '', date: new Date().toISOString().slice(0, 10) });
