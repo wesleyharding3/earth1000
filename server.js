@@ -11245,8 +11245,10 @@ Output rules:
    auth is gone, the user can't access leftover rows, and a periodic
    cleanup job can sweep orphans later.
 
-   TODO: when Stripe is wired, cancel any active subscription before
-   step 1 to prevent further charges.
+   Active PayPal/Apple subscriptions are intentionally NOT cancelled
+   here — users must cancel via PayPal's portal or iOS Settings →
+   Subscriptions before deleting. The subscription row is preserved so
+   late webhooks (renewal, refund) still have a target to update.
 ========================================= */
 app.delete("/api/account", async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);

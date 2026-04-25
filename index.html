@@ -30387,7 +30387,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>
 
     </div>
-    <div class="pricingNote">Cancel anytime · Secured by Stripe &amp; PayPal</div>
+    <div class="pricingNote" id="pricingProcessorNote">Cancel anytime · Secured by PayPal</div>
   </div>
 </div>
 
@@ -32098,6 +32098,107 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   window.__updatePricingState = _updatePricingCtaState;
 
+  // ── Capacitor iOS detection ────────────────────────────────────
+  // On iOS, App Store rules forbid charging users via any non-Apple
+  // payment processor for in-app digital subscriptions. Pricing modal
+  // must show ONLY the Apple/RevenueCat path on iOS — never PayPal.
+  function _isCapIos() {
+    return window.Capacitor?.getPlatform?.() === 'ios';
+  }
+
+  // ── RevenueCat (iOS only) ──────────────────────────────────────
+  let _rcConfig = null;
+  let _rcConfigPromise = null;
+  let _rcConfiguredFor = null;
+
+  async function _loadRevenueCatConfig() {
+    if (_rcConfig) return _rcConfig;
+    if (_rcConfigPromise) return _rcConfigPromise;
+    _rcConfigPromise = fetch(`${BASE}/api/payments/revenuecat/config`)
+      .then(async (res) => {
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload.error || `HTTP ${res.status}`);
+        _rcConfig = payload;
+        return payload;
+      })
+      .finally(() => { _rcConfigPromise = null; });
+    return _rcConfigPromise;
+  }
+
+  // Idempotent. .configure() runs once with the user's Supabase id; later
+  // calls .logIn() to swap user without re-creating the SDK.
+  async function _rcInit(userId) {
+    if (!_isCapIos() || !userId) return false;
+    const Purchases = window.Capacitor?.Plugins?.Purchases;
+    if (!Purchases) {
+      console.warn('[rc] Capacitor.Plugins.Purchases missing — run `npx cap sync ios`?');
+      return false;
+    }
+    if (_rcConfiguredFor === userId) return true;
+
+    const cfg = await _loadRevenueCatConfig().catch(() => null);
+    if (!cfg?.apiKey) return false;
+
+    try {
+      if (_rcConfiguredFor === null) {
+        await Purchases.configure({ apiKey: cfg.apiKey, appUserID: userId });
+      } else {
+        await Purchases.logIn({ appUserID: userId });
+      }
+      _rcConfiguredFor = userId;
+      return true;
+    } catch (err) {
+      console.warn('[rc] init failed:', err?.message || err);
+      return false;
+    }
+  }
+  window.__initRevenueCat = _rcInit;
+
+  function _rcRenderBtn(containerId, tier) {
+    const container = document.getElementById(containerId);
+    if (!container || container.dataset.rendered === '1') return;
+    container.innerHTML = `<button class="pricingTierCta active" type="button">Subscribe with Apple</button>`;
+    container.querySelector('button')?.addEventListener('click', async () => {
+      if (!window.__authToken || !window.__currentUser?.id) {
+        window.__openAuthModal?.();
+        return;
+      }
+      const userId = window.__currentUser.id;
+
+      const inited = await _rcInit(userId);
+      if (!inited) {
+        window.__showToast?.('Apple subscriptions are unavailable right now.');
+        return;
+      }
+
+      const cfg = await _loadRevenueCatConfig().catch(() => null);
+      const productId = tier === 'pro' ? cfg?.productIdPro : cfg?.productIdEnterprise;
+      if (!productId) {
+        window.__showToast?.('Subscription is not configured.');
+        return;
+      }
+
+      const Purchases = window.Capacitor?.Plugins?.Purchases;
+      try {
+        const { products } = await Purchases.getProducts({ productIdentifiers: [productId] });
+        const product = (products || []).find(p => p.identifier === productId);
+        if (!product) {
+          window.__showToast?.('Subscription product not available on this device.');
+          return;
+        }
+        await Purchases.purchaseStoreProduct({ product });
+        // Apple sheet completed. RevenueCat will hit /revenuecat/webhook
+        // momentarily; give it a beat then refresh the tier from our DB.
+        setTimeout(() => window.__refreshSubscriptionState?.({ showToast: true }), 1500);
+      } catch (err) {
+        if (err?.userCancelled || err?.code === '1' || err?.code === 1) return;
+        console.error('[rc] purchase failed:', err);
+        window.__showToast?.(`Subscription failed: ${err?.message || 'unknown error'}`);
+      }
+    });
+    container.dataset.rendered = '1';
+  }
+
   // ── PayPal ─────────────────────────────────────────────────────
   let _ppConfig = null;
   let _ppConfigPromise = null;
@@ -32139,15 +32240,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   async function _initPayPalButtons() {
+    if (_isCapIos()) {
+      // On iOS, never load PayPal — Apple rejects any in-app payment
+      // path other than StoreKit. Use the Apple/RevenueCat flow instead.
+      _renderPricingButtons();
+      return;
+    }
     const config = await _loadPayPalConfig().catch(() => null);
     if (!config?.clientId) return;
-    _renderPayPalButtons();
+    _renderPricingButtons();
   }
 
-  function _renderPayPalButtons() {
-    _ppRenderBtn('pricingPaypalPro',        'pro');
-    _ppRenderBtn('pricingPaypalEnterprise', 'enterprise');
+  function _renderPricingButtons() {
+    if (_isCapIos()) {
+      _rcRenderBtn('pricingPaypalPro',        'pro');
+      _rcRenderBtn('pricingPaypalEnterprise', 'enterprise');
+      const note = document.getElementById('pricingProcessorNote');
+      if (note) note.textContent = 'Cancel anytime · Billed by Apple';
+    } else {
+      _ppRenderBtn('pricingPaypalPro',        'pro');
+      _ppRenderBtn('pricingPaypalEnterprise', 'enterprise');
+    }
   }
+  // Back-compat: legacy callers (and www/index.html) still reference this.
+  function _renderPayPalButtons() { _renderPricingButtons(); }
 
   function _ppRenderBtn(containerId, tier) {
     const container = document.getElementById(containerId);
@@ -32174,8 +32290,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     container.dataset.rendered = '1';
   }
 
-  // ── Cancel / manage PayPal (redirect to PayPal account) ────────
+  // ── Cancel / manage subscription ───────────────────────────────
+  // iOS routes to the system Subscriptions page; web routes to PayPal.
+  // We don't programmatically cancel — Apple/PayPal own that UI by design.
   window.__cancelPayPal = function () {
+    if (_isCapIos()) {
+      const url = 'https://apps.apple.com/account/subscriptions';
+      const Browser = window.Capacitor?.Plugins?.Browser;
+      if (Browser?.open) { Browser.open({ url }); } else { window.open(url, '_blank'); }
+      return;
+    }
     const isLive = (window.PAYPAL_ENV || _ppConfig?.env) === 'live';
     const manageUrl = isLive
       ? 'https://www.paypal.com/myaccount/autopay/'

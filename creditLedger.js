@@ -13,9 +13,11 @@
  * per user.
  *
  * Profit model (Pro = $5/mo):
- *   $5 subscription – $0.45 Stripe = $4.55 net
  *   400 credits/week × 4.33 weeks = 1732 credits/month = $1.73 AI cost
- *   Gross margin: ($4.55 - $1.73) / $5 = 56%
+ *
+ *   Web (PayPal ~3.49% + $0.49):  $5 - $0.66 = $4.34 net → 52% margin
+ *   iOS (Apple 30%):              $5 - $1.50 = $3.50 net → 35% margin
+ *   iOS (Apple SBP 15%, year 2+): $5 - $0.75 = $4.25 net → 50% margin
  */
 
 'use strict';

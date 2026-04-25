@@ -1,10 +1,17 @@
 'use strict';
 
 /**
- * payments.js — PayPal subscription management
+ * payments.js — PayPal + Apple StoreKit + RevenueCat subscription management
  *
  * Exports:
  *   router — Express Router (mount with app.use('/api/payments', router))
+ *
+ * Subscription routing:
+ *   Web browsers → PayPal (handled directly, /paypal/* endpoints)
+ *   iOS app      → RevenueCat → Apple StoreKit (RevenueCat webhooks fire
+ *                  /revenuecat/webhook). The /apple/* endpoints exist as a
+ *                  defense-in-depth fallback that validates a raw Apple
+ *                  receipt directly with the JWS verifier.
  *
  * Required env vars:
  *   PAYPAL_CLIENT_ID
@@ -17,6 +24,14 @@
  *   APPLE_PRODUCT_ID_PRO       (App Store Connect subscription product id, e.g. earth00.pro.monthly)
  *   APPLE_PRODUCT_ID_ENTERPRISE(App Store Connect subscription product id, e.g. earth00.enterprise.monthly)
  *   APPLE_ENV                  ('sandbox' or 'production', defaults to 'sandbox')
+ *   APPLE_APP_APPLE_ID         (numeric Apple ID from App Store Connect, REQUIRED in production)
+ *   APPLE_ROOT_CERTS_DIR       (absolute path to dir holding Apple root CAs;
+ *                               defaults to ./apple-certs relative to this file)
+ *
+ *   REVENUECAT_PUBLIC_API_KEY_IOS  (public iOS SDK key — safe to ship in client)
+ *   REVENUECAT_WEBHOOK_SECRET      (random string; set the same value in
+ *                                   RevenueCat dashboard → Webhooks →
+ *                                   "Authorization header value")
  *
  *   SUPABASE_URL               (your Supabase project URL)
  *   SUPABASE_SERVICE_ROLE_KEY  (from Supabase → Settings → API → service_role key)
@@ -24,9 +39,12 @@
  */
 
 const express = require('express');
+const fs      = require('fs');
+const path    = require('path');
 const pool    = require('./db');
 
 const sba = require('./supabaseAdmin');
+const { SignedDataVerifier, Environment } = require('@apple/app-store-server-library');
 
 const router = express.Router();
 
@@ -378,35 +396,62 @@ router.post('/paypal/webhook', async (req, res) => {
 //
 // Flow:
 //   1. iOS app fetches /apple/config to discover product ids + bundle id.
-//   2. User taps "Subscribe via Apple". The Capacitor IAP plugin (e.g.
-//      @capgo/capacitor-purchases or cordova-plugin-purchase) opens the
-//      native StoreKit sheet. On success the plugin returns a signed
-//      JWS transaction (JWSTransaction in StoreKit 2).
-//   3. App POSTs that JWS to /apple/activate. Server decodes, validates
-//      bundleId + productId + expiresDate, and writes a row to Supabase
-//      `subscriptions` with provider='apple'.
+//   2. User taps "Subscribe via Apple". The Capacitor IAP plugin
+//      (@capgo/capacitor-purchases) opens the native StoreKit sheet. On
+//      success the plugin returns a signed JWS transaction (JWSTransaction
+//      in StoreKit 2).
+//   3. App POSTs that JWS to /apple/activate. Server verifies the JWS
+//      signature against Apple's root CA, validates bundleId + productId +
+//      expiresDate, and writes a row to Supabase `subscriptions`.
 //   4. Apple sends server-to-server notifications (App Store Server
 //      Notifications V2) to /apple/webhook for renew/expire/refund. We
-//      decode the signedPayload and update Supabase accordingly.
+//      verify+decode the signedPayload and update Supabase accordingly.
 //
-// ⚠️ SECURITY — `decodeAppleJws` below decodes WITHOUT verifying Apple's
-//    signature. This is fine for scaffolding/sandbox testing but MUST be
-//    replaced before going live. The official lib is:
-//
-//        npm i @apple/app-store-server-library
-//
-//    It exposes SignedDataVerifier which validates the JWS chain against
-//    Apple's root CA. Replace decodeAppleJws() with verifier.verifyAndDecode*().
-//    See: https://github.com/apple/app-store-server-library-node
+// JWS signatures are verified with `@apple/app-store-server-library` using
+// the Apple root CAs in ./apple-certs/. The verifier checks the certificate
+// chain, expiry, and (when enableOnlineChecks=true) revocation status.
+// In production, APPLE_APP_APPLE_ID must be set so the verifier can match
+// the appAppleId claim inside the JWS.
 
-function decodeAppleJws(jws) {
-  // ⚠️ Scaffold-only: signature NOT verified. Replace before production.
-  const parts = String(jws || '').split('.');
-  if (parts.length !== 3) throw new Error('Invalid JWS');
-  const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
-  const payload = Buffer.from(b64 + pad, 'base64').toString('utf8');
-  return JSON.parse(payload);
+let _appleVerifier = null;
+function getAppleVerifier() {
+  if (_appleVerifier) return _appleVerifier;
+
+  const certsDir = process.env.APPLE_ROOT_CERTS_DIR
+    ? path.resolve(process.env.APPLE_ROOT_CERTS_DIR)
+    : path.join(__dirname, 'apple-certs');
+
+  if (!fs.existsSync(certsDir)) {
+    throw new Error(`Apple root cert dir not found: ${certsDir}`);
+  }
+
+  const rootCerts = fs.readdirSync(certsDir)
+    .filter(f => /\.(cer|crt|der)$/i.test(f))
+    .map(f => fs.readFileSync(path.join(certsDir, f)));
+
+  if (!rootCerts.length) {
+    throw new Error(`No Apple root certs (*.cer/*.crt/*.der) in ${certsDir}`);
+  }
+
+  const env = getAppleEnv() === 'production' ? Environment.PRODUCTION : Environment.SANDBOX;
+  const appAppleId = process.env.APPLE_APP_APPLE_ID
+    ? Number(process.env.APPLE_APP_APPLE_ID)
+    : undefined;
+
+  if (env === Environment.PRODUCTION && !Number.isFinite(appAppleId)) {
+    throw new Error('APPLE_APP_APPLE_ID is required for production environment');
+  }
+
+  // enableOnlineChecks: revocation + expiry against current time. Set false
+  // only in tests where you replay frozen receipts past their expiry.
+  _appleVerifier = new SignedDataVerifier(
+    rootCerts,
+    true,
+    env,
+    APPLE_BUNDLE_ID,
+    appAppleId
+  );
+  return _appleVerifier;
 }
 
 router.get('/apple/config', (_req, res) => {
@@ -434,13 +479,19 @@ router.post('/apple/activate', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'signedTransaction and tier required' });
   }
 
+  let tx;
   try {
-    const tx = decodeAppleJws(signedTransaction);
+    // verifyAndDecodeTransaction validates the full cert chain against
+    // Apple's root CA, checks the JWS signature, verifies bundleId matches
+    // the verifier's bundleId, and (in production) verifies appAppleId.
+    // Throws VerificationException on any failure.
+    tx = await getAppleVerifier().verifyAndDecodeTransaction(signedTransaction);
+  } catch (err) {
+    console.warn('[apple/activate] JWS verification failed:', err.message);
+    return res.status(400).json({ error: 'Apple receipt verification failed', detail: err.message });
+  }
 
-    if (tx.bundleId && tx.bundleId !== APPLE_BUNDLE_ID) {
-      return res.status(400).json({ error: `bundleId mismatch (got ${tx.bundleId})` });
-    }
-
+  try {
     const tierFromProduct = appleProductToTier(tx.productId);
     if (!tierFromProduct) {
       return res.status(400).json({ error: `Unknown productId: ${tx.productId}` });
@@ -482,16 +533,39 @@ router.post('/apple/activate', requireAuth, async (req, res) => {
 // App Store Server Notifications V2 webhook.
 // Configure URL in App Store Connect → App → App Information → App Store
 // Server Notifications. Apple POSTs: { signedPayload: "<JWS>" }
+//
+// Both the outer notification and the inner signedTransactionInfo are
+// verified end-to-end against Apple's root CA. Any failure → 200 with no
+// state change (prevents Apple's retry storm but keeps us out of a bad
+// state from a forged payload).
 router.post('/apple/webhook', async (req, res) => {
   try {
     const { signedPayload } = req.body || {};
     if (!signedPayload) { res.sendStatus(200); return; }
 
-    const notification = decodeAppleJws(signedPayload);
+    const verifier = getAppleVerifier();
+
+    let notification;
+    try {
+      notification = await verifier.verifyAndDecodeNotification(signedPayload);
+    } catch (err) {
+      console.warn('[apple/webhook] notification verification failed:', err.message);
+      res.sendStatus(200);
+      return;
+    }
+
     const { notificationType, subtype, data } = notification || {};
     if (!data?.signedTransactionInfo) { res.sendStatus(200); return; }
 
-    const tx = decodeAppleJws(data.signedTransactionInfo);
+    let tx;
+    try {
+      tx = await verifier.verifyAndDecodeTransaction(data.signedTransactionInfo);
+    } catch (err) {
+      console.warn('[apple/webhook] transaction verification failed:', err.message);
+      res.sendStatus(200);
+      return;
+    }
+
     const originalTransactionId = String(tx.originalTransactionId || tx.transactionId || '');
     const tier = appleProductToTier(tx.productId);
 
@@ -541,6 +615,141 @@ router.post('/apple/webhook', async (req, res) => {
     }
   } catch (err) {
     console.error('[apple/webhook]', err.message);
+  }
+
+  res.sendStatus(200);
+});
+
+// ─── RevenueCat ────────────────────────────────────────────────────────────
+//
+// RevenueCat is the iOS purchase intermediary: it wraps StoreKit on the
+// device and validates Apple receipts on its servers. We never see the raw
+// JWS — RevenueCat sends us cleaned-up JSON events instead.
+//
+// Setup (one-time, in RevenueCat dashboard):
+//   1. Create a project, link to App Store Connect (paste the App Store
+//      Server API key from App Store Connect → Users and Access → Keys).
+//   2. Add Products: ${APPLE_PRODUCT_ID_PRO} and ${APPLE_PRODUCT_ID_ENTERPRISE}.
+//      Optionally bundle them into Entitlements named "pro" / "enterprise".
+//   3. Project Settings → API Keys → copy the public iOS SDK key into
+//      REVENUECAT_PUBLIC_API_KEY_IOS.
+//   4. Project Settings → Integrations → Webhooks:
+//        URL: https://YOUR_API_HOST/api/payments/revenuecat/webhook
+//        Authorization header value: <random string> → put in REVENUECAT_WEBHOOK_SECRET
+//
+// On iOS app start we call Purchases.logIn(supabaseUserId), so RevenueCat's
+// `app_user_id` field always equals our Supabase user id. That's how we
+// route incoming webhook events to the right subscription row.
+
+router.get('/revenuecat/config', (_req, res) => {
+  const apiKey = process.env.REVENUECAT_PUBLIC_API_KEY_IOS || null;
+  if (!apiKey || !APPLE_PRODUCT.pro || !APPLE_PRODUCT.enterprise) {
+    return res.status(503).json({
+      error: 'RevenueCat configuration is incomplete',
+      hasApiKey:              Boolean(apiKey),
+      hasProductIdPro:        Boolean(APPLE_PRODUCT.pro),
+      hasProductIdEnterprise: Boolean(APPLE_PRODUCT.enterprise),
+    });
+  }
+  res.json({
+    apiKey,
+    productIdPro:        APPLE_PRODUCT.pro,
+    productIdEnterprise: APPLE_PRODUCT.enterprise,
+    bundleId:            APPLE_BUNDLE_ID,
+  });
+});
+
+function rcProductToTier(productId) {
+  if (!productId) return null;
+  if (productId === APPLE_PRODUCT.enterprise) return 'enterprise';
+  if (productId === APPLE_PRODUCT.pro)        return 'pro';
+  return null;
+}
+
+// RevenueCat webhook — see https://www.revenuecat.com/docs/webhooks
+router.post('/revenuecat/webhook', async (req, res) => {
+  const expected = process.env.REVENUECAT_WEBHOOK_SECRET;
+  const got      = req.headers.authorization || '';
+  if (!expected) {
+    console.error('[revenuecat/webhook] REVENUECAT_WEBHOOK_SECRET not set — rejecting');
+    return res.sendStatus(500);
+  }
+  if (got !== expected) {
+    console.warn('[revenuecat/webhook] auth header mismatch');
+    return res.sendStatus(401);
+  }
+
+  const event     = req.body?.event || {};
+  const type      = event.type;
+  const appUserId = event.app_user_id;
+  const productId = event.product_id;
+  const tier      = rcProductToTier(productId);
+  const periodEnd = event.expiration_at_ms ? new Date(Number(event.expiration_at_ms)) : null;
+  const txId      = event.transaction_id || event.original_transaction_id || event.id || null;
+
+  console.log(`[revenuecat/webhook] type=${type} user=${appUserId || '?'} product=${productId || '-'} tier=${tier || '-'}`);
+
+  // app_user_id is set via Purchases.logIn(supabaseUserId) on the iOS side.
+  // Anonymous IDs (RevenueCat's $RCAnonymousID:...) mean the user purchased
+  // before logging in — we can't link these to a Supabase row. Drop quietly.
+  if (!appUserId || /^\$RCAnonymousID:/.test(appUserId)) {
+    return res.sendStatus(200);
+  }
+
+  try {
+    switch (type) {
+      case 'TEST':
+        // "Send test event" button in the dashboard. No-op.
+        break;
+
+      case 'INITIAL_PURCHASE':
+      case 'RENEWAL':
+      case 'PRODUCT_CHANGE':
+      case 'UNCANCELLATION':
+        if (tier) {
+          await upsertSubscription({
+            userId:        appUserId,
+            tier,
+            provider:      'revenuecat',
+            providerSubId: String(txId || appUserId),
+            providerCusId: event.original_app_user_id || null,
+            periodEnd,
+            status:        'active',
+          });
+        }
+        break;
+
+      case 'CANCELLATION':
+        // User cancelled but Apple keeps serving until expires_at_ms.
+        // Don't flip status yet — just record the new period_end so the
+        // app can show "expires on X". EXPIRATION fires later when it ends.
+        if (periodEnd) {
+          await sba.from('subscriptions')
+            .update({ current_period_end: periodEnd.toISOString(), updated_at: new Date().toISOString() })
+            .eq('user_id', appUserId);
+        }
+        break;
+
+      case 'BILLING_ISSUE':
+        await setSubscriptionStatus(appUserId, 'past_due');
+        break;
+
+      case 'EXPIRATION':
+      case 'REFUND':
+        await cancelSubscription(appUserId);
+        break;
+
+      default:
+        // Ignored event types (logged above): SUBSCRIBER_ALIAS,
+        // SUBSCRIPTION_PAUSED, INVOICE_ISSUANCE, NON_RENEWING_PURCHASE,
+        // TEMPORARY_ENTITLEMENT_GRANT, TRANSFER, etc.
+        break;
+    }
+  } catch (err) {
+    console.error('[revenuecat/webhook]', err.message);
+    // 5xx → RevenueCat retries with backoff. Use this for transient DB
+    // failures so we don't lose state changes.
+    return res.sendStatus(500);
   }
 
   res.sendStatus(200);
