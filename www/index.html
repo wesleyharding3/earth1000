@@ -40463,15 +40463,25 @@ body.ticker-active .gTickerLabel {
 
   async function fetchSnapshot(params) {
     state.loading = true;
-    statsEl.innerHTML = '<span class="loadDots loadDots--yellow"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span>';
+    const dotsHtml = '<span class="loadDots loadDots--yellow"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span>';
+    statsEl.innerHTML = dotsHtml;
     const q = new URLSearchParams(params);
+    // Retry across a transient 500 on cold-start; keep the dots up the
+    // whole time so we never flash an error for a race we can recover from.
+    const backoffs = [600, 1500, 3000];
     try {
-      const r = await fetch(`${API}/api/heatmap?` + q.toString());
-      if (!r.ok) throw new Error('http ' + r.status);
-      const j = await r.json();
-      return j;
-    } catch (e) {
-      statsEl.textContent = 'Error: ' + e.message;
+      for (let attempt = 0; attempt <= backoffs.length; attempt++) {
+        if (!window.__semHeatActive) return null;
+        try {
+          const r = await fetch(`${API}/api/heatmap?` + q.toString());
+          if (r.ok) return await r.json();
+        } catch (_) { /* network error — fall through to retry */ }
+        if (attempt < backoffs.length) {
+          statsEl.innerHTML = dotsHtml;
+          await new Promise(res => setTimeout(res, backoffs[attempt]));
+        }
+      }
+      if (window.__semHeatActive) statsEl.textContent = "Couldn't load heatmap.";
       return null;
     } finally {
       state.loading = false;
