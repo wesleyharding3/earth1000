@@ -6157,6 +6157,22 @@ app.get('/region-editor', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'region-editor.html'));
 });
 
+// Privacy + Terms — public legal pages, linked from auth modal, settings
+// sub-view, and pricing modal. URLs here are also what we put in App
+// Store Connect's Privacy Policy URL field. No auth required.
+app.get('/privacy.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'privacy.html'));
+});
+app.get('/privacy', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'privacy.html'));
+});
+app.get('/terms.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'terms.html'));
+});
+app.get('/terms', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'terms.html'));
+});
+
 /* =========================================
    Timeline Editor — Data Panel Workflow
    ========================================= */

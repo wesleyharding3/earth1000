@@ -31467,23 +31467,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const restore   = document.getElementById('acctDpRestore');
     const privacy   = document.getElementById('acctDpPrivacy');
     const terms     = document.getElementById('acctDpTerms');
-    if (!main || !settings || !openBtn || !backBtn) return;
+    console.log('[acct-settings] init', {
+      main:     !!main,
+      settings: !!settings,
+      openBtn:  !!openBtn,
+      backBtn:  !!backBtn,
+    });
+    if (!main || !settings || !openBtn || !backBtn) {
+      console.warn('[acct-settings] init aborted — element(s) missing');
+      return;
+    }
 
     function showSettings() {
+      console.log('[acct-settings] showSettings called');
       main.style.display = 'none';
       settings.style.display = '';
-      // Kill the dropdown's 5s auto-close while in Settings — Settings flows
-      // (legal doc reading, DELETE typing) easily exceed 5 seconds.
       try { clearTimeout(_acctDropTimer); } catch (_) {}
     }
     function showMain() {
+      console.log('[acct-settings] showMain called');
       main.style.display = '';
       settings.style.display = 'none';
     }
     window.__acctDpResetView = showMain;
 
-    openBtn.addEventListener('click', e => { e.stopPropagation(); showSettings(); });
-    backBtn.addEventListener('click', e => { e.stopPropagation(); showMain(); });
+    openBtn.addEventListener('click', e => {
+      console.log('[acct-settings] Settings button clicked');
+      e.stopPropagation();
+      showSettings();
+    });
+    backBtn.addEventListener('click', e => {
+      console.log('[acct-settings] Back button clicked');
+      e.stopPropagation();
+      showMain();
+    });
 
     if (restore && (window.Capacitor?.getPlatform?.() === 'ios')) {
       restore.style.display = '';
