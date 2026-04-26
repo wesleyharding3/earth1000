@@ -11066,6 +11066,12 @@ app.post("/api/heatmap/ask", async (req, res) => {
 
   const rawQuestion = String(req.body?.question || "").trim();
   const mode = String(req.body?.mode || "percent").toLowerCase();
+  // Cache bypass: ?fresh=1 OR body.fresh=true forces a re-call against
+  // Sonnet, useful when the prompt has been strengthened and old rows
+  // are stale. Curated rows still get rewritten because we ON CONFLICT
+  // UPDATE, so admins can use this judiciously.
+  const forceFresh = String(req.query?.fresh || req.body?.fresh || '').toLowerCase() === '1' ||
+                     String(req.query?.fresh || req.body?.fresh || '').toLowerCase() === 'true';
   if (!rawQuestion) return res.status(400).json({ error: "question is required" });
   if (rawQuestion.length > 280) return res.status(400).json({ error: "question too long (max 280 chars)" });
   if (!["percent", "rank", "binary"].includes(mode)) {
@@ -11079,7 +11085,10 @@ app.post("/api/heatmap/ask", async (req, res) => {
 
   try {
     // 1. Cache lookup. Pinned curated rows + recent Claude rows both live here.
-    const cached = await pool.query(
+    //    Skipped entirely when forceFresh=true.
+    const cached = forceFresh
+      ? { rows: [] }
+      : await pool.query(
       `SELECT id, mode, legend, unit, source_note, values, refusal, source, hit_count
          FROM heatmap_qa_cache
         WHERE question_hash = $1 AND mode = $2
@@ -11241,10 +11250,40 @@ Most users will be wronger than you think when checking — but for the cases wh
       payload.unit        = raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : ''));
       payload.source_note = String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240);
       // Validate ISOs against the whitelist; drop hallucinated codes.
+      // Track the dropped ISOs so we can see why a country went missing
+      // (model omitted it, model emitted NaN, model used unknown ISO, etc).
       const seen = new Set();
-      payload.values = (Array.isArray(raw.values) ? raw.values : [])
-        .map(v => ({ iso: String(v.iso || '').toUpperCase().trim(), value: Number(v.value) }))
-        .filter(v => v.iso && isoSet.has(v.iso) && Number.isFinite(v.value) && !seen.has(v.iso) && (seen.add(v.iso) || true));
+      const droppedNaN = [];
+      const droppedUnknownIso = [];
+      const droppedDuplicate = [];
+      const rawArr = Array.isArray(raw.values) ? raw.values : [];
+      payload.values = rawArr
+        .map(v => ({ iso: String(v.iso || '').toUpperCase().trim(), value: Number(v.value), origValue: v?.value }))
+        .filter(v => {
+          if (!v.iso) { droppedUnknownIso.push('(empty)'); return false; }
+          if (!isoSet.has(v.iso)) { droppedUnknownIso.push(`${v.iso}=${v.origValue}`); return false; }
+          if (!Number.isFinite(v.value)) { droppedNaN.push(`${v.iso}=${JSON.stringify(v.origValue)}`); return false; }
+          if (seen.has(v.iso)) { droppedDuplicate.push(v.iso); return false; }
+          seen.add(v.iso);
+          return true;
+        })
+        .map(v => ({ iso: v.iso, value: v.value }));
+      console.log(
+        `[heatmap/ask] mode=${mode} q="${rawQuestion}" raw=${rawArr.length} kept=${payload.values.length}` +
+        (droppedNaN.length      ? ` nan=[${droppedNaN.join(',')}]`           : '') +
+        (droppedUnknownIso.length ? ` unknown_iso=[${droppedUnknownIso.join(',')}]` : '') +
+        (droppedDuplicate.length  ? ` dup=[${droppedDuplicate.join(',')}]`         : '')
+      );
+      // Surface the catalog gap directly: which countries the user expects
+      // (top-10 most populous) made it through, and which were absent
+      // entirely from the model's output (didn't even get a chance to be
+      // dropped).
+      const expected = ['CN','IN','US','ID','PK','NG','BR','BD','RU','MX'];
+      const presentBigTen = expected.filter(c => seen.has(c));
+      const absentBigTen  = expected.filter(c => !seen.has(c) && isoSet.has(c));
+      if (mode === 'rank' || mode === 'percent') {
+        console.log(`[heatmap/ask] big10_present=[${presentBigTen.join(',')}] big10_absent=[${absentBigTen.join(',')}]`);
+      }
     }
 
     // 6. Persist (Claude row, source='claude'). Pinned curated rows are
