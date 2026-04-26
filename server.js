@@ -11198,6 +11198,21 @@ ACCURACY CHECKLIST — apply before responding:
 
 5. NOTE THE LIMITS in source_note. If you're uncertain about edge cases, list them by name ("excludes borderline cases: X, Y") so the user knows. If your data has a vintage, cite it.
 
+NEVER-MISS LIST (catastrophic failures to prevent):
+The following are NOT edge cases — they are the most basic answers and their absence makes the response useless. Self-check: if any of these apply to your question, the named countries MUST appear in your output.
+
+- Population (rank or count): China, India, United States, Indonesia, Pakistan, Nigeria, Brazil, Bangladesh, Russia, Mexico are the world's ten most populous countries. Any population query that omits one of them is broken.
+- GDP / economy size (rank or value): United States, China, Japan, Germany, India, United Kingdom, France, Italy, Canada, Brazil are the top-10 economies. Any GDP query missing them is broken.
+- Land area: Russia, Canada, China, United States, Brazil, Australia, India, Argentina, Kazakhstan, Algeria.
+- Coastline / oceans: every continent has dozens of coastal countries; never return only Western examples.
+- Religion majority: Indonesia (largest Muslim country), Brazil (largest Catholic country), India (largest Hindu country) — almost always relevant.
+- Nuclear weapons: USA, Russia, UK, France, China, India, Pakistan, Israel, North Korea — exactly nine, no more, no fewer.
+- EU membership: 27 countries, no UK (left in 2020), no Norway / Switzerland.
+
+For RANK mode specifically: "rank by X" means EVERY country with a non-trivial value of X should appear. Do not truncate to a top-10 unless the question explicitly says so. If asked "rank by population", every sovereign country should have a rank — China at 1 or 2, the smallest at the bottom. Returning only 20 countries when the world has 190+ is a failure.
+
+For BINARY mode: be more inclusive than your gut suggests. If you can think of three obvious countries that match, there are probably twenty more. Walk continents.
+
 Most users will be wronger than you think when checking — but for the cases where they are right and you're missing obvious entries, your answer becomes useless. Aim for high recall on clear positives and strict exclusion of vague matches.`;
 
     const claudeResp = await Anthropic.messages.create({

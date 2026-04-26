@@ -37981,6 +37981,38 @@ body.ticker-active .gTickerLabel {
     );
   }
 
+  function _pointInRing(lon, lat, ring) {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) &&
+          (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  function _pointInRings(lon, lat, polyRings) {
+    let inside = false;
+    for (const ring of polyRings) {
+      if (_pointInRing(lon, lat, ring)) inside = !inside;
+    }
+    return inside;
+  }
+  window.__pointInCountry = function(lon, lat, entry) {
+    if (!entry?.rings?.length) return false;
+    for (const polyRings of entry.rings) {
+      if (_pointInRings(lon, lat, polyRings)) return true;
+      if (_polygonCrossesAntimeridian(polyRings)) {
+        const shifted = _shiftRingLonPositive(polyRings);
+        const shiftedLon = lon < 0 ? lon + 360 : lon;
+        if (_pointInRings(shiftedLon, lat, shifted)) return true;
+      }
+    }
+    return false;
+  };
+
   // For countries that have city_points but no country_points row (e.g.
   // France, where every article is pinned to a city), roll the city
   // points up into a synthetic country aggregate so the wash layer can
@@ -39597,30 +39629,55 @@ body.ticker-active .gTickerLabel {
       const totalInSet = (state.countryPoints || []).length;
       _setInspectorTitle('Map This', false, qText || 'Click a country for the answer');
 
-      // Build {iso → {value, unit}} from the rendered country points.
+      // Build {iso → {value, unit, label}} from the rendered country points.
       const isoToQA = new Map();
       for (const cp of (state.countryPoints || [])) {
         const iso = String(cp.iso || '').toUpperCase();
-        if (iso) isoToQA.set(iso, { value: cp._qaValue, unit: cp._qaUnit });
+        if (iso) isoToQA.set(iso, {
+          value: cp._qaValue,
+          unit: cp._qaUnit,
+          label: cp.country_name || cp.name || null
+        });
       }
 
-      // Group nearby points by ISO so each country shows once. For binary
-      // mode we still surface non-matching countries as "No" so the user
-      // gets context; for percent/rank we omit countries with no answer.
-      const seen = new Set();
-      const rows = [];
+      // Tight click radius: polygon hit first (anywhere inside the
+      // country counts), then ≤100 km proximity for clicks just off the
+      // coast / between countries.
+      const QA_RADIUS_KM = 100;
+      const QA_RADIUS_MI = QA_RADIUS_KM * 0.621371;
+      const isoToNearby = new Map();
       for (const { p, d } of nearby) {
         const iso = String(p.iso_code || p.iso || '').toUpperCase();
-        if (!iso || seen.has(iso)) continue;
-        seen.add(iso);
+        if (!iso) continue;
+        const prev = isoToNearby.get(iso);
+        if (!prev || d < prev.d) isoToNearby.set(iso, { p, d });
+      }
+      const rowsByIso = new Map();
+      // Pass 1: polygon hits (distance 0).
+      if (typeof window.__pointInCountry === 'function' && geoIdx?.byIso) {
+        for (const [iso, qa] of isoToQA.entries()) {
+          const entry = geoIdx.byIso.get(iso);
+          if (!entry) continue;
+          if (window.__pointInCountry(lon, lat, entry)) {
+            const label = qa.label || isoToNearby.get(iso)?.p?.country_name || isoName.get(iso) || iso;
+            rowsByIso.set(iso, { name: label, iso, qa, d: 0 });
+          }
+        }
+      }
+      // Pass 2: ≤100 km proximity fallback. Binary mode also surfaces
+      // non-matches as "No" so the user still sees context.
+      for (const { p, d } of nearby) {
+        if (d > QA_RADIUS_MI) continue;
+        const iso = String(p.iso_code || p.iso || '').toUpperCase();
+        if (!iso || rowsByIso.has(iso)) continue;
         const qa = isoToQA.get(iso);
         if (!qa && qMode !== 'binary') continue;
-        rows.push({ name: labelFor(p), iso, qa: qa || null, d });
+        rowsByIso.set(iso, { name: labelFor(p), iso, qa: qa || null, d });
       }
-      rows.sort((a, b) => a.d - b.d);
+      const rows = [...rowsByIso.values()].sort((a, b) => a.d - b.d);
 
       if (!rows.length) {
-        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No matched countries within ${INSPECTOR_RADIUS_MI} mi.</div>`;
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No matched country at this point or within 100 km.</div>`;
       } else {
         function fmtAnswer(qa) {
           if (!qa) return '<span style="opacity:0.5;">No</span>';
