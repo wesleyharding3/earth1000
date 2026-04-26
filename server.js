@@ -8335,25 +8335,29 @@ function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
   const contexts = Array.isArray(rawContexts) ? rawContexts : [];
   const unused = new Set(contexts.map((_, idx) => idx));
 
-  return expected.map((country, idx) => {
+  // Match each expected country to a context by ISO code (preferred) or
+  // by normalized country name. We deliberately do NOT fall back to
+  // positional/index matching — the model can reorder or omit entries,
+  // and an index pairing scrambles labels (e.g. text about Senegal
+  // surfacing under a "United States" header). When no context matches,
+  // the expected country is dropped from the output.
+  const out = expected.map((country) => {
     const isoCode = _flowCtxNormalizeIso(country?.iso_code || country?.iso);
     const countryName = String(country?.country || country?.name || isoCode).trim();
     const normalizedName = _flowCtxNormalizeName(countryName);
 
-    let matchIdx = contexts.findIndex((entry, entryIdx) =>
-      unused.has(entryIdx) &&
-      _flowCtxNormalizeIso(entry?.iso_code || entry?.iso) === isoCode
-    );
-
-    if (matchIdx < 0) {
+    let matchIdx = -1;
+    if (isoCode) {
+      matchIdx = contexts.findIndex((entry, entryIdx) =>
+        unused.has(entryIdx) &&
+        _flowCtxNormalizeIso(entry?.iso_code || entry?.iso) === isoCode
+      );
+    }
+    if (matchIdx < 0 && normalizedName) {
       matchIdx = contexts.findIndex((entry, entryIdx) =>
         unused.has(entryIdx) &&
         _flowCtxNormalizeName(entry?.country || entry?.name) === normalizedName
       );
-    }
-
-    if (matchIdx < 0 && unused.has(idx) && contexts[idx]) {
-      matchIdx = idx;
     }
 
     const match = matchIdx >= 0 ? contexts[matchIdx] : null;
@@ -8365,6 +8369,24 @@ function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
       context: String(match?.context || match?.summary || '').trim(),
     };
   }).filter((entry) => entry.context);
+
+  // If the model returned contexts for countries that weren't in the
+  // expected list (or that we couldn't match by iso/name), surface them
+  // anyway — labeled with the model's own country name — rather than
+  // silently dropping the explanation. Better to show a slightly
+  // unexpected country than to mislabel a different country's text.
+  for (const idx of unused) {
+    const entry = contexts[idx];
+    if (!entry) continue;
+    const text = String(entry?.context || entry?.summary || '').trim();
+    if (!text) continue;
+    const iso = _flowCtxNormalizeIso(entry?.iso_code || entry?.iso);
+    const name = String(entry?.country || entry?.name || iso || '').trim();
+    if (!name) continue;
+    out.push({ iso_code: iso, country: name, context: text });
+  }
+
+  return out;
 }
 
 function _flowCtxBuildStructuredBlocks(eventSummary, primaryContexts, secondaryContexts) {
