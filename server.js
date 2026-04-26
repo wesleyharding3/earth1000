@@ -3754,16 +3754,19 @@ app.get('/api/admin/briefing-editor/threads', requireAdmin, async (req, res) => 
     // article count. It's close enough for the editor's "thread has content"
     // check and is free. hasVideo was computed but never consumed by the
     // editor UI, so it's gone. 60s TTL coalesces concurrent editor reloads.
-    const payload = await ttlCached('briefing-editor/threads:v3', 60_000, async () => {
+    // Cache key bumped (v3 → v4) because the ORDER BY changed from
+    // importance to recency; older cached payloads would surface in the
+    // wrong order until the 60s TTL expired.
+    const payload = await ttlCached('briefing-editor/threads:v4', 60_000, async () => {
       const { rows } = await pool.query(`
         SELECT id, title, primary_category, importance, keywords,
-               geographic_scope, article_count
+               geographic_scope, article_count, last_updated_at
         FROM story_threads
         WHERE status = 'active'
           AND last_updated_at > NOW() - INTERVAL '3 days'
           AND COALESCE(article_count, 0) >= 1
           AND COALESCE(scope, 'global') = 'global'
-        ORDER BY importance DESC, article_count DESC
+        ORDER BY last_updated_at DESC, importance DESC
         LIMIT 100
       `);
       return {

@@ -1435,9 +1435,9 @@
         const featuredBlock = `
           <div class="featured-block" style="margin-top:10px;padding:10px;border:1px solid rgba(96,200,255,0.2);border-radius:6px;background:rgba(96,200,255,0.04);">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <input type="checkbox" id="fv-enabled-${id}" ${fvEnabled ? 'checked' : ''} ${canFeature ? '' : 'disabled'} onchange="setFeatured(${id}, this.checked)" />
-              <label for="fv-enabled-${id}" style="font-size:12px;font-weight:600;color:#60c8ff;">Featured media moment</label>
-              ${canFeature ? '' : '<span style="font-size:10px;color:rgba(255,255,255,0.4);">(resolve a video first)</span>'}
+              <input type="checkbox" id="fv-enabled-${id}" ${fvEnabled ? 'checked' : ''} onchange="setFeatured(${id}, this.checked)" style="cursor:pointer;" />
+              <label for="fv-enabled-${id}" style="font-size:12px;font-weight:600;color:#60c8ff;cursor:pointer;">Featured media moment</label>
+              ${canFeature ? '' : `<span class="fv-pending-warning-${id}" style="font-size:11px;color:rgba(255,180,80,0.85);font-weight:600;">⚠ resolve a video first</span>`}
             </div>
             <div style="font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:8px;line-height:1.4;">
               When enabled, the narrator will hand off to this video mid-segment. The script is written AROUND the handoff — must be set before generation. Changing this after Step 3 requires a regenerate.
@@ -1497,6 +1497,15 @@
     // manifest.
     window.setFeatured = function(id, enabled) {
       if (!enrichData[id]) return;
+      // Featured handoff requires a resolved video_meta (duration, title, etc.)
+      // to plan the script transition. Block enabling without one and tell
+      // the user clearly — silent disabled checkboxes are infuriating.
+      if (enabled && !enrichData[id].video_meta) {
+        const cb = document.getElementById(`fv-enabled-${id}`);
+        if (cb) cb.checked = false;
+        alert('Resolve a YouTube URL first.\n\nPaste the URL above and click "Resolve" — that fetches duration + title so the narrator can hand off correctly.');
+        return;
+      }
       if (!enrichData[id].featured_video) {
         enrichData[id].featured_video = {
           enabled: false, duration_sec: 15, narrator_transition: '',
@@ -1549,6 +1558,10 @@
           <div class="video-info"><div class="video-title">${escHtml(body.title || 'Resolved')}</div><div class="video-id">${escHtml(body.video_id || '')}</div>
           ${body.has_captions ? '<div style="color:#4ade80;font-size:10px;margin-top:2px;">&#9989; Captions available</div>' : '<div style="color:#fbbf24;font-size:10px;margin-top:2px;">&#9888; No captions detected</div>'}
           </div>`;
+        // Clear the "resolve a video first" hint that was rendered next to
+        // the Featured-media checkbox before resolution. Without this the
+        // hint persists even though the checkbox now works.
+        document.querySelectorAll(`.fv-pending-warning-${id}`).forEach(el => el.remove());
       } catch (e) {
         const vp = document.getElementById(`vp-${id}`);
         vp.classList.add('visible');

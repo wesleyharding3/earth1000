@@ -5283,7 +5283,10 @@ button.arcCtxSegDot,
   padding: 0; border: none; background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: none; width: auto;
   left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom));
+  /* Sit just above the page-nav, matching where the minimized news-flows
+     bar lives. The previous +34px lifted it visibly higher than the flows
+     bar; aligning them makes the two bottom-bars feel like one row. */
+  bottom: calc(var(--page-nav-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 8px);
 }
 .semHeatMinPlayBtn.hidden-mode { display: none; }
 #semHeatPanel.minimized .semHeatBody { display: none; }
@@ -12988,12 +12991,12 @@ window.__arcCtxSegmented = (function() {
 
       <div class="semHeatSection">
         <div class="semHeatCtlTabs" id="semHeatCtlTabs">
-          <div class="semHeatCtlTab active" data-ctl="keyword">Keyword</div>
+          <div class="semHeatCtlTab" data-ctl="keyword">Keyword</div>
           <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
-          <div class="semHeatCtlTab" data-ctl="ask">Map This</div>
+          <div class="semHeatCtlTab active" data-ctl="ask">Map This</div>
         </div>
 
-        <div class="semHeatCtlPanel active" data-panel="keyword">
+        <div class="semHeatCtlPanel" data-panel="keyword">
           <div class="semHeatKwRow">
             <div class="kwAutoWrap">
               <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
@@ -13033,7 +13036,7 @@ window.__arcCtxSegmented = (function() {
         </div>
 
         <!-- Ask-AI panel: free-form question → Claude tool call → heat. -->
-        <div class="semHeatCtlPanel" data-panel="ask">
+        <div class="semHeatCtlPanel active" data-panel="ask">
           <div class="semHeatKwRow">
             <input type="text" class="semHeatInput" id="semHeatAskInput"
                    placeholder="e.g. countries with active volcanoes" autocomplete="off" maxlength="280" />
@@ -39255,7 +39258,7 @@ body.ticker-active .gTickerLabel {
 
   const state = {
     mode: 'coverage',
-    ctl:  'keyword',
+    ctl:  'ask',
     points: [],          // merged legacy list (kept for inspector fallback)
     countryPoints: [],   // articles where city_id IS NULL
     cityPoints: [],      // articles where city_id IS NOT NULL
@@ -40570,6 +40573,10 @@ body.ticker-active .gTickerLabel {
       const prevLabel = btn.textContent;
       btn.textContent = '…';
       if (stat) stat.textContent = 'Asking…';
+      // Stash the question so the country-click inspector can label
+      // each country's QA value with the question that produced it.
+      state.qaQuestion = q;
+      state.qaModeAtSubmit = mode;
       try {
         const apiBase = window.__API || 'https://earth-wjr6.onrender.com';
         const headers = { 'Content-Type': 'application/json' };
@@ -41226,6 +41233,66 @@ body.ticker-active .gTickerLabel {
 
     // Rank: coverage mode → share of nearby n; sentiment mode → avg sentiment.
     const body  = inspectorEl.querySelector('.semHeatInspBody');
+
+    // Map This (QA) branch — when the heat sphere is showing answers from
+    // /api/heatmap/ask, the inspector reuses this same panel but pivots its
+    // contents to "country · question · answer" rows. Reads `_qaValue` /
+    // `_qaUnit` set by _heatQAToCountryPoints, plus state.qaQuestion stored
+    // at submit time.
+    if (state.qaMode) {
+      _inspectorCtx = null;
+      _inspectorBackFn = null;
+      const qMode = state.qaMode;
+      const qText = state.qaQuestion || '';
+      const totalInSet = (state.countryPoints || []).length;
+      _setInspectorTitle('Map This', false, qText || 'Click a country for the answer');
+
+      // Build {iso → {value, unit}} from the rendered country points.
+      const isoToQA = new Map();
+      for (const cp of (state.countryPoints || [])) {
+        const iso = String(cp.iso || '').toUpperCase();
+        if (iso) isoToQA.set(iso, { value: cp._qaValue, unit: cp._qaUnit });
+      }
+
+      // Group nearby points by ISO so each country shows once. For binary
+      // mode we still surface non-matching countries as "No" so the user
+      // gets context; for percent/rank we omit countries with no answer.
+      const seen = new Set();
+      const rows = [];
+      for (const { p, d } of nearby) {
+        const iso = String(p.iso_code || p.iso || '').toUpperCase();
+        if (!iso || seen.has(iso)) continue;
+        seen.add(iso);
+        const qa = isoToQA.get(iso);
+        if (!qa && qMode !== 'binary') continue;
+        rows.push({ name: labelFor(p), iso, qa: qa || null, d });
+      }
+      rows.sort((a, b) => a.d - b.d);
+
+      if (!rows.length) {
+        body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No matched countries within ${INSPECTOR_RADIUS_MI} mi.</div>`;
+      } else {
+        function fmtAnswer(qa) {
+          if (!qa) return '<span style="opacity:0.5;">No</span>';
+          const v = qa.value;
+          if (qMode === 'binary') return '<span style="color:rgba(255,200,120,0.95);">Yes</span>';
+          if (qMode === 'rank')   return `<span style="color:rgba(255,200,120,0.95);">#${v} / ${totalInSet}</span>`;
+          // percent / default
+          const num = Number.isFinite(v) ? v : 0;
+          const txt = num >= 10 ? Math.round(num) : num.toFixed(1);
+          const suffix = qa.unit ? escapeHtml(String(qa.unit)) : '%';
+          return `<span style="color:rgba(255,200,120,0.95);">${txt}${suffix}</span>`;
+        }
+        const html = rows.map(r => `
+          <div class="semHeatInspRow static">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(r.name)}</span>
+            <span style="font-variant-numeric:tabular-nums;font-weight:600;">${fmtAnswer(r.qa)}</span>
+          </div>`).join('');
+        body.innerHTML = html;
+      }
+      return;
+    }
+
     if (state.mode === 'sentiment') {
       _inspectorCtx = null;
       _inspectorBackFn = null;
