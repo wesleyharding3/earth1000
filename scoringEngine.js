@@ -36,7 +36,21 @@ MAIN
 =========================================================
 */
 async function classifyArticle(articleId) {
-  const client = await pool.connect();
+  // Pool may have been ended by gracefulShutdown while a notification
+  // arrived seconds earlier — short-circuit cleanly instead of crashing
+  // the listener and spamming N "Cannot use a pool after end" lines.
+  if (pool.ended || pool.ending) {
+    return { success: false, reason: 'pool_closing' };
+  }
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (err) {
+    if (/Cannot use a pool after calling end/i.test(err.message)) {
+      return { success: false, reason: 'pool_closing' };
+    }
+    throw err;
+  }
 
   try {
     await client.query("BEGIN");

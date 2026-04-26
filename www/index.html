@@ -6306,10 +6306,18 @@ button.arcCtxSegDot,
   border: 1px solid rgba(255,255,255,0.06);
 }
 .adpAnalysis > .arcCtxBody {
-  max-height: none;
-  min-height: 120px;
+  /* Fixed minimum + bounded maximum + own scroll. Without this, a
+     short analysis collapsed the panel to ~80px and a long one
+     stretched it to 600px+, which was disorienting between articles.
+     The analysis now reserves a stable window inside the article
+     detail scroll and scrolls internally when content overflows. */
+  min-height: 240px;
+  max-height: 400px;
   padding: 14px 14px 16px;
-  overflow: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .adpContextTitle {

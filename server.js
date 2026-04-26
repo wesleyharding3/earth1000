@@ -11636,13 +11636,38 @@ const server = app.listen(PORT, () => console.log(`Server running on port ${PORT
 
 function gracefulShutdown(signal) {
   console.log(`\n${signal} received — shutting down gracefully`);
+  // Stop accepting new HTTP traffic AND new article-listener work in
+  // parallel. The listener's queue is independent of HTTP — without
+  // explicit drain, server.close() resolves the moment the last HTTP
+  // connection closes, then pool.end() fires while in-flight
+  // classifyArticle calls are still mid-pipeline → "Cannot use a pool
+  // after calling end on the pool" once per queued article.
+  let httpClosed = false;
+  let listenerDrained = false;
+  let alreadyEnded = false;
+  const closePoolWhenReady = async () => {
+    if (alreadyEnded || !httpClosed || !listenerDrained) return;
+    alreadyEnded = true;
+    try {
+      await pool.end();
+      console.log('DB pool drained');
+    } catch (err) {
+      console.error('pool.end() failed:', err.message);
+    }
+    process.exit(0);
+  };
   server.close(() => {
     console.log('HTTP server closed');
-    pool.end().then(() => {
-      console.log('DB pool drained');
-      process.exit(0);
-    });
+    httpClosed = true;
+    closePoolWhenReady();
   });
+  const { stopArticleListener } = require('./articleListener');
+  stopArticleListener({ timeoutMs: 25_000 })
+    .catch(err => console.warn('[articleListener] stop error:', err.message))
+    .finally(() => {
+      listenerDrained = true;
+      closePoolWhenReady();
+    });
   // Force exit after 30s if connections don't drain
   setTimeout(() => {
     console.error('Forced exit — connections did not drain in 30s');

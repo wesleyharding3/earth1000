@@ -102,7 +102,26 @@ const CONCURRENCY = 5;
 let _active = 0;
 const _queue = [];
 
+// Shutdown coordination. When the server process gets SIGTERM (Render
+// restart, deploy, OOM), we need to drain the in-flight articles before
+// pool.end() runs — otherwise classifyArticle hits a closed pool and
+// spams "Cannot use a pool after calling end on the pool" once per
+// queued/active article.
+let _shutdownRequested = false;
+let _idleResolvers = [];
+function _signalIdleIfDone() {
+  if (_active === 0 && _queue.length === 0) {
+    const r = _idleResolvers; _idleResolvers = [];
+    for (const resolve of r) resolve();
+  }
+}
+
 function enqueue(fn) {
+  // Refuse new work after shutdown has begun. The article will be
+  // re-NOTIFIED by Postgres on the next listener startup if needed
+  // (LISTEN/NOTIFY isn't durable, but the fetcher writes the row before
+  // notifying — a follow-up backfill scan picks up anything missed).
+  if (_shutdownRequested) return;
   _queue.push(fn);
   _drain();
 }
@@ -114,8 +133,36 @@ function _drain() {
     fn().finally(() => {
       _active--;
       _drain();
+      _signalIdleIfDone();
     });
   }
+}
+
+// Wait for the queue to fully drain. Returns immediately if already
+// idle. Caller is responsible for setting _shutdownRequested first if
+// they want to prevent new work from arriving during the wait.
+function _awaitIdle(timeoutMs = 25_000) {
+  if (_active === 0 && _queue.length === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    let timer = null;
+    const onIdle = () => {
+      if (timer) clearTimeout(timer);
+      resolve();
+    };
+    _idleResolvers.push(onIdle);
+    timer = setTimeout(() => {
+      _idleResolvers = _idleResolvers.filter(r => r !== onIdle);
+      console.warn(`[articleListener] drain timed out — ${_active} active, ${_queue.length} queued`);
+      resolve();
+    }, timeoutMs);
+  });
+}
+
+async function stopArticleListener({ timeoutMs = 25_000 } = {}) {
+  _shutdownRequested = true;
+  console.log(`[articleListener] shutdown requested — draining ${_active} active + ${_queue.length} queued`);
+  await _awaitIdle(timeoutMs);
+  console.log('[articleListener] drained');
 }
 
 // Dedup guard — the fetcher fires an explicit pg_notify AND the DB trigger
@@ -305,6 +352,7 @@ async function startArticleListener() {
 
 module.exports = {
   startArticleListener,
+  stopArticleListener,
   logScoringVerification,
   resetStats
 };
