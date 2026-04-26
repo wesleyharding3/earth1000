@@ -11176,11 +11176,19 @@ Output rules:
 - Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
 - Numbers are estimates — include data vintage in source_note (year, source). When uncertain, say so explicitly in source_note.
 
-PRECISION OVER BREADTH:
-- Include ONLY countries that clearly and confidently meet the question's criterion. Do not pad the list with countries loosely associated, partially matching, or that you only "kind of" remember.
-- Better to under-include than to mislead. A small precise list is far more useful than a large loose one — every country you add paints the heatmap and shapes the user's understanding.
-- If you are uncertain whether a country meets the criterion, OMIT it. Note the uncertainty in source_note ("excludes borderline cases such as X, Y, Z") so the user knows.
-- Common failure mode to avoid: when asked "which countries [do X]", do NOT default to listing every country that has any vague association with X. The user wants discrimination, not a roll call.`;
+ACCURACY CHECKLIST — apply before responding:
+
+1. STATE THE CRITERION. Internally restate exactly what the question asks. If it includes a numeric threshold (e.g. "over 10,000 ft", "more than 50%"), treat it as strict. If it names a defined group (EU, NATO, OPEC, NPT signatories), use the canonical membership list.
+
+2. ENUMERATE BY CONTINENT. Walk through every continent — Africa, Asia, Europe, Americas, Oceania — and consider each region's countries. For factual binary questions, the global answer set is usually 30–100 countries. Do NOT rely on only the most famous examples; that's the #1 failure mode.
+
+3. VERIFY EACH CANDIDATE. For each country you'd include, briefly justify why it qualifies — name the specific peak, region, language family, treaty, or feature. If you can't name a specific qualifying reason, do not include the country.
+
+4. EXCLUDE without specific evidence. Do not include a country because it "looks mountainous", "is in that region", or "feels like it should qualify". Specific evidence required.
+
+5. NOTE THE LIMITS in source_note. If you're uncertain about edge cases, list them by name ("excludes borderline cases: X, Y") so the user knows. If your data has a vintage, cite it.
+
+Most users will be wronger than you think when checking — but for the cases where they are right and you're missing obvious entries, your answer becomes useless. Aim for high recall on clear positives and strict exclusion of vague matches.`;
 
     const claudeResp = await Anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
