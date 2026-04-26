@@ -33,10 +33,12 @@ const CREDIT_COSTS = Object.freeze({
   flow_context:     10,   // /api/ai/flow-context (~$0.010)
   translate:         1,   // DeepL — nominal (real cost ~$0.0005)
   // /api/heatmap/ask — Claude tool-use call returning ~200 country
-  // values. Slim prompt (~600 in), structured output (~600 out via tool
-  // schema). Cache hits + curated rows are FREE — credits only charged
-  // when we actually invoke Claude. (~$0.012)
-  heatmap_qa:       12,
+  // values. Slim prompt (~3K in including ISO catalog), structured output
+  // (~600 out via tool schema). Switched to Sonnet 4.5 (3x Haiku cost) to
+  // fix Haiku's tendency to over-include — see heatmap-test.js. Cache hits
+  // + curated rows are FREE — credits only charged when we actually
+  // invoke Claude. (~$0.025-0.030)
+  heatmap_qa:       30,
 });
 
 // ─── Weekly base allowance by tier ──────────────────────────────────────────

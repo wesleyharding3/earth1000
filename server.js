@@ -11175,10 +11175,15 @@ Output rules:
 - Use the set_country_values tool when the question has a meaningful per-country answer.
 - Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
 - Numbers are estimates — include data vintage in source_note (year, source). When uncertain, say so explicitly in source_note.
-- Do not include countries you have no information about.`;
+
+PRECISION OVER BREADTH:
+- Include ONLY countries that clearly and confidently meet the question's criterion. Do not pad the list with countries loosely associated, partially matching, or that you only "kind of" remember.
+- Better to under-include than to mislead. A small precise list is far more useful than a large loose one — every country you add paints the heatmap and shapes the user's understanding.
+- If you are uncertain whether a country meets the criterion, OMIT it. Note the uncertainty in source_note ("excludes borderline cases such as X, Y, Z") so the user knows.
+- Common failure mode to avoid: when asked "which countries [do X]", do NOT default to listing every country that has any vague association with X. The user wants discrimination, not a roll call.`;
 
     const claudeResp = await Anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 4096,
       system: systemPrompt,
       tools,
