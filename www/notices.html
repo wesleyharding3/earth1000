@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notices — earth00</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0d;
+      --surface: #141414;
+      --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.87);
+      --muted: rgba(255,255,255,0.45);
+      --accent: #4ade80;
+      --link: #60a5fa;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.75;
+      padding: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,13,13,0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 24px;
+      height: 52px;
+    }
+
+    .topbar-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .topbar-home:hover { opacity: 1; }
+    .topbar-home svg { flex-shrink: 0; }
+
+    .topbar-sep { color: var(--border); font-size: 18px; }
+    .topbar-title { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+    .layout {
+      display: flex;
+      gap: 40px;
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+    }
+
+    .toc {
+      flex-shrink: 0;
+      width: 220px;
+      position: sticky;
+      top: 68px;
+      align-self: flex-start;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+    .toc::-webkit-scrollbar { width: 4px; }
+    .toc::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .toc-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-left: 12px;
+    }
+    .toc a {
+      display: block;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      line-height: 1.4;
+    }
+    .toc a:hover {
+      color: var(--text);
+      border-left-color: var(--accent);
+    }
+
+    .content { flex: 1; min-width: 0; }
+
+    .page-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .page-title {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .page-date {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 40px;
+    }
+
+    .summary-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 40px;
+    }
+    .summary-box h2 {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .summary-point {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+    .summary-point:last-child { margin-bottom: 0; }
+    .summary-dot {
+      flex-shrink: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-top: 8px;
+    }
+
+    .policy-section {
+      margin-bottom: 48px;
+      scroll-margin-top: 72px;
+    }
+    .policy-section h2 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .policy-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 20px;
+      margin-bottom: 8px;
+      color: rgba(255,255,255,0.7);
+    }
+    .policy-section p {
+      margin-bottom: 14px;
+      color: rgba(255,255,255,0.78);
+    }
+    .policy-section ul {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 14px 0;
+    }
+    .policy-section ul li {
+      position: relative;
+      padding-left: 18px;
+      margin-bottom: 6px;
+      color: rgba(255,255,255,0.78);
+      font-size: 14px;
+    }
+    .policy-section ul li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 9px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+    .policy-section a { color: var(--link); text-decoration: none; }
+    .policy-section a:hover { text-decoration: underline; }
+
+    .in-short {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(74,222,128,0.08);
+      border: 1px solid rgba(74,222,128,0.2);
+      border-radius: 6px;
+      padding: 2px 10px;
+      margin-bottom: 12px;
+      letter-spacing: 0.02em;
+    }
+
+    .policy-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 16px 0 20px;
+    }
+    .policy-table th {
+      text-align: left;
+      padding: 10px 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .policy-table td {
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      color: rgba(255,255,255,0.75);
+      vertical-align: top;
+    }
+    .policy-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+
+    .contact-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px 22px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.75);
+      line-height: 1.6;
+    }
+    .contact-box a { color: var(--link); text-decoration: none; }
+    .contact-box a:hover { text-decoration: underline; }
+
+    .page-footer {
+      text-align: center;
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .page-footer a { color: var(--link); text-decoration: none; }
+    .page-footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 720px) {
+      .toc { display: none; }
+      .layout { padding: 32px 16px 80px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="topbar">
+  <a class="topbar-home" href="/">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 8L8 3L13 8V13H10V10H6V13H3V8Z" fill="currentColor"/>
+    </svg>
+    earth00
+  </a>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-title">Notices</span>
+</nav>
+
+<div class="layout">
+
+  <aside class="toc">
+    <div class="toc-label">Contents</div>
+    <a href="#s1">1. Overview</a>
+    <a href="#s2">2. Open-Source Software</a>
+    <a href="#s3">3. Map &amp; Geographic Data</a>
+    <a href="#s4">4. External Services</a>
+    <a href="#s5">5. News Source Attribution</a>
+    <a href="#s6">6. AI Content Disclosure</a>
+    <a href="#s7">7. Content Removal Policy</a>
+    <a href="#s8">8. Counter-Notification</a>
+    <a href="#s9">9. Disputes &amp; Governing Law</a>
+    <a href="#s10">10. Updates</a>
+    <a href="#s11">11. Contact</a>
+  </aside>
+
+  <main class="content">
+
+    <div class="page-eyebrow">Legal</div>
+    <h1 class="page-title">Notices</h1>
+    <p class="page-date">Last updated April 25, 2026</p>
+
+    <p>This page lists open-source software and third-party services used by <strong>earth00</strong> ("we," "us," or "our"), explains how we attribute and aggregate news content, and provides a procedure for content owners to request removal of their material from our Services.</p>
+
+    <div class="summary-box" style="margin-top:32px;">
+      <h2>Summary of Key Points</h2>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Open-source software:</strong> we ship with a number of open-source packages and acknowledge them under the licenses they require.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>External services:</strong> we use third-party services for authentication, payments, translation, language models, and analytics, listed below with their roles.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>News content:</strong> headlines, snippets, and links are sourced from publicly available RSS feeds and web pages. Each item links back to its original publisher.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>Removal requests:</strong> publishers, rights holders, and individuals may request removal of specific content via the procedure in Section 7. We respond within 14 days.</div></div>
+      <div class="summary-point"><div class="summary-dot"></div><div><strong>AI usage:</strong> some features are produced or summarized by large language models; outputs should not be taken as the sole source of truth.</div></div>
+    </div>
+
+    <section class="policy-section" id="s1">
+      <h2>1. Overview</h2>
+      <span class="in-short">In Short</span>
+      <p>This Notices document complements our <a href="/privacy.html">Privacy Policy</a> and <a href="/terms.html">Terms of Service</a> by providing the attribution, disclosure, and removal information required by the open-source licenses we rely on, by U.S. copyright law (17 U.S.C. § 512), and by App Store guidelines.</p>
+      <p>Earth00 aggregates publicly available news content (headlines, brief excerpts, links) and combines it with original analysis, translation, and language-model-assisted summaries. We do not claim authorship of source material; original publishers retain all rights to their content.</p>
+    </section>
+
+    <section class="policy-section" id="s2">
+      <h2>2. Open-Source Software</h2>
+      <span class="in-short">In Short</span>
+      <p>The Earth00 application incorporates the following open-source components, each governed by its own license. We thank their authors and maintainers.</p>
+
+      <table class="policy-table">
+        <thead>
+          <tr><th>Component</th><th>Purpose</th><th>License</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>@anthropic-ai/sdk</td><td>Language-model client</td><td>MIT</td></tr>
+          <tr><td>@apple/app-store-server-library</td><td>App Store receipt validation</td><td>MIT</td></tr>
+          <tr><td>@capacitor/core, /cli, /ios</td><td>Mobile webview framework</td><td>MIT</td></tr>
+          <tr><td>@capacitor-community/apple-sign-in</td><td>Native Sign in with Apple</td><td>MIT</td></tr>
+          <tr><td>@revenuecat/purchases-capacitor</td><td>Subscription management</td><td>MIT</td></tr>
+          <tr><td>@supabase/supabase-js</td><td>Authentication and database client</td><td>MIT</td></tr>
+          <tr><td>cheerio</td><td>HTML parsing</td><td>MIT</td></tr>
+          <tr><td>cors</td><td>HTTP CORS handling</td><td>MIT</td></tr>
+          <tr><td>deepl-node</td><td>Translation client</td><td>MIT</td></tr>
+          <tr><td>dotenv</td><td>Environment configuration</td><td>BSD-2-Clause</td></tr>
+          <tr><td>express</td><td>HTTP server framework</td><td>MIT</td></tr>
+          <tr><td>jsonwebtoken</td><td>Token signing and verification</td><td>MIT</td></tr>
+          <tr><td>p-limit</td><td>Concurrency limiting</td><td>MIT</td></tr>
+          <tr><td>pg</td><td>PostgreSQL client</td><td>MIT</td></tr>
+          <tr><td>rss-parser</td><td>RSS/Atom parsing</td><td>MIT</td></tr>
+          <tr><td>sharp</td><td>Image processing</td><td>Apache-2.0</td></tr>
+        </tbody>
+      </table>
+      <p>Full license texts are available in the source distributions of each package on <a href="https://www.npmjs.com">npm</a>.</p>
+    </section>
+
+    <section class="policy-section" id="s3">
+      <h2>3. Map &amp; Geographic Data</h2>
+      <span class="in-short">In Short</span>
+      <p>We use publicly available cartographic and reference datasets to render the globe and country boundaries.</p>
+      <ul>
+        <li><strong>Natural Earth</strong> (1:50m and 1:110m vector data) — public domain. <a href="https://www.naturalearthdata.com/">naturalearthdata.com</a></li>
+        <li><strong>Country and region boundary data</strong> derived from Natural Earth and similar public-domain or permissively-licensed sources, with localized adjustments.</li>
+        <li><strong>Shipping lanes</strong> dataset — used for visualization of trade routes; sourced from public-domain marine traffic references.</li>
+        <li><strong>Railway network data</strong> — public-domain reference data.</li>
+      </ul>
+    </section>
+
+    <section class="policy-section" id="s4">
+      <h2>4. External Services</h2>
+      <span class="in-short">In Short</span>
+      <p>The following third-party services power features within Earth00. Each service has its own privacy policy and terms; users interacting with these features may have data processed by these providers as described in our <a href="/privacy.html">Privacy Policy</a>.</p>
+
+      <table class="policy-table">
+        <thead>
+          <tr><th>Service</th><th>Used For</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Anthropic (Claude)</td><td>Generating analyses, summaries, and contextual explanations</td></tr>
+          <tr><td>DeepL</td><td>Article and headline translation</td></tr>
+          <tr><td>Supabase</td><td>User authentication and account data storage</td></tr>
+          <tr><td>Apple — App Store / StoreKit / Sign in with Apple</td><td>iOS subscriptions, payments, and sign-in</td></tr>
+          <tr><td>RevenueCat</td><td>iOS subscription state management and webhooks</td></tr>
+          <tr><td>PayPal</td><td>Web subscriptions and payments</td></tr>
+          <tr><td>Render</td><td>Application hosting and managed PostgreSQL</td></tr>
+          <tr><td>Google</td><td>Sign-in via Google OAuth (optional)</td></tr>
+          <tr><td>Federal Reserve Economic Data (FRED)</td><td>Reference series for selected economic indicators</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="policy-section" id="s5">
+      <h2>5. News Source Attribution</h2>
+      <span class="in-short">In Short</span>
+      <p>Earth00 aggregates news from publicly available RSS feeds and web pages published by hundreds of news organizations worldwide. We do not claim authorship of, or ownership in, source headlines, article text, or images.</p>
+
+      <h3>How attribution works</h3>
+      <p>For each article surfaced in the application:</p>
+      <ul>
+        <li>The publisher's name (or hostname) is shown alongside the headline</li>
+        <li>The original article URL is reachable via tap, click, or "open source"</li>
+        <li>Excerpts are limited to a brief snippet sufficient to convey the topic</li>
+        <li>We do not host full article bodies, paywalled content, or images embedded from third-party CDNs without the publisher's implicit permission via their RSS feed</li>
+      </ul>
+
+      <h3>Aggregation framework</h3>
+      <p>Earth00 operates under the framework of fair use (17 U.S.C. § 107) for the limited use of headlines and brief snippets, with prominent attribution and links back to original sources. We respect <code>robots.txt</code> directives and rate-limit requests to publisher servers.</p>
+    </section>
+
+    <section class="policy-section" id="s6">
+      <h2>6. AI Content Disclosure</h2>
+      <span class="in-short">In Short</span>
+      <p>Some features in Earth00 produce content using third-party large language models (primarily Anthropic's Claude). These features include — but are not limited to — daily briefings, story analyses, contextual explanations, and translations.</p>
+
+      <h3>What this means for you</h3>
+      <ul>
+        <li>Outputs are AI-assisted and may contain inaccuracies, biases, or hallucinations</li>
+        <li>You should not rely on AI-generated content as the sole source of truth, particularly for important decisions</li>
+        <li>The original article linked beneath each AI-generated summary is the authoritative source</li>
+        <li>We do not train AI models on user data; LLM providers process data per their own privacy policies</li>
+      </ul>
+
+      <p>Where reasonably possible, AI-generated content is labeled within the application interface.</p>
+    </section>
+
+    <section class="policy-section" id="s7">
+      <h2>7. Content Removal Policy</h2>
+      <span class="in-short">In Short</span>
+      <p>Earth00 supports the takedown framework set out in the U.S. Digital Millennium Copyright Act (17 U.S.C. § 512) and analogous frameworks in other jurisdictions.</p>
+
+      <h3>Who can request removal</h3>
+      <p>Any of the following parties may submit a removal request:</p>
+      <ul>
+        <li>A news publisher (or its authorized agent) requesting that their content no longer be aggregated by Earth00</li>
+        <li>A copyright holder (or authorized agent) of any specific work appearing in the Services</li>
+        <li>A subject of news coverage with a legitimate privacy or right-of-publicity claim</li>
+        <li>Any individual whose personal data appears in the Services without lawful basis</li>
+      </ul>
+
+      <h3>How to submit a removal request</h3>
+      <p>Send a written notice to <a href="mailto:legal@earth00.com">legal@earth00.com</a> containing:</p>
+      <ul>
+        <li>Your full name and contact information (mailing address, telephone, email)</li>
+        <li>If acting on behalf of a publisher or rights holder, identification of that party and your authority to act</li>
+        <li>A description of the work or content for which removal is requested</li>
+        <li>The URL(s), publisher name(s), or other identifiers sufficient for us to locate the material</li>
+        <li>A statement that you have a good faith belief that use of the material in the manner complained of is not authorized by the rights holder, its agent, or the law</li>
+        <li>A statement, made under penalty of perjury, that the information in the notice is accurate and that you are authorized to act on behalf of the rights holder</li>
+        <li>A physical or electronic signature</li>
+      </ul>
+
+      <h3>What we will do</h3>
+      <ul>
+        <li>Acknowledge receipt within five (5) business days</li>
+        <li>Review and act on valid requests within fourteen (14) days of receipt</li>
+        <li>For requests from publishers: cease aggregating the publisher's RSS feed and web pages, and remove existing snippets/headlines from active surfaces</li>
+        <li>For requests targeting specific content: remove the identified URL(s), snippets, and any AI-generated summaries derived therefrom</li>
+        <li>Notify you of the action taken, by reply to your original request</li>
+      </ul>
+
+      <h3>Designated agent</h3>
+      <p class="contact-box" style="margin-top:14px;">
+        <strong>Designated Agent for Removal Requests</strong><br>
+        Wesley Harding<br>
+        Earth00 Inc.<br>
+        Email: <a href="mailto:legal@earth00.com">legal@earth00.com</a>
+      </p>
+      <p>Misrepresentations in a removal request may subject you to liability under 17 U.S.C. § 512(f).</p>
+    </section>
+
+    <section class="policy-section" id="s8">
+      <h2>8. Counter-Notification</h2>
+      <span class="in-short">In Short</span>
+      <p>If you believe content was removed in error or as a result of misidentification, you may submit a counter-notification to <a href="mailto:legal@earth00.com">legal@earth00.com</a>.</p>
+      <p>A valid counter-notification must include:</p>
+      <ul>
+        <li>Your physical or electronic signature</li>
+        <li>Identification of the material removed and its location prior to removal</li>
+        <li>A statement, under penalty of perjury, that you have a good faith belief the material was removed as a result of mistake or misidentification</li>
+        <li>Your name, address, and telephone number, and a statement that you consent to the jurisdiction of the federal courts of the State of Delaware</li>
+        <li>A statement that you will accept service of process from the original complaining party</li>
+      </ul>
+    </section>
+
+    <section class="policy-section" id="s9">
+      <h2>9. Disputes &amp; Governing Law</h2>
+      <span class="in-short">In Short</span>
+      <p>Any dispute arising from this Notices document or the operation of Earth00 is governed by the laws of the State of Delaware, United States of America, without regard to conflict-of-law principles.</p>
+      <p>The parties agree to first attempt informal resolution by written correspondence. If unresolved within thirty (30) days, the parties consent to the exclusive jurisdiction of the state and federal courts located in Delaware.</p>
+      <p>Nothing in this section limits any rights you may have under applicable consumer protection laws.</p>
+    </section>
+
+    <section class="policy-section" id="s10">
+      <h2>10. Updates</h2>
+      <span class="in-short">In Short</span>
+      <p>We may update this Notices document from time to time, including to reflect changes in third-party services we use, additions or removals of open-source dependencies, or changes to our removal procedures.</p>
+      <p>Updates will be reflected by a new "Last updated" date at the top of this page. Material changes will be communicated through the Services or by email to registered account holders where appropriate.</p>
+    </section>
+
+    <section class="policy-section" id="s11">
+      <h2>11. Contact</h2>
+      <span class="in-short">In Short</span>
+      <p>For all matters relating to this Notices document — open-source attribution corrections, content removal requests, counter-notifications, or general inquiries about external services — contact:</p>
+      <div class="contact-box">
+        <strong>earth00 — Legal &amp; Compliance</strong><br>
+        Email: <a href="mailto:legal@earth00.com">legal@earth00.com</a><br>
+        Web: <a href="https://earth00.com">https://earth00.com</a><br><br>
+        For privacy-specific requests (data access, deletion, portability), see our <a href="/privacy.html">Privacy Policy</a>.<br>
+        For service terms, see our <a href="/terms.html">Terms of Service</a>.
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="page-footer">
+  earth00 — <a href="/privacy.html">Privacy Policy</a> · <a href="/terms.html">Terms of Service</a> · <a href="/notices.html">Notices</a>
+</footer>
+
+</body>
+</html>

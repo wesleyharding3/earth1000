@@ -12417,6 +12417,14 @@ window.__arcCtxSegmented = (function() {
             </svg>
             Terms of Service
           </div>
+          <div class="acctDpBtn" id="acctDpNotices">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            Notices
+          </div>
           <!-- App Store guideline 5.1.1(v): in-app account deletion is
                required since 2022. Hidden until signed in (the dropdown
                itself is gated upstream). -->
@@ -32010,6 +32018,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       <a id="authPrivacyLink">Privacy Policy</a>
       <span class="authLegalSep">·</span>
       <a id="authTermsLink">Terms of Service</a>
+      <span class="authLegalSep">·</span>
+      <a id="authNoticesLink">Notices</a>
     </div>
   </div>
 </div>
@@ -32934,6 +32944,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   document.getElementById('authTermsLink')?.addEventListener('click', e => {
     e.preventDefault(); window.__openLegalDoc?.('/terms.html');
   });
+  document.getElementById('authNoticesLink')?.addEventListener('click', e => {
+    e.preventDefault(); window.__openLegalDoc?.('/notices.html');
+  });
   authOverlay.addEventListener('click', e => { if (e.target === authOverlay) closeModal(); });
   // Block all touch/pointer events from reaching elements behind the overlay
   ['touchstart','touchmove','touchend','pointerdown','pointermove','pointerup','mousedown'].forEach(evt => {
@@ -33068,6 +33081,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const restore   = document.getElementById('acctDpRestore');
     const privacy   = document.getElementById('acctDpPrivacy');
     const terms     = document.getElementById('acctDpTerms');
+    const notices   = document.getElementById('acctDpNotices');
     if (!main || !settings || !openBtn || !backBtn) return;
 
     function showSettings() {
@@ -33164,6 +33178,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__openLegalDoc = openLegalDoc;
     privacy?.addEventListener('click', e => { e.stopPropagation(); openLegalDoc('/privacy.html'); });
     terms?.addEventListener('click',   e => { e.stopPropagation(); openLegalDoc('/terms.html');   });
+    notices?.addEventListener('click', e => { e.stopPropagation(); openLegalDoc('/notices.html'); });
   })();
 
   /* ── Delete Account (App Store guideline 5.1.1(v)) ──
