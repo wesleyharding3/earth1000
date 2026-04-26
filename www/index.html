@@ -10222,6 +10222,26 @@ button.arcCtxSegDot,
 .pricingTierCta.current-plan { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); cursor: default; }
 .pricingPaypalBtn { margin-top: 8px; }
 .pricingNote { font-size: 11px; color: rgba(255,255,255,0.25); text-align: center; margin-top: 20px; }
+/* ─── Subscription disclosure (App Store 3.1.2) ── */
+.pricingDisclosure {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.4);
+}
+.pricingDisclosure p { margin: 0 0 6px 0; }
+.pricingDisclosure p:last-child { margin-bottom: 0; }
+.pricingLegalLink {
+  color: rgba(255,255,255,0.6);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 0.14s;
+}
+.pricingLegalLink:hover { color: rgba(255,255,255,0.9); }
 /* Upgrade nudge banner */
 .upgradeNudge {
   display: flex; align-items: center; gap: 10px;
@@ -10695,6 +10715,21 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   text-align: center; margin-top: 15px;
   font-size: 12px; color: rgba(255,255,255,0.28);
 }
+/* ─── Legal links footer for the auth modal (Privacy + Terms) ── */
+.authLegalFooter {
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  gap: 10px;
+  font-size: 11px; letter-spacing: 0.02em;
+}
+.authLegalFooter a {
+  color: rgba(255,255,255,0.42);
+  cursor: pointer; text-decoration: none;
+  transition: color 0.14s;
+}
+.authLegalFooter a:hover { color: rgba(255,255,255,0.78); }
+.authLegalSep { color: rgba(255,255,255,0.22); }
 /* ─── Onboarding Questionnaire v2 — Multi-step with typing animation ── */
 #onboardOverlay {
   display: none; position: fixed; inset: 0; z-index: 9500;
@@ -10958,7 +10993,6 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 .acctDpBtn.signout:hover { background: rgba(255,50,50,0.08); color: rgba(255,130,130,1); }
 .acctDpBtn.delete {
   color: rgba(255,80,80,0.65);
-  font-size: 11px;
 }
 .acctDpBtn.delete:hover { background: rgba(255,40,40,0.10); color: rgba(255,140,140,1); }
 .acctDpBtn.delete svg { opacity: 0.55; }
@@ -31852,7 +31886,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       <!-- Pro -->
       <div class="pricingTierCard highlighted" id="pricingCardPro">
         <div class="pricingTierName">Pro</div>
-        <div class="pricingTierPrice">$5<span>/mo</span></div>
+        <div class="pricingTierPrice">$4.99<span>/month</span></div>
         <ul class="pricingTierFeatures">
           <li>Daily briefings</li>
           <li>Article translation</li>
@@ -31864,7 +31898,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       <!-- Enterprise -->
       <div class="pricingTierCard" id="pricingCardEnterprise">
         <div class="pricingTierName">Enterprise</div>
-        <div class="pricingTierPrice">$25<span>/mo</span></div>
+        <div class="pricingTierPrice">$24.99<span>/month</span></div>
         <ul class="pricingTierFeatures">
           <li>Daily briefings</li>
           <li>Article translation</li>
@@ -31876,7 +31910,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>
 
     </div>
-    <div class="pricingNote" id="pricingProcessorNote">Cancel anytime · Secured by PayPal</div>
+    <!-- App Store Guideline 3.1.2: subscription disclosure must appear
+         visibly BEFORE the user taps Subscribe. Auto-renewal language,
+         cancellation pathway, and Privacy + Terms links are required.
+         The cancellation location text is swapped per platform by JS:
+         "Apple ID Settings" on iOS, "PayPal account" on web. -->
+    <div class="pricingDisclosure" id="pricingDisclosure">
+      <p>
+        Subscriptions auto-renew at the listed price each month until cancelled.
+        Cancel anytime in your <span id="pricingManageLocation">account</span>;
+        cancellation takes effect at the end of the current billing period.
+      </p>
+      <p>
+        By subscribing you agree to our
+        <a class="pricingLegalLink" data-doc="terms">Terms</a>
+        and
+        <a class="pricingLegalLink" data-doc="privacy">Privacy Policy</a>.
+      </p>
+    </div>
   </div>
 </div>
 
@@ -31950,6 +32001,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <input type="password" id="suPassword" placeholder="Min. 8 characters" autocomplete="new-password" />
       </div>
       <button class="authSubmit" id="suSubmit">Create Account</button>
+    </div>
+    <!-- Legal footer — App Store guideline 3.1.2 requires Privacy + Terms
+         to be visible BEFORE any subscription purchase. The pricing modal
+         won't open without sign-in, so surfacing them here means the
+         user has seen them by the time they reach checkout. -->
+    <div class="authLegalFooter">
+      <a id="authPrivacyLink">Privacy Policy</a>
+      <span class="authLegalSep">·</span>
+      <a id="authTermsLink">Terms of Service</a>
     </div>
   </div>
 </div>
@@ -32864,6 +32924,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   });
 
   authClose.addEventListener('click', closeModal);
+
+  // Auth modal legal links — Privacy + Terms (App Store guideline 3.1.2).
+  // Reuses window.__openLegalDoc set up by the Settings sub-view (Capacitor
+  // Browser sheet on iOS, new tab on web).
+  document.getElementById('authPrivacyLink')?.addEventListener('click', e => {
+    e.preventDefault(); window.__openLegalDoc?.('/privacy.html');
+  });
+  document.getElementById('authTermsLink')?.addEventListener('click', e => {
+    e.preventDefault(); window.__openLegalDoc?.('/terms.html');
+  });
   authOverlay.addEventListener('click', e => { if (e.target === authOverlay) closeModal(); });
   // Block all touch/pointer events from reaching elements behind the overlay
   ['touchstart','touchmove','touchend','pointerdown','pointermove','pointerup','mousedown'].forEach(evt => {
@@ -33016,7 +33086,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // to return), otherwise fall back to window.open. Internal pages
     // bundled at /privacy.html and /terms.html.
     function openLegalDoc(path) {
-      const url = new URL(path, window.location.origin).href;
+      // window.location.origin in Capacitor iOS is `capacitor://localhost`
+      // or `https://localhost` — neither resolves on the public internet,
+      // so SFSafariViewController can't load them and iOS routes the
+      // unknown scheme to whatever app claims it (we saw AAA intercept).
+      // Always use an absolute public URL that Safari can fetch normally.
+      // Swap to earth00.com once DNS + custom domain are live on Render.
+      const PUBLIC_BASE = 'https://earth-wjr6.onrender.com';
+      const url = new URL(path, PUBLIC_BASE).href;
       const Browser = window.Capacitor?.Plugins?.Browser;
       if (Browser?.open) {
         Browser.open({ url, presentationStyle: 'popover' }).catch(() => window.open(url, '_blank'));
@@ -33024,6 +33101,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.open(url, '_blank');
       }
     }
+    // Exposed so the auth modal's footer links can reuse the same opener.
+    window.__openLegalDoc = openLegalDoc;
     privacy?.addEventListener('click', e => { e.stopPropagation(); openLegalDoc('/privacy.html'); });
     terms?.addEventListener('click',   e => { e.stopPropagation(); openLegalDoc('/terms.html');   });
   })();
@@ -34070,15 +34149,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (_isCapIos()) {
       _rcRenderBtn('pricingPaypalPro',        'pro');
       _rcRenderBtn('pricingPaypalEnterprise', 'enterprise');
-      const note = document.getElementById('pricingProcessorNote');
-      if (note) note.textContent = 'Cancel anytime · Billed by Apple';
     } else {
       _ppRenderBtn('pricingPaypalPro',        'pro');
       _ppRenderBtn('pricingPaypalEnterprise', 'enterprise');
     }
+    _wirePricingDisclosure();
   }
   // Back-compat: legacy callers still reference this name.
   function _renderPayPalButtons() { _renderPricingButtons(); }
+
+  // ── Pricing modal disclosure (App Store 3.1.2) ──
+  // Swap the cancellation-location text for the active platform, and
+  // wire up the embedded Privacy + Terms links via __openLegalDoc.
+  // Idempotent — repeated calls are no-ops via the data-wired flag.
+  function _wirePricingDisclosure() {
+    const manageLoc = document.getElementById('pricingManageLocation');
+    if (manageLoc) {
+      manageLoc.textContent = _isCapIos() ? 'Apple ID Settings' : 'PayPal account';
+    }
+    document.querySelectorAll('.pricingLegalLink').forEach(a => {
+      if (a.dataset.wired === '1') return;
+      a.dataset.wired = '1';
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const path = a.dataset.doc === 'privacy' ? '/privacy.html' : '/terms.html';
+        window.__openLegalDoc?.(path);
+      });
+    });
+  }
 
   function _ppRenderBtn(containerId, tier) {
     const container = document.getElementById(containerId);
