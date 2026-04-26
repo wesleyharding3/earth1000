@@ -33015,12 +33015,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
         const idToken = result?.response?.identityToken;
         if (!idToken) throw new Error('No identity token returned from Apple.');
-        const { error } = await sb.auth.signInWithIdToken({
+        const { data, error } = await sb.auth.signInWithIdToken({
           provider: 'apple',
           token: idToken,
           nonce: rawNonce,
         });
         if (error) throw error;
+        // Email/password sign-in calls applySession + closeModal explicitly;
+        // the OAuth redirect flow doesn't need to because the page reloads.
+        // Native flow stays in the same JS context, so we have to do both
+        // ourselves — otherwise the auth modal hangs visible until the
+        // user dismisses it.
+        if (data?.session) { try { await applySession(data.session); } catch (_) {} }
+        closeModal();
         return;
       }
 
