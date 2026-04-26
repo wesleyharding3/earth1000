@@ -255,7 +255,39 @@ async function run() {
       const voiceoverText = (seg.voiceover_text || '').trim();
       const transitionText = (seg.transition || '').trim();
 
-      if (voiceoverText) {
+      // Featured-media split: TTS the "before" and "after" halves
+      // separately and concatenate their MP3 buffers. We stamp
+      // _focalSplitMs (boundary within this piece) so the player can
+      // fire the focal trigger at the precise sentence boundary instead
+      // of an approximate percentage of segment duration.
+      const fm = seg.featured_video || seg.video?.focal || seg.video_focal;
+      const hasSplit = fm?.enabled
+        && (seg.voiceover_before_video || '').trim()
+        && (seg.voiceover_after_video  || '').trim();
+
+      if (hasSplit) {
+        pieceNum++;
+        try {
+          const beforePiece = await synthesiseAudio(seg.voiceover_before_video.trim());
+          const afterPiece  = await synthesiseAudio(seg.voiceover_after_video.trim());
+          const buffer      = Buffer.concat([beforePiece.buffer, afterPiece.buffer]);
+          const durationMs  = beforePiece.durationMs + afterPiece.durationMs;
+          const wordTimings = [
+            ...(beforePiece.wordTimings || []),
+            ...(afterPiece.wordTimings  || []).map(w => ({ ...w, t: (w.t || 0) + beforePiece.durationMs })),
+          ];
+          audioBuffers.push(buffer);
+          pieceDurationsMs.push(durationMs);
+          pieceWordTimings.push(wordTimings);
+          seg._focalSplitMs = beforePiece.durationMs;
+          console.log(`   [${elapsed(t0)}] Piece ${pieceNum} (seg ${si} voice split @ ${(beforePiece.durationMs/1000).toFixed(1)}s) — ${(buffer.byteLength/1024).toFixed(0)}KB · ${(durationMs/1000).toFixed(1)}s`);
+        } catch (err) {
+          console.warn(`   ⚠ Voiceover audio (split) for seg ${si} failed: ${err.message}`);
+          audioBuffers.push(Buffer.alloc(0));
+          pieceDurationsMs.push(0);
+          pieceWordTimings.push([]);
+        }
+      } else if (voiceoverText) {
         pieceNum++;
         try {
           const { buffer, wordTimings, durationMs } = await synthesiseAudio(voiceoverText);
@@ -312,6 +344,13 @@ async function run() {
       segments[si].transition_start_ms= cumMs + vms;
       segments[si].transition_ms      = tms;
       segments[si].word_timings       = [...vwords, ...twords];
+      // Featured-media segments: convert the within-piece split offset
+      // into an absolute trigger time so the player fires focal at the
+      // exact sentence boundary, no triggerPct guessing.
+      if (segments[si]._focalSplitMs != null) {
+        segments[si].focal_trigger_ms = cumMs + segments[si]._focalSplitMs;
+        delete segments[si]._focalSplitMs;
+      }
       cumMs += vms + tms;
     }
 
@@ -711,7 +750,40 @@ async function run() {
         const transitionText = (seg.transition || '').trim();
         const breakdown = { voiceover_ms: 0, transition_ms: 0, voiceover_words: [], transition_words: [] };
 
-        if (voiceoverText) {
+        // Featured-media split: TTS the before/after halves separately
+        // and concat the MP3 buffers, stamping _focalSplitMs so the
+        // player can fire the focal trigger at the exact sentence
+        // boundary (vs an approximate triggerPct of segment duration).
+        const fm = seg.featured_video || seg.video?.focal || seg.video_focal;
+        const hasSplit = fm?.enabled
+          && (seg.voiceover_before_video || '').trim()
+          && (seg.voiceover_after_video  || '').trim();
+
+        if (hasSplit) {
+          pieceNum++;
+          try {
+            const beforePiece = await synthesiseAudio(seg.voiceover_before_video.trim());
+            const afterPiece  = await synthesiseAudio(seg.voiceover_after_video.trim());
+            const buffer      = Buffer.concat([beforePiece.buffer, afterPiece.buffer]);
+            const durationMs  = beforePiece.durationMs + afterPiece.durationMs;
+            const wordTimings = [
+              ...(beforePiece.wordTimings || []),
+              ...(afterPiece.wordTimings  || []).map(w => ({ ...w, t: (w.t || 0) + beforePiece.durationMs })),
+            ];
+            audioBuffers.push(buffer);
+            pieceDurationsMs.push(durationMs);
+            pieceWordTimings.push(wordTimings);
+            breakdown.voiceover_ms = durationMs;
+            breakdown.voiceover_words = wordTimings;
+            seg._focalSplitMs = beforePiece.durationMs;
+            console.log(`   [${elapsed(t0)}] Piece ${pieceNum} (seg ${si} voice split @ ${(beforePiece.durationMs/1000).toFixed(1)}s) — ${(buffer.byteLength/1024).toFixed(0)}KB · ${(durationMs/1000).toFixed(1)}s`);
+          } catch (err) {
+            console.warn(`   ⚠ Voiceover audio (split) for seg ${si} failed: ${err.message}`);
+            audioBuffers.push(Buffer.alloc(0));
+            pieceDurationsMs.push(0);
+            pieceWordTimings.push([]);
+          }
+        } else if (voiceoverText) {
           pieceNum++;
           try {
             const { buffer, wordTimings, durationMs } = await synthesiseAudio(voiceoverText);
@@ -778,6 +850,13 @@ async function run() {
         segments[si].transition_start_ms= cumMs + vms;
         segments[si].transition_ms      = tms;
         segments[si].word_timings       = [...vwords, ...twords];
+        // Featured-media segments: convert the within-piece split offset
+        // into an absolute trigger time so the player fires focal at the
+        // exact sentence boundary, no triggerPct guessing.
+        if (segments[si]._focalSplitMs != null) {
+          segments[si].focal_trigger_ms = cumMs + segments[si]._focalSplitMs;
+          delete segments[si]._focalSplitMs;
+        }
         cumMs += vms + tms;
       }
 
@@ -1477,13 +1556,25 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
           background_context:   t.deepContext.background,
         },
       } : {}),
-      // Featured video — narrator must hand off to this video mid-segment
+      // Featured media — narrator hands off to this mid-segment.
+      // The shape varies per media_type so the prompt can write the right
+      // kind of transition (a video clip vs an embedded tweet vs a globe-
+      // wide heatmap of a specific question).
       ...(t._featuredVideo ? {
         featured_video: {
           enabled:              true,
           duration_seconds:     t._featuredVideo.duration_sec || 15,
           media_type:           t._featuredVideo.media_type || 'youtube',
           narrator_transition:  t._featuredVideo.narrator_transition || '',
+          ...(t._featuredVideo.media_type === 'twitter_post' || t._featuredVideo.media_type === 'twitter_video'
+            ? { twitter_url: t._featuredVideo.twitter_url || '' }
+            : {}),
+          ...(t._featuredVideo.media_type === 'heatmap'
+            ? {
+                heatmap_question: t._featuredVideo.heatmap_question || '',
+                heatmap_mode:     t._featuredVideo.heatmap_mode || 'binary',
+              }
+            : {}),
         },
       } : {}),
     };
@@ -1575,15 +1666,32 @@ ENTITY RULES (critical for globe arc visualisation):
 - type is "country" or "city" only.
 - CRITICAL: entities must match the story you are writing for that thread_id. Do NOT list entities from other stories.
 
-FEATURED VIDEO HANDOFF (critical for timing):
-- Some stories include a "featured_video" field. This means the narrator will pause mid-segment to hand off to a third-party video clip (a speech, press conference, street footage, etc.) that plays with audio for the specified duration.
-- When "featured_video" is present:
-  1. Write the voiceover in TWO parts, split by a natural pause point.
-  2. The FIRST part (before the handoff) should build context and end with a transition line that introduces the video. If "narrator_transition" is provided, use it verbatim as the last sentence of part 1. If empty, write a natural transition (e.g. "Here's a clip from the press conference...", "Footage from the streets of Beirut shows the situation firsthand...").
-  3. Mark the split point with the marker: [VIDEO_HANDOFF]
-  4. The SECOND part (after the video) should resume naturally, referencing what the viewer just saw (e.g. "Following those remarks...", "As we saw in that footage...").
-  5. Keep the total voiceover word count the same (55-75 words), but split it roughly 60/40 before/after the handoff.
-  6. Do NOT describe what's in the video — the viewer will see/hear it themselves.
+FEATURED MEDIA HANDOFF (critical for timing):
+- Some stories include a "featured_video" field. The "media_type" inside it tells you WHICH kind of media will appear at the handoff. The narrator's voiceover must be split into two halves around a [VIDEO_HANDOFF] marker so the player can fire the visual at the precise sentence boundary.
+
+When "featured_video" is present, ALWAYS:
+  1. Write the voiceover in TWO parts. Insert the marker [VIDEO_HANDOFF] at the split point.
+  2. Use the "narrator_transition" string verbatim as the last sentence of part 1 if provided. Otherwise, write a natural transition tailored to the media type (see below).
+  3. Keep total voiceover word count at 55-75 words, split roughly 60/40 before/after.
+
+Per media_type:
+
+  • media_type = "youtube" — a third-party video clip (speech, press conference, street footage) plays with sound for ${'duration_seconds'} seconds.
+    - Part 1 ends with a transition like "Here's a clip from the press conference..." or "Footage from the streets of Beirut shows the situation firsthand..."
+    - Part 2 resumes with "Following those remarks..." or "As we saw in that footage..."
+    - Do NOT describe what's in the video — the viewer will see/hear it themselves.
+
+  • media_type = "twitter_post" or "twitter_video" — an embedded X post (or X video) appears on screen for ${'duration_seconds'} seconds. The narrator does NOT narrate over it (silent display).
+    - Part 1 ends with a transition like "The Foreign Minister addressed it directly on X:" or "Reuters posted footage from the scene."
+    - Part 2 resumes with "Following that post..." or "Reactions to the statement..."
+    - Do NOT quote the tweet text in the script — the viewer reads it themselves.
+
+  • media_type = "heatmap" — a per-country heatmap visualization paints over the globe for the rest of the segment, visualizing the question in "heatmap_question". The narrator KEEPS TALKING — this is NOT a silent handoff. The narrator should INTERPRET the heatmap data live for the viewer.
+    - Part 1 ends with a transition that introduces the heatmap, like "Look at where this dependency is concentrated:" or "The countries highlighted across the map share one trait:"
+    - Part 2 (the LARGER half here, ~60-70% of the words) discusses the heatmap pattern in detail: which countries are lit up, what the geographic clustering reveals, why this matters for the story. Reference the visualization directly ("As you can see across North Africa and the Gulf...", "The brightest spots are concentrated in...").
+    - Use the heatmap_question + heatmap_mode as your guide for what to discuss. Example: question "countries with oil import dependency above 50%" mode "binary" → narrate which regions are most exposed.
+    - Do NOT pretend to read specific numbers off the map — speak in qualitative regional terms.
+
 - For stories WITHOUT "featured_video", write a normal continuous voiceover as usual.
 
 CONTENT GUARDRAILS (must follow):

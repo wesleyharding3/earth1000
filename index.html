@@ -10885,6 +10885,8 @@ window._ytEmbedUrl = function(videoId, opts) {
     if (opts.mute === false) p.set('mute', '0');
     if (opts.jsapi) p.set('jsapi', '1');
     if (opts.cc) p.set('cc', '1');
+    if (Number.isFinite(opts.start) && opts.start > 0) p.set('start', String(Math.floor(opts.start)));
+    if (Number.isFinite(opts.end)   && opts.end   > 0) p.set('end',   String(Math.floor(opts.end)));
     return `${API}/api/video-embed?${p}`;
   }
   // Desktop browser: direct YouTube embed
@@ -10895,6 +10897,10 @@ window._ytEmbedUrl = function(videoId, opts) {
   });
   if (opts.jsapi) { p.set('enablejsapi', '1'); }
   if (opts.cc) { p.set('cc_load_policy', '1'); }
+  // start=N tells YouTube to begin playback at second N. Used so featured
+  // clips don't briefly flash second 0:00 before our seekTo command lands.
+  if (Number.isFinite(opts.start) && opts.start > 0) p.set('start', String(Math.floor(opts.start)));
+  if (Number.isFinite(opts.end)   && opts.end   > 0) p.set('end',   String(Math.floor(opts.end)));
   return `https://www.youtube-nocookie.com/embed/${videoId}?${p}`;
 };
 
@@ -17758,15 +17764,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return rollFix.multiply(toFront);
       }
 
-      function startFocus(lat, lon) {
+      function startFocus(lat, lon, opts) {
         focusTargetQuat = computeFocusQuat(lat, lon);
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
         if (!window.briefingActive) {
           playSFX(SFX.node);
         } else {
-          // Gentle zoom-in toward each briefing node; resets to default on close
-          targetZoom = 2.65;
+          // Briefing tour: keep the camera WIDE so the whole globe stays
+          // in frame as the tour rotates between countries. The previous
+          // 2.65 zoomed in too tight — surrounding context vanished,
+          // especially painfully on mobile. Caller can pass opts.zoom to
+          // override for special moments (e.g. a deliberate close-up).
+          const briefingWide = _isMobileView ? 4.2 : 3.4;
+          targetZoom = (opts && Number.isFinite(opts.zoom)) ? opts.zoom : briefingWide;
         }
       }
 
@@ -33159,6 +33170,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
   width: 100%; aspect-ratio: 16/9; display: block; border: none;
 }
 
+/* Pending featured-video card: thumbnail placeholder shown until the
+   focal trigger swaps in the iframe. Prevents short clips from playing
+   to completion silently in the panel before the narrator hands off. */
+.bAPVideoThumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16/9;
+  background-size: cover;
+  background-position: center;
+  background-color: #000;
+}
+.bAPVideoThumb::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.55) 100%);
+}
+.bAPVideoCue {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.92);
+  background: rgba(8,12,20,0.55);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 999px;
+  padding: 6px 14px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
 /* ── Focal Video Mode — enlarges video to span screen horizontally ── */
 .bFocalVideo {
   position: fixed !important;
@@ -34878,28 +34922,59 @@ body.ticker-active .gTickerLabel {
         }
       }
 
-      // Featured media moment — enlarge video/tweet, play with sound, pause narrator
+      // Featured media moment — enlarge video/tweet, paint heatmap overlay,
+      // or otherwise hand off to the configured media for this segment.
+      // Reads from the new `featured_video` schema (set by the editor) with
+      // a fallback to the legacy `video_focal` / `video.focal` shape.
       {
-        const focal = seg.video?.focal || seg.video_focal;
-        const hasMedia = seg.video_id || seg.twitter_url || seg.video?.twitter_url;
-        if (focal?.enabled && hasMedia) {
-          const fStart = focal.start_sec ?? 0;
-          const fEnd = focal.end_sec ?? 15;
-          const triggerPct = (focal.trigger_pct ?? 35) / 100;
-          const enableCC = focal.captions !== false;
-          const volumeLevel = focal.volume || 'medium';
-          const transition = focal.narrator_transition || '';
+        const fm = seg.featured_video || seg.video?.focal || seg.video_focal || null;
+        const mediaType = fm?.media_type || 'youtube';
+
+        const ytId      = mediaType === 'youtube' ? seg.video_id : null;
+        const tweetUrl  = (mediaType === 'twitter_post' || mediaType === 'twitter_video')
+          ? (fm?.twitter_url || seg.twitter_url || seg.video?.twitter_url || null)
+          : null;
+        const hmQ       = mediaType === 'heatmap' ? (fm?.heatmap_question || null) : null;
+        const hmMode    = mediaType === 'heatmap' ? (fm?.heatmap_mode || 'binary') : null;
+
+        const hasMedia =
+          (mediaType === 'youtube' && ytId) ||
+          ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && tweetUrl) ||
+          (mediaType === 'heatmap' && hmQ);
+
+        if (fm?.enabled && hasMedia) {
+          const fStart      = fm.start_sec ?? 0;
+          const fEnd        = fm.end_sec   ?? (fStart + (fm.duration_sec || 15));
+          const triggerPct  = (fm.trigger_pct ?? 35) / 100;
+          const enableCC    = fm.captions !== false;
+          const volumeLevel = fm.volume || 'medium';
+          const transition  = fm.narrator_transition || '';
+
+          // Prefer the precise focal_trigger_ms stamped by the audio
+          // generator (it points at the exact end of the "before video"
+          // voiceover, generated as its own MP3 piece). Fall back to the
+          // approximate triggerPct fraction for legacy episodes.
+          const focalAbsMs    = Number.isFinite(seg.focal_trigger_ms) ? seg.focal_trigger_ms : null;
+          const focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
+            ? Math.max(0, focalAbsMs - seg.start_ms)
+            : null;
+          const triggerDelayMs = (focalOffsetMs != null) ? focalOffsetMs : ms(triggerPct);
 
           addBTimer(setTimeout(() => {
             if (segIdx !== idx) return;
-            if (transition) {
-              showFocalTransition(transition, () => {
+            const fire = () => {
+              if (mediaType === 'heatmap') {
+                startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart));
+              } else {
                 startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
-              });
+              }
+            };
+            if (transition) {
+              showFocalTransition(transition, fire);
             } else {
-              startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
+              fire();
             }
-          }, ms(triggerPct)));
+          }, triggerDelayMs));
         }
       }
 
@@ -35462,15 +35537,44 @@ body.ticker-active .gTickerLabel {
   function makeVideoCard(videoId, seg) {
     const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
-    const mediaType = seg.video?.media_type || seg.media_type || 'youtube';
-    const twitterUrl = seg.video?.twitter_url || seg.twitter_url || '';
+    const fm = seg.featured_video || seg.video?.focal || seg.video_focal || null;
+    const mediaType = fm?.media_type || seg.video?.media_type || seg.media_type || 'youtube';
+    const twitterUrl = fm?.twitter_url || seg.video?.twitter_url || seg.twitter_url || '';
 
     // Twitter/X embed
     if ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && twitterUrl) {
       return makeTwitterCard(twitterUrl, mediaType, seg);
     }
 
-    // YouTube embed (default)
+    // Heatmap-only segments don't render a card here — the globe gets the
+    // overlay instead (handled by startFocalHeatmap).
+    if (mediaType === 'heatmap') return '';
+
+    // YouTube path. If this is a featured/focal video, render a THUMBNAIL
+    // placeholder rather than mounting the iframe immediately. Letting the
+    // iframe autoplay (even muted) from segment start meant short clips
+    // could finish before the narrator's cue line ever ran. The iframe is
+    // mounted at the focal trigger inside startFocalVideo.
+    if (fm?.enabled) {
+      const startSec = fm.start_sec ?? 0;
+      const endSec   = fm.end_sec   ?? (startSec + (fm.duration_sec || 15));
+      return `<div class="bAPCard bAPVideoCard bAPVideoPending" id="bVideoCard"
+            data-video-id="${videoId}" data-media-type="youtube"
+            data-pending-iframe="1" data-start-sec="${startSec}" data-end-sec="${endSec}">
+        <div class="bAPVideoThumb" style="background-image:url('https://img.youtube.com/vi/${videoId}/hqdefault.jpg');">
+          <div class="bAPVideoCue">▶ Cued · plays when narrator hands off</div>
+        </div>
+        <div class="bAPCardBody">
+          <div class="bAPCardMeta">
+            <span class="bAPCardSource" id="bVideoSource">—</span>
+            ${vidLoc ? `<span class="bAPCardLocation">${vidLoc}</span>` : ''}
+            <span class="bAPCardDate">${vidDate}</span>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // Non-featured YouTube reference — mount iframe inline as before.
     return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}" data-media-type="youtube">
       <iframe id="bVideoIframe" src="${window._ytEmbedUrl(videoId, { jsapi: true, cc: true })}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
@@ -35579,6 +35683,28 @@ body.ticker-active .gTickerLabel {
     const mediaType = card.dataset.mediaType || 'youtube';
     const isTwitter = mediaType === 'twitter_post' || mediaType === 'twitter_video';
 
+    // Pending featured-video card: thumbnail is in place, iframe needs to
+    // be mounted now so playback starts here — not at segment start.
+    if (card.dataset.pendingIframe === '1' && mediaType === 'youtube') {
+      const videoId = card.dataset.videoId;
+      const thumb   = card.querySelector('.bAPVideoThumb');
+      if (videoId) {
+        const iframe = document.createElement('iframe');
+        iframe.id   = 'bVideoIframe';
+        iframe.src  = window._ytEmbedUrl(videoId, {
+          jsapi: true, cc: enableCaptions !== false,
+          start: startSec, end: endSec,
+        });
+        iframe.allowFullscreen = true;
+        iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+        iframe.setAttribute('referrerpolicy', 'origin');
+        iframe.onerror = () => { try { card.remove(); } catch (_) {} };
+        if (thumb) thumb.replaceWith(iframe);
+        else card.insertAdjacentElement('afterbegin', iframe);
+      }
+      delete card.dataset.pendingIframe;
+    }
+
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
 
@@ -35666,6 +35792,53 @@ body.ticker-active .gTickerLabel {
     if (audio && playing) {
       bgMusicNarratorStart();
       try { audio.play().catch(() => {}); } catch (_) {}
+    }
+  }
+
+  // ── Heatmap focal moment ─────────────────────────────────────────────
+  // Used when a segment's featured_video.media_type === 'heatmap'. Unlike
+  // YouTube/Twitter focal moments, the heatmap doesn't pause the narrator
+  // — it's a globe overlay the script narrates over ("as you can see, oil
+  // import dependency is concentrated in…"). The same /api/heatmap/ask
+  // endpoint the live "Map This" panel uses, with server-side cache so
+  // repeated plays of the same briefing are free.
+  async function startFocalHeatmap(question, mode, durationSec) {
+    if (!question) return;
+    try {
+      const apiBase = window.__API || window.__API_BASE || 'https://earth-wjr6.onrender.com';
+      const headers = { 'Content-Type': 'application/json' };
+      const tok = window.__authToken;
+      if (tok) headers['Authorization'] = `Bearer ${tok}`;
+      const res = await fetch(`${apiBase}/api/heatmap/ask`, {
+        method:  'POST',
+        headers,
+        body:    JSON.stringify({ question, mode: mode || 'binary' }),
+      });
+      if (!res.ok) {
+        console.warn('[briefing/heatmap] request failed:', res.status);
+        return;
+      }
+      const data = await res.json();
+      if (data?.refusal || !Array.isArray(data?.values) || !data.values.length) {
+        console.warn('[briefing/heatmap] no usable values:', data?.refusal || 'empty');
+        return;
+      }
+      // Same renderer the live Map This panel uses — flips state.qaMode +
+      // paints with the warm amber/gold palette.
+      if (typeof window.__semHeatRenderQA === 'function') {
+        window.__semHeatRenderQA({
+          values:      data.values,
+          mode:        data.mode || mode || 'binary',
+          legend:      data.legend || question,
+          source_note: data.source_note || '',
+        });
+      }
+      // Don't tear down — the next segment's globe transition will repaint
+      // anyway. The duration parameter is currently informational only;
+      // could be used later to fade the overlay if we want explicit cleanup.
+      void durationSec;
+    } catch (e) {
+      console.warn('[briefing/heatmap] error:', e?.message || e);
     }
   }
 

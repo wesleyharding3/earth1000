@@ -1412,7 +1412,18 @@
 
     // ── Step 2: Enrich ──
     function buildEnrichList() {
-      orderedIds = [...selectedIds].filter(id => allThreads.some(t => (t.thread_id || t.id) === id));
+      // Initial order: most-recent-first by last_updated_at, falling back
+      // to click order for any thread missing a timestamp. Users can still
+      // reorder manually via the up/down arrows on each card.
+      orderedIds = [...selectedIds]
+        .filter(id => allThreads.some(t => (t.thread_id || t.id) === id))
+        .map(id => {
+          const t = allThreads.find(t => (t.thread_id || t.id) === id);
+          const ts = t?.last_updated_at ? new Date(t.last_updated_at).getTime() : 0;
+          return { id, ts };
+        })
+        .sort((a, b) => b.ts - a.ts)
+        .map(o => o.id);
       const list = document.getElementById('enrich-list');
       list.innerHTML = '';
       orderedIds.forEach((id, idx) => {
@@ -1447,19 +1458,51 @@
                 <label style="font-size:10px;color:rgba(255,255,255,0.4);">Narrator transition (optional — Claude will write one if blank)</label>
                 <input type="text" id="fv-transition-${id}" placeholder="e.g. Here's a clip from the press conference..." value="${escHtml(fv.narrator_transition || '')}" onchange="enrichData[${id}].featured_video.narrator_transition = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
               </div>
-              <div style="display:flex;gap:8px;">
-                <div style="flex:1;">
-                  <label style="font-size:10px;color:rgba(255,255,255,0.4);">Clip duration (sec)</label>
-                  <input type="number" id="fv-duration-${id}" min="3" max="60" step="1" value="${fv.duration_sec || 15}" onchange="enrichData[${id}].featured_video.duration_sec = parseInt(this.value) || 15" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+              <div style="margin-bottom:8px;">
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Media type</label>
+                <select id="fv-media-${id}" onchange="fvUpdateMediaType(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
+                  <option value="youtube" ${(fv.media_type || 'youtube') === 'youtube' ? 'selected' : ''}>YouTube</option>
+                  <option value="twitter_post" ${fv.media_type === 'twitter_post' ? 'selected' : ''}>X post</option>
+                  <option value="twitter_video" ${fv.media_type === 'twitter_video' ? 'selected' : ''}>X video</option>
+                  <option value="heatmap" ${fv.media_type === 'heatmap' ? 'selected' : ''}>Heatmap overlay</option>
+                </select>
+              </div>
+
+              <!-- YouTube clip range -->
+              <div id="fv-yt-fields-${id}" style="display:${(fv.media_type || 'youtube') === 'youtube' ? 'block' : 'none'};margin-bottom:8px;">
+                <div style="display:flex;gap:8px;">
+                  <div style="flex:1;">
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Start (sec)</label>
+                    <input type="number" id="fv-start-${id}" min="0" step="1" value="${fv.start_sec != null ? fv.start_sec : 0}" onchange="enrichData[${id}].featured_video.start_sec = parseInt(this.value) || 0; fvUpdateClipRange(${id});" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                  </div>
+                  <div style="flex:1;">
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">End (sec)</label>
+                    <input type="number" id="fv-end-${id}" min="1" step="1" value="${fv.end_sec != null ? fv.end_sec : (fv.duration_sec || 15)}" onchange="enrichData[${id}].featured_video.end_sec = parseInt(this.value) || 15; fvUpdateClipRange(${id});" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                  </div>
                 </div>
-                <div style="flex:1;">
-                  <label style="font-size:10px;color:rgba(255,255,255,0.4);">Media type</label>
-                  <select id="fv-media-${id}" onchange="enrichData[${id}].featured_video.media_type = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
-                    <option value="youtube" ${(fv.media_type || 'youtube') === 'youtube' ? 'selected' : ''}>YouTube</option>
-                    <option value="twitter_post" ${fv.media_type === 'twitter_post' ? 'selected' : ''}>X post</option>
-                    <option value="twitter_video" ${fv.media_type === 'twitter_video' ? 'selected' : ''}>X video</option>
-                  </select>
+                <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Narrator hands off at Start, picks back up at End.</div>
+              </div>
+
+              <!-- Tweet URL -->
+              <div id="fv-tw-fields-${id}" style="display:${(fv.media_type === 'twitter_post' || fv.media_type === 'twitter_video') ? 'block' : 'none'};margin-bottom:8px;">
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Tweet URL</label>
+                <input type="text" id="fv-tweeturl-${id}" placeholder="https://x.com/username/status/1234567890" value="${escHtml(fv.twitter_url || '')}" onchange="enrichData[${id}].featured_video.twitter_url = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Embedded post (image/text) or video, depending on media type.</div>
+              </div>
+
+              <!-- Heatmap overlay -->
+              <div id="fv-hm-fields-${id}" style="display:${fv.media_type === 'heatmap' ? 'block' : 'none'};">
+                <div style="margin-bottom:6px;">
+                  <label style="font-size:10px;color:rgba(255,255,255,0.4);">Heatmap question</label>
+                  <input type="text" id="fv-hmq-${id}" placeholder="e.g. countries with oil import dependency above 50%" value="${escHtml(fv.heatmap_question || '')}" onchange="enrichData[${id}].featured_video.heatmap_question = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
                 </div>
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Heatmap mode</label>
+                <select id="fv-hmm-${id}" onchange="enrichData[${id}].featured_video.heatmap_mode = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
+                  <option value="binary" ${(fv.heatmap_mode || 'binary') === 'binary' ? 'selected' : ''}>Binary (yes / no)</option>
+                  <option value="percent" ${fv.heatmap_mode === 'percent' ? 'selected' : ''}>Percentage</option>
+                  <option value="rank" ${fv.heatmap_mode === 'rank' ? 'selected' : ''}>Rank</option>
+                </select>
+                <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Globe overlays this heatmap during the segment. Resolved at render time via /api/heatmap/ask.</div>
               </div>
             </div>
           </div>`;
@@ -1497,24 +1540,54 @@
     // manifest.
     window.setFeatured = function(id, enabled) {
       if (!enrichData[id]) return;
-      // Featured handoff requires a resolved video_meta (duration, title, etc.)
-      // to plan the script transition. Block enabling without one and tell
-      // the user clearly — silent disabled checkboxes are infuriating.
-      if (enabled && !enrichData[id].video_meta) {
-        const cb = document.getElementById(`fv-enabled-${id}`);
-        if (cb) cb.checked = false;
-        alert('Resolve a YouTube URL first.\n\nPaste the URL above and click "Resolve" — that fetches duration + title so the narrator can hand off correctly.');
-        return;
-      }
       if (!enrichData[id].featured_video) {
+        // Initialize a full feature config — fields specific to each
+        // media type live alongside one another and only the selected
+        // media_type's fields are displayed in the UI.
         enrichData[id].featured_video = {
-          enabled: false, duration_sec: 15, narrator_transition: '',
-          media_type: (enrichData[id].video_meta ? 'youtube' : 'youtube'),
+          enabled: false,
+          narrator_transition: '',
+          media_type: 'youtube',
+          // YouTube clip
+          start_sec: 0,
+          end_sec: 15,
+          duration_sec: 15,           // legacy mirror for backends not yet aware of start/end
+          // Tweet
+          twitter_url: '',
+          // Heatmap overlay
+          heatmap_question: '',
+          heatmap_mode: 'binary',
         };
       }
       enrichData[id].featured_video.enabled = !!enabled;
       const fields = document.getElementById(`fv-fields-${id}`);
       if (fields) fields.style.display = enabled ? 'block' : 'none';
+    };
+
+    // Update which media-specific field group is visible based on the
+    // selected media type. Called from the media-type <select>'s onchange.
+    window.fvUpdateMediaType = function(id, value) {
+      if (!enrichData[id]?.featured_video) return;
+      enrichData[id].featured_video.media_type = value;
+      const yt = document.getElementById(`fv-yt-fields-${id}`);
+      const tw = document.getElementById(`fv-tw-fields-${id}`);
+      const hm = document.getElementById(`fv-hm-fields-${id}`);
+      if (yt) yt.style.display = value === 'youtube' ? 'block' : 'none';
+      if (tw) tw.style.display = (value === 'twitter_post' || value === 'twitter_video') ? 'block' : 'none';
+      if (hm) hm.style.display = value === 'heatmap' ? 'block' : 'none';
+    };
+
+    // Keep the legacy duration_sec mirror in sync whenever start_sec or
+    // end_sec changes, so backends that haven't been updated still see
+    // a sensible duration value.
+    window.fvUpdateClipRange = function(id) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      const start = Math.max(0, parseInt(fv.start_sec, 10) || 0);
+      const end   = Math.max(start + 1, parseInt(fv.end_sec, 10) || (start + 15));
+      fv.start_sec = start;
+      fv.end_sec   = end;
+      fv.duration_sec = end - start;
     };
 
     function toggleEnrich(id) {

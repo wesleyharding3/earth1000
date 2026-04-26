@@ -841,6 +841,11 @@ app.get("/api/video-embed", (req, res) => {
   const mute = req.query.mute !== '0' ? '1' : '0';
   const enablejsapi = req.query.jsapi === '1' ? '1' : '0';
   const cc = req.query.cc === '1' ? '1' : '0';
+  // start/end (seconds) clip the video. Featured-media segments use these
+  // so the iframe loads pre-positioned and we don't flash 0:00 before
+  // seekTo lands.
+  const startSec = parseInt(req.query.start, 10);
+  const endSec   = parseInt(req.query.end,   10);
 
   // Derive origin from the request itself so the proxy page IS the origin
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'https';
@@ -854,6 +859,8 @@ app.get("/api/video-embed", (req, res) => {
     enablejsapi: '1'          // always enable so we can relay errors back
   });
   if (cc === '1') params.set('cc_load_policy', '1');
+  if (Number.isFinite(startSec) && startSec > 0) params.set('start', String(startSec));
+  if (Number.isFinite(endSec)   && endSec   > 0) params.set('end',   String(endSec));
 
   res.setHeader('Content-Type', 'text/html');
   res.setHeader('X-Frame-Options', 'ALLOWALL');
