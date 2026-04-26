@@ -31386,12 +31386,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // Apple OAuth — Apple auto-verifies the email, no confirmation round-trip.
   // First consent returns the real email; subsequent sign-ins return an
   // @privaterelay.appleid.com relay address — Supabase handles transparently.
+  // iOS Capacitor uses the NATIVE Sign in with Apple plugin (system
+  // sheet, Face ID/Touch ID). Apple won't redirect web OAuth back to
+  // capacitor://localhost, so on iOS the web flow strands the user on
+  // the production website. Native flow returns an identity token
+  // directly, which we hand to Supabase via signInWithIdToken.
+  // Web/desktop falls back to the OAuth redirect flow as before.
+  function _appleNonce() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function _sha256Hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+  }
   async function signInWithApple() {
     const btn = document.getElementById('authAppleBtn');
     try {
       if (btn) btn.disabled = true;
       authMsg.className = 'authMsg';
       authMsg.textContent = '';
+
+      if (window.Capacitor?.getPlatform?.() === 'ios') {
+        const SignInWithApple = window.Capacitor?.Plugins?.SignInWithApple;
+        if (!SignInWithApple) {
+          throw new Error('Apple sign-in plugin not registered — run npx cap sync ios.');
+        }
+        const rawNonce = _appleNonce();
+        const hashedNonce = await _sha256Hex(rawNonce);
+        const result = await SignInWithApple.authorize({
+          clientId: 'com.earth00.app',
+          redirectURI: '',
+          scopes: 'email name',
+          state: '',
+          nonce: hashedNonce,
+        });
+        const idToken = result?.response?.identityToken;
+        if (!idToken) throw new Error('No identity token returned from Apple.');
+        const { error } = await sb.auth.signInWithIdToken({
+          provider: 'apple',
+          token: idToken,
+          nonce: rawNonce,
+        });
+        if (error) throw error;
+        return;
+      }
+
+      // Web fallback — Apple OAuth redirect via Supabase.
       const { error } = await sb.auth.signInWithOAuth({
         provider: 'apple',
         options: { redirectTo: window.location.origin },
@@ -31399,6 +31441,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (error) throw error;
     } catch (err) {
       if (btn) btn.disabled = false;
+      if (err?.code === '1001' || err?.code === 1001 || /cancel/i.test(err?.message || '')) {
+        return;
+      }
       authMsg.className = 'authMsg show error';
       authMsg.textContent = (err && err.message) || 'Apple sign-in failed.';
     }

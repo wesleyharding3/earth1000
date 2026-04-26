@@ -32967,16 +32967,64 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const authGoogleBtn = document.getElementById('authGoogleBtn');
   if (authGoogleBtn) authGoogleBtn.addEventListener('click', signInWithGoogle);
 
-  // Apple OAuth — same Supabase flow as Google. Apple auto-verifies the
-  // email so no email-confirmation round-trip is needed. Note: Apple only
-  // shares the user's real email on FIRST consent; subsequent logins
-  // return a relay address. Supabase handles that transparently.
+  // Sign in with Apple. Apple auto-verifies the email so no
+  // email-confirmation round-trip is needed. Apple only shares the
+  // user's real email on FIRST consent; subsequent logins return a
+  // relay address. Supabase handles that transparently.
+  //
+  // iOS Capacitor uses the NATIVE plugin (system Sign in with Apple
+  // sheet, Face ID/Touch ID). Apple won't redirect web OAuth back to
+  // capacitor://localhost, so the web flow strands the user on the
+  // production website. Native flow returns an identity token directly
+  // within the app, which we hand to Supabase via signInWithIdToken.
+  //
+  // Web/desktop falls back to the OAuth redirect flow as before.
+  function _appleNonce() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  async function _sha256Hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+  }
   async function signInWithApple() {
     const btn = document.getElementById('authAppleBtn');
     try {
       if (btn) btn.disabled = true;
       authMsg.className = 'authMsg';
       authMsg.textContent = '';
+
+      if (window.Capacitor?.getPlatform?.() === 'ios') {
+        const SignInWithApple = window.Capacitor?.Plugins?.SignInWithApple;
+        if (!SignInWithApple) {
+          throw new Error('Apple sign-in plugin not registered — run npx cap sync ios.');
+        }
+        // Apple-recommended replay protection: generate a random nonce,
+        // hash it (SHA-256), send the hashed nonce to Apple. Apple
+        // signs the hash into the identity token. Supabase verifies the
+        // raw nonce against the hashed value in the token.
+        const rawNonce = _appleNonce();
+        const hashedNonce = await _sha256Hex(rawNonce);
+        const result = await SignInWithApple.authorize({
+          clientId: 'com.earth00.app',
+          redirectURI: '',
+          scopes: 'email name',
+          state: '',
+          nonce: hashedNonce,
+        });
+        const idToken = result?.response?.identityToken;
+        if (!idToken) throw new Error('No identity token returned from Apple.');
+        const { error } = await sb.auth.signInWithIdToken({
+          provider: 'apple',
+          token: idToken,
+          nonce: rawNonce,
+        });
+        if (error) throw error;
+        return;
+      }
+
+      // Web fallback — Apple OAuth redirect via Supabase.
       const { error } = await sb.auth.signInWithOAuth({
         provider: 'apple',
         options: { redirectTo: window.location.origin },
@@ -32984,6 +33032,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (error) throw error;
     } catch (err) {
       if (btn) btn.disabled = false;
+      // userCancelled (1001) is just the user dismissing the sheet — silent.
+      if (err?.code === '1001' || err?.code === 1001 || /cancel/i.test(err?.message || '')) {
+        return;
+      }
       authMsg.className = 'authMsg show error';
       authMsg.textContent = (err && err.message) || 'Apple sign-in failed.';
     }
