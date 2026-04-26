@@ -39425,6 +39425,14 @@ body.ticker-active .gTickerLabel {
       const g = Math.round(t > 0.5 ? 230 : 230 * (2 * t));
       return { r, g, b: 70 };
     }
+    // QA / "Map This" mode — warm amber → bright gold so it reads as a
+    // distinctly different layer than the cool blue/cyan news-coverage map.
+    if (state.qaMode) {
+      const r = Math.round(180 + 75  * intensity);  // 180 → 255
+      const g = Math.round(80  + 175 * intensity);  // 80  → 255
+      const b = Math.round(20  + 30  * intensity);  // 20  → 50
+      return { r, g, b };
+    }
     const r = Math.round(60  + 195 * intensity);
     const g = Math.round(150 + 105 * intensity);
     const b = 255;
@@ -39694,9 +39702,23 @@ body.ticker-active .gTickerLabel {
         alpha     =
           SENT_COUNTRY_ALPHA_FLOOR +
           (SENT_COUNTRY_ALPHA_CEIL - SENT_COUNTRY_ALPHA_FLOOR) * intensity;
+      } else if (state.qaMode === 'binary') {
+        // QA / "Map This" binary: every included country reads at full
+        // intensity, omitted countries don't paint at all. Strong contrast
+        // between yes / no — no gradients within the matched set.
+        intensity = 1;
+        alpha     = 0.65;
+      } else if (state.qaMode === 'rank' || state.qaMode === 'percent') {
+        // QA / "Map This" rank or percent: pronounced spread from highest
+        // (full saturation) to lowest (still readable). Wider alpha range
+        // than the news-coverage map so the gradient is visible.
+        const share = Math.min(1, (p.n || 0) / totalN);
+        const rel   = maxShare > 0 ? share / maxShare : 0;
+        intensity   = Math.pow(rel, 0.55);
+        alpha       = 0.15 + 0.55 * intensity;
       } else {
-        // Coverage mode (unchanged): per-country share of total, gamma-
-        // corrected and rescaled so the busiest country hits the ceiling.
+        // Coverage (news) mode: per-country share of total, gamma-corrected
+        // and rescaled so the busiest country hits the ceiling.
         const share = Math.min(1, (p.n || 0) / totalN);
         const rel   = share / maxShare;
         intensity   = Math.pow(rel, 0.55);
@@ -40387,6 +40409,9 @@ body.ticker-active .gTickerLabel {
     [...modeRow.querySelectorAll('.semHeatPill')].forEach(p => p.classList.remove('active'));
     pill.classList.add('active');
     state.mode = pill.dataset.mode;
+    // Clear any leftover Map-This QA state so a previous QA palette
+    // doesn't bleed into the news-coverage / sentiment renders.
+    state.qaMode = null;
     updateLegend();
     if (state.series) {
       // If playback is running, rebuild the two active buffers in the
