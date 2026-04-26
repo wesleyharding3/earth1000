@@ -98,9 +98,36 @@ async function logScoringVerification() {
 // Concurrency limiter — process at most this many articles simultaneously.
 // Without this, a burst of 200 notifications would open 200 concurrent DB
 // pipelines and exhaust the connection pool, starving the API server.
-const CONCURRENCY = 5;
+//
+// Each in-flight article holds 3-5 pool connections (classify + route +
+// lexicon-sentiment + image-resolver, some sequential, some parallel).
+// At CONCURRENCY=5 a 60-article burst from the fetcher consumed enough
+// pool to time out user requests. Lowered to 3 — peak listener load
+// is now ~12 connections instead of ~20, leaving headroom for API
+// traffic. Combined with the adaptive pause below (skip a tick when
+// the pool is hot), bursts no longer starve the server.
+//
+// Throughput note: classifyArticle averages ~5s. CONCURRENCY=3 drains
+// a 60-article burst in ~100s vs ~60s at 5. Threads form on a 30-min
+// cron so this delay is invisible to thread cadence.
+const CONCURRENCY = 3;
+// Adaptive pause threshold. When the shared pool is heavily contended
+// (most connections busy) we hold new articles in the queue and let
+// API requests drain through. Articles already in flight finish; the
+// queue is preserved (no skipping) so routing/keywords/sentiment/image
+// still happen — just a few seconds later.
+const POOL_HOT_PAUSE_MS = 250;
 let _active = 0;
 const _queue = [];
+
+function _poolIsHot() {
+  // pg-pool exposes totalCount, idleCount, waitingCount. "Hot" =
+  // someone is waiting OR we're at >85% of max with no idle conns.
+  const max = pool.options?.max ?? 60;
+  if ((pool.waitingCount ?? 0) > 0) return true;
+  if ((pool.idleCount ?? 0) === 0 && (pool.totalCount ?? 0) >= 0.85 * max) return true;
+  return false;
+}
 
 // Shutdown coordination. When the server process gets SIGTERM (Render
 // restart, deploy, OOM), we need to drain the in-flight articles before
@@ -128,6 +155,15 @@ function enqueue(fn) {
 
 function _drain() {
   while (_active < CONCURRENCY && _queue.length > 0) {
+    // Adaptive pause: if Postgres is hot, hold the queue and retry
+    // shortly. The article stays queued — no skipping. In-flight work
+    // finishes, pool relieves, drain resumes. During shutdown we let
+    // the queue empty without pausing so we don't deadlock against
+    // _awaitIdle.
+    if (!_shutdownRequested && _poolIsHot()) {
+      setTimeout(_drain, POOL_HOT_PAUSE_MS).unref?.();
+      return;
+    }
     const fn = _queue.shift();
     _active++;
     fn().finally(() => {

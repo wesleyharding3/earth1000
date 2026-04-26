@@ -11344,6 +11344,256 @@ Most users will be wronger than you think when checking — but for the cases wh
 });
 
 /* =========================================
+   ADMIN — Heatmap Q&A curation
+   ─────────────────────────────────────────
+   Sonnet hallucinates on factual recall (e.g. lists Egypt + Cuba as
+   having active volcanoes — both false). The /api/heatmap/ask cache
+   already has a `source` column distinguishing 'claude' from 'curated'.
+   This admin flow lets us:
+     1. POST /admin/heatmap/simulate — re-run Sonnet against the live
+        prompt, return the full country catalog merged with Sonnet's
+        values so the editor can show every country (including ones
+        Sonnet omitted).
+     2. POST /admin/heatmap/save — overwrite the cache row with hand-
+        verified values, flipped to source='curated'. Future calls to
+        /api/heatmap/ask hit the cache and never reach Sonnet for that
+        question.
+     3. GET  /admin/heatmap/saved — list saved curated rows for re-edit.
+========================================= */
+
+// Shared helper: builds the system prompt + tools, runs Sonnet, returns
+// validated payload. Same prompt as /api/heatmap/ask (which is the whole
+// point — admin sees what users see). Doesn't touch cache or credits.
+async function _callHeatmapSonnet({ question, mode }) {
+  const { rows: countryRows } = await pool.query(
+    `SELECT iso_code, name FROM countries WHERE iso_code IS NOT NULL AND length(iso_code) = 2 ORDER BY name`
+  );
+  const isoSet = new Set(countryRows.map(c => c.iso_code.toUpperCase()));
+  const isoCatalog = countryRows.map(c => `${c.iso_code.toUpperCase()} ${c.name}`).join('\n');
+
+  const modeGuidance = mode === 'percent'
+    ? 'Each value is a percentage 0–100 (e.g. 87.2 means 87.2% of that country\'s population/area/whatever the question asks).'
+    : mode === 'rank'
+    ? 'Each value is an integer rank starting at 1 (lower = stronger). Only include the ranked countries; omit unranked ones.'
+    : 'Each value is 0 or 1. Include only countries where the answer is 1.';
+
+  const tools = [
+    {
+      name: 'set_country_values',
+      description: 'Return a per-country value map answering the user question.',
+      input_schema: {
+        type: 'object',
+        required: ['legend', 'values'],
+        properties: {
+          legend: { type: 'string' },
+          unit: { type: 'string' },
+          source_note: { type: 'string' },
+          values: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['iso', 'value'],
+              properties: {
+                iso: { type: 'string' },
+                value: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      name: 'decline_question',
+      description: 'Decline the question — biased, unanswerable, or no per-country mapping.',
+      input_schema: {
+        type: 'object',
+        required: ['reason'],
+        properties: { reason: { type: 'string' } },
+      },
+    },
+  ];
+
+  // Same prompt body as /api/heatmap/ask. Kept inline rather than
+  // extracted because the prompt is policy and we want it readable
+  // alongside the endpoint that uses it.
+  const systemPrompt = `You answer geographic questions for a globe-based news intelligence dashboard. Your output paints a heatmap.
+
+Available countries (use ONLY these 2-letter ISO codes):
+${isoCatalog}
+
+Output rules:
+- Mode: ${mode}. ${modeGuidance}
+- Use the set_country_values tool when the question has a meaningful per-country answer.
+- Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
+- Numbers are estimates — include data vintage in source_note. When uncertain, say so explicitly.
+
+For RANK mode: "rank by X" means EVERY country with a non-trivial value of X should appear. Do not truncate to a top-10 unless explicitly asked. China at 1 or 2 on population — never absent.
+
+For BINARY mode: be more inclusive than your gut suggests. If you can think of three obvious countries that match, there are probably twenty more. Walk continents.
+
+Aim for high recall on clear positives and strict exclusion of vague matches.`;
+
+  const Anthropic = require('@anthropic-ai/sdk');
+  const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const resp = await aiClient.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 4096,
+    system: systemPrompt,
+    tools,
+    tool_choice: { type: 'any' },
+    messages: [{ role: 'user', content: question }],
+  });
+
+  const toolUse = (resp.content || []).find(b => b.type === 'tool_use');
+  let payload = { legend: null, unit: null, source_note: null, values: [], refusal: null };
+  if (!toolUse) throw new Error('Model returned no tool call');
+  if (toolUse.name === 'decline_question') {
+    payload.refusal = String(toolUse.input?.reason || 'Question cannot be answered as a heatmap.');
+  } else if (toolUse.name === 'set_country_values') {
+    const raw = toolUse.input || {};
+    payload.legend = String(raw.legend || question).slice(0, 120);
+    payload.unit = raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : ''));
+    payload.source_note = String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240);
+    const seen = new Set();
+    payload.values = (Array.isArray(raw.values) ? raw.values : [])
+      .map(v => ({ iso: String(v.iso || '').toUpperCase().trim(), value: Number(v.value) }))
+      .filter(v => v.iso && isoSet.has(v.iso) && Number.isFinite(v.value) && !seen.has(v.iso) && (seen.add(v.iso) || true));
+  }
+  return { payload, countryRows };
+}
+
+// Simulate — runs Sonnet, merges with catalog so the editor can
+// display every country (including ones Sonnet omitted). Always
+// fresh — no cache lookup, no cache write. Caller is admin so we
+// don't charge credits.
+app.post('/api/admin/heatmap/simulate', requireAdmin, async (req, res) => {
+  const question = String(req.body?.question || '').trim();
+  const mode = String(req.body?.mode || 'percent').toLowerCase();
+  if (!question) return res.status(400).json({ error: 'question is required' });
+  if (!['percent', 'rank', 'binary'].includes(mode)) {
+    return res.status(400).json({ error: 'mode must be percent | rank | binary' });
+  }
+  try {
+    const { payload, countryRows } = await _callHeatmapSonnet({ question, mode });
+    // Also surface any existing cached row so the editor can show
+    // "this question was last curated on X" and pre-fill from it.
+    const crypto = require('crypto');
+    const normalized = question.toLowerCase().replace(/\s+/g, ' ').trim();
+    const questionHash = crypto.createHash('sha256').update(`${mode}|${normalized}`).digest('hex');
+    const existing = await pool.query(
+      `SELECT source, values, legend, unit, source_note, last_hit_at
+         FROM heatmap_qa_cache WHERE question_hash=$1 AND mode=$2 LIMIT 1`,
+      [questionHash, mode]
+    );
+    return res.json({
+      question,
+      mode,
+      legend: payload.legend,
+      unit: payload.unit,
+      source_note: payload.source_note,
+      values: payload.values,
+      refusal: payload.refusal,
+      catalog: countryRows.map(c => ({ iso: c.iso_code.toUpperCase(), name: c.name })),
+      existing: existing.rows[0] || null,
+    });
+  } catch (err) {
+    console.error('[admin/heatmap/simulate]', err);
+    return res.status(500).json({ error: 'Simulate failed', detail: err.message });
+  }
+});
+
+// Save — writes (or overwrites) a curated row in heatmap_qa_cache.
+// Uses the same hash key as the public endpoint so future user calls
+// hit this row instead of re-calling Sonnet.
+app.post('/api/admin/heatmap/save', requireAdmin, async (req, res) => {
+  const question = String(req.body?.question || '').trim();
+  const mode = String(req.body?.mode || 'percent').toLowerCase();
+  const legend = String(req.body?.legend || question).slice(0, 120);
+  const unit = String(req.body?.unit || (mode === 'percent' ? '%' : mode === 'rank' ? 'rank' : '')).slice(0, 16);
+  const source_note = String(req.body?.source_note || 'Curated').slice(0, 240);
+  const rawValues = Array.isArray(req.body?.values) ? req.body.values : [];
+  if (!question) return res.status(400).json({ error: 'question is required' });
+  if (!['percent', 'rank', 'binary'].includes(mode)) {
+    return res.status(400).json({ error: 'mode must be percent | rank | binary' });
+  }
+  try {
+    const { rows: countryRows } = await pool.query(
+      `SELECT iso_code FROM countries WHERE iso_code IS NOT NULL AND length(iso_code) = 2`
+    );
+    const isoSet = new Set(countryRows.map(c => c.iso_code.toUpperCase()));
+    const seen = new Set();
+    const values = rawValues
+      .map(v => ({ iso: String(v.iso || '').toUpperCase().trim(), value: Number(v.value) }))
+      .filter(v => v.iso && isoSet.has(v.iso) && Number.isFinite(v.value))
+      .filter(v => {
+        if (mode === 'binary' && v.value !== 1) return false;
+        if (mode === 'percent' && (v.value < 0 || v.value > 100)) return false;
+        if (mode === 'rank' && v.value < 1) return false;
+        if (seen.has(v.iso)) return false;
+        seen.add(v.iso);
+        return true;
+      });
+
+    const crypto = require('crypto');
+    const normalized = question.toLowerCase().replace(/\s+/g, ' ').trim();
+    const questionHash = crypto.createHash('sha256').update(`${mode}|${normalized}`).digest('hex');
+    await pool.query(
+      `INSERT INTO heatmap_qa_cache
+         (question_hash, question_text, mode, legend, unit, source_note, values, refusal, source, hit_count, last_hit_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, 'curated', 0, NOW())
+       ON CONFLICT (question_hash, mode) DO UPDATE SET
+         question_text = EXCLUDED.question_text,
+         legend        = EXCLUDED.legend,
+         unit          = EXCLUDED.unit,
+         source_note   = EXCLUDED.source_note,
+         values        = EXCLUDED.values,
+         refusal       = NULL,
+         source        = 'curated',
+         last_hit_at   = NOW()`,
+      [questionHash, question, mode, legend, unit, source_note, JSON.stringify(values)]
+    );
+    return res.json({ ok: true, question, mode, count: values.length });
+  } catch (err) {
+    console.error('[admin/heatmap/save]', err);
+    return res.status(500).json({ error: 'Save failed', detail: err.message });
+  }
+});
+
+// List saved curated rows so the editor can offer "edit existing".
+app.get('/api/admin/heatmap/saved', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT question_hash, question_text, mode, legend, unit, source_note,
+              hit_count, last_hit_at, source,
+              jsonb_array_length(COALESCE(values::jsonb, '[]'::jsonb)) AS value_count
+         FROM heatmap_qa_cache
+        WHERE source = 'curated'
+        ORDER BY last_hit_at DESC NULLS LAST
+        LIMIT 200`
+    );
+    return res.json({ rows });
+  } catch (err) {
+    console.error('[admin/heatmap/saved]', err);
+    return res.status(500).json({ error: 'List failed', detail: err.message });
+  }
+});
+
+// Load full curated row for editing (returns values too).
+app.get('/api/admin/heatmap/saved/:questionHash/:mode', requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM heatmap_qa_cache WHERE question_hash=$1 AND mode=$2 LIMIT 1`,
+      [req.params.questionHash, req.params.mode]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('[admin/heatmap/saved/get]', err);
+    return res.status(500).json({ error: 'Load failed', detail: err.message });
+  }
+});
+
+/* =========================================
    Account deletion  —  DELETE /api/account
    Required by App Store guideline 5.1.1(v) (since 2022): if a user can
    create an account in the app, they must be able to delete it from
@@ -11498,7 +11748,27 @@ startArticleListener().catch(console.error);
 // ── Cache warming — keep threads & timelines hot so no user hits a cold query ──
 // The TTL cache is 120s. We refresh every 90s so the cache never expires.
 // First warm runs 5s after boot (after the pool is ready).
+//
+// LONG-TERM TODO: replace these HTTP loopback fetches with direct
+// in-process calls to the underlying handlers. Each fetch here costs
+// 1 socket + middleware + pool connection, which during fetcher
+// bursts compounds with article-ingestion load and starves user
+// requests. A direct call would be `await getLatestThreads({limit})`
+// straight to the pool, no HTTP. Tracked in the spawn_task chip.
+//
+// SHORT-TERM: skip a warm cycle entirely when the pool is hot, so a
+// fetcher burst doesn't get amplified by 13 self-loopback queries.
+function _poolHotForWarm() {
+  const max = pool.options?.max ?? 60;
+  if ((pool.waitingCount ?? 0) > 0) return true;
+  if ((pool.idleCount ?? 0) === 0 && (pool.totalCount ?? 0) >= 0.7 * max) return true;
+  return false;
+}
 async function _warmFeedCaches() {
+  if (_poolHotForWarm()) {
+    console.log(`[cache-warm] skipped — pool hot (total=${pool.totalCount} idle=${pool.idleCount} waiting=${pool.waitingCount})`);
+    return;
+  }
   const http = require('http');
   const base = `http://localhost:${PORT}`;
   const urls = [
@@ -11518,6 +11788,11 @@ async function _warmFeedCaches() {
   ];
 
   for (const url of urls) {
+    // Re-check on every URL — a long burst can start mid-warm.
+    if (_poolHotForWarm()) {
+      console.log(`[cache-warm] aborted mid-cycle — pool hot`);
+      return;
+    }
     try {
       await new Promise((resolve, reject) => {
         const r = http.get(url, res => {
@@ -11534,6 +11809,21 @@ async function _warmFeedCaches() {
 }
 setTimeout(_warmFeedCaches, 5000);
 setInterval(_warmFeedCaches, 90_000).unref?.();
+
+// Diagnostic — log Postgres's server-wide connection cap once at
+// startup so we can tell whether DB_POOL_MAX is realistic. With
+// multiple services hitting one DB instance, exceeding max_connections
+// causes "Connection terminated unexpectedly" errors that look like
+// pool issues but are actually PG rejecting new connections.
+setTimeout(async () => {
+  try {
+    const r = await pool.query(`SHOW max_connections`);
+    const cur = await pool.query(`SELECT count(*)::int AS n FROM pg_stat_activity`);
+    console.log(`[pg] max_connections=${r.rows[0].max_connections} current=${cur.rows[0].n} pool_max=${pool.options?.max}`);
+  } catch (e) {
+    console.warn('[pg] connection cap probe failed:', e.message);
+  }
+}, 8000);
 
 // ── World Leaders tweets (oEmbed, admin-curated) ────────────────────────
 const { processTweetUrls } = require('./twitterFetcher');

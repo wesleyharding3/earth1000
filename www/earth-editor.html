@@ -652,6 +652,118 @@
       .thd-field-row { flex-direction: column; gap: 0; }
       .thd-card-img { width: 48px; height: 48px; }
     }
+
+    /* ── Heatmap curation tab ─────────────────────────────────────── */
+    .hm-toolbar {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .hm-question-input { flex: 1 1 360px; min-width: 240px; }
+    .hm-mode-select {
+      background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b;
+      border-radius: 8px; padding: 8px 10px; font-size: 0.85rem;
+    }
+    .hm-status {
+      padding: 10px 12px; border-radius: 8px; margin-bottom: 12px;
+      background: #0f172a; border: 1px solid #1e293b; color: #cbd5e1;
+      font-size: 0.85rem;
+    }
+    .hm-status.error { border-color: #b91c1c; color: #fca5a5; background: #1c1010; }
+    .hm-status.refusal { border-color: #b45309; color: #fcd34d; background: #1c160c; }
+    .hm-meta {
+      display: grid; grid-template-columns: 1fr 120px 1fr; gap: 8px;
+      margin-bottom: 12px;
+    }
+    .hm-meta-row { display: flex; flex-direction: column; gap: 4px; }
+    .hm-meta-row label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.04em; }
+    @media (max-width: 700px) {
+      .hm-meta { grid-template-columns: 1fr; }
+    }
+    .hm-saved-list {
+      display: flex; flex-direction: column; gap: 6px;
+      max-height: 360px; overflow-y: auto;
+      padding: 10px; background: #0f172a; border: 1px solid #1e293b;
+      border-radius: 8px; margin-bottom: 12px;
+    }
+    .hm-saved-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; background: #131b33; border: 1px solid #1e293b;
+      border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+    }
+    .hm-saved-item:hover { border-color: #475569; }
+    .hm-saved-item .hm-saved-mode {
+      padding: 2px 6px; border-radius: 4px; background: #1e293b;
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
+      flex-shrink: 0;
+    }
+    .hm-saved-item .hm-saved-q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hm-saved-item .hm-saved-meta { color: #94a3b8; font-size: 0.75rem; flex-shrink: 0; }
+    .hm-editor {
+      background: #0f172a; border: 1px solid #1e293b; border-radius: 10px;
+      padding: 10px; max-height: 60vh; overflow-y: auto;
+    }
+    .hm-actions {
+      display: flex; gap: 10px; justify-content: flex-end;
+      margin-top: 12px;
+    }
+    /* Tabular layout (binary / percent) */
+    .hm-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    .hm-table th, .hm-table td {
+      padding: 6px 10px; text-align: left;
+      border-bottom: 1px solid #1e293b;
+    }
+    .hm-table th {
+      position: sticky; top: 0; background: #0f172a;
+      font-size: 0.7rem; text-transform: uppercase; color: #94a3b8;
+      letter-spacing: 0.04em; z-index: 1;
+    }
+    .hm-table tr:hover td { background: #131b33; }
+    .hm-table .hm-iso { color: #64748b; font-family: ui-monospace, monospace; font-size: 0.8rem; width: 50px; }
+    .hm-table .hm-name { color: #e2e8f0; }
+    .hm-table input[type="number"] {
+      width: 90px; background: #131b33; color: #e2e8f0;
+      border: 1px solid #1e293b; border-radius: 4px;
+      padding: 4px 8px; font-size: 0.85rem;
+    }
+    .hm-table input[type="number"]:focus { border-color: #3b82f6; outline: none; }
+    .hm-table input[type="checkbox"] { width: 16px; height: 16px; }
+    /* Rank zones (drag list) */
+    .hm-rank-zones { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 700px) { .hm-rank-zones { grid-template-columns: 1fr; } }
+    .hm-rank-zone {
+      background: #0f172a; border: 1px solid #1e293b; border-radius: 8px;
+      padding: 8px; min-height: 200px;
+    }
+    .hm-rank-zone h4 {
+      margin: 0 0 8px 4px; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 0.05em; color: #94a3b8;
+    }
+    .hm-rank-zone-body { display: flex; flex-direction: column; gap: 4px; min-height: 180px; }
+    .hm-rank-zone-body.dragover { background: rgba(59,130,246,0.06); border-radius: 6px; }
+    .hm-rank-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px; background: #131b33; border: 1px solid #1e293b;
+      border-radius: 6px; cursor: grab; font-size: 0.85rem;
+      user-select: none;
+    }
+    .hm-rank-row:active { cursor: grabbing; }
+    .hm-rank-row.dragging { opacity: 0.4; }
+    .hm-rank-row .hm-rank-pos {
+      width: 32px; height: 24px; flex-shrink: 0;
+      background: #1e293b; border-radius: 4px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 0.75rem; color: #e2e8f0;
+    }
+    .hm-rank-row .hm-iso { width: 36px; flex-shrink: 0; }
+    .hm-rank-row .hm-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hm-rank-row .hm-rank-x {
+      background: transparent; border: 0; color: #64748b; cursor: pointer;
+      font-size: 1rem; padding: 0 4px;
+    }
+    .hm-rank-row .hm-rank-x:hover { color: #f87171; }
   </style>
 </head>
 <body>
@@ -677,6 +789,7 @@
       <button class="top-tab" data-tab="timelines" onclick="switchTab('timelines')">Timelines</button>
       <button class="top-tab" data-tab="threads" onclick="switchTab('threads')">Threads</button>
       <button class="top-tab" data-tab="rankings" onclick="switchTab('rankings')">Rankings</button>
+      <button class="top-tab" data-tab="heatmap" onclick="switchTab('heatmap')">Heatmap</button>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════
@@ -1186,6 +1299,52 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         TAB 6: HEATMAP CURATION
+         Sonnet hallucinates on factual recall (active volcanoes,
+         population ranks, etc.). This tab lets us simulate a question
+         against the same /api/heatmap/ask pathway, then hand-edit the
+         per-country values and save them as 'curated' so future user
+         calls return the verified data instead of re-asking Sonnet.
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="tab-heatmap" class="hidden">
+      <div class="hm-toolbar">
+        <input type="text" id="hm-question" class="search-input hm-question-input"
+               placeholder='e.g. "countries with an active volcano"  ·  "rank by population"  ·  "% Muslim population"' />
+        <select id="hm-mode" class="hm-mode-select">
+          <option value="binary">Binary (yes / no)</option>
+          <option value="percent">Percent (0–100)</option>
+          <option value="rank">Rank (1–N, drag to reorder)</option>
+        </select>
+        <button class="btn-primary btn-small" onclick="hmSimulate()">Simulate</button>
+        <button class="btn-secondary btn-small" onclick="hmLoadSaved()">Saved curations</button>
+      </div>
+      <div id="hm-status" class="hm-status hidden"></div>
+      <div id="hm-meta" class="hm-meta hidden">
+        <div class="hm-meta-row">
+          <label>Legend</label>
+          <input type="text" id="hm-legend" class="seg-input" placeholder="Short legend label" />
+        </div>
+        <div class="hm-meta-row">
+          <label>Unit</label>
+          <input type="text" id="hm-unit" class="seg-input short" placeholder="%, rank, …" />
+        </div>
+        <div class="hm-meta-row">
+          <label>Source note</label>
+          <input type="text" id="hm-source-note" class="seg-input" placeholder="Source / vintage" />
+        </div>
+      </div>
+      <div id="hm-saved-list" class="hm-saved-list hidden"></div>
+      <div id="hm-editor" class="hm-editor hidden">
+        <!-- Rendered by hmRender(). Tabular for binary/percent, two-zone
+             drag list for rank. -->
+      </div>
+      <div id="hm-actions" class="hm-actions hidden">
+        <button class="btn-secondary" onclick="hmReset()">Reset</button>
+        <button class="btn-primary" onclick="hmSave()">Save curated answer</button>
+      </div>
+    </div>
   </div>
 
   <!-- Progress Overlay -->
@@ -1271,7 +1430,7 @@
     // TAB SWITCHING
     // ════════════════════════════════════════════════════════════════
     let activeTab = 'briefings';
-    const tabLoaded = { briefings: false, tweets: false, timelines: false, threads: false, rankings: false };
+    const tabLoaded = { briefings: false, tweets: false, timelines: false, threads: false, rankings: false, heatmap: false };
 
     function switchTab(tab) {
       activeTab = tab;
@@ -1283,6 +1442,9 @@
       if (tab === 'timelines' && !tabLoaded.timelines) { tabLoaded.timelines = true; loadAdminTimelines(); }
       if (tab === 'threads' && !tabLoaded.threads) { tabLoaded.threads = true; loadAdminThreads(); }
       if (tab === 'rankings' && !tabLoaded.rankings) { tabLoaded.rankings = true; loadRankings(); }
+      // Heatmap tab is intentionally lazy — initial state is empty
+      // until the admin types a question and clicks Simulate. No prefetch.
+      if (tab === 'heatmap' && !tabLoaded.heatmap) { tabLoaded.heatmap = true; }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -3800,6 +3962,316 @@
         alert('Retrain failed: ' + e.message);
       }
     }
+
+    // ════════════════════════════════════════════════════════════════
+    // TAB 6: HEATMAP CURATION
+    // ────────────────────────────────────────────────────────────────
+    // Flow: admin types a question + picks mode → /admin/heatmap/simulate
+    // returns Sonnet's answer merged with the full country catalog →
+    // editable table (binary checkbox / percent number / rank drag list)
+    // → /admin/heatmap/save writes a curated row that future user calls
+    // hit instead of re-asking Sonnet.
+    // ════════════════════════════════════════════════════════════════
+    let hmState = {
+      question: '',
+      mode: 'binary',
+      catalog: [],          // [{iso, name}]
+      values: new Map(),    // iso → number (0/1 binary, 0-100 percent, 1..N rank)
+      rankOrder: [],        // ordered ISOs for rank mode (rank = idx+1)
+      legend: '', unit: '', sourceNote: '',
+      refusal: null,
+    };
+
+    function hmStatus(msg, cls) {
+      const el = document.getElementById('hm-status');
+      el.classList.remove('hidden', 'error', 'refusal');
+      el.textContent = msg;
+      if (cls) el.classList.add(cls);
+    }
+    function hmHideStatus() { document.getElementById('hm-status').classList.add('hidden'); }
+
+    async function hmSimulate() {
+      const q = document.getElementById('hm-question').value.trim();
+      const mode = document.getElementById('hm-mode').value;
+      if (!q) { hmStatus('Type a question first.', 'error'); return; }
+      hmStatus('Calling Sonnet… (15-30s)');
+      document.getElementById('hm-saved-list').classList.add('hidden');
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/heatmap/simulate`, {
+          method: 'POST', headers: authHeaders(),
+          body: JSON.stringify({ question: q, mode }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        hmState.question = data.question;
+        hmState.mode = data.mode;
+        hmState.catalog = (data.catalog || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+        hmState.values = new Map();
+        hmState.rankOrder = [];
+        hmState.legend = data.legend || q;
+        hmState.unit = data.unit || (mode === 'percent' ? '%' : mode === 'rank' ? 'rank' : '');
+        hmState.sourceNote = data.source_note || 'Curated';
+        hmState.refusal = data.refusal || null;
+        // Prefer existing curated values over Sonnet's if a curated row
+        // already exists — gives the admin a starting point of their
+        // last edits rather than overwriting with a fresh hallucination.
+        const existing = data.existing;
+        const sourceValues = (existing?.source === 'curated' && Array.isArray(existing?.values))
+          ? existing.values
+          : (data.values || []);
+        for (const v of sourceValues) {
+          if (!v?.iso) continue;
+          const iso = String(v.iso).toUpperCase();
+          const n = Number(v.value);
+          if (!Number.isFinite(n)) continue;
+          hmState.values.set(iso, n);
+        }
+        if (mode === 'rank') {
+          hmState.rankOrder = [...hmState.values.entries()]
+            .sort((a, b) => a[1] - b[1])
+            .map(([iso]) => iso);
+        }
+        if (data.refusal) {
+          hmStatus(`Sonnet declined: ${data.refusal}. You can still author the answer manually.`, 'refusal');
+        } else {
+          const src = existing?.source === 'curated' ? 'curated (re-editing)' : 'Sonnet';
+          hmStatus(`${sourceValues.length} countries returned from ${src} · catalog has ${hmState.catalog.length}`);
+        }
+        document.getElementById('hm-meta').classList.remove('hidden');
+        document.getElementById('hm-legend').value = hmState.legend;
+        document.getElementById('hm-unit').value = hmState.unit;
+        document.getElementById('hm-source-note').value = hmState.sourceNote;
+        document.getElementById('hm-actions').classList.remove('hidden');
+        hmRender();
+      } catch (e) {
+        hmStatus('Simulate failed: ' + e.message, 'error');
+      }
+    }
+
+    function hmReset() {
+      hmState.values = new Map();
+      hmState.rankOrder = [];
+      hmRender();
+    }
+
+    function hmRender() {
+      const ed = document.getElementById('hm-editor');
+      ed.classList.remove('hidden');
+      if (hmState.mode === 'rank') {
+        ed.innerHTML = hmRenderRank();
+        hmWireRankDrag();
+      } else {
+        ed.innerHTML = hmRenderTable();
+        hmWireTableInputs();
+      }
+    }
+
+    function hmRenderTable() {
+      const isBinary = hmState.mode === 'binary';
+      const head = isBinary
+        ? '<tr><th>ISO</th><th>Country</th><th>Yes</th></tr>'
+        : '<tr><th>ISO</th><th>Country</th><th>Value (0–100)</th></tr>';
+      const rows = hmState.catalog.map(c => {
+        const v = hmState.values.get(c.iso);
+        if (isBinary) {
+          const checked = v === 1 ? 'checked' : '';
+          return `<tr data-iso="${c.iso}">
+            <td class="hm-iso">${escHtml(c.iso)}</td>
+            <td class="hm-name">${escHtml(c.name)}</td>
+            <td><input type="checkbox" data-hm-bin ${checked} /></td>
+          </tr>`;
+        }
+        const pct = Number.isFinite(v) ? v : '';
+        return `<tr data-iso="${c.iso}">
+          <td class="hm-iso">${escHtml(c.iso)}</td>
+          <td class="hm-name">${escHtml(c.name)}</td>
+          <td><input type="number" data-hm-pct min="0" max="100" step="0.1" value="${pct}" placeholder="—" /></td>
+        </tr>`;
+      }).join('');
+      return `<table class="hm-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+    }
+
+    function hmWireTableInputs() {
+      const ed = document.getElementById('hm-editor');
+      ed.querySelectorAll('input[data-hm-bin]').forEach(inp => {
+        inp.addEventListener('change', () => {
+          const iso = inp.closest('tr')?.dataset?.iso;
+          if (!iso) return;
+          if (inp.checked) hmState.values.set(iso, 1);
+          else hmState.values.delete(iso);
+        });
+      });
+      ed.querySelectorAll('input[data-hm-pct]').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const iso = inp.closest('tr')?.dataset?.iso;
+          if (!iso) return;
+          const raw = inp.value.trim();
+          if (raw === '') { hmState.values.delete(iso); return; }
+          let n = Number(raw);
+          if (!Number.isFinite(n)) return;
+          n = Math.max(0, Math.min(100, n));
+          hmState.values.set(iso, n);
+        });
+      });
+    }
+
+    function hmRenderRank() {
+      const ranked = hmState.rankOrder.filter(iso => hmState.catalog.some(c => c.iso === iso));
+      const rankedSet = new Set(ranked);
+      const unranked = hmState.catalog.filter(c => !rankedSet.has(c.iso));
+      const isoToName = new Map(hmState.catalog.map(c => [c.iso, c.name]));
+      const rankedRows = ranked.map((iso, idx) => `
+        <div class="hm-rank-row" draggable="true" data-iso="${iso}" data-zone="ranked">
+          <div class="hm-rank-pos">${idx + 1}</div>
+          <div class="hm-iso">${escHtml(iso)}</div>
+          <div class="hm-name">${escHtml(isoToName.get(iso) || iso)}</div>
+          <button class="hm-rank-x" title="Remove from rank" onclick="hmRankRemove('${iso}')">×</button>
+        </div>`).join('');
+      const unrankedRows = unranked.map(c => `
+        <div class="hm-rank-row" draggable="true" data-iso="${c.iso}" data-zone="unranked">
+          <div class="hm-rank-pos">—</div>
+          <div class="hm-iso">${escHtml(c.iso)}</div>
+          <div class="hm-name">${escHtml(c.name)}</div>
+        </div>`).join('');
+      return `
+        <div class="hm-rank-zones">
+          <div class="hm-rank-zone">
+            <h4>Ranked (${ranked.length}) — drag to reorder, top = rank 1</h4>
+            <div class="hm-rank-zone-body" data-zone="ranked">${rankedRows || '<div style="color:#64748b;font-size:0.8rem;padding:8px;">Drag countries here to rank them.</div>'}</div>
+          </div>
+          <div class="hm-rank-zone">
+            <h4>Unranked (${unranked.length})</h4>
+            <div class="hm-rank-zone-body" data-zone="unranked">${unrankedRows}</div>
+          </div>
+        </div>`;
+    }
+
+    window.hmRankRemove = function(iso) {
+      hmState.rankOrder = hmState.rankOrder.filter(x => x !== iso);
+      hmState.values.delete(iso);
+      hmRender();
+    };
+
+    function hmWireRankDrag() {
+      // Native HTML5 drag-and-drop. Drop on a body re-orders within
+      // the ranked zone, or moves between ranked/unranked. Position
+      // is determined by which row the pointer is over at drop time.
+      let dragIso = null;
+      const ed = document.getElementById('hm-editor');
+      ed.querySelectorAll('.hm-rank-row').forEach(row => {
+        row.addEventListener('dragstart', (e) => {
+          dragIso = row.dataset.iso;
+          row.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          // Firefox needs setData to start drag.
+          try { e.dataTransfer.setData('text/plain', dragIso); } catch (_) {}
+        });
+        row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      });
+      ed.querySelectorAll('.hm-rank-zone-body').forEach(zone => {
+        zone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          zone.classList.add('dragover');
+          e.dataTransfer.dropEffect = 'move';
+        });
+        zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+        zone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          zone.classList.remove('dragover');
+          if (!dragIso) return;
+          const targetZone = zone.dataset.zone;
+          // Determine drop index by which row the pointer is over.
+          const rows = [...zone.querySelectorAll('.hm-rank-row:not(.dragging)')];
+          let insertIdx = rows.length;
+          for (let i = 0; i < rows.length; i++) {
+            const r = rows[i].getBoundingClientRect();
+            if (e.clientY < r.top + r.height / 2) { insertIdx = i; break; }
+          }
+          // Strip from its current position then re-insert.
+          hmState.rankOrder = hmState.rankOrder.filter(x => x !== dragIso);
+          if (targetZone === 'ranked') {
+            hmState.rankOrder.splice(insertIdx, 0, dragIso);
+            // Re-derive values from order — rank is positional now.
+            hmState.values = new Map(hmState.rankOrder.map((iso, idx) => [iso, idx + 1]));
+          } else {
+            hmState.values.delete(dragIso);
+          }
+          dragIso = null;
+          hmRender();
+        });
+      });
+    }
+
+    async function hmSave() {
+      if (!hmState.question) { hmStatus('Nothing to save.', 'error'); return; }
+      // Sync inputs back into state.
+      hmState.legend = document.getElementById('hm-legend').value.trim() || hmState.question;
+      hmState.unit = document.getElementById('hm-unit').value.trim();
+      hmState.sourceNote = document.getElementById('hm-source-note').value.trim() || 'Curated';
+      let values;
+      if (hmState.mode === 'rank') {
+        values = hmState.rankOrder.map((iso, idx) => ({ iso, value: idx + 1 }));
+      } else {
+        values = [...hmState.values.entries()]
+          .filter(([, v]) => Number.isFinite(v) && (hmState.mode !== 'binary' || v === 1))
+          .map(([iso, v]) => ({ iso, value: v }));
+      }
+      hmStatus(`Saving ${values.length} values…`);
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/heatmap/save`, {
+          method: 'POST', headers: authHeaders(),
+          body: JSON.stringify({
+            question: hmState.question, mode: hmState.mode,
+            legend: hmState.legend, unit: hmState.unit,
+            source_note: hmState.sourceNote,
+            values,
+          }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        hmStatus(`Saved · ${data.count} countries · future calls return this curated answer.`);
+      } catch (e) {
+        hmStatus('Save failed: ' + e.message, 'error');
+      }
+    }
+
+    async function hmLoadSaved() {
+      const list = document.getElementById('hm-saved-list');
+      list.classList.remove('hidden');
+      list.innerHTML = '<div style="color:#94a3b8;font-size:0.8rem;padding:6px;">Loading…</div>';
+      try {
+        const res = await fetch(`${API_BASE}/api/admin/heatmap/saved`, { headers: authHeaders() });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { rows } = await res.json();
+        if (!rows?.length) {
+          list.innerHTML = '<div style="color:#94a3b8;font-size:0.8rem;padding:6px;">No curated answers yet.</div>';
+          return;
+        }
+        list.innerHTML = rows.map(r => {
+          const ts = r.last_hit_at ? new Date(r.last_hit_at).toLocaleDateString() : '';
+          return `<div class="hm-saved-item" onclick="hmEditSaved('${escHtml(r.question_text).replace(/'/g, "\\'")}','${escHtml(r.mode)}')">
+            <span class="hm-saved-mode">${escHtml(r.mode)}</span>
+            <span class="hm-saved-q">${escHtml(r.question_text)}</span>
+            <span class="hm-saved-meta">${r.value_count || 0} · ${ts}</span>
+          </div>`;
+        }).join('');
+      } catch (e) {
+        list.innerHTML = `<div style="color:#fca5a5;font-size:0.8rem;padding:6px;">Load failed: ${escHtml(e.message)}</div>`;
+      }
+    }
+
+    window.hmEditSaved = function(question, mode) {
+      document.getElementById('hm-question').value = question;
+      document.getElementById('hm-mode').value = mode;
+      document.getElementById('hm-saved-list').classList.add('hidden');
+      hmSimulate();
+    };
 
     // ════════════════════════════════════════════════════════════════
     // INIT
