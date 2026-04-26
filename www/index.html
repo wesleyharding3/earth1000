@@ -11588,6 +11588,31 @@ window.fmtDate = function(d) {
   }
 })();
 
+/* ── iOS keyboard form-assistant bar (prev / next / Done) ──
+   WKWebView shows it above the keyboard for every text input by
+   default. It eats vertical space and clutters our minimal UI. The
+   @capacitor/keyboard plugin exposes setAccessoryBarVisible — call it
+   once after the platform is ready and again whenever the app resumes
+   (the setting can revert after a backgrounding cycle on some iOS
+   builds). No-op on web / Android. */
+(function() {
+  if (typeof window.Capacitor === 'undefined') return;
+  if (window.Capacitor?.getPlatform?.() !== 'ios') return;
+  const hideBar = () => {
+    const Keyboard = window.Capacitor?.Plugins?.Keyboard;
+    if (!Keyboard?.setAccessoryBarVisible) return;
+    Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(() => {});
+  };
+  // App.addListener('resume') would also work but requires the App
+  // plugin; pageshow + visibilitychange are reliable in WKWebView and
+  // don't add a dependency.
+  hideBar();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') hideBar();
+  });
+  window.addEventListener('pageshow', hideBar);
+})();
+
 /* ── YouTube embed URL helper (proxied on Capacitor to avoid error 153) ── */
 window._ytEmbedUrl = function(videoId, opts) {
   opts = opts || {};
