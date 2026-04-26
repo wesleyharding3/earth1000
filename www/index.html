@@ -2899,7 +2899,17 @@ body.flow-maximized #flowArcList {
   pointer-events: auto;
 }
 .arcCtxSegArrow {
+  /* Hard-lock the box to a circle. Without box-sizing + padding:0 the
+     browser's default <button> padding (1px 6px) inflates width but
+     not height, rendering as an ellipse on mobile. flex:0 0 auto plus
+     min/max-width/height defends against the parent flex container
+     stretching the button on narrow viewports. */
+  box-sizing: border-box;
   width: 28px; height: 28px;
+  min-width: 28px; min-height: 28px;
+  max-width: 28px; max-height: 28px;
+  flex: 0 0 28px;
+  padding: 0;
   border-radius: 50%;
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(12,17,28,0.70);
@@ -4227,11 +4237,18 @@ button.arcCtxSegDot,
        same value so the icon sits in a snug square, not the older
        rectangle that came from asymmetric padding (3px vertical, 6px
        horizontal). One global rule reaches every panel that hosts the
-       toggle: article detail, thread / line detail, country, city. */
+       toggle: article detail, thread / line detail, country, city.
+       min/max/flex pinning defends against the parent flex container
+       (e.g. a panel header) stretching the button to fill leftover
+       horizontal space — that's what made the icons look elongated
+       on mobile despite the explicit width. */
     .gridViewToggle button {
       box-sizing: border-box;
       width: 22px;
       height: 22px;
+      min-width: 22px; min-height: 22px;
+      max-width: 22px; max-height: 22px;
+      flex: 0 0 22px;
       padding: 0;
       background: transparent;
       border: none;
@@ -4864,6 +4881,20 @@ button.arcCtxSegDot,
 @media (pointer: coarse), (max-width: 700px) {
   #flowCtxCard.view-ctx #arcContextPanel {
     max-height: calc(100vh - env(safe-area-inset-top, 0px) - 220px);
+    /* Lock a stable minimum so the panel doesn't pop in/out as
+       streamed content arrives. The body itself overflow-y:auto's
+       inside this min — short responses just leave whitespace
+       (with the seg nav anchored at the bottom), long responses
+       scroll. Picked to match the typical 3-block render so the
+       common case is no scroll, no resize. */
+    min-height: 320px;
+  }
+  /* The .arcCtxBody must also assert a min-height equal to the
+     panel min minus header/seg-nav, otherwise the body can collapse
+     to its content height while the panel reserves the space —
+     which leaves the seg nav floating mid-air. */
+  #flowCtxCard.view-ctx #arcContextPanel .arcCtxBody {
+    min-height: 240px;
   }
 }
 @media (pointer: fine) and (min-width: 701px) {
@@ -39807,6 +39838,25 @@ body.ticker-active .gTickerLabel {
     return false;
   };
 
+  // Minimum great-circle distance (miles) from (lat,lon) to any vertex
+  // in the country's polygon rings. Vertex-only — close enough for the
+  // "click within ~100km of a country" inspector check, and far cheaper
+  // than full point-to-segment math.
+  window.__minDistanceMiToCountry = function(lat, lon, entry) {
+    if (!entry?.rings?.length) return Infinity;
+    let best = Infinity;
+    for (const polyRings of entry.rings) {
+      for (const ring of polyRings) {
+        for (const [vlon, vlat] of ring) {
+          const d = haversineMi(lat, lon, vlat, vlon);
+          if (d < best) best = d;
+          if (best === 0) return 0;
+        }
+      }
+    }
+    return best;
+  };
+
   // Check whether any pair of consecutive vertices in the outer ring jumps
   // > 180° in longitude — signals the country crosses the antimeridian.
   function _polygonCrossesAntimeridian(rings) {
@@ -41476,46 +41526,40 @@ body.ticker-active .gTickerLabel {
         });
       }
 
-      // Two-pass detection so the click feels precise:
-      //   1. POLYGON HIT — click landed inside a country's borders.
-      //   2. PROXIMITY  — within 100 km of a country's centroid (catches
-      //      clicks just over a coast or a small island country).
+      // QA's state.points carry only an ISO — no lat/lon — so the
+      // shared `nearby` distance loop above is empty for QA mode. Use
+      // the country polygons in geoIdx.byIso directly: polygon-hit
+      // first, then nearest-vertex distance ≤ 100 km. That mirrors what
+      // the user sees on screen (a country is "clickable" wherever
+      // it's painted, plus a small buffer for clicks just off coast).
       const QA_RADIUS_KM = 100;
       const QA_RADIUS_MI = QA_RADIUS_KM * 0.621371;
-      const isoToNearby = new Map(); // for label fallback in pass 2
-      for (const { p, d } of nearby) {
-        const iso = String(p.iso_code || p.iso || '').toUpperCase();
-        if (!iso) continue;
-        const prev = isoToNearby.get(iso);
-        if (!prev || d < prev.d) isoToNearby.set(iso, { p, d });
-      }
-
       const rowsByIso = new Map();
+      const isoSetForQA = qMode === 'binary'
+        ? new Set([...(geoIdx?.byIso?.keys() || [])])  // binary: surface 'No' too
+        : new Set(isoToQA.keys());                     // rank/percent: only matched
+      const canPolyHit  = typeof window.__pointInCountry === 'function' && geoIdx?.byIso;
+      const canEdgeDist = typeof window.__minDistanceMiToCountry === 'function' && geoIdx?.byIso;
 
-      // Pass 1: polygon hits (distance reported as 0 — the click is inside).
-      if (typeof window.__pointInCountry === 'function' && geoIdx?.byIso) {
-        for (const [iso, qa] of isoToQA.entries()) {
-          const entry = geoIdx.byIso.get(iso);
-          if (!entry) continue;
-          if (window.__pointInCountry(lon, lat, entry)) {
-            const label = qa.label || isoToNearby.get(iso)?.p?.country_name || iso;
-            rowsByIso.set(iso, { name: label, iso, qa, d: 0 });
-          }
-        }
-      }
-
-      // Pass 2: proximity within 100 km. For binary mode, also surface
-      // countries that DIDN'T match (renders as "No") so the user gets
-      // negative confirmation — but only inside the radius, not 1000 mi away.
-      for (const { p, d } of nearby) {
-        if (d > QA_RADIUS_MI) continue;
-        const iso = String(p.iso_code || p.iso || '').toUpperCase();
-        if (!iso || rowsByIso.has(iso)) continue;
-        const qa = isoToQA.get(iso);
+      for (const iso of isoSetForQA) {
+        const entry = geoIdx?.byIso?.get(iso);
+        if (!entry) continue;
+        const qa = isoToQA.get(iso) || null;
         if (!qa && qMode !== 'binary') continue;
-        rowsByIso.set(iso, { name: labelFor(p), iso, qa: qa || null, d });
-      }
 
+        let d = Infinity;
+        if (canPolyHit && window.__pointInCountry(lon, lat, entry)) {
+          d = 0;
+        } else if (canEdgeDist) {
+          d = window.__minDistanceMiToCountry(lat, lon, entry);
+          if (d > QA_RADIUS_MI) continue;
+        } else {
+          continue;
+        }
+
+        const label = qa?.label || entry.name || isoName.get(iso) || iso;
+        rowsByIso.set(iso, { name: label, iso, qa, d });
+      }
       const rows = [...rowsByIso.values()].sort((a, b) => a.d - b.d);
 
       if (!rows.length) {

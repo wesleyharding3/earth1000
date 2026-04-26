@@ -38013,6 +38013,25 @@ body.ticker-active .gTickerLabel {
     return false;
   };
 
+  // Minimum great-circle distance (miles) from (lat,lon) to any vertex
+  // in the country's polygon rings. Vertex-only — close enough for the
+  // "click within ~100km of a country" inspector check, and far cheaper
+  // than full point-to-segment math.
+  window.__minDistanceMiToCountry = function(lat, lon, entry) {
+    if (!entry?.rings?.length) return Infinity;
+    let best = Infinity;
+    for (const polyRings of entry.rings) {
+      for (const ring of polyRings) {
+        for (const [vlon, vlat] of ring) {
+          const d = haversineMi(lat, lon, vlat, vlon);
+          if (d < best) best = d;
+          if (best === 0) return 0;
+        }
+      }
+    }
+    return best;
+  };
+
   // For countries that have city_points but no country_points row (e.g.
   // France, where every article is pinned to a city), roll the city
   // points up into a synthetic country aggregate so the wash layer can
@@ -39640,39 +39659,39 @@ body.ticker-active .gTickerLabel {
         });
       }
 
-      // Tight click radius: polygon hit first (anywhere inside the
-      // country counts), then ≤100 km proximity for clicks just off the
-      // coast / between countries.
+      // QA's state.points carry only an ISO — no lat/lon — so the
+      // shared `nearby` distance loop above is empty. Use the country
+      // polygons in geoIdx.byIso directly: polygon-hit first, then
+      // nearest-vertex distance ≤ 100 km. That mirrors what the user
+      // sees on screen (a country is "clickable" wherever it's
+      // painted, plus a small buffer for clicks just off the coast).
       const QA_RADIUS_KM = 100;
       const QA_RADIUS_MI = QA_RADIUS_KM * 0.621371;
-      const isoToNearby = new Map();
-      for (const { p, d } of nearby) {
-        const iso = String(p.iso_code || p.iso || '').toUpperCase();
-        if (!iso) continue;
-        const prev = isoToNearby.get(iso);
-        if (!prev || d < prev.d) isoToNearby.set(iso, { p, d });
-      }
       const rowsByIso = new Map();
-      // Pass 1: polygon hits (distance 0).
-      if (typeof window.__pointInCountry === 'function' && geoIdx?.byIso) {
-        for (const [iso, qa] of isoToQA.entries()) {
-          const entry = geoIdx.byIso.get(iso);
-          if (!entry) continue;
-          if (window.__pointInCountry(lon, lat, entry)) {
-            const label = qa.label || isoToNearby.get(iso)?.p?.country_name || isoName.get(iso) || iso;
-            rowsByIso.set(iso, { name: label, iso, qa, d: 0 });
-          }
-        }
-      }
-      // Pass 2: ≤100 km proximity fallback. Binary mode also surfaces
-      // non-matches as "No" so the user still sees context.
-      for (const { p, d } of nearby) {
-        if (d > QA_RADIUS_MI) continue;
-        const iso = String(p.iso_code || p.iso || '').toUpperCase();
-        if (!iso || rowsByIso.has(iso)) continue;
-        const qa = isoToQA.get(iso);
+      const isoSetForQA = qMode === 'binary'
+        ? new Set([...(geoIdx?.byIso?.keys() || [])])  // binary: surface 'No' too
+        : new Set(isoToQA.keys());                     // rank/percent: only matched
+      const canPolyHit  = typeof window.__pointInCountry === 'function' && geoIdx?.byIso;
+      const canEdgeDist = typeof window.__minDistanceMiToCountry === 'function' && geoIdx?.byIso;
+
+      for (const iso of isoSetForQA) {
+        const entry = geoIdx?.byIso?.get(iso);
+        if (!entry) continue;
+        const qa = isoToQA.get(iso) || null;
         if (!qa && qMode !== 'binary') continue;
-        rowsByIso.set(iso, { name: labelFor(p), iso, qa: qa || null, d });
+
+        let d = Infinity;
+        if (canPolyHit && window.__pointInCountry(lon, lat, entry)) {
+          d = 0;
+        } else if (canEdgeDist) {
+          d = window.__minDistanceMiToCountry(lat, lon, entry);
+          if (d > QA_RADIUS_MI) continue;
+        } else {
+          continue;
+        }
+
+        const label = qa?.label || entry.name || isoName.get(iso) || iso;
+        rowsByIso.set(iso, { name: label, iso, qa, d });
       }
       const rows = [...rowsByIso.values()].sort((a, b) => a.d - b.d);
 
