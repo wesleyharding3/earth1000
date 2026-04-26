@@ -33131,9 +33131,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
         try { localStorage.removeItem('earth00_history'); } catch (_) {}
         try { sessionStorage.clear(); } catch (_) {}
         try { await sb.auth.signOut({ scope: 'local' }); } catch (_) {}
-        // Hard reload back to a clean state so no stale auth context
-        // lingers in memory.
-        location.replace('/');
+
+        // Visible state change BEFORE navigation, so the user never sees
+        // "Deleting…" stuck even if the WebView swallows the navigation
+        // call (Capacitor iOS has historically been flaky with location.*
+        // when serving from https://localhost/).
+        try { modal.classList.remove('open'); } catch (_) {}
+        try { window.__showToast?.('Account deleted.'); } catch (_) {}
+        confirm.disabled = false;
+        confirm.textContent = 'Delete forever';
+
+        // Try several navigation strategies in order; the first that works
+        // wins. location.reload() is the most reliable fallback inside the
+        // Capacitor WebView.
+        try { location.replace('/'); } catch (_) {}
+        setTimeout(() => {
+          try { location.href = '/'; } catch (_) {}
+        }, 200);
+        setTimeout(() => {
+          try { location.reload(); } catch (_) {}
+        }, 600);
       } catch (err) {
         if (errBox) errBox.textContent = `Network error: ${err.message}`;
         confirm.disabled = false;
