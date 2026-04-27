@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 'use strict';
+
+// Cap DB pool before any module loads ./db. Most of this cron's work is
+// external API fetches (FRED / World Bank / commodities); only a few writes
+// at the end. 2 connections is more than enough.
+process.env.DB_POOL_MAX = "2";
+
 /**
  * globeStatsCron.js
  *

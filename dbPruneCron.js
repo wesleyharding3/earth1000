@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+
+// Cap DB pool before any module loads ./db. Cron does sequential VACUUM/
+// DELETE work; 2 connections is plenty and keeps it from starving the API.
+process.env.DB_POOL_MAX = "2";
+
 /**
  * dbPruneCron.js — Weekly database pruning cron
  *

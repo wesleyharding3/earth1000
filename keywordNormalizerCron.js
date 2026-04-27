@@ -1,3 +1,7 @@
+// Cap DB pool before any module loads ./db. Crons only need 1–2
+// connections at a time; defaulting to 60 was starving the web pool.
+process.env.DB_POOL_MAX = "2";
+
 /**
  * keywordNormalizerCron.js — DECOUPLED KEYWORD NORMALIZER
  *

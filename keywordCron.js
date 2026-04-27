@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 'use strict';
+
+// Cap DB pool before any module loads ./db. dotenv.config() does not
+// override already-set env vars, so this sticks. Crons only need 1–2
+// connections at a time; defaulting to 60 (the web server's value) was
+// letting a single nightly run starve the API pool — see Render logs
+// 2026-04-26 ("[pool] total=1 idle=0 waiting=0", "remaining connection
+// slots are reserved for roles with the SUPERUSER attribute").
+process.env.DB_POOL_MAX = "2";
+
 /**
  * keywordCron.js
  *
@@ -41,10 +50,15 @@ function isDateLikeKeyword(keyword) {
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
 async function computeTrending({ days = 7, limit = 50 } = {}) {
-  // Disable statement_timeout for this long-running aggregation
+  // Bounded long-running aggregation. Previously we ran with
+  // statement_timeout = 0 (unbounded) and a single run was clocking
+  // 16+ minutes while holding pool connections — see Render logs
+  // "[keywordCron] trending: 50 keywords cached (1010.1s)". 5 min is
+  // plenty for the partial covering index path; if the query still can't
+  // complete in that window we'd rather skip the refresh than choke the API.
   const client = await pool.connect();
   try {
-    await client.query('SET statement_timeout = 0');
+    await client.query("SET statement_timeout = '5min'");
     const { rows } = await client.query(`
       SELECT
         k.keyword,
@@ -71,9 +85,10 @@ async function computeTrending({ days = 7, limit = 50 } = {}) {
 // ── Rising ──────────────────────────────────────────────────────────────────
 // Keywords whose recent velocity is significantly above their baseline rate.
 async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
+  // Same 5-minute bound as computeTrending — see comment there.
   const client = await pool.connect();
   try {
-    await client.query('SET statement_timeout = 0');
+    await client.query("SET statement_timeout = '5min'");
     const { rows } = await client.query(`
     WITH recent AS (
       SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
@@ -144,26 +159,39 @@ async function run() {
   const t0 = Date.now();
   console.log(`[keywordCron] ${new Date().toISOString()} — starting`);
 
-  try {
-    if (DO_TRENDING) {
+  // Trending and rising are independent — if one trips the 5-minute
+  // statement_timeout, the other should still try. We track per-section
+  // success and only exit non-zero when BOTH fail (so cache freshness
+  // for the surviving section is preserved on Render).
+  let okCount = 0, attempted = 0;
+  if (DO_TRENDING) {
+    attempted++;
+    try {
       const results = await computeTrending();
       await writeCache('trending', 'global', { keywords: results });
       console.log(`[keywordCron] trending: ${results.length} keywords cached (${elapsed(t0)})`);
+      okCount++;
+    } catch (err) {
+      console.error(`[keywordCron] trending failed: ${err.message}`);
     }
-
-    if (DO_RISING) {
+  }
+  if (DO_RISING) {
+    attempted++;
+    try {
       const results = await computeRising();
       await writeCache('rising', 'global', { keywords: results });
       console.log(`[keywordCron] rising:   ${results.length} keywords cached (${elapsed(t0)})`);
+      okCount++;
+    } catch (err) {
+      console.error(`[keywordCron] rising failed: ${err.message}`);
     }
-
-    console.log(`[keywordCron] done in ${elapsed(t0)}`);
-  } catch (err) {
-    console.error('[keywordCron] fatal:', err.message);
-    process.exit(1);
-  } finally {
-    await pool.end();
   }
+  await pool.end().catch(() => {});
+  if (attempted > 0 && okCount === 0) {
+    console.error('[keywordCron] all sections failed');
+    process.exit(1);
+  }
+  console.log(`[keywordCron] done in ${elapsed(t0)} (${okCount}/${attempted} sections refreshed)`);
 }
 
 run();

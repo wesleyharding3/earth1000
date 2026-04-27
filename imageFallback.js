@@ -8,6 +8,36 @@
  * thematically off, and blocked requests on an external API.)
  */
 
+// Concurrency cap: imageFallback runs PER ARTICLE during ingestion bursts,
+// and at peak the articleListener processes 30+ articles in parallel.
+// Each lookup does up to 3 sequential pool.query() calls, so without a
+// limit a single burst would request ~90 pool slots simultaneously and
+// starve every other API consumer (this was the root cause of the Render
+// "remaining connection slots are reserved" / "sorry, too many clients
+// already" / "timeout exceeded when trying to connect" log spam). Cap to
+// 4 concurrent lookups — well below the web pool's headroom. Hand-rolled
+// semaphore because the project's installed p-limit is ESM-only and this
+// file is CommonJS.
+function makeConcurrencyLimit(n) {
+  let active = 0;
+  const queue = [];
+  const drain = () => {
+    while (active < n && queue.length) {
+      active++;
+      const { fn, resolve, reject } = queue.shift();
+      Promise.resolve()
+        .then(fn)
+        .then(resolve, reject)
+        .finally(() => { active--; drain(); });
+    }
+  };
+  return (fn) => new Promise((resolve, reject) => {
+    queue.push({ fn, resolve, reject });
+    drain();
+  });
+}
+const _bucketLimit = makeConcurrencyLimit(4);
+
 /**
  * Bucket-first fallback: find an image from our own image_assets catalog
  * that matches the thread/timeline by country, keyword, or category.
@@ -25,6 +55,10 @@
  * @returns {Promise<string|null>} public_url or null
  */
 async function findBucketImage(item, pool) {
+  return _bucketLimit(() => _findBucketImageInner(item, pool));
+}
+
+async function _findBucketImageInner(item, pool) {
   try {
     const isoCodes = Array.isArray(item.primary_nations) ? item.primary_nations.filter(Boolean) : [];
     const keywords = Array.isArray(item.keywords)

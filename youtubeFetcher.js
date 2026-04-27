@@ -1,3 +1,8 @@
+// Cap DB pool before any module loads ./db. YouTube fetcher is a
+// standalone cron (Render runs it on its own schedule); mirror the
+// fetcher/worker pattern so it can't crowd out the API pool.
+process.env.DB_POOL_MAX = "6";
+
 require("dotenv").config();
 const Parser = require("rss-parser");
 const pool = require("./db");

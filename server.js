@@ -1419,6 +1419,17 @@ async function _executeNewsSearch({ effectiveLimit, offset }) {
   }
 }
 
+// Last-good cache for /api/news/search default-query path. Survives any
+// transient empty-tier returns so a starved DB pool never causes the Feed
+// to flash zero. Bounded to a handful of (limit, offset) keys so it can't
+// grow unbounded.
+const _newsSearchLastGood = new Map();
+const NEWS_LASTGOOD_TTL   = 30 * 60 * 1000; // 30 minutes
+setInterval(() => {
+  const cutoff = Date.now() - NEWS_LASTGOOD_TTL;
+  for (const [k, v] of _newsSearchLastGood) if (v.ts < cutoff) _newsSearchLastGood.delete(k);
+}, 5 * 60 * 1000).unref();
+
 // ── User Preference Boost Engine ──────────────────────────────────────────
 // Fetches preferences from Supabase and applies personalized ranking boosts.
 // Operates post-cache so the underlying DB queries remain shared across users.
@@ -1793,9 +1804,26 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
       const cacheKey = `news/search:default:v8:${effectiveLimit}:${offset}`;
-      const cached = await ttlCached(cacheKey, 60_000, async () => {
+      let cached = await ttlCached(cacheKey, 60_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset });
       });
+      // ── Last-good fallback ──────────────────────────────────────────
+      // When all three tiers time out (DB pool starved or under heavy
+      // contention), _executeNewsSearch returns {total:0, articles:[]}
+      // and ttlCached caches that empty value for the next 60s — which
+      // is exactly the "feed shows 0 articles for a minute" bug. Track
+      // the last non-empty response per cache key and serve it instead
+      // when the live path empties out, so the Feed never flashes to
+      // zero just because the database hiccupped.
+      if (cached && Array.isArray(cached.articles) && cached.articles.length > 0) {
+        _newsSearchLastGood.set(cacheKey, { data: cached, ts: Date.now() });
+      } else {
+        const lg = _newsSearchLastGood.get(cacheKey);
+        if (lg && (Date.now() - lg.ts) < NEWS_LASTGOOD_TTL) {
+          console.warn(`[news/search] live empty, serving last-good age=${Math.round((Date.now() - lg.ts) / 1000)}s`);
+          cached = lg.data;
+        }
+      }
 
       // Per-user preference pass re-orders the cached slice for logged-in
       // callers. Only the current slice (not a full 500-row pool) is

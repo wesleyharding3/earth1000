@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 'use strict';
+
+// Cap DB pool before any module loads ./db. The cron uses a single client
+// and does a Promise.all of related-but-cheap reads on it; 3 connections
+// covers worst case without starving the API pool.
+process.env.DB_POOL_MAX = "3";
+
 /**
  * sourcesStatsCron.js
  *

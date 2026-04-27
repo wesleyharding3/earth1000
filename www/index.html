@@ -25321,11 +25321,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       (function setupMap2DArcs() {
         const ARC_HEIGHT_FRAC = 0.18;   // apex height as fraction of chord length
 
+        // Globe colors:
+        //   primary   → 0x22c55e (emerald-500)  → green
+        //   secondary → 0x38bdf8 (sky-400)      → cyan-blue
+        // Globe's default flow tint is the same emerald, so non-tier
+        // arcs go green here too — gives the 2D map parity with the globe.
         function colorFor(flow) {
           const t = flow && flow._tier;
-          if (t === "primary")   return { stroke: "rgba(255,170,40,0.95)",  glow: "rgba(255,170,40,0.30)", orb: "rgba(255,200,80,1)" };
-          if (t === "secondary") return { stroke: "rgba(120,200,255,0.85)", glow: "rgba(120,200,255,0.25)", orb: "rgba(170,220,255,1)" };
-          return                       { stroke: "rgba(255,255,255,0.78)",  glow: "rgba(255,255,255,0.20)", orb: "rgba(255,255,255,1)" };
+          if (t === "secondary") return { stroke: "rgba(56,189,248,0.85)", glow: "rgba(56,189,248,0.22)", orb: "rgba(125,211,252,1)" };
+          // 'primary' AND default both go green.
+          return                       { stroke: "rgba(34,197,94,0.92)",  glow: "rgba(34,197,94,0.26)",  orb: "rgba(134,239,172,1)" };
         }
 
         function widthFor(flow, dpr) {
@@ -25373,17 +25378,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const lx = dx - sx, ly = dy - sy;
             const len = Math.hypot(lx, ly);
             if (len < 1) continue;
-            // Perpendicular (rotated 90° CCW). The arc bows "up" relative to
-            // the chord; for east-west arcs that means north of the chord.
-            const px = -ly / len, py = lx / len;
-            // Vertical-bias the apex so latitude-spanning arcs still arch up
-            // visually (an arc going straight north→south would otherwise
-            // bow east). We blend in a "north-bias" that's stronger for
-            // long-lat arcs.
+            // Perpendicular unit vector (90° CCW from the chord).
+            let px = -ly / len, py = lx / len;
+            // BIAS THE APEX UPWARD. Without this, an east-pointing chord
+            // (e.g. London → Tokyo) gets perpendicular (0, +1), so its
+            // apex sits BELOW the chord on the canvas and the arc looks
+            // like it's leaving from the wrong side of each country —
+            // exactly the "dislodged" look reported under zoom. Flipping
+            // when py > 0 forces every chord to bow toward the top edge
+            // of the screen, matching the globe's "arc lifts off the
+            // surface" aesthetic.
+            if (py > 0) { px = -px; py = -py; }
+
             const heightMult = (flow._tier === "primary") ? 0.75 : (flow._tier === "secondary" ? 1.15 : 1.0);
-            const apex = len * ARC_HEIGHT_FRAC * heightMult;
-            const cx = mx + px * apex;
-            const cy = my + py * apex;
+            // Apex is in WORLD pixels and scales linearly with chord
+            // length, so the apex/chord ratio (the visible arc shape)
+            // stays invariant under zoom. Lane offset spreads parallel
+            // arcs (same src+dst) so they fan out instead of stacking —
+            // the globe does this in 3D via the same field. Treat
+            // __laneOffset as a fraction-of-chord perpendicular shift to
+            // keep the spread consistent at all zoom levels.
+            const apex      = len * ARC_HEIGHT_FRAC * heightMult;
+            const laneShift = (flow.__laneOffset || 0) * len * 0.18;
+            const cx = mx + px * (apex + laneShift);
+            const cy = my + py * (apex + laneShift);
 
             // Particle progress along the curve. Static (aggregate) arcs
             // loop continuously; transient arcs use their own progression.
@@ -25420,7 +25438,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const orbR = w * 2.5;
               const grad = ctx.createRadialGradient(xOff + p.x, p.y, 0, xOff + p.x, p.y, orbR);
               grad.addColorStop(0, colors.orb);
-              grad.addColorStop(1, "rgba(255,255,255,0)");
+              // Fade to transparent green (or blue for secondary) instead of
+              // white so the orb halo blends with the arc color cleanly.
+              grad.addColorStop(1, colors.glow.replace(/,\s*[\d.]+\)$/, ',0)'));
               ctx.fillStyle = grad;
               ctx.beginPath();
               ctx.arc(xOff + p.x, p.y, orbR, 0, Math.PI * 2);
