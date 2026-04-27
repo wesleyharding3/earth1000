@@ -1,4 +1,9 @@
 // rerouteAll.js
+// Cap concurrent DB connections — this script reroutes thousands of
+// articles. Without the cap it defaults to 60 and would eat the
+// production budget. 3 is plenty for the per-article SQL workload.
+process.env.DB_POOL_MAX = "3";
+
 require("dotenv").config();
 const pool = require("./db");
 const { routeArticle } = require("./locationRouter");

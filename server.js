@@ -1,3 +1,15 @@
+// Cap the web tier's DB connection pool BEFORE db.js loads. The default
+// (60) was set when web was the only DB consumer; with worker, fetcher,
+// and many crons all sharing Postgres max_connections=103, the web's 60
+// + everyone else routinely pushed past the limit and triggered the
+// "remaining connection slots are reserved for SUPERUSER" (53300)
+// failures that took down /api/threads/latest, /api/flows, etc.
+//
+// Production logs consistently show web pool usage between 5-20 active
+// connections. 40 is generous (2× the observed peak) while leaving room
+// in the 103-connection budget for every cron we run alongside.
+process.env.DB_POOL_MAX = "40";
+
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
@@ -9179,8 +9191,25 @@ app.get("/api/timelines/:timelineId/panels", async (req, res) => {
 async function computeCoveragePiePanel(pool, { type, id }) {
   const table = type === 'timeline' ? 'story_timeline_articles' : 'story_thread_articles';
   const col   = type === 'timeline' ? 'timeline_id' : 'thread_id';
+
+  // Combined query: both the all-time per-country distribution (used for
+  // the pie's labels/values) AND the recent vs baseline window splits
+  // (used for the dynamic trend caption). One round-trip instead of two.
+  // Recent = last 48h, baseline = 9 days ago → 48h ago (prior week
+  // excluding the recent window). FILTER aggregates Postgres-side so
+  // we don't pull every article row to count windows in JS.
   const { rows } = await pool.query(`
-    SELECT co.iso_code, co.name, COUNT(DISTINCT a.id)::int AS n
+    SELECT
+      co.iso_code,
+      co.name,
+      COUNT(DISTINCT a.id)::int AS n,
+      COUNT(DISTINCT a.id) FILTER (
+        WHERE a.published_at > NOW() - INTERVAL '48 hours'
+      )::int AS recent_n,
+      COUNT(DISTINCT a.id) FILTER (
+        WHERE a.published_at <= NOW() - INTERVAL '48 hours'
+          AND a.published_at >  NOW() - INTERVAL '9 days'
+      )::int AS baseline_n
       FROM ${table} sta
       JOIN news_articles a ON a.id = sta.article_id
       LEFT JOIN countries co ON co.id = a.country_id
@@ -9201,15 +9230,112 @@ async function computeCoveragePiePanel(pool, { type, id }) {
     values.push(rest.reduce((s, r) => s + r.n, 0));
   }
   const total = values.reduce((a, b) => a + b, 0);
+
   return {
     title:      'Coverage by source country',
     subtitle:   `${rows.length} countr${rows.length === 1 ? 'y' : 'ies'} · ${total} article${total === 1 ? '' : 's'}`,
-    caption:    'Distribution of the thread\u2019s articles across the source countries they were published in.',
+    caption:    _coverageTrendCaption(rows),
     chart_type: 'pie',
     data:       { labels, series: [{ name: 'Articles', values }], unit: 'articles' },
     source_name: 'earth00 (computed)',
     generated_by: 'computed_stats',
   };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Coverage-trend caption synthesis
+// ────────────────────────────────────────────────────────────────────────
+// Generates a one-line natural-language statement describing how the
+// thread's coverage geography is shifting between the recent 48h window
+// and the prior week's baseline. Pure SQL aggregation — no Claude call,
+// no token cost, computed live on every /api/threads/:id/panels request.
+//
+// Falls back to the static "Distribution of articles..." line when:
+//   • The thread has no baseline data (too new — under ~48h old)
+//   • The recent window is too sparse to draw a conclusion (< 5 articles)
+//   • No country's share has shifted by > 5 percentage points
+//
+// Otherwise picks 1-2 risers (countries gaining share) and 1 faller
+// (losing share) and composes a sentence in one of these patterns:
+//   • Single strong riser:  "Coverage rising in Ukraine — 28% of articles
+//                            this week, up from 11%."
+//   • Two risers:           "Increased coverage from Ukraine and Poland
+//                            in the last 48h."
+//   • Riser + faller:       "Coverage rising in Ukraine as France's share
+//                            declines."
+const _STATIC_COVERAGE_CAPTION =
+  'Distribution of the thread\u2019s articles across the source countries they were published in.';
+
+function _coverageTrendCaption(rows) {
+  // Sum the windowed counts.
+  const totalRecent   = rows.reduce((s, r) => s + (r.recent_n   || 0), 0);
+  const totalBaseline = rows.reduce((s, r) => s + (r.baseline_n || 0), 0);
+
+  // Need at least 5 recent articles AND a baseline to compare against,
+  // otherwise the deltas are too noisy to mean anything.
+  if (totalRecent < 5 || totalBaseline < 5) return _STATIC_COVERAGE_CAPTION;
+
+  // Compute per-country share delta (recent − baseline). Restrict to
+  // countries with at least 2 recent articles so a single article
+  // can't dominate a tiny thread.
+  const deltas = rows
+    .filter(r => (r.recent_n || 0) >= 2 || (r.baseline_n || 0) >= 2)
+    .map(r => {
+      const recentShare   = (r.recent_n   || 0) / totalRecent;
+      const baselineShare = (r.baseline_n || 0) / totalBaseline;
+      return {
+        name:           r.name || r.iso_code,
+        iso:            r.iso_code,
+        recent_n:       r.recent_n   || 0,
+        baseline_n:     r.baseline_n || 0,
+        recent_share:   recentShare,
+        baseline_share: baselineShare,
+        delta:          recentShare - baselineShare,
+      };
+    });
+
+  // 5-percentage-point threshold weeds out the rounding noise that
+  // pure flat-coverage pies produce.
+  const SIG = 0.05;
+  const risers  = deltas.filter(d => d.delta >=  SIG && d.recent_n >= 2)
+                        .sort((a, b) => b.delta - a.delta);
+  const fallers = deltas.filter(d => d.delta <= -SIG && d.baseline_n >= 2)
+                        .sort((a, b) => a.delta - b.delta);
+
+  if (!risers.length && !fallers.length) return _STATIC_COVERAGE_CAPTION;
+
+  const pct = (x) => Math.round(x * 100);
+
+  // Single strong riser — most informative phrasing, name the share shift.
+  if (risers.length === 1 && !fallers.length) {
+    const r = risers[0];
+    return `Coverage rising in ${r.name} — ${pct(r.recent_share)}% of articles in the last 48h, up from ${pct(r.baseline_share)}% the prior week.`;
+  }
+
+  // Two+ risers — pair them up.
+  if (risers.length >= 2 && !fallers.length) {
+    const [a, b] = risers;
+    return `Increased coverage from ${a.name} and ${b.name} in the last 48h (${pct(a.recent_share)}% and ${pct(b.recent_share)}% of recent articles).`;
+  }
+
+  // Riser + faller — the contrast tells the most narrative story.
+  if (risers.length && fallers.length) {
+    const r = risers[0];
+    const f = fallers[0];
+    if (risers.length >= 2) {
+      return `Coverage rising in ${r.name} and ${risers[1].name} as ${f.name}'s share declines (${pct(f.baseline_share)}% → ${pct(f.recent_share)}%).`;
+    }
+    return `Coverage rising in ${r.name} (${pct(r.baseline_share)}% → ${pct(r.recent_share)}%) as ${f.name}'s share declines.`;
+  }
+
+  // Only fallers — coverage is consolidating elsewhere or this thread is
+  // cooling. Note who's leaving.
+  if (fallers.length) {
+    const f = fallers[0];
+    return `Coverage easing from ${f.name} — ${pct(f.recent_share)}% of recent articles vs ${pct(f.baseline_share)}% the prior week.`;
+  }
+
+  return _STATIC_COVERAGE_CAPTION;
 }
 
 // POST /api/briefing/location — on-demand briefing for a city or country node

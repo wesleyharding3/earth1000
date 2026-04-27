@@ -21,6 +21,9 @@
  *   node mergeFragmentedThreads.js --show=100     # show first 100 merge proposals
  */
 
+// Cap concurrent DB connections. Mostly Anthropic-bound; 2 is plenty.
+process.env.DB_POOL_MAX = "2";
+
 require("dotenv").config();
 const pool = require("./db");
 const { Anthropic } = require("@anthropic-ai/sdk");

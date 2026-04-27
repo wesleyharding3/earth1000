@@ -102,6 +102,16 @@
 
 'use strict';
 
+// Cap this cron's share of Postgres connections BEFORE db.js loads.
+// Without this it defaults to DB_POOL_MAX=60, which when running
+// concurrently with the web server + worker + other crons blows past
+// Postgres max_connections=103 — the user-facing /api/threads/latest,
+// /api/timelines/latest, /api/flows etc. then start failing with
+// "remaining connection slots are reserved for SUPERUSER" (53300).
+// Per-thread / per-timeline graduation work is mostly Anthropic-bound
+// with sequential DB queries between API calls; 4 is plenty.
+process.env.DB_POOL_MAX = "4";
+
 require('dotenv').config({ override: true });
 const pool = require('./db');
 const Anthropic = require('@anthropic-ai/sdk');

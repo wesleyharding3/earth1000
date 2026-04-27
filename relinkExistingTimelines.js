@@ -37,6 +37,9 @@
 
 'use strict';
 
+// One-shot back-linker. Cap concurrent DB connections; sequential.
+process.env.DB_POOL_MAX = "2";
+
 require('dotenv').config();
 const pool = require('./db');
 

@@ -4569,7 +4569,10 @@ body.flow-maximized #flowArcList {
    chip. Maximizes screen real estate. */
 #flowCtxCard.flowCtxMinimized {
   width: max-content;
-  max-height: 24px;
+  /* 28px = pill's true outer height (24 content + 1+1 border) plus a
+     2px buffer for backdrop-filter bleed + subpixel rounding. Was 24px
+     which clipped the pill's bottom border. */
+  max-height: 28px;
   padding: 0;
   gap: 0;
   border-color: transparent;

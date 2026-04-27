@@ -36,6 +36,17 @@
  */
 
 'use strict';
+
+// Cap this cron's share of Postgres connections BEFORE db.js loads.
+// localStoryBuilder iterates per country and is a Promise.all-heavy
+// SQL workload — uncapped, it would default to DB_POOL_MAX=60 and on
+// its own consume the entire production budget, which is exactly what
+// caused user-facing endpoints (/api/threads/latest, /api/flows, etc.)
+// to fail with "remaining connection slots reserved for SUPERUSER".
+// 3 is plenty — the per-country logic is Anthropic-bound with
+// modest SQL between API calls.
+process.env.DB_POOL_MAX = "3";
+
 require('dotenv').config({ override: true });
 
 const pool = require('./db');

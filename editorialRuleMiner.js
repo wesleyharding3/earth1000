@@ -27,6 +27,11 @@
 // writes concise rule_text lines for each.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Cap this cron's share of Postgres connections BEFORE db.js loads.
+// Without this it defaults to DB_POOL_MAX=60. Mining work is mostly
+// Anthropic Haiku calls with sequential SQL upserts; 3 is plenty.
+process.env.DB_POOL_MAX = "3";
+
 require('dotenv').config();
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');

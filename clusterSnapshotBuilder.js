@@ -20,6 +20,13 @@
 
 'use strict';
 
+// Cap this cron's share of Postgres connections BEFORE db.js loads.
+// Without this, the script defaults to DB_POOL_MAX=60 and can starve
+// the web tier when running concurrently with the article ingester.
+// The snapshot builder is mostly sequential SQL with bursts of writes;
+// 3 connections is plenty.
+process.env.DB_POOL_MAX = "3";
+
 require('dotenv').config();
 
 const pool = require('./db');

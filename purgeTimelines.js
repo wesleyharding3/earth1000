@@ -13,6 +13,9 @@
  *   node purgeTimelines.js --purge-only — purge without rebuilding
  */
 
+// Cap concurrent DB connections. Sequential DELETEs; 2 is sufficient.
+process.env.DB_POOL_MAX = "2";
+
 require('dotenv').config();
 const pool = require('./db');
 

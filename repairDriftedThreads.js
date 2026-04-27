@@ -27,6 +27,10 @@
  */
 
 'use strict';
+
+// One-shot cleanup. Cap concurrent DB connections; mostly Anthropic-bound.
+process.env.DB_POOL_MAX = "2";
+
 require('dotenv').config({ override: true });
 
 const pool = require('./db');

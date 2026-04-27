@@ -15,6 +15,9 @@
 
 'use strict';
 
+// Cap concurrent DB connections. Sequential aggregate + DELETE; 2 is sufficient.
+process.env.DB_POOL_MAX = "2";
+
 require('dotenv').config();
 const pool = require('./db');
 

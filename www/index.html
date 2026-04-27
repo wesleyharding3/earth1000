@@ -4857,7 +4857,13 @@ button.arcCtxSegDot,
    snap on width while still animating every other property. */
 #flowCtxCard.flowCtxMinimized {
   width: max-content;
-  max-height: 24px;          /* exactly pill height */
+  /* 28px = .flowCtxPillBar's true outer height. The pill declares
+     `height: 24px` with `box-sizing: content-box` (CSS default) plus a
+     1px top + 1px bottom border, so it renders at 26px. The extra 2px
+     here is breathing room for backdrop-filter blur bleed and subpixel
+     rounding. Previously max-height: 24px was clipping the pill's
+     bottom border. */
+  max-height: 28px;
   padding: 0;
   gap: 0;
   border-color: transparent;
