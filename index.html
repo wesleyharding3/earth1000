@@ -17787,14 +17787,64 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const url = currentSort === "global"
             ? `https://earth-wjr6.onrender.com/api/news/${entity}/${node.id}/global?limit=${limit}&offset=${offset}${tagParam}`
             : `https://earth-wjr6.onrender.com/api/news/${entity}/${node.id}?limit=${limit}&offset=${offset}${tagParam}`;
-          return fetch(url)
-            .then(res => res.json())
+          // Resilient fetch — auto-retries once on 5xx / network errors
+          // so a transient cold-start hiccup never strands the user on
+          // an empty panel. Validates the response is an array (the
+          // endpoint can return `{error:"..."}` on misconfig). Abort
+          // errors (panel switched away mid-flight) stay silent.
+          const fetchOnce = async () => {
+            const res = await fetch(url);
+            if (!res.ok) {
+              const err = new Error(`HTTP ${res.status}`);
+              err._status = res.status;
+              throw err;
+            }
+            const data = await res.json();
+            if (!Array.isArray(data)) throw new Error('Bad response shape');
+            return data;
+          };
+          return fetchOnce()
+            .catch(err => {
+              // Pass aborts straight through to the outer catch.
+              if (err?.name === 'AbortError') throw err;
+              // 4xx = client-side mistake, won't get better by retrying.
+              if (err._status && err._status < 500) throw err;
+              // 5xx + network errors → wait a beat, try once more.
+              return new Promise(r => setTimeout(r, 1000)).then(fetchOnce);
+            })
             .then(articles => {
               if (!articles.length && offset === 0) { hasMore = false; loading = false; renderCards(); return; }
               if (articles.length < limit) hasMore = false;
               allArticles = [...allArticles, ...articles]; offset += limit; loading = false; renderCards();
             })
-            .catch(err => { console.error("Panel article load error:", err); loading = false; renderCards(); });
+            .catch(err => {
+              loading = false;
+              // User navigated away mid-fetch — stay silent. Re-opening
+              // the panel triggers a fresh loadMore() anyway.
+              if (err?.name === 'AbortError') return;
+              console.error("Panel article load error:", err);
+              // First-page failure: replace the skeleton with an
+              // explicit retry pill instead of going straight to "No
+              // recent articles" — which reads as a real empty city.
+              // Subsequent pages: keep what we have, just stop paginating.
+              if (offset === 0) {
+                track.innerHTML = `<div style="grid-column:1/-1;padding:28px 16px;text-align:center">
+                  <div style="font-size:12px;color:rgba(255,255,255,0.55);margin-bottom:12px;line-height:1.5">Couldn&rsquo;t load articles right now.<br><span style="opacity:0.7;font-size:11px">The server may be warming up &mdash; this usually takes a few seconds.</span></div>
+                  <button type="button" class="panelRetryBtn" style="padding:7px 18px;background:rgba(255,184,92,0.16);border:1px solid rgba(255,184,92,0.40);color:#ffd28a;border-radius:14px;font-size:11px;font-weight:700;letter-spacing:0.10em;text-transform:uppercase;cursor:pointer;transition:background 0.15s, border-color 0.15s">Try again</button>
+                </div>`;
+                const btn = track.querySelector('.panelRetryBtn');
+                if (btn) {
+                  btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(255,184,92,0.26)'; btn.style.borderColor = 'rgba(255,184,92,0.55)'; });
+                  btn.addEventListener('mouseleave', () => { btn.style.background = 'rgba(255,184,92,0.16)'; btn.style.borderColor = 'rgba(255,184,92,0.40)'; });
+                  btn.addEventListener('click', () => {
+                    track.innerHTML = skeletonCards(8);
+                    loadMore();
+                  });
+                }
+              } else {
+                renderCards();
+              }
+            });
         }
 
         viewport.addEventListener("scroll", () => { if (viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 200) loadMore(); });
@@ -24368,14 +24418,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // when satellite is off or faded, covered when it's at full opacity.
         // ── Starfield (parallax) ──────────────────────────────────────
         // Two-layer field — DEEP (sparse, slow) + NEAR (denser, faster).
-        // Stars are stored in a fixed coordinate system; per-frame the
-        // canvas position derives from scrollX/scrollY with a depth-
-        // dependent factor so the layers drift at different rates.
-        // Drawn beneath the earth band so the negative space above and
-        // below the map (visible only when zoom < 1.0) feels like deep
-        // space rather than a black void.
-        const STAR_DEEP_COUNT = 110;
-        const STAR_NEAR_COUNT = 60;
+        // Sized to match the globe view's THREE.js stars: tiny sharp
+        // pinpoints, never big halos. The depth differential between
+        // layers shows up as different parallax drift speeds, not
+        // different sizes — same visual language as the globe.
+        // Drawn ONLY in the negative space above and below the map
+        // band (clipped each frame), so when the map fills the screen
+        // no stars are visible.
+        const STAR_DEEP_COUNT = 220;
+        const STAR_NEAR_COUNT = 90;
         const STAR_FIELD_W = 4096;
         const STAR_FIELD_H = 2048;
         const STAR_DEEP_PARALLAX = 0.08;
@@ -24390,8 +24441,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             deep[i] = {
               ux: Math.random() * STAR_FIELD_W,
               uy: Math.random() * STAR_FIELD_H,
-              size: 0.5 + Math.random() * 0.7,
-              baseAlpha: 0.30 + Math.random() * 0.30,
+              size: 0.30 + Math.random() * 0.35,
+              baseAlpha: 0.30 + Math.random() * 0.35,
               tint: tints[(Math.random() * tints.length) | 0],
               twinkleSpeed: 0.0008 + Math.random() * 0.0014,
               twinklePhase: Math.random() * Math.PI * 2,
@@ -24401,8 +24452,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             near[i] = {
               ux: Math.random() * STAR_FIELD_W,
               uy: Math.random() * STAR_FIELD_H,
-              size: 0.9 + Math.random() * 1.4,
-              baseAlpha: 0.45 + Math.random() * 0.35,
+              size: 0.45 + Math.random() * 0.45,
+              baseAlpha: 0.40 + Math.random() * 0.40,
               tint: tints[(Math.random() * tints.length) | 0],
               twinkleSpeed: 0.0014 + Math.random() * 0.0022,
               twinklePhase: Math.random() * Math.PI * 2,
@@ -24418,7 +24469,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const nearOX = (STATE.scrollX * STAR_NEAR_PARALLAX) % STAR_FIELD_W;
           const deepOY = STATE.scrollY * STAR_DEEP_PARALLAX;
           const nearOY = STATE.scrollY * STAR_NEAR_PARALLAX;
-          const zoomBoost = Math.max(0, Math.min(1, 1 - STATE.zoom * 0.5));
 
           ctx.save();
           for (const s of _starsCache.deep) {
@@ -24427,8 +24477,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             let sy = ((s.uy - deepOY) % STAR_FIELD_H + STAR_FIELD_H) % STAR_FIELD_H;
             sy = (sy % h);
             const tw = (Math.sin(ts * s.twinkleSpeed + s.twinklePhase) + 1) * 0.5;
-            const a = (s.baseAlpha + tw * 0.30 + zoomBoost * 0.10) * STATE.dpr;
-            const r = (s.size + tw * 0.4) * STATE.dpr;
+            const a = s.baseAlpha + tw * 0.25;
+            const r = (s.size + tw * 0.15) * STATE.dpr;
             ctx.fillStyle = `rgba(${s.tint},${a.toFixed(3)})`;
             ctx.beginPath();
             ctx.arc(sx, sy, r, 0, Math.PI * 2);
@@ -24440,12 +24490,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             let sy = ((s.uy - nearOY) % STAR_FIELD_H + STAR_FIELD_H) % STAR_FIELD_H;
             sy = (sy % h);
             const tw = (Math.sin(ts * s.twinkleSpeed + s.twinklePhase) + 1) * 0.5;
-            const a = (s.baseAlpha + tw * 0.45 + zoomBoost * 0.10) * STATE.dpr;
-            const r = (s.size + tw * 0.6) * STATE.dpr;
-            ctx.fillStyle = `rgba(${s.tint},${(a * 0.30).toFixed(3)})`;
-            ctx.beginPath();
-            ctx.arc(sx, sy, r * 2.2, 0, Math.PI * 2);
-            ctx.fill();
+            const a = s.baseAlpha + tw * 0.35;
+            const r = (s.size + tw * 0.25) * STATE.dpr;
             ctx.fillStyle = `rgba(${s.tint},${a.toFixed(3)})`;
             ctx.beginPath();
             ctx.arc(sx, sy, r, 0, Math.PI * 2);
@@ -24458,20 +24504,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const ctx = STATE.ctx;
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           const isDark = (window.__globeTheme === "dark");
-          // Pure black base — starfield + map fill on top.
+          // Pure black base. Stars draw into this beneath the map
+          // band's vertical position; map content draws on top inside
+          // the band, fully opaque. Stars are STRICTLY BEHIND the map
+          // and only visible in the negative space above and below.
           ctx.fillStyle = "#000";
           ctx.fillRect(0, 0, STATE.width, STATE.height);
-
-          // Starfield first — stays behind everything else.
-          drawStarfield(ctx, performance.now());
 
           const wW = worldW(), wH = worldH();
           const baseX = -(((STATE.scrollX % wW) + wW) % wW);
           const yTop  = -STATE.scrollY;
           const yBot  = yTop + wH;
-          const fadePx = Math.min(72, Math.max(0, (STATE.height - wH) * 0.6 + 18)) * STATE.dpr;
 
-          ctx.save();
+          // ── Starfield (clipped to negative space only) ───────────
+          const topGapH = Math.max(0, yTop);
+          const botGapH = Math.max(0, STATE.height - yBot);
+          if (topGapH > 0 || botGapH > 0) {
+            ctx.save();
+            ctx.beginPath();
+            if (topGapH > 0) ctx.rect(0, 0,        STATE.width, topGapH);
+            if (botGapH > 0) ctx.rect(0, yBot,     STATE.width, botGapH);
+            ctx.clip();
+            drawStarfield(ctx, performance.now());
+            ctx.restore();
+          }
+
+          // ── Map content (earth points + satellite) ───────────────
           const epRenderable = getEarthPointsRenderable();
           if (epRenderable) {
             ctx.save();
@@ -24500,30 +24558,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
               }
             }
           }
-          ctx.restore();
-
-          // ── Edge fade ────────────────────────────────────────────
-          // Soft transition from map → starfield via destination-out.
-          if (fadePx > 0 && wH < STATE.height) {
-            ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
-            const gTop = ctx.createLinearGradient(0, yTop, 0, yTop + fadePx);
-            gTop.addColorStop(0, 'rgba(0,0,0,1)');
-            gTop.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = gTop;
-            ctx.fillRect(0, yTop, STATE.width, fadePx);
-            const gBot = ctx.createLinearGradient(0, yBot, 0, yBot - fadePx);
-            gBot.addColorStop(0, 'rgba(0,0,0,1)');
-            gBot.addColorStop(1, 'rgba(0,0,0,0)');
-            ctx.fillStyle = gBot;
-            ctx.fillRect(0, yBot - fadePx, STATE.width, fadePx);
-            ctx.restore();
-          }
 
           // ── Atmospheric horizon glow ─────────────────────────────
-          // Warm amber on top, cool cyan on bottom — Earth's atmosphere
-          // illuminated by the sun. Only draws when there's negative
-          // space (otherwise the bands clip into adjacent screen edges).
+          // Warm amber on top, cool cyan on bottom. Drawn with `screen`
+          // blend so the glow adds light against both the map (planet
+          // edge illumination) and the stars (atmospheric scatter).
           if (wH < STATE.height) {
             const glowH = 18 * STATE.dpr;
             ctx.save();
