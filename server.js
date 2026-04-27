@@ -8346,7 +8346,10 @@ ${articleContext}`;
       .join("")
       .trim();
     const structured = _flowCtxExtractJson(rawText) || {};
-    const overview = String(structured?.overview || "").trim();
+    // Scrub Claude's web_search citation markup ("<cite index=…>")
+    // from every text field before pushing it into a block — otherwise
+    // the literal tags surface inline in the rendered analysis prose.
+    const overview = _stripClaudeCitations(String(structured?.overview || ""));
     const primary = Array.isArray(structured?.primary_actors)   ? structured.primary_actors   : [];
     const secondary = Array.isArray(structured?.secondary_actors) ? structured.secondary_actors : [];
 
@@ -8355,21 +8358,21 @@ ${articleContext}`;
       blocks.push({ kind: "summary", badge: "Story", title: "Overview", text: overview });
     }
     for (const a of primary) {
-      const name = String(a?.name || "").trim();
-      const ctx  = String(a?.context || "").trim();
+      const name = _stripClaudeCitations(String(a?.name || ""));
+      const ctx  = _stripClaudeCitations(String(a?.context || ""));
       if (!ctx) continue;
       blocks.push({ kind: "primary", badge: "Primary actor", title: name || "Primary actor", text: ctx });
     }
     for (const a of secondary) {
-      const name = String(a?.name || "").trim();
-      const ctx  = String(a?.context || "").trim();
+      const name = _stripClaudeCitations(String(a?.name || ""));
+      const ctx  = _stripClaudeCitations(String(a?.context || ""));
       if (!ctx) continue;
       blocks.push({ kind: "secondary", badge: "Secondary actor", title: name || "Secondary actor", text: ctx });
     }
     if (!blocks.length) {
       blocks.push({
         kind: "summary", badge: "Story", title: "Overview",
-        text: String(rawText || "Analysis unavailable for this entity right now.").slice(0, 900),
+        text: _stripClaudeCitations(String(rawText || "Analysis unavailable for this entity right now.")).slice(0, 900),
       });
     }
 
@@ -8434,6 +8437,41 @@ function _flowCtxExtractJson(text) {
   return null;
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Citation-markup scrubber for AI analysis text.
+//
+// When Claude uses the Anthropic-hosted web_search tool (added to the
+// flow-context and cluster-node/summary endpoints to verify secondary-
+// country connections), the model often wraps cited spans in inline
+// citation markup like:
+//
+//   <cite index="1-6,1-7">Mali's defense minister was killed</cite>
+//
+// That markup is meant for downstream rendering pipelines that resolve
+// the indexes back to source URLs. Our frontend treats `text` as a
+// plain string typed character-by-character into the analysis panel,
+// so the raw `<cite>` tags surface as visible artifacts in the UI.
+//
+// This helper strips the opening and closing `<cite ...>` / `</cite>`
+// tags while preserving the inner text. It also tidies up any
+// double-spaces or stray whitespace before punctuation that the strip
+// can leave behind (e.g. "rising in Ukraine ." → "rising in Ukraine.").
+//
+// Defensive: handles unclosed/malformed tags, mixed casing, attribute
+// variants (`index`, `data-index`, etc.), and non-string inputs.
+function _stripClaudeCitations(s) {
+  if (typeof s !== 'string' || !s) return s == null ? '' : String(s);
+  return s
+    // Strip <cite ...> opening + </cite> closing tags. The \b after
+    // "cite" prevents accidentally matching <citation> or <citing>.
+    .replace(/<\/?cite\b[^>]*>/gi, '')
+    // Collapse runs of internal spaces/tabs left behind by the strip.
+    .replace(/[ \t]{2,}/g, ' ')
+    // Tidy stray whitespace before punctuation — "Mali ." → "Mali.".
+    .replace(/\s+([.,;:!?])/g, '$1')
+    .trim();
+}
+
 function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
   const expected = Array.isArray(expectedCountries) ? expectedCountries : [];
   const contexts = Array.isArray(rawContexts) ? rawContexts : [];
@@ -8470,7 +8508,9 @@ function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
     return {
       iso_code: isoCode,
       country: countryName,
-      context: String(match?.context || match?.summary || '').trim(),
+      // Scrub <cite> markup that the web_search-enabled model can
+      // emit inline in the JSON string fields.
+      context: _stripClaudeCitations(String(match?.context || match?.summary || '')),
     };
   }).filter((entry) => entry.context);
 
@@ -8482,7 +8522,7 @@ function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
   for (const idx of unused) {
     const entry = contexts[idx];
     if (!entry) continue;
-    const text = String(entry?.context || entry?.summary || '').trim();
+    const text = _stripClaudeCitations(String(entry?.context || entry?.summary || ''));
     if (!text) continue;
     const iso = _flowCtxNormalizeIso(entry?.iso_code || entry?.iso);
     const name = String(entry?.country || entry?.name || iso || '').trim();
@@ -8495,7 +8535,10 @@ function _flowCtxNormalizeCountryContexts(expectedCountries, rawContexts) {
 
 function _flowCtxBuildStructuredBlocks(eventSummary, primaryContexts, secondaryContexts) {
   const blocks = [];
-  const summary = String(eventSummary || '').trim();
+  // Scrub Claude's web_search citation markup before pushing text into
+  // the blocks. Without this, panels render literal "<cite index="…">"
+  // tags inline in the analysis prose.
+  const summary = _stripClaudeCitations(String(eventSummary || ''));
   if (summary) {
     blocks.push({
       kind: 'summary',
@@ -8506,22 +8549,24 @@ function _flowCtxBuildStructuredBlocks(eventSummary, primaryContexts, secondaryC
   }
 
   for (const ctx of primaryContexts || []) {
-    if (!ctx?.context) continue;
+    const txt = _stripClaudeCitations(String(ctx?.context || ''));
+    if (!txt) continue;
     blocks.push({
       kind: 'primary',
       badge: 'Primary country',
       title: ctx.country || ctx.iso_code || 'Primary country',
-      text: String(ctx.context).trim(),
+      text: txt,
     });
   }
 
   for (const ctx of secondaryContexts || []) {
-    if (!ctx?.context) continue;
+    const txt = _stripClaudeCitations(String(ctx?.context || ''));
+    if (!txt) continue;
     blocks.push({
       kind: 'secondary',
       badge: 'Secondary country',
       title: ctx.country || ctx.iso_code || 'Secondary country',
-      text: String(ctx.context).trim(),
+      text: txt,
     });
   }
 
@@ -9724,9 +9769,12 @@ ${originLine}`;
         .join("")
         .trim();
       const structured = _flowCtxExtractJson(rawText) || {};
-      const framing = String(structured?.framing || "").trim();
-      const subject = String(structured?.subject_matter || "").trim();
-      const bias    = String(structured?.editorial_bias || "").trim();
+      // Defensive scrub of <cite> markup. This endpoint doesn't use
+      // web_search today, but the same helper applies cheaply and
+      // future-proofs the panel against any tool-use additions.
+      const framing = _stripClaudeCitations(String(structured?.framing || ""));
+      const subject = _stripClaudeCitations(String(structured?.subject_matter || ""));
+      const bias    = _stripClaudeCitations(String(structured?.editorial_bias || ""));
 
       const blocks = [];
       if (framing) blocks.push({ kind: "summary",   badge: "Framing",        title: "Story & origin",    text: framing });
@@ -9735,7 +9783,7 @@ ${originLine}`;
       if (!blocks.length) {
         blocks.push({
           kind: "summary", badge: "Framing", title: "Story & origin",
-          text: String(rawText || "Analysis unavailable right now.").slice(0, 900),
+          text: _stripClaudeCitations(String(rawText || "Analysis unavailable right now.")).slice(0, 900),
         });
       }
       return res.json({ blocks, credits: _creditsBlock(access) });

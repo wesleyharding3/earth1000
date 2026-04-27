@@ -2657,7 +2657,16 @@ body.flow-maximized #flowArcList {
 }
 .arcCtxBody {
   position: relative;
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 auto;
+  /* Stable height — covers loading shimmer, typing, and settled
+     states so the typewriter doesn't grow the panel as text fills
+     in. Sized for the worst-case block content (the ~400-char Story
+     overview measured at ~313px in a 340px-wide panel) plus the
+     ~60px reserved at the bottom for the segment nav. Each panel's
+     parent container can still grow beyond this floor; this rule
+     just prevents the AI panel from collapsing to a tiny pill while
+     short blocks are typing. */
+  min-height: 320px;
   overflow-y: auto; overflow-x: hidden;
   padding: 10px 12px 14px;
   font-size: 12px; line-height: 1.62;
@@ -2674,6 +2683,14 @@ body.flow-maximized #flowArcList {
   touch-action: pan-y;
 }
 .arcCtxBody.arcCtxStateLoading { overflow: hidden; }
+/* Active block takes its min-height from the body so the visible
+   slot in segmented mode is full-height — keeps the active block
+   from "floating" in the upper area of a tall panel when text is
+   still typing. The non-active blocks are absolutely positioned so
+   their natural height doesn't matter for layout. */
+.arcCtxStateSegmented .arcCtxBlock--active {
+  min-height: 250px;
+}
 .arcCtxShell {
   position: relative;
   overflow: hidden;
@@ -5026,12 +5043,12 @@ button.arcCtxSegDot,
        common case is no scroll, no resize. */
     min-height: 320px;
   }
-  /* The .arcCtxBody must also assert a min-height equal to the
-     panel min minus header/seg-nav, otherwise the body can collapse
-     to its content height while the panel reserves the space —
-     which leaves the seg nav floating mid-air. */
+  /* Lock the flow-context body to the same stable height the
+     article/thread/line panels use, so the typewriter pass + segment
+     navigation never resize the panel. 340px fits the worst-case
+     ~400-char Story block; longer content scrolls internally. */
   #flowCtxCard.view-ctx #arcContextPanel .arcCtxBody {
-    min-height: 240px;
+    height: 340px;
   }
 }
 @media (pointer: fine) and (min-width: 701px) {
@@ -6485,13 +6502,15 @@ button.arcCtxSegDot,
   border: 1px solid rgba(255,255,255,0.06);
 }
 .adpAnalysis > .arcCtxBody {
-  /* Fixed minimum + bounded maximum + own scroll. Without this, a
-     short analysis collapsed the panel to ~80px and a long one
-     stretched it to 600px+, which was disorienting between articles.
-     The analysis now reserves a stable window inside the article
-     detail scroll and scrolls internally when content overflows. */
-  min-height: 240px;
-  max-height: 400px;
+  /* Fully-locked stable height. The panel never resizes during the
+     typewriter pass (loading shimmer → block typing in → settled),
+     and never jumps between blocks of different lengths in segmented
+     mode. 340px fits the worst-case ~400-character block at the
+     standard panel width with comfortable buffer; longer (rare)
+     content scrolls internally via overflow-y. Used by both the
+     article detail panel and the cluster-detail (thread/line) panel,
+     which share the .adpAnalysis wrapper. */
+  height: 340px;
   padding: 14px 14px 16px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -14635,6 +14654,15 @@ function computeCityTiers(cities) {
 
 
 
+      // ── Two-layer parallax starfield ──────────────────────────────
+      // The DEEP layer (radius 80, 6000 stars) is the original distant
+      // backdrop — barely scales as the camera zooms. The NEAR layer
+      // (radius 45–60, 1500 stars at slightly bigger size) sits closer
+      // to the camera so sizeAttenuation makes those stars visibly
+      // grow/shrink as zoom changes — that differential is what reads
+      // as depth. Both layers share the same starField Group so they
+      // counter-rotate with the scene quaternion identically; only the
+      // distance from camera differs, which is what drives parallax.
       const starCount = 6000;
       const starPositions = [];
       const starBaseBrightness = [];
@@ -14667,8 +14695,51 @@ function computeCityTiers(cities) {
       starField.add(starPoints);
       scene.add(starField);
 
+      // ── NEAR layer (closer stars for parallax) ────────────────────
+      // Smaller count, randomized radius across a shell instead of a
+      // fixed sphere — gives a subtle 3D distribution. Slightly larger
+      // base size (0.34 vs 0.28) so even at the smaller distance they
+      // don't feel uniformly tiny. Same uniformly-random spherical
+      // distribution; brightness range trimmed slightly higher so the
+      // near layer reads as the brightest field on top.
+      const nearStarCount = 1500;
+      const nearStarPositions = [];
+      const nearStarBaseBrightness = [];
+      for (let i = 0; i < nearStarCount; i++) {
+        const u = Math.random(), v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2 * v - 1);
+        // Random radius across [42, 58] — gives a thick shell instead
+        // of a paper-thin ring, so the depth effect is smoother.
+        const r = 42 + Math.random() * 16;
+        nearStarPositions.push(
+          r * Math.sin(phi) * Math.cos(theta),
+          r * Math.cos(phi),
+          r * Math.sin(phi) * Math.sin(theta)
+        );
+        nearStarBaseBrightness.push(0.40 + Math.random() * 0.55);
+      }
+      const nearStarGeo = new THREE.BufferGeometry();
+      nearStarGeo.setAttribute("position", new THREE.Float32BufferAttribute(nearStarPositions, 3));
+      const nearStarColors = new Float32Array(nearStarCount * 3);
+      nearStarGeo.setAttribute("color", new THREE.Float32BufferAttribute(nearStarColors, 3));
+      const nearStarMat = new THREE.PointsMaterial({
+        size: 0.34, sizeAttenuation: true, vertexColors: true,
+        map: circleGlowTexture,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        alphaTest: 0.001
+      });
+      const nearStarPoints = new THREE.Points(nearStarGeo, nearStarMat);
+      starField.add(nearStarPoints);
+
       const starTwinkleChance = 0.003, starTwinkleDuration = 0.40, starTwinkleIntensity = 0.35;
       const starTwinkleTimers = new Array(starCount).fill(0);
+      // Near layer twinkles slightly more often + a touch deeper to
+      // sell the closer-distance read.
+      const nearStarTwinkleChance    = 0.005;
+      const nearStarTwinkleDuration  = 0.45;
+      const nearStarTwinkleIntensity = 0.42;
+      const nearStarTwinkleTimers = new Array(nearStarCount).fill(0);
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
@@ -20461,6 +20532,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           starColorAttr.setXYZ(i, b, b, b);
         }
         starColorAttr.needsUpdate = true;
+        // Near-layer twinkle update — same algorithm, different
+        // chance/duration/intensity so the close stars feel slightly
+        // more alive than the deep field.
+        const nearStarColorAttr = nearStarPoints.geometry.attributes.color;
+        for (let i = 0; i < nearStarCount; i++) {
+          if (nearStarTwinkleTimers[i] <= 0 && Math.random() < nearStarTwinkleChance) {
+            nearStarTwinkleTimers[i] = nearStarTwinkleDuration;
+          }
+          let b = nearStarBaseBrightness[i];
+          if (nearStarTwinkleTimers[i] > 0) {
+            const fade = Math.sin((nearStarTwinkleTimers[i] / nearStarTwinkleDuration) * Math.PI);
+            b *= (1 - nearStarTwinkleIntensity * fade);
+            nearStarTwinkleTimers[i] -= 0.016;
+          }
+          nearStarColorAttr.setXYZ(i, b, b, b);
+        }
+        nearStarColorAttr.needsUpdate = true;
         starField.quaternion.copy(scene.quaternion).invert();
 
         updateCompass();
@@ -25608,22 +25696,146 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // theme-colored background + earth points and lets the country
         // wireframe render on top — matches the globe's "satellite off"
         // wireframe view.
+        // ── Starfield (parallax) ──────────────────────────────────────
+        // Two-layer field — DEEP (sparse, slow) + NEAR (denser, faster).
+        // Stars are stored in unit space (ux, uy ∈ [0,1]); per-frame the
+        // canvas position derives from scrollX, scrollY, zoom with a
+        // depth-dependent factor so the layers drift at different rates.
+        // Drawn beneath the earth band so the negative space above and
+        // below the map (visible only when zoom < 1.0) feels like deep
+        // space rather than a black void.
+        const STAR_DEEP_COUNT = 110;
+        const STAR_NEAR_COUNT = 60;
+        // Bigger world-space tile means stars repeat less often per
+        // pan distance, which sells "this is space, not a small loop."
+        const STAR_FIELD_W = 4096;
+        const STAR_FIELD_H = 2048;
+        const STAR_DEEP_PARALLAX = 0.08;  // fraction of map scroll applied to deep layer
+        const STAR_NEAR_PARALLAX = 0.22;  // near layer drifts almost 3× faster than deep
+        let _starsCache = null;
+        function ensureStars() {
+          if (_starsCache) return _starsCache;
+          const deep = new Array(STAR_DEEP_COUNT);
+          const near = new Array(STAR_NEAR_COUNT);
+          // Pre-compute static fields once. ux/uy are positions in
+          // [0, STAR_FIELD_W/H]; size + base alpha + twinkle phase
+          // are per-star; tint is a small palette.
+          const tints = ['255,255,255', '215,225,255', '255,235,210', '230,220,255'];
+          for (let i = 0; i < STAR_DEEP_COUNT; i++) {
+            deep[i] = {
+              ux: Math.random() * STAR_FIELD_W,
+              uy: Math.random() * STAR_FIELD_H,
+              size: 0.5 + Math.random() * 0.7,
+              baseAlpha: 0.30 + Math.random() * 0.30,
+              tint: tints[(Math.random() * tints.length) | 0],
+              twinkleSpeed: 0.0008 + Math.random() * 0.0014,
+              twinklePhase: Math.random() * Math.PI * 2,
+            };
+          }
+          for (let i = 0; i < STAR_NEAR_COUNT; i++) {
+            near[i] = {
+              ux: Math.random() * STAR_FIELD_W,
+              uy: Math.random() * STAR_FIELD_H,
+              size: 0.9 + Math.random() * 1.4,
+              baseAlpha: 0.45 + Math.random() * 0.35,
+              tint: tints[(Math.random() * tints.length) | 0],
+              twinkleSpeed: 0.0014 + Math.random() * 0.0022,
+              twinklePhase: Math.random() * Math.PI * 2,
+            };
+          }
+          _starsCache = { deep, near };
+          return _starsCache;
+        }
+        function drawStarfield(ctx, ts) {
+          ensureStars();
+          const w = STATE.width, h = STATE.height;
+          // Parallax offsets: near layer responds more to scroll than
+          // deep. Modulo into the field width so the scroll loop is
+          // seamless when the user pans far east or west.
+          const deepOX = (STATE.scrollX * STAR_DEEP_PARALLAX) % STAR_FIELD_W;
+          const nearOX = (STATE.scrollX * STAR_NEAR_PARALLAX) % STAR_FIELD_W;
+          // Vertical parallax — when the map zooms beyond fit, scrollY
+          // can also negative-shift (centered band rises); near stars
+          // respond more so the depth holds during zoom-out.
+          const deepOY = STATE.scrollY * STAR_DEEP_PARALLAX;
+          const nearOY = STATE.scrollY * STAR_NEAR_PARALLAX;
+
+          // Density tuning: at low zoom the field is more visible, so
+          // stars feel a touch brighter; at high zoom the negative
+          // space disappears entirely so this is a no-op anyway.
+          const zoomBoost = Math.max(0, Math.min(1, 1 - STATE.zoom * 0.5));
+
+          ctx.save();
+          // Deep layer first (drawn behind near).
+          for (const s of _starsCache.deep) {
+            // Position into canvas via tile-wrap so the field repeats
+            // seamlessly. Repeat in y too in case the canvas is taller
+            // than the field height (rare but cheap to handle).
+            let sx = ((s.ux - deepOX) % STAR_FIELD_W + STAR_FIELD_W) % STAR_FIELD_W;
+            sx = (sx % w);
+            let sy = ((s.uy - deepOY) % STAR_FIELD_H + STAR_FIELD_H) % STAR_FIELD_H;
+            sy = (sy % h);
+            const tw = (Math.sin(ts * s.twinkleSpeed + s.twinklePhase) + 1) * 0.5;
+            const a = (s.baseAlpha + tw * 0.30 + zoomBoost * 0.10) * STATE.dpr;
+            const r = (s.size + tw * 0.4) * STATE.dpr;
+            // Soft fill via radial-style alpha layers — single-pass via
+            // shadowBlur is too slow; two-pass arc fill is sharp enough.
+            ctx.fillStyle = `rgba(${s.tint},${a.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          // Near layer — slightly bigger soft glow via halo arc.
+          for (const s of _starsCache.near) {
+            let sx = ((s.ux - nearOX) % STAR_FIELD_W + STAR_FIELD_W) % STAR_FIELD_W;
+            sx = (sx % w);
+            let sy = ((s.uy - nearOY) % STAR_FIELD_H + STAR_FIELD_H) % STAR_FIELD_H;
+            sy = (sy % h);
+            const tw = (Math.sin(ts * s.twinkleSpeed + s.twinklePhase) + 1) * 0.5;
+            const a = (s.baseAlpha + tw * 0.45 + zoomBoost * 0.10) * STATE.dpr;
+            const r = (s.size + tw * 0.6) * STATE.dpr;
+            // Halo: faint outer, brighter core.
+            ctx.fillStyle = `rgba(${s.tint},${(a * 0.30).toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r * 2.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = `rgba(${s.tint},${a.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
         function paintBase() {
           const ctx = STATE.ctx;
           ctx.setTransform(1, 0, 0, 1, 0, 0);
+          // Pure black base — the starfield + map fill on top of this.
+          // Day theme keeps a subtle lift only inside the map band; the
+          // deep-space framing reads better when the negative space is
+          // actual black, not a dark blue tint.
           const isDark = (window.__globeTheme === "dark");
-          ctx.fillStyle = isDark ? "#02050a" : "#0a1424";
+          ctx.fillStyle = "#000";
           ctx.fillRect(0, 0, STATE.width, STATE.height);
+
+          // Starfield first — stays behind everything else. Uses the
+          // current frame timestamp for twinkle phase consistency.
+          drawStarfield(ctx, performance.now());
 
           const wW = worldW(), wH = worldH();
           const baseX = -(((STATE.scrollX % wW) + wW) % wW);
           const yTop  = -STATE.scrollY;
+          const yBot  = yTop + wH;
+          // Edge-fade band height: bigger at small worldH (zoomed out
+          // creates more negative space, so a wider feather looks more
+          // atmospheric). Capped so at fit-zoom the fade is invisible.
+          const fadePx = Math.min(72, Math.max(0, (STATE.height - wH) * 0.6 + 18)) * STATE.dpr;
 
-          // Earth points — drawn UNDER the satellite. Visible when the
-          // satellite is off or faded; covered as the satellite opacity
-          // climbs back to full. Three-tile wrap so the seam at ±180°
-          // never shows during pan. Renderable returns either the static
-          // base (cheap path) or a per-frame twinkle-modulated scratch.
+          // Earth points + satellite are clipped to the map band so
+          // they don't fight with the starfield. (When wH < canvas
+          // height, anything outside [yTop, yBot] should be space.)
+          ctx.save();
+          // ── Earth points (under satellite) ───────────────────────
           const epRenderable = getEarthPointsRenderable();
           if (epRenderable) {
             ctx.save();
@@ -25634,23 +25846,80 @@ const settingsToggle     = document.getElementById("settingsToggle");
             ctx.restore();
           }
 
-          if (!STATE.imgsReady) return;
-          // Satellite overlay gates — toggle and opacity match settings.
-          if (window.__surfaceOverlayEnabled === false) return;
-          const opacity = Math.max(0, Math.min(1,
-            window.__surfaceOverlayOpacity != null ? window.__surfaceOverlayOpacity : 1.0
-          ));
-          if (opacity === 0) return;
-          const img = isDark
-            ? (STATE.nightImg || STATE.dayImg)
-            : (STATE.dayImg   || STATE.nightImg);
-          if (!img) return;
-          ctx.save();
-          ctx.globalAlpha = opacity;
-          for (let i = -1; i <= 1; i++) {
-            ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
+          if (STATE.imgsReady && window.__surfaceOverlayEnabled !== false) {
+            const opacity = Math.max(0, Math.min(1,
+              window.__surfaceOverlayOpacity != null ? window.__surfaceOverlayOpacity : 1.0
+            ));
+            if (opacity > 0) {
+              const img = isDark
+                ? (STATE.nightImg || STATE.dayImg)
+                : (STATE.dayImg   || STATE.nightImg);
+              if (img) {
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                for (let i = -1; i <= 1; i++) {
+                  ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
+                }
+                ctx.restore();
+              }
+            }
           }
           ctx.restore();
+
+          // ── Edge fade (feather the map's top/bottom into the
+          // starfield) ──────────────────────────────────────────────
+          // destination-out paints with a black-to-transparent gradient
+          // that ERASES the corresponding alpha from the underlying
+          // map content. The result: a soft, gradient transition from
+          // map → space, indistinguishable from an actual atmospheric
+          // edge when overlaid with the horizon glow below.
+          if (fadePx > 0 && wH < STATE.height) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            // Top edge: erase from yTop (full opacity) to yTop+fadePx
+            // (transparent) — the band of map fades out as it meets
+            // the starfield above.
+            const gTop = ctx.createLinearGradient(0, yTop, 0, yTop + fadePx);
+            gTop.addColorStop(0, 'rgba(0,0,0,1)');
+            gTop.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gTop;
+            ctx.fillRect(0, yTop, STATE.width, fadePx);
+            // Bottom edge: mirror.
+            const gBot = ctx.createLinearGradient(0, yBot, 0, yBot - fadePx);
+            gBot.addColorStop(0, 'rgba(0,0,0,1)');
+            gBot.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gBot;
+            ctx.fillRect(0, yBot - fadePx, STATE.width, fadePx);
+            ctx.restore();
+          }
+
+          // ── Atmospheric horizon glow ─────────────────────────────
+          // Two thin glow bands at the top and bottom edges of the map
+          // band — warm amber on top, cool cyan-blue on bottom. Reads
+          // as the planet's atmosphere illuminated by the sun. Only
+          // drawn when there's negative space above/below (otherwise
+          // the glow would clip into adjacent screen edges and look
+          // like a flat tint stripe).
+          if (wH < STATE.height) {
+            const glowH = 18 * STATE.dpr;
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            // Top: warm amber atmospheric scatter.
+            const gTop = ctx.createLinearGradient(0, yTop - glowH * 0.6, 0, yTop + glowH * 0.4);
+            gTop.addColorStop(0.0, 'rgba(255, 180, 110, 0)');
+            gTop.addColorStop(0.5, 'rgba(255, 195, 130, 0.55)');
+            gTop.addColorStop(1.0, 'rgba(255, 165, 95, 0.18)');
+            ctx.fillStyle = gTop;
+            ctx.fillRect(0, yTop - glowH * 0.6, STATE.width, glowH);
+            // Bottom: cool cyan atmospheric scatter.
+            const gBot = ctx.createLinearGradient(0, yBot - glowH * 0.4, 0, yBot + glowH * 0.6);
+            gBot.addColorStop(0.0, 'rgba(95, 165, 255, 0.18)');
+            gBot.addColorStop(0.5, 'rgba(120, 195, 255, 0.55)');
+            gBot.addColorStop(1.0, 'rgba(95, 165, 255, 0)');
+            ctx.fillStyle = gBot;
+            ctx.fillRect(0, yBot - glowH * 0.4, STATE.width, glowH);
+            ctx.restore();
+          }
         }
 
         // ── RAF loop ──────────────────────────────────────────────────
@@ -25765,19 +26034,63 @@ const settingsToggle     = document.getElementById("settingsToggle");
               }));
             } catch (_) {}
           }
+          // Rubber-band: if all gestures have ended and the user has
+          // overscrolled past natural fit (zoom < naturalMinZoom),
+          // spring zoom back to fit. This lets the user temporarily
+          // pull beyond bounds to peek at the "Earth in space" view
+          // while still always returning to a sensible default.
+          if (STATE.pointers.size === 0) {
+            maybeSpringBackZoom();
+          }
         }
+        // Wheel events have no clean "release" signal — a debounce on
+        // last-wheel-time stands in for "user is no longer scrolling."
+        // 200ms is short enough that the spring-back feels responsive
+        // without firing during a continuous scroll gesture.
+        let _wheelEndTimer = null;
         function onWheel(e) {
           if (!STATE.enabled) return;
           e.preventDefault();
           const factor = Math.exp(-e.deltaY * 0.0015);
           zoomAt(e.clientX, e.clientY, factor);
+          if (_wheelEndTimer) clearTimeout(_wheelEndTimer);
+          _wheelEndTimer = setTimeout(() => {
+            _wheelEndTimer = null;
+            if (STATE.pointers.size === 0) maybeSpringBackZoom();
+          }, 200);
         }
         function zoomAt(clientX, clientY, factor) {
           const rect = STATE.canvas.getBoundingClientRect();
           const sx = (clientX - rect.left) * STATE.dpr;
           const sy = (clientY - rect.top)  * STATE.dpr;
           const before = unproject(sx, sy);
-          const next = Math.max(STATE.minZoom, Math.min(STATE.maxZoom, STATE.zoom * factor));
+          // Cancel any in-progress spring-back — the user is taking
+          // control again. Without this, an active spring fights the
+          // user's gesture and the zoom feels unresponsive.
+          cancelSpringBack();
+          // Rubber-band-aware zoom clamp. Past the natural minZoom
+          // (0.6 = "Earth fits the screen") the user can still zoom
+          // out to overshootMinZoom (0.4), but each step is dampened
+          // logarithmically so the gesture feels increasingly heavy
+          // — like pulling against a spring. At the absolute floor
+          // the zoom stops.
+          const NATURAL_MIN = 0.6;
+          const OVERSHOOT_MIN = 0.4;
+          let next = STATE.zoom * factor;
+          if (next < NATURAL_MIN && factor < 1) {
+            // Zooming further out past natural fit. Compute how far
+            // into the overshoot range we'd go without resistance,
+            // then dampen via 1 / (1 + 6t) where t is overshoot
+            // depth normalized to [0, 1]. At t=0 (just past min) the
+            // factor passes through; at t=1 (would-be at floor) the
+            // step is 1/7 of the requested change — heavy.
+            const requestedDelta = STATE.zoom - next;
+            const currentOvershoot = Math.max(0, NATURAL_MIN - STATE.zoom);
+            const t = Math.min(1, currentOvershoot / (NATURAL_MIN - OVERSHOOT_MIN));
+            const dampedDelta = requestedDelta / (1 + 6 * t);
+            next = Math.max(OVERSHOOT_MIN, STATE.zoom - dampedDelta);
+          }
+          next = Math.min(STATE.maxZoom, next);
           if (next === STATE.zoom) return;
           STATE.zoom = next;
           // Re-anchor so the cursor stays over the same lat/lon.
@@ -25787,6 +26100,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
           STATE.scrollX = (((targetX - sx) % wW) + wW) % wW;
           STATE.scrollY = targetY - sy;
           clampVerticalScroll();
+        }
+        // ── Spring-back animation ─────────────────────────────────
+        // When a gesture ends and zoom is below natural fit, animate
+        // back to NATURAL_MIN over ~360ms with a cubic-ease curve.
+        // Anchored at the canvas center so the lat/lon under the
+        // center stays put — feels like the planet is being pulled
+        // back to its natural framing rather than jumping.
+        let _springRaf = null;
+        function cancelSpringBack() {
+          if (_springRaf) { cancelAnimationFrame(_springRaf); _springRaf = null; }
+        }
+        function maybeSpringBackZoom() {
+          const NATURAL_MIN = 0.6;
+          if (STATE.zoom >= NATURAL_MIN - 0.001) return;
+          cancelSpringBack();
+          const startZoom = STATE.zoom;
+          const targetZoom = NATURAL_MIN;
+          const cx = STATE.width  * 0.5;
+          const cy = STATE.height * 0.5;
+          const anchor = unproject(cx, cy);
+          const t0 = performance.now();
+          const DUR = 360;
+          const step = (now) => {
+            const t = Math.min(1, (now - t0) / DUR);
+            // cubic ease-out: snaps in fast, settles softly
+            const eased = 1 - Math.pow(1 - t, 3);
+            STATE.zoom = startZoom + (targetZoom - startZoom) * eased;
+            // Re-anchor at center so the visible map doesn't drift
+            const wW = worldW(), wH = worldH();
+            const targetX = ((anchor.lon + 180) / 360) * wW;
+            const targetY = ((90 - anchor.lat) / 180) * wH;
+            STATE.scrollX = (((targetX - cx) % wW) + wW) % wW;
+            STATE.scrollY = targetY - cy;
+            clampVerticalScroll();
+            if (t < 1) {
+              _springRaf = requestAnimationFrame(step);
+            } else {
+              _springRaf = null;
+            }
+          };
+          _springRaf = requestAnimationFrame(step);
         }
 
         let _inputsAttached = false;

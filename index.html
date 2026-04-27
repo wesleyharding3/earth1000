@@ -2672,7 +2672,14 @@ body.flow-maximized #flowArcList {
 }
 .arcCtxBody {
   position: relative;
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 auto;
+  /* Stable height across all states (loading, typing, settled) so
+     the typewriter doesn't grow the panel as text fills in. Sized
+     for the worst-case ~400-char block plus seg-nav reserve.
+     Specific overrides in .adpAnalysis > .arcCtxBody and
+     #flowCtxCard.view-ctx #arcCtxBody pin this to a fixed height
+     rather than just a floor. */
+  min-height: 320px;
   overflow-y: auto; overflow-x: hidden;
   padding: 10px 12px 14px;
   font-size: 12px; line-height: 1.62;
@@ -2689,6 +2696,12 @@ body.flow-maximized #flowArcList {
   touch-action: pan-y;
 }
 .arcCtxBody.arcCtxStateLoading { overflow: hidden; }
+/* Active block min-height in segmented mode so the visible slot
+   reaches near the seg nav instead of leaving an awkward floating
+   gap when content is short. */
+.arcCtxStateSegmented .arcCtxBlock--active {
+  min-height: 250px;
+}
 .arcCtxShell {
   position: relative;
   overflow: hidden;
@@ -4724,13 +4737,21 @@ button.arcCtxSegDot,
    chain up to the globe's window-level wheel listener. */
 @media (pointer: coarse), (max-width: 700px) {
   #flowCtxCard.view-ctx #arcContextPanel {
-    max-height: 210px;
+    /* Bumped 210 → 360 so the locked-height arcCtxBody (340) fits
+       inside without overflowing the panel chrome. */
+    max-height: 360px;
   }
 }
 @media (pointer: fine) and (min-width: 701px) {
   #flowCtxCard.view-ctx #arcContextPanel {
     max-height: calc(100vh - env(safe-area-inset-top, 0px) - 160px);
   }
+}
+/* Lock the flow-context body to the same stable height the article
+   and thread/line panels use, so the typewriter pass + segment
+   navigation never resize the panel. */
+#flowCtxCard.view-ctx #arcContextPanel .arcCtxBody {
+  height: 340px;
 }
 #flowCtxCard,
 .arcContextPanel,
@@ -5987,10 +6008,20 @@ button.arcCtxSegDot,
   border: 1px solid rgba(255,255,255,0.06);
 }
 .adpAnalysis > .arcCtxBody {
-  max-height: none;
-  min-height: 120px;
+  /* Fully-locked stable height. The panel never resizes during the
+     typewriter pass (loading shimmer → block typing in → settled),
+     and never jumps between blocks of different lengths in segmented
+     mode. 340px fits the worst-case ~400-character block at the
+     standard panel width with comfortable buffer; longer content
+     scrolls internally via overflow-y. Used by both the article
+     detail panel and the cluster-detail (thread/line) panel, which
+     share the .adpAnalysis wrapper. */
+  height: 340px;
   padding: 14px 14px 16px;
-  overflow: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .adpContextTitle {
@@ -13754,6 +13785,13 @@ function computeCityTiers(cities) {
 
 
 
+      // ── Two-layer parallax starfield ──────────────────────────────
+      // The DEEP layer (radius 80, 6000 stars) is the original distant
+      // backdrop — barely scales as the camera zooms. The NEAR layer
+      // (radius 45–60, 1500 stars at slightly bigger size) sits closer
+      // to the camera so sizeAttenuation makes those stars visibly
+      // grow/shrink as zoom changes — that differential is what reads
+      // as depth.
       const starCount = 6000;
       const starPositions = [];
       const starBaseBrightness = [];
@@ -13786,8 +13824,46 @@ function computeCityTiers(cities) {
       starField.add(starPoints);
       scene.add(starField);
 
+      // ── NEAR layer (closer stars for parallax) ────────────────────
+      // Smaller count, randomized radius across [42, 58] for a thick
+      // shell rather than a paper-thin ring. Slightly larger base size
+      // so even at the smaller distance they don't feel uniformly tiny.
+      const nearStarCount = 1500;
+      const nearStarPositions = [];
+      const nearStarBaseBrightness = [];
+      for (let i = 0; i < nearStarCount; i++) {
+        const u = Math.random(), v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2 * v - 1);
+        const r = 42 + Math.random() * 16;
+        nearStarPositions.push(
+          r * Math.sin(phi) * Math.cos(theta),
+          r * Math.cos(phi),
+          r * Math.sin(phi) * Math.sin(theta)
+        );
+        nearStarBaseBrightness.push(0.40 + Math.random() * 0.55);
+      }
+      const nearStarGeo = new THREE.BufferGeometry();
+      nearStarGeo.setAttribute("position", new THREE.Float32BufferAttribute(nearStarPositions, 3));
+      const nearStarColors = new Float32Array(nearStarCount * 3);
+      nearStarGeo.setAttribute("color", new THREE.Float32BufferAttribute(nearStarColors, 3));
+      const nearStarMat = new THREE.PointsMaterial({
+        size: 0.34, sizeAttenuation: true, vertexColors: true,
+        map: circleGlowTexture,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        alphaTest: 0.001
+      });
+      const nearStarPoints = new THREE.Points(nearStarGeo, nearStarMat);
+      starField.add(nearStarPoints);
+
       const starTwinkleChance = 0.003, starTwinkleDuration = 0.40, starTwinkleIntensity = 0.35;
       const starTwinkleTimers = new Array(starCount).fill(0);
+      // Near layer twinkles slightly more often + a touch deeper to
+      // sell the closer-distance read.
+      const nearStarTwinkleChance    = 0.005;
+      const nearStarTwinkleDuration  = 0.45;
+      const nearStarTwinkleIntensity = 0.42;
+      const nearStarTwinkleTimers = new Array(nearStarCount).fill(0);
       const earthTwinkleChance = 0.04, earthTwinkleDuration = 0.2, earthTwinkleIntensity = 0.6;
       const earthTwinkleTimers = new Array(earthPointCount).fill(0);
 
@@ -19251,6 +19327,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           starColorAttr.setXYZ(i, b, b, b);
         }
         starColorAttr.needsUpdate = true;
+        // Near-layer twinkle update — same algorithm, different
+        // chance/duration/intensity so close stars feel slightly
+        // more alive than the deep field.
+        const nearStarColorAttr = nearStarPoints.geometry.attributes.color;
+        for (let i = 0; i < nearStarCount; i++) {
+          if (nearStarTwinkleTimers[i] <= 0 && Math.random() < nearStarTwinkleChance) {
+            nearStarTwinkleTimers[i] = nearStarTwinkleDuration;
+          }
+          let b = nearStarBaseBrightness[i];
+          if (nearStarTwinkleTimers[i] > 0) {
+            const fade = Math.sin((nearStarTwinkleTimers[i] / nearStarTwinkleDuration) * Math.PI);
+            b *= (1 - nearStarTwinkleIntensity * fade);
+            nearStarTwinkleTimers[i] -= 0.016;
+          }
+          nearStarColorAttr.setXYZ(i, b, b, b);
+        }
+        nearStarColorAttr.needsUpdate = true;
         starField.quaternion.copy(scene.quaternion).invert();
 
         updateCompass();
@@ -24273,17 +24366,112 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Honors the same Satellite View toggle + opacity slider the globe
         // uses. Earth points layer is drawn UNDER the satellite — visible
         // when satellite is off or faded, covered when it's at full opacity.
+        // ── Starfield (parallax) ──────────────────────────────────────
+        // Two-layer field — DEEP (sparse, slow) + NEAR (denser, faster).
+        // Stars are stored in a fixed coordinate system; per-frame the
+        // canvas position derives from scrollX/scrollY with a depth-
+        // dependent factor so the layers drift at different rates.
+        // Drawn beneath the earth band so the negative space above and
+        // below the map (visible only when zoom < 1.0) feels like deep
+        // space rather than a black void.
+        const STAR_DEEP_COUNT = 110;
+        const STAR_NEAR_COUNT = 60;
+        const STAR_FIELD_W = 4096;
+        const STAR_FIELD_H = 2048;
+        const STAR_DEEP_PARALLAX = 0.08;
+        const STAR_NEAR_PARALLAX = 0.22;
+        let _starsCache = null;
+        function ensureStars() {
+          if (_starsCache) return _starsCache;
+          const deep = new Array(STAR_DEEP_COUNT);
+          const near = new Array(STAR_NEAR_COUNT);
+          const tints = ['255,255,255', '215,225,255', '255,235,210', '230,220,255'];
+          for (let i = 0; i < STAR_DEEP_COUNT; i++) {
+            deep[i] = {
+              ux: Math.random() * STAR_FIELD_W,
+              uy: Math.random() * STAR_FIELD_H,
+              size: 0.5 + Math.random() * 0.7,
+              baseAlpha: 0.30 + Math.random() * 0.30,
+              tint: tints[(Math.random() * tints.length) | 0],
+              twinkleSpeed: 0.0008 + Math.random() * 0.0014,
+              twinklePhase: Math.random() * Math.PI * 2,
+            };
+          }
+          for (let i = 0; i < STAR_NEAR_COUNT; i++) {
+            near[i] = {
+              ux: Math.random() * STAR_FIELD_W,
+              uy: Math.random() * STAR_FIELD_H,
+              size: 0.9 + Math.random() * 1.4,
+              baseAlpha: 0.45 + Math.random() * 0.35,
+              tint: tints[(Math.random() * tints.length) | 0],
+              twinkleSpeed: 0.0014 + Math.random() * 0.0022,
+              twinklePhase: Math.random() * Math.PI * 2,
+            };
+          }
+          _starsCache = { deep, near };
+          return _starsCache;
+        }
+        function drawStarfield(ctx, ts) {
+          ensureStars();
+          const w = STATE.width, h = STATE.height;
+          const deepOX = (STATE.scrollX * STAR_DEEP_PARALLAX) % STAR_FIELD_W;
+          const nearOX = (STATE.scrollX * STAR_NEAR_PARALLAX) % STAR_FIELD_W;
+          const deepOY = STATE.scrollY * STAR_DEEP_PARALLAX;
+          const nearOY = STATE.scrollY * STAR_NEAR_PARALLAX;
+          const zoomBoost = Math.max(0, Math.min(1, 1 - STATE.zoom * 0.5));
+
+          ctx.save();
+          for (const s of _starsCache.deep) {
+            let sx = ((s.ux - deepOX) % STAR_FIELD_W + STAR_FIELD_W) % STAR_FIELD_W;
+            sx = (sx % w);
+            let sy = ((s.uy - deepOY) % STAR_FIELD_H + STAR_FIELD_H) % STAR_FIELD_H;
+            sy = (sy % h);
+            const tw = (Math.sin(ts * s.twinkleSpeed + s.twinklePhase) + 1) * 0.5;
+            const a = (s.baseAlpha + tw * 0.30 + zoomBoost * 0.10) * STATE.dpr;
+            const r = (s.size + tw * 0.4) * STATE.dpr;
+            ctx.fillStyle = `rgba(${s.tint},${a.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          for (const s of _starsCache.near) {
+            let sx = ((s.ux - nearOX) % STAR_FIELD_W + STAR_FIELD_W) % STAR_FIELD_W;
+            sx = (sx % w);
+            let sy = ((s.uy - nearOY) % STAR_FIELD_H + STAR_FIELD_H) % STAR_FIELD_H;
+            sy = (sy % h);
+            const tw = (Math.sin(ts * s.twinkleSpeed + s.twinklePhase) + 1) * 0.5;
+            const a = (s.baseAlpha + tw * 0.45 + zoomBoost * 0.10) * STATE.dpr;
+            const r = (s.size + tw * 0.6) * STATE.dpr;
+            ctx.fillStyle = `rgba(${s.tint},${(a * 0.30).toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r * 2.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = `rgba(${s.tint},${a.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
+
         function paintBase() {
           const ctx = STATE.ctx;
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           const isDark = (window.__globeTheme === "dark");
-          ctx.fillStyle = isDark ? "#02050a" : "#0a1424";
+          // Pure black base — starfield + map fill on top.
+          ctx.fillStyle = "#000";
           ctx.fillRect(0, 0, STATE.width, STATE.height);
+
+          // Starfield first — stays behind everything else.
+          drawStarfield(ctx, performance.now());
 
           const wW = worldW(), wH = worldH();
           const baseX = -(((STATE.scrollX % wW) + wW) % wW);
           const yTop  = -STATE.scrollY;
+          const yBot  = yTop + wH;
+          const fadePx = Math.min(72, Math.max(0, (STATE.height - wH) * 0.6 + 18)) * STATE.dpr;
 
+          ctx.save();
           const epRenderable = getEarthPointsRenderable();
           if (epRenderable) {
             ctx.save();
@@ -24294,22 +24482,66 @@ const settingsToggle     = document.getElementById("settingsToggle");
             ctx.restore();
           }
 
-          if (!STATE.imgsReady) return;
-          if (window.__surfaceOverlayEnabled === false) return;
-          const opacity = Math.max(0, Math.min(1,
-            window.__surfaceOverlayOpacity != null ? window.__surfaceOverlayOpacity : 1.0
-          ));
-          if (opacity === 0) return;
-          const img = isDark
-            ? (STATE.nightImg || STATE.dayImg)
-            : (STATE.dayImg   || STATE.nightImg);
-          if (!img) return;
-          ctx.save();
-          ctx.globalAlpha = opacity;
-          for (let i = -1; i <= 1; i++) {
-            ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
+          if (STATE.imgsReady && window.__surfaceOverlayEnabled !== false) {
+            const opacity = Math.max(0, Math.min(1,
+              window.__surfaceOverlayOpacity != null ? window.__surfaceOverlayOpacity : 1.0
+            ));
+            if (opacity > 0) {
+              const img = isDark
+                ? (STATE.nightImg || STATE.dayImg)
+                : (STATE.dayImg   || STATE.nightImg);
+              if (img) {
+                ctx.save();
+                ctx.globalAlpha = opacity;
+                for (let i = -1; i <= 1; i++) {
+                  ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
+                }
+                ctx.restore();
+              }
+            }
           }
           ctx.restore();
+
+          // ── Edge fade ────────────────────────────────────────────
+          // Soft transition from map → starfield via destination-out.
+          if (fadePx > 0 && wH < STATE.height) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            const gTop = ctx.createLinearGradient(0, yTop, 0, yTop + fadePx);
+            gTop.addColorStop(0, 'rgba(0,0,0,1)');
+            gTop.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gTop;
+            ctx.fillRect(0, yTop, STATE.width, fadePx);
+            const gBot = ctx.createLinearGradient(0, yBot, 0, yBot - fadePx);
+            gBot.addColorStop(0, 'rgba(0,0,0,1)');
+            gBot.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = gBot;
+            ctx.fillRect(0, yBot - fadePx, STATE.width, fadePx);
+            ctx.restore();
+          }
+
+          // ── Atmospheric horizon glow ─────────────────────────────
+          // Warm amber on top, cool cyan on bottom — Earth's atmosphere
+          // illuminated by the sun. Only draws when there's negative
+          // space (otherwise the bands clip into adjacent screen edges).
+          if (wH < STATE.height) {
+            const glowH = 18 * STATE.dpr;
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            const gTop = ctx.createLinearGradient(0, yTop - glowH * 0.6, 0, yTop + glowH * 0.4);
+            gTop.addColorStop(0.0, 'rgba(255, 180, 110, 0)');
+            gTop.addColorStop(0.5, 'rgba(255, 195, 130, 0.55)');
+            gTop.addColorStop(1.0, 'rgba(255, 165, 95, 0.18)');
+            ctx.fillStyle = gTop;
+            ctx.fillRect(0, yTop - glowH * 0.6, STATE.width, glowH);
+            const gBot = ctx.createLinearGradient(0, yBot - glowH * 0.4, 0, yBot + glowH * 0.6);
+            gBot.addColorStop(0.0, 'rgba(95, 165, 255, 0.18)');
+            gBot.addColorStop(0.5, 'rgba(120, 195, 255, 0.55)');
+            gBot.addColorStop(1.0, 'rgba(95, 165, 255, 0)');
+            ctx.fillStyle = gBot;
+            ctx.fillRect(0, yBot - glowH * 0.4, STATE.width, glowH);
+            ctx.restore();
+          }
         }
 
         let _running = false;
@@ -24412,19 +24644,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
               }));
             } catch (_) {}
           }
+          // Rubber-band: spring back to natural fit if user
+          // overscrolled past it during the gesture.
+          if (STATE.pointers.size === 0) {
+            maybeSpringBackZoom();
+          }
         }
+        // Wheel events have no clean "release" signal — debounce on
+        // last-wheel-time stands in for "user is no longer scrolling."
+        let _wheelEndTimer = null;
         function onWheel(e) {
           if (!STATE.enabled) return;
           e.preventDefault();
           const factor = Math.exp(-e.deltaY * 0.0015);
           zoomAt(e.clientX, e.clientY, factor);
+          if (_wheelEndTimer) clearTimeout(_wheelEndTimer);
+          _wheelEndTimer = setTimeout(() => {
+            _wheelEndTimer = null;
+            if (STATE.pointers.size === 0) maybeSpringBackZoom();
+          }, 200);
         }
         function zoomAt(clientX, clientY, factor) {
           const rect = STATE.canvas.getBoundingClientRect();
           const sx = (clientX - rect.left) * STATE.dpr;
           const sy = (clientY - rect.top)  * STATE.dpr;
           const before = unproject(sx, sy);
-          const next = Math.max(STATE.minZoom, Math.min(STATE.maxZoom, STATE.zoom * factor));
+          // Cancel any in-progress spring-back — user is gesturing.
+          cancelSpringBack();
+          // Rubber-band-aware zoom clamp. Past the natural minZoom
+          // (0.6 = "Earth fits the screen") the user can still zoom
+          // out to overshootMinZoom (0.4), but each step is dampened
+          // logarithmically so the gesture feels increasingly heavy.
+          const NATURAL_MIN = 0.6;
+          const OVERSHOOT_MIN = 0.4;
+          let next = STATE.zoom * factor;
+          if (next < NATURAL_MIN && factor < 1) {
+            const requestedDelta = STATE.zoom - next;
+            const currentOvershoot = Math.max(0, NATURAL_MIN - STATE.zoom);
+            const t = Math.min(1, currentOvershoot / (NATURAL_MIN - OVERSHOOT_MIN));
+            const dampedDelta = requestedDelta / (1 + 6 * t);
+            next = Math.max(OVERSHOOT_MIN, STATE.zoom - dampedDelta);
+          }
+          next = Math.min(STATE.maxZoom, next);
           if (next === STATE.zoom) return;
           STATE.zoom = next;
           const wW = worldW(), wH = worldH();
@@ -24433,6 +24694,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
           STATE.scrollX = (((targetX - sx) % wW) + wW) % wW;
           STATE.scrollY = targetY - sy;
           clampVerticalScroll();
+        }
+        // ── Spring-back animation ─────────────────────────────────
+        // When a gesture ends and zoom is below natural fit, animate
+        // back to NATURAL_MIN over ~360ms with cubic-ease-out.
+        let _springRaf = null;
+        function cancelSpringBack() {
+          if (_springRaf) { cancelAnimationFrame(_springRaf); _springRaf = null; }
+        }
+        function maybeSpringBackZoom() {
+          const NATURAL_MIN = 0.6;
+          if (STATE.zoom >= NATURAL_MIN - 0.001) return;
+          cancelSpringBack();
+          const startZoom = STATE.zoom;
+          const targetZoom = NATURAL_MIN;
+          const cx = STATE.width  * 0.5;
+          const cy = STATE.height * 0.5;
+          const anchor = unproject(cx, cy);
+          const t0 = performance.now();
+          const DUR = 360;
+          const step = (now) => {
+            const t = Math.min(1, (now - t0) / DUR);
+            const eased = 1 - Math.pow(1 - t, 3);
+            STATE.zoom = startZoom + (targetZoom - startZoom) * eased;
+            const wW = worldW(), wH = worldH();
+            const targetX = ((anchor.lon + 180) / 360) * wW;
+            const targetY = ((90 - anchor.lat) / 180) * wH;
+            STATE.scrollX = (((targetX - cx) % wW) + wW) % wW;
+            STATE.scrollY = targetY - cy;
+            clampVerticalScroll();
+            if (t < 1) {
+              _springRaf = requestAnimationFrame(step);
+            } else {
+              _springRaf = null;
+            }
+          };
+          _springRaf = requestAnimationFrame(step);
         }
 
         let _inputsAttached = false;
