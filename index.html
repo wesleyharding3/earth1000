@@ -13401,6 +13401,15 @@ function computeCityTiers(cities) {
       const earthMat = new THREE.PointsMaterial({ size:0.009, map:circleGlowTexture, vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, alphaTest:0.001 });
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
+      // Bridge for the 2D Map view — exposes the same point cloud + base
+      // brightness array so the map can pre-render an equirectangular
+      // canvas of identical dots, layered under the satellite imagery.
+      window.__getEarthPoints = () => ({
+        positions:  earthPositions,
+        brightness: earthBaseBrightness,
+        count:      earthPointCount,
+        radius:     radius,
+      });
 
       // Invisible occluder sphere — writes depth so stars don't show through the earth
       const occluderMesh = new THREE.Mesh(
@@ -23643,23 +23652,87 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
 
+        // Earth-points offscreen — built once when the bridge is ready.
+        // Mirrors the globe's earthPoints mesh (same point cloud, same
+        // brightness). Pre-rendered to a 2048×1024 equirectangular canvas
+        // so per-frame cost is one drawImage instead of 10k arc calls.
+        let _earthPointsCanvas = null;
+        function getEarthPointsCanvas() {
+          if (_earthPointsCanvas) return _earthPointsCanvas;
+          const ep = window.__getEarthPoints && window.__getEarthPoints();
+          if (!ep || !ep.count || !ep.positions || !ep.brightness) return null;
+          const W = 2048, H = 1024;
+          const c = document.createElement('canvas');
+          c.width = W; c.height = H;
+          const cx = c.getContext('2d');
+          cx.globalCompositeOperation = 'lighter';
+          const r = ep.radius || 1;
+          const RAD2DEG = 180 / Math.PI;
+          const fillBuf = new Map();
+          for (let i = 0; i < ep.count; i++) {
+            const x = ep.positions[i * 3];
+            const y = ep.positions[i * 3 + 1];
+            const z = ep.positions[i * 3 + 2];
+            const lat = Math.asin(Math.max(-1, Math.min(1, y / r))) * RAD2DEG;
+            const lon = Math.atan2(z, x) * RAD2DEG;
+            const px = ((lon + 180) / 360) * W;
+            const py = ((90 - lat) / 180) * H;
+            const b = ep.brightness[i];
+            const key = b.toFixed(2);
+            if (!fillBuf.has(key)) fillBuf.set(key, []);
+            fillBuf.get(key).push(px, py);
+          }
+          for (const [key, coords] of fillBuf) {
+            const b = parseFloat(key);
+            cx.fillStyle = `rgba(255,255,255,${(b * 0.85).toFixed(3)})`;
+            for (let i = 0; i < coords.length; i += 2) {
+              cx.fillRect(coords[i] - 1, coords[i + 1] - 1, 2, 2);
+            }
+          }
+          _earthPointsCanvas = c;
+          return c;
+        }
+
+        // Honors the same Satellite View toggle + opacity slider the globe
+        // uses. Earth points layer is drawn UNDER the satellite — visible
+        // when satellite is off or faded, covered when it's at full opacity.
         function paintBase() {
           const ctx = STATE.ctx;
           ctx.setTransform(1, 0, 0, 1, 0, 0);
           const isDark = (window.__globeTheme === "dark");
           ctx.fillStyle = isDark ? "#02050a" : "#0a1424";
           ctx.fillRect(0, 0, STATE.width, STATE.height);
+
+          const wW = worldW(), wH = worldH();
+          const baseX = -(((STATE.scrollX % wW) + wW) % wW);
+          const yTop  = -STATE.scrollY;
+
+          const epCanvas = getEarthPointsCanvas();
+          if (epCanvas) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            for (let i = -1; i <= 1; i++) {
+              ctx.drawImage(epCanvas, baseX + i * wW, yTop, wW, wH);
+            }
+            ctx.restore();
+          }
+
           if (!STATE.imgsReady) return;
+          if (window.__surfaceOverlayEnabled === false) return;
+          const opacity = Math.max(0, Math.min(1,
+            window.__surfaceOverlayOpacity != null ? window.__surfaceOverlayOpacity : 1.0
+          ));
+          if (opacity === 0) return;
           const img = isDark
             ? (STATE.nightImg || STATE.dayImg)
             : (STATE.dayImg   || STATE.nightImg);
           if (!img) return;
-          const wW = worldW(), wH = worldH();
-          const baseX = -(((STATE.scrollX % wW) + wW) % wW);
-          const yTop  = -STATE.scrollY;
+          ctx.save();
+          ctx.globalAlpha = opacity;
           for (let i = -1; i <= 1; i++) {
             ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
           }
+          ctx.restore();
         }
 
         let _running = false;
@@ -23801,10 +23874,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (STATE.enabled) return;
           ensureCanvas();
           resize();
+          // enabled MUST be set before loadImages — the texture-poll
+          // reschedules itself on setTimeout only while enabled is true,
+          // so a first call with enabled=false would never re-poll if a
+          // texture (e.g. night) hadn't finished loading yet. That was
+          // the source of "auto theme stays light" — auto correctly
+          // resolved to dark, __globeTheme was dark, but STATE.nightImg
+          // never got pulled and paintBase fell back to the day image.
+          STATE.enabled = true;
           loadImages();
           attachInputs();
           STATE.canvas.style.display = "block";
-          STATE.enabled = true;
           startRAF();
         }
         function unmount() {
@@ -23918,11 +23998,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const yTop  = -api.state.scrollY;
           const isDark = (window.__globeTheme === "dark");
 
+          // When the satellite overlay is off, the wireframe is the ONLY
+          // map content — bump line weight + opacity so it reads cleanly
+          // against the solid background. When satellite is on, keep the
+          // existing subtler stroke so the imagery dominates.
+          const noSatellite = (window.__surfaceOverlayEnabled === false)
+            || ((window.__surfaceOverlayOpacity != null) && window.__surfaceOverlayOpacity === 0);
           ctx.save();
-          ctx.lineWidth = Math.max(0.75, api.state.dpr * (dim ? 0.7 : 0.9));
-          ctx.strokeStyle = isDark
-            ? `rgba(190,215,255,${dim ? 0.30 : 0.55})`
-            : `rgba(255,255,255,${dim ? 0.40 : 0.78})`;
+          ctx.lineWidth = noSatellite
+            ? Math.max(1.0, api.state.dpr * 1.1)
+            : Math.max(0.75, api.state.dpr * (dim ? 0.7 : 0.9));
+          ctx.strokeStyle = noSatellite
+            ? (isDark ? "rgba(190,215,255,0.85)" : "rgba(40,60,90,0.78)")
+            : (isDark
+                ? `rgba(190,215,255,${dim ? 0.30 : 0.55})`
+                : `rgba(255,255,255,${dim ? 0.40 : 0.78})`);
           ctx.lineJoin = "round";
           ctx.lineCap  = "round";
           ctx.beginPath();
