@@ -33,6 +33,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
+      /* Lets CSS transitions interpolate width/height to/from intrinsic
+         keywords (max-content, fit-content, auto). Used by
+         #flowCtxCard.flowCtxMinimized to animate from the panel's
+         260/220px expanded width down to max-content (hugging the pill).
+         Older browsers snap on width but every other transition runs. */
+      interpolate-size: allow-keywords;
       --app-height: 100vh;
       --app-width: 100vw;
       --app-bottom-inset: 0px;
@@ -63,9 +69,19 @@
       --grm-green: #3ddc84;
     }
 
-    body { 
-      margin: 0; 
-      overflow: hidden; 
+    /* Disable iOS Safari's automatic font-boost on orientation change.
+       Default `auto` scales up font sizes in "narrow" containers and
+       doesn't always undo it — the thread / line timeline (.ftl*) labels
+       stuck at the inflated size after rotating to landscape and back
+       to portrait. 100% pins rendered text to its declared CSS size. */
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      overflow: hidden;
       background: #000;
       font-family: -apple-system, BlinkMacSystemFont,
                    "Segoe UI", Roboto,
@@ -2602,7 +2618,12 @@ body.flow-maximized #flowArcList {
   flex-shrink: 0;
 }
 .arcCtxBackBtn, .arcCtxRefreshBtn {
-  width: 24px; height: 24px; border-radius: 12px;
+  width: 24px; height: 24px;
+  min-width: 24px; min-height: 24px;
+  /* 50% (was 12px which only happened to be circular at 24px). On mobile
+     these get bumped to var(--tap-min) on both axes via the rule next to
+     .iconBtn — 50% keeps them perfectly circular at the new size too. */
+  border-radius: 50%;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.12);
   color: rgba(255,255,255,0.7);
@@ -4348,13 +4369,24 @@ body.flow-maximized #flowArcList {
   visibility: hidden;
   pointer-events: none;
   transform: translateY(-6px);
-  /* max-height included so info / arcs / ctx views animate smoothly when
-     toggling .flowCtxMinimized — same easing the slot uses internally. */
+  /* On minimize, the card not only shrinks vertically but also drops
+     its frame (border / background / shadow / padding) and contracts
+     horizontally to hug the pill — see #flowCtxCard.flowCtxMinimized.
+     All those properties need explicit transitions to avoid snap-pops:
+       max-height + width → 0.42s with the slot's easing curve
+       padding / background / border-color / box-shadow → 0.3s ease
+     Width interpolates to max-content via :root interpolate-size below;
+     older browsers snap that one dimension but everything else animates. */
   transition:
-    opacity 0.3s ease,
-    transform 0.3s ease,
-    max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
-    visibility 0s linear 0.3s;
+    opacity      0.3s ease,
+    transform    0.3s ease,
+    max-height   0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    width        0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    padding      0.3s ease,
+    background   0.3s ease,
+    border-color 0.3s ease,
+    box-shadow   0.3s ease,
+    visibility   0s linear 0.3s;
 }
 #flowCtxCard.visible {
   opacity: 1;
@@ -4530,24 +4562,34 @@ body.flow-maximized #flowArcList {
 }
 /* (pill bar styles above replace old absolute-positioned buttons) */
 /* ── Minimized state — UNIFIED across all contexts ─────────────────
-   When .flowCtxMinimized is on the card, only the header row (pill
-   bar + "Routes" eyebrow when applicable) is visible. Replaces the
-   old per-block compaction rules which left a thread eyebrow + 1-line
-   title visible underneath the pill on info-view, taking up screen
-   space the user wanted reclaimed.
-   44px max-height = 24px header row + 2px row margin + 2 × ~9px card
-   padding. overflow:hidden keeps fading content inside the new short
-   bounds during the transition. */
+   When .flowCtxMinimized is on the card, the entire frame collapses
+   to JUST the pill bar — no outer border, no glass backdrop, no
+   padding, no shadow, no eyebrow / title / count. The pill itself
+   keeps its own border + background, so it reads as a self-contained
+   chip. Maximizes screen real estate. */
 #flowCtxCard.flowCtxMinimized {
-  max-height: 44px;
+  width: max-content;
+  max-height: 24px;
+  padding: 0;
+  gap: 0;
+  border-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
   overflow: hidden;
 }
+#flowCtxCard.flowCtxMinimized .flowCtxLiveArcsTitle,
 #flowCtxCard.flowCtxMinimized .flowCtxInfoView,
 #flowCtxCard.flowCtxMinimized .flowCtxLiveArcsSlot,
 #flowCtxCard.flowCtxMinimized #arcContextPanel,
 #flowCtxCard.flowCtxMinimized .flowCtxLabelsChk {
   opacity: 0;
   pointer-events: none;
+}
+#flowCtxCard.flowCtxMinimized .flowCtxHeaderRow {
+  min-height: 0;
+  margin-bottom: 0;
 }
 .flowCtxInfoView {
   display: none;
@@ -9074,10 +9116,17 @@ body.flow-maximized #flowArcList {
       /* Circular tap targets need BOTH min-height AND min-width clamped to
          the same floor — without this, .iconBtn / .snapBtn ended up as
          38×44 / 36×44 vertical ellipses on mobile because the explicit
-         height collapsed to 38/36 while min-height (44) won. */
+         height collapsed to 38/36 while min-height (44) won.
+         The arcCtx + aiAnalysisRegen entries are circular refresh /
+         back chips inside AI-context panels — same potential elliptical
+         bug, same fix. border-radius: 50% on those rules keeps them
+         circular at both 24px and 44px. */
       .iconBtn,
       .snapBtn,
-      .bDot {
+      .bDot,
+      .arcCtxBackBtn,
+      .arcCtxRefreshBtn,
+      .aiAnalysisRegen {
         min-width: var(--tap-min);
       }
 
@@ -9954,19 +10003,32 @@ body.flow-maximized #flowArcList {
   background: rgba(255,130,130,1);
   box-shadow: 0 0 6px rgba(255,130,130,0.7);
 }
+/* Regenerate icon — wrapped in a circle pill to match the AI-context
+   panel chips. The mobile rule below adds min-width: var(--tap-min)
+   so the global 44px min-height floor doesn't squash the pill into
+   a 24×44 ellipse on touch screens. */
 .aiAnalysisRegen {
-  background: transparent;
-  border: none;
-  padding: 4px;
-  color: rgba(212,168,67,0.55);
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 50%;             /* circle at any size */
+  background: rgba(212,168,67,0.10);
+  border: 1px solid rgba(212,168,67,0.28);
+  color: rgba(212,168,67,0.70);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  border-radius: 4px;
   line-height: 1;
-  transition: color 0.15s, background 0.15s, transform 0.2s;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, transform 0.2s;
 }
 .aiAnalysisRegen:hover {
   color: rgba(255,220,130,1);
-  background: rgba(212,168,67,0.1);
+  background: rgba(212,168,67,0.22);
+  border-color: rgba(212,168,67,0.55);
   transform: rotate(45deg);
 }
 .aiAnalysisRegen svg { display: block; width: 12px; height: 12px; }
@@ -17422,9 +17484,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
               </div>
             </div>`;
         }
+        // Side-effect guard: closing the thread panel was also dropping
+        // the country/city panel underneath. Snapshot infoPanel state
+        // before opening the thread, then restore via a one-shot
+        // MutationObserver when #clusterDetail loses its .open class.
+        // See www/index.html for the full rationale.
         window.__cpOpenLocalThread = function(id) {
           const n = Number(id);
           if (!n) return;
+
+          const ip = document.getElementById('infoPanel');
+          const wasActive = !!ip?.classList.contains('active');
+          const wasMaxed  = !!ip?.classList.contains('maximized');
+          const savedH    = ip?.style.height || '';
+          const bodyHadPanelOpen = document.body.classList.contains('panel-open');
+
+          if (wasActive) {
+            const detailEl = document.getElementById('clusterDetail');
+            if (detailEl) {
+              const obs = new MutationObserver(() => {
+                if (!detailEl.classList.contains('open')) {
+                  if (ip && !ip.classList.contains('active')) {
+                    ip.classList.add('active');
+                    if (wasMaxed) ip.classList.add('maximized');
+                    if (savedH)   ip.style.height = savedH;
+                    if (bodyHadPanelOpen) document.body.classList.add('panel-open');
+                  }
+                  obs.disconnect();
+                }
+              });
+              obs.observe(detailEl, { attributes: true, attributeFilter: ['class'] });
+            }
+          }
+
           if (typeof window.__openThread === 'function') return window.__openThread(n);
           if (typeof window.openThreadInPanel === 'function') return window.openThreadInPanel(n);
         };
@@ -29744,6 +29836,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   padding-bottom: 4px;
   scrollbar-width: thin;
   scrollbar-color: rgba(100,200,255,0.2) transparent;
+  /* Explicit lock — even if html's text-size-adjust is overridden later,
+     the timeline labels stay pinned to their declared px sizes through
+     mobile rotation. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 .ftlTrack::-webkit-scrollbar { height: 4px; }
 .ftlTrack::-webkit-scrollbar-track { background: transparent; }
@@ -29771,29 +29868,62 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .ftlEvent.negative::before { background: rgba(255,80,80,0.5); border-color: rgba(255,80,80,0.8); }
 .ftlEvent.positive::before { background: rgba(80,255,120,0.5); border-color: rgba(80,255,120,0.8); }
 
-/* ── Sequential pulse wave on the timeline bullets ──────────────────
+/* ── Sequential ambient activation on the timeline bullets ─────────
    _startFtlPulseLoop() in JS adds .ftlPulsing to one .ftlEvent at a
    time, advancing every 1000ms with wraparound. Each class swap
-   re-fires a single 1s halo ripple. The halo color matches the dot's
-   sentiment tint so the wave reads the emotional shape of the story. */
-@keyframes ftlPulseHalo {
-  0%   { box-shadow: 0 0 0 0   rgba(100,200,255,0.55); }
-  85%  { box-shadow: 0 0 0 14px rgba(100,200,255,0); }
-  100% { box-shadow: 0 0 0 14px rgba(100,200,255,0); }
+   re-fires the keyframes below for one full 1-second cycle.
+
+   Inspired by the ambient-headline node activation (.ahPulseDot +
+   .ahNodeDot — see lines ~6620-6685): combines the ahDotPulse sonar-
+   ping ring (single expansion + fade) with the ahNodeGlow sustained
+   breathing halo, compressed into one 1s window. The dot flashes
+   brighter, scales up to 1.5×, emits an expanding halo + ring, then
+   settles back. Three variants preserve the sentiment tint. */
+@keyframes ftlPulseAmbient {
+  0%   { background: rgba(100,200,255,0.5);
+         box-shadow: 0 0 0 0 rgba(100,200,255,0.85);
+         transform: scale(1); }
+  15%  { background: rgba(180,230,255,1);
+         box-shadow: 0 0 12px rgba(100,200,255,1), 0 0 0 4px rgba(100,200,255,0.5);
+         transform: scale(1.5); }
+  60%  { background: rgba(140,220,255,0.9);
+         box-shadow: 0 0 14px rgba(100,200,255,0.6), 0 0 0 16px rgba(100,200,255,0);
+         transform: scale(1.15); }
+  100% { background: rgba(100,200,255,0.5);
+         box-shadow: 0 0 0 0 rgba(100,200,255,0);
+         transform: scale(1); }
 }
-@keyframes ftlPulseHaloPos {
-  0%   { box-shadow: 0 0 0 0   rgba(80,255,120,0.55); }
-  85%  { box-shadow: 0 0 0 14px rgba(80,255,120,0); }
-  100% { box-shadow: 0 0 0 14px rgba(80,255,120,0); }
+@keyframes ftlPulseAmbientPos {
+  0%   { background: rgba(80,255,120,0.5);
+         box-shadow: 0 0 0 0 rgba(80,255,120,0.85);
+         transform: scale(1); }
+  15%  { background: rgba(160,255,180,1);
+         box-shadow: 0 0 12px rgba(80,255,120,1), 0 0 0 4px rgba(80,255,120,0.5);
+         transform: scale(1.5); }
+  60%  { background: rgba(120,255,150,0.9);
+         box-shadow: 0 0 14px rgba(80,255,120,0.6), 0 0 0 16px rgba(80,255,120,0);
+         transform: scale(1.15); }
+  100% { background: rgba(80,255,120,0.5);
+         box-shadow: 0 0 0 0 rgba(80,255,120,0);
+         transform: scale(1); }
 }
-@keyframes ftlPulseHaloNeg {
-  0%   { box-shadow: 0 0 0 0   rgba(255,80,80,0.55); }
-  85%  { box-shadow: 0 0 0 14px rgba(255,80,80,0); }
-  100% { box-shadow: 0 0 0 14px rgba(255,80,80,0); }
+@keyframes ftlPulseAmbientNeg {
+  0%   { background: rgba(255,80,80,0.5);
+         box-shadow: 0 0 0 0 rgba(255,80,80,0.85);
+         transform: scale(1); }
+  15%  { background: rgba(255,170,170,1);
+         box-shadow: 0 0 12px rgba(255,80,80,1), 0 0 0 4px rgba(255,80,80,0.5);
+         transform: scale(1.5); }
+  60%  { background: rgba(255,130,130,0.9);
+         box-shadow: 0 0 14px rgba(255,80,80,0.6), 0 0 0 16px rgba(255,80,80,0);
+         transform: scale(1.15); }
+  100% { background: rgba(255,80,80,0.5);
+         box-shadow: 0 0 0 0 rgba(255,80,80,0);
+         transform: scale(1); }
 }
-.ftlEvent.ftlPulsing::before          { animation: ftlPulseHalo    1s ease-out; }
-.ftlEvent.ftlPulsing.positive::before { animation: ftlPulseHaloPos 1s ease-out; }
-.ftlEvent.ftlPulsing.negative::before { animation: ftlPulseHaloNeg 1s ease-out; }
+.ftlEvent.ftlPulsing::before          { animation: ftlPulseAmbient    1s ease-out; }
+.ftlEvent.ftlPulsing.positive::before { animation: ftlPulseAmbientPos 1s ease-out; }
+.ftlEvent.ftlPulsing.negative::before { animation: ftlPulseAmbientNeg 1s ease-out; }
 
 .ftlEventDate {
   font-size: 9px;
