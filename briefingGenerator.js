@@ -888,6 +888,57 @@ async function run() {
     // Note: if audioData is still null here (audio reused from DB), segments won't have
     // start_ms stamped — the player will fall back to word-count estimates, which is fine.
 
+    // ── 6.5. Pre-resolve heatmap segments ─────────────────────────────────
+    // For every segment whose featured_video.media_type === 'heatmap',
+    // resolve the heatmap question NOW (Claude + web_search) and bake
+    // the per-country values into the segment payload as
+    // featured_video.heatmap_resolved = { legend, unit, source_note,
+    // values: [{iso,value}, ...], refusal }. Eliminates a per-view
+    // Claude call at briefing playback — every viewer of the same
+    // briefing sees identical, deterministic heatmap data.
+    //
+    // The resolver is cache-aware: re-runs of the same question hit
+    // heatmap_qa_cache and finish instantly. Failures are non-fatal;
+    // an unresolved segment falls back to live /api/heatmap/ask at view
+    // time, matching pre-extraction behavior.
+    try {
+      const { resolveHeatmap } = require('./heatmapResolver');
+      let resolvedCount = 0;
+      for (const seg of segments) {
+        const fv = seg.featured_video;
+        if (!fv || fv.media_type !== 'heatmap' || !fv.heatmap_question) continue;
+        try {
+          const tHeat = Date.now();
+          const result = await resolveHeatmap(fv.heatmap_question, fv.heatmap_mode || 'binary');
+          fv.heatmap_resolved = {
+            legend:      result.legend,
+            unit:        result.unit,
+            source_note: result.source_note,
+            values:      result.values,
+            refusal:     result.refusal,
+            cache:       result.cache,
+            source:      result.source,
+          };
+          resolvedCount++;
+          console.log(
+            `   [${elapsed(t0)}] Heatmap pre-resolved (${result.cache}, ` +
+            `${(result.values || []).length} countries, ${((Date.now() - tHeat) / 1000).toFixed(1)}s): ` +
+            `"${fv.heatmap_question}"`
+          );
+        } catch (err) {
+          console.warn(
+            `   ⚠ Heatmap pre-resolve failed for "${fv.heatmap_question}" — ` +
+            `client will fall back to live resolution. ${err.message}`
+          );
+        }
+      }
+      if (resolvedCount) {
+        console.log(`   [${elapsed(t0)}] Pre-resolved ${resolvedCount} heatmap segment(s)`);
+      }
+    } catch (e) {
+      console.warn(`   ⚠ Heatmap pre-resolution module load failed: ${e.message}`);
+    }
+
     // ── 7. Save complete episode ───────────────────────────────────────────
     await pool.query(`
       UPDATE briefing_episodes
@@ -901,7 +952,7 @@ async function run() {
     `, [
       narrative.headline,
       buildFullScript(narrative),
-      JSON.stringify(segments),   // segments now include start_ms per entry
+      JSON.stringify(segments),   // segments now include start_ms + heatmap_resolved per entry
       audioData,
       episodeId
     ]);

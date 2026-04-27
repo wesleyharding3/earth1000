@@ -38575,6 +38575,16 @@ body.ticker-active .gTickerLabel {
   // ── Open ─────────────────────────────────────────────────────────────────
   function openBriefing() {
     if (!episode) return;
+    // Briefing is designed exclusively for the 3D globe (camera flies,
+    // arcs render in world space, hover labels do dot-product checks
+    // against the camera). The 2D map projection has none of that
+    // infrastructure — running a briefing while projection-map is
+    // active would result in stuck/invisible globe transitions and
+    // missing labels. Auto-switch to the globe before opening.
+    if (document.body.classList.contains('projection-map')
+        && typeof window.__setProjection === 'function') {
+      try { window.__setProjection('globe'); } catch (_) {}
+    }
     window.briefingActive = true;
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
@@ -39199,9 +39209,12 @@ body.ticker-active .gTickerLabel {
             const fire = () => {
               if (mediaType === 'heatmap') {
                 // Heatmap doesn't pause the narrator — it's a globe overlay
-                // the script narrates over. Fire-and-forget; cleanup happens
-                // when the next segment overwrites the heat sphere.
-                startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart));
+                // the script narrates over. Prefer the resolver-baked
+                // values (briefingGenerator.js pre-resolves at generation
+                // time); fall back to a live API call for legacy
+                // briefings without baked data. Fire-and-forget; cleanup
+                // happens when the next segment overwrites the heat sphere.
+                startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), fm?.heatmap_resolved || null);
               } else {
                 // YouTube + Twitter both flow through startFocalVideo; it
                 // dispatches on the card's data-media-type attribute.
@@ -40224,9 +40237,29 @@ body.ticker-active .gTickerLabel {
   // import dependency is concentrated in…"). The same /api/heatmap/ask
   // endpoint the live "Map This" panel uses, with server-side cache so
   // repeated plays of the same briefing are free.
-  async function startFocalHeatmap(question, mode, durationSec) {
-    if (!question) return;
+  async function startFocalHeatmap(question, mode, durationSec, prebaked) {
+    if (!question && !(prebaked && Array.isArray(prebaked.values) && prebaked.values.length)) return;
     try {
+      // Pre-resolved path: briefingGenerator baked the heatmap into the
+      // segment payload at generation time. Use it directly — no API
+      // call, no auth, no Claude latency, deterministic across viewers.
+      if (prebaked && Array.isArray(prebaked.values) && prebaked.values.length && !prebaked.refusal) {
+        if (typeof window.__semHeatRenderQA === 'function') {
+          window.__semHeatRenderQA({
+            values:      prebaked.values,
+            mode:        mode || 'binary',
+            legend:      prebaked.legend || question,
+            source_note: prebaked.source_note || '',
+          });
+        }
+        void durationSec;
+        return;
+      }
+
+      // Live fallback — used for legacy briefings that predate pre-
+      // resolution, or when the generator's resolver failed. Calls the
+      // public /api/heatmap/ask endpoint which goes through the same
+      // resolver internally; cache hits are free.
       const apiBase = window.__API || window.__API_BASE || 'https://earth-wjr6.onrender.com';
       const headers = { 'Content-Type': 'application/json' };
       const tok = window.__authToken;
@@ -40245,8 +40278,6 @@ body.ticker-active .gTickerLabel {
         console.warn('[briefing/heatmap] no usable values:', data?.refusal || 'empty');
         return;
       }
-      // Same renderer the live Map This panel uses — flips state.qaMode +
-      // paints with the warm amber/gold palette.
       if (typeof window.__semHeatRenderQA === 'function') {
         window.__semHeatRenderQA({
           values:      data.values,
@@ -40255,9 +40286,6 @@ body.ticker-active .gTickerLabel {
           source_note: data.source_note || '',
         });
       }
-      // Don't tear down — the next segment's globe transition will repaint
-      // anyway. The duration parameter is currently informational only;
-      // could be used later to fade the overlay if we want explicit cleanup.
       void durationSec;
     } catch (e) {
       console.warn('[briefing/heatmap] error:', e?.message || e);

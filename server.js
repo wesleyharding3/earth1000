@@ -24,6 +24,10 @@ const { generateLocationBriefing } = require("./locationBriefingGenerator");
 const dataPanels = require("./dataPanelGenerator");
 const Anthropic = new (require('@anthropic-ai/sdk'))({ apiKey: process.env.ANTHROPIC_API_KEY });
 const { resolveImagesForArticles } = require("./imageResolver");
+// Shared heatmap-resolver — also used by briefingGenerator.js to
+// pre-resolve heatmap segments at generation time so the briefing
+// playback never triggers a Claude call.
+const heatmapResolver = require("./heatmapResolver");
 const jwt = require("jsonwebtoken");
 const payments = require("./payments");
 const sba = require("./supabaseAdmin");
@@ -11396,41 +11400,44 @@ app.post("/api/heatmap/ask", async (req, res) => {
     return res.status(400).json({ error: "mode must be percent | rank | binary" });
   }
 
-  // Normalize for stable cache key.
+  // Normalize for stable cache key — this same hash is what
+  // resolveHeatmap() uses internally; computing it here so the cache
+  // hit path can short-circuit before touching credit consumption.
   const normalized = rawQuestion.toLowerCase().replace(/\s+/g, " ").trim();
   const crypto = require('crypto');
   const questionHash = crypto.createHash('sha256').update(`${mode}|${normalized}`).digest('hex');
 
   try {
-    // 1. Cache lookup. Pinned curated rows + recent Claude rows both live here.
-    //    Skipped entirely when forceFresh=true.
-    const cached = forceFresh
-      ? { rows: [] }
-      : await pool.query(
-      `SELECT id, mode, legend, unit, source_note, values, refusal, source, hit_count
-         FROM heatmap_qa_cache
-        WHERE question_hash = $1 AND mode = $2
-        LIMIT 1`,
-      [questionHash, mode]
-    );
-    if (cached.rows.length) {
-      const row = cached.rows[0];
-      // Fire-and-forget hit accounting.
-      pool.query(
-        `UPDATE heatmap_qa_cache SET hit_count = hit_count + 1, last_hit_at = NOW() WHERE id = $1`,
-        [row.id]
-      ).catch(() => {});
-      return res.json({
-        question: rawQuestion,
-        mode: row.mode,
-        legend: row.legend,
-        unit: row.unit,
-        source_note: row.source_note,
-        values: row.values,
-        refusal: row.refusal,
-        source: row.source,        // 'claude' | 'curated'
-        cache: 'hit',
-      });
+    // 1. Cache lookup short-circuit. Pinned curated rows + recent
+    //    Claude rows both live here. We pre-check so cache hits
+    //    don't burn credits — the resolver itself doesn't enforce
+    //    credits (that's an endpoint concern).
+    if (!forceFresh) {
+      const { rows: cachedRows } = await pool.query(
+        `SELECT id, mode, legend, unit, source_note, values, refusal, source
+           FROM heatmap_qa_cache
+          WHERE question_hash = $1 AND mode = $2
+          LIMIT 1`,
+        [questionHash, mode]
+      );
+      if (cachedRows.length) {
+        const row = cachedRows[0];
+        pool.query(
+          `UPDATE heatmap_qa_cache SET hit_count = hit_count + 1, last_hit_at = NOW() WHERE id = $1`,
+          [row.id]
+        ).catch(() => {});
+        return res.json({
+          question:    rawQuestion,
+          mode:        row.mode,
+          legend:      row.legend,
+          unit:        row.unit,
+          source_note: row.source_note,
+          values:      row.values,
+          refusal:     row.refusal,
+          source:      row.source,
+          cache:       'hit',
+        });
+      }
     }
 
     // 2. Credit gate (only on miss — cache hits are free).
@@ -11448,330 +11455,13 @@ app.post("/api/heatmap/ask", async (req, res) => {
       });
     }
 
-    // 3. Country whitelist — Claude is told to ONLY use ISOs from this set.
-    const { rows: countryRows } = await pool.query(
-      `SELECT iso_code, name FROM countries WHERE iso_code IS NOT NULL AND length(iso_code) = 2 ORDER BY name`
-    );
-    const isoSet = new Set(countryRows.map(c => c.iso_code.toUpperCase()));
-    const isoCatalog = countryRows.map(c => `${c.iso_code.toUpperCase()} ${c.name}`).join('\n');
-
-    // 4. Claude call with a structured tool. Two tool options: emit values,
-    //    or decline with a reason. Either path produces a usable response.
-    const modeGuidance = mode === 'percent'
-      ? 'Each value is a percentage 0–100 (e.g. 87.2 means 87.2% of that country\'s population/area/whatever the question asks).'
-      : mode === 'rank'
-      ? 'Each value is an integer rank starting at 1 (lower = stronger). Only include the ranked countries; omit unranked ones.'
-      : /* binary */ 'Each value is 0 or 1. Include only countries where the answer is 1.';
-
-    const tools = [
-      // Server tool — Anthropic-hosted web search. The model can call it
-      // multiple times (capped) before emitting the final custom tool call.
-      // Capped to keep latency bounded; still enough for a fact-check loop
-      // (initial query + 1–2 follow-ups on borderline cases).
-      {
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: 6,
-      },
-      {
-        name: 'set_country_values',
-        description: 'Return a per-country value map answering the user question. Call this LAST, after any web_search calls.',
-        input_schema: {
-          type: 'object',
-          required: ['legend', 'values'],
-          properties: {
-            legend: { type: 'string', description: 'Short label for the legend chip (e.g. "Muslim population %", "Press freedom rank").' },
-            unit:   { type: 'string', description: 'Unit string for tooltips, e.g. "%", "rank", or empty.' },
-            source_note: { type: 'string', description: 'Brief attribution naming the specific source(s) used (e.g. "World Bank 2023; UN Pop Division 2024"). If you used web_search, cite the most authoritative result. Mark "AI estimate — verify before citing" only if no source could be verified.' },
-            values: {
-              type: 'array',
-              description: 'Array of { iso, value } objects. ISOs MUST be drawn from the catalog provided.',
-              items: {
-                type: 'object',
-                required: ['iso', 'value'],
-                properties: {
-                  iso:   { type: 'string', description: '2-letter ISO 3166-1 country code (uppercase).' },
-                  value: { type: 'number' },
-                },
-              },
-            },
-          },
-        },
-      },
-      {
-        name: 'decline_question',
-        description: 'Decline the question — use when it is biased, unanswerable, or has no meaningful per-country mapping.',
-        input_schema: {
-          type: 'object',
-          required: ['reason'],
-          properties: {
-            reason: { type: 'string', description: 'Brief, neutral explanation shown to the user.' },
-          },
-        },
-      },
-    ];
-
-    const systemPrompt = `You answer geographic questions for a globe-based news intelligence dashboard. Your output paints a heatmap.
-
-Available countries (use ONLY these 2-letter ISO codes):
-${isoCatalog}
-
-Output rules:
-- Mode: ${mode}. ${modeGuidance}
-- Use the set_country_values tool when the question has a meaningful per-country answer.
-- Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
-- Cite specific sources in source_note (e.g. "World Bank 2023" or "Wikipedia: List of mountain peaks, 2024-03"). Only use "AI estimate — verify before citing" as a last resort when no source could be verified.
-
-Question phrasing — REQUIRED interpretation:
-- If the question contains "your country", "your nation", "your state", "your homeland", or any second-person possessive pointed at a country/place, interpret it AS IF the user wrote "each country" — i.e. it is a per-country query. The user is not asking about you; they are asking the heatmap to show one value per country. Do NOT decline these questions on the grounds that you have no country of residence.
-- Example rephrasings that all mean the same thing:
-    "How many universities are in your country?"  →  "How many universities are in each country?"
-    "What is your country's GDP?"                →  "What is each country's GDP?"
-    "Is your nation in NATO?"                    →  "Is each nation in NATO?"
-
-DATA VERIFICATION POLICY — read carefully:
-
-You have access to a \`web_search\` tool. Speed is NOT a priority — accuracy is. A correct answer that takes 30 seconds is far better than a fast wrong one. USE web_search whenever:
-- The question asks for specific numerical data (population, GDP, area, ranks, percentages) and you are not 100% certain of the current value or the full ranking.
-- The question references a defined group, treaty, or membership list (NATO, OPEC, EU, NPT signatories, NPT nuclear-weapon states, BRICS, ASEAN, OECD, G20, Schengen, eurozone, Commonwealth, OPEC+) — verify the CURRENT membership before answering. Memberships change.
-- The question is on a topic that drifts over time (currency unions, sanctions regimes, alliance expansions, leaders, treaty status, language official-status).
-- You can think of obvious candidate countries but cannot confidently enumerate the FULL set.
-- Coverage of less-Western regions (Africa, Central Asia, Pacific, Caribbean) is required and you suspect your unaided recall is biased toward the West.
-
-You may call web_search up to 6 times per question. Use them — partial verification is better than none.
-
-AUTHORITATIVE SOURCES BY DOMAIN (prefer these when searching; cite the one you used):
-- Demographics / population: worldbank.org, population.un.org, cia.gov/the-world-factbook, census.gov/data/data-tools/idb
-- Economics / GDP / trade: worldbank.org, imf.org/data, oec.world, oecd.org/statistics
-- Geography / topography / terrain / peaks / rivers: usgs.gov, naturalearthdata.com, geonames.org, britannica.com, peakbagger.com
-- Climate / environment / energy: iea.org, ipcc.ch, ourworldindata.org, noaa.gov, climatewatchdata.org
-- Biology / biodiversity / ecology: iucnredlist.org, gbif.org, worldwildlife.org, fao.org
-- Health / disease / mortality: who.int, healthdata.org (IHME), unaids.org, unicef.org/data
-- Politics / governance / corruption / press freedom: freedomhouse.org, v-dem.net, transparency.org, rsf.org
-- Languages / religion / culture: ethnologue.com, pewresearch.org, worldatlas.com
-- Military / nuclear / arms: sipri.org, iiss.org, fas.org/issues/nuclear-weapons
-- Treaties / international orgs / membership: treaties.un.org, europa.eu, nato.int, un.org/en/members
-- Wikipedia (en.wikipedia.org) is acceptable as a starting point — its country-list articles are usually well-cited; verify against a primary source when stakes are high.
-
-Cite the specific source(s) you used in source_note. Example: "Source: SIPRI 2023 Yearbook; Wikipedia (NATO members)". Never just write "Sonnet estimate" — search instead.
-
-ACCURACY CHECKLIST — apply before responding:
-
-1. STATE THE CRITERION. Internally restate exactly what the question asks. If it includes a numeric threshold (e.g. "over 10,000 ft", "more than 50%"), treat it as strict. If it names a defined group (EU, NATO, OPEC, NPT signatories), use the canonical membership list.
-
-2. ENUMERATE BY CONTINENT. Walk through every continent — Africa, Asia, Europe, Americas, Oceania — and consider each region's countries. For factual binary questions, the global answer set is usually 30–100 countries. Do NOT rely on only the most famous examples; that's the #1 failure mode.
-
-3. VERIFY EACH CANDIDATE. For each country you'd include, briefly justify why it qualifies — name the specific peak, region, language family, treaty, or feature. If you can't name a specific qualifying reason, do not include the country.
-
-4. EXCLUDE without specific evidence. Do not include a country because it "looks mountainous", "is in that region", or "feels like it should qualify". Specific evidence required.
-
-5. NOTE THE LIMITS in source_note. If you're uncertain about edge cases, list them by name ("excludes borderline cases: X, Y") so the user knows. If your data has a vintage, cite it.
-
-NEVER-MISS LIST (catastrophic failures to prevent):
-The following are NOT edge cases — they are the most basic answers and their absence makes the response useless. Self-check: if any of these apply to your question, the named countries MUST appear in your output.
-
-- Population (rank or count): China, India, United States, Indonesia, Pakistan, Nigeria, Brazil, Bangladesh, Russia, Mexico are the world's ten most populous countries. Any population query that omits one of them is broken.
-- GDP / economy size (rank or value): United States, China, Japan, Germany, India, United Kingdom, France, Italy, Canada, Brazil are the top-10 economies. Any GDP query missing them is broken.
-- Land area: Russia, Canada, China, United States, Brazil, Australia, India, Argentina, Kazakhstan, Algeria.
-- Coastline / oceans: every continent has dozens of coastal countries; never return only Western examples.
-- Religion majority: Indonesia (largest Muslim country), Brazil (largest Catholic country), India (largest Hindu country) — almost always relevant.
-- Nuclear weapons: USA, Russia, UK, France, China, India, Pakistan, Israel, North Korea — exactly nine, no more, no fewer.
-- EU membership: 27 countries, no UK (left in 2020), no Norway / Switzerland.
-
-For RANK mode specifically: "rank by X" means EVERY country with a non-trivial value of X should appear. Do not truncate to a top-10 unless the question explicitly says so. If asked "rank by population", every sovereign country should have a rank — China at 1 or 2, the smallest at the bottom. Returning only 20 countries when the world has 190+ is a failure.
-
-For BINARY mode: be more inclusive than your gut suggests. If you can think of three obvious countries that match, there are probably twenty more. Walk continents.
-
-Most users will be wronger than you think when checking — but for the cases where they are right and you're missing obvious entries, your answer becomes useless. Aim for high recall on clear positives and strict exclusion of vague matches.`;
-
-    const claudeResp = await Anthropic.messages.create({
-      model: 'claude-sonnet-4-5-20250929',
-      // Bumped from 4096 → 12000: web_search results get injected inline so
-      // the context can grow significantly during the search loop. tool_choice
-      // 'any' still forces a final custom-tool call (web_search is a server
-      // tool and not subject to the constraint).
-      max_tokens: 12000,
-      system: systemPrompt,
-      tools,
-      tool_choice: { type: 'any' },   // force one of the two custom tools
-      messages: [{ role: 'user', content: rawQuestion }],
-    });
-
-    // 5. Extract the tool call.
-    const toolUse = (claudeResp.content || []).find(b => b.type === 'tool_use');
-    if (!toolUse) {
-      return res.status(502).json({ error: 'Model returned no tool call', cache: 'miss' });
-    }
-
-    let payload = {
-      legend: null, unit: null, source_note: null, values: [], refusal: null,
-    };
-    if (toolUse.name === 'decline_question') {
-      payload.refusal = String(toolUse.input?.reason || 'Question cannot be answered as a heatmap.');
-    } else if (toolUse.name === 'set_country_values') {
-      const raw = toolUse.input || {};
-      payload.legend      = String(raw.legend || rawQuestion).slice(0, 120);
-      payload.unit        = raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : ''));
-      payload.source_note = String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240);
-      // Validate ISOs against the whitelist; drop hallucinated codes.
-      // Track the dropped ISOs so we can see why a country went missing
-      // (model omitted it, model emitted NaN, model used unknown ISO, etc).
-      const seen = new Set();
-      const droppedNaN = [];
-      const droppedUnknownIso = [];
-      const droppedDuplicate = [];
-      const rawArr = Array.isArray(raw.values) ? raw.values : [];
-      payload.values = rawArr
-        .map(v => ({ iso: String(v.iso || '').toUpperCase().trim(), value: Number(v.value), origValue: v?.value }))
-        .filter(v => {
-          if (!v.iso) { droppedUnknownIso.push('(empty)'); return false; }
-          if (!isoSet.has(v.iso)) { droppedUnknownIso.push(`${v.iso}=${v.origValue}`); return false; }
-          if (!Number.isFinite(v.value)) { droppedNaN.push(`${v.iso}=${JSON.stringify(v.origValue)}`); return false; }
-          if (seen.has(v.iso)) { droppedDuplicate.push(v.iso); return false; }
-          seen.add(v.iso);
-          return true;
-        })
-        .map(v => ({ iso: v.iso, value: v.value }));
-      console.log(
-        `[heatmap/ask] mode=${mode} q="${rawQuestion}" raw=${rawArr.length} kept=${payload.values.length}` +
-        (droppedNaN.length      ? ` nan=[${droppedNaN.join(',')}]`           : '') +
-        (droppedUnknownIso.length ? ` unknown_iso=[${droppedUnknownIso.join(',')}]` : '') +
-        (droppedDuplicate.length  ? ` dup=[${droppedDuplicate.join(',')}]`         : '')
-      );
-      // Surface the catalog gap directly: which countries the user expects
-      // (top-10 most populous) made it through, and which were absent
-      // entirely from the model's output (didn't even get a chance to be
-      // dropped).
-      const expected = ['CN','IN','US','ID','PK','NG','BR','BD','RU','MX'];
-      const presentBigTen = expected.filter(c => seen.has(c));
-      const absentBigTen  = expected.filter(c => !seen.has(c) && isoSet.has(c));
-      if (mode === 'rank' || mode === 'percent') {
-        console.log(`[heatmap/ask] big10_present=[${presentBigTen.join(',')}] big10_absent=[${absentBigTen.join(',')}]`);
-      }
-
-      // ── Fill-in pass: rank/binary modes truncate. ────────────────────
-      // Sonnet 4.5 reliably truncates rank-mode answers to ~15 countries
-      // even when the prompt explicitly asks for "every country with a
-      // non-trivial value." We catch this by counting the kept rows and,
-      // when below threshold, running a SECOND call that hands Claude the
-      // existing answer plus the catalog of missing ISOs and asks it to
-      // fill in. Doubles cost on these queries — the result lands in
-      // heatmap_qa_cache so re-asks are free.
-      //
-      // Disable with env: HEATMAP_FILL_IN=false
-      const FILL_IN_THRESHOLDS = { rank: 50, binary: 15 };
-      const fillInEnabled = process.env.HEATMAP_FILL_IN !== 'false';
-      const fillInTarget  = FILL_IN_THRESHOLDS[mode];
-      const needsFillIn   = fillInEnabled
-        && fillInTarget != null
-        && payload.values.length > 0
-        && payload.values.length < fillInTarget;
-
-      if (needsFillIn) {
-        try {
-          const tFillStart = Date.now();
-          // Names lookup so the prompt reads naturally and Claude doesn't
-          // have to re-resolve ISO → country.
-          const isoToName = new Map(countryRows.map(c => [c.iso_code.toUpperCase(), c.name]));
-          const missing = countryRows
-            .map(c => c.iso_code.toUpperCase())
-            .filter(iso => !seen.has(iso));
-          const existingSummary = payload.values
-            .slice()
-            .sort((a, b) => (mode === 'rank' ? a.value - b.value : b.value - a.value))
-            .map(v => `${v.iso} (${isoToName.get(v.iso) || v.iso})=${v.value}`)
-            .join(', ');
-          const lastRank = (mode === 'rank')
-            ? Math.max(...payload.values.map(v => v.value || 0))
-            : null;
-
-          const fillInUserMsg = `Your previous answer to "${rawQuestion}" (mode: ${mode}) returned only ${payload.values.length} countries:
-
-${existingSummary}
-
-The world has 190+ sovereign countries. Your answer is incomplete. Walk through the following countries that were NOT in your previous answer, and identify which of them have a non-trivial value for the question. Use web_search if needed.
-
-Missing from previous answer (${missing.length} countries):
-${missing.map(iso => `${iso} ${isoToName.get(iso) || ''}`.trim()).join('\n')}
-
-${mode === 'rank'
-  ? `Continue the rank sequence — your last rank was ${lastRank}, so new entries should be ranked starting at ${lastRank + 1} and continuing until you've ranked every country with a meaningful value. DO NOT REPEAT countries already in the previous answer above.`
-  : 'Include ONLY countries where the answer is 1 (yes / true). DO NOT REPEAT countries already in the previous answer above.'}
-
-Call set_country_values with ONLY the additional countries.`;
-
-          const fillInResp = await Anthropic.messages.create({
-            model: 'claude-sonnet-4-5-20250929',
-            max_tokens: 8000,
-            system: systemPrompt,
-            tools,
-            // Force the data-emit tool. Decline isn't valid here — the
-            // first call already accepted the question.
-            tool_choice: { type: 'tool', name: 'set_country_values' },
-            messages: [{ role: 'user', content: fillInUserMsg }],
-          });
-
-          const fillInTool = (fillInResp.content || []).find(b => b.type === 'tool_use' && b.name === 'set_country_values');
-          let added = 0;
-          let dupRej = 0, isoRej = 0, nanRej = 0;
-          if (fillInTool) {
-            const fillRaw = fillInTool.input || {};
-            const fillArr = Array.isArray(fillRaw.values) ? fillRaw.values : [];
-            for (const v of fillArr) {
-              const iso = String(v.iso || '').toUpperCase().trim();
-              const num = Number(v.value);
-              if (!iso || !isoSet.has(iso))      { isoRej++; continue; }
-              if (!Number.isFinite(num))         { nanRej++; continue; }
-              if (seen.has(iso))                 { dupRej++; continue; }
-              seen.add(iso);
-              payload.values.push({ iso, value: num });
-              added++;
-            }
-            // Append the fill-in pass to the source_note so users know.
-            if (added > 0 && fillRaw.source_note) {
-              const extra = String(fillRaw.source_note).slice(0, 120);
-              if (!payload.source_note?.includes(extra)) {
-                payload.source_note = `${payload.source_note}; +fill-in: ${extra}`.slice(0, 240);
-              }
-            }
-          }
-          console.log(
-            `[heatmap/ask] fill-in mode=${mode} added=${added} dup=${dupRej} bad_iso=${isoRej} nan=${nanRej} ` +
-            `total=${payload.values.length} (${((Date.now() - tFillStart) / 1000).toFixed(1)}s)`
-          );
-        } catch (fillErr) {
-          // Fill-in failure is non-fatal — return the original answer.
-          console.warn(`[heatmap/ask] fill-in failed: ${fillErr.message}`);
-        }
-      }
-    }
-
-    // 6. Persist (Claude row, source='claude'). Pinned curated rows are
-    //    inserted out-of-band by your seeding scripts.
-    await pool.query(
-      `INSERT INTO heatmap_qa_cache
-         (question_hash, question_text, mode, legend, unit, source_note, values, refusal, source, hit_count, last_hit_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'claude', 1, NOW())
-       ON CONFLICT (question_hash, mode) DO UPDATE SET
-         legend       = EXCLUDED.legend,
-         unit         = EXCLUDED.unit,
-         source_note  = EXCLUDED.source_note,
-         values       = EXCLUDED.values,
-         refusal      = EXCLUDED.refusal,
-         hit_count    = heatmap_qa_cache.hit_count + 1,
-         last_hit_at  = NOW()`,
-      [questionHash, rawQuestion, mode, payload.legend, payload.unit, payload.source_note, JSON.stringify(payload.values), payload.refusal]
-    );
-
+    // 3. Delegate to the shared resolver. It runs the Claude call,
+    //    fill-in pass, and cache write. forceFresh skips its internal
+    //    cache lookup; we already short-circuited cache hits above so
+    //    the resolver always proceeds to Claude here.
+    const result = await heatmapResolver.resolveHeatmap(rawQuestion, mode, { forceFresh: true });
     return res.json({
-      question: rawQuestion,
-      mode,
-      legend: payload.legend,
-      unit: payload.unit,
-      source_note: payload.source_note,
-      values: payload.values,
-      refusal: payload.refusal,
-      source: 'claude',
+      ...result,
       cache: 'miss',
       credits: access.remaining != null ? { remaining: access.remaining, weekly_limit: access.weekly_limit } : undefined,
     });
