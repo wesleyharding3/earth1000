@@ -2729,12 +2729,25 @@ body.flow-maximized #flowArcList {
   z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  /* Center the label within the locked width — short labels like
+     "Story" sit centered instead of left-aligned in a half-empty pill. */
+  justify-content: center;
+  gap: 7px;
+  padding: 5px 12px;
+  /* Locked width — every analysis returns one of three fixed labels
+     ("Story" / "Primary actor" / "Secondary actor"). 168px fits the
+     longest label at the new 11px font size with a 1px breathing
+     buffer. Both bounds locked so all three pills render at the same
+     dimensions regardless of which label they carry — no layout pop
+     when blocks stream in one at a time. */
+  min-width: 168px;
+  max-width: 168px;
+  box-sizing: border-box;
+  white-space: nowrap;
   border-radius: 999px;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(255,255,255,0.06);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2742,8 +2755,8 @@ body.flow-maximized #flowArcList {
 }
 .arcCtxSignalBadge::before {
   content: '';
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 10px currentColor;
@@ -7321,6 +7334,40 @@ button.arcCtxSegDot,
       background: var(--grm-gold); border: 1.5px solid rgba(6,10,18,0.9); box-shadow: 0 0 6px rgba(212,168,67,0.3);
     }
     .cdTimelineDot.video { background: #ff6b6b; box-shadow: 0 0 6px rgba(255,107,107,0.3); }
+    /* Sequential ambient pulse — _startCdTimelinePulse() in JS adds
+       .pulsing to one dot at a time, advancing every 1000ms with
+       wraparound. One full 1s cycle per swap: dot saturates + scales,
+       sonar ring expands and fades, then settles back to baseline. */
+    @keyframes cdTimelineDotPulse {
+      0%   { background: var(--grm-gold);
+             box-shadow: 0 0 6px rgba(212,168,67,0.3), 0 0 0 0 rgba(212,168,67,0.9);
+             transform: scale(1); }
+      15%  { background: rgba(255,225,150,1);
+             box-shadow: 0 0 14px rgba(212,168,67,1), 0 0 0 4px rgba(212,168,67,0.55);
+             transform: scale(1.65); }
+      60%  { background: rgba(240,200,100,0.95);
+             box-shadow: 0 0 14px rgba(212,168,67,0.6), 0 0 0 16px rgba(212,168,67,0);
+             transform: scale(1.2); }
+      100% { background: var(--grm-gold);
+             box-shadow: 0 0 6px rgba(212,168,67,0.3), 0 0 0 0 rgba(212,168,67,0);
+             transform: scale(1); }
+    }
+    @keyframes cdTimelineDotPulseVideo {
+      0%   { background: #ff6b6b;
+             box-shadow: 0 0 6px rgba(255,107,107,0.3), 0 0 0 0 rgba(255,107,107,0.9);
+             transform: scale(1); }
+      15%  { background: rgba(255,180,180,1);
+             box-shadow: 0 0 14px rgba(255,107,107,1), 0 0 0 4px rgba(255,107,107,0.55);
+             transform: scale(1.65); }
+      60%  { background: rgba(255,140,140,0.95);
+             box-shadow: 0 0 14px rgba(255,107,107,0.6), 0 0 0 16px rgba(255,107,107,0);
+             transform: scale(1.2); }
+      100% { background: #ff6b6b;
+             box-shadow: 0 0 6px rgba(255,107,107,0.3), 0 0 0 0 rgba(255,107,107,0);
+             transform: scale(1); }
+    }
+    .cdTimelineDot.pulsing       { animation: cdTimelineDotPulse      1s ease-out; }
+    .cdTimelineDot.video.pulsing { animation: cdTimelineDotPulseVideo 1s ease-out; }
     .cdTimelineDate {
       font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.3); letter-spacing: 0.08em; margin-bottom: 2px;
     }
@@ -40951,10 +40998,42 @@ body.ticker-active .gTickerLabel {
 
   function closeNodePanel() {
     if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
+    _stopCdTimelinePulse();
     detailEl.classList.remove("open", "cdMaximized", "cdMinimized");
     cdSnapState = "default";
     detailEl.style.height = "";
     _selected = null;
+  }
+
+  // ── Sequential pulse loop for the thread-detail timeline bullets ─
+  // Adds `.pulsing` to one .cdTimelineDot at a time inside
+  // #cdTimelineBody, advancing every 1000ms with wraparound. Each
+  // class swap re-fires the @keyframes cdTimelineDotPulse defined
+  // alongside the dot CSS. `requestAnimationFrame` between remove and
+  // add forces the keyframes to restart instead of being collapsed
+  // into one tick (which would skip the animation entirely).
+  // Restart-safe: called from every render path (timelines→threads,
+  // threads→articles), and stopped from closeNodePanel.
+  let _cdTimelinePulseTimer = null;
+  function _startCdTimelinePulse() {
+    _stopCdTimelinePulse();
+    const dots = document.querySelectorAll('#cdTimelineBody .cdTimelineDot');
+    if (!dots.length) return;
+    let i = 0;
+    dots.forEach(d => d.classList.remove('pulsing'));
+    dots[0].classList.add('pulsing');
+    _cdTimelinePulseTimer = setInterval(() => {
+      dots.forEach(d => d.classList.remove('pulsing'));
+      i = (i + 1) % dots.length;
+      requestAnimationFrame(() => {
+        if (dots[i] && dots[i].isConnected) dots[i].classList.add('pulsing');
+      });
+    }, 1000);
+  }
+  function _stopCdTimelinePulse() {
+    if (_cdTimelinePulseTimer) { clearInterval(_cdTimelinePulseTimer); _cdTimelinePulseTimer = null; }
+    document.querySelectorAll('#cdTimelineBody .cdTimelineDot.pulsing')
+      .forEach(d => d.classList.remove('pulsing'));
   }
 
   function makeCdCard(a) {
@@ -41413,6 +41492,10 @@ body.ticker-active .gTickerLabel {
           timelineEl.innerHTML = `<div class="cdTimeline">${sorted.map(makeTimelineItem).join("")}</div>`;
         }
       }
+      // Re-fire the sequential pulse loop against the freshly rendered
+      // dots. _start clears any existing interval first so this is
+      // safe to call on every re-render.
+      _startCdTimelinePulse();
     });
 
     // Render the Sources section — articles only for both kinds now.
