@@ -3313,27 +3313,9 @@ button.arcCtxSegDot,
   background: rgba(0,220,130,0.06); animation: arcCardExpand 0.25s ease-out;
 }
 
-/* Top-left return arrow — fades in on expansion, returns to bar list. */
-.arcCardReturnBtn {
-  -webkit-appearance: none; appearance: none;
-  position: absolute; top: 6px; left: 6px;
-  width: 22px; height: 22px; padding: 0;
-  background: transparent; border: none; outline: none;
-  color: rgba(255,255,255,0.55);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  opacity: 0; transform: translateX(-3px);
-  animation: arcCardReturnFadeIn 0.36s cubic-bezier(0.32, 0.72, 0, 1) 0.08s forwards;
-  transition: color 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  z-index: 2;
-}
-.arcCardReturnBtn:hover { color: rgba(255,255,255,0.95); }
-.arcCardReturnBtn svg { width: 14px; height: 14px; }
-@keyframes arcCardReturnFadeIn {
-  from { opacity: 0; transform: translateX(-3px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
+/* (Removed .arcCardReturnBtn + its keyframes — was the duplicate top-left
+   return arrow overlaid on the image. Removed because the bottom-row
+   arcCardIconBtn[data-action="deselect"] already provides the back path.) */
 
 /* Bottom-right icon buttons (eye / page) — transparent, no pill. */
 .arcCardIconBtn {
@@ -22883,8 +22865,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         html += `<button class="arcCardBtn deselect" data-action="deselect">Back</button>`;
         html += `</div>`;
       } else {
-        // Top-left return arrow — fades in; returns to bar list.
-        html += `<button class="arcCardReturnBtn" data-action="return" title="Back to list" aria-label="Back to list">${SVG_BACK}</button>`;
+        // (Removed: a duplicate top-left return arrow used to overlay the
+        // image. The bottom-row arcCardMetaRow already exposes a "back"
+        // icon next to the route label, which is the canonical control
+        // — keeping both was visually noisy. Same render path serves
+        // News Flows routes, Threads flow routes, and Lines flow routes.)
         if (flow.imageUrl) {
           html += `<img class="arcCardImg" src="${esc(flow.imageUrl)}" alt="" onerror="this.style.display='none'" />`;
         }
@@ -22938,14 +22923,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         deselectArc();
       });
-      // Top-left return arrow (individual card only) — same as Back.
-      div.querySelector('[data-action="return"]')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (window.__threadMacroCurrent && window.__flowInArticleMicroView) {
-          try { window.__flowExitArticleMicroView?.(); } catch (_) {}
-        }
-        deselectArc();
-      });
+      // (Removed listener for [data-action="return"] — that button was the
+      // image-overlay back arrow, deleted above. The bottom-row deselect
+      // button is the sole "back" path now.)
       // Eye — two modes:
       //   • Thread context: enter/swap/exit the article micro-view (zoom
       //     into the article's own src→dst flow).
