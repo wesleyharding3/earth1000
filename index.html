@@ -8969,6 +8969,15 @@ body.flow-maximized #flowArcList {
         min-height: var(--tap-min);
         touch-action: manipulation;
       }
+      /* Circular tap targets need BOTH min-height AND min-width clamped to
+         the same floor — without this, .iconBtn / .snapBtn ended up as
+         38×44 / 36×44 vertical ellipses on mobile because the explicit
+         height collapsed to 38/36 while min-height (44) won. */
+      .iconBtn,
+      .snapBtn,
+      .bDot {
+        min-width: var(--tap-min);
+      }
 
       /* ── Fluid typography on key panel/card text ── */
       /* Panel titles */
@@ -9181,13 +9190,15 @@ body.flow-maximized #flowArcList {
         left: 8px;
         gap: 6px;
       }
+      /* Match the 44px shared min-* floor so the explicit and the floor
+         agree — keeps the cascade simple and the buttons perfectly round. */
       .iconBtn {
-        width: 38px;
-        height: 38px;
+        width: var(--tap-min);
+        height: var(--tap-min);
       }
       .iconBtn svg {
-        width: 14px;
-        height: 14px;
+        width: 16px;
+        height: 16px;
       }
 
       /* ── Tooltips on mobile: constrain to viewport, don't rely on hover ── */
@@ -9560,8 +9571,10 @@ body.flow-maximized #flowArcList {
   }
 
   /* Panel resize handle / snap buttons */
-  .snapBtn { width: 36px; height: 36px; }
-  .snapBtn svg { width: 14px; height: 14px; }
+  /* Panel resize handle / snap buttons — explicit size matches the shared
+     min-* tap floor so the cascade is consistent and the buttons stay round. */
+  .snapBtn { width: var(--tap-min); height: var(--tap-min); }
+  .snapBtn svg { width: 16px; height: 16px; }
 
   /* Sort bar */
   .panelSortOption { padding: 14px 0; }
