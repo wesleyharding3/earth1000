@@ -1577,9 +1577,14 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
         featured_video: {
           enabled:              true,
           duration_seconds:     t._featuredVideo.duration_sec || 15,
-          // Heatmap is the new editor default — fall through to it when the
-          // manifest didn't specify a media_type.
-          media_type:           t._featuredVideo.media_type || 'heatmap',
+          // Default media_type is YouTube — it's what most threads have
+          // ready (video_ids on constituent articles). Heatmap is opt-in
+          // ONLY: the editor must explicitly set media_type === 'heatmap'
+          // (typically alongside heatmap_question + heatmap_mode). This
+          // matches the editor's UX: heatmap is a deliberate "this story
+          // benefits from a country-by-country visualization" choice, not
+          // a fallback for missing video.
+          media_type:           t._featuredVideo.media_type || 'youtube',
           // Verbatim override the narrator must use for the last sentence
           // before the [VIDEO_HANDOFF] when filled.
           narrator_transition:      t._featuredVideo.narrator_transition || '',
@@ -1691,7 +1696,7 @@ ENTITY RULES (critical for globe arc visualisation):
 
 FEATURED MEDIA HANDOFF (critical for timing):
 - Some stories include a "featured_video" field. The "media_type" inside it tells you WHICH kind of media will appear at the handoff. The narrator's voiceover must be split into two halves around a [VIDEO_HANDOFF] marker so the player can fire the visual at the precise sentence boundary.
-- "heatmap" is the editor's default media_type — when no specific clip or post is set, a featured heatmap is the expected canvas. Treat it as first-class, not a fallback.
+- The default media_type is "youtube" — a third-party video clip from a constituent article. Heatmap and Twitter media are OPT-IN: they appear only when the editor explicitly designates them. Treat each media_type by the rules below; do not assume any one is "first-class."
 
 When "featured_video" is present, ALWAYS:
   1. Write the voiceover in TWO parts. Insert the marker [VIDEO_HANDOFF] at the split point.

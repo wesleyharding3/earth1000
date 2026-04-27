@@ -20001,11 +20001,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const surfaceNormal = pos.clone().normalize();
         const dot = surfaceNormal.dot(camDir);
         if (dot > -0.05 || projected.z > 1) {
-          if (card) card.style.opacity = '0';
+          if (card)   card.style.opacity = '0';
           if (lineEl) lineEl.style.opacity = '0';
           return;
         }
-        if (card) card.style.opacity = '';
+        // Reveal both card and SVG leader line when the point is
+        // camera-facing again. Without restoring lineEl.opacity here,
+        // a label that was hidden on the back hemisphere would come
+        // back without its connecting line — which is the very thing
+        // the user is asking for ("svg line, dot-product check").
+        if (card)   card.style.opacity   = '';
+        if (lineEl) lineEl.style.opacity = '';
         trackHoverCard(sx, sy);
       };
 
@@ -20019,28 +20025,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const pts    = isCityNode ? cityPoints : countryPoints;
         const idx    = arr.findIndex(n => n.name === nodeObj.name);
         if (idx < 0 || !pts) return;
-        // Store tracking reference for render-loop updates
+        // Store tracking reference so the render-loop tracker
+        // (_briefingTrackHoverCard) can re-evaluate visibility every
+        // frame as the camera flies. Set BEFORE the dot-product gate
+        // so a country that's not yet camera-facing still gets tracked
+        // and revealed the moment it rotates into view.
         _briefingHoverRef = { posArr, pts, idx };
         const pos = new THREE.Vector3(
           posArr[idx * 3], posArr[idx * 3 + 1], posArr[idx * 3 + 2]
         ).applyMatrix4(pts.matrixWorld);
         const projected = pos.clone().project(camera);
-        // Skip if point is on the far side of the globe
-        const camDir = pos.clone().sub(camera.position).normalize();
-        const surfaceNormal = pos.clone().normalize();
-        if (surfaceNormal.dot(camDir) > -0.05 || projected.z > 1) return;
         const rect = renderer.domElement.getBoundingClientRect();
         const sx = (projected.x  + 1) / 2 * rect.width  + rect.left;
         const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
         // Use the enriched array entry (has .population) rather than the
         // simplified segment object, merging so any extra briefing fields are kept
         const enriched = Object.assign({}, nodeObj, arr[idx] || {});
+        // Always populate the card content with showHoverCard, then mark
+        // it briefing-forced so it survives the body.briefing-active
+        // display-none rule. The tracker decides visibility per frame
+        // by toggling .style.opacity — content is ready the moment the
+        // country becomes camera-facing, instead of bailing here and
+        // leaving the card empty for the rest of the segment.
         showHoverCard(enriched, sx, sy);
-        // Force-show during briefing (overrides body.briefing-active display:none)
         const card = document.getElementById('hoverCard');
         const lineEl = document.getElementById('hoverLineEl');
         if (card) card.classList.add('briefing-forced');
         if (lineEl) lineEl.classList.add('briefing-forced');
+        // If the country is on the back hemisphere right now, hide the
+        // card immediately so it doesn't flash before the tracker takes
+        // over. The tracker will reveal it the next frame the dot-
+        // product check passes.
+        const camDir = pos.clone().sub(camera.position).normalize();
+        const surfaceNormal = pos.clone().normalize();
+        if (surfaceNormal.dot(camDir) > -0.05 || projected.z > 1) {
+          if (card)   card.style.opacity   = '0';
+          if (lineEl) lineEl.style.opacity = '0';
+        }
       };
 
       // Hide the hover card (briefing cleanup between segments)
@@ -40247,9 +40268,8 @@ body.ticker-active .gTickerLabel {
     const panel   = document.getElementById('bArticlePanel');
     const snapIdx = segIdx;
     const twitterUrl = seg?.video?.twitter_url || seg?.twitter_url || '';
-    const hasMedia = videoId || twitterUrl;
     panel.classList.remove('visible');
-    if (!ids?.length && !hasMedia) { panel.innerHTML = ''; return; }
+    if (!ids?.length && !videoId && !twitterUrl) { panel.innerHTML = ''; return; }
     try {
       let articles = [];
       if (ids?.length) {
@@ -40258,17 +40278,60 @@ body.ticker-active .gTickerLabel {
         articles = await res.json();
       }
       if (segIdx !== snapIdx) return;
-      // When media present: media card first, then 1 article card
-      // When no media: 2 article cards
-      const cards = [];
-      if (hasMedia) {
-        cards.push(makeVideoCard(videoId, seg));
-        cards.push(...articles.slice(0, 1).map(makeAPCard));
+
+      // ── Decide what occupies the side-video slot ────────────────────
+      //
+      //   featured-video : the segment has a featured YouTube video. The
+      //                    existing pending-thumbnail → handoff → embed
+      //                    flow runs in makeVideoCard; we keep that.
+      //   twitter        : the featured media is an X post / X video.
+      //                    makeVideoCard renders the embed directly.
+      //   article-video  : the segment has NO featured video (or its
+      //                    featured media is a heatmap takeover) BUT one
+      //                    of its constituent articles has its own
+      //                    video_id. We pin that as a simple embed so the
+      //                    side panel always carries video when any video
+      //                    exists in the segment's universe.
+      //   null           : no video available — both side slots become
+      //                    rotating article cards.
+      let sideContent = null;
+      let sideVideoId = null;
+      let sideArticleVideo = null;
+      if (videoId) {
+        sideContent = 'featured-video';
+        sideVideoId = videoId;
+      } else if (twitterUrl) {
+        sideContent = 'twitter';
       } else {
-        cards.push(...articles.slice(0, 2).map(makeAPCard));
+        const av = articles.find(a => a && a.video_id);
+        if (av) {
+          sideContent = 'article-video';
+          sideVideoId = av.video_id;
+          sideArticleVideo = av;
+        }
       }
+
+      // Pool that feeds the rotating article slot(s). Drop the article
+      // we used for the side video so it doesn't appear twice.
+      const articlePool = sideArticleVideo
+        ? articles.filter(a => a.id !== sideArticleVideo.id)
+        : articles.slice();
+
+      // Slot count: 1 rotating article slot when a side-media occupies
+      // the first slot; otherwise 2 article slots.
+      const rotatingSlotCount = sideContent ? 1 : 2;
+      const initialArticles = articlePool.slice(0, rotatingSlotCount);
+
+      const cards = [];
+      if (sideContent === 'featured-video' || sideContent === 'twitter') {
+        cards.push(makeVideoCard(sideVideoId, seg));
+      } else if (sideContent === 'article-video') {
+        cards.push(makeArticleVideoCard(sideArticleVideo));
+      }
+      cards.push(...initialArticles.map(makeAPCard));
       panel.innerHTML = cards.join('');
       if (cards.length) panel.classList.add('visible');
+
       // Initialize Twitter embed if present
       const tweetCard = document.getElementById('bVideoCard');
       if (tweetCard?.dataset?.tweetUrl) {
@@ -40277,9 +40340,79 @@ body.ticker-active .gTickerLabel {
       // Backfill video source name from first article
       const srcEl = document.getElementById('bVideoSource');
       if (srcEl && articles.length) srcEl.textContent = articles[0].source_name || '—';
+
+      // ── Mid-segment article rotation ────────────────────────────────
+      // If the article pool has more articles than fit in the rotating
+      // slots, swap them at 50% of the segment's audio duration. The
+      // side-video / twitter card stays put; only the article-card slots
+      // rotate. addBTimer registers each timer with the briefing
+      // registry so it gets cleared on segment change.
+      if (articlePool.length > rotatingSlotCount) {
+        const dur = getSegmentDuration(snapIdx) * 1000;
+        const swapAtMs = Math.max(2000, Math.round(dur / 2));
+        addBTimer(setTimeout(() => {
+          if (segIdx !== snapIdx) return;
+          const nextBatch = articlePool.slice(
+            rotatingSlotCount,
+            rotatingSlotCount + rotatingSlotCount
+          );
+          if (!nextBatch.length) return;
+          // Article cards are .bAPCard nodes that aren't the video /
+          // twitter / article-video card. The :not()s keep the sticky
+          // first-slot media card from being treated as rotatable.
+          const cardEls = panel.querySelectorAll(
+            '.bAPCard:not(.bAPVideoCard):not(.bAPArticleVideoCard):not(.bAPTwitterCard)'
+          );
+          if (!cardEls.length) return;
+          // Fade out → replace HTML → fade in. ~220ms each side, gap of
+          // a single frame so the transition has a defined start.
+          cardEls.forEach(el => {
+            el.style.transition = 'opacity 0.22s ease';
+            el.style.opacity = '0';
+          });
+          addBTimer(setTimeout(() => {
+            if (segIdx !== snapIdx) return;
+            for (let i = 0; i < cardEls.length && i < nextBatch.length; i++) {
+              const tmp = document.createElement('div');
+              tmp.innerHTML = makeAPCard(nextBatch[i]);
+              const newEl = tmp.firstElementChild;
+              if (!newEl) continue;
+              newEl.style.opacity = '0';
+              newEl.style.transition = 'opacity 0.22s ease';
+              cardEls[i].replaceWith(newEl);
+              void newEl.offsetWidth; // flush so the transition has a defined starting frame
+              newEl.style.opacity = '1';
+            }
+          }, 230));
+        }, swapAtMs));
+      }
     } catch (_) {
       if (segIdx === snapIdx) { panel.innerHTML = ''; }
     }
+  }
+
+  // ── Article-derived video card (non-featured side video) ──────────────
+  // Renders a simple muted-autoplay YouTube embed pinned to the side
+  // panel for the duration of a segment. No takeover, no handoff — this
+  // is for segments whose featured media is a heatmap (or absent) but
+  // whose constituent articles still carry a video worth pinning.
+  function makeArticleVideoCard(article) {
+    const videoId = article.video_id;
+    const title = (article.translated_title || article.title || '').replace(/</g, '&lt;');
+    const safeUrl = (article.url || '').replace(/'/g, '%27');
+    const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1`;
+    return `<div class="bAPCard bAPArticleVideoCard">
+      <div class="bAPArticleVideoEmbed" style="position:relative;width:100%;aspect-ratio:16/9;background:#000">
+        <iframe src="${src}" style="position:absolute;inset:0;width:100%;height:100%;border:0"
+                allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy"></iframe>
+      </div>
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource">${article.source_name || ''}</span>
+        </div>
+        <div class="bAPCardTitle" onclick="window.open('${safeUrl}','_blank')" style="cursor:pointer">${title}</div>
+      </div>
+    </div>`;
   }
 
   // ── Arc cleanup ───────────────────────────────────────────────────────────
