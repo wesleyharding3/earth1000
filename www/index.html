@@ -2972,10 +2972,18 @@ body.flow-maximized #flowArcList {
 .arcCtxSegDots {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  /* Bumped 10 → 14: with the previous tight gap, neighboring dots'
+     halos overlapped enough to read as a continuous flat line of
+     orange light instead of discrete circles. */
+  gap: 14px;
 }
 button.arcCtxSegDot,
 .arcCtxSegDot {
+  /* Default appearance reset — WKWebView in particular adds
+     -webkit-appearance: button which can squash tiny <button>s
+     visually. Force the dot to be a clean filled circle. */
+  -webkit-appearance: none;
+  appearance: none;
   width: 6px !important;
   height: 6px !important;
   min-width: 6px !important;
@@ -2987,26 +2995,39 @@ button.arcCtxSegDot,
   padding: 0 !important;
   flex: 0 0 6px !important;
   background: rgba(180,200,230,0.55) !important;
-  box-shadow: 0 0 6px rgba(180,200,230,0.45) !important;
+  /* Removed baseline glow — dots stay clean and crisp at rest. */
+  box-shadow: none !important;
   cursor: pointer;
   transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 .arcCtxSegDot:hover {
   background: rgba(220,235,255,0.85) !important;
-  box-shadow: 0 0 8px rgba(220,235,255,0.75) !important;
+  box-shadow: 0 0 6px rgba(220,235,255,0.55) !important;
+}
+/* Future segments — rendered upfront so the user sees the total count
+   from frame 0, but visually muted because they haven't been reached
+   yet. Sits below baseline opacity. */
+.arcCtxSegDot.is-pending {
+  background: rgba(180,200,230,0.30) !important;
+  box-shadow: none !important;
 }
 .arcCtxSegDot.is-done {
-  background: rgba(255,188,96,0.85) !important;
-  box-shadow: 0 0 8px rgba(255,188,96,0.65), 0 0 16px rgba(255,160,60,0.35) !important;
+  background: rgba(255,188,96,0.92) !important;
+  /* Tightened halo: was 8px+16px (which bled into neighbors at 10px gap
+     and made the row read as one continuous orange line). 4px halo plus
+     wider gap keeps each done-dot visually distinct. */
+  box-shadow: 0 0 4px rgba(255,188,96,0.55) !important;
 }
 .arcCtxSegDot.is-active {
   background: #ffd28a !important;
-  box-shadow: 0 0 10px rgba(255,210,140,0.95), 0 0 20px rgba(255,180,80,0.55) !important;
+  /* Tightened halo: 4px+8px (was 10px+20px). Pulse animation below
+     stays within ~12px reach, well under the 14px gap. */
+  box-shadow: 0 0 5px rgba(255,210,140,0.85), 0 0 9px rgba(255,180,80,0.40) !important;
   animation: arcCtxSegDotPulse 1.4s ease-in-out infinite;
 }
 @keyframes arcCtxSegDotPulse {
-  0%, 100% { transform: scale(1.0); box-shadow: 0 0 8px rgba(255,210,140,0.75), 0 0 16px rgba(255,180,80,0.40); }
-  50%      { transform: scale(1.3); box-shadow: 0 0 14px rgba(255,220,160,1.0), 0 0 26px rgba(255,190,90,0.65); }
+  0%, 100% { transform: scale(1.0); box-shadow: 0 0 4px rgba(255,210,140,0.70), 0 0 7px rgba(255,180,80,0.32); }
+  50%      { transform: scale(1.3); box-shadow: 0 0 7px rgba(255,220,160,0.95), 0 0 12px rgba(255,190,90,0.50); }
 }
 /* When the stream is paused waiting on the user to click Next, make
    the Next arrow pulse harder so the affordance is obvious. */
@@ -12048,6 +12069,15 @@ window.__earthAnalysis = (function() {
     if (window.__arcCtxSegmented && (body?.id === 'cdAnalysisBody')) {
       window.__arcCtxSegmented.setManualMode(body, true);
     }
+    // Pre-declare the total segment count so the bottom nav renders
+    // upfront with N dots from frame 0 — instead of growing one dot
+    // per block as they stream in. Skipped only by callers that opt
+    // out via the SHARED stream() function (none currently do; the
+    // mobile flow-context panel uses its own _arcCtxStream loop and
+    // is not affected here).
+    if (body && normalized.length >= 2) {
+      body.dataset.segTotal = String(normalized.length);
+    }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
       if (signal?.aborted) break;
@@ -12064,6 +12094,10 @@ window.__earthAnalysis = (function() {
     }
     live.forEach(b => { b.typedText = b.text; b.status = 'done'; });
     renderBlocks(body, live);
+    // Done streaming — segTotal can be cleared so any subsequent
+    // re-render (e.g. user clicks dots to revisit) uses the actual
+    // rendered count without a stale floor.
+    if (body) delete body.dataset.segTotal;
   }
   return { showLoading, showMessage, renderBlocks, stream, esc };
 })();
@@ -12085,24 +12119,37 @@ window.__arcCtxSegmented = (function() {
     return blocks.length - 1;
   }
 
+  // Resolve the intended segment count for this body. If the caller has
+  // declared a total via dataset.segTotal (set BEFORE streaming so the
+  // nav can render full-width from frame 0), use that as the floor —
+  // otherwise fall back to the actual rendered block count.
+  function _segTotalFor(body, blocks) {
+    const declared = parseInt(body?.dataset?.segTotal || '', 10);
+    return (Number.isFinite(declared) && declared > blocks.length) ? declared : blocks.length;
+  }
+
   function setActive(body, idx) {
     const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
-    if (!blocks.length) return;
-    const clamped = Math.max(0, Math.min(blocks.length - 1, idx));
+    const total  = _segTotalFor(body, blocks);
+    if (!total) return;
+    const clamped = Math.max(0, Math.min(total - 1, idx));
     body.dataset.segManualIdx = String(clamped);
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === clamped));
     const navHost = body.parentElement || body;
     const nav = navHost.querySelector(':scope > .arcCtxSegNav') || body.querySelector('.arcCtxSegNav');
     if (!nav) return;
     nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
-      d.classList.toggle('is-active', i === clamped);
-      d.classList.toggle('is-done',   blocks[i]?.classList.contains('is-done'));
+      d.classList.toggle('is-active',  i === clamped);
+      d.classList.toggle('is-done',    blocks[i]?.classList.contains('is-done'));
+      // Future segments — rendered but not yet typed. Drops the
+      // is-pending class as soon as a real block arrives at index i.
+      d.classList.toggle('is-pending', !blocks[i]);
     });
     const prev = nav.querySelector('.arcCtxSegPrev');
     const next = nav.querySelector('.arcCtxSegNext');
     const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
     if (prev) prev.toggleAttribute('disabled', clamped <= 0);
-    if (next) next.toggleAttribute('disabled', clamped >= blocks.length - 1 && !morePending);
+    if (next) next.toggleAttribute('disabled', clamped >= total - 1 && !morePending);
   }
 
   // Wire click handlers directly on the nav's buttons. The nav is
@@ -12142,7 +12189,14 @@ window.__arcCtxSegmented = (function() {
     // no Next arrow to click and the stream is stuck forever. So when
     // morePending is true we keep the nav visible even with one block.
     const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
-    if (blocks.length < 2 && !morePending) {
+    // segTotal is set by the caller BEFORE streaming begins so the nav
+    // can render with N dots from frame 0, even though only the first
+    // block is in DOM. As blocks stream in, dots transition from
+    // is-pending → is-active → is-done. Falls back to actual block
+    // count when no total was declared (e.g. flow-context on mobile,
+    // which keeps the legacy incremental-reveal behavior).
+    const total = _segTotalFor(body, blocks);
+    if (total < 2 && !morePending) {
       body.classList.remove('arcCtxStateSegmented');
       body.querySelector(':scope > .arcCtxSegNav')?.remove();
       navHost.querySelector(':scope > .arcCtxSegNav')?.remove();
@@ -12157,7 +12211,7 @@ window.__arcCtxSegmented = (function() {
       ? Number(body.dataset.segManualIdx)
       : null;
     let activeIdx = pickActiveIndex(blocks, manualIdx);
-    if (activeIdx < 0 || activeIdx >= blocks.length) activeIdx = blocks.length - 1;
+    if (activeIdx < 0 || activeIdx >= total) activeIdx = Math.max(0, blocks.length - 1);
 
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === activeIdx));
 
@@ -12167,15 +12221,23 @@ window.__arcCtxSegmented = (function() {
     if (stale) stale.remove();
 
     let nav = navHost.querySelector(':scope > .arcCtxSegNav');
-    const needsRebuild = !nav || nav.querySelectorAll('.arcCtxSegDot').length !== blocks.length;
+    const needsRebuild = !nav || nav.querySelectorAll('.arcCtxSegDot').length !== total;
     if (needsRebuild) {
       if (nav) nav.remove();
       nav = document.createElement('div');
       nav.className = 'arcCtxSegNav';
-      const dotHtml = blocks.map((b, i) =>
-        `<button class="arcCtxSegDot${i === activeIdx ? ' is-active' : ''}${b.classList.contains('is-done') ? ' is-done' : ''}" data-seg="${i}" aria-label="Section ${i + 1}"></button>`
-      ).join('');
-      const nextDisabled = (activeIdx >= blocks.length - 1) && !morePending;
+      const dotHtml = Array.from({ length: total }, (_, i) => {
+        const block = blocks[i];
+        const isActive  = i === activeIdx;
+        const isDone    = !!block?.classList.contains('is-done');
+        const isPending = !block;
+        const cls = ['arcCtxSegDot'];
+        if (isActive)  cls.push('is-active');
+        if (isDone)    cls.push('is-done');
+        if (isPending) cls.push('is-pending');
+        return `<button class="${cls.join(' ')}" data-seg="${i}" aria-label="Section ${i + 1}"></button>`;
+      }).join('');
+      const nextDisabled = (activeIdx >= total - 1) && !morePending;
       nav.innerHTML =
         `<button class="arcCtxSegArrow arcCtxSegPrev" aria-label="Previous"${activeIdx <= 0 ? ' disabled' : ''}>&lsaquo;</button>` +
         `<div class="arcCtxSegDots">${dotHtml}</div>` +
@@ -12184,13 +12246,15 @@ window.__arcCtxSegmented = (function() {
       wireNavHandlers(body, nav);
     } else {
       nav.querySelectorAll('.arcCtxSegDot').forEach((d, i) => {
-        d.classList.toggle('is-active', i === activeIdx);
-        d.classList.toggle('is-done',   blocks[i]?.classList.contains('is-done'));
+        const block = blocks[i];
+        d.classList.toggle('is-active',  i === activeIdx);
+        d.classList.toggle('is-done',    !!block?.classList.contains('is-done'));
+        d.classList.toggle('is-pending', !block);
       });
       const prev = nav.querySelector('.arcCtxSegPrev');
       const next = nav.querySelector('.arcCtxSegNext');
       if (prev) prev.toggleAttribute('disabled', activeIdx <= 0);
-      if (next) next.toggleAttribute('disabled', (activeIdx >= blocks.length - 1) && !morePending);
+      if (next) next.toggleAttribute('disabled', (activeIdx >= total - 1) && !morePending);
     }
   }
 
@@ -15756,7 +15820,7 @@ function computeCityTiers(cities) {
 
       window.addEventListener("mousedown", e => {
         if (window.__currentPage !== 1) return;
-        if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel")) return;
+        if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON" || e.target.closest("#settingsSidebar") || e.target.closest("#infoPanel") || e.target.closest("#clusterDetail")) return;
 
         // Don't start dragging or clear focus if panel is active - let click handler close it first
         if (isPanelActive()) return;
@@ -15859,7 +15923,11 @@ function computeCityTiers(cities) {
           // Point check catches the case where the card is in the DOM but
           // hasn't had its listeners attached yet.
           touchTarget?.closest("#flowCtxCard") ||
-          touchTarget?.closest("#articleDetailPanel")
+          touchTarget?.closest("#articleDetailPanel") ||
+          // Cluster-detail panel (also hosts the local thread panel). A
+          // scroll-drag inside should always scroll the panel, never
+          // rotate the globe. Same pattern as the others above.
+          touchTarget?.closest("#clusterDetail")
         ) return;
 
         // Don't start dragging if panel is active - let touch handler close it first
@@ -18933,6 +19001,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
         if (panel.classList.contains("active") && panel.contains(e.target)) return;
+        // Same exclusion for #clusterDetail (city/country panels and the
+        // local thread panel). A wheel scroll inside that panel must
+        // scroll the panel, not rotate the globe.
+        const cd = document.getElementById("clusterDetail");
+        if (cd?.classList.contains("open") && cd.contains(e.target)) return;
         e.preventDefault();
         
         // Stop any in-progress camera animation
@@ -22393,6 +22466,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }));
       _arcCtxCache.set(key, finalized);
       if (_arcCtxCurrentKey === key) _arcCtxRenderBlocks(key);
+      // Clear the segTotal floor once streaming completes so subsequent
+      // re-renders (revisits via dot click) use the actual rendered
+      // count, not a stale total from a previous stream.
+      const body = document.getElementById('arcCtxBody');
+      if (body) delete body.dataset.segTotal;
     }
 
     function _arcCtxRenderBlocks(key) {
@@ -22518,6 +22596,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // block begins. Same behavior as the detail panels on desktop.
       if (window.__arcCtxSegmented) {
         window.__arcCtxSegmented.setManualMode(body, true);
+      }
+      // Pre-declare segment total so the bottom nav renders all N dots
+      // from frame 0 — EXCEPT on mobile, which keeps the legacy
+      // incremental-reveal feel since the flow-context card overlays
+      // the live globe and the user is still watching the arcs animate.
+      // On mobile the dots grow with the stream; on desktop they show
+      // the full count immediately so the bar is stable on load.
+      const _isMobileFlowCtx = window.__arcCtxSegmented?.isMobile?.() === true;
+      if (body && normalizedBlocks.length >= 2 && !_isMobileFlowCtx) {
+        body.dataset.segTotal = String(normalizedBlocks.length);
       }
       for (let i = 0; i < normalizedBlocks.length; i += 1) {
         if (signal?.aborted) {
@@ -33106,6 +33194,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (window.__arcCtxSegmented) {
       window.__arcCtxSegmented.setManualMode(body, true);
     }
+    // Pre-declare the total segment count so the bottom nav renders
+    // upfront with N dots from frame 0 — instead of growing one dot
+    // per block as they stream in. Article detail panel always uses
+    // pre-render (no mobile carve-out, unlike the flow-context panel).
+    if (body && normalized.length >= 2) {
+      body.dataset.segTotal = String(normalized.length);
+    }
     const live = [];
     for (let i = 0; i < normalized.length; i += 1) {
       if (signal?.aborted) break;
@@ -33122,6 +33217,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     live.forEach(b => { b.typedText = b.text; b.status = 'done'; });
     _adpAnalysisRenderBlocks(live);
+    // Done — clear the floor so subsequent re-renders use the actual
+    // rendered count.
+    if (body) delete body.dataset.segTotal;
   }
 
   async function _adpAnalysisRender(article) {
