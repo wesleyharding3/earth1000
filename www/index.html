@@ -14461,6 +14461,10 @@ function computeCityTiers(cities) {
 
       // ── Compute tier for each city ────────────────────────────────
       const cityTierIndices = computeCityTiers(cities);
+      // Stamp the tier index on each city object so the 2D Map's city layer
+      // can render the same per-tier sizes as the globe without re-running
+      // the tier computation.
+      for (let _i = 0; _i < cities.length; _i++) cities[_i].__tier = cityTierIndices[_i];
 
       // ── Nearest-neighbour distances for spatial-aware hover ───────
       // O(N²) over ~500 cities — runs once at startup, negligible cost
@@ -25117,6 +25121,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // listeners on the map canvas.
       (function setupMap2DCountries() {
         let _idx = null;
+        let _selectedIso = null;     // currently-highlighted country (matches globe's selectedKey)
         function ensureIdx() {
           if (_idx) return Promise.resolve(_idx);
           if (typeof window.__ensureCountryGeoIdxReady === "function") {
@@ -25129,8 +25134,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         ensureIdx();
 
-        // Convert a clientX/clientY (CSS pixels) to lat/lon using the map's
-        // current scroll/zoom. Returns null if the map isn't mounted.
         function clientToLatLon(clientX, clientY) {
           if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
           const rect = Map2D.state.canvas.getBoundingClientRect();
@@ -25140,8 +25143,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         Map2D.clientToLatLon = clientToLatLon;
 
-        // Hit-test using the existing point-in-polygon helper exposed on
-        // window. Returns the matching {iso, name} entry or null.
         function hitTest(lat, lon) {
           if (!_idx || !_idx.byIso) return null;
           if (typeof window.__pointInCountry !== "function") return null;
@@ -25151,70 +25152,114 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return null;
         }
 
+        // Trace a country's polygons into the *current* path on `ctx` —
+        // shared between the global border stroke pass and the per-country
+        // highlight (selected country gets fill + thicker stroke).
+        function tracePolygons(ctx, entry, baseX, yTop, wW, wH, W) {
+          const polys = entry && entry.rings;
+          if (!polys || !polys.length) return;
+          for (const polyRings of polys) {
+            if (!polyRings) continue;
+            for (const ring of polyRings) {
+              if (!ring || ring.length < 2) continue;
+              for (let tile = -1; tile <= 1; tile++) {
+                const xOff = baseX + tile * wW;
+                const x0 = xOff + ((ring[0][0] + 180) / 360) * wW;
+                const y0 = yTop  + ((90 - ring[0][1]) / 180) * wH;
+                if (x0 < -wW || x0 > W + wW) continue;
+                ctx.moveTo(x0, y0);
+                for (let i = 1; i < ring.length; i++) {
+                  const x = xOff + ((ring[i][0] + 180) / 360) * wW;
+                  const y = yTop  + ((90 - ring[i][1]) / 180) * wH;
+                  ctx.lineTo(x, y);
+                }
+              }
+            }
+          }
+        }
+
         // ── Paint layer ───────────────────────────────────────────────
-        // entry.rings is shaped [polygon][ring][[lon,lat],...] (i.e. a
-        // GeoJSON MultiPolygon). For each ring we draw three horizontal tiles
-        // (–wW, 0, +wW) so the seam at ±180° is invisible during pan.
+        // Borders show in 'country' and 'city' view modes (dimmer in city
+        // mode so the city dots dominate). Other modes (regions / transport
+        // / environment) hide the borders entirely so their dedicated
+        // overlays stay readable.
         Map2D.addLayer((api, ctx) => {
           if (!_idx || !_idx.byIso) return;
+          const vm = window.__currentViewMode || 'country';
+          if (vm !== 'country' && vm !== 'city') return;
+          const dim = (vm !== 'country');
           const W = api.state.width;
           const wW = api.worldW(), wH = api.worldH();
           const baseX = -(((api.state.scrollX % wW) + wW) % wW);
           const yTop  = -api.state.scrollY;
           const isDark = (window.__globeTheme === "dark");
+
+          // Borders pass — single batched stroke.
           ctx.save();
-          ctx.lineWidth   = Math.max(0.75, api.state.dpr * 0.9);
-          ctx.strokeStyle = isDark ? "rgba(190,215,255,0.55)" : "rgba(255,255,255,0.78)";
-          ctx.lineJoin    = "round";
-          ctx.lineCap     = "round";
+          ctx.lineWidth = Math.max(0.75, api.state.dpr * (dim ? 0.7 : 0.9));
+          ctx.strokeStyle = isDark
+            ? `rgba(190,215,255,${dim ? 0.30 : 0.55})`
+            : `rgba(255,255,255,${dim ? 0.40 : 0.78})`;
+          ctx.lineJoin = "round";
+          ctx.lineCap  = "round";
           ctx.beginPath();
           for (const entry of _idx.byIso.values()) {
-            const polys = entry && entry.rings;
-            if (!polys || !polys.length) continue;
-            for (const polyRings of polys) {
-              if (!polyRings) continue;
-              for (const ring of polyRings) {
-                if (!ring || ring.length < 2) continue;
-                for (let tile = -1; tile <= 1; tile++) {
-                  const xOff = baseX + tile * wW;
-                  const x0 = xOff + ((ring[0][0] + 180) / 360) * wW;
-                  const y0 = yTop  + ((90 - ring[0][1]) / 180) * wH;
-                  if (x0 < -wW || x0 > W + wW) continue;
-                  ctx.moveTo(x0, y0);
-                  for (let i = 1; i < ring.length; i++) {
-                    const x = xOff + ((ring[i][0] + 180) / 360) * wW;
-                    const y = yTop  + ((90 - ring[i][1]) / 180) * wH;
-                    ctx.lineTo(x, y);
-                  }
-                }
-              }
-            }
+            tracePolygons(ctx, entry, baseX, yTop, wW, wH, W);
           }
           ctx.stroke();
           ctx.restore();
+
+          // Selection highlight — only in country mode; matches the globe's
+          // polygonLayer selectedKey rendering: warm amber fill + brighter
+          // gold stroke. Uses evenodd so MultiPolygons with holes paint right.
+          if (_selectedIso && vm === 'country') {
+            const sel = _idx.byIso.get(_selectedIso);
+            if (sel) {
+              ctx.save();
+              ctx.beginPath();
+              tracePolygons(ctx, sel, baseX, yTop, wW, wH, W);
+              ctx.fillStyle = "rgba(255,180,60,0.20)";
+              ctx.fill('evenodd');
+              ctx.lineWidth = Math.max(2, api.state.dpr * 2.5);
+              ctx.strokeStyle = "rgba(255,210,110,0.95)";
+              ctx.lineJoin = "round";
+              ctx.lineCap  = "round";
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
         });
 
-        // ── Tap → open country panel ─────────────────────────────────
+        // Expose a tiny API so other code (e.g. panel close) can clear the
+        // highlight. The country tap handler manages it inline.
+        Map2D.setSelectedCountry = (iso) => { _selectedIso = iso || null; };
+        Map2D.getSelectedCountry = () => _selectedIso;
+
+        // ── Tap → highlight + open country panel ─────────────────────
         function onTap(e) {
-          // Cities layer runs first via capture phase; if it claimed the tap
-          // we don't double-open into a country panel.
           if (e.detail && e.detail.__handledCity) return;
+          const vm = window.__currentViewMode || 'country';
+          if (vm !== 'country') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
           if (!ll) return;
           const hit = hitTest(ll.lat, ll.lon);
-          if (!hit) return;
+          if (!hit) {
+            // Tapped empty area — clear current selection.
+            _selectedIso = null;
+            return;
+          }
+          _selectedIso = hit.iso;
           if (typeof window.__openCountryByName === "function") {
             window.__openCountryByName(hit.name, hit.iso);
           }
         }
 
-        // ── Hover → show floating card (desktop) ─────────────────────
+        // ── Hover → show floating card (desktop, country mode only) ──
         let _lastHoverIso = null;
         function onHover(e) {
-          // City layer (capture phase) gets first dibs. If it set the marker,
-          // we skip country hover so the cards don't fight.
           if (e.detail && e.detail.__handledCity) return;
           if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
+          if ((window.__currentViewMode || 'country') !== 'country') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
           if (!ll) return;
           const hit = hitTest(ll.lat, ll.lon);
@@ -25222,14 +25267,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (_lastHoverIso) { _lastHoverIso = null; if (window.__hideHoverCard) window.__hideHoverCard(); }
             return;
           }
-          if (hit.iso === _lastHoverIso) return; // no change
+          if (hit.iso === _lastHoverIso) return;
           _lastHoverIso = hit.iso;
           if (window.__showHoverCard) {
             window.__showHoverCard({ name: hit.name, country: hit.name, flag: "", population: null }, e.detail.clientX, e.detail.clientY);
           }
         }
 
-        // Wire up — re-attach when the canvas first appears.
         function attach() {
           const c = Map2D.state.canvas;
           if (!c) { setTimeout(attach, 100); return; }
@@ -25398,12 +25442,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Hit-priority: cities shadow countries — clicking inside a city's
       // radius opens the city panel instead of the country.
       (function setupMap2DCities() {
-        const HIT_PX_DESKTOP = 14;   // CSS-px tap target
+        const HIT_PX_DESKTOP = 14;
         const HIT_PX_MOBILE  = 22;
+        // Mirror the globe's CITY_TIERS pointSize multipliers so the relative
+        // sizes between tier-0 metropolises and tier-4 long-tail towns feel
+        // identical across views.
+        const TIER_RADIUS_MULT = [2.0, 1.3, 0.9, 0.6, 0.4];
+        const BASE_RADIUS_PX   = 2.4;   // canvas-px radius before tier multiplier
         let _lastHoverNode = null;
 
-        function getCities()    { return Array.isArray(window.__globeCities)    ? window.__globeCities    : []; }
-        function getCountries() { return Array.isArray(window.__globeCountries) ? window.__globeCountries : []; }
+        function getCities() { return Array.isArray(window.__globeCities) ? window.__globeCities : []; }
 
         function clientToLatLon(clientX, clientY) {
           if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
@@ -25412,12 +25460,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const sy = (clientY - rect.top)  * Map2D.state.dpr;
           return Map2D.unproject(sx, sy);
         }
-
-        // Best city near (lat,lon); only returns if within `maxMi` great-circle.
         function nearestCity(lat, lon, maxMi) {
           const cities = getCities();
           if (!cities.length) return null;
-          // Approx haversine, miles
           const R = 3958.8;
           const toRad = Math.PI / 180;
           let best = null, bestD = maxMi;
@@ -25435,11 +25480,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
           return best;
         }
-
-        // Convert a hit radius in CSS-px to a great-circle radius in miles
-        // at the given screen-space scale. Approximation: at the equator,
-        // 1° lon = 69 mi. At lat L, longitude shrinks by cos(L). Latitude
-        // is constant 69 mi/°. We use the mean miles-per-canvas-pixel.
         function hitRadiusMi(lat) {
           const wW = Map2D.worldW();
           const milesPerCanvasPxLon = (360 / wW) * 69 * Math.cos(lat * Math.PI / 180);
@@ -25451,7 +25491,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         // ── Paint layer ─────────────────────────────────────────────
+        // Cities only render in 'city' view mode (matching the globe's
+        // setActiveMode behavior). Tier 0 = brightest/largest with the widest
+        // halo; tier 4 = small pinpricks. Glow uses additive composition so
+        // dense regions like Europe/East Asia bloom into a "city lights" mat.
         Map2D.addLayer((api, ctx) => {
+          if ((window.__currentViewMode || 'country') !== 'city') return;
           const cities = getCities();
           if (!cities.length) return;
           const W = api.state.width;
@@ -25459,44 +25504,60 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const baseX = -(((api.state.scrollX % wW) + wW) % wW);
           const yTop  = -api.state.scrollY;
           const isDark = (window.__globeTheme === "dark");
-          const dotFill = isDark ? "rgba(255,225,150,0.95)" : "rgba(255,210,90,0.95)";
-          const dotStroke = isDark ? "rgba(255,255,255,0.7)" : "rgba(20,40,80,0.65)";
+          const coreFill = isDark ? "rgba(255,235,180,0.96)" : "rgba(255,205,80,0.96)";
+          const haloHi   = isDark ? "rgba(255,225,140,0.55)" : "rgba(255,200,80,0.45)";
+          const haloLo   = "rgba(255,200,80,0)";
+
           ctx.save();
+          // Halo pass — additive so overlapping cities bloom together.
+          ctx.globalCompositeOperation = "lighter";
           for (const c of cities) {
             const lat = c?.lat ?? c?.latitude;
             const lon = c?.lon ?? c?.longitude;
             if (lat == null || lon == null) continue;
-            // Tier-aware radius (smaller tier = bigger dot to match globe).
-            const tier = c.tier ?? 3;
-            const r = (4.5 - Math.min(4, tier) * 0.7) * api.state.dpr;
+            const tier = Math.max(0, Math.min(4, c.__tier ?? c.tier ?? 3));
+            const r = BASE_RADIUS_PX * TIER_RADIUS_MULT[tier] * api.state.dpr;
+            const haloR = r * 3.6;
+            const xCenter = ((lon + 180) / 360) * wW;
+            const y = yTop + ((90 - lat) / 180) * wH;
+            for (let tile = -1; tile <= 1; tile++) {
+              const x = baseX + tile * wW + xCenter;
+              if (x < -haloR || x > W + haloR) continue;
+              const grad = ctx.createRadialGradient(x, y, 0, x, y, haloR);
+              grad.addColorStop(0, haloHi);
+              grad.addColorStop(1, haloLo);
+              ctx.fillStyle = grad;
+              ctx.beginPath();
+              ctx.arc(x, y, haloR, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+          // Solid core pass — normal compositing so the bright dot stays
+          // crisp (additive would clip to white at high overlap).
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = coreFill;
+          for (const c of cities) {
+            const lat = c?.lat ?? c?.latitude;
+            const lon = c?.lon ?? c?.longitude;
+            if (lat == null || lon == null) continue;
+            const tier = Math.max(0, Math.min(4, c.__tier ?? c.tier ?? 3));
+            const r = BASE_RADIUS_PX * TIER_RADIUS_MULT[tier] * api.state.dpr;
             const xCenter = ((lon + 180) / 360) * wW;
             const y = yTop + ((90 - lat) / 180) * wH;
             for (let tile = -1; tile <= 1; tile++) {
               const x = baseX + tile * wW + xCenter;
               if (x < -10 || x > W + 10) continue;
-              // Soft outer glow
-              ctx.beginPath();
-              ctx.arc(x, y, r * 2.2, 0, Math.PI * 2);
-              const grad = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.2);
-              grad.addColorStop(0,   isDark ? "rgba(255,225,150,0.55)" : "rgba(255,210,90,0.50)");
-              grad.addColorStop(1,   "rgba(255,210,90,0)");
-              ctx.fillStyle = grad;
-              ctx.fill();
-              // Solid core
               ctx.beginPath();
               ctx.arc(x, y, r, 0, Math.PI * 2);
-              ctx.fillStyle = dotFill;
               ctx.fill();
-              ctx.lineWidth = 0.8 * api.state.dpr;
-              ctx.strokeStyle = dotStroke;
-              ctx.stroke();
             }
           }
           ctx.restore();
         });
 
-        // ── Click → open city panel ────────────────────────────────
+        // ── Click → open city panel (city mode only) ───────────────
         function onTap(e) {
+          if ((window.__currentViewMode || 'country') !== 'city') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
           if (!ll) return;
           const maxMi = hitRadiusMi(ll.lat);
@@ -25504,14 +25565,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (!c) return;
           if (typeof window.__openNodePanel === "function") {
             try { window.__openNodePanel(c, "city"); } catch (_) {}
-            // Stop the country layer from also firing. We can't easily cancel
-            // a CustomEvent but we can mark the detail so country layer skips.
             e.detail.__handledCity = true;
           }
         }
 
-        // ── Hover → show hover card ───────────────────────────────
+        // ── Hover → show hover card (desktop, city mode only) ──────
         function onHover(e) {
+          if ((window.__currentViewMode || 'country') !== 'city') return;
           if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
           if (!ll) return;
@@ -25525,7 +25585,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             return;
           }
           if (_lastHoverNode === c) {
-            // already showing — mark so country layer skips, and stop here
             if (e.detail) e.detail.__handledCity = true;
             return;
           }
@@ -25539,9 +25598,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
         function attach() {
           const c = Map2D.state.canvas;
           if (!c) { setTimeout(attach, 100); return; }
-          // Cities tap handler is added FIRST so it runs before the country
-          // tap handler. If a city is hit, country handler can early-out via
-          // __handledCity marker.
           c.addEventListener("map2d:tap",   onTap, true);
           c.addEventListener("map2d:hover", onHover, true);
         }
