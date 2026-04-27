@@ -5428,6 +5428,18 @@ button.arcCtxSegDot,
 .semHeatLegendBar { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(to right, #e74c3c, #f1c40f, #2ecc71); }
 .semHeatLegendBar.coverage { background: linear-gradient(to right, rgba(60,140,255,0.2), rgba(60,180,255,0.55), rgba(120,230,255,1)); }
 
+/* Heatmap color pickers — surfaced when displayMode='colored'. */
+.semHeatColorPickers { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); }
+.semHeatColorPickers .pickerHint { font-size: 10px; color: rgba(255,255,255,0.55); line-height: 1.35; }
+.semHeatColorPickers .pickerRow { display: flex; align-items: center; gap: 8px; }
+.semHeatColorPickers .pickerLabel { font-size: 11px; color: rgba(255,255,255,0.78); flex: 1; }
+.semHeatColorPickers input[type="color"] { -webkit-appearance: none; appearance: none; width: 28px; height: 22px; padding: 0; margin: 0; border: 1px solid rgba(255,255,255,0.20); border-radius: 4px; background: transparent; cursor: pointer; }
+.semHeatColorPickers input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.semHeatColorPickers input[type="color"]::-webkit-color-swatch       { border: none; border-radius: 3px; }
+.semHeatColorPickers .rankRow { display: flex; gap: 4px; align-items: center; }
+.semHeatColorPickers .rankRow .rankSlot { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.semHeatColorPickers .rankRow .rankSlot span { font-size: 9px; color: rgba(255,255,255,0.50); }
+
 .semHeatLoading { text-align: center; padding: 8px; font-size: 11px; color: rgba(255,200,140,0.7); }
 
 /* ── Loading dots (sequential glow) ── */
@@ -13079,6 +13091,16 @@ window.__arcCtxSegmented = (function() {
           <div class="semHeatPill active" data-mode="coverage">Coverage</div>
           <div class="semHeatPill" data-mode="sentiment">Sentiment</div>
         </div>
+        <!-- Palette toggle: B&W = whitish-blue intensity ramp (default look),
+             Colored = user-selectable hues per active mode (rank/percent/binary
+             for Map This get distinct picker layouts). -->
+        <div class="semHeatPillRow" id="semHeatPaletteRow" style="margin-top:6px;">
+          <div class="semHeatPill active" data-palette="bw">B&amp;W</div>
+          <div class="semHeatPill" data-palette="colored">Colored</div>
+        </div>
+        <!-- Inline color pickers — populated dynamically by syncPaletteUI()
+             based on state.mode + state.qaMode + state.displayMode. -->
+        <div class="semHeatColorPickers" id="semHeatColorPickers" style="display:none;"></div>
         <div class="semHeatLegend">
           <span id="semHeatLegendLeft">low</span>
           <div class="semHeatLegendBar coverage" id="semHeatLegendBar"></div>
@@ -40994,6 +41016,72 @@ body.ticker-active .gTickerLabel {
   }
   setInterval(updateToggleBtnVisibility, 700);
 
+  // ── Palette / display-mode persistence ──────────────────────────────
+  // displayMode: 'bw' = the original whitish-blue intensity ramp (no hue),
+  //              'colored' = user-selectable hues per mode/qaMode.
+  // palette holds one or more colors per render branch:
+  //   coverage      — single color (intensity ramp from transparent → color)
+  //   sentimentNeg  — color for sentiment = -1
+  //   sentimentPos  — color for sentiment = +1
+  //   qaBinary      — single color (yes paints, no doesn't)
+  //   qaPercent     — single color (intensity ramp by percent)
+  //   qaRank        — array of 5 colors quantized by rank/total (tier 1..5)
+  // Defaults reproduce the prior look: warm amber for QA, blue for coverage,
+  // red↔green for sentiment.
+  const DEFAULT_PALETTE = {
+    coverage:     '#3ce0ff',
+    sentimentNeg: '#e74c3c',
+    sentimentPos: '#2ecc71',
+    qaBinary:     '#ffc878',
+    qaPercent:    '#ffc878',
+    qaRank:       ['#ff5050', '#ff9248', '#ffc878', '#9be37e', '#3ce0ff']
+  };
+  const PALETTE_KEY = 'earth00:semHeatPalette';
+  const DISPLAY_KEY = 'earth00:semHeatDisplay';
+  function _loadDisplayMode() {
+    try {
+      const v = localStorage.getItem(DISPLAY_KEY);
+      if (v === 'bw' || v === 'colored') return v;
+    } catch (_) {}
+    return 'bw';  // default = the current whitish-blue look
+  }
+  function _loadPalette() {
+    try {
+      const raw = localStorage.getItem(PALETTE_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        // Merge atop defaults so a partial save (or schema change) still
+        // returns every key.
+        return {
+          ...DEFAULT_PALETTE,
+          ...p,
+          qaRank: Array.isArray(p?.qaRank) && p.qaRank.length === 5
+            ? p.qaRank.slice()
+            : DEFAULT_PALETTE.qaRank.slice()
+        };
+      }
+    } catch (_) {}
+    return { ...DEFAULT_PALETTE, qaRank: DEFAULT_PALETTE.qaRank.slice() };
+  }
+  function _savePalette() {
+    try { localStorage.setItem(PALETTE_KEY, JSON.stringify(state.palette)); } catch (_) {}
+  }
+  function _saveDisplayMode() {
+    try { localStorage.setItem(DISPLAY_KEY, state.displayMode); } catch (_) {}
+  }
+  // Hex '#rrggbb' → {r,g,b}. Tolerant of '#rgb' too.
+  function _hex2rgb(hex) {
+    if (typeof hex !== 'string') return { r: 60, g: 180, b: 255 };
+    let h = hex.trim().replace(/^#/, '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    if (!/^[0-9a-f]{6}$/i.test(h)) return { r: 60, g: 180, b: 255 };
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16)
+    };
+  }
+
   const state = {
     mode: 'coverage',
     ctl:  'ask',
@@ -41004,7 +41092,10 @@ body.ticker-active .gTickerLabel {
     seriesIdx: 0,
     playing: false,
     playTimer: null,
-    loading: false
+    loading: false,
+    // Palette-related (see DEFAULT_PALETTE above for shape)
+    displayMode: _loadDisplayMode(),
+    palette:     _loadPalette()
   };
 
   // ── Country polygon index (loaded from custom.geo.json) ────────────────
@@ -41154,36 +41245,69 @@ body.ticker-active .gTickerLabel {
     _nodeVisSnapshot.length = 0;
   }
 
+  // Whitish-blue intensity ramp — the original "Coverage" palette. Reused
+  // uniformly for every mode when state.displayMode === 'bw'. Intensity is
+  // whatever the renderer computed for this point (share, |sentiment|, or
+  // 1 for binary), so the visual scale stays "0 = clear, 100 = whitish-blue"
+  // across coverage / sentiment / Map This.
+  function _bwStops(intensity) {
+    const t = Math.max(0, Math.min(1, intensity));
+    const r = Math.round(60  + 195 * t);
+    const g = Math.round(150 + 105 * t);
+    const b = 255;
+    return { r, g, b };
+  }
+
   function colorStopsFor(p, intensity) {
+    // ── B&W (default) ────────────────────────────────────────────────
+    // One palette to rule them all — whitish-blue intensity ramp.
+    // The renderer's per-mode `intensity` computation drives the ramp,
+    // so e.g. sentiment in B&W still uses |sentiment| as its driver.
+    if (state.displayMode === 'bw') {
+      return _bwStops(intensity);
+    }
+
+    // ── Colored — sentiment ──────────────────────────────────────────
+    // Bipolar interpolation between user-picked negative↔positive.
     if (state.mode === 'sentiment') {
       if (p.avg_sent == null || p.sent_n === 0) {
         return { r: 150, g: 150, b: 160 };
       }
-      // Prefer the z-score–normalized value (populated by
-      // _applySentimentNormalization in sentiment mode) so the palette
-      // uses the full red↔green range instead of clustering around the
-      // global mean. Falls back to raw avg_sent if normalization hasn't
-      // been run yet (e.g. during initial paint).
       const normed = (typeof p._sentNormalized === 'number')
         ? p._sentNormalized
         : p.avg_sent;
-      const t = (Math.max(-1, Math.min(1, normed)) + 1) / 2;
-      const r = Math.round(t < 0.5 ? 255 : 255 * (1 - 2 * (t - 0.5)));
-      const g = Math.round(t > 0.5 ? 230 : 230 * (2 * t));
-      return { r, g, b: 70 };
+      const t = (Math.max(-1, Math.min(1, normed)) + 1) / 2; // 0 neg → 1 pos
+      const aC = _hex2rgb(state.palette.sentimentNeg);
+      const bC = _hex2rgb(state.palette.sentimentPos);
+      return {
+        r: Math.round(aC.r + (bC.r - aC.r) * t),
+        g: Math.round(aC.g + (bC.g - aC.g) * t),
+        b: Math.round(aC.b + (bC.b - aC.b) * t),
+      };
     }
-    // QA / "Map This" mode — warm amber → bright gold so it reads as a
-    // distinctly different layer than the cool blue/cyan news-coverage map.
-    if (state.qaMode) {
-      const r = Math.round(180 + 75  * intensity);  // 180 → 255
-      const g = Math.round(80  + 175 * intensity);  // 80  → 255
-      const b = Math.round(20  + 30  * intensity);  // 20  → 50
-      return { r, g, b };
+
+    // ── Colored — Map This (QA) ──────────────────────────────────────
+    if (state.qaMode === 'rank') {
+      // 5-tier quantization. _qaValue holds the raw rank (1=best); we map
+      // (rank-1)/(total-1) into [0,1] then floor*5 → tier index 0..4.
+      const total = Math.max(1, (state.countryPoints || []).length);
+      const rank  = Number(p._qaValue) || 1;
+      const rel   = (rank - 1) / Math.max(1, total - 1);
+      const tier  = Math.min(4, Math.max(0, Math.floor(rel * 5)));
+      const tierColor = (state.palette.qaRank && state.palette.qaRank[tier]) ||
+                        DEFAULT_PALETTE.qaRank[tier];
+      return _hex2rgb(tierColor);
     }
-    const r = Math.round(60  + 195 * intensity);
-    const g = Math.round(150 + 105 * intensity);
-    const b = 255;
-    return { r, g, b };
+    if (state.qaMode === 'binary') {
+      return _hex2rgb(state.palette.qaBinary);
+    }
+    if (state.qaMode === 'percent') {
+      return _hex2rgb(state.palette.qaPercent);
+    }
+
+    // ── Colored — Coverage (default) ─────────────────────────────────
+    // Single hue; alpha (computed by the renderer) does the 0→100 ramp.
+    return _hex2rgb(state.palette.coverage);
   }
 
   // ── Two-pass heatmap render ─────────────────────────────────────────
@@ -41920,16 +42044,73 @@ body.ticker-active .gTickerLabel {
     return _dotTex;
   }
 
-  function updateLegend() {
-    if (state.mode === 'sentiment') {
-      legendBar.classList.remove('coverage');
-      legendL.textContent = 'negative';
-      legendR.textContent = 'positive';
-    } else {
-      legendBar.classList.add('coverage');
-      legendL.textContent = 'low';
-      legendR.textContent = 'high';
+  // Build a CSS linear-gradient string honouring state.displayMode +
+  // state.palette + active mode/qaMode. Returns null to fall back to the
+  // legacy CSS classes (the .coverage / default backgrounds in the
+  // stylesheet) — that keeps the original look pixel-identical when
+  // displayMode is bw.
+  function _legendGradient() {
+    const role = (() => {
+      if (state.qaMode === 'binary')  return 'qaBinary';
+      if (state.qaMode === 'rank')    return 'qaRank';
+      if (state.qaMode === 'percent') return 'qaPercent';
+      if (state.mode === 'sentiment') return 'sentiment';
+      return 'coverage';
+    })();
+
+    if (state.displayMode === 'bw') {
+      // Whitish-blue intensity ramp — same end-stops the canvas paints.
+      return 'linear-gradient(to right, rgba(60,150,255,0.10), rgba(120,200,255,0.55), rgba(170,225,255,1))';
     }
+
+    if (role === 'sentiment') {
+      const a = state.palette.sentimentNeg;
+      const b = state.palette.sentimentPos;
+      // Pass through midpoint white as a subtle neutral so divergent
+      // palettes (e.g. red→teal) don't muddy in the middle.
+      return `linear-gradient(to right, ${a}, rgba(255,255,255,0.65) 50%, ${b})`;
+    }
+    if (role === 'qaRank') {
+      const r = state.palette.qaRank;
+      // 5 hard stops — one per tier — so users see exactly which color
+      // maps to which rank position.
+      return `linear-gradient(to right,
+        ${r[0]} 0%, ${r[0]} 20%,
+        ${r[1]} 20%, ${r[1]} 40%,
+        ${r[2]} 40%, ${r[2]} 60%,
+        ${r[3]} 60%, ${r[3]} 80%,
+        ${r[4]} 80%, ${r[4]} 100%)`;
+    }
+    if (role === 'qaBinary') {
+      const c = state.palette.qaBinary;
+      // Binary is "no | yes" — solid block on the right half.
+      return `linear-gradient(to right, transparent 50%, ${c} 50%)`;
+    }
+    // qaPercent + coverage: single-hue ramp from transparent to full.
+    const c = (role === 'qaPercent') ? state.palette.qaPercent : state.palette.coverage;
+    const rgb = _hex2rgb(c);
+    return `linear-gradient(to right,
+      rgba(${rgb.r},${rgb.g},${rgb.b},0.10),
+      rgba(${rgb.r},${rgb.g},${rgb.b},0.55),
+      rgba(${rgb.r},${rgb.g},${rgb.b},1.0))`;
+  }
+
+  function _legendLabels() {
+    if (state.qaMode === 'binary') return { left: 'no',          right: 'yes' };
+    if (state.qaMode === 'rank')   return { left: `rank ${(state.countryPoints || []).length}`, right: 'rank 1' };
+    if (state.qaMode === 'percent')return { left: 'low',         right: 'high' };
+    if (state.mode === 'sentiment')return { left: 'negative',    right: 'positive' };
+    return { left: 'low', right: 'high' };
+  }
+
+  function updateLegend() {
+    // Always inline the gradient so colored-mode customizations show up
+    // immediately. Drop the static .coverage class so it doesn't override.
+    legendBar.classList.remove('coverage');
+    legendBar.style.background = _legendGradient();
+    const { left, right } = _legendLabels();
+    legendL.textContent = left;
+    legendR.textContent = right;
   }
 
   function updateStats(payload) {
@@ -42228,6 +42409,7 @@ body.ticker-active .gTickerLabel {
     // doesn't bleed into the news-coverage / sentiment renders.
     state.qaMode = null;
     updateLegend();
+    syncPaletteUI();
     if (state.series) {
       // If playback is running, rebuild the two active buffers in the
       // new mode in-place so the continuous loop picks them up on the
@@ -42247,6 +42429,140 @@ body.ticker-active .gTickerLabel {
       });
     }
   });
+
+  // ── Palette / B&W ⇄ Colored toggle ──────────────────────────────────
+  // Black & white = the original whitish-blue intensity ramp (uniform across
+  // every mode and qaMode). Colored = honour state.palette[*] for the active
+  // branch; the picker UI below this row swaps in/out based on mode + qaMode.
+  const paletteRow      = document.getElementById('semHeatPaletteRow');
+  const colorPickersEl  = document.getElementById('semHeatColorPickers');
+
+  function _repaintAfterPaletteChange() {
+    if (state.series) {
+      if (state.playing && _playPrevBuf && _playNextBuf) {
+        _paintBucketInto(_playPrevBuf, _playCurrentIdx);
+        const followIdx = (_playCurrentIdx + 1) % state.series.buckets.length;
+        _paintBucketInto(_playNextBuf, followIdx);
+      } else {
+        renderSeriesFrame();
+      }
+    } else {
+      renderPoints({
+        country_points: state.countryPoints,
+        city_points:    state.cityPoints
+      });
+    }
+  }
+
+  // Returns the palette role the picker UI should expose right now.
+  // Mirrors colorStopsFor's branching exactly so users see the same controls
+  // that shape the render they're looking at.
+  function _activePaletteRole() {
+    if (state.qaMode === 'binary')  return 'qaBinary';
+    if (state.qaMode === 'rank')    return 'qaRank';
+    if (state.qaMode === 'percent') return 'qaPercent';
+    if (state.mode === 'sentiment') return 'sentiment';
+    return 'coverage';
+  }
+
+  function syncPaletteUI() {
+    if (!paletteRow || !colorPickersEl) return;
+    // Highlight the active mode pill.
+    [...paletteRow.querySelectorAll('.semHeatPill')].forEach(p => {
+      p.classList.toggle('active', p.dataset.palette === state.displayMode);
+    });
+    // In B&W mode the pickers are irrelevant — hide them entirely so the
+    // panel stays compact for users who never want hue.
+    if (state.displayMode === 'bw') {
+      colorPickersEl.style.display = 'none';
+      colorPickersEl.innerHTML = '';
+      return;
+    }
+    colorPickersEl.style.display = '';
+    const role = _activePaletteRole();
+    let html = '';
+    if (role === 'coverage') {
+      html += `
+        <div class="pickerHint">News coverage paints darker → brighter from this hue. Click the swatch to change.</div>
+        <div class="pickerRow">
+          <span class="pickerLabel">Coverage color</span>
+          <input type="color" data-pkey="coverage" value="${state.palette.coverage}" />
+        </div>`;
+    } else if (role === 'sentiment') {
+      html += `
+        <div class="pickerHint">Sentiment is bipolar — pick one color for negative, one for positive.</div>
+        <div class="pickerRow">
+          <span class="pickerLabel">Negative</span>
+          <input type="color" data-pkey="sentimentNeg" value="${state.palette.sentimentNeg}" />
+        </div>
+        <div class="pickerRow">
+          <span class="pickerLabel">Positive</span>
+          <input type="color" data-pkey="sentimentPos" value="${state.palette.sentimentPos}" />
+        </div>`;
+    } else if (role === 'qaBinary') {
+      html += `
+        <div class="pickerHint">Binary Q&amp;A (yes / no): countries that match paint in this color; the rest stay clear.</div>
+        <div class="pickerRow">
+          <span class="pickerLabel">"Yes" color</span>
+          <input type="color" data-pkey="qaBinary" value="${state.palette.qaBinary}" />
+        </div>`;
+    } else if (role === 'qaPercent') {
+      html += `
+        <div class="pickerHint">Percent Q&amp;A: low values fade to clear, high values saturate to this color.</div>
+        <div class="pickerRow">
+          <span class="pickerLabel">High color</span>
+          <input type="color" data-pkey="qaPercent" value="${state.palette.qaPercent}" />
+        </div>`;
+    } else if (role === 'qaRank') {
+      const ranks = state.palette.qaRank;
+      html += `
+        <div class="pickerHint">Rank Q&amp;A splits matched countries into 5 tiers by their rank/total. Pick one color per tier.</div>
+        <div class="rankRow">`;
+      for (let i = 0; i < 5; i++) {
+        html += `
+          <div class="rankSlot">
+            <input type="color" data-pkey="qaRank" data-pkidx="${i}" value="${ranks[i] || DEFAULT_PALETTE.qaRank[i]}" />
+            <span>${i + 1}</span>
+          </div>`;
+      }
+      html += `</div>`;
+    }
+    colorPickersEl.innerHTML = html;
+  }
+
+  paletteRow.addEventListener('click', (e) => {
+    const pill = e.target.closest('.semHeatPill');
+    if (!pill) return;
+    state.displayMode = (pill.dataset.palette === 'colored') ? 'colored' : 'bw';
+    _saveDisplayMode();
+    syncPaletteUI();
+    updateLegend();
+    _repaintAfterPaletteChange();
+  });
+
+  colorPickersEl.addEventListener('input', (e) => {
+    const inp = e.target;
+    if (!(inp instanceof HTMLInputElement) || inp.type !== 'color') return;
+    const key = inp.dataset.pkey;
+    if (!key) return;
+    if (key === 'qaRank') {
+      const idx = parseInt(inp.dataset.pkidx, 10);
+      if (!Number.isFinite(idx) || idx < 0 || idx > 4) return;
+      const arr = state.palette.qaRank.slice();
+      arr[idx] = inp.value;
+      state.palette = { ...state.palette, qaRank: arr };
+    } else {
+      state.palette = { ...state.palette, [key]: inp.value };
+    }
+    _savePalette();
+    updateLegend();
+    _repaintAfterPaletteChange();
+  });
+
+  // First-paint sync. updateLegend will wire its own gradient, but the
+  // pickers don't know what role to show until state.mode + state.qaMode
+  // are settled — so we run sync once here and again in the QA submit path.
+  syncPaletteUI();
 
   ctlTabs.addEventListener('click', (e) => {
     const tab = e.target.closest('.semHeatCtlTab');
@@ -42352,13 +42668,9 @@ body.ticker-active .gTickerLabel {
     state.qaMode = mode || 'percent';
     try { renderPoints({ country_points: pts, city_points: [] }); } catch (_) {}
     try { updateLegend(); } catch (_) {}
-
-    // Override the legend chip + status row with QA copy so the user
-    // sees "Muslim population %" instead of the default "low … high".
-    const left = document.getElementById('semHeatLegendLeft');
-    const right = document.getElementById('semHeatLegendRight');
-    if (left)  left.textContent  = state.qaMode === 'binary' ? 'no' : 'low';
-    if (right) right.textContent = state.qaMode === 'binary' ? 'yes' : (state.qaMode === 'rank' ? 'rank 1' : 'high');
+    // Refresh the palette pickers — the active QA mode determines whether we
+    // surface a single picker (binary / percent), 5 pickers (rank), etc.
+    try { syncPaletteUI(); } catch (_) {}
     const status = document.getElementById('semHeatAskStatus');
     if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
     const note = document.getElementById('semHeatAskNote');
@@ -43083,14 +43395,21 @@ body.ticker-active .gTickerLabel {
       const QA_RADIUS_KM = 100;
       const QA_RADIUS_MI = QA_RADIUS_KM * 0.621371;
       const rowsByIso = new Map();
+      // The country polygon index lives at module scope as `_countryGeoIdx`
+      // (loaded async from custom.geo.json). Earlier this branch referenced
+      // a non-existent `geoIdx` — every lookup returned undefined, so every
+      // ISO failed `if (!entry) continue;` and the panel showed
+      // "No matched country at this point or within 100 km" for EVERY click.
+      // That's why Map This appeared to be wired but did nothing.
+      const _qaGeoIdx = _countryGeoIdx;
       const isoSetForQA = qMode === 'binary'
-        ? new Set([...(geoIdx?.byIso?.keys() || [])])  // binary: surface 'No' too
-        : new Set(isoToQA.keys());                     // rank/percent: only matched
-      const canPolyHit  = typeof window.__pointInCountry === 'function' && geoIdx?.byIso;
-      const canEdgeDist = typeof window.__minDistanceMiToCountry === 'function' && geoIdx?.byIso;
+        ? new Set([...(_qaGeoIdx?.byIso?.keys() || [])])  // binary: surface 'No' too
+        : new Set(isoToQA.keys());                        // rank/percent: only matched
+      const canPolyHit  = typeof window.__pointInCountry === 'function' && _qaGeoIdx?.byIso;
+      const canEdgeDist = typeof window.__minDistanceMiToCountry === 'function' && _qaGeoIdx?.byIso;
 
       for (const iso of isoSetForQA) {
-        const entry = geoIdx?.byIso?.get(iso);
+        const entry = _qaGeoIdx?.byIso?.get(iso);
         if (!entry) continue;
         const qa = isoToQA.get(iso) || null;
         if (!qa && qMode !== 'binary') continue;

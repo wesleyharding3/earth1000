@@ -11264,6 +11264,13 @@ Output rules:
 - Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
 - Cite specific sources in source_note (e.g. "World Bank 2023" or "Wikipedia: List of mountain peaks, 2024-03"). Only use "AI estimate — verify before citing" as a last resort when no source could be verified.
 
+Question phrasing — REQUIRED interpretation:
+- If the question contains "your country", "your nation", "your state", "your homeland", or any second-person possessive pointed at a country/place, interpret it AS IF the user wrote "each country" — i.e. it is a per-country query. The user is not asking about you; they are asking the heatmap to show one value per country. Do NOT decline these questions on the grounds that you have no country of residence.
+- Example rephrasings that all mean the same thing:
+    "How many universities are in your country?"  →  "How many universities are in each country?"
+    "What is your country's GDP?"                →  "What is each country's GDP?"
+    "Is your nation in NATO?"                    →  "Is each nation in NATO?"
+
 DATA VERIFICATION POLICY — read carefully:
 
 You have access to a \`web_search\` tool. Speed is NOT a priority — accuracy is. A correct answer that takes 30 seconds is far better than a fast wrong one. USE web_search whenever:
@@ -11382,6 +11389,102 @@ Most users will be wronger than you think when checking — but for the cases wh
       const absentBigTen  = expected.filter(c => !seen.has(c) && isoSet.has(c));
       if (mode === 'rank' || mode === 'percent') {
         console.log(`[heatmap/ask] big10_present=[${presentBigTen.join(',')}] big10_absent=[${absentBigTen.join(',')}]`);
+      }
+
+      // ── Fill-in pass: rank/binary modes truncate. ────────────────────
+      // Sonnet 4.5 reliably truncates rank-mode answers to ~15 countries
+      // even when the prompt explicitly asks for "every country with a
+      // non-trivial value." We catch this by counting the kept rows and,
+      // when below threshold, running a SECOND call that hands Claude the
+      // existing answer plus the catalog of missing ISOs and asks it to
+      // fill in. Doubles cost on these queries — the result lands in
+      // heatmap_qa_cache so re-asks are free.
+      //
+      // Disable with env: HEATMAP_FILL_IN=false
+      const FILL_IN_THRESHOLDS = { rank: 50, binary: 15 };
+      const fillInEnabled = process.env.HEATMAP_FILL_IN !== 'false';
+      const fillInTarget  = FILL_IN_THRESHOLDS[mode];
+      const needsFillIn   = fillInEnabled
+        && fillInTarget != null
+        && payload.values.length > 0
+        && payload.values.length < fillInTarget;
+
+      if (needsFillIn) {
+        try {
+          const tFillStart = Date.now();
+          // Names lookup so the prompt reads naturally and Claude doesn't
+          // have to re-resolve ISO → country.
+          const isoToName = new Map(countryRows.map(c => [c.iso_code.toUpperCase(), c.name]));
+          const missing = countryRows
+            .map(c => c.iso_code.toUpperCase())
+            .filter(iso => !seen.has(iso));
+          const existingSummary = payload.values
+            .slice()
+            .sort((a, b) => (mode === 'rank' ? a.value - b.value : b.value - a.value))
+            .map(v => `${v.iso} (${isoToName.get(v.iso) || v.iso})=${v.value}`)
+            .join(', ');
+          const lastRank = (mode === 'rank')
+            ? Math.max(...payload.values.map(v => v.value || 0))
+            : null;
+
+          const fillInUserMsg = `Your previous answer to "${rawQuestion}" (mode: ${mode}) returned only ${payload.values.length} countries:
+
+${existingSummary}
+
+The world has 190+ sovereign countries. Your answer is incomplete. Walk through the following countries that were NOT in your previous answer, and identify which of them have a non-trivial value for the question. Use web_search if needed.
+
+Missing from previous answer (${missing.length} countries):
+${missing.map(iso => `${iso} ${isoToName.get(iso) || ''}`.trim()).join('\n')}
+
+${mode === 'rank'
+  ? `Continue the rank sequence — your last rank was ${lastRank}, so new entries should be ranked starting at ${lastRank + 1} and continuing until you've ranked every country with a meaningful value. DO NOT REPEAT countries already in the previous answer above.`
+  : 'Include ONLY countries where the answer is 1 (yes / true). DO NOT REPEAT countries already in the previous answer above.'}
+
+Call set_country_values with ONLY the additional countries.`;
+
+          const fillInResp = await Anthropic.messages.create({
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 8000,
+            system: systemPrompt,
+            tools,
+            // Force the data-emit tool. Decline isn't valid here — the
+            // first call already accepted the question.
+            tool_choice: { type: 'tool', name: 'set_country_values' },
+            messages: [{ role: 'user', content: fillInUserMsg }],
+          });
+
+          const fillInTool = (fillInResp.content || []).find(b => b.type === 'tool_use' && b.name === 'set_country_values');
+          let added = 0;
+          let dupRej = 0, isoRej = 0, nanRej = 0;
+          if (fillInTool) {
+            const fillRaw = fillInTool.input || {};
+            const fillArr = Array.isArray(fillRaw.values) ? fillRaw.values : [];
+            for (const v of fillArr) {
+              const iso = String(v.iso || '').toUpperCase().trim();
+              const num = Number(v.value);
+              if (!iso || !isoSet.has(iso))      { isoRej++; continue; }
+              if (!Number.isFinite(num))         { nanRej++; continue; }
+              if (seen.has(iso))                 { dupRej++; continue; }
+              seen.add(iso);
+              payload.values.push({ iso, value: num });
+              added++;
+            }
+            // Append the fill-in pass to the source_note so users know.
+            if (added > 0 && fillRaw.source_note) {
+              const extra = String(fillRaw.source_note).slice(0, 120);
+              if (!payload.source_note?.includes(extra)) {
+                payload.source_note = `${payload.source_note}; +fill-in: ${extra}`.slice(0, 240);
+              }
+            }
+          }
+          console.log(
+            `[heatmap/ask] fill-in mode=${mode} added=${added} dup=${dupRej} bad_iso=${isoRej} nan=${nanRej} ` +
+            `total=${payload.values.length} (${((Date.now() - tFillStart) / 1000).toFixed(1)}s)`
+          );
+        } catch (fillErr) {
+          // Fill-in failure is non-fatal — return the original answer.
+          console.warn(`[heatmap/ask] fill-in failed: ${fillErr.message}`);
+        }
       }
     }
 
