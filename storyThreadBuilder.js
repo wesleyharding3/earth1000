@@ -170,10 +170,12 @@ async function run() {
   // CHEAP by:
   //   - only running on clusters containing a thread touched THIS run
   //   - capping Claude calls via CLAUDE_DEDUP_MAX_CLUSTERS (default 5)
-  //   - gated on env flag CLAUDE_DEDUP_IN_CRON = 'true' so it can be
-  //     flipped off without redeploying
-  // Expected cost at ~5 clusters/run × 24 runs/day × $0.02 ≈ $2.40/day.
-  if (process.env.CLAUDE_DEDUP_IN_CRON === 'true' && allTouchedIds.size) {
+  //   - opt-out via env flag CLAUDE_DEDUP_IN_CRON = 'false' (default ON)
+  // Model is Sonnet 4.5 (see dedupThreadsWithClaude.js); the calibrated
+  // "same breaking story?" call under a strict no-merge bar needs the
+  // stronger model. Expected cost at ~5 clusters/run × 24 runs/day at
+  // Sonnet pricing ≈ ~$2/day.
+  if (process.env.CLAUDE_DEDUP_IN_CRON !== 'false' && allTouchedIds.size) {
     try {
       const { runScopedDedup } = require('./dedupThreadsWithClaude');
       const maxClusters = parseInt(process.env.CLAUDE_DEDUP_MAX_CLUSTERS || '5', 10);

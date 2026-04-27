@@ -56,7 +56,13 @@ const ARGV = new Map(process.argv.slice(2).map(a => {
   return [k, rest.length ? rest.join('=') : true];
 }));
 const APPLY        = !!ARGV.get('apply');
-const MODEL        = ARGV.get('model') || 'claude-haiku-4-5';
+// Default model is Sonnet — semantic "same breaking story?" calls under a
+// strict no-merge bar require calibrated judgment that Haiku consistently
+// gets wrong (either over-merges different-but-related stories, or fails to
+// merge clear paraphrases because the vocabulary differs). Sonnet is the
+// right default for this prompt; Haiku is still selectable via --model
+// for cost-sensitive bulk runs.
+const MODEL        = ARGV.get('model') || process.env.CLAUDE_DEDUP_MODEL || 'claude-sonnet-4-5';
 const MAX_CLUSTERS = parseInt(ARGV.get('max-clusters') || '40', 10);
 const MIN_CLUSTER  = parseInt(ARGV.get('min-cluster') || '2', 10);
 const MIN_ARTICLES = parseInt(ARGV.get('min-articles') || '2', 10);
