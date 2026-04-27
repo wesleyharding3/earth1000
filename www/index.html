@@ -11384,7 +11384,10 @@ window.fmtDate = function(d) {
   // Render cold-start (5-30s) + Claude generation (3-15s) can pass 45s.
   // Give them headroom; the user-facing failure mode for an over-eager
   // abort is much worse than waiting an extra 15s for a real result.
-  const CLAUDE_TIMEOUT = 75000;
+  // Bumped to 95s after enabling Anthropic web_search on /api/heatmap/ask:
+  // up to 6 search calls + final generation can stretch the tail to ~60s.
+  // 95s is comfortably under Render's 100s platform timeout.
+  const CLAUDE_TIMEOUT = 95000;
   // Endpoints that hit heavy DB queries under load get a longer leash
   // /api/payments/subscription-status was getting stuck at the default
   // 20 s timeout on first-load when the backend was under contention,
@@ -11397,7 +11400,7 @@ window.fmtDate = function(d) {
   // Claude-call endpoints — wider timeout headroom because Render cold
   // start + Claude generation can compound past 45s. Order before the
   // LONG list so a URL matching both gets the Claude timeout.
-  const CLAUDE_TIMEOUT_PATTERNS = ['/api/keywords/explain', '/api/cluster-node/summary', '/api/explain', '/api/ai/flow-context'];
+  const CLAUDE_TIMEOUT_PATTERNS = ['/api/keywords/explain', '/api/cluster-node/summary', '/api/explain', '/api/ai/flow-context', '/api/heatmap/ask'];
   window.fetch = function(input, init) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
@@ -25222,6 +25225,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
               ctx.fill('evenodd');
               ctx.lineWidth = Math.max(2, api.state.dpr * 2.5);
               ctx.strokeStyle = "rgba(255,210,110,0.95)";
+              ctx.lineJoin = "round";
+              ctx.lineCap  = "round";
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
+          // Hover highlight — desktop-only live feedback; skipped if the
+          // hovered country is also the selected one (selection paint is
+          // already brighter). Mirrors the globe's hovered-country colors.
+          if (_lastHoverIso && _lastHoverIso !== _selectedIso && vm === 'country') {
+            const hov = _idx.byIso.get(_lastHoverIso);
+            if (hov) {
+              ctx.save();
+              ctx.beginPath();
+              tracePolygons(ctx, hov, baseX, yTop, wW, wH, W);
+              ctx.fillStyle = "rgba(255,200,80,0.12)";
+              ctx.fill('evenodd');
+              ctx.lineWidth = Math.max(1.4, api.state.dpr * 1.8);
+              ctx.strokeStyle = "rgba(255,225,140,0.85)";
               ctx.lineJoin = "round";
               ctx.lineCap  = "round";
               ctx.stroke();

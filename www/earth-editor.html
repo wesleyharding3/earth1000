@@ -1590,7 +1590,7 @@
       list.innerHTML = '';
       orderedIds.forEach((id, idx) => {
         const thread = allThreads.find(t => (t.thread_id || t.id) === id);
-        if (!enrichData[id]) enrichData[id] = { youtube_url: '', video_meta: null, steering_hint: '', featured_video: null };
+        if (!enrichData[id]) enrichData[id] = { youtube_url: '', video_meta: null, steering_hint: '', featured_video: null, side_tweet_url: '' };
         const d = enrichData[id];
         const videoPreviewHtml = d.video_meta
           ? `<div class="video-preview visible" id="vp-${id}">
@@ -1604,34 +1604,42 @@
         // re-cue narration; the locked banner in Step 3 makes that clear.
         const fv = d.featured_video || {};
         const fvEnabled = !!fv.enabled;
-        const canFeature = !!d.video_meta;   // can only feature a resolved video
+        // Heatmap is the new default — it doesn't need a resolved YouTube
+        // video, so no gate on the checkbox itself. The "resolve a video"
+        // warning instead surfaces inside the YouTube fields block when that
+        // media type is selected without one.
+        const fvType = fv.media_type || 'heatmap';
         const featuredBlock = `
           <div class="featured-block" style="margin-top:10px;padding:10px;border:1px solid rgba(96,200,255,0.2);border-radius:6px;background:rgba(96,200,255,0.04);">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
               <input type="checkbox" id="fv-enabled-${id}" ${fvEnabled ? 'checked' : ''} onchange="setFeatured(${id}, this.checked)" style="cursor:pointer;" />
               <label for="fv-enabled-${id}" style="font-size:12px;font-weight:600;color:#60c8ff;cursor:pointer;">Featured media moment</label>
-              ${canFeature ? '' : `<span class="fv-pending-warning-${id}" style="font-size:11px;color:rgba(255,180,80,0.85);font-weight:600;">⚠ resolve a video first</span>`}
             </div>
             <div style="font-size:10px;color:rgba(255,255,255,0.45);margin-bottom:8px;line-height:1.4;">
-              When enabled, the narrator will hand off to this video mid-segment. The script is written AROUND the handoff — must be set before generation. Changing this after Step 3 requires a regenerate.
+              When enabled, the narrator hands off to this media mid-segment. Default is a featured heatmap; switch the media type below for a YouTube clip or tweet. The script is written AROUND the handoff — must be set before generation; changing it after Step 3 requires a regenerate.
             </div>
             <div id="fv-fields-${id}" style="display:${fvEnabled ? 'block' : 'none'};">
               <div style="margin-bottom:8px;">
-                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Narrator transition (optional — Claude will write one if blank)</label>
-                <input type="text" id="fv-transition-${id}" placeholder="e.g. Here's a clip from the press conference..." value="${escHtml(fv.narrator_transition || '')}" onchange="enrichData[${id}].featured_video.narrator_transition = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Narrator transition — full override (used verbatim if filled)</label>
+                <input type="text" id="fv-transition-${id}" placeholder="Leave blank to let Claude write one" value="${escHtml(fv.narrator_transition || '')}" onchange="enrichData[${id}].featured_video.narrator_transition = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+              </div>
+              <div style="margin-bottom:8px;">
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Steering hint — guides Claude when override is blank</label>
+                <input type="text" id="fv-transition-hint-${id}" placeholder="e.g. lean into the visual surprise; tease the data without giving the answer" value="${escHtml(fv.narrator_transition_hint || '')}" onchange="enrichData[${id}].featured_video.narrator_transition_hint = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
               </div>
               <div style="margin-bottom:8px;">
                 <label style="font-size:10px;color:rgba(255,255,255,0.4);">Media type</label>
                 <select id="fv-media-${id}" onchange="fvUpdateMediaType(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
-                  <option value="youtube" ${(fv.media_type || 'youtube') === 'youtube' ? 'selected' : ''}>YouTube</option>
-                  <option value="twitter_post" ${fv.media_type === 'twitter_post' ? 'selected' : ''}>X post</option>
-                  <option value="twitter_video" ${fv.media_type === 'twitter_video' ? 'selected' : ''}>X video</option>
-                  <option value="heatmap" ${fv.media_type === 'heatmap' ? 'selected' : ''}>Heatmap overlay</option>
+                  <option value="heatmap" ${fvType === 'heatmap' ? 'selected' : ''}>Heatmap overlay (default)</option>
+                  <option value="youtube" ${fvType === 'youtube' ? 'selected' : ''}>YouTube</option>
+                  <option value="twitter_post" ${fvType === 'twitter_post' ? 'selected' : ''}>X post</option>
+                  <option value="twitter_video" ${fvType === 'twitter_video' ? 'selected' : ''}>X video</option>
                 </select>
               </div>
 
               <!-- YouTube clip range -->
-              <div id="fv-yt-fields-${id}" style="display:${(fv.media_type || 'youtube') === 'youtube' ? 'block' : 'none'};margin-bottom:8px;">
+              <div id="fv-yt-fields-${id}" style="display:${fvType === 'youtube' ? 'block' : 'none'};margin-bottom:8px;">
+                ${d.video_meta ? '' : `<div style="font-size:11px;color:rgba(255,180,80,0.85);font-weight:600;margin-bottom:6px;">⚠ Resolve a YouTube URL above before featuring a clip.</div>`}
                 <div style="display:flex;gap:8px;">
                   <div style="flex:1;">
                     <label style="font-size:10px;color:rgba(255,255,255,0.4);">Start (sec)</label>
@@ -1645,15 +1653,15 @@
                 <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Narrator hands off at Start, picks back up at End.</div>
               </div>
 
-              <!-- Tweet URL -->
-              <div id="fv-tw-fields-${id}" style="display:${(fv.media_type === 'twitter_post' || fv.media_type === 'twitter_video') ? 'block' : 'none'};margin-bottom:8px;">
-                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Tweet URL</label>
+              <!-- Tweet URL (featured) -->
+              <div id="fv-tw-fields-${id}" style="display:${(fvType === 'twitter_post' || fvType === 'twitter_video') ? 'block' : 'none'};margin-bottom:8px;">
+                <label style="font-size:10px;color:rgba(255,255,255,0.4);">Featured tweet URL</label>
                 <input type="text" id="fv-tweeturl-${id}" placeholder="https://x.com/username/status/1234567890" value="${escHtml(fv.twitter_url || '')}" onchange="enrichData[${id}].featured_video.twitter_url = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
                 <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Embedded post (image/text) or video, depending on media type.</div>
               </div>
 
               <!-- Heatmap overlay -->
-              <div id="fv-hm-fields-${id}" style="display:${fv.media_type === 'heatmap' ? 'block' : 'none'};">
+              <div id="fv-hm-fields-${id}" style="display:${fvType === 'heatmap' ? 'block' : 'none'};">
                 <div style="margin-bottom:6px;">
                   <label style="font-size:10px;color:rgba(255,255,255,0.4);">Heatmap question</label>
                   <input type="text" id="fv-hmq-${id}" placeholder="e.g. countries with oil import dependency above 50%" value="${escHtml(fv.heatmap_question || '')}" onchange="enrichData[${id}].featured_video.heatmap_question = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
@@ -1667,6 +1675,14 @@
                 <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Globe overlays this heatmap during the segment. Resolved at render time via /api/heatmap/ask.</div>
               </div>
             </div>
+          </div>
+          <!-- Side tweet — independent of the featured-media moment. If filled
+               and not the featured tweet, the narrator references it as an
+               embedded post displayed beside the article card. -->
+          <div style="margin-top:10px;">
+            <label style="font-size:11px;color:rgba(255,255,255,0.55);">Side tweet (sidebar of article card, optional)</label>
+            <input type="text" id="side-tweet-${id}" placeholder="https://x.com/username/status/..." value="${escHtml(d.side_tweet_url || '')}" onchange="enrichData[${id}].side_tweet_url = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+            <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">If you set a tweet here AND don't pick "X post/video" as the featured type, this embeds beside the article card. The narrator can reference it without a full handoff.</div>
           </div>`;
         const card = document.createElement('div');
         card.className = 'enrich-card'; card.dataset.id = id; card.id = `enrich-${id}`;
@@ -1705,11 +1721,14 @@
       if (!enrichData[id].featured_video) {
         // Initialize a full feature config — fields specific to each
         // media type live alongside one another and only the selected
-        // media_type's fields are displayed in the UI.
+        // media_type's fields are displayed in the UI. Heatmap is the
+        // default because it requires no external resource (no YouTube
+        // resolve, no tweet URL) and works on day-1 every segment.
         enrichData[id].featured_video = {
           enabled: false,
-          narrator_transition: '',
-          media_type: 'youtube',
+          narrator_transition: '',     // verbatim override
+          narrator_transition_hint: '',// guides Claude when override blank
+          media_type: 'heatmap',
           // YouTube clip
           start_sec: 0,
           end_sec: 15,
@@ -2314,9 +2333,14 @@
           entry.featured_video = {
             enabled: true,
             duration_sec: d.featured_video.duration_sec || 15,
-            narrator_transition: d.featured_video.narrator_transition || '',
-            media_type: d.featured_video.media_type || 'youtube',
-            twitter_url: d.featured_video.twitter_url || null,
+            narrator_transition:      d.featured_video.narrator_transition || '',
+            narrator_transition_hint: d.featured_video.narrator_transition_hint || '',
+            media_type:               d.featured_video.media_type || 'heatmap',
+            twitter_url:              d.featured_video.twitter_url || null,
+            // Forward heatmap params so the script generator can write the
+            // narrator's interpretation of the visualization.
+            heatmap_question: d.featured_video.heatmap_question || '',
+            heatmap_mode:     d.featured_video.heatmap_mode     || 'binary',
           };
         } else if (editableSegments?.length) {
           const seg = editableSegments.find(s => String(s.thread_id) === String(id));
@@ -2325,11 +2349,14 @@
               enabled: true,
               duration_sec: (seg.video_focal.end_sec || 15) - (seg.video_focal.start_sec || 0),
               narrator_transition: seg.video_focal.narrator_transition || '',
-              media_type: seg.media_type || 'youtube',
+              media_type: seg.media_type || 'heatmap',
               twitter_url: seg.twitter_url || null,
             };
           }
         }
+        // Side tweet — separate from featured. Renders next to the article
+        // card whenever populated and not the featured-tweet target.
+        if (d.side_tweet_url) entry.side_tweet_url = d.side_tweet_url;
         return entry;
       });
       const options = { force: true, force_audio: true };

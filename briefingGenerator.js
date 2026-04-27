@@ -576,6 +576,13 @@ async function run() {
           const td = threadData.find(t => String(t.id) === String(mt.thread_id));
           if (td) td._featuredVideo = mt.featured_video;
         }
+        // Side tweet — independent of the featured-media moment. The
+        // narrator references it (the embedded post sits beside the article
+        // card) but the script does NOT split with [VIDEO_HANDOFF].
+        if (mt.side_tweet_url) {
+          const td = threadData.find(t => String(t.id) === String(mt.thread_id));
+          if (td) td._sideTweetUrl = mt.side_tweet_url;
+        }
       }
     }
     let narrative;
@@ -1564,8 +1571,16 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
         featured_video: {
           enabled:              true,
           duration_seconds:     t._featuredVideo.duration_sec || 15,
-          media_type:           t._featuredVideo.media_type || 'youtube',
-          narrator_transition:  t._featuredVideo.narrator_transition || '',
+          // Heatmap is the new editor default — fall through to it when the
+          // manifest didn't specify a media_type.
+          media_type:           t._featuredVideo.media_type || 'heatmap',
+          // Verbatim override the narrator must use for the last sentence
+          // before the [VIDEO_HANDOFF] when filled.
+          narrator_transition:      t._featuredVideo.narrator_transition || '',
+          // Steering hint — guides Claude when narrator_transition is empty.
+          // Editor surfaces this as a separate field so the user can shape
+          // the auto-written transition without writing it themselves.
+          narrator_transition_hint: t._featuredVideo.narrator_transition_hint || '',
           ...(t._featuredVideo.media_type === 'twitter_post' || t._featuredVideo.media_type === 'twitter_video'
             ? { twitter_url: t._featuredVideo.twitter_url || '' }
             : {}),
@@ -1577,6 +1592,8 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
             : {}),
         },
       } : {}),
+      // Side tweet — embedded beside the article card; NOT a featured handoff.
+      ...(t._sideTweetUrl ? { side_tweet_url: t._sideTweetUrl } : {}),
     };
   });
 
@@ -1668,10 +1685,14 @@ ENTITY RULES (critical for globe arc visualisation):
 
 FEATURED MEDIA HANDOFF (critical for timing):
 - Some stories include a "featured_video" field. The "media_type" inside it tells you WHICH kind of media will appear at the handoff. The narrator's voiceover must be split into two halves around a [VIDEO_HANDOFF] marker so the player can fire the visual at the precise sentence boundary.
+- "heatmap" is the editor's default media_type — when no specific clip or post is set, a featured heatmap is the expected canvas. Treat it as first-class, not a fallback.
 
 When "featured_video" is present, ALWAYS:
   1. Write the voiceover in TWO parts. Insert the marker [VIDEO_HANDOFF] at the split point.
-  2. Use the "narrator_transition" string verbatim as the last sentence of part 1 if provided. Otherwise, write a natural transition tailored to the media type (see below).
+  2. Transition copy precedence (use the first that applies):
+     a. If "narrator_transition" is a non-empty string → use it VERBATIM as the last sentence of part 1.
+     b. Else if "narrator_transition_hint" is non-empty → write the transition yourself but FOLLOW THE HINT (it's the editor's steering note, e.g. "lean into the visual surprise", "tease without giving the answer"). Reflect the hint's intent and tone — don't quote it.
+     c. Else → write a natural transition tailored to the media_type per the rules below.
   3. Keep total voiceover word count at 55-75 words, split roughly 60/40 before/after.
 
 Per media_type:
@@ -1693,6 +1714,12 @@ Per media_type:
     - Do NOT pretend to read specific numbers off the map — speak in qualitative regional terms.
 
 - For stories WITHOUT "featured_video", write a normal continuous voiceover as usual.
+
+SIDE TWEET (separate from featured_video):
+- Some stories include a top-level "side_tweet_url". This is an embedded X post that displays beside the article card during the segment — it is NOT a featured handoff and DOES NOT require a [VIDEO_HANDOFF] marker.
+- When present (and not also the featured tweet), weave a brief reference to the post into the voiceover so the viewer's eye is drawn to the sidebar. One sentence is plenty: "A post from the foreign ministry — visible on the side card — calls the move provocative." or "An eyewitness video circulating on X (shown alongside) captures the moment."
+- Do NOT quote the tweet's full text — the viewer reads it themselves. Just signal that it's there and worth glancing at.
+- A story can have BOTH a featured_video (any type) AND a side_tweet_url; treat them as independent.
 
 CONTENT GUARDRAILS (must follow):
 - Do NOT report the death, assassination, or removal from power of any sitting head of state or major world leader unless it is explicitly confirmed as verified fact in the provided articles. If articles only speculate or reference rumours, write about the speculation/rumour angle instead (e.g. "speculation is growing about...").
