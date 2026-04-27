@@ -33,7 +33,7 @@ const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees si
 const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
-const TOTAL_ARTICLE_LIMIT  = 1200;
+const TOTAL_ARTICLE_LIMIT  = 1500;
 const REFRESH_MIN_ARTICLES = 5;
 const REFRESH_MIN_NEW_KWS  = 3;
 const RECENCY_HALF_LIFE_HOURS = 36;
@@ -44,18 +44,22 @@ const RECENCY_HALF_LIFE_HOURS = 36;
 // minutes) shoved out every slower-publishing non-Western source. The tiered
 // sampler below guarantees geographic floors:
 //
-//   Tier 1 — GLOBAL           stories with ≥2 country mentions in
-//                             article_locations (cross-border reporting)
-//   Tier 2 — COUNTRY QUOTA    up to TIER_COUNTRY_PER per country_iso, so
-//                             Bolivia and Tajikistan each get slots even if
-//                             the US has 50k articles in the window
-//   Tier 3 — FRESH FILL       articles < FRESH_PRIORITY_HOURS old, any country
-//   Tier 4 — BACKLOG FILL     remaining capacity, newest-first
+//   Tier 1  — GLOBAL          stories with ≥2 country mentions in
+//                              article_locations (cross-border reporting)
+//   Tier 2a — COUNTRY FLOOR    up to TIER_COUNTRY_FLOOR per country_iso —
+//                              every country with candidates gets a shot,
+//                              OUTSIDE the TIER_COUNTRY_LIMIT total cap so
+//                              busy countries can't crowd them out
+//   Tier 2b — COUNTRY CEILING  up to TIER_COUNTRY_PER per country_iso (incl.
+//                              floor), capped at TIER_COUNTRY_LIMIT additional
+//   Tier 3  — FRESH FILL       articles < FRESH_PRIORITY_HOURS old, any country
+//   Tier 4  — BACKLOG FILL     remaining capacity, newest-first
 //
 // Total target = TOTAL_ARTICLE_LIMIT.
 const TIER_GLOBAL_LIMIT    = 200;
-const TIER_COUNTRY_PER     = 12;   // per-country ceiling in tier 2
-const TIER_COUNTRY_LIMIT   = 700;
+const TIER_COUNTRY_FLOOR   = 2;    // per-country FLOOR: every country with candidates gets ≥ this many
+const TIER_COUNTRY_PER     = 12;   // per-country ceiling (includes floor)
+const TIER_COUNTRY_LIMIT   = 700;  // total cap on the CEILING pass (floor articles are ON TOP)
 const TIER_FRESH_LIMIT     = 200;
 const TIER_BACKLOG_LIMIT   = 200;
 const FRESH_PRIORITY_HOURS = 6;
@@ -1528,11 +1532,31 @@ async function getUnthreadedArticles(hours) {
     tier1.push(a); used.add(a.id);
   }
 
-  // Tier 2 — per-country quota. Walks candidates newest-first and stops
-  // adding from a country once TIER_COUNTRY_PER is hit, guaranteeing every
-  // country that produced anything in the window gets representation.
-  const tier2 = [];
+  // Tier 2a — per-country FLOOR. Walks candidates newest-first and admits
+  // up to TIER_COUNTRY_FLOOR articles for every country with candidates.
+  // Sits OUTSIDE the TIER_COUNTRY_LIMIT cap so under-represented countries
+  // (Mongolia, Tajikistan, Zambia, etc.) always get a shot at forming a
+  // thread even on busy days when dominant countries (US/IR/IL/RU/UA)
+  // would otherwise consume the entire ceiling budget. Skips uncategorized
+  // (iso=ZZ) — the floor is for *known* countries getting drowned, not
+  // for articles we couldn't tag.
   const countryCount = new Map();
+  const tier2Floor = [];
+  for (const a of candidates) {
+    if (used.has(a.id)) continue;
+    const iso = a.country_iso || 'ZZ';
+    if (iso === 'ZZ') continue;
+    const n = countryCount.get(iso) || 0;
+    if (n >= TIER_COUNTRY_FLOOR) continue;
+    tier2Floor.push(a); used.add(a.id);
+    countryCount.set(iso, n + 1);
+  }
+
+  // Tier 2b — per-country CEILING. Walks candidates newest-first and stops
+  // adding from a country once TIER_COUNTRY_PER is hit (counting the floor
+  // articles already admitted). Capped at TIER_COUNTRY_LIMIT additional
+  // articles — that cap is on the ceiling pass alone; floor sits on top.
+  const tier2 = [];
   for (const a of candidates) {
     if (tier2.length >= TIER_COUNTRY_LIMIT) break;
     if (used.has(a.id)) continue;
@@ -1564,11 +1588,19 @@ async function getUnthreadedArticles(hours) {
     tier4.push(a); used.add(a.id);
   }
 
-  const combined = [...tier1, ...tier2, ...tier3, ...tier4].slice(0, TOTAL_ARTICLE_LIMIT);
+  // Concat order matters for the slice — tail tiers get cut first if we
+  // exceed TOTAL_ARTICLE_LIMIT. Floor articles are placed BEFORE the
+  // ceiling pass and the fill tiers so under-represented countries can
+  // never be dropped by the cap.
+  const combined = [...tier1, ...tier2Floor, ...tier2, ...tier3, ...tier4].slice(0, TOTAL_ARTICLE_LIMIT);
 
+  // Log how many distinct countries got the floor (i.e. countries that
+  // would have produced threads only via this pass). Useful for tracking
+  // how much under-represented coverage the floor is actually rescuing.
+  const flooredCountries = new Set(tier2Floor.map(a => a.country_iso || 'ZZ'));
   console.log(
-    `   Tiered sample: global=${tier1.length} country=${tier2.length} ` +
-    `fresh=${tier3.length} backlog=${tier4.length} total=${combined.length} ` +
+    `   Tiered sample: global=${tier1.length} country_floor=${tier2Floor.length}(in ${flooredCountries.size} countries) ` +
+    `country_ceiling=${tier2.length} fresh=${tier3.length} backlog=${tier4.length} total=${combined.length} ` +
     `(distinct_countries=${new Set(combined.map(a => a.country_iso || 'ZZ')).size})`
   );
 
