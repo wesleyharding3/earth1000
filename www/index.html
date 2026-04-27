@@ -2560,6 +2560,9 @@ body.flow-maximized #flowArcList {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  /* Fade-out for the minimize transition (matches .flowCtxInfoView). */
+  opacity: 1;
+  transition: opacity 0.28s ease-out;
 }
 .arcListPanel.ai-context-open .arcListTimelineBar,
 .arcListPanel.ai-context-open .arcListScroll {
@@ -4629,7 +4632,16 @@ button.arcCtxSegDot,
   visibility: hidden;
   pointer-events: none;
   transform: translateY(-6px);
-  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0.3s;
+  /* max-height transition matches the slot's existing easing so the
+     card shrinking and the inner content fading stay in lockstep when
+     the user toggles the minimize button. Without this rule, info /
+     arcs / ctx views snapped between full size and the .flowCtxMinimized
+     44px cap. */
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease,
+    max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
+    visibility 0s linear 0.3s;
 }
 #flowCtxCard.visible {
   opacity: 1;
@@ -4638,20 +4650,36 @@ button.arcCtxSegDot,
   transform: translateY(0);
   transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0s;
 }
+/* ── flowCtxCard header row: "Routes" eyebrow + pill bar share one row ── */
+/* Lives at the top of the card, replaces the previous standalone
+   pill bar. Title sits left, pill bar right. When NOT in view-arcs mode
+   (i.e. info / AI views) the title is hidden via the rule below, so the
+   pill bar sits alone on the right exactly as it did before. */
+.flowCtxHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
 /* ── flowCtxCard pill control bar ── */
+/* Now lives inside .flowCtxHeaderRow, so it no longer needs its own
+   align-self / margin-bottom — those used to position it as a direct
+   child of the column-flex card. */
 .flowCtxPillBar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 0;
-  align-self: flex-end;
   background: rgba(0,0,0,0.55);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 20px;
   padding: 0 2px;
   z-index: 3;
   height: 24px;
-  margin-bottom: 2px;
   flex-shrink: 0;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -4717,6 +4745,10 @@ button.arcCtxSegDot,
     "btn   btn";
   column-gap: 10px;
   row-gap: 4px;
+  /* Fade-out for the minimize transition. The slot has its own opacity
+     transition; this one mirrors the same easing for visual cohesion. */
+  opacity: 1;
+  transition: opacity 0.28s ease-out;
   align-items: start;
 }
 #flowCtxCard .flowCtxKind          { grid-area: kind; }
@@ -4774,18 +4806,29 @@ button.arcCtxSegDot,
   box-shadow: 0 0 6px rgba(255,180,80,0.85), 0 0 12px rgba(255,170,60,0.5);
   flex: 0 0 auto;
 }
-/* Minimized state — hide image and meta, compact card */
-#flowCtxCard.flowCtxMinimized .flowCtxImgWrap { display: none; }
-#flowCtxCard.flowCtxMinimized .flowCtxMeta { display: none; }
-#flowCtxCard.flowCtxMinimized .flowCtxInfoView {
-  grid-template-columns: 1fr;
-  grid-template-areas:
-    "kind"
-    "title";
+/* ── Minimized state — UNIFIED across all contexts ─────────────────
+   When .flowCtxMinimized is on the card, only the header row (pill bar
+   + "Routes" eyebrow when applicable) is visible. Replaces the old
+   per-block compaction rules (image hidden / meta hidden / info-view
+   grid reshape / title clamped to 1 line) which still left a thread
+   eyebrow + title visible underneath the pill on info-view, taking up
+   screen space the user wanted reclaimed.
+   The 44px max-height = 24px header row + 2px row margin-bottom +
+   2 × 8-10px card padding. overflow:hidden keeps the fading content
+   inside the new short bounds during the transition. */
+#flowCtxCard.flowCtxMinimized {
+  max-height: 44px;
+  overflow: hidden;
 }
-#flowCtxCard.flowCtxMinimized .flowCtxTitle {
-  -webkit-line-clamp: 1;
-  font-size: 11px;
+/* Fade all body content out simultaneously with the shrink. The
+   pointer-events:none keeps a half-faded info view from intercepting
+   clicks meant for the pill bar (which sits at z-index 3). */
+#flowCtxCard.flowCtxMinimized .flowCtxInfoView,
+#flowCtxCard.flowCtxMinimized .flowCtxLiveArcsSlot,
+#flowCtxCard.flowCtxMinimized #arcContextPanel,
+#flowCtxCard.flowCtxMinimized .flowCtxLabelsChk {
+  opacity: 0;
+  pointer-events: none;
 }
 /* Override the grid display to hide by default; view-info restores it. */
 #flowCtxCard .flowCtxInfoView { display: none; }
@@ -4811,7 +4854,8 @@ button.arcCtxSegDot,
   background: rgba(0,0,0,0.35);
   border: 1px solid rgba(255,255,255,0.08);
   z-index: 4;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  /* Includes opacity for the minimize fade. */
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.28s ease-out;
 }
 .flowCtxLabelsChk:hover {
   background: rgba(255,255,255,0.1);
@@ -4832,8 +4876,9 @@ button.arcCtxSegDot,
    are a generic aggregate; the per-arc labels crowd the view, so hide
    the toggle entirely in that mode. */
 #flowCtxCard.noInfoOrigin .flowCtxLabelsChk { display: none; }
-/* Minimize collapses the card; the label toggle would crowd the title. */
-#flowCtxCard.flowCtxMinimized .flowCtxLabelsChk { display: none; }
+/* (Removed: `#flowCtxCard.flowCtxMinimized .flowCtxLabelsChk { display: none; }`
+   The unified .flowCtxMinimized rule now fades it out via opacity:0 so the
+   minimize transition reads as a smooth fade instead of a snap.) */
 #flowCtxCard.view-ctx .flowCtxLabelsChk { display: none; }
 
 /* ── Tab-driven view switching inside flowCtxCard ───────────────────
@@ -5015,32 +5060,34 @@ button.arcCtxSegDot,
    collapsed to just the pill-bar header until the user clicks Play. */
 .flowCtxLiveArcsSlot {
   display: none;
-  /* COLUMN — keeps the "Routes" title (.flowCtxLiveArcsTitle) on its
-     own line at the top, with the reparented #flowArcList stacked below
-     it. The .view-arcs class sets `display: flex` on this slot (line
-     ~4843) without specifying a direction; the flexbox default is `row`,
-     which used to put the title to the LEFT of the arc list — squeezing
-     the route bars to ~170px and truncating the "src → dst" text on the
-     right. flex-direction:column gives both children full width. */
+  /* Slot now contains only the reparented #flowArcList — the "Routes"
+     title moved up into .flowCtxHeaderRow alongside the pill bar, so
+     this slot no longer needs flex-direction:column. Keeping it for
+     defensive reasons (any future child stays stacked vertically). */
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  /* Approx. 3 article bars (≈60px each) inside the scroll area. */
-  max-height: 210px;
+  /* 188px = the prior 210px MINUS the 22px the title used to occupy
+     INSIDE the slot. Arc-bar capacity is therefore unchanged (≈3 bars
+     at 60px each), and the panel ends up shorter by exactly the height
+     the title used to add. */
+  max-height: 188px;
   opacity: 1;
   transition:
     max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
     opacity 0.28s ease-out,
     margin 0.42s cubic-bezier(0.32, 0.72, 0, 1);
 }
-/* "Routes" section title — appears at the top of the live-arcs slot
-   across all three flow contexts (Article / Thread / Timeline). */
+/* "Routes" section title — sits inline with the pill bar inside
+   .flowCtxHeaderRow, so it shares a 24px-tall row with the [—] [×]
+   buttons. Hidden by default; shown only when the card is in arcs view.
+   The same DOM is reused across Article / Thread / Timeline flows. */
 .flowCtxLiveArcsTitle {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 7px;
-  padding: 4px 2px 6px;
+  padding: 0 2px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.14em;
@@ -5049,11 +5096,28 @@ button.arcCtxSegDot,
   text-shadow: 0 0 8px rgba(255,180,60,0.30);
   flex-shrink: 0;
 }
+#flowCtxCard.view-arcs .flowCtxLiveArcsTitle { display: flex; }
 .flowCtxLiveArcsDot {
   width: 6px; height: 6px; border-radius: 50%;
   background: rgba(255,210,140,0.9);
   box-shadow: 0 0 8px rgba(255,180,60,0.65);
   animation: flowCtxArcsDotPulse 1.6s ease-in-out infinite;
+}
+/* Route-count chip beside the "Routes" eyebrow. tabular-nums keeps the
+   width stable as the count flips between 1 / 10 / 100 (otherwise the
+   pill bar would shift right by ~1px each transition). Slightly dimmer
+   than the eyebrow label so it reads as a quantity, not a heading. */
+.flowCtxLiveArcsCount {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255,200,120,0.55);
+  background: rgba(255,180,80,0.10);
+  border: 1px solid rgba(255,180,80,0.18);
+  border-radius: 8px;
+  padding: 1px 6px;
+  line-height: 1.2;
 }
 @keyframes flowCtxArcsDotPulse {
   0%,100% { opacity: 0.55; box-shadow: 0 0 6px rgba(255,180,60,0.45); }
@@ -5074,7 +5138,11 @@ button.arcCtxSegDot,
   max-width: calc(100vw - 32px);
   background: rgba(6, 10, 20, 0.30);
   padding: 8px;
-  max-height: calc(24px + 210px + 28px);
+  /* 24px header row + 188px arc-list slot + 28px buffer. Down from the
+     prior 210px slot — saves the 22px the "Routes" eyebrow used to add
+     INSIDE the slot, now that the title shares the header row with
+     the pill bar instead. */
+  max-height: calc(24px + 188px + 28px);
   transition:
     max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
     background 0.25s ease;
@@ -5082,18 +5150,10 @@ button.arcCtxSegDot,
 #flowCtxCard.view-arcs.noInfoOrigin.liveArcsPrePlay {
   max-height: 52px;
 }
-/* Minimized in routes/live-arcs mode — collapse the arcs slot to just the
-   pill bar. Mirrors the liveArcsPrePlay collapse but applies whether or
-   not the card was opened directly (noInfoOrigin) vs. drilled-down. */
-#flowCtxCard.view-arcs.flowCtxMinimized .flowCtxLiveArcsSlot {
-  max-height: 0;
-  opacity: 0;
-  margin: 0;
-  pointer-events: none;
-}
-#flowCtxCard.view-arcs.flowCtxMinimized {
-  max-height: 52px;
-}
+/* (The old per-view-arcs minimize rules — slot max-height:0 + card
+   max-height:52px — are now handled by the unified .flowCtxMinimized
+   block above. Removed to avoid two specificities fighting over
+   max-height during the transition.) */
 /* Inner scroll area gets the 3-bar cap so overflow scrolls instead of
    bleeding past the outer cap. */
 #flowCtxCard.view-arcs.noInfoOrigin .arcListScroll {
@@ -22699,16 +22759,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }
 
-      // Update both counters (min bar + expanded header). Share a
-       // single "N flow[s]" string so the number stays identical through
-       // min/max transitions — nothing perceivable changes about the
-       // counter itself, only the chrome around it.
+      // Update all counters (min bar, the legacy expanded header, AND the
+      // new "Routes 12" chip in the flowCtxCard's header row). Single
+      // source of truth: visibleArcs.length. The chip in .flowCtxLiveArcsTitle
+      // shows just the number since "Routes" is already the label;
+      // arcListMinCount/arcListMaxCount keep their "N flow[s]" form for
+      // the minimized-bar standalone view where there's no surrounding label.
       {
         const n = visibleArcs.length;
         const countText = n + ' flow' + (n === 1 ? '' : 's');
         minCount.textContent = countText;
         const maxCount = document.getElementById('arcListMaxCount');
         if (maxCount) maxCount.textContent = countText;
+        const headerCount = document.getElementById('flowCtxLiveArcsCount');
+        if (headerCount) headerCount.textContent = String(n);
       }
 
       // Build desired set (stable UIDs)
@@ -28498,13 +28562,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // the Pro AI feature; style cribbed from the keyword intelligence
     // ".kwi-ai-btn" pill.
     el.innerHTML = `
-      <div class="flowCtxPillBar">
-        <button class="flowCtxReturn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
-        <button class="flowCtxTab active" data-view="info" title="Article"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
-        <button class="flowCtxTab" data-view="arcs" title="Live Arcs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 18 C 8 6, 16 6, 20 18"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/></svg></button>
-        <button class="flowCtxTab ai" id="flowCtxAiBtn" data-view="ctx" title="AI Context">✦</button>
-        <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
-        <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      <!-- Header row: "Routes" eyebrow on the left, pill bar of buttons on
+           the right. They share a single 24px-tall row so the title aligns
+           with the [—] [×] buttons instead of pushing the arc list down by
+           an extra row. The title hides via CSS unless .view-arcs is set
+           on the card, so info / AI views see only the pill bar. -->
+      <div class="flowCtxHeaderRow">
+        <div class="flowCtxLiveArcsTitle">
+          <span class="flowCtxLiveArcsDot"></span>
+          <span>Routes</span>
+          <!-- Route count chip — updated by syncPanel() each tick from
+               visibleArcs.length. Same source of truth that drives
+               #arcListMinCount and #arcListMaxCount. -->
+          <span class="flowCtxLiveArcsCount" id="flowCtxLiveArcsCount">0</span>
+        </div>
+        <div class="flowCtxPillBar">
+          <button class="flowCtxReturn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+          <button class="flowCtxTab active" data-view="info" title="Article"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
+          <button class="flowCtxTab" data-view="arcs" title="Live Arcs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 18 C 8 6, 16 6, 20 18"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/></svg></button>
+          <button class="flowCtxTab ai" id="flowCtxAiBtn" data-view="ctx" title="AI Context">✦</button>
+          <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
+          <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+        </div>
       </div>
       <div class="flowCtxInfoView">
         <div class="flowCtxKind"></div>
@@ -28512,15 +28591,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="flowCtxTitle"></div>
         <div class="flowCtxMeta"></div>
       </div>
-      <div class="flowCtxLiveArcsSlot">
-        <!-- Section title for the live arcs panel. Same DOM is reused
-             across Article / Thread / Timeline flows, so this single
-             label surfaces in all three contexts. -->
-        <div class="flowCtxLiveArcsTitle">
-          <span class="flowCtxLiveArcsDot"></span>
-          <span>Routes</span>
-        </div>
-      </div>
+      <div class="flowCtxLiveArcsSlot"></div>
       <label class="flowCtxLabelsChk" title="Show origin &amp; destination labels on the globe">
         <input type="checkbox" id="flowCtxLabelsToggle" checked>
         <span>Labels</span>
@@ -31092,13 +31163,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }).join("");
 
     panel.classList.add("visible");
+    _startFtlPulseLoop();
+  }
+
+  // ── Sequential pulse loop for the Story Timeline bullets ─────────
+  // Adds `.ftlPulsing` to one .ftlEvent at a time, advancing every
+  // 1000ms with wraparound. Each swap re-fires a 1s halo ripple via
+  // the @keyframes ftlPulseHalo defined above on .ftlEvent::before.
+  let _ftlPulseTimer = null;
+  function _startFtlPulseLoop() {
+    _stopFtlPulseLoop();
+    const events = document.querySelectorAll('#ftlTrack .ftlEvent');
+    if (!events.length) return;
+    let i = 0;
+    // Immediate first pulse so the wave starts on open without a wait.
+    events.forEach(e => e.classList.remove('ftlPulsing'));
+    events[0].classList.add('ftlPulsing');
+    _ftlPulseTimer = setInterval(() => {
+      events.forEach(e => e.classList.remove('ftlPulsing'));
+      i = (i + 1) % events.length;
+      // rAF gap so the browser doesn't collapse remove+add in one tick
+      // and skip the keyframe restart.
+      requestAnimationFrame(() => events[i].classList.add('ftlPulsing'));
+    }, 1000);
+  }
+  function _stopFtlPulseLoop() {
+    if (_ftlPulseTimer) { clearInterval(_ftlPulseTimer); _ftlPulseTimer = null; }
+    document.querySelectorAll('#ftlTrack .ftlPulsing').forEach(e => e.classList.remove('ftlPulsing'));
   }
 
   window.hideFlowTimeline = function() {
+    _stopFtlPulseLoop();
     document.getElementById("flowTimeline")?.classList.remove("visible");
   };
 
   function clearFlowTimeline() {
+    _stopFtlPulseLoop();
     document.getElementById("flowTimeline")?.classList.remove("visible");
   }
 
@@ -31268,6 +31368,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 .ftlEvent.negative::before { background: rgba(255,80,80,0.5); border-color: rgba(255,80,80,0.8); }
 .ftlEvent.positive::before { background: rgba(80,255,120,0.5); border-color: rgba(80,255,120,0.8); }
+
+/* ── Sequential pulse wave on the timeline bullets ──────────────────
+   _startFtlPulseLoop() in JS adds the .ftlPulsing class to one
+   .ftlEvent at a time, advancing every 1000ms with a wraparound at
+   the end. Each class swap re-triggers a single 1s halo ripple via
+   the keyframes below. The halo color matches the dot's sentiment
+   tint so you can "read" the emotional shape of the timeline even
+   while only one dot is highlighted. */
+@keyframes ftlPulseHalo {
+  0%   { box-shadow: 0 0 0 0   rgba(100,200,255,0.55); }
+  85%  { box-shadow: 0 0 0 14px rgba(100,200,255,0); }
+  100% { box-shadow: 0 0 0 14px rgba(100,200,255,0); }
+}
+@keyframes ftlPulseHaloPos {
+  0%   { box-shadow: 0 0 0 0   rgba(80,255,120,0.55); }
+  85%  { box-shadow: 0 0 0 14px rgba(80,255,120,0); }
+  100% { box-shadow: 0 0 0 14px rgba(80,255,120,0); }
+}
+@keyframes ftlPulseHaloNeg {
+  0%   { box-shadow: 0 0 0 0   rgba(255,80,80,0.55); }
+  85%  { box-shadow: 0 0 0 14px rgba(255,80,80,0); }
+  100% { box-shadow: 0 0 0 14px rgba(255,80,80,0); }
+}
+.ftlEvent.ftlPulsing::before          { animation: ftlPulseHalo    1s ease-out; }
+.ftlEvent.ftlPulsing.positive::before { animation: ftlPulseHaloPos 1s ease-out; }
+.ftlEvent.ftlPulsing.negative::before { animation: ftlPulseHaloNeg 1s ease-out; }
 
 .ftlEventDate {
   font-size: 9px;
@@ -36316,6 +36442,57 @@ const settingsToggle     = document.getElementById("settingsToggle");
   overflow-y: auto;
   padding: 20px 22px 18px;
   font-size: 13px;
+  /* Local stacking context so the ::before rim sits cleanly above the
+     card body but below interactive children (close button etc, which
+     stay at the natural z-index of their tag, > pseudo-element). */
+  isolation: isolate;
+}
+/* CSS Houdini — required for animating <angle> on a custom property.
+   Without @property the conic-gradient angle would snap, not interpolate. */
+@property --pie-rim-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+/* Animated rim pulse — a "comet" of warm amber light orbits the card's
+   rounded-rect border continuously while the modal is mounted. The card
+   element only exists between open and close (rebuilt fresh per open),
+   so the animation naturally starts at panel open with no JS hook.
+   The mask trick traces the rounded corners. */
+.pieModalCard::before {
+  content: '';
+  position: absolute;
+  inset: -1px;                 /* sit ON the border line */
+  border-radius: 11px;          /* card's 10px + 1px outset */
+  padding: 2px;                 /* rim thickness */
+  /* Bright comet ~30deg wide, rest transparent. Rotating
+     --pie-rim-angle revolves the comet around the rim. */
+  background: conic-gradient(
+    from var(--pie-rim-angle),
+    rgba(255,200,140,0)     0deg,
+    rgba(255,200,140,0)   280deg,
+    rgba(255,200,140,0.45) 320deg,
+    rgba(255,220,180,1)    348deg,
+    rgba(255,200,140,0.45) 356deg,
+    rgba(255,200,140,0)    360deg
+  );
+  /* XOR mask — keep only the rim ring, hide the interior. */
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 1;
+  /* Soft warm-amber glow follows the masked rim shape. */
+  filter: drop-shadow(0 0 6px rgba(255,180,80,0.6));
+  animation: pieModalRimPulse 3s linear infinite;
+}
+@keyframes pieModalRimPulse {
+  to { --pie-rim-angle: 360deg; }
 }
 .pieModalClose {
   position: absolute; top: 10px; right: 10px;
