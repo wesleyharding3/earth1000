@@ -8284,7 +8284,7 @@ app.post("/api/cluster-node/summary", async (req, res) => {
       ? `${kindLabel}: "${meta.title}"\nCategory: ${meta.primary_category || "General"}\nDescription: ${meta.description || ""}\nKeywords: ${(meta.keywords || []).slice(0, 15).join(", ")}`
       : "";
 
-    const prompt = `You are an impartial global news analyst. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
+    const prompt = `You are an impartial global news analyst with web_search access. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
 
 Schema:
 {
@@ -8294,9 +8294,27 @@ Schema:
 }
 
 Rules:
+- Treat the articles below as your starting point. Re-read every article carefully — secondary actors are often mentioned only briefly (as treaty partners, joint-statement co-signatories, named companies/NGOs operating in the story, supply-chain links, aid providers, diaspora communities, etc.). Find those mentions before deciding who to include.
+- If the articles are thin on WHY a candidate actor matters, you MUST use the web_search tool to verify the actual relationship before including them. Suggested queries:
+    * "<actor> <primary actor> <topic-keyword>"
+    * "<actor> <named organization or individual from articles>"
+    * "<actor> <story-specific term from the title or summaries>"
+  Up to 4 web searches per response. Accuracy matters more than speed.
 - overview: ~400 characters summarizing the broader geopolitical or societal arc of this ${kindLabel}, synthesizing the most important developments from the articles below.
-- primary_actors: 1–3 entries for the countries / institutions / parties most central to the story. Each context ~250 characters covering their role, stakes, and exposure.
-- secondary_actors: 0–4 entries for actors with meaningful but non-central roles. Each context ~200 characters explaining the relationship to the primary actors.
+- primary_actors: 1–3 entries for the countries / institutions / parties most central to the story. Each context ~250 characters covering their role, stakes, and exposure with SPECIFIC details (named officials, dates, dollar amounts, named programs).
+- secondary_actors: 0–4 entries — INCLUDE ONLY actors with documentable, concrete connections (named operational involvement, named bilateral mechanism, named company/NGO active in the story, named diaspora/supply-chain link). When in doubt, OMIT — a shorter, sharper list is better than a padded one. Each context ~200 characters explaining the SPECIFIC tie to the primary actors.
+- Every secondary actor context must give a SPECIFIC, CONCRETE reason this actor is in the story. Acceptable concrete answers include:
+    * Direct operational involvement (sent rescuers, equipment, aid, sanctions, public statements).
+    * Bilateral institutional ties cited in coverage (treaty membership, named MoU, joint commission).
+    * Named companies, NGOs, or individuals from the actor active in the story (with the company/person named).
+    * Diaspora, labor migration, or supply-chain links with specifics (which industry, what scale).
+- FORBIDDEN — these phrases are non-answers and waste the user's time. Do NOT produce any of:
+    * "no direct involvement"
+    * "no apparent direct connection"
+    * "tangential", "peripheral", "minimal direct connection", "indirect relevance"
+    * "would be indirect through international standards / mining industry / global frameworks / broader networks"
+    * "no operational role", "no documented participation", "no material stake"
+  If after re-reading articles AND web-searching you genuinely cannot find a real connection, OMIT the actor from secondary_actors entirely. Do not produce vague filler.
 - Factual, neutral, specific. No speculation, no opinions, no bullets. Keep proper noun casing consistent in the "name" field.
 
 ${entityContext}
@@ -8304,9 +8322,22 @@ ${entityContext}
 Articles:
 ${articleContext}`;
 
+    // Bumped max_tokens 1400 → 6000 because Anthropic's web_search server
+    // tool injects search results inline into the response context. Each
+    // search adds ~600 tokens of result snippets; with up to 4 searches
+    // plus the final ~1400-token JSON output we can blow through a small
+    // budget. Web-search is server-managed (no manual tool loop here) —
+    // the API runs queries transparently and returns the final text.
     const response = await Anthropic.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 1400,
+      max_tokens: 6000,
+      tools: [
+        // Anthropic-hosted web search. Capped at 4 to bound latency.
+        // Used to verify concrete actor connections when the article
+        // context is too thin to ground a specific claim. Same tool
+        // pattern as /api/heatmap/ask and /api/ai/flow-context.
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 4 },
+      ],
       messages: [{ role: "user", content: prompt }],
     });
 
@@ -8683,7 +8714,7 @@ app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
             : `Focus on the currently selected slice of the ${kindLabel}.`)
       : `Focus on the overall ${kindLabel}.`;
 
-    const prompt = `You are an impartial geopolitical analyst. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
+    const prompt = `You are an impartial geopolitical analyst with web_search access. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
 
 Schema:
 {
@@ -8697,11 +8728,28 @@ Schema:
 }
 
 Rules:
-- Use ONLY the article titles and summaries provided below.
+- Treat the articles below as your starting point. Re-read every article — secondary countries are often mentioned only briefly (in a joint statement, as a treaty partner, as an aid provider, as a supply-chain link, as the home of a named company, as a venue for a related summit, etc.). Find that mention.
+- If the articles do not clearly explain a secondary country's connection to the primary actors, you MUST use the web_search tool. Suggested queries:
+    * "<country> <primary country> <topic-keyword>"
+    * "<country> <named organization or individual from articles>"
+    * "<country> <story-specific term, e.g. 'Sinaloa mine rescue', 'mining sector ties Mexico'>"
+  Use up to 4 web searches per response if needed. Accuracy matters more than speed.
 - event_summary: aim for about 400 characters describing the event itself and the latest developments.
 - For each primary country listed below, include exactly one object in primary_country_contexts, in the same order. Each context should be around 250 characters and explain that country's role, stakes, or exposure in the story.
 - For each secondary country listed below, include exactly one object in secondary_country_contexts, in the same order. Each context should be around 200 characters.
-- Every secondary country context must explicitly explain how that secondary country is related to the primary countries and to the story overall. If the relationship is indirect or limited, say so directly.
+- Every secondary country context must give a SPECIFIC, CONCRETE reason this country is associated with the story. Acceptable concrete answers include:
+    * Direct operational involvement (sent rescuers, equipment, aid, sanctions, statements).
+    * Bilateral institutional ties cited in coverage (treaty membership, joint commission, named MoU).
+    * Named companies, NGOs, or individuals from the country active in the story.
+    * Diaspora, labor migration, or supply-chain links specifically relevant to the event.
+    * Identifying the SPECIFIC article passage that caused this country to be tagged ("Article #7 lists this country in a G7 communiqué on mining safety alongside Mexico's response").
+- FORBIDDEN — these phrases are non-answers and waste the user's time. Do NOT produce any of:
+    * "no direct involvement"
+    * "no apparent direct connection"
+    * "tangential", "peripheral", "minimal direct connection", "indirect relevance"
+    * "would be indirect through international standards / mining industry / global frameworks / broader networks"
+    * "no operational role", "no documented participation", "no material stake"
+  If after re-reading articles AND web-searching you genuinely cannot find a real connection, the correct response is to identify the SPECIFIC article passage that caused this country to be listed as secondary, e.g. "Listed because Article #4 quotes a G7 statement that included Mexico's response to the rescue alongside this country." Always be concrete.
 - Clarity matters more than exact character counts. It is okay to go over when needed.
 - Keep the prose factual, neutral, and specific. No speculation, no opinions, no bullets.
 
@@ -8730,9 +8778,22 @@ ${articleContext || "(no article context available)"}`;
     let streamClosed = false;
     req.on("close", () => { streamClosed = true; });
 
+    // Bumped max_tokens 1400 → 6000 because Anthropic's web_search server
+    // tool injects search results inline into the response context. Each
+    // search adds ~600 tokens of result snippets; with up to 4 searches
+    // plus the final ~1400-token JSON output we can blow through a small
+    // budget. Web-search is server-managed (no manual tool loop here) —
+    // the API runs queries transparently and returns the final text.
     const response = await Anthropic.messages.create({
       model: "claude-haiku-4-5",
-      max_tokens: 1400,
+      max_tokens: 6000,
+      tools: [
+        // Anthropic-hosted web search. Capped at 4 to bound latency.
+        // The model uses these to verify secondary-country connections
+        // when the article context is too thin to ground a concrete
+        // answer. Same tool pattern as the heatmap/ask endpoint.
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 4 },
+      ],
       messages: [{ role: "user", content: prompt }],
     });
     const rawText = (response?.content || [])
