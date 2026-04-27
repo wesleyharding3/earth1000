@@ -2131,21 +2131,30 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 15, 30);
     if (q.length < 1) return res.json([]);
 
+    // Range bounds for prefix lookup. Keywords are already stored lowercase
+    // (see keywordExtractor.js:80), so we don't need LOWER() — and dropping it
+    // is what lets the existing btree indexes on `keyword` actually serve this
+    // query. Prefix LIKE on default-collation text does NOT use a btree index,
+    // but a range comparison `keyword >= lo AND keyword < hi` does.
+    const qHi = q + '\uFFFF'; // last BMP code unit; sorts after any practical keyword
     const results = await ttlCached(`kw-suggest:${q}:${limit}`, 120_000, async () => {
       // Three sources, run in parallel
       const [kwRows, countryRows, cityRows] = await Promise.all([
-        // 1) Keywords from keyword_daily_stats (recent 30 days, excludes stopwords)
+        // 1) Keywords from keyword_daily_stats (recent 30 days, excludes stopwords).
+        // Uses range comparison so the partial index
+        // idx_kds_global_date_keyword_cover (date DESC, keyword)
+        // WHERE source_country_id IS NULL AND about_country_id IS NULL can serve it.
         pool.query(`
-          SELECT keyword AS name, SUM(total_count)::int AS weight, 'keyword' AS type
+          SELECT keyword AS name, SUM(total_count)::bigint AS weight, 'keyword' AS type
           FROM keyword_daily_stats
           WHERE date >= CURRENT_DATE - INTERVAL '30 days'
-            AND LOWER(keyword) LIKE $1 || '%'
             AND source_country_id IS NULL AND about_country_id IS NULL
-            AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = LOWER(keyword))
+            AND keyword >= $1 AND keyword < $2
+            AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = keyword)
           GROUP BY keyword
           ORDER BY weight DESC
-          LIMIT $2
-        `, [q, limit]).catch(e => { console.error("kw-suggest keyword query err:", e.message); return { rows: [] }; }),
+          LIMIT $3
+        `, [q, qHi, limit]).catch(e => { console.error("kw-suggest keyword query err:", e.message, e.stack); return { rows: [] }; }),
         // 2) Country names
         pool.query(`
           SELECT name, population::int AS weight, 'country' AS type
@@ -2160,14 +2169,15 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
         `, [q, limit]).catch(e => { console.error("kw-suggest city query err:", e.message); return { rows: [] }; }),
       ]);
 
-      // Merge, dedup by lowercase name, sort by weight desc
+      // Merge, dedup by lowercase name, sort by weight desc.
+      // pg returns bigint as a string; coerce so the numeric sort works.
       const seen = new Set();
       const merged = [];
       for (const row of [...kwRows.rows, ...countryRows.rows, ...cityRows.rows]) {
         const key = row.name.toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
-        merged.push({ name: row.name, type: row.type, weight: row.weight });
+        merged.push({ name: row.name, type: row.type, weight: Number(row.weight) || 0 });
       }
       merged.sort((a, b) => b.weight - a.weight);
       return merged.slice(0, limit);
@@ -11168,16 +11178,25 @@ app.post("/api/heatmap/ask", async (req, res) => {
       : /* binary */ 'Each value is 0 or 1. Include only countries where the answer is 1.';
 
     const tools = [
+      // Server tool — Anthropic-hosted web search. The model can call it
+      // multiple times (capped) before emitting the final custom tool call.
+      // Capped to keep latency bounded; still enough for a fact-check loop
+      // (initial query + 1–2 follow-ups on borderline cases).
+      {
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: 6,
+      },
       {
         name: 'set_country_values',
-        description: 'Return a per-country value map answering the user question.',
+        description: 'Return a per-country value map answering the user question. Call this LAST, after any web_search calls.',
         input_schema: {
           type: 'object',
           required: ['legend', 'values'],
           properties: {
             legend: { type: 'string', description: 'Short label for the legend chip (e.g. "Muslim population %", "Press freedom rank").' },
             unit:   { type: 'string', description: 'Unit string for tooltips, e.g. "%", "rank", or empty.' },
-            source_note: { type: 'string', description: 'Brief attribution / data vintage (e.g. "Pew 2020 estimates"). Always include "AI estimate — verify before citing" if uncertain.' },
+            source_note: { type: 'string', description: 'Brief attribution naming the specific source(s) used (e.g. "World Bank 2023; UN Pop Division 2024"). If you used web_search, cite the most authoritative result. Mark "AI estimate — verify before citing" only if no source could be verified.' },
             values: {
               type: 'array',
               description: 'Array of { iso, value } objects. ISOs MUST be drawn from the catalog provided.',
@@ -11215,7 +11234,33 @@ Output rules:
 - Mode: ${mode}. ${modeGuidance}
 - Use the set_country_values tool when the question has a meaningful per-country answer.
 - Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
-- Numbers are estimates — include data vintage in source_note (year, source). When uncertain, say so explicitly in source_note.
+- Cite specific sources in source_note (e.g. "World Bank 2023" or "Wikipedia: List of mountain peaks, 2024-03"). Only use "AI estimate — verify before citing" as a last resort when no source could be verified.
+
+DATA VERIFICATION POLICY — read carefully:
+
+You have access to a \`web_search\` tool. Speed is NOT a priority — accuracy is. A correct answer that takes 30 seconds is far better than a fast wrong one. USE web_search whenever:
+- The question asks for specific numerical data (population, GDP, area, ranks, percentages) and you are not 100% certain of the current value or the full ranking.
+- The question references a defined group, treaty, or membership list (NATO, OPEC, EU, NPT signatories, NPT nuclear-weapon states, BRICS, ASEAN, OECD, G20, Schengen, eurozone, Commonwealth, OPEC+) — verify the CURRENT membership before answering. Memberships change.
+- The question is on a topic that drifts over time (currency unions, sanctions regimes, alliance expansions, leaders, treaty status, language official-status).
+- You can think of obvious candidate countries but cannot confidently enumerate the FULL set.
+- Coverage of less-Western regions (Africa, Central Asia, Pacific, Caribbean) is required and you suspect your unaided recall is biased toward the West.
+
+You may call web_search up to 6 times per question. Use them — partial verification is better than none.
+
+AUTHORITATIVE SOURCES BY DOMAIN (prefer these when searching; cite the one you used):
+- Demographics / population: worldbank.org, population.un.org, cia.gov/the-world-factbook, census.gov/data/data-tools/idb
+- Economics / GDP / trade: worldbank.org, imf.org/data, oec.world, oecd.org/statistics
+- Geography / topography / terrain / peaks / rivers: usgs.gov, naturalearthdata.com, geonames.org, britannica.com, peakbagger.com
+- Climate / environment / energy: iea.org, ipcc.ch, ourworldindata.org, noaa.gov, climatewatchdata.org
+- Biology / biodiversity / ecology: iucnredlist.org, gbif.org, worldwildlife.org, fao.org
+- Health / disease / mortality: who.int, healthdata.org (IHME), unaids.org, unicef.org/data
+- Politics / governance / corruption / press freedom: freedomhouse.org, v-dem.net, transparency.org, rsf.org
+- Languages / religion / culture: ethnologue.com, pewresearch.org, worldatlas.com
+- Military / nuclear / arms: sipri.org, iiss.org, fas.org/issues/nuclear-weapons
+- Treaties / international orgs / membership: treaties.un.org, europa.eu, nato.int, un.org/en/members
+- Wikipedia (en.wikipedia.org) is acceptable as a starting point — its country-list articles are usually well-cited; verify against a primary source when stakes are high.
+
+Cite the specific source(s) you used in source_note. Example: "Source: SIPRI 2023 Yearbook; Wikipedia (NATO members)". Never just write "Sonnet estimate" — search instead.
 
 ACCURACY CHECKLIST — apply before responding:
 
@@ -11248,10 +11293,14 @@ Most users will be wronger than you think when checking — but for the cases wh
 
     const claudeResp = await Anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 4096,
+      // Bumped from 4096 → 12000: web_search results get injected inline so
+      // the context can grow significantly during the search loop. tool_choice
+      // 'any' still forces a final custom-tool call (web_search is a server
+      // tool and not subject to the constraint).
+      max_tokens: 12000,
       system: systemPrompt,
       tools,
-      tool_choice: { type: 'any' },   // force one of the two tools
+      tool_choice: { type: 'any' },   // force one of the two custom tools
       messages: [{ role: 'user', content: rawQuestion }],
     });
 
@@ -11378,9 +11427,16 @@ async function _callHeatmapSonnet({ question, mode }) {
     : 'Each value is 0 or 1. Include only countries where the answer is 1.';
 
   const tools = [
+    // Server tool — Anthropic-hosted web search. Same cap as the public
+    // endpoint so admin sim mirrors what users see.
+    {
+      type: 'web_search_20250305',
+      name: 'web_search',
+      max_uses: 6,
+    },
     {
       name: 'set_country_values',
-      description: 'Return a per-country value map answering the user question.',
+      description: 'Return a per-country value map answering the user question. Call this LAST, after any web_search calls.',
       input_schema: {
         type: 'object',
         required: ['legend', 'values'],
@@ -11425,11 +11481,34 @@ Output rules:
 - Mode: ${mode}. ${modeGuidance}
 - Use the set_country_values tool when the question has a meaningful per-country answer.
 - Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
-- Numbers are estimates — include data vintage in source_note. When uncertain, say so explicitly.
+- Cite specific sources in source_note. Use "AI estimate — verify before citing" only when no source could be verified.
+
+DATA VERIFICATION POLICY:
+
+You have access to a \`web_search\` tool (up to 6 uses). Accuracy beats speed. Use it whenever:
+- Specific numbers are asked (population, GDP, area, ranks, percentages) and you are not 100% certain of recent values.
+- A defined membership list is referenced (NATO, OPEC, EU, NPT, BRICS, ASEAN, OECD, G20, Schengen, eurozone, Commonwealth) — verify CURRENT membership.
+- The topic drifts over time (sanctions, treaties, leaders, currency unions, alliances).
+- You can think of obvious candidates but cannot confidently enumerate the full set.
+- Coverage of less-Western regions is required and your unaided recall may be Western-biased.
+
+AUTHORITATIVE SOURCES BY DOMAIN (prefer these; cite the one you used):
+- Demographics / population: worldbank.org, population.un.org, cia.gov/the-world-factbook, census.gov
+- Economics / GDP / trade: worldbank.org, imf.org/data, oec.world, oecd.org
+- Geography / topography / peaks / rivers: usgs.gov, naturalearthdata.com, geonames.org, britannica.com, peakbagger.com
+- Climate / environment / energy: iea.org, ipcc.ch, ourworldindata.org, noaa.gov, climatewatchdata.org
+- Biology / biodiversity: iucnredlist.org, gbif.org, worldwildlife.org, fao.org
+- Health: who.int, healthdata.org, unaids.org, unicef.org/data
+- Politics / governance / press freedom: freedomhouse.org, v-dem.net, transparency.org, rsf.org
+- Languages / religion: ethnologue.com, pewresearch.org
+- Military / nuclear: sipri.org, iiss.org, fas.org/issues/nuclear-weapons
+- Treaties / international orgs: treaties.un.org, europa.eu, nato.int
+
+Wikipedia is acceptable as a starting point; its country-list articles are usually well-cited.
 
 For RANK mode: "rank by X" means EVERY country with a non-trivial value of X should appear. Do not truncate to a top-10 unless explicitly asked. China at 1 or 2 on population — never absent.
 
-For BINARY mode: be more inclusive than your gut suggests. If you can think of three obvious countries that match, there are probably twenty more. Walk continents.
+For BINARY mode: be more inclusive than your gut suggests. If you can think of three obvious countries that match, there are probably twenty more. Walk continents — and if uncertain about non-Western entries, web_search.
 
 Aim for high recall on clear positives and strict exclusion of vague matches.`;
 
@@ -11437,7 +11516,8 @@ Aim for high recall on clear positives and strict exclusion of vague matches.`;
   const aiClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const resp = await aiClient.messages.create({
     model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 4096,
+    // Web search injects results inline; allow headroom.
+    max_tokens: 12000,
     system: systemPrompt,
     tools,
     tool_choice: { type: 'any' },

@@ -12596,6 +12596,18 @@ window.__arcCtxSegmented = (function() {
 
     <div class="sidebarInner">
 
+      <!-- Always-visible global control: Globe vs 2D Map projection. -->
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="sidebarSectionLabel">Map View</div>
+        <div class="themeToggleRow" style="margin-top:0;">
+          <div class="themePill" data-projection-pill>
+            <button class="themePillBtn active" data-projection="globe">Globe</button>
+            <button class="themePillBtn" data-projection="map">Map</button>
+          </div>
+        </div>
+      </div>
+      <div class="sidebarDivider"></div>
+
       <!-- Country view -->
       <div class="sidebarPanel" id="sidebarPanelCountry">
         <div class="sidebarViewBadge">
@@ -13519,6 +13531,12 @@ window.__arcCtxSegmented = (function() {
     let ambientSpeed = 0.0004;
     let ambientEnabled = true;
     let ambientPaused = false;
+    // Bridge for the 2D Map view's ambient horizontal scroll.
+    window.__getAmbientState = () => ({
+      speed:   ambientSpeed,
+      enabled: ambientEnabled,
+      paused:  ambientPaused,
+    });
     let ambientResumeTimer = null;
     // Ambient microdrift: sub-threshold sway on both yaw and pitch so
     // the horizon gently shifts like a satellite in a slow orbit.
@@ -14058,6 +14076,10 @@ function computeCityTiers(cities) {
 
       let __dayTexture   = earthTexture;
       let __nightTexture = null;
+      // Bridge for the 2D Map view (defined later, in module scope) to read
+      // these textures even though they live inside init()'s closure.
+      window.__getDayTexture   = () => __dayTexture;
+      window.__getNightTexture = () => __nightTexture;
 
       // Upgrade day texture to higher-res Blue Marble in background
       (function() {
@@ -14159,6 +14181,31 @@ function computeCityTiers(cities) {
       }
 
       window.__syncSurfaceOverlayVisibility = syncSurfaceOverlayVisibility;
+
+      // ── Globe ⇄ 2D Map projection seam (P0) ───────────────────────────
+      // Owns the cross-cutting state for which view geometry is on screen.
+      // P0 only hides the WebGL canvas when 'map' is selected; subsequent
+      // phases mount a 2D map canvas + handlers.
+      window.__projection = (function() {
+        try { return localStorage.getItem("earth00:projection") === "map" ? "map" : "globe"; }
+        catch (_) { return "globe"; }
+      })();
+      window.__setProjection = function(mode) {
+        const m = (mode === "map") ? "map" : "globe";
+        const prev = window.__projection;
+        window.__projection = m;
+        try { localStorage.setItem("earth00:projection", m); } catch (_) {}
+        document.body.classList.toggle("projection-map",   m === "map");
+        document.body.classList.toggle("projection-globe", m !== "map");
+        if (renderer && renderer.domElement) {
+          renderer.domElement.style.display = (m === "map") ? "none" : "";
+        }
+        if (prev !== m) {
+          window.dispatchEvent(new CustomEvent("projectionchange", { detail: { mode: m, prev } }));
+        }
+      };
+      // Apply persisted preference now that renderer is in scope.
+      window.__setProjection(window.__projection);
 
       for(let i=0;i<earthPointCount;i++){
         const u=Math.random(), v=Math.random();
@@ -15869,6 +15916,50 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (getThemeMode() === "auto") applyThemeMode("auto");
       }, 5 * 60 * 1000);
 
+      // ── Projection pill (Globe / Map) ─────────────────────────────────
+      const projectionPillBtns = Array.from(document.querySelectorAll(".themePillBtn[data-projection]"));
+      function syncProjectionControls() {
+        const m = window.__projection || "globe";
+        projectionPillBtns.forEach(btn => {
+          btn.classList.toggle("active", btn.dataset.projection === m);
+        });
+      }
+      window.__syncProjectionControls = syncProjectionControls;
+      projectionPillBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (typeof window.__setProjection === "function") {
+            window.__setProjection(btn.dataset.projection);
+          }
+          syncProjectionControls();
+        });
+        btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      });
+      // Reflect the persisted choice the main module already applied.
+      syncProjectionControls();
+      // Auto-mount the 2D map after a short delay if the persisted choice is
+      // 'map'. We poll briefly because window.__map2d is defined further down
+      // in the module — and on some load paths the bottom-of-module init code
+      // reads window.__projection as undefined, so we re-apply from the
+      // persisted localStorage value to be safe.
+      (function autoMountMap() {
+        const persisted = (() => {
+          try { return localStorage.getItem("earth00:projection"); }
+          catch (_) { return null; }
+        })();
+        if (persisted !== "map") return;
+        let tries = 0;
+        const t = setInterval(() => {
+          if (window.__map2d) {
+            clearInterval(t);
+            window.__projection = "map";
+            try { window.__map2d.mount(); } catch (_) {}
+          } else if (tries++ > 50) {
+            clearInterval(t);
+          }
+        }, 60);
+      })();
+
       // ──────────────────────────────────────────────────────────
       //  TRANSPORTATION VIEW
       // ──────────────────────────────────────────────────────────
@@ -17117,6 +17208,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (hoverEraseTimer) clearTimeout(hoverEraseTimer);
         hoverEraseTimer = setTimeout(() => { card.classList.remove("hcErase"); }, 150);
       }
+      // Bridge for the 2D Map view (defined later in this module).
+      window.__showHoverCard = showHoverCard;
+      window.__hideHoverCard = hideHoverCard;
 
       const raycaster = new THREE.Raycaster();
       raycaster.params.Points.threshold = 0.03;
@@ -19985,6 +20079,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
           
           if (!dataArr?.length || !posArr) return [];
+          // 2D Map projection branch — viewport-bounds visibility instead of
+          // sphere-facing dot product. Same node set, same downstream weighting.
+          if (window.__projection === "map" && window.__map2d && window.__map2d.isEnabled()) {
+            const m   = window.__map2d;
+            const mst = m.state;
+            const mg  = 110;
+            const W   = window.innerWidth, H = window.innerHeight;
+            const wW  = m.worldW(), wH = m.worldH();
+            const result = [];
+            for (let i = 0; i < dataArr.length; i++) {
+              if (mask    && !mask[i])    continue;
+              if (gdpMask && !gdpMask[i]) continue;
+              const node = dataArr[i];
+              const lat  = node?.lat ?? node?.latitude;
+              const lon  = node?.lon ?? node?.longitude;
+              if (lat == null || lon == null) continue;
+              // Project lat/lon → CSS-px screen coords (account for DPR).
+              const baseX = -(((mst.scrollX % wW) + wW) % wW);
+              const xWorld = baseX + ((lon + 180) / 360) * wW;
+              const y      = (-mst.scrollY + ((90 - lat) / 180) * wH) / mst.dpr;
+              // Pick the nearest tile (–wW/0/+wW) that lands on screen.
+              let sx = -1;
+              for (let tile = -1; tile <= 1; tile++) {
+                const sx0 = (xWorld + tile * wW) / mst.dpr;
+                if (sx0 > mg && sx0 < W - mg) { sx = sx0; break; }
+              }
+              if (sx < 0) continue;
+              if (y <= mg || y >= H - 300) continue;
+              // Synthesize a "facing" value so downstream weighting still works
+              // (1 = head-on; we treat all visible-on-map nodes as fully visible).
+              result.push({ node, sx, sy: y, facing: 1.0 });
+            }
+            return result;
+          }
           const cDir = new THREE.Vector3();
           camera.getWorldDirection(cDir).normalize();
           const quat = scene.quaternion;
@@ -24628,6 +24756,795 @@ const settingsToggle     = document.getElementById("settingsToggle");
         this.borderMaterial.uniforms.color.value.set(color);
       }
     }
+
+      // ────────────────────────────────────────────────────────────────────
+      //  2D Map view — equirectangular alternative to the WebGL globe
+      // ────────────────────────────────────────────────────────────────────
+      // Rendered into a sibling canvas inside #pageGlobe. Lives behind
+      // window.__map2d. Mounts/unmounts on `projectionchange`. Subsystems
+      // (heatmap, polygons, nodes, arcs, headlines) plug in through hooks
+      // exposed on the returned API in later phases.
+      const Map2D = (function() {
+        const STATE = {
+          enabled:   false,
+          canvas:    null,
+          ctx:       null,
+          width:     0, height: 0,    // canvas pixels (already DPR-scaled)
+          dpr:       1,
+          zoom:      1,                // 1 = world width === canvas width
+          minZoom:   0.6,
+          maxZoom:   16,
+          // World pixel coords: image origin at top-left = (0,0); +x east, +y south.
+          // We pan by translating the world; scrollX wraps mod worldW,
+          // scrollY clamps to image bounds (or centers when world < viewport).
+          scrollX:   0,
+          scrollY:   0,
+          rafId:     null,
+          dayImg:    null,
+          nightImg:  null,
+          imgsReady: false,
+          pointers:  new Map(),
+          pinchActive: false,
+          pinchStartDist: 0,
+          pinchStartZoom: 1,
+          // Hooks for later phases. Each is called once per frame after the
+          // base layer; signature: (api, ctx) => void. Phases register here.
+          layers: [],
+        };
+
+        // ── Image sources ───────────────────────────────────────────────
+        // We reuse the globe's already-loaded THREE textures (their underlying
+        // <img> elements are HTMLImageElement instances ready to drawImage).
+        // This dodges a double-fetch and matches the globe's exact imagery.
+        // The poll covers the window between mount() and the textures finishing
+        // their async load.
+        function loadImages() {
+          function pull() {
+            try {
+              const dt = window.__getDayTexture && window.__getDayTexture();
+              if (dt && dt.image && (dt.image.width > 0 || dt.image.naturalWidth > 0)) {
+                STATE.dayImg = dt.image;
+              }
+            } catch (_) {}
+            try {
+              const nt = window.__getNightTexture && window.__getNightTexture();
+              if (nt && nt.image && (nt.image.width > 0 || nt.image.naturalWidth > 0)) {
+                STATE.nightImg = nt.image;
+              }
+            } catch (_) {}
+            // Either texture is enough to paint — the active theme picks one,
+            // and the other is only needed when the user toggles theme.
+            STATE.imgsReady = !!(STATE.dayImg || STATE.nightImg);
+            // Keep polling for the missing one for theme parity.
+            if (!(STATE.dayImg && STATE.nightImg) && STATE.enabled) setTimeout(pull, 800);
+          }
+          pull();
+        }
+
+        // ── Canvas / sizing ─────────────────────────────────────────────
+        function ensureCanvas() {
+          if (STATE.canvas) return STATE.canvas;
+          const c = document.createElement("canvas");
+          c.id = "map2dCanvas";
+          c.style.cssText = [
+            "position:absolute",
+            "inset:0",
+            "width:100%",
+            "height:100%",
+            "display:none",
+            "touch-action:none",
+            "cursor:grab",
+            "z-index:1",
+          ].join(";") + ";";
+          const host = document.getElementById("pageGlobe");
+          if (host) host.appendChild(c);
+          STATE.canvas = c;
+          STATE.ctx = c.getContext("2d");
+          return c;
+        }
+
+        function resize() {
+          if (!STATE.canvas) return;
+          const dpr = window.devicePixelRatio || 1;
+          const w = window.innerWidth, h = window.innerHeight;
+          STATE.canvas.width  = Math.max(1, Math.round(w * dpr));
+          STATE.canvas.height = Math.max(1, Math.round(h * dpr));
+          STATE.dpr    = dpr;
+          STATE.width  = STATE.canvas.width;
+          STATE.height = STATE.canvas.height;
+          clampVerticalScroll();
+        }
+
+        // ── Coordinate helpers ─────────────────────────────────────────
+        // World extent at current zoom (in canvas pixels).
+        // worldW = canvas pixel width × zoom; worldH = worldW / 2 (2:1 aspect).
+        function worldW() { return STATE.width * STATE.zoom; }
+        function worldH() { return worldW() * 0.5; }
+
+        function project(lat, lon) {
+          const wW = worldW(), wH = worldH();
+          let x = ((lon + 180) / 360) * wW - STATE.scrollX;
+          const y = ((90 - lat) / 180) * wH - STATE.scrollY;
+          // Wrap into nearest visible tile.
+          x = ((x % wW) + wW) % wW;
+          if (x > STATE.width) x -= wW;
+          return { x, y };
+        }
+        function unproject(sx, sy) {
+          const wW = worldW(), wH = worldH();
+          const lon = ((((sx + STATE.scrollX) % wW) + wW) % wW) / wW * 360 - 180;
+          const lat = 90 - ((sy + STATE.scrollY) / wH) * 180;
+          return { lat, lon };
+        }
+        function clampVerticalScroll() {
+          const wH = worldH();
+          if (wH <= STATE.height) {
+            // World shorter than viewport — center the band of latitude.
+            STATE.scrollY = (wH - STATE.height) / 2;
+          } else {
+            const maxY = wH - STATE.height;
+            if (STATE.scrollY < 0)    STATE.scrollY = 0;
+            if (STATE.scrollY > maxY) STATE.scrollY = maxY;
+          }
+        }
+
+        // ── Painter ────────────────────────────────────────────────────
+        function paintBase() {
+          const ctx = STATE.ctx;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          const isDark = (window.__globeTheme === "dark");
+          ctx.fillStyle = isDark ? "#02050a" : "#0a1424";
+          ctx.fillRect(0, 0, STATE.width, STATE.height);
+          if (!STATE.imgsReady) return;
+          const img = isDark
+            ? (STATE.nightImg || STATE.dayImg)
+            : (STATE.dayImg   || STATE.nightImg);
+          if (!img) return;
+          const wW = worldW(), wH = worldH();
+          // Three-tile draw covers any horizontal pan position.
+          const baseX = -(((STATE.scrollX % wW) + wW) % wW);
+          const yTop  = -STATE.scrollY;
+          for (let i = -1; i <= 1; i++) {
+            ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
+          }
+        }
+
+        // ── RAF loop ──────────────────────────────────────────────────
+        let _running = false;
+        // Ambient horizontal auto-scroll: equivalent of the globe's yaw drift.
+        // Maps the existing radians-per-frame `ambientSpeed` to world pixels,
+        // honoring the globe's pause/lock semantics so dragging or briefing
+        // pauses both views identically.
+        function applyAmbientScroll() {
+          if (typeof window.__getAmbientState !== "function") return;
+          const a = window.__getAmbientState();
+          if (!a || !a.enabled || a.paused) return;
+          // Skip while the user is actively panning/pinching.
+          if (STATE.pointers.size > 0) return;
+          const px = (a.speed * worldW()) / (2 * Math.PI);
+          STATE.scrollX += px;
+          const wW = worldW();
+          STATE.scrollX = ((STATE.scrollX % wW) + wW) % wW;
+        }
+        function tick() {
+          if (!_running) return;
+          applyAmbientScroll();
+          paintBase();
+          // Layer hooks for subsequent phases (polygons, heatmap, arcs, …).
+          for (let i = 0; i < STATE.layers.length; i++) {
+            try { STATE.layers[i](api, STATE.ctx); } catch (_) {}
+          }
+          STATE.rafId = requestAnimationFrame(tick);
+        }
+        function startRAF() {
+          if (_running) return;
+          _running = true;
+          STATE.rafId = requestAnimationFrame(tick);
+        }
+        function stopRAF() {
+          _running = false;
+          if (STATE.rafId) { cancelAnimationFrame(STATE.rafId); STATE.rafId = null; }
+        }
+
+        // ── Pointer / pan / zoom ──────────────────────────────────────
+        function pinchDistance() {
+          const pts = Array.from(STATE.pointers.values());
+          if (pts.length < 2) return 0;
+          return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        }
+        function pinchMidpoint() {
+          const pts = Array.from(STATE.pointers.values());
+          if (pts.length < 2) return null;
+          return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        }
+        // Click vs drag classification: track total movement per pointer; if
+        // tiny on pointer-up, dispatch a synthetic 'map2d:tap' on the canvas
+        // so external handlers (hit-testing) can react.
+        const TAP_PX = 6;
+        function onPointerDown(e) {
+          if (!STATE.canvas) return;
+          STATE.canvas.setPointerCapture?.(e.pointerId);
+          STATE.pointers.set(e.pointerId, {
+            x: e.clientX, y: e.clientY,
+            x0: e.clientX, y0: e.clientY,
+            traveled: 0,
+          });
+          STATE.canvas.style.cursor = "grabbing";
+        }
+        function onPointerMove(e) {
+          const prev = STATE.pointers.get(e.pointerId);
+          // hover (not dragging): emit a hover event for layer consumers
+          if (!prev) {
+            try {
+              STATE.canvas.dispatchEvent(new CustomEvent("map2d:hover", {
+                detail: { clientX: e.clientX, clientY: e.clientY },
+              }));
+            } catch (_) {}
+            return;
+          }
+          const dx = e.clientX - prev.x;
+          const dy = e.clientY - prev.y;
+          prev.traveled += Math.hypot(dx, dy);
+          prev.x = e.clientX; prev.y = e.clientY;
+          if (STATE.pointers.size === 1) {
+            STATE.scrollX -= dx * STATE.dpr;
+            STATE.scrollY -= dy * STATE.dpr;
+            const wW = worldW();
+            STATE.scrollX = ((STATE.scrollX % wW) + wW) % wW;
+            clampVerticalScroll();
+          } else if (STATE.pointers.size === 2) {
+            if (!STATE.pinchActive) {
+              STATE.pinchActive = true;
+              STATE.pinchStartDist = pinchDistance();
+              STATE.pinchStartZoom = STATE.zoom;
+            } else {
+              const d = pinchDistance();
+              if (d > 0 && STATE.pinchStartDist > 0) {
+                const targetZoom = STATE.pinchStartZoom * (d / STATE.pinchStartDist);
+                const factor = targetZoom / STATE.zoom;
+                const mp = pinchMidpoint();
+                if (mp) zoomAt(mp.x, mp.y, factor);
+              }
+            }
+          }
+        }
+        function onPointerUp(e) {
+          const rec = STATE.pointers.get(e.pointerId);
+          STATE.pointers.delete(e.pointerId);
+          if (STATE.pointers.size < 2) STATE.pinchActive = false;
+          if (STATE.pointers.size === 0 && STATE.canvas) STATE.canvas.style.cursor = "grab";
+          // Treat a pointer that barely moved as a tap.
+          if (rec && rec.traveled <= TAP_PX) {
+            try {
+              STATE.canvas.dispatchEvent(new CustomEvent("map2d:tap", {
+                detail: { clientX: rec.x0, clientY: rec.y0 },
+              }));
+            } catch (_) {}
+          }
+        }
+        function onWheel(e) {
+          if (!STATE.enabled) return;
+          e.preventDefault();
+          const factor = Math.exp(-e.deltaY * 0.0015);
+          zoomAt(e.clientX, e.clientY, factor);
+        }
+        function zoomAt(clientX, clientY, factor) {
+          const rect = STATE.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * STATE.dpr;
+          const sy = (clientY - rect.top)  * STATE.dpr;
+          const before = unproject(sx, sy);
+          const next = Math.max(STATE.minZoom, Math.min(STATE.maxZoom, STATE.zoom * factor));
+          if (next === STATE.zoom) return;
+          STATE.zoom = next;
+          // Re-anchor so the cursor stays over the same lat/lon.
+          const wW = worldW(), wH = worldH();
+          const targetX = ((before.lon + 180) / 360) * wW;
+          const targetY = ((90 - before.lat) / 180) * wH;
+          STATE.scrollX = (((targetX - sx) % wW) + wW) % wW;
+          STATE.scrollY = targetY - sy;
+          clampVerticalScroll();
+        }
+
+        let _inputsAttached = false;
+        function attachInputs() {
+          if (_inputsAttached) return;
+          const c = STATE.canvas;
+          c.addEventListener("pointerdown",  onPointerDown);
+          window.addEventListener("pointermove",  onPointerMove);
+          window.addEventListener("pointerup",    onPointerUp);
+          window.addEventListener("pointercancel", onPointerUp);
+          c.addEventListener("wheel", onWheel, { passive: false });
+          _inputsAttached = true;
+        }
+
+        // ── Mount / unmount ───────────────────────────────────────────
+        function mount() {
+          if (STATE.enabled) return;
+          ensureCanvas();
+          resize();
+          loadImages();
+          attachInputs();
+          STATE.canvas.style.display = "block";
+          STATE.enabled = true;
+          startRAF();
+        }
+        function unmount() {
+          if (!STATE.enabled) return;
+          stopRAF();
+          if (STATE.canvas) STATE.canvas.style.display = "none";
+          STATE.enabled = false;
+          STATE.pointers.clear();
+          STATE.pinchActive = false;
+        }
+
+        window.addEventListener("resize",            () => { if (STATE.enabled) resize(); });
+        window.addEventListener("orientationchange", () => { if (STATE.enabled) resize(); });
+
+        // Public API. `state` is exposed for read-only debugging; subsystems
+        // should mutate STATE only through dedicated functions.
+        const api = {
+          mount, unmount,
+          isEnabled: () => STATE.enabled,
+          state:   STATE,
+          project, unproject,
+          worldW, worldH,
+          // Layer registration: returns an unregister fn.
+          addLayer(fn) {
+            STATE.layers.push(fn);
+            return () => {
+              const i = STATE.layers.indexOf(fn);
+              if (i >= 0) STATE.layers.splice(i, 1);
+            };
+          },
+          requestRedraw() { /* RAF runs continuously while mounted; no-op for now */ },
+        };
+        return api;
+      })();
+
+      // Tie the projection toggle to mount/unmount.
+      window.addEventListener("projectionchange", (e) => {
+        if (e.detail.mode === "map") Map2D.mount();
+        else                          Map2D.unmount();
+      });
+      window.__map2d = Map2D;
+
+      // ── Country polygon layer + click/hover hit-testing ──────────────
+      // The polygon index lives in another <script> block and is exposed via
+      // window.__getCountryGeoIdx / window.__ensureCountryGeoIdxReady. We
+      // pull it once it's ready and register a paint layer + tap/hover
+      // listeners on the map canvas.
+      (function setupMap2DCountries() {
+        let _idx = null;
+        function ensureIdx() {
+          if (_idx) return Promise.resolve(_idx);
+          if (typeof window.__ensureCountryGeoIdxReady === "function") {
+            return window.__ensureCountryGeoIdxReady().then(() => {
+              _idx = window.__getCountryGeoIdx ? window.__getCountryGeoIdx() : null;
+              return _idx;
+            });
+          }
+          return Promise.resolve(null);
+        }
+        ensureIdx();
+
+        // Convert a clientX/clientY (CSS pixels) to lat/lon using the map's
+        // current scroll/zoom. Returns null if the map isn't mounted.
+        function clientToLatLon(clientX, clientY) {
+          if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
+          const rect = Map2D.state.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * Map2D.state.dpr;
+          const sy = (clientY - rect.top)  * Map2D.state.dpr;
+          return Map2D.unproject(sx, sy);
+        }
+        Map2D.clientToLatLon = clientToLatLon;
+
+        // Hit-test using the existing point-in-polygon helper exposed on
+        // window. Returns the matching {iso, name} entry or null.
+        function hitTest(lat, lon) {
+          if (!_idx || !_idx.byIso) return null;
+          if (typeof window.__pointInCountry !== "function") return null;
+          for (const [iso, entry] of _idx.byIso) {
+            if (window.__pointInCountry(lon, lat, entry)) return entry;
+          }
+          return null;
+        }
+
+        // ── Paint layer ───────────────────────────────────────────────
+        // entry.rings is shaped [polygon][ring][[lon,lat],...] (i.e. a
+        // GeoJSON MultiPolygon). For each ring we draw three horizontal tiles
+        // (–wW, 0, +wW) so the seam at ±180° is invisible during pan.
+        Map2D.addLayer((api, ctx) => {
+          if (!_idx || !_idx.byIso) return;
+          const W = api.state.width;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+          const isDark = (window.__globeTheme === "dark");
+          ctx.save();
+          ctx.lineWidth   = Math.max(0.75, api.state.dpr * 0.9);
+          ctx.strokeStyle = isDark ? "rgba(190,215,255,0.55)" : "rgba(255,255,255,0.78)";
+          ctx.lineJoin    = "round";
+          ctx.lineCap     = "round";
+          ctx.beginPath();
+          for (const entry of _idx.byIso.values()) {
+            const polys = entry && entry.rings;
+            if (!polys || !polys.length) continue;
+            for (const polyRings of polys) {
+              if (!polyRings) continue;
+              for (const ring of polyRings) {
+                if (!ring || ring.length < 2) continue;
+                for (let tile = -1; tile <= 1; tile++) {
+                  const xOff = baseX + tile * wW;
+                  const x0 = xOff + ((ring[0][0] + 180) / 360) * wW;
+                  const y0 = yTop  + ((90 - ring[0][1]) / 180) * wH;
+                  if (x0 < -wW || x0 > W + wW) continue;
+                  ctx.moveTo(x0, y0);
+                  for (let i = 1; i < ring.length; i++) {
+                    const x = xOff + ((ring[i][0] + 180) / 360) * wW;
+                    const y = yTop  + ((90 - ring[i][1]) / 180) * wH;
+                    ctx.lineTo(x, y);
+                  }
+                }
+              }
+            }
+          }
+          ctx.stroke();
+          ctx.restore();
+        });
+
+        // ── Tap → open country panel ─────────────────────────────────
+        function onTap(e) {
+          // Cities layer runs first via capture phase; if it claimed the tap
+          // we don't double-open into a country panel.
+          if (e.detail && e.detail.__handledCity) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const hit = hitTest(ll.lat, ll.lon);
+          if (!hit) return;
+          if (typeof window.__openCountryByName === "function") {
+            window.__openCountryByName(hit.name, hit.iso);
+          }
+        }
+
+        // ── Hover → show floating card (desktop) ─────────────────────
+        let _lastHoverIso = null;
+        function onHover(e) {
+          // City layer (capture phase) gets first dibs. If it set the marker,
+          // we skip country hover so the cards don't fight.
+          if (e.detail && e.detail.__handledCity) return;
+          if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const hit = hitTest(ll.lat, ll.lon);
+          if (!hit) {
+            if (_lastHoverIso) { _lastHoverIso = null; if (window.__hideHoverCard) window.__hideHoverCard(); }
+            return;
+          }
+          if (hit.iso === _lastHoverIso) return; // no change
+          _lastHoverIso = hit.iso;
+          if (window.__showHoverCard) {
+            window.__showHoverCard({ name: hit.name, country: hit.name, flag: "", population: null }, e.detail.clientX, e.detail.clientY);
+          }
+        }
+
+        // Wire up — re-attach when the canvas first appears.
+        function attach() {
+          const c = Map2D.state.canvas;
+          if (!c) { setTimeout(attach, 100); return; }
+          c.addEventListener("map2d:tap",   onTap);
+          c.addEventListener("map2d:hover", onHover);
+          c.addEventListener("pointerleave", () => {
+            if (_lastHoverIso && window.__hideHoverCard) window.__hideHoverCard();
+            _lastHoverIso = null;
+          });
+        }
+        attach();
+      })();
+
+      // ── Flow arcs layer (thread, line, article) ─────────────────────
+      // Reads window.__flowGetArcObjects() — the same arc records the globe
+      // already maintains. We render each as a 2D quadratic Bezier with apex
+      // perpendicular to the chord (latitude-aware: apex height scales with
+      // chord length). ±180° crossings: we pull the dst longitude into the
+      // nearest 360° period of the src so the chord is always the short path,
+      // and the three-tile horizontal wrap takes care of the visual.
+      // Particle position: arc.age / arc.travelDuration drives a moving orb
+      // along the curve, looping when age exceeds the travel phase.
+      (function setupMap2DArcs() {
+        const ARC_HEIGHT_FRAC = 0.18;   // apex height as fraction of chord length
+
+        function colorFor(flow) {
+          const t = flow && flow._tier;
+          if (t === "primary")   return { stroke: "rgba(255,170,40,0.95)",  glow: "rgba(255,170,40,0.30)", orb: "rgba(255,200,80,1)" };
+          if (t === "secondary") return { stroke: "rgba(120,200,255,0.85)", glow: "rgba(120,200,255,0.25)", orb: "rgba(170,220,255,1)" };
+          return                       { stroke: "rgba(255,255,255,0.78)",  glow: "rgba(255,255,255,0.20)", orb: "rgba(255,255,255,1)" };
+        }
+
+        function widthFor(flow, dpr) {
+          const base = flow && flow._tier === "primary" ? 1.6 : 1.2;
+          return base * dpr;
+        }
+
+        // Quadratic bezier interpolation.
+        function bez(p0, p1, p2, t) {
+          const u = 1 - t;
+          return { x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
+                   y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
+        }
+
+        Map2D.addLayer((api, ctx) => {
+          const arcs = (typeof window.__flowGetArcObjects === "function")
+            ? window.__flowGetArcObjects() : null;
+          if (!arcs || !arcs.length) return;
+          const W = api.state.width;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+
+          for (const arc of arcs) {
+            const flow = arc && arc.flow;
+            const src  = flow && flow.src;
+            const dst  = flow && flow.dst;
+            if (!src || !dst || src.lat == null || dst.lat == null) continue;
+
+            // Adjust dst.lon to take the shorter (chord) path.
+            let srcLon = src.lon, dstLon = dst.lon;
+            const dlon = dstLon - srcLon;
+            if (dlon >  180) dstLon -= 360;
+            if (dlon < -180) dstLon += 360;
+
+            // Map to world canvas coords.
+            const sx = ((srcLon + 180) / 360) * wW;
+            const sy = ((90 - src.lat) / 180) * wH;
+            const dx = ((dstLon + 180) / 360) * wW;
+            const dy = ((90 - dst.lat) / 180) * wH;
+
+            // Chord midpoint and perpendicular apex.
+            const mx = (sx + dx) / 2;
+            const my = (sy + dy) / 2;
+            const lx = dx - sx, ly = dy - sy;
+            const len = Math.hypot(lx, ly);
+            if (len < 1) continue;
+            // Perpendicular (rotated 90° CCW). The arc bows "up" relative to
+            // the chord; for east-west arcs that means north of the chord.
+            const px = -ly / len, py = lx / len;
+            // Vertical-bias the apex so latitude-spanning arcs still arch up
+            // visually (an arc going straight north→south would otherwise
+            // bow east). We blend in a "north-bias" that's stronger for
+            // long-lat arcs.
+            const heightMult = (flow._tier === "primary") ? 0.75 : (flow._tier === "secondary" ? 1.15 : 1.0);
+            const apex = len * ARC_HEIGHT_FRAC * heightMult;
+            const cx = mx + px * apex;
+            const cy = my + py * apex;
+
+            // Particle progress along the curve. Static (aggregate) arcs
+            // loop continuously; transient arcs use their own progression.
+            const dur  = Math.max(0.001, arc.travelDuration || 4);
+            const age  = arc.age || arc._elapsed || 0;
+            const t    = (age % dur) / dur;
+
+            const colors = colorFor(flow);
+            const w = widthFor(flow, api.state.dpr);
+
+            ctx.save();
+            for (let tile = -1; tile <= 1; tile++) {
+              const xOff = baseX + tile * wW;
+              // Skip far off-screen tiles.
+              if (xOff + Math.max(sx, cx, dx) < 0 - wW) continue;
+              if (xOff + Math.min(sx, cx, dx) > W + wW) continue;
+              // Glow halo behind the line.
+              ctx.lineWidth   = w * 3.5;
+              ctx.strokeStyle = colors.glow;
+              ctx.lineCap     = "round";
+              ctx.beginPath();
+              ctx.moveTo(xOff + sx, sy);
+              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.stroke();
+              // Stroke
+              ctx.lineWidth   = w;
+              ctx.strokeStyle = colors.stroke;
+              ctx.beginPath();
+              ctx.moveTo(xOff + sx, sy);
+              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.stroke();
+              // Particle orb
+              const p = bez({x: sx, y: sy}, {x: cx, y: cy}, {x: dx, y: dy}, t);
+              const orbR = w * 2.5;
+              const grad = ctx.createRadialGradient(xOff + p.x, p.y, 0, xOff + p.x, p.y, orbR);
+              grad.addColorStop(0, colors.orb);
+              grad.addColorStop(1, "rgba(255,255,255,0)");
+              ctx.fillStyle = grad;
+              ctx.beginPath();
+              ctx.arc(xOff + p.x, p.y, orbR, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+        });
+      })();
+
+      // ── Heatmap layer ────────────────────────────────────────────────
+      // The existing heatmap pipeline paints into a 2048×1024 equirectangular
+      // canvas (`heatCanvas`) which is then wrapped onto a sphere on the
+      // globe. For the 2D map we draw that same canvas directly, three-tile
+      // wrapped to dodge the ±180° seam during pan. fetchSnapshot, paintFrameTo,
+      // crossfade, and focal-heatmap all work without modification — they
+      // just produce pixels we then composite.
+      (function setupMap2DHeatmap() {
+        // Match the globe's max alpha for visual parity.
+        const HEAT_OPACITY = 0.66;
+        Map2D.addLayer((api, ctx) => {
+          if (!window.__getHeatActive || !window.__getHeatActive()) return;
+          const heat = window.__getHeatCanvas && window.__getHeatCanvas();
+          if (!heat) return;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+          ctx.save();
+          ctx.globalAlpha = HEAT_OPACITY;
+          for (let tile = -1; tile <= 1; tile++) {
+            ctx.drawImage(heat, baseX + tile * wW, yTop, wW, wH);
+          }
+          ctx.restore();
+        });
+      })();
+
+      // ── City / region node points layer ──────────────────────────────
+      // Renders the same node set as the globe, except no THREE points; we
+      // draw each city as a small radial dot. Click opens the city panel
+      // via the existing __openNodePanel; hover card reuses showHoverCard.
+      // Hit-priority: cities shadow countries — clicking inside a city's
+      // radius opens the city panel instead of the country.
+      (function setupMap2DCities() {
+        const HIT_PX_DESKTOP = 14;   // CSS-px tap target
+        const HIT_PX_MOBILE  = 22;
+        let _lastHoverNode = null;
+
+        function getCities()    { return Array.isArray(window.__globeCities)    ? window.__globeCities    : []; }
+        function getCountries() { return Array.isArray(window.__globeCountries) ? window.__globeCountries : []; }
+
+        function clientToLatLon(clientX, clientY) {
+          if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
+          const rect = Map2D.state.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * Map2D.state.dpr;
+          const sy = (clientY - rect.top)  * Map2D.state.dpr;
+          return Map2D.unproject(sx, sy);
+        }
+
+        // Best city near (lat,lon); only returns if within `maxMi` great-circle.
+        function nearestCity(lat, lon, maxMi) {
+          const cities = getCities();
+          if (!cities.length) return null;
+          // Approx haversine, miles
+          const R = 3958.8;
+          const toRad = Math.PI / 180;
+          let best = null, bestD = maxMi;
+          for (const c of cities) {
+            const cLat = c?.lat ?? c?.latitude;
+            const cLon = c?.lon ?? c?.longitude;
+            if (cLat == null || cLon == null) continue;
+            const dLat = (cLat - lat) * toRad;
+            const dLon = (cLon - lon) * toRad;
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(lat * toRad) * Math.cos(cLat * toRad) *
+                      Math.sin(dLon / 2) ** 2;
+            const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            if (d < bestD) { bestD = d; best = c; }
+          }
+          return best;
+        }
+
+        // Convert a hit radius in CSS-px to a great-circle radius in miles
+        // at the given screen-space scale. Approximation: at the equator,
+        // 1° lon = 69 mi. At lat L, longitude shrinks by cos(L). Latitude
+        // is constant 69 mi/°. We use the mean miles-per-canvas-pixel.
+        function hitRadiusMi(lat) {
+          const wW = Map2D.worldW();
+          const milesPerCanvasPxLon = (360 / wW) * 69 * Math.cos(lat * Math.PI / 180);
+          const milesPerCanvasPxLat = (180 / Map2D.worldH()) * 69;
+          const milesPerCanvasPx    = (milesPerCanvasPxLon + milesPerCanvasPxLat) / 2;
+          const isMobile = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+          const hitPx = isMobile ? HIT_PX_MOBILE : HIT_PX_DESKTOP;
+          return hitPx * Map2D.state.dpr * milesPerCanvasPx;
+        }
+
+        // ── Paint layer ─────────────────────────────────────────────
+        Map2D.addLayer((api, ctx) => {
+          const cities = getCities();
+          if (!cities.length) return;
+          const W = api.state.width;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+          const isDark = (window.__globeTheme === "dark");
+          const dotFill = isDark ? "rgba(255,225,150,0.95)" : "rgba(255,210,90,0.95)";
+          const dotStroke = isDark ? "rgba(255,255,255,0.7)" : "rgba(20,40,80,0.65)";
+          ctx.save();
+          for (const c of cities) {
+            const lat = c?.lat ?? c?.latitude;
+            const lon = c?.lon ?? c?.longitude;
+            if (lat == null || lon == null) continue;
+            // Tier-aware radius (smaller tier = bigger dot to match globe).
+            const tier = c.tier ?? 3;
+            const r = (4.5 - Math.min(4, tier) * 0.7) * api.state.dpr;
+            const xCenter = ((lon + 180) / 360) * wW;
+            const y = yTop + ((90 - lat) / 180) * wH;
+            for (let tile = -1; tile <= 1; tile++) {
+              const x = baseX + tile * wW + xCenter;
+              if (x < -10 || x > W + 10) continue;
+              // Soft outer glow
+              ctx.beginPath();
+              ctx.arc(x, y, r * 2.2, 0, Math.PI * 2);
+              const grad = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.2);
+              grad.addColorStop(0,   isDark ? "rgba(255,225,150,0.55)" : "rgba(255,210,90,0.50)");
+              grad.addColorStop(1,   "rgba(255,210,90,0)");
+              ctx.fillStyle = grad;
+              ctx.fill();
+              // Solid core
+              ctx.beginPath();
+              ctx.arc(x, y, r, 0, Math.PI * 2);
+              ctx.fillStyle = dotFill;
+              ctx.fill();
+              ctx.lineWidth = 0.8 * api.state.dpr;
+              ctx.strokeStyle = dotStroke;
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+        });
+
+        // ── Click → open city panel ────────────────────────────────
+        function onTap(e) {
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const maxMi = hitRadiusMi(ll.lat);
+          const c = nearestCity(ll.lat, ll.lon, maxMi);
+          if (!c) return;
+          if (typeof window.__openNodePanel === "function") {
+            try { window.__openNodePanel(c, "city"); } catch (_) {}
+            // Stop the country layer from also firing. We can't easily cancel
+            // a CustomEvent but we can mark the detail so country layer skips.
+            e.detail.__handledCity = true;
+          }
+        }
+
+        // ── Hover → show hover card ───────────────────────────────
+        function onHover(e) {
+          if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const maxMi = hitRadiusMi(ll.lat);
+          const c = nearestCity(ll.lat, ll.lon, maxMi);
+          if (!c) {
+            if (_lastHoverNode) {
+              _lastHoverNode = null;
+              if (window.__hideHoverCard) window.__hideHoverCard();
+            }
+            return;
+          }
+          if (_lastHoverNode === c) {
+            // already showing — mark so country layer skips, and stop here
+            if (e.detail) e.detail.__handledCity = true;
+            return;
+          }
+          _lastHoverNode = c;
+          if (window.__showHoverCard) {
+            window.__showHoverCard(c, e.detail.clientX, e.detail.clientY);
+          }
+          if (e.detail) e.detail.__handledCity = true;
+        }
+
+        function attach() {
+          const c = Map2D.state.canvas;
+          if (!c) { setTimeout(attach, 100); return; }
+          // Cities tap handler is added FIRST so it runs before the country
+          // tap handler. If a city is hit, country handler can early-out via
+          // __handledCity marker.
+          c.addEventListener("map2d:tap",   onTap, true);
+          c.addEventListener("map2d:hover", onHover, true);
+        }
+        attach();
+      })();
 
   </script>
 
@@ -34798,6 +35715,86 @@ const settingsToggle     = document.getElementById("settingsToggle");
   text-transform: uppercase;
 }
 
+/* ── Pie chart expand affordance + modal ──────────────────────────── */
+.bDataPanelChart--expandable { cursor: zoom-in; }
+.bDataPanelChart--expandable::after {
+  content: ""; position: absolute; right: 4px; bottom: 4px;
+  width: 12px; height: 12px;
+  background:
+    linear-gradient(rgba(255,153,64,0.9) 0 0) left  / 100% 1.2px no-repeat,
+    linear-gradient(rgba(255,153,64,0.9) 0 0) right / 1.2px 100% no-repeat,
+    linear-gradient(rgba(255,153,64,0.9) 0 0) bottom/ 100% 1.2px no-repeat;
+  opacity: 0.55; pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+.bDataPanelChart--expandable:hover::after { opacity: 1; }
+
+.pieModalBackdrop {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(2,4,10,0.74);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  padding: max(20px, env(safe-area-inset-top, 20px)) 20px max(20px, env(safe-area-inset-bottom, 20px));
+  opacity: 0; transition: opacity 0.18s ease;
+}
+.pieModalBackdrop.visible { opacity: 1; }
+.pieModalCard {
+  position: relative;
+  background: rgba(8,12,22,0.96);
+  border: 1px solid rgba(255,153,64,0.30);
+  border-radius: 10px;
+  box-shadow: 0 18px 60px rgba(0,0,0,0.65);
+  color: #fff;
+  width: min(640px, 96vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  padding: 20px 22px 18px;
+  font-size: 13px;
+}
+.pieModalClose {
+  position: absolute; top: 10px; right: 10px;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.7);
+  font-size: 18px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
+}
+.pieModalClose:hover { background: rgba(255,153,64,0.18); color: #fff; }
+.pieModalTitle { font-size: 16px; font-weight: 700; margin-right: 36px; line-height: 1.3; }
+.pieModalSubtitle { font-size: 12px; color: rgba(255,255,255,0.55); margin-top: 4px; line-height: 1.4; }
+.pieModalChart {
+  margin: 14px auto 10px;
+  width: 100%; max-width: 520px;
+  aspect-ratio: 1 / 1;
+}
+.pieModalChart svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.pieModalLegend {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px 12px;
+  font-size: 12px; color: rgba(255,255,255,0.85);
+  margin: 4px 0 10px;
+}
+.pieModalLegendItem { display: flex; align-items: center; gap: 8px; }
+.pieModalLegendDot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.pieModalLegendLab { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pieModalLegendVal { color: rgba(255,255,255,0.55); font-variant-numeric: tabular-nums; }
+.pieModalCaption { font-size: 12px; color: rgba(255,255,255,0.7); line-height: 1.45; margin: 6px 0 10px; }
+.pieModalFooter {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; font-size: 11px; color: rgba(255,255,255,0.45);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-top: 10px;
+}
+.pieModalFooter a {
+  color: #60c8ff; text-decoration: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 240px;
+}
+.pieModalFooter a:hover { text-decoration: underline; }
+
 /* Mobile: data panels show one at a time, cycled by JS */
 @media (max-width: 720px) {
   .bDataPanels {
@@ -37050,13 +38047,26 @@ body.ticker-active .gTickerLabel {
     const sourceLink = p.source_url
       ? `<a href="${escapeHtmlDP(p.source_url)}" target="_blank" rel="noopener">${escapeHtmlDP(p.source_name || 'source')}</a>`
       : `<span>${escapeHtmlDP(p.source_name || '')}</span>`;
+    // Pie charts get a click-to-expand affordance: stash the panel in a
+    // registry keyed by a unique id so the modal opener can look it up
+    // without us having to thread the data through HTML attributes.
+    let chartAttrs = '';
+    if (p.chart_type === 'pie' && labels.length) {
+      if (!window.__pieRegistry) window.__pieRegistry = new Map();
+      window.__pieRegistry._next = (window.__pieRegistry._next || 0) + 1;
+      const pid = "pie_" + window.__pieRegistry._next;
+      window.__pieRegistry.set(pid, p);
+      chartAttrs = ` class="bDataPanelChart bDataPanelChart--expandable" data-pie-id="${pid}" onclick="window.__openPieModal && window.__openPieModal(this)" role="button" tabindex="0" aria-label="Expand pie chart"`;
+    } else {
+      chartAttrs = ' class="bDataPanelChart"';
+    }
     return `
       <div class="bDataPanelHeader">
         <div class="bDataPanelTitle">${escapeHtmlDP(p.title || '')}</div>
         <span class="bDataPanelChartType">${escapeHtmlDP(p.chart_type || '')}</span>
       </div>
       ${p.subtitle ? `<div class="bDataPanelSubtitle">${escapeHtmlDP(p.subtitle)}</div>` : ''}
-      <div class="bDataPanelChart">${svg}</div>
+      <div${chartAttrs}>${svg}</div>
       ${legend ? `<div class="bDataPanelLegend">${legend}</div>` : ''}
       ${p.caption ? `<div class="bDataPanelCaption">${escapeHtmlDP(p.caption)}</div>` : ''}
       <div class="bDataPanelFooter">
@@ -37068,6 +38078,134 @@ body.ticker-active .gTickerLabel {
   function escapeHtmlDP(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
   }
+
+  // ── Expanded pie modal ────────────────────────────────────────────
+  // Triggered by clicking a small pie panel. Opens a centered overlay
+  // with a large pie, slice labels (inside for big slices, leader lines
+  // for small ones), legend, caption, and source link.
+  function renderExpandedPieSVG(p, colors) {
+    const data   = (typeof p.data === 'string') ? JSON.parse(p.data) : (p.data || {});
+    const labels = Array.isArray(data.labels) ? data.labels : [];
+    const series = Array.isArray(data.series) ? data.series : [];
+    const values = (series[0] && series[0].values) || [];
+    const total  = values.reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+
+    const W = 600, H = 600;
+    const cx = W / 2, cy = H / 2;
+    const r  = 200;
+    const labelRadius = r + 26;       // leader-line outer endpoint
+    const innerLabelR = r * 0.62;     // for big slices
+    const SMALL_FRAC  = 0.07;          // below this → leader line + outside label
+
+    let acc = 0;
+    const slices = [];
+    for (let i = 0; i < values.length; i++) {
+      const v    = Number(values[i]) || 0;
+      const frac = v / total;
+      const a0   = acc * 2 * Math.PI - Math.PI / 2;
+      acc += frac;
+      const a1   = acc * 2 * Math.PI - Math.PI / 2;
+      const aMid = (a0 + a1) / 2;
+      const large = frac > 0.5 ? 1 : 0;
+      const x0 = cx + Math.cos(a0) * r, y0 = cy + Math.sin(a0) * r;
+      const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
+      slices.push({ i, frac, v, a0, a1, aMid, large, x0, y0, x1, y1, label: labels[i] || '' });
+    }
+
+    const fmt = n => (n >= 1e9) ? (n/1e9).toFixed(1)+'B'
+                  : (n >= 1e6) ? (n/1e6).toFixed(1)+'M'
+                  : (n >= 1e3) ? (n/1e3).toFixed(1)+'k'
+                  : String(Math.round(n));
+
+    let paths = '', insideLabels = '', leaders = '';
+    for (const s of slices) {
+      const c = colors[s.i % colors.length];
+      paths += `<path d="M ${cx} ${cy} L ${s.x0.toFixed(1)} ${s.y0.toFixed(1)} A ${r} ${r} 0 ${s.large} 1 ${s.x1.toFixed(1)} ${s.y1.toFixed(1)} Z" fill="${c}" stroke="rgba(0,0,0,0.55)" stroke-width="1"/>`;
+      const pct = (s.frac * 100).toFixed(s.frac < 0.1 ? 1 : 0) + '%';
+      if (s.frac >= SMALL_FRAC) {
+        const lx = cx + Math.cos(s.aMid) * innerLabelR;
+        const ly = cy + Math.sin(s.aMid) * innerLabelR;
+        insideLabels +=
+          `<text x="${lx.toFixed(1)}" y="${(ly - 4).toFixed(1)}" text-anchor="middle" fill="#fff" font-size="13" font-weight="700" style="pointer-events:none; paint-order:stroke; stroke:rgba(0,0,0,0.5); stroke-width:2.5; stroke-linejoin:round;">${escapeHtmlDP(s.label)}</text>` +
+          `<text x="${lx.toFixed(1)}" y="${(ly + 11).toFixed(1)}" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="11" style="pointer-events:none; paint-order:stroke; stroke:rgba(0,0,0,0.5); stroke-width:2.5; stroke-linejoin:round;">${pct}</text>`;
+      } else {
+        const ex = cx + Math.cos(s.aMid) * (r + 6);
+        const ey = cy + Math.sin(s.aMid) * (r + 6);
+        const tx = cx + Math.cos(s.aMid) * labelRadius;
+        const ty = cy + Math.sin(s.aMid) * labelRadius;
+        const sideRight = Math.cos(s.aMid) >= 0;
+        const tx2 = sideRight ? tx + 22 : tx - 22;
+        const anchor = sideRight ? 'start' : 'end';
+        leaders +=
+          `<polyline points="${ex.toFixed(1)},${ey.toFixed(1)} ${tx.toFixed(1)},${ty.toFixed(1)} ${tx2.toFixed(1)},${ty.toFixed(1)}" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="0.9"/>` +
+          `<text x="${(tx2 + (sideRight ? 4 : -4)).toFixed(1)}" y="${(ty + 4).toFixed(1)}" text-anchor="${anchor}" fill="rgba(255,255,255,0.92)" font-size="12">${escapeHtmlDP(s.label)} <tspan fill="rgba(255,255,255,0.55)">${pct}</tspan></text>`;
+      }
+    }
+    return `<svg viewBox="0 0 ${W} ${H}">${paths}${leaders}${insideLabels}</svg>`;
+  }
+
+  function _legendForExpandedPie(p, colors) {
+    const data   = (typeof p.data === 'string') ? JSON.parse(p.data) : (p.data || {});
+    const labels = Array.isArray(data.labels) ? data.labels : [];
+    const series = Array.isArray(data.series) ? data.series : [];
+    const values = (series[0] && series[0].values) || [];
+    const total  = values.reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+    return labels.map((lab, i) => {
+      const v   = Number(values[i]) || 0;
+      const pct = ((v / total) * 100).toFixed(0);
+      return `<div class="pieModalLegendItem">
+        <span class="pieModalLegendDot" style="background:${colors[i % colors.length]}"></span>
+        <span class="pieModalLegendLab">${escapeHtmlDP(lab)}</span>
+        <span class="pieModalLegendVal">${pct}%</span>
+      </div>`;
+    }).join('');
+  }
+
+  let _pieModalEl = null;
+  function closePieModal() {
+    if (!_pieModalEl) return;
+    const el = _pieModalEl;
+    _pieModalEl = null;
+    el.classList.remove('visible');
+    setTimeout(() => { if (el && el.parentElement) el.parentElement.removeChild(el); }, 200);
+    document.removeEventListener('keydown', _onPieModalKey);
+  }
+  function _onPieModalKey(e) { if (e.key === 'Escape') closePieModal(); }
+
+  function openPieModal(triggerEl) {
+    const pid = triggerEl && triggerEl.dataset && triggerEl.dataset.pieId;
+    const p   = pid && window.__pieRegistry ? window.__pieRegistry.get(pid) : null;
+    if (!p) return;
+    closePieModal();
+    const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b', '#6ba6ff', '#ff9e9e', '#b58cff'];
+    const backdrop = document.createElement('div');
+    backdrop.className = 'pieModalBackdrop';
+    const sourceLink = p.source_url
+      ? `<a href="${escapeHtmlDP(p.source_url)}" target="_blank" rel="noopener">${escapeHtmlDP(p.source_name || 'source')}</a>`
+      : `<span>${escapeHtmlDP(p.source_name || '')}</span>`;
+    const estimate = p.generated_by === 'ai_composed'
+      ? '<span class="bDataPanelEstimate">Estimate</span>' : '';
+    backdrop.innerHTML = `
+      <div class="pieModalCard" role="dialog" aria-modal="true">
+        <button class="pieModalClose" aria-label="Close">×</button>
+        <div class="pieModalTitle">${escapeHtmlDP(p.title || '')}</div>
+        ${p.subtitle ? `<div class="pieModalSubtitle">${escapeHtmlDP(p.subtitle)}</div>` : ''}
+        <div class="pieModalChart">${renderExpandedPieSVG(p, colors)}</div>
+        <div class="pieModalLegend">${_legendForExpandedPie(p, colors)}</div>
+        ${p.caption ? `<div class="pieModalCaption">${escapeHtmlDP(p.caption)}</div>` : ''}
+        <div class="pieModalFooter">${sourceLink}${estimate}</div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    _pieModalEl = backdrop;
+    // Click backdrop (but not the card) closes.
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closePieModal(); });
+    backdrop.querySelector('.pieModalClose').addEventListener('click', closePieModal);
+    document.addEventListener('keydown', _onPieModalKey);
+    // Force reflow then add visible class for fade-in.
+    void backdrop.offsetWidth;
+    backdrop.classList.add('visible');
+  }
+  window.__openPieModal = openPieModal;
 
   // ── Inline SVG chart renderer (no external dep) ───────────────────────
   // Supports: line, area, bar, stacked_bar, pie, scatter
@@ -39517,6 +40655,9 @@ body.ticker-active .gTickerLabel {
   // floor inside the country's actual shape.
   let _countryGeoIdxPromise = null;
   let _countryGeoIdx        = null;
+  // Bridge for the 2D Map view (lives in another script tag).
+  window.__getCountryGeoIdx        = () => _countryGeoIdx;
+  window.__ensureCountryGeoIdxReady = () => ensureCountryGeoIdx();
   function ensureCountryGeoIdx() {
     if (_countryGeoIdx)        return Promise.resolve(_countryGeoIdx);
     if (_countryGeoIdxPromise) return _countryGeoIdxPromise;
@@ -39576,6 +40717,9 @@ body.ticker-active .gTickerLabel {
   let heatTexture = null;
   let group = null;
   let markerMeshes = [];
+  // Bridge for the 2D Map view (lives in another script tag).
+  window.__getHeatCanvas = () => heatCanvas;
+  window.__getHeatActive = () => !!window.__semHeatActive;
 
   function ensureHeatSphere() {
     const THREE = window.THREE;
