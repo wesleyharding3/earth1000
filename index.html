@@ -23654,9 +23654,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // Earth-points offscreen — built once when the bridge is ready.
         // Mirrors the globe's earthPoints mesh (same point cloud, same
-        // brightness). Pre-rendered to a 2048×1024 equirectangular canvas
-        // so per-frame cost is one drawImage instead of 10k arc calls.
-        let _earthPointsCanvas = null;
+        // brightness, same circleGlowTexture-style soft sprite). Pre-rendered
+        // to a 2048×1024 equirectangular canvas so per-frame cost is one
+        // drawImage instead of 10k draw calls.
+        const EP_LUMINOSITY      = 0.45;
+        const EP_SPRITE_SIZE     = 4;
+        let   _earthPointsCanvas = null;
+        let   _earthPointsScratch = null;
+
+        function _epDotSprite(peakAlpha, size) {
+          const s = size || EP_SPRITE_SIZE;
+          const c = document.createElement('canvas');
+          c.width = s; c.height = s;
+          const cx = c.getContext('2d');
+          const half = s / 2;
+          const grad = cx.createRadialGradient(half, half, 0, half, half, half);
+          grad.addColorStop(0.00, `rgba(255,255,255,${peakAlpha.toFixed(3)})`);
+          grad.addColorStop(0.45, `rgba(255,255,255,${(peakAlpha * 0.45).toFixed(3)})`);
+          grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+          cx.fillStyle = grad;
+          cx.fillRect(0, 0, s, s);
+          return c;
+        }
+
         function getEarthPointsCanvas() {
           if (_earthPointsCanvas) return _earthPointsCanvas;
           const ep = window.__getEarthPoints && window.__getEarthPoints();
@@ -23666,9 +23686,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           c.width = W; c.height = H;
           const cx = c.getContext('2d');
           cx.globalCompositeOperation = 'lighter';
+          const spriteCache = new Map();
           const r = ep.radius || 1;
           const RAD2DEG = 180 / Math.PI;
-          const fillBuf = new Map();
+          const HALF = EP_SPRITE_SIZE / 2;
           for (let i = 0; i < ep.count; i++) {
             const x = ep.positions[i * 3];
             const y = ep.positions[i * 3 + 1];
@@ -23678,19 +23699,78 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const px = ((lon + 180) / 360) * W;
             const py = ((90 - lat) / 180) * H;
             const b = ep.brightness[i];
-            const key = b.toFixed(2);
-            if (!fillBuf.has(key)) fillBuf.set(key, []);
-            fillBuf.get(key).push(px, py);
-          }
-          for (const [key, coords] of fillBuf) {
-            const b = parseFloat(key);
-            cx.fillStyle = `rgba(255,255,255,${(b * 0.85).toFixed(3)})`;
-            for (let i = 0; i < coords.length; i += 2) {
-              cx.fillRect(coords[i] - 1, coords[i + 1] - 1, 2, 2);
+            let sprite = spriteCache.get(b);
+            if (!sprite) {
+              sprite = _epDotSprite(b * EP_LUMINOSITY);
+              spriteCache.set(b, sprite);
             }
+            cx.drawImage(sprite, Math.floor(px - HALF), Math.floor(py - HALF));
           }
           _earthPointsCanvas = c;
           return c;
+        }
+
+        // ── Twinkle (port of globe's earthTwinkle) ────────────────────
+        const TWINKLE_MAX            = 60;
+        const TWINKLE_SPAWN_PER_FRAME = 0.35;
+        const TWINKLE_DURATION_MS    = 1400;
+        const TWINKLE_INTENSITY      = 0.85;
+        const _twinkles = [];
+
+        function _maintainTwinkles(now, ep) {
+          if (!ep) return;
+          while (_twinkles.length < TWINKLE_MAX && Math.random() < TWINKLE_SPAWN_PER_FRAME) {
+            _twinkles.push({
+              idx: Math.floor(Math.random() * ep.count),
+              start: now,
+              duration: TWINKLE_DURATION_MS * (0.55 + Math.random() * 0.9),
+              intensity: TWINKLE_INTENSITY * (0.55 + Math.random() * 0.45),
+            });
+          }
+          for (let i = _twinkles.length - 1; i >= 0; i--) {
+            if (now - _twinkles[i].start > _twinkles[i].duration) _twinkles.splice(i, 1);
+          }
+        }
+
+        function getEarthPointsRenderable() {
+          const base = getEarthPointsCanvas();
+          if (!base) return null;
+          const ep = window.__getEarthPoints && window.__getEarthPoints();
+          const now = performance.now();
+          _maintainTwinkles(now, ep);
+          if (!_twinkles.length || !ep) return base;
+          if (!_earthPointsScratch) {
+            _earthPointsScratch = document.createElement('canvas');
+            _earthPointsScratch.width  = base.width;
+            _earthPointsScratch.height = base.height;
+          }
+          const sc = _earthPointsScratch;
+          const scx = sc.getContext('2d');
+          scx.globalCompositeOperation = 'source-over';
+          scx.clearRect(0, 0, sc.width, sc.height);
+          scx.drawImage(base, 0, 0);
+          scx.globalCompositeOperation = 'destination-out';
+          const r = ep.radius || 1;
+          const RAD2DEG = 180 / Math.PI;
+          const HALF = EP_SPRITE_SIZE / 2;
+          for (const t of _twinkles) {
+            const phase = (now - t.start) / t.duration;
+            if (phase < 0 || phase > 1) continue;
+            const sub = Math.min(1, t.intensity * Math.sin(phase * Math.PI));
+            if (sub <= 0.02) continue;
+            const i = t.idx;
+            const x3 = ep.positions[i * 3];
+            const y3 = ep.positions[i * 3 + 1];
+            const z3 = ep.positions[i * 3 + 2];
+            const lat = Math.asin(Math.max(-1, Math.min(1, y3 / r))) * RAD2DEG;
+            const lon = Math.atan2(z3, x3) * RAD2DEG;
+            const px = ((lon + 180) / 360) * sc.width;
+            const py = ((90 - lat) / 180) * sc.height;
+            scx.fillStyle = `rgba(0,0,0,${sub.toFixed(3)})`;
+            scx.fillRect(Math.floor(px - HALF), Math.floor(py - HALF), EP_SPRITE_SIZE, EP_SPRITE_SIZE);
+          }
+          scx.globalCompositeOperation = 'source-over';
+          return sc;
         }
 
         // Honors the same Satellite View toggle + opacity slider the globe
@@ -23707,12 +23787,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const baseX = -(((STATE.scrollX % wW) + wW) % wW);
           const yTop  = -STATE.scrollY;
 
-          const epCanvas = getEarthPointsCanvas();
-          if (epCanvas) {
+          const epRenderable = getEarthPointsRenderable();
+          if (epRenderable) {
             ctx.save();
             ctx.globalCompositeOperation = 'lighter';
             for (let i = -1; i <= 1; i++) {
-              ctx.drawImage(epCanvas, baseX + i * wW, yTop, wW, wH);
+              ctx.drawImage(epRenderable, baseX + i * wW, yTop, wW, wH);
             }
             ctx.restore();
           }
@@ -24067,6 +24147,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         function onTap(e) {
           if (e.detail && e.detail.__handledCity) return;
+          // Heatmap owns the tap when active — its own listener routes
+          // the click to the inspector panel. Bailing here also avoids
+          // opening the country panel under the inspector.
+          if (window.__semHeatActive) return;
           const vm = window.__currentViewMode || 'country';
           if (vm !== 'country') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
@@ -24085,6 +24169,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         let _lastHoverIso = null;
         function onHover(e) {
           if (e.detail && e.detail.__handledCity) return;
+          // Heatmap is showing — suppress hover cards so they don't fight
+          // the inspector panel.
+          if (window.__semHeatActive) return;
           if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
           if ((window.__currentViewMode || 'country') !== 'country') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
@@ -24364,6 +24451,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
 
         function onTap(e) {
+          // Heatmap owns the tap when active — see country layer for rationale.
+          if (window.__semHeatActive) return;
           if ((window.__currentViewMode || 'country') !== 'city') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
           if (!ll) return;
@@ -24376,6 +24465,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
         function onHover(e) {
+          if (window.__semHeatActive) return;
           if ((window.__currentViewMode || 'country') !== 'city') return;
           if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
@@ -24404,6 +24494,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (!c) { setTimeout(attach, 100); return; }
           c.addEventListener("map2d:tap",   onTap, true);
           c.addEventListener("map2d:hover", onHover, true);
+        }
+        attach();
+      })();
+
+      // ── Heatmap inspector: route 2D map taps to the heatmap inspector
+      // when the heat layer is active. Mirrors the globe's
+      // enableHeatClickInspector() behaviour for the 2D canvas. The
+      // country/city tap handlers above already early-return on
+      // window.__semHeatActive, so this is the SOLE path that handles
+      // taps while the heatmap is up — same as the globe.
+      (function setupMap2DHeatInspector() {
+        function clientToLatLon(clientX, clientY) {
+          if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
+          const rect = Map2D.state.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * Map2D.state.dpr;
+          const sy = (clientY - rect.top)  * Map2D.state.dpr;
+          return Map2D.unproject(sx, sy);
+        }
+        function onTap(e) {
+          if (!window.__semHeatActive) return;
+          // Don't capture taps that landed on the heatmap UI itself.
+          const tEl = e.target;
+          if (tEl && tEl.closest && (tEl.closest('#semHeatPanel') || tEl.closest('#semHeatInspector'))) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          if (typeof window.__semHeatOpenInspector === "function") {
+            window.__semHeatOpenInspector(ll.lat, ll.lon, null);
+            e.detail.__handledHeatmap = true;
+          }
+        }
+        function attach() {
+          const c = Map2D.state.canvas;
+          if (!c) { setTimeout(attach, 100); return; }
+          // Capture phase, registered FIRST so it fires before country/city
+          // listeners — though those already bail on __semHeatActive.
+          c.addEventListener("map2d:tap", onTap, true);
         }
         attach();
       })();
@@ -40327,7 +40453,11 @@ body.ticker-active .gTickerLabel {
   // rotated (scene.quaternion = globeQuat) the leader line follows the
   // point on the globe. Each frame we transform through heatSphere's
   // current world matrix.
-  let inspectorAnchorLocal = null; // THREE.Vector3 in heatSphere local space
+  let inspectorAnchorLocal = null; // THREE.Vector3 in heatSphere local space (3D globe mode)
+  // 2D map mode anchor: {lat, lon}. Set by openInspectorAt when localPoint is
+  // null and Map2D is enabled. The RAF tick projects through Map2D.project()
+  // each frame so the leader line follows the user's pan/zoom on the 2D map.
+  let inspectorAnchor2DLatLon = null;
   let inspectorRafId   = null;
   let inspectorMinimized = false;
 
@@ -40606,6 +40736,7 @@ body.ticker-active .gTickerLabel {
 
   function closeInspectorPopup() {
     inspectorAnchorLocal = null;
+    inspectorAnchor2DLatLon = null;
     if (inspectorEl) inspectorEl.style.display = 'none';
     if (inspectorSvg) inspectorSvg.style.display = 'none';
     if (inspectorRafId) { cancelAnimationFrame(inspectorRafId); inspectorRafId = null; }
@@ -40733,10 +40864,12 @@ body.ticker-active .gTickerLabel {
           </div>`).join('');
         body.innerHTML = html;
       }
-      return;
+      // Fall through to anchor + display setup so the QA panel actually
+      // appears (with leader line) on click. We intentionally don't
+      // `return` here — that was a pre-existing bug that left QA-mode
+      // clicks invisible.
     }
-
-    if (state.mode === 'sentiment') {
+    else if (state.mode === 'sentiment') {
       _inspectorCtx = null;
       _inspectorBackFn = null;
       _setInspectorTitle('Regional Sentiment', false, `within ${INSPECTOR_RADIUS_MI} mi of click · click country for articles`);
@@ -40832,9 +40965,20 @@ body.ticker-active .gTickerLabel {
       renderInspectorCountryRanking();
     }
 
-    // Anchor + show (stored in heatSphere local space so the leader
-    // line follows globe rotation automatically).
-    inspectorAnchorLocal = localPoint.clone();
+    // Anchor + show. Two paths:
+    //   • 3D globe → store the click in heatSphere local space so the leader
+    //     line follows globe rotation automatically (transformed each RAF
+    //     through heatSphere.matrixWorld).
+    //   • 2D map  → caller passes localPoint=null; store {lat,lon} and let
+    //     the RAF tick project through Map2D.project() each frame so the
+    //     leader follows pan/zoom on the equirectangular canvas.
+    if (localPoint && localPoint.clone) {
+      inspectorAnchorLocal = localPoint.clone();
+      inspectorAnchor2DLatLon = null;
+    } else {
+      inspectorAnchorLocal = null;
+      inspectorAnchor2DLatLon = { lat, lon };
+    }
     inspectorEl.style.display  = 'block';
     inspectorSvg.style.display = 'block';
     inspectorMinimized = false;
@@ -41124,10 +41268,46 @@ body.ticker-active .gTickerLabel {
   function startInspectorTracking() {
     if (inspectorRafId) cancelAnimationFrame(inspectorRafId);
     const tick = () => {
-      if (!inspectorAnchorLocal || !window.__semHeatActive) { inspectorRafId = null; return; }
-      const cam = window.__camera;
-      const rend = window.__renderer;
-      if (cam && rend && heatSphere && inspectorEl.style.display !== 'none') {
+      if (!window.__semHeatActive) { inspectorRafId = null; return; }
+      if (!inspectorAnchorLocal && !inspectorAnchor2DLatLon) { inspectorRafId = null; return; }
+      if (inspectorEl.style.display === 'none') {
+        inspectorRafId = requestAnimationFrame(tick);
+        return;
+      }
+
+      let sx, sy, facing = true;
+
+      if (inspectorAnchor2DLatLon) {
+        // 2D map path: project lat/lon through Map2D to canvas raw pixels,
+        // convert back to CSS pixels via dpr, then add the canvas's
+        // viewport offset to get clientX/Y for the SVG leader line.
+        const m = window.__map2d;
+        if (!m || !m.isEnabled || !m.isEnabled() || !m.state || !m.state.canvas) {
+          inspectorRafId = requestAnimationFrame(tick);
+          return;
+        }
+        const pt = m.project(inspectorAnchor2DLatLon.lat, inspectorAnchor2DLatLon.lon);
+        const rect = m.state.canvas.getBoundingClientRect();
+        const dpr = m.state.dpr || 1;
+        sx = rect.left + pt.x / dpr;
+        sy = rect.top  + pt.y / dpr;
+        // Hide the leader if the point has scrolled offscreen (the 2D
+        // analogue of "behind the globe"). project() picks the wrapped
+        // tile nearest the viewport, so a point's x can be negative or
+        // greater than canvas width when offscreen.
+        const cssW = rect.width;
+        const cssH = rect.height;
+        const cx = sx - rect.left;
+        const cy = sy - rect.top;
+        facing = cx >= 0 && cx <= cssW && cy >= 0 && cy <= cssH;
+      } else {
+        // 3D globe path (original).
+        const cam  = window.__camera;
+        const rend = window.__renderer;
+        if (!cam || !rend || !heatSphere) {
+          inspectorRafId = requestAnimationFrame(tick);
+          return;
+        }
         // Transform the local-space anchor into current world-space
         // through the heatSphere's matrix. Because the scene is rotated
         // by globeQuat, this automatically drags the leader along with
@@ -41137,8 +41317,8 @@ body.ticker-active .gTickerLabel {
 
         const v = worldAnchor.clone().project(cam);
         const rect = rend.domElement.getBoundingClientRect();
-        const sx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
-        const sy = rect.top  + (-v.y * 0.5 + 0.5) * rect.height;
+        sx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
+        sy = rect.top  + (-v.y * 0.5 + 0.5) * rect.height;
 
         // Hide the dot if the point is on the back of the globe.
         // "Facing" = the outward surface normal at this point (the
@@ -41148,31 +41328,32 @@ body.ticker-active .gTickerLabel {
         heatSphere.getWorldPosition(sphereCenter);
         const outward = worldAnchor.clone().sub(sphereCenter).normalize();
         const viewDir = cam.position.clone().sub(worldAnchor).normalize();
-        const facing = outward.dot(viewDir) > 0;
-        inspectorDot.style.display  = facing ? '' : 'none';
-        inspectorLine.style.display = facing ? '' : 'none';
-
-        // Panel anchor: use left-center of panel as line target
-        const pRect = inspectorEl.getBoundingClientRect();
-        // Pick the closest edge midpoint
-        const candidates = [
-          { x: pRect.left,                y: pRect.top + pRect.height/2 }, // left
-          { x: pRect.right,               y: pRect.top + pRect.height/2 }, // right
-          { x: pRect.left + pRect.width/2, y: pRect.top },                 // top
-          { x: pRect.left + pRect.width/2, y: pRect.bottom }               // bottom
-        ];
-        let best = candidates[0], bestD = Infinity;
-        for (const c of candidates) {
-          const d = (c.x - sx)**2 + (c.y - sy)**2;
-          if (d < bestD) { bestD = d; best = c; }
-        }
-        inspectorLine.setAttribute('x1', sx);
-        inspectorLine.setAttribute('y1', sy);
-        inspectorLine.setAttribute('x2', best.x);
-        inspectorLine.setAttribute('y2', best.y);
-        inspectorDot.setAttribute('cx', sx);
-        inspectorDot.setAttribute('cy', sy);
+        facing = outward.dot(viewDir) > 0;
       }
+
+      inspectorDot.style.display  = facing ? '' : 'none';
+      inspectorLine.style.display = facing ? '' : 'none';
+
+      // Panel anchor: pick the panel-edge midpoint closest to the dot.
+      const pRect = inspectorEl.getBoundingClientRect();
+      const candidates = [
+        { x: pRect.left,                y: pRect.top + pRect.height/2 }, // left
+        { x: pRect.right,               y: pRect.top + pRect.height/2 }, // right
+        { x: pRect.left + pRect.width/2, y: pRect.top },                 // top
+        { x: pRect.left + pRect.width/2, y: pRect.bottom }               // bottom
+      ];
+      let best = candidates[0], bestD = Infinity;
+      for (const c of candidates) {
+        const d = (c.x - sx)**2 + (c.y - sy)**2;
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      inspectorLine.setAttribute('x1', sx);
+      inspectorLine.setAttribute('y1', sy);
+      inspectorLine.setAttribute('x2', best.x);
+      inspectorLine.setAttribute('y2', best.y);
+      inspectorDot.setAttribute('cx', sx);
+      inspectorDot.setAttribute('cy', sy);
+
       inspectorRafId = requestAnimationFrame(tick);
     };
     inspectorRafId = requestAnimationFrame(tick);
@@ -41257,6 +41438,17 @@ body.ticker-active .gTickerLabel {
     }
     _heatPointerDown = null;
   }
+
+  // Bridge for the 2D-map tap router: Map2D's "map2d:tap" listener calls
+  // this with (lat, lon, null) when the heatmap is active. Passing
+  // localPoint=null tells openInspectorAt to use the 2D anchor path
+  // (project via Map2D each frame) instead of the heatSphere local-space
+  // path. All three modes — coverage, sentiment, Map This (Q&A) — flow
+  // through the same function so the panel + leader behave identically
+  // on globe and 2D map.
+  window.__semHeatOpenInspector = function (lat, lon, localPoint) {
+    return openInspectorAt(lat, lon, localPoint || null);
+  };
 
   window.__semHeatOpen = function (opts) {
     // Mutual exclusion: flow arcs must never coexist with the heatmap.

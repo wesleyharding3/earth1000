@@ -26,6 +26,12 @@
  *   node dedupThreadsWithClaude.js --min-cluster=2    # skip single-thread clusters
  */
 
+// Cap this script's share of Postgres connections BEFORE db.js loads. Runs
+// concurrently with web + worker + storyThreadBuilder; without this cap it
+// would default to DB_POOL_MAX=60. The dedup loop is mostly Anthropic-bound
+// with small DB queries between API calls, so 3 is plenty.
+process.env.DB_POOL_MAX = "3";
+
 // override:true — see auditThreadArticles.js for the reason.
 require("dotenv").config({ override: true });
 const pool = require("./db");

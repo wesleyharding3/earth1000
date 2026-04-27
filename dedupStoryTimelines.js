@@ -35,6 +35,11 @@
  *   node dedupStoryTimelines.js --max=200       — cap active pool
  */
 
+// Cap this script's share of Postgres connections BEFORE db.js loads. Runs
+// concurrently with web + sibling crons; without this cap it would default to
+// DB_POOL_MAX=60. Mostly Anthropic-bound, sequential DB writes — 3 is plenty.
+process.env.DB_POOL_MAX = "3";
+
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");

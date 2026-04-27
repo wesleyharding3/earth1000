@@ -24,6 +24,11 @@
  */
 
 'use strict';
+// Cap this script's share of Postgres connections BEFORE db.js loads. Without
+// this cap it defaults to DB_POOL_MAX=60. Sequential per-country queries; 2
+// is plenty.
+process.env.DB_POOL_MAX = "2";
+
 require('dotenv').config({ override: true });
 
 const pool = require('./db');

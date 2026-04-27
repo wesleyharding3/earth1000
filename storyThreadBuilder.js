@@ -20,6 +20,12 @@
  *   node storyThreadBuilder.js --hours=72 — custom lookback window
  */
 
+// Cap this cron's share of Postgres connections BEFORE db.js loads. Without
+// this cap the script defaults to DB_POOL_MAX=60, which on its own can blow
+// past Postgres max_connections=103 when web + worker + sibling crons are
+// also live. The builder uses small Promise.all batches; 4 is plenty.
+process.env.DB_POOL_MAX = "4";
+
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");

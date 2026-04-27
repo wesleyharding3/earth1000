@@ -19,6 +19,12 @@
 
 'use strict';
 
+// Cap this script's share of Postgres connections BEFORE db.js loads. Runs
+// concurrently with web + worker + sibling crons; without this cap it would
+// default to DB_POOL_MAX=60. Briefing is mostly Anthropic + ElevenLabs bound
+// with sequential DB reads; 4 is plenty.
+process.env.DB_POOL_MAX = "4";
+
 require('dotenv').config();
 const pool      = require('./db');
 const readline  = require('readline');
