@@ -46,6 +46,22 @@ const {
 const app = express();
 console.log("Node version:", process.version);
 
+// Trust the Render edge proxy so req.ip resolves to the real client IP via
+// X-Forwarded-For. Without this, every visitor's IP looks like the Render
+// load-balancer's internal address, which collapses every per-IP rate-limit
+// (apiLimiter / heavyLimiter / searchLimiter) into a SINGLE GLOBAL bucket
+// shared by the entire userbase.
+//
+// Concrete prior failure: heavyLimiter caps /api/flows at 30 req/min and
+// is supposed to be per-user. With trust-proxy off, all browsers shared the
+// 30/min budget — one user clicking through several flow-arc threads in a
+// minute starved the budget for everyone else, who then saw the limiter's
+// instant 429 as "Failed to load" with no loading spinner. Setting trust
+// proxy=1 (single hop) tells express-rate-limit to key off the original
+// client IP from X-Forwarded-For. Render only adds one hop, so 1 is the
+// safe choice — using `true` would let a malicious client forge the header.
+app.set('trust proxy', 1);
+
 // ── Title-based country boost for threads/timelines ──────────────────────
 // Threads/timelines whose title or geographic_scope mention these countries
 // get a ranking boost so they surface higher in the feed.
@@ -111,8 +127,15 @@ function rateLimit({ windowMs = 60_000, max = 100 } = {}) {
 
 // General API: 200 req/min per IP — generous for normal use
 const apiLimiter = rateLimit({ windowMs: 60_000, max: 200 });
-// Expensive endpoints: 30 req/min per IP
-const heavyLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+// Expensive endpoints: 80 req/min per IP. Bumped from 30 because a real
+// user clicking through several thread flow-arc cards fires 5-8 /api/flows
+// requests per switch (arcs, routes-by-mode, source filters) — the old 30
+// cap could trip after 4-5 thread interactions, and (worse) before the
+// trust-proxy fix the cap was effectively GLOBAL across all users. Now
+// per-user with the cache (180s TTL on /api/flows) absorbing repeats, 80
+// gives plenty of room for active exploration without exposing the DB to
+// abuse.
+const heavyLimiter = rateLimit({ windowMs: 60_000, max: 80 });
 // Search: 60 req/min per IP
 const searchLimiter = rateLimit({ windowMs: 60_000, max: 60 });
 const _prodOrigins = [
