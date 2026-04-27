@@ -2749,14 +2749,21 @@ body.flow-maximized #flowArcList {
   justify-content: center;
   gap: 7px;
   padding: 5px 12px;
-  /* Locked width — every analysis returns one of three fixed labels
-     ("Story" / "Primary actor" / "Secondary actor"). 168px fits the
-     longest label at the new 11px font size with a 1px breathing
-     buffer. Both bounds locked so all three pills render at the same
-     dimensions regardless of which label they carry — no layout pop
-     when blocks stream in one at a time. */
-  min-width: 168px;
-  max-width: 168px;
+  /* Locked width — every analysis returns one of a small set of fixed
+     labels across three surfaces:
+       cluster-node:  "Story" / "Primary actor" / "Secondary actor"
+       flow-context:  "Story" / "Primary country" / "Secondary country"
+       article:       "Framing" / "Subject" / "Editorial bias"
+       loading:       "Deep Analysis" / "Deep Context"
+     Longest is "Secondary country" (flow-context) at ~197px natural
+     outer width with the 11px font + 7px dot + 7px gap + 24px padding.
+     200px gives every label a 3px breathing buffer. Both bounds
+     locked so every pill renders at the same dimensions regardless
+     of which label it carries — no layout pop when blocks stream in
+     one at a time, and the loading-state badge matches the runtime
+     width so there's no jump when content arrives. */
+  min-width: 200px;
+  max-width: 200px;
   box-sizing: border-box;
   white-space: nowrap;
   border-radius: 999px;
@@ -2949,14 +2956,21 @@ body.flow-maximized #flowArcList {
   0%, 100% { box-shadow: 0 0 10px rgba(88,180,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.02); }
   50%      { box-shadow: 0 0 18px rgba(120,210,255,0.38), inset 0 0 0 1px rgba(255,255,255,0.04); }
 }
+.arcCtxSegNav {
+  /* Defaults for the responsive dot/gap variables. apply() in JS
+     overrides these on the nav element when the segment count gets
+     large enough to overflow the panel width — both shrink in lockstep
+     so the row stays a tidy line of clean small dots. */
+  --seg-dot: 6px;
+  --seg-gap: 14px;
+}
 .arcCtxSegDots {
   display: inline-flex;
   align-items: center;
-  /* 14px gap with 4-5px halos keeps each dot visually distinct.
-     Earlier desktop used 22×4 bars and earlier mobile used a 10px
-     gap — both lead to halos overlapping into a flat orange line.
-     Now unified across desktop + mobile. */
-  gap: 14px;
+  /* Gap consumed by the CSS variable so apply() can shrink it for
+     large segment counts. Default 14px keeps neighboring dots'
+     tight halos visually distinct. */
+  gap: var(--seg-gap);
 }
 button.arcCtxSegDot,
 .arcCtxSegDot {
@@ -2964,16 +2978,16 @@ button.arcCtxSegDot,
      default -webkit-appearance: button. Force a clean filled circle. */
   -webkit-appearance: none;
   appearance: none;
-  width: 6px !important;
-  height: 6px !important;
-  min-width: 6px !important;
-  min-height: 6px !important;
-  max-width: 6px !important;
-  max-height: 6px !important;
+  width: var(--seg-dot) !important;
+  height: var(--seg-dot) !important;
+  min-width: var(--seg-dot) !important;
+  min-height: var(--seg-dot) !important;
+  max-width: var(--seg-dot) !important;
+  max-height: var(--seg-dot) !important;
+  flex: 0 0 var(--seg-dot) !important;
   border-radius: 50% !important;
   border: 0 !important;
   padding: 0 !important;
-  flex: 0 0 6px !important;
   background: rgba(180,200,230,0.55) !important;
   /* No baseline glow — dots stay clean and crisp at rest. */
   box-shadow: none !important;
@@ -11386,6 +11400,27 @@ window.__arcCtxSegmented = (function() {
     if (prev) prev.toggleAttribute('disabled', clamped <= 0);
     if (next) next.toggleAttribute('disabled', clamped >= total - 1);
   }
+  // Compute responsive dot diameter + gap so the nav row never
+  // overflows the panel width even at large segment counts. Both
+  // shrink in lockstep; the ratio (gap ≈ 2.33 × dot) keeps the row
+  // visually balanced at every size. CSS variables --seg-dot and
+  // --seg-gap are set on the nav element; the dot CSS picks them up
+  // via var(...) so the existing !important overrides remain valid.
+  function _segSizingFor(total, navWidth) {
+    const IDEAL_DOT = 6, IDEAL_GAP = 14;
+    const FLOOR_DOT = 3, FLOOR_GAP = 7;
+    const CHROME = 84; // arrows + flanking gaps
+    const need   = total * IDEAL_DOT + (total - 1) * IDEAL_GAP;
+    const budget = Math.max(40, (navWidth || 0) - CHROME);
+    if (!Number.isFinite(navWidth) || navWidth <= 0) return { dot: IDEAL_DOT, gap: IDEAL_GAP };
+    if (need <= budget) return { dot: IDEAL_DOT, gap: IDEAL_GAP };
+    const ratio = IDEAL_GAP / IDEAL_DOT;
+    const dot = budget / (total + (total - 1) * ratio);
+    const clampedDot = Math.max(FLOOR_DOT, Math.min(IDEAL_DOT, Math.floor(dot * 10) / 10));
+    const clampedGap = Math.max(FLOOR_GAP, Math.round(clampedDot * ratio * 10) / 10);
+    return { dot: clampedDot, gap: clampedGap };
+  }
+
   // Event delegation — one click handler per body, survives nav rebuilds.
   function ensureDelegate(body) {
     if (!body || body._segDelegateAttached) return;
@@ -11474,6 +11509,13 @@ window.__arcCtxSegmented = (function() {
       if (prev) prev.toggleAttribute('disabled', activeIdx <= 0);
       if (next) next.toggleAttribute('disabled', (activeIdx >= total - 1) && !morePending);
     }
+    // Apply responsive dot/gap sizing AFTER the nav is mounted so we
+    // can measure its width. Shrinks dot+gap proportionally when N is
+    // large enough to overflow the panel.
+    const navW = (body.clientWidth || nav.clientWidth || 0);
+    const sizing = _segSizingFor(total, navW);
+    nav.style.setProperty('--seg-dot', sizing.dot + 'px');
+    nav.style.setProperty('--seg-gap', sizing.gap + 'px');
   }
   function isMobile() {
     return (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) || false;
@@ -21360,12 +21402,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__arcCtxSegmented.setManualMode(body, true);
       }
       // Pre-declare segment total so the bottom nav renders all N dots
-      // from frame 0 — EXCEPT on mobile, where the flow-context card
-      // overlays the live globe and the user is still watching the
-      // arcs animate. On mobile the dots grow with the stream; on
-      // desktop they show the full count immediately.
-      const _isMobileFlowCtx = window.__arcCtxSegmented?.isMobile?.() === true;
-      if (body && normalizedBlocks.length >= 2 && !_isMobileFlowCtx) {
+      // from frame 0 — including on mobile. (Earlier this had a mobile
+      // carve-out that kept incremental dot reveal; the user wanted
+      // the upfront pattern across every surface for consistency.)
+      // The CSS layer shrinks the dot diameter + gap responsively when
+      // N is large so a wide secondary-country list still fits in a
+      // narrow pane.
+      if (body && normalizedBlocks.length >= 2) {
         body.dataset.segTotal = String(normalizedBlocks.length);
       }
       for (let i = 0; i < normalizedBlocks.length; i += 1) {
@@ -21770,6 +21813,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // new "Routes 12" chip in the flowCtxCard's header row). Single
       // source of truth: visibleArcs.length. The chip in .flowCtxLiveArcsTitle
       // shows just the number since "Routes" is already the label.
+      //
+      // The header chip is shown ONLY in news-flows mode — i.e. when no
+      // thread/timeline AI session is registered AND no article flow is
+      // active (the body class flow-from-card flips on for article-arc
+      // flows). For thread / line / article flows the count is meaningless
+      // (the user came in with an explicit story scope, not a free
+      // browsing of the global flows), so we suppress it via display:none.
       {
         const n = visibleArcs.length;
         const countText = n + ' flow' + (n === 1 ? '' : 's');
@@ -21777,7 +21827,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const maxCount = document.getElementById('arcListMaxCount');
         if (maxCount) maxCount.textContent = countText;
         const headerCount = document.getElementById('flowCtxLiveArcsCount');
-        if (headerCount) headerCount.textContent = String(n);
+        if (headerCount) {
+          const isNewsFlowsMode = !_arcCtxSession
+            && !document.body.classList.contains('flow-from-card');
+          headerCount.style.display = isNewsFlowsMode ? '' : 'none';
+          headerCount.textContent = String(n);
+        }
       }
 
       // Build desired set (stable UIDs)
