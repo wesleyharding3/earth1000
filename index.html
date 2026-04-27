@@ -9212,17 +9212,28 @@ body.flow-maximized #flowArcList {
       #topLeftCluster {
         top: calc(env(safe-area-inset-top, 0px) + 10px);
         left: 8px;
-        gap: 6px;
+        gap: 5px;
       }
-      /* Match the 44px shared min-* floor so the explicit and the floor
-         agree — keeps the cascade simple and the buttons perfectly round. */
+      /* Mobile top-nav buttons: 36×36 (down from the prior 44×44). The
+         #topLeftCluster holds 5–7 .iconBtn elements, which at 44px each
+         overflowed the available width on small phones and visually
+         crowded the 56px compass in the top-right. 36px keeps the buttons
+         clearly tappable while pulling the cluster's right edge well
+         clear of the compass.
+         CRITICAL: width / height / min-width / min-height ALL clamped to
+         the same value so the buttons stay perfectly circular. The prior
+         "elliptical 38×44" bug was caused by explicit height=38 fighting
+         the inherited min-height=var(--tap-min) (44). All four properties
+         must agree. */
       .iconBtn {
-        width: var(--tap-min);
-        height: var(--tap-min);
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
       }
       .iconBtn svg {
-        width: 16px;
-        height: 16px;
+        width: 14px;
+        height: 14px;
       }
 
       /* ── Tooltips on mobile: constrain to viewport, don't rely on hover ── */
