@@ -24856,10 +24856,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
 
         // ── Coordinate helpers ─────────────────────────────────────────
-        // World extent at current zoom (in canvas pixels).
-        // worldW = canvas pixel width × zoom; worldH = worldW / 2 (2:1 aspect).
-        function worldW() { return STATE.width * STATE.zoom; }
-        function worldH() { return worldW() * 0.5; }
+        // World extent at current zoom. The map fills the viewport vertically
+        // (worldH = canvasH × zoom) so the user never sees an empty band above
+        // or below; with the 2:1 equirectangular aspect this means the world
+        // is always wider than the viewport, giving infinite horizontal scroll.
+        function worldH() { return STATE.height * STATE.zoom; }
+        function worldW() { return worldH() * 2; }
 
         function project(lat, lon) {
           const wW = worldW(), wH = worldH();

@@ -11817,6 +11817,18 @@ window.__arcCtxSegmented = (function() {
 
     <div class="sidebarInner">
 
+      <!-- Always-visible global control: Globe vs 2D Map projection. -->
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="sidebarSectionLabel">Map View</div>
+        <div class="themeToggleRow" style="margin-top:0;">
+          <div class="themePill" data-projection-pill>
+            <button class="themePillBtn active" data-projection="globe">Globe</button>
+            <button class="themePillBtn" data-projection="map">Map</button>
+          </div>
+        </div>
+      </div>
+      <div class="sidebarDivider"></div>
+
       <!-- Country view -->
       <div class="sidebarPanel" id="sidebarPanelCountry">
         <div class="sidebarViewBadge">
@@ -12721,6 +12733,12 @@ window.__arcCtxSegmented = (function() {
     let ambientEnabled = true;
     let ambientPaused = false;
     let ambientResumeTimer = null;
+    // Bridge for the 2D Map view's ambient horizontal scroll (defined later).
+    window.__getAmbientState = () => ({
+      speed:   ambientSpeed,
+      enabled: ambientEnabled,
+      paused:  ambientPaused,
+    });
     // Ambient microdrift: sub-threshold sway on both yaw and pitch so
     // the horizon gently shifts like a satellite in a slow orbit.
     // Tracked as previous-frame absolute values so deltas can be applied.
@@ -13191,6 +13209,10 @@ function computeCityTiers(cities) {
 
       let __dayTexture   = earthTexture;
       let __nightTexture = null;
+      // Bridge for the 2D Map view (defined later, in module scope) to read
+      // these textures even though they live inside init()'s closure.
+      window.__getDayTexture   = () => __dayTexture;
+      window.__getNightTexture = () => __nightTexture;
 
       // Upgrade day texture to higher-res Blue Marble in background
       (function() {
@@ -13292,6 +13314,31 @@ function computeCityTiers(cities) {
       }
 
       window.__syncSurfaceOverlayVisibility = syncSurfaceOverlayVisibility;
+
+      // ── Globe ⇄ 2D Map projection seam ────────────────────────────────
+      // Owns the cross-cutting state for which view geometry is on screen.
+      // The toggle hides the WebGL canvas when 'map' is selected; the
+      // mounted-or-not Map2D module (further down in this script) responds
+      // to the projectionchange event.
+      window.__projection = (function() {
+        try { return localStorage.getItem("earth00:projection") === "map" ? "map" : "globe"; }
+        catch (_) { return "globe"; }
+      })();
+      window.__setProjection = function(mode) {
+        const m = (mode === "map") ? "map" : "globe";
+        const prev = window.__projection;
+        window.__projection = m;
+        try { localStorage.setItem("earth00:projection", m); } catch (_) {}
+        document.body.classList.toggle("projection-map",   m === "map");
+        document.body.classList.toggle("projection-globe", m !== "map");
+        if (renderer && renderer.domElement) {
+          renderer.domElement.style.display = (m === "map") ? "none" : "";
+        }
+        if (prev !== m) {
+          window.dispatchEvent(new CustomEvent("projectionchange", { detail: { mode: m, prev } }));
+        }
+      };
+      window.__setProjection(window.__projection);
 
       for(let i=0;i<earthPointCount;i++){
         const u=Math.random(), v=Math.random();
@@ -14987,6 +15034,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (getThemeMode() === "auto") applyThemeMode("auto");
       }, 5 * 60 * 1000);
 
+      // ── Projection pill (Globe / Map) ─────────────────────────────────
+      const projectionPillBtns = Array.from(document.querySelectorAll(".themePillBtn[data-projection]"));
+      function syncProjectionControls() {
+        const m = window.__projection || "globe";
+        projectionPillBtns.forEach(btn => {
+          btn.classList.toggle("active", btn.dataset.projection === m);
+        });
+      }
+      window.__syncProjectionControls = syncProjectionControls;
+      projectionPillBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (typeof window.__setProjection === "function") {
+            window.__setProjection(btn.dataset.projection);
+          }
+          syncProjectionControls();
+        });
+        btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      });
+      syncProjectionControls();
+      // Auto-mount the 2D map after a short delay if the persisted choice is
+      // 'map'. We poll because window.__map2d is defined further down in the
+      // module — by the time this fires it's available on window.__map2d.
+      (function autoMountMap() {
+        const persisted = (() => {
+          try { return localStorage.getItem("earth00:projection"); }
+          catch (_) { return null; }
+        })();
+        if (persisted !== "map") return;
+        let tries = 0;
+        const t = setInterval(() => {
+          if (window.__map2d) {
+            clearInterval(t);
+            window.__projection = "map";
+            try { window.__map2d.mount(); } catch (_) {}
+          } else if (tries++ > 50) {
+            clearInterval(t);
+          }
+        }, 60);
+      })();
+
       // ──────────────────────────────────────────────────────────
       //  TRANSPORTATION VIEW
       // ──────────────────────────────────────────────────────────
@@ -16243,6 +16331,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (hoverEraseTimer) clearTimeout(hoverEraseTimer);
         hoverEraseTimer = setTimeout(() => { card.classList.remove("hcErase"); }, 150);
       }
+      // Bridge for the 2D Map view (defined later in this module).
+      window.__showHoverCard = showHoverCard;
+      window.__hideHoverCard = hideHoverCard;
 
       const raycaster = new THREE.Raycaster();
       raycaster.params.Points.threshold = 0.03;
@@ -18816,6 +18907,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
           
           if (!dataArr?.length || !posArr) return [];
+          // 2D Map projection branch — viewport-bounds visibility instead of
+          // sphere-facing dot product. Same node set, same downstream weighting.
+          if (window.__projection === "map" && window.__map2d && window.__map2d.isEnabled()) {
+            const m   = window.__map2d;
+            const mst = m.state;
+            const mg  = 110;
+            const W   = window.innerWidth, H = window.innerHeight;
+            const wW  = m.worldW(), wH = m.worldH();
+            const result = [];
+            for (let i = 0; i < dataArr.length; i++) {
+              if (mask    && !mask[i])    continue;
+              if (gdpMask && !gdpMask[i]) continue;
+              const node = dataArr[i];
+              const lat  = node?.lat ?? node?.latitude;
+              const lon  = node?.lon ?? node?.longitude;
+              if (lat == null || lon == null) continue;
+              const baseX = -(((mst.scrollX % wW) + wW) % wW);
+              const xWorld = baseX + ((lon + 180) / 360) * wW;
+              const y      = (-mst.scrollY + ((90 - lat) / 180) * wH) / mst.dpr;
+              let sx = -1;
+              for (let tile = -1; tile <= 1; tile++) {
+                const sx0 = (xWorld + tile * wW) / mst.dpr;
+                if (sx0 > mg && sx0 < W - mg) { sx = sx0; break; }
+              }
+              if (sx < 0) continue;
+              if (y <= mg || y >= H - 300) continue;
+              result.push({ node, sx, sy: y, facing: 1.0 });
+            }
+            return result;
+          }
           const cDir = new THREE.Vector3();
           camera.getWorldDirection(cDir).normalize();
           const quat = scene.quaternion;
@@ -23394,6 +23515,671 @@ const settingsToggle     = document.getElementById("settingsToggle");
         this.borderMaterial.uniforms.color.value.set(color);
       }
     }
+
+      // ────────────────────────────────────────────────────────────────────
+      //  2D Map view — equirectangular alternative to the WebGL globe
+      // ────────────────────────────────────────────────────────────────────
+      // Rendered into a sibling canvas inside #pageGlobe. Lives behind
+      // window.__map2d. Mounts/unmounts on `projectionchange`.
+      const Map2D = (function() {
+        const STATE = {
+          enabled:   false,
+          canvas:    null,
+          ctx:       null,
+          width:     0, height: 0,
+          dpr:       1,
+          zoom:      1,
+          minZoom:   0.6,
+          maxZoom:   16,
+          scrollX:   0,
+          scrollY:   0,
+          rafId:     null,
+          dayImg:    null,
+          nightImg:  null,
+          imgsReady: false,
+          pointers:  new Map(),
+          pinchActive: false,
+          pinchStartDist: 0,
+          pinchStartZoom: 1,
+          layers: [],
+        };
+
+        function loadImages() {
+          function pull() {
+            try {
+              const dt = window.__getDayTexture && window.__getDayTexture();
+              if (dt && dt.image && (dt.image.width > 0 || dt.image.naturalWidth > 0)) {
+                STATE.dayImg = dt.image;
+              }
+            } catch (_) {}
+            try {
+              const nt = window.__getNightTexture && window.__getNightTexture();
+              if (nt && nt.image && (nt.image.width > 0 || nt.image.naturalWidth > 0)) {
+                STATE.nightImg = nt.image;
+              }
+            } catch (_) {}
+            STATE.imgsReady = !!(STATE.dayImg || STATE.nightImg);
+            if (!(STATE.dayImg && STATE.nightImg) && STATE.enabled) setTimeout(pull, 800);
+          }
+          pull();
+        }
+
+        function ensureCanvas() {
+          if (STATE.canvas) return STATE.canvas;
+          const c = document.createElement("canvas");
+          c.id = "map2dCanvas";
+          c.style.cssText = [
+            "position:absolute","inset:0","width:100%","height:100%",
+            "display:none","touch-action:none","cursor:grab","z-index:1",
+          ].join(";") + ";";
+          const host = document.getElementById("pageGlobe");
+          if (host) host.appendChild(c);
+          STATE.canvas = c;
+          STATE.ctx = c.getContext("2d");
+          return c;
+        }
+
+        function resize() {
+          if (!STATE.canvas) return;
+          const dpr = window.devicePixelRatio || 1;
+          const w = window.innerWidth, h = window.innerHeight;
+          STATE.canvas.width  = Math.max(1, Math.round(w * dpr));
+          STATE.canvas.height = Math.max(1, Math.round(h * dpr));
+          STATE.dpr    = dpr;
+          STATE.width  = STATE.canvas.width;
+          STATE.height = STATE.canvas.height;
+          clampVerticalScroll();
+        }
+
+        // World extent at current zoom. The map fills the viewport vertically
+        // (worldH = canvasH × zoom) so the user never sees an empty band above
+        // or below; with the 2:1 equirectangular aspect this means the world
+        // is always wider than the viewport, giving infinite horizontal scroll.
+        function worldH() { return STATE.height * STATE.zoom; }
+        function worldW() { return worldH() * 2; }
+
+        function project(lat, lon) {
+          const wW = worldW(), wH = worldH();
+          let x = ((lon + 180) / 360) * wW - STATE.scrollX;
+          const y = ((90 - lat) / 180) * wH - STATE.scrollY;
+          x = ((x % wW) + wW) % wW;
+          if (x > STATE.width) x -= wW;
+          return { x, y };
+        }
+        function unproject(sx, sy) {
+          const wW = worldW(), wH = worldH();
+          const lon = ((((sx + STATE.scrollX) % wW) + wW) % wW) / wW * 360 - 180;
+          const lat = 90 - ((sy + STATE.scrollY) / wH) * 180;
+          return { lat, lon };
+        }
+        function clampVerticalScroll() {
+          const wH = worldH();
+          if (wH <= STATE.height) {
+            STATE.scrollY = (wH - STATE.height) / 2;
+          } else {
+            const maxY = wH - STATE.height;
+            if (STATE.scrollY < 0)    STATE.scrollY = 0;
+            if (STATE.scrollY > maxY) STATE.scrollY = maxY;
+          }
+        }
+
+        function paintBase() {
+          const ctx = STATE.ctx;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          const isDark = (window.__globeTheme === "dark");
+          ctx.fillStyle = isDark ? "#02050a" : "#0a1424";
+          ctx.fillRect(0, 0, STATE.width, STATE.height);
+          if (!STATE.imgsReady) return;
+          const img = isDark
+            ? (STATE.nightImg || STATE.dayImg)
+            : (STATE.dayImg   || STATE.nightImg);
+          if (!img) return;
+          const wW = worldW(), wH = worldH();
+          const baseX = -(((STATE.scrollX % wW) + wW) % wW);
+          const yTop  = -STATE.scrollY;
+          for (let i = -1; i <= 1; i++) {
+            ctx.drawImage(img, baseX + i * wW, yTop, wW, wH);
+          }
+        }
+
+        let _running = false;
+        // Ambient horizontal auto-scroll: equivalent of the globe's yaw drift.
+        function applyAmbientScroll() {
+          if (typeof window.__getAmbientState !== "function") return;
+          const a = window.__getAmbientState();
+          if (!a || !a.enabled || a.paused) return;
+          if (STATE.pointers.size > 0) return;
+          const px = (a.speed * worldW()) / (2 * Math.PI);
+          STATE.scrollX += px;
+          const wW = worldW();
+          STATE.scrollX = ((STATE.scrollX % wW) + wW) % wW;
+        }
+        function tick() {
+          if (!_running) return;
+          applyAmbientScroll();
+          paintBase();
+          for (let i = 0; i < STATE.layers.length; i++) {
+            try { STATE.layers[i](api, STATE.ctx); } catch (_) {}
+          }
+          STATE.rafId = requestAnimationFrame(tick);
+        }
+        function startRAF() {
+          if (_running) return;
+          _running = true;
+          STATE.rafId = requestAnimationFrame(tick);
+        }
+        function stopRAF() {
+          _running = false;
+          if (STATE.rafId) { cancelAnimationFrame(STATE.rafId); STATE.rafId = null; }
+        }
+
+        const TAP_PX = 6;
+        function pinchDistance() {
+          const pts = Array.from(STATE.pointers.values());
+          if (pts.length < 2) return 0;
+          return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        }
+        function pinchMidpoint() {
+          const pts = Array.from(STATE.pointers.values());
+          if (pts.length < 2) return null;
+          return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        }
+        function onPointerDown(e) {
+          if (!STATE.canvas) return;
+          STATE.canvas.setPointerCapture?.(e.pointerId);
+          STATE.pointers.set(e.pointerId, {
+            x: e.clientX, y: e.clientY,
+            x0: e.clientX, y0: e.clientY,
+            traveled: 0,
+          });
+          STATE.canvas.style.cursor = "grabbing";
+        }
+        function onPointerMove(e) {
+          const prev = STATE.pointers.get(e.pointerId);
+          if (!prev) {
+            try {
+              STATE.canvas.dispatchEvent(new CustomEvent("map2d:hover", {
+                detail: { clientX: e.clientX, clientY: e.clientY },
+              }));
+            } catch (_) {}
+            return;
+          }
+          const dx = e.clientX - prev.x;
+          const dy = e.clientY - prev.y;
+          prev.traveled += Math.hypot(dx, dy);
+          prev.x = e.clientX; prev.y = e.clientY;
+          if (STATE.pointers.size === 1) {
+            STATE.scrollX -= dx * STATE.dpr;
+            STATE.scrollY -= dy * STATE.dpr;
+            const wW = worldW();
+            STATE.scrollX = ((STATE.scrollX % wW) + wW) % wW;
+            clampVerticalScroll();
+          } else if (STATE.pointers.size === 2) {
+            if (!STATE.pinchActive) {
+              STATE.pinchActive = true;
+              STATE.pinchStartDist = pinchDistance();
+              STATE.pinchStartZoom = STATE.zoom;
+            } else {
+              const d = pinchDistance();
+              if (d > 0 && STATE.pinchStartDist > 0) {
+                const targetZoom = STATE.pinchStartZoom * (d / STATE.pinchStartDist);
+                const factor = targetZoom / STATE.zoom;
+                const mp = pinchMidpoint();
+                if (mp) zoomAt(mp.x, mp.y, factor);
+              }
+            }
+          }
+        }
+        function onPointerUp(e) {
+          const rec = STATE.pointers.get(e.pointerId);
+          STATE.pointers.delete(e.pointerId);
+          if (STATE.pointers.size < 2) STATE.pinchActive = false;
+          if (STATE.pointers.size === 0 && STATE.canvas) STATE.canvas.style.cursor = "grab";
+          if (rec && rec.traveled <= TAP_PX) {
+            try {
+              STATE.canvas.dispatchEvent(new CustomEvent("map2d:tap", {
+                detail: { clientX: rec.x0, clientY: rec.y0 },
+              }));
+            } catch (_) {}
+          }
+        }
+        function onWheel(e) {
+          if (!STATE.enabled) return;
+          e.preventDefault();
+          const factor = Math.exp(-e.deltaY * 0.0015);
+          zoomAt(e.clientX, e.clientY, factor);
+        }
+        function zoomAt(clientX, clientY, factor) {
+          const rect = STATE.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * STATE.dpr;
+          const sy = (clientY - rect.top)  * STATE.dpr;
+          const before = unproject(sx, sy);
+          const next = Math.max(STATE.minZoom, Math.min(STATE.maxZoom, STATE.zoom * factor));
+          if (next === STATE.zoom) return;
+          STATE.zoom = next;
+          const wW = worldW(), wH = worldH();
+          const targetX = ((before.lon + 180) / 360) * wW;
+          const targetY = ((90 - before.lat) / 180) * wH;
+          STATE.scrollX = (((targetX - sx) % wW) + wW) % wW;
+          STATE.scrollY = targetY - sy;
+          clampVerticalScroll();
+        }
+
+        let _inputsAttached = false;
+        function attachInputs() {
+          if (_inputsAttached) return;
+          const c = STATE.canvas;
+          c.addEventListener("pointerdown",  onPointerDown);
+          window.addEventListener("pointermove",  onPointerMove);
+          window.addEventListener("pointerup",    onPointerUp);
+          window.addEventListener("pointercancel", onPointerUp);
+          c.addEventListener("wheel", onWheel, { passive: false });
+          _inputsAttached = true;
+        }
+
+        function mount() {
+          if (STATE.enabled) return;
+          ensureCanvas();
+          resize();
+          loadImages();
+          attachInputs();
+          STATE.canvas.style.display = "block";
+          STATE.enabled = true;
+          startRAF();
+        }
+        function unmount() {
+          if (!STATE.enabled) return;
+          stopRAF();
+          if (STATE.canvas) STATE.canvas.style.display = "none";
+          STATE.enabled = false;
+          STATE.pointers.clear();
+          STATE.pinchActive = false;
+        }
+
+        window.addEventListener("resize",            () => { if (STATE.enabled) resize(); });
+        window.addEventListener("orientationchange", () => { if (STATE.enabled) resize(); });
+
+        const api = {
+          mount, unmount,
+          isEnabled: () => STATE.enabled,
+          state:   STATE,
+          project, unproject,
+          worldW, worldH,
+          addLayer(fn) {
+            STATE.layers.push(fn);
+            return () => {
+              const i = STATE.layers.indexOf(fn);
+              if (i >= 0) STATE.layers.splice(i, 1);
+            };
+          },
+          requestRedraw() { /* RAF runs continuously while mounted */ },
+        };
+        return api;
+      })();
+
+      window.addEventListener("projectionchange", (e) => {
+        if (e.detail.mode === "map") Map2D.mount();
+        else                          Map2D.unmount();
+      });
+      window.__map2d = Map2D;
+
+      // ── Country polygon layer + click/hover hit-testing ──────────────
+      (function setupMap2DCountries() {
+        let _idx = null;
+        function ensureIdx() {
+          if (_idx) return Promise.resolve(_idx);
+          if (typeof window.__ensureCountryGeoIdxReady === "function") {
+            return window.__ensureCountryGeoIdxReady().then(() => {
+              _idx = window.__getCountryGeoIdx ? window.__getCountryGeoIdx() : null;
+              return _idx;
+            });
+          }
+          return Promise.resolve(null);
+        }
+        ensureIdx();
+
+        function clientToLatLon(clientX, clientY) {
+          if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
+          const rect = Map2D.state.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * Map2D.state.dpr;
+          const sy = (clientY - rect.top)  * Map2D.state.dpr;
+          return Map2D.unproject(sx, sy);
+        }
+        Map2D.clientToLatLon = clientToLatLon;
+
+        function hitTest(lat, lon) {
+          if (!_idx || !_idx.byIso) return null;
+          if (typeof window.__pointInCountry !== "function") return null;
+          for (const [iso, entry] of _idx.byIso) {
+            if (window.__pointInCountry(lon, lat, entry)) return entry;
+          }
+          return null;
+        }
+
+        Map2D.addLayer((api, ctx) => {
+          if (!_idx || !_idx.byIso) return;
+          const W = api.state.width;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+          const isDark = (window.__globeTheme === "dark");
+          ctx.save();
+          ctx.lineWidth   = Math.max(0.75, api.state.dpr * 0.9);
+          ctx.strokeStyle = isDark ? "rgba(190,215,255,0.55)" : "rgba(255,255,255,0.78)";
+          ctx.lineJoin    = "round";
+          ctx.lineCap     = "round";
+          ctx.beginPath();
+          for (const entry of _idx.byIso.values()) {
+            const polys = entry && entry.rings;
+            if (!polys || !polys.length) continue;
+            for (const polyRings of polys) {
+              if (!polyRings) continue;
+              for (const ring of polyRings) {
+                if (!ring || ring.length < 2) continue;
+                for (let tile = -1; tile <= 1; tile++) {
+                  const xOff = baseX + tile * wW;
+                  const x0 = xOff + ((ring[0][0] + 180) / 360) * wW;
+                  const y0 = yTop  + ((90 - ring[0][1]) / 180) * wH;
+                  if (x0 < -wW || x0 > W + wW) continue;
+                  ctx.moveTo(x0, y0);
+                  for (let i = 1; i < ring.length; i++) {
+                    const x = xOff + ((ring[i][0] + 180) / 360) * wW;
+                    const y = yTop  + ((90 - ring[i][1]) / 180) * wH;
+                    ctx.lineTo(x, y);
+                  }
+                }
+              }
+            }
+          }
+          ctx.stroke();
+          ctx.restore();
+        });
+
+        function onTap(e) {
+          if (e.detail && e.detail.__handledCity) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const hit = hitTest(ll.lat, ll.lon);
+          if (!hit) return;
+          if (typeof window.__openCountryByName === "function") {
+            window.__openCountryByName(hit.name, hit.iso);
+          }
+        }
+
+        let _lastHoverIso = null;
+        function onHover(e) {
+          if (e.detail && e.detail.__handledCity) return;
+          if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const hit = hitTest(ll.lat, ll.lon);
+          if (!hit) {
+            if (_lastHoverIso) { _lastHoverIso = null; if (window.__hideHoverCard) window.__hideHoverCard(); }
+            return;
+          }
+          if (hit.iso === _lastHoverIso) return;
+          _lastHoverIso = hit.iso;
+          if (window.__showHoverCard) {
+            window.__showHoverCard({ name: hit.name, country: hit.name, flag: "", population: null }, e.detail.clientX, e.detail.clientY);
+          }
+        }
+
+        function attach() {
+          const c = Map2D.state.canvas;
+          if (!c) { setTimeout(attach, 100); return; }
+          c.addEventListener("map2d:tap",   onTap);
+          c.addEventListener("map2d:hover", onHover);
+          c.addEventListener("pointerleave", () => {
+            if (_lastHoverIso && window.__hideHoverCard) window.__hideHoverCard();
+            _lastHoverIso = null;
+          });
+        }
+        attach();
+      })();
+
+      // ── Flow arcs layer (thread, line, article) ─────────────────────
+      (function setupMap2DArcs() {
+        const ARC_HEIGHT_FRAC = 0.18;
+
+        function colorFor(flow) {
+          const t = flow && flow._tier;
+          if (t === "primary")   return { stroke: "rgba(255,170,40,0.95)",  glow: "rgba(255,170,40,0.30)", orb: "rgba(255,200,80,1)" };
+          if (t === "secondary") return { stroke: "rgba(120,200,255,0.85)", glow: "rgba(120,200,255,0.25)", orb: "rgba(170,220,255,1)" };
+          return                       { stroke: "rgba(255,255,255,0.78)",  glow: "rgba(255,255,255,0.20)", orb: "rgba(255,255,255,1)" };
+        }
+        function widthFor(flow, dpr) {
+          const base = flow && flow._tier === "primary" ? 1.6 : 1.2;
+          return base * dpr;
+        }
+        function bez(p0, p1, p2, t) {
+          const u = 1 - t;
+          return { x: u * u * p0.x + 2 * u * t * p1.x + t * t * p2.x,
+                   y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
+        }
+
+        Map2D.addLayer((api, ctx) => {
+          const arcs = (typeof window.__flowGetArcObjects === "function")
+            ? window.__flowGetArcObjects() : null;
+          if (!arcs || !arcs.length) return;
+          const W = api.state.width;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+
+          for (const arc of arcs) {
+            const flow = arc && arc.flow;
+            const src  = flow && flow.src;
+            const dst  = flow && flow.dst;
+            if (!src || !dst || src.lat == null || dst.lat == null) continue;
+
+            let srcLon = src.lon, dstLon = dst.lon;
+            const dlon = dstLon - srcLon;
+            if (dlon >  180) dstLon -= 360;
+            if (dlon < -180) dstLon += 360;
+
+            const sx = ((srcLon + 180) / 360) * wW;
+            const sy = ((90 - src.lat) / 180) * wH;
+            const dx = ((dstLon + 180) / 360) * wW;
+            const dy = ((90 - dst.lat) / 180) * wH;
+
+            const mx = (sx + dx) / 2;
+            const my = (sy + dy) / 2;
+            const lx = dx - sx, ly = dy - sy;
+            const len = Math.hypot(lx, ly);
+            if (len < 1) continue;
+            const px = -ly / len, py = lx / len;
+            const heightMult = (flow._tier === "primary") ? 0.75 : (flow._tier === "secondary" ? 1.15 : 1.0);
+            const apex = len * ARC_HEIGHT_FRAC * heightMult;
+            const cx = mx + px * apex;
+            const cy = my + py * apex;
+
+            const dur  = Math.max(0.001, arc.travelDuration || 4);
+            const age  = arc.age || arc._elapsed || 0;
+            const t    = (age % dur) / dur;
+
+            const colors = colorFor(flow);
+            const w = widthFor(flow, api.state.dpr);
+
+            ctx.save();
+            for (let tile = -1; tile <= 1; tile++) {
+              const xOff = baseX + tile * wW;
+              if (xOff + Math.max(sx, cx, dx) < 0 - wW) continue;
+              if (xOff + Math.min(sx, cx, dx) > W + wW) continue;
+              ctx.lineWidth   = w * 3.5;
+              ctx.strokeStyle = colors.glow;
+              ctx.lineCap     = "round";
+              ctx.beginPath();
+              ctx.moveTo(xOff + sx, sy);
+              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.stroke();
+              ctx.lineWidth   = w;
+              ctx.strokeStyle = colors.stroke;
+              ctx.beginPath();
+              ctx.moveTo(xOff + sx, sy);
+              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.stroke();
+              const p = bez({x: sx, y: sy}, {x: cx, y: cy}, {x: dx, y: dy}, t);
+              const orbR = w * 2.5;
+              const grad = ctx.createRadialGradient(xOff + p.x, p.y, 0, xOff + p.x, p.y, orbR);
+              grad.addColorStop(0, colors.orb);
+              grad.addColorStop(1, "rgba(255,255,255,0)");
+              ctx.fillStyle = grad;
+              ctx.beginPath();
+              ctx.arc(xOff + p.x, p.y, orbR, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.restore();
+          }
+        });
+      })();
+
+      // ── Heatmap layer ────────────────────────────────────────────────
+      (function setupMap2DHeatmap() {
+        const HEAT_OPACITY = 0.66;
+        Map2D.addLayer((api, ctx) => {
+          if (!window.__getHeatActive || !window.__getHeatActive()) return;
+          const heat = window.__getHeatCanvas && window.__getHeatCanvas();
+          if (!heat) return;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+          ctx.save();
+          ctx.globalAlpha = HEAT_OPACITY;
+          for (let tile = -1; tile <= 1; tile++) {
+            ctx.drawImage(heat, baseX + tile * wW, yTop, wW, wH);
+          }
+          ctx.restore();
+        });
+      })();
+
+      // ── City / region node points layer ──────────────────────────────
+      (function setupMap2DCities() {
+        const HIT_PX_DESKTOP = 14;
+        const HIT_PX_MOBILE  = 22;
+        let _lastHoverNode = null;
+
+        function getCities() { return Array.isArray(window.__globeCities) ? window.__globeCities : []; }
+
+        function clientToLatLon(clientX, clientY) {
+          if (!Map2D.isEnabled() || !Map2D.state.canvas) return null;
+          const rect = Map2D.state.canvas.getBoundingClientRect();
+          const sx = (clientX - rect.left) * Map2D.state.dpr;
+          const sy = (clientY - rect.top)  * Map2D.state.dpr;
+          return Map2D.unproject(sx, sy);
+        }
+        function nearestCity(lat, lon, maxMi) {
+          const cities = getCities();
+          if (!cities.length) return null;
+          const R = 3958.8;
+          const toRad = Math.PI / 180;
+          let best = null, bestD = maxMi;
+          for (const c of cities) {
+            const cLat = c?.lat ?? c?.latitude;
+            const cLon = c?.lon ?? c?.longitude;
+            if (cLat == null || cLon == null) continue;
+            const dLat = (cLat - lat) * toRad;
+            const dLon = (cLon - lon) * toRad;
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(lat * toRad) * Math.cos(cLat * toRad) *
+                      Math.sin(dLon / 2) ** 2;
+            const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            if (d < bestD) { bestD = d; best = c; }
+          }
+          return best;
+        }
+        function hitRadiusMi(lat) {
+          const wW = Map2D.worldW();
+          const milesPerCanvasPxLon = (360 / wW) * 69 * Math.cos(lat * Math.PI / 180);
+          const milesPerCanvasPxLat = (180 / Map2D.worldH()) * 69;
+          const milesPerCanvasPx    = (milesPerCanvasPxLon + milesPerCanvasPxLat) / 2;
+          const isMobile = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+          const hitPx = isMobile ? HIT_PX_MOBILE : HIT_PX_DESKTOP;
+          return hitPx * Map2D.state.dpr * milesPerCanvasPx;
+        }
+
+        Map2D.addLayer((api, ctx) => {
+          const cities = getCities();
+          if (!cities.length) return;
+          const W = api.state.width;
+          const wW = api.worldW(), wH = api.worldH();
+          const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          const yTop  = -api.state.scrollY;
+          const isDark = (window.__globeTheme === "dark");
+          const dotFill   = isDark ? "rgba(255,225,150,0.95)" : "rgba(255,210,90,0.95)";
+          const dotStroke = isDark ? "rgba(255,255,255,0.7)"  : "rgba(20,40,80,0.65)";
+          ctx.save();
+          for (const c of cities) {
+            const lat = c?.lat ?? c?.latitude;
+            const lon = c?.lon ?? c?.longitude;
+            if (lat == null || lon == null) continue;
+            const tier = c.tier ?? 3;
+            const r = (4.5 - Math.min(4, tier) * 0.7) * api.state.dpr;
+            const xCenter = ((lon + 180) / 360) * wW;
+            const y = yTop + ((90 - lat) / 180) * wH;
+            for (let tile = -1; tile <= 1; tile++) {
+              const x = baseX + tile * wW + xCenter;
+              if (x < -10 || x > W + 10) continue;
+              ctx.beginPath();
+              ctx.arc(x, y, r * 2.2, 0, Math.PI * 2);
+              const grad = ctx.createRadialGradient(x, y, r * 0.4, x, y, r * 2.2);
+              grad.addColorStop(0, isDark ? "rgba(255,225,150,0.55)" : "rgba(255,210,90,0.50)");
+              grad.addColorStop(1, "rgba(255,210,90,0)");
+              ctx.fillStyle = grad;
+              ctx.fill();
+              ctx.beginPath();
+              ctx.arc(x, y, r, 0, Math.PI * 2);
+              ctx.fillStyle = dotFill;
+              ctx.fill();
+              ctx.lineWidth = 0.8 * api.state.dpr;
+              ctx.strokeStyle = dotStroke;
+              ctx.stroke();
+            }
+          }
+          ctx.restore();
+        });
+
+        function onTap(e) {
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const maxMi = hitRadiusMi(ll.lat);
+          const c = nearestCity(ll.lat, ll.lon, maxMi);
+          if (!c) return;
+          if (typeof window.__openNodePanel === "function") {
+            try { window.__openNodePanel(c, "city"); } catch (_) {}
+            e.detail.__handledCity = true;
+          }
+        }
+        function onHover(e) {
+          if (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) return;
+          const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
+          if (!ll) return;
+          const maxMi = hitRadiusMi(ll.lat);
+          const c = nearestCity(ll.lat, ll.lon, maxMi);
+          if (!c) {
+            if (_lastHoverNode) {
+              _lastHoverNode = null;
+              if (window.__hideHoverCard) window.__hideHoverCard();
+            }
+            return;
+          }
+          if (_lastHoverNode === c) {
+            if (e.detail) e.detail.__handledCity = true;
+            return;
+          }
+          _lastHoverNode = c;
+          if (window.__showHoverCard) {
+            window.__showHoverCard(c, e.detail.clientX, e.detail.clientY);
+          }
+          if (e.detail) e.detail.__handledCity = true;
+        }
+        function attach() {
+          const c = Map2D.state.canvas;
+          if (!c) { setTimeout(attach, 100); return; }
+          c.addEventListener("map2d:tap",   onTap, true);
+          c.addEventListener("map2d:hover", onHover, true);
+        }
+        attach();
+      })();
 
   </script>
 
@@ -37647,6 +38433,9 @@ body.ticker-active .gTickerLabel {
   // floor inside the country's actual shape.
   let _countryGeoIdxPromise = null;
   let _countryGeoIdx        = null;
+  // Bridge for the 2D Map view (lives in another script tag).
+  window.__getCountryGeoIdx        = () => _countryGeoIdx;
+  window.__ensureCountryGeoIdxReady = () => ensureCountryGeoIdx();
   function ensureCountryGeoIdx() {
     if (_countryGeoIdx)        return Promise.resolve(_countryGeoIdx);
     if (_countryGeoIdxPromise) return _countryGeoIdxPromise;
@@ -37706,6 +38495,9 @@ body.ticker-active .gTickerLabel {
   let heatTexture = null;
   let group = null;
   let markerMeshes = [];
+  // Bridge for the 2D Map view (lives in another script tag).
+  window.__getHeatCanvas = () => heatCanvas;
+  window.__getHeatActive = () => !!window.__semHeatActive;
 
   function ensureHeatSphere() {
     const THREE = window.THREE;
