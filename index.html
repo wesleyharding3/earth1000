@@ -4680,6 +4680,13 @@ body.flow-maximized #flowArcList {
 /* ── Live arcs list, embedded inside flowCtxCard ─────────────────── */
 .flowCtxLiveArcsSlot {
   display: none;
+  /* COLUMN — keeps the "Routes" title (.flowCtxLiveArcsTitle) on its own
+     line at the top, with the reparented #flowArcList stacked below it.
+     The .view-arcs class sets `display: flex` on this slot without a
+     direction; the default `row` used to put the title to the LEFT of
+     the arc list, squeezing the route bars and truncating the "src → dst"
+     text on the right. */
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;

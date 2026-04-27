@@ -5015,6 +5015,14 @@ button.arcCtxSegDot,
    collapsed to just the pill-bar header until the user clicks Play. */
 .flowCtxLiveArcsSlot {
   display: none;
+  /* COLUMN — keeps the "Routes" title (.flowCtxLiveArcsTitle) on its
+     own line at the top, with the reparented #flowArcList stacked below
+     it. The .view-arcs class sets `display: flex` on this slot (line
+     ~4843) without specifying a direction; the flexbox default is `row`,
+     which used to put the title to the LEFT of the arc list — squeezing
+     the route bars to ~170px and truncating the "src → dst" text on the
+     right. flex-direction:column gives both children full width. */
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
