@@ -104,15 +104,16 @@ async function main() {
   `, [MIN_ARTICLES]);
   console.log(`   [${el()}] Loaded ${threads.length} threads`);
 
-  // Cluster by primary_category × any overlapping primary_nation. Two
-  // threads land in the same cluster if they share a category AND at least
-  // one primary nation. Very loose — Claude decides what's actually a
-  // duplicate within each cluster.
-  const clusters = buildClusters(threads);
+  // Cluster by nation overlap + keyword / title-token overlap (NOT by
+  // primary_category — that gate hid the marathon-world-record story
+  // splitting across technology / politics / environment).
+  const rawClusters = buildClusters(threads);
+  // Slice oversized clusters so Sonnet's context stays manageable.
+  const clusters = rawClusters.flatMap(c => splitOversizedCluster(c, 25));
   const ranked = clusters
     .filter(c => c.length >= MIN_CLUSTER)
     .sort((a, b) => b.length - a.length);
-  console.log(`   [${el()}] Built ${ranked.length} candidate clusters (>= ${MIN_CLUSTER} threads each)`);
+  console.log(`   [${el()}] Built ${ranked.length} candidate clusters (>= ${MIN_CLUSTER} threads each, ${rawClusters.length} raw → ${clusters.length} after size split)`);
 
   let mergeGroups = 0;
   let mergedRows  = 0;
@@ -167,28 +168,83 @@ async function main() {
 }
 
 // ─── Clustering ─────────────────────────────────────────────────────────────
+// Cluster threads that *might* be duplicates so Sonnet has them side-by-side.
+//
+// PRIOR BUG: clustering was gated on primary_category. The article scorer's
+// category assignment is genuinely noisy — the "Kenya marathon world record"
+// story spawned FOUR separate threads classified as `technology`, `politics`,
+// `environment`, and `technology` again. Different categories meant the
+// dedup pass never even compared them.
+//
+// CURRENT RULE: a pair shares a cluster edge when
+//   (a) they overlap on at least one primary nation, AND
+//   (b) they share at least 2 specific keywords  OR  3 distinctive title tokens.
+//
+// Connected components form clusters. The keyword/token requirement keeps
+// large nations (US, UK, Iran) from collapsing every thread that mentions
+// them into one giant cluster, while still surfacing same-event threads
+// across mismatched categories.
 function buildClusters(threads) {
-  // Union-find by (category, shared primary nation)
   const parent = new Map(threads.map(t => [t.id, t.id]));
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
   const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
 
-  const byCat = new Map();
+  // Common stop-words and category-noise tokens to ignore when computing
+  // overlap. Without this, "war", "trade", "election" connect every thread
+  // about the same superpower.
+  const STOPWORDS = new Set([
+    'the','and','for','with','from','into','that','this','these','those',
+    'about','over','after','before','amid','near','part','while',
+    'said','says','will','have','been','their','its','his','her','our',
+    'iran','war','news','world','update','breaking','latest','update','daily',
+    'amid','vs','versus'
+  ]);
+  const tokens = (s) =>
+    new Set(String(s || '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(t => t.length >= 4 && !STOPWORDS.has(t)));
+  const kwSet = (t) => {
+    const s = new Set();
+    for (const k of (t.keywords || [])) {
+      const v = String(k || '').trim().toLowerCase();
+      if (!v || STOPWORDS.has(v)) continue;
+      s.add(v);
+    }
+    return s;
+  };
+
+  // Pre-compute features once per thread.
+  const feats = new Map();
   for (const t of threads) {
-    const cat = t.primary_category || '(none)';
-    if (!byCat.has(cat)) byCat.set(cat, []);
-    byCat.get(cat).push(t);
+    feats.set(t.id, {
+      isos:   new Set(sanitizeIsos(t.primary_nations || [])),
+      kws:    kwSet(t),
+      titleT: tokens(t.title),
+    });
   }
-  for (const [, list] of byCat) {
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i];
-      const aIsos = new Set(sanitizeIsos(a.primary_nations || []));
-      if (!aIsos.size) continue;
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j];
-        const bIsos = sanitizeIsos(b.primary_nations || []);
-        if (bIsos.some(iso => aIsos.has(iso))) union(a.id, b.id);
-      }
+
+  for (let i = 0; i < threads.length; i++) {
+    const a = threads[i];
+    const fa = feats.get(a.id);
+    if (!fa.isos.size) continue;
+    for (let j = i + 1; j < threads.length; j++) {
+      const b = threads[j];
+      const fb = feats.get(b.id);
+      if (!fb.isos.size) continue;
+
+      // (a) Nation overlap.
+      let nationHit = false;
+      for (const iso of fb.isos) if (fa.isos.has(iso)) { nationHit = true; break; }
+      if (!nationHit) continue;
+
+      // (b) Specific overlap — keywords and title tokens.
+      let kwOverlap = 0;
+      for (const k of fb.kws) if (fa.kws.has(k)) kwOverlap++;
+      let titleOverlap = 0;
+      for (const tk of fb.titleT) if (fa.titleT.has(tk)) titleOverlap++;
+
+      if (kwOverlap >= 2 || titleOverlap >= 3) union(a.id, b.id);
     }
   }
   const groups = new Map();
@@ -200,6 +256,31 @@ function buildClusters(threads) {
   return [...groups.values()];
 }
 
+// Split clusters that exceed a size cap into Sonnet-sized chunks. Sonnet 4.5
+// can handle ~50 thread descriptors comfortably; beyond that token cost
+// climbs and recall drops. We split greedily by primary_category × nation
+// so the slices stay topically tight.
+function splitOversizedCluster(cluster, maxSize = 25) {
+  if (cluster.length <= maxSize) return [cluster];
+  // Bucket by (top-1 nation, primary_category) so each slice is a
+  // category-coherent sub-group of the same nation.
+  const buckets = new Map();
+  for (const t of cluster) {
+    const iso = (sanitizeIsos(t.primary_nations || [])[0]) || '(none)';
+    const key = `${iso}::${t.primary_category || '(none)'}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(t);
+  }
+  // If the largest bucket is still >maxSize, fall through to greedy chunks.
+  const out = [];
+  for (const slice of buckets.values()) {
+    for (let i = 0; i < slice.length; i += maxSize) {
+      out.push(slice.slice(i, i + maxSize));
+    }
+  }
+  return out;
+}
+
 // ─── Claude prompt ──────────────────────────────────────────────────────────
 async function askClaude(cluster) {
   const threadLines = cluster.map(t =>
@@ -209,7 +290,7 @@ async function askClaude(cluster) {
   description="${(t.description || '').slice(0, 220).replace(/\s+/g, ' ')}"`
   ).join('\n\n');
 
-  const prompt = `You are deduplicating breaking-news story threads. Each thread represents one ongoing story. Below are threads in the same category that share at least one country; some are likely paraphrased duplicates of the same breaking event.
+  const prompt = `You are deduplicating breaking-news story threads. Each thread represents one ongoing story. Below are threads that share at least one country AND have meaningful keyword/title-token overlap; many are likely paraphrased duplicates of the same breaking event.
 
 Return ONLY valid JSON:
 {
@@ -222,42 +303,124 @@ Return ONLY valid JSON:
   ]
 }
 
-Rules (STRICT — err heavily toward NOT merging):
-- ONLY group threads that cover THE SAME specific breaking event — same actors, same action, same moment in time. Titles should read like paraphrases of the same headline when written a week apart.
-- HARD BLOCKS on merging (never merge these, regardless of category/nation overlap):
-    * Two DIFFERENT countries (e.g. Cuba vs Venezuela, even both "Latin America energy crisis"). NOT duplicates.
-    * Two DIFFERENT named officials / politicians / actors (e.g. Swalwell resignation vs DeRemer resignation). NOT duplicates.
-    * OPPOSITE directions of a conflict (e.g. "Ukraine drone strikes on Russian oil" vs "Russian airstrikes on Ukrainian cities"). NOT duplicates — these are different sides.
-    * Different incidents even in the same place (e.g. two separate school shootings, two separate prison raids, two separate budget passes).
-    * One thread is an umbrella / macro summary (e.g. "Global economic fallout from X war") and the other is a specific-event thread. NOT duplicates.
-    * Related but distinct facets (e.g. EU energy policy response vs. US sanctions relaxation — same broader context, but different decisions/actors). NOT duplicates.
-- A mega-story like the entire US-Iran war legitimately has many separate threads covering distinct events (naval blockade, ceasefire talks, executions, protests, market impact). Keep them separate — merging all into one "Iran War" thread loses information.
-- A SAFE merge requires:
-    * Both titles describe the same action by the same primary actor on the same date/week
-    * OR both are explicit paraphrases (e.g. "Denmark Train Collision Injures 17" and "Denmark Train Collision Leaves Five Critical")
-    * Nation overlap alone is NOT sufficient.
-- Winner selection: prefer the thread with a more specific, named-event title over a generic one. If titles are equally specific, the higher article_count wins.
-- If no real duplicates, return { "merge_groups": [] }.
-- WHEN IN DOUBT, DO NOT MERGE. The cost of a false merge (two different stories collapsed, articles misattributed) is much higher than the cost of leaving two paraphrased threads intact.
+WHAT YOU SHOULD MERGE (positive examples — these ARE duplicates):
+
+1. **Place-name variants of the same event.** Different geographic specificity, same incident:
+   • "Belfast Car Bombing at Police Station" + "Northern Ireland Car Bomb at Police Station" → MERGE
+   • "Beirut Port Explosion" + "Lebanon Port Disaster" → MERGE
+   • "Mumbai Train Bombing" + "India Mumbai Attack" → MERGE
+   The narrower placename almost always points to the same event the broader one covers; if titles share the action+target+date, MERGE.
+
+2. **Verb / specificity variants of the same record or achievement.** Same person, same record, different angle:
+   • "Kenya's Sawe Shatters Two-Hour Marathon Barrier" + "Kenyan Runner Shatters Marathon World Record" + "Kenya Marathon Record: Sub-Two-Hour Barrier Broken" → MERGE
+   • "Roman Ronaldo Hits 1000th Goal" + "Cristiano Ronaldo Reaches Career Milestone Goal" → MERGE
+   If both are clearly the same person/team/record (even when one omits the name), MERGE.
+
+3. **Death-toll / damage-update reframings of the same incident.** Same disaster, different vintage:
+   • "Colombia Bombing Kills 20 Ahead of Elections" + "Colombia Bombing Death Toll Reaches 20" → MERGE
+   • "Turkey Earthquake Kills 1000" + "Turkey Quake Toll Climbs to 5000" → MERGE
+   These are evolving updates of one incident, not separate events.
+
+4. **Same corporate/policy action, different framing.** Same actor, same announcement:
+   • "China Blocks Meta's $2 Billion AI Startup Acquisition" + "China Blocks Meta's $2 Billion Manus AI Acquisition" → MERGE
+   • "Apple Cuts iPhone Production 10%" + "Apple Reduces iPhone Output for FY25" → MERGE
+
+5. **Same ruling / legal action, different outlet's wording.** Same court, same case:
+   • "National Court overturns Ombudsman's Starlink blocking order" + "National Court clears Starlink licensing pathway" → MERGE if same ruling/case
+   • "Iran Executes Mossad Agent" + "Iran Executes Two Mossad-Linked Espionage Suspects" → MERGE if same execution announcement
+
+HARD BLOCKS — never merge these (regardless of nation/keyword overlap):
+
+- Two DIFFERENT countries as the primary actor (e.g. Cuba energy crisis vs Venezuela energy crisis). Even if same category, NOT duplicates.
+- Two DIFFERENT named officials / politicians / actors (e.g. Swalwell resignation vs DeRemer resignation). NOT duplicates.
+- OPPOSITE directions of a conflict (e.g. "Ukraine drone strikes on Russian oil" vs "Russian airstrikes on Ukrainian cities"). Different sides — NOT duplicates.
+- Different incidents in the same place (e.g. two separate school shootings, two separate prison raids, two separate budget passes). Same place ≠ same event.
+- One thread is an umbrella / macro summary (e.g. "Global economic fallout from X war") and the other is a specific-event thread. NOT duplicates.
+- Related but distinct facets (e.g. EU energy policy response vs US sanctions relaxation — same broader context, different decisions/actors). NOT duplicates.
+
+A mega-story like the entire US-Iran war legitimately has many separate threads covering distinct events (naval blockade, ceasefire talks, executions, protests, market impact). Keep those separate — merging all into one "Iran War" thread loses information.
+
+JUDGEMENT BAR:
+- A safe merge requires the SAME action by the SAME primary actor at the SAME moment in time (or a clear update of one).
+- When titles share the protagonist + action + target/effect, MERGE — even if surface vocabulary differs significantly.
+- When titles share only a country/region but describe different events or actors, DO NOT merge.
+
+WINNER SELECTION (STRICT — get this right):
+- DEFAULT: pick the thread with the highest article_count. The canonical thread is the one with the broadest established coverage; downstream caches, URLs, and analytics anchor to it.
+- ONLY override the article_count default when the lower-count thread has a markedly more accurate title — e.g. names the protagonist where the larger thread has a generic placeholder ("Unknown Suspect Detained" vs "Mark Carney Detained"). Stylistic differences do NOT count; "Colombia Highway Bombing Kills 20" is NOT more specific than "Colombia Bombing Kills 20 Ahead of Elections" — they describe the same event with the same specificity, so the higher article_count wins.
+- Never pick a winner with article_count < 5 over a loser with article_count > 50. The asymmetry is too costly.
+
+If no real duplicates, return { "merge_groups": [] }.
+
+The dataset is biased toward UNDER-merging; analysts have repeatedly seen 3–4 threads about the same record-breaking marathon spread across distinct categories. When the action+actor match, lean toward MERGE.
 
 THREADS (${cluster.length}):
 ${threadLines}`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 2000,
+    // Bumped 2000 → 4000: larger clusters (now allowed because we dropped
+    // the per-category gate) plus the longer prompt with positive examples
+    // means richer responses. 4k stays well under Sonnet 4.5's 64k output
+    // ceiling and keeps cost roughly flat per cluster.
+    max_tokens: 4000,
     messages: [{ role: 'user', content: prompt }],
   });
   const text = (response?.content || []).map(p => typeof p?.text === 'string' ? p.text : '').join('').trim();
   const parsed = extractJson(text);
   const groups = Array.isArray(parsed?.merge_groups) ? parsed.merge_groups : [];
-  return groups
-    .map(g => ({
-      winner_id: parseInt(g.winner_id, 10),
-      loser_ids: Array.isArray(g.loser_ids) ? g.loser_ids.map(x => parseInt(x, 10)).filter(Boolean) : [],
-      rationale: String(g.rationale || '').slice(0, 160),
-    }))
-    .filter(g => Number.isFinite(g.winner_id) && g.loser_ids.length);
+  // Backstop the winner-selection rule. Sonnet occasionally picks a tiny
+  // thread as winner over a much larger loser because the smaller title
+  // reads marginally more specific. The downstream cost — orphaning the
+  // larger thread's URL slug + analytics — outweighs any title-quality
+  // gain, so we swap automatically when the imbalance is severe.
+  // Triggers when:
+  //   - loser has >= 5× as many articles AND
+  //   - loser has >= 30 articles in absolute terms (high-coverage)
+  // This catches the Colombia case (12-article winner over 164-article loser)
+  // even though the previous rule's `winnerN <= 10` constraint missed it.
+  const byId = new Map(cluster.map(t => [t.id, t]));
+  const fixed = [];
+  for (const g of groups) {
+    const winnerId = parseInt(g.winner_id, 10);
+    const loserIds = Array.isArray(g.loser_ids)
+      ? g.loser_ids.map(x => parseInt(x, 10)).filter(Boolean)
+      : [];
+    if (!Number.isFinite(winnerId) || !loserIds.length) continue;
+    const winner = byId.get(winnerId);
+    if (!winner) {
+      fixed.push({ winner_id: winnerId, loser_ids: loserIds, rationale: String(g.rationale || '').slice(0, 160) });
+      continue;
+    }
+    const winnerN = Number(winner.article_count) || 0;
+    let bestLoserN = winnerN;
+    let bestLoserId = winnerId;
+    for (const lid of loserIds) {
+      const l = byId.get(lid);
+      if (!l) continue;
+      const ln = Number(l.article_count) || 0;
+      if (ln >= bestLoserN * 5 && ln >= 30) {
+        bestLoserN = ln; bestLoserId = lid;
+      }
+    }
+    if (bestLoserId !== winnerId) {
+      // Swap — promote the giant loser to winner; demote the original
+      // winner into the loser list.
+      const newLosers = [winnerId, ...loserIds.filter(id => id !== bestLoserId)];
+      fixed.push({
+        winner_id: bestLoserId,
+        loser_ids: newLosers,
+        rationale: `${String(g.rationale || '').slice(0, 120)} [auto-swapped: ${bestLoserId} has ${bestLoserN} articles vs ${winnerId}'s ${winnerN}]`,
+      });
+    } else {
+      fixed.push({
+        winner_id: winnerId,
+        loser_ids: loserIds,
+        rationale: String(g.rationale || '').slice(0, 160),
+      });
+    }
+  }
+  return fixed.filter(g => Number.isFinite(g.winner_id) && g.loser_ids.length);
 }
 
 // ─── Merge (mirrors storyThreadBuilder.dedupSimilarThreads semantics) ───────
@@ -334,7 +497,7 @@ async function runScopedDedup({ touchedIds, maxClusters = 5, apply = true, log =
   `);
   if (!threads.length) return { proposed: 0, merged: 0, claudeCalls: 0 };
 
-  const all = buildClusters(threads);
+  const all = buildClusters(threads).flatMap(c => splitOversizedCluster(c, 25));
   // Keep only clusters that contain at least one touched thread, have
   // at least 2 threads total, and sort by size DESC so the biggest
   // potential-dup clusters get the budget.

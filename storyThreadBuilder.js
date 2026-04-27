@@ -36,7 +36,15 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
 const CLAUDE_BATCH    = 100;    // articles per Claude call
 const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees singletons too)
-const MIN_SHARED_KW   = 2;     // min shared keywords to link two articles
+// Bumped 2 → 3 because the prior 2-keyword threshold + transitive union-find
+// chained unrelated stories together. Concrete example from production:
+// thread #8851 fused Meta layoffs + Warner-Paramount merger + South Africa
+// xenophobia + Belgian plane in Haiti into one 32-article frankenstein
+// titled "Meta Layoffs Spark Regional Xenophobic Violence" because random
+// shared words (billion, global, military, operation) chained the clusters
+// transitively. Three shared keywords is the minimum that reliably means
+// "same story" — two is just "same general topic / category".
+const MIN_SHARED_KW   = 3;     // min shared keywords to link two articles
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
 const TOTAL_ARTICLE_LIMIT  = 1500;
@@ -922,6 +930,34 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
       const reason = isJunkThreadDef(def);
       if (reason) {
         console.log(`   🚫 Rejected non-geopolitical thread "${def.title}" (${reason})`);
+        continue;
+      }
+
+      // ── Frankenstein guard ───────────────────────────────────────
+      // A real story has a focused geographic scope. A thread with more
+      // nations than articles is almost always a transitive sqlCluster
+      // chain that bundled unrelated stories under one umbrella (the
+      // canonical case: thread #8851 with 16 articles + 13 nations
+      // that fused Meta layoffs + Warner-Paramount merger + Haiti
+      // military + South Africa xenophobia under "Meta Layoffs Spark
+      // Regional Xenophobic Violence").
+      //
+      // Production stats showed the boundary cleanly:
+      //   - real high-coverage threads always have far more articles
+      //     than nations (1298 articles / 29 nations, 1244 articles /
+      //     18 nations — easily passing).
+      //   - frankensteins all looked like 3-16 articles / 9-29 nations
+      //     because Claude was asked to label a heterogeneous bundle.
+      // The (>5 nations AND nations > articles) rule rejects the latter
+      // without catching real wide-scope stories.
+      const totalNations = sanitizeIsos(def.primary_nations).length
+                         + sanitizeIsos(def.secondary_nations).length;
+      if (totalNations > 5 && totalNations > def.article_ids.length) {
+        console.log(
+          `   🚫 Rejected suspected frankenstein "${def.title}" ` +
+          `(${totalNations} nations / ${def.article_ids.length} articles — ` +
+          `nation count exceeds article count)`
+        );
         continue;
       }
     }

@@ -5374,7 +5374,10 @@ body.flow-maximized #flowArcList {
   pointer-events: none;
   transform: translate(-50%, calc(-100% - 14px));
   animation: countryFanIn 0.18s cubic-bezier(0.18,0.9,0.32,1.2);
-  font-family: 'Chakra Petch', -apple-system, BlinkMacSystemFont, sans-serif;
+  /* Inherit the body font stack so the fan matches the ambient-headline
+     cards (.ahCard / .ahHeadlineEl), the hover card, and the flow-node
+     labels — keeps every globe-overlay label visually coherent. */
+  font-family: inherit;
 }
 #countryFan.visible { display: flex; }
 @keyframes countryFanIn {
@@ -5402,7 +5405,11 @@ body.flow-maximized #flowArcList {
   border-radius: 10px;
   padding: 8px 14px;
   color: #ffbe50;
-  font-size: 13px;
+  /* Match the ambient-headline font (.ahHeadlineEl): same body stack,
+     12.5px / 600 / normal case. Was previously 13px which was a touch
+     larger than the ambient headlines and the hover card. */
+  font-family: inherit;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.03em;
   text-shadow: 0 0 8px rgba(255,180,60,0.4);
@@ -6109,6 +6116,8 @@ body.flow-maximized #flowArcList {
   border-radius: 12px;
   padding: 9px 12px 8px;
   box-shadow: 0 0 0 1px rgba(255,180,60,0.04), 0 6px 22px rgba(0,0,0,0.7);
+  /* Inherit body font stack — same as .ahCard / .ahHeadlineEl. */
+  font-family: inherit;
       opacity: 0;
   transform: translateY(5px) scale(0.95);
   transition: opacity 0.18s ease, transform 0.18s ease;
@@ -8886,6 +8895,9 @@ body.flow-maximized #flowArcList {
       pointer-events: none;
       z-index: 100;
       transform: translate(-50%, -100%);
+      /* Inherit body font stack so the bubble titles read in the same
+         face as the ambient-headline cards (.ahCard) and hover cards. */
+      font-family: inherit;
     }
     .bubbleWrapper {
       position: relative;
@@ -12306,7 +12318,11 @@ window.__arcCtxSegmented = (function() {
 
     <div class="semHeatBody">
       <div class="semHeatSection">
-        <div class="semHeatLabel">Display mode</div>
+        <!-- Label tracks the active control tab — see syncCoverageSentimentVisibility().
+             "Display mode" while Coverage/Sentiment pills are visible (Keyword /
+             Time-series tabs); "Palette" when Map This is active and the
+             Coverage/Sentiment pills are hidden because they don't apply. -->
+        <div class="semHeatLabel" id="semHeatSectionLabel">Display mode</div>
         <div class="semHeatPillRow" id="semHeatModeRow">
           <div class="semHeatPill active" data-mode="coverage">Coverage</div>
           <div class="semHeatPill" data-mode="sentiment">Sentiment</div>
@@ -16272,13 +16288,105 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return pop.toLocaleString() + " population";
       }
 
+      // Persistent (lat, lon) anchor for the hover card so the SVG leader
+      // line stays glued to the city's actual location as the user drags
+      // the globe or pans/zooms the 2D map. Without this, the card was
+      // anchored to the click/cursor screen position and "drifted" off the
+      // city the moment the underlying geometry moved.
+      let __hoverAnchor    = null;   // { lat, lon }
+      let __hoverAnchorRaf = null;
+      function _trackHoverAnchor() {
+        if (!__hoverAnchor) { __hoverAnchorRaf = null; return; }
+        const card   = document.getElementById('hoverCard');
+        const lineEl = document.getElementById('hoverLineEl');
+        if (!card || !lineEl) { __hoverAnchorRaf = null; return; }
+        if (!card.classList.contains('hcVisible')) {
+          __hoverAnchor = null;
+          __hoverAnchorRaf = null;
+          return;
+        }
+
+        const proj = (window.__projection === 'map') ? 'map' : 'globe';
+
+        if (proj === 'map') {
+          const m = window.__map2d;
+          if (!m || !m.isEnabled || !m.isEnabled() || !m.state || !m.state.canvas) {
+            __hoverAnchorRaf = requestAnimationFrame(_trackHoverAnchor);
+            return;
+          }
+          const pt   = m.project(__hoverAnchor.lat, __hoverAnchor.lon);
+          const rect = m.state.canvas.getBoundingClientRect();
+          const dpr  = m.state.dpr || 1;
+          const sx   = rect.left + pt.x / dpr;
+          const sy   = rect.top  + pt.y / dpr;
+          const cx = sx - rect.left, cy = sy - rect.top;
+          const onscreen = cx >= 0 && cx <= rect.width && cy >= 0 && cy <= rect.height;
+          if (!onscreen) {
+            card.style.opacity   = '0';
+            lineEl.style.opacity = '0';
+          } else {
+            card.style.opacity   = '';
+            lineEl.style.opacity = '1';
+            positionHoverCard(card, lineEl, sx, sy);
+          }
+        } else {
+          const cam  = window.__camera || (typeof camera !== 'undefined' ? camera : null);
+          const rend = window.__renderer || (typeof renderer !== 'undefined' ? renderer : null);
+          if (!cam || !rend) {
+            __hoverAnchorRaf = requestAnimationFrame(_trackHoverAnchor);
+            return;
+          }
+          const latR = __hoverAnchor.lat * Math.PI / 180;
+          const lonR = -__hoverAnchor.lon * Math.PI / 180;
+          const R    = 1.0;
+          const pos  = new THREE.Vector3(
+            R * Math.cos(latR) * Math.cos(lonR),
+            R * Math.sin(latR),
+            R * Math.cos(latR) * Math.sin(lonR)
+          );
+          if (window.scene?.quaternion) pos.applyQuaternion(window.scene.quaternion);
+
+          const camDir = new THREE.Vector3();
+          cam.getWorldDirection(camDir).normalize();
+          const dot = -camDir.dot(pos.clone().normalize());
+          if (dot < 0.05) {
+            card.style.opacity   = '0';
+            lineEl.style.opacity = '0';
+          } else {
+            const projected = pos.clone().project(cam);
+            const rect = rend.domElement.getBoundingClientRect();
+            const sx   = (projected.x  + 1) / 2 * rect.width  + rect.left;
+            const sy   = (-projected.y + 1) / 2 * rect.height + rect.top;
+            card.style.opacity   = '';
+            lineEl.style.opacity = '1';
+            positionHoverCard(card, lineEl, sx, sy);
+          }
+        }
+        __hoverAnchorRaf = requestAnimationFrame(_trackHoverAnchor);
+      }
+      function _setHoverAnchorFromNode(node) {
+        if (!node) { __hoverAnchor = null; return; }
+        const lat = Number(node.lat);
+        const lon = Number(node.lon ?? node.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          __hoverAnchor = null;
+          return;
+        }
+        __hoverAnchor = { lat, lon };
+        if (!__hoverAnchorRaf) __hoverAnchorRaf = requestAnimationFrame(_trackHoverAnchor);
+      }
+      function _clearHoverAnchor() {
+        __hoverAnchor = null;
+        if (__hoverAnchorRaf) { cancelAnimationFrame(__hoverAnchorRaf); __hoverAnchorRaf = null; }
+      }
+
       function showHoverCard(node, sx, sy) {
         const card   = document.getElementById("hoverCard");
         const lineEl = document.getElementById("hoverLineEl");
         if (hoverEraseTimer) { clearTimeout(hoverEraseTimer); hoverEraseTimer = null; }
         card.classList.remove("hcErase");
         card.classList.remove("hcVisible");
-        
+
         const viewMode = window.__currentViewMode || "country";
         const showCountryLine = node.country && node.name !== node.country;
         
@@ -16305,6 +16413,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         positionHoverCard(card, lineEl, sx, sy);
         card.classList.add("hcVisible");
         lineEl.style.opacity = "1";
+        // Glue the leader line to the city/country lat/lon so it stays
+        // anchored as the globe rotates / 2D map pans. See
+        // _trackHoverAnchor() above for the projection logic.
+        _setHoverAnchorFromNode(node);
       }
 
       function positionHoverCard(card, lineEl, sx, sy) {
@@ -16379,6 +16491,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         card.classList.add("hcErase");
         lineEl.style.opacity = "0";
         lineEl.classList.remove("briefing-forced");
+        // Stop the lat/lon anchor RAF; without this it would race against
+        // the erase animation and fight the opacity:0 we just set.
+        _clearHoverAnchor();
         if (hoverEraseTimer) clearTimeout(hoverEraseTimer);
         hoverEraseTimer = setTimeout(() => { card.classList.remove("hcErase"); }, 150);
       }
@@ -24167,6 +24282,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         Map2D.setSelectedCountry = (iso) => { _selectedIso = iso || null; };
         Map2D.getSelectedCountry = () => _selectedIso;
 
+        // Uses the same hitTestGlobe + showFan path as the 3D globe so the
+        // border-disambiguation fan triggers identically on both views.
         function onTap(e) {
           if (e.detail && e.detail.__handledCity) return;
           // Heatmap owns the tap when active — its own listener routes
@@ -24177,14 +24294,60 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (vm !== 'country') return;
           const ll = clientToLatLon(e.detail.clientX, e.detail.clientY);
           if (!ll) return;
-          const hit = hitTest(ll.lat, ll.lon);
-          if (!hit) {
-            _selectedIso = null;
+
+          // Prefer the shared hitTestGlobe (returns inside + nearby + fan).
+          // Falls back to the local point-in-polygon hitTest if it's
+          // missing (geo index not yet loaded).
+          let inside = null, nearby = [], fan = [];
+          if (typeof window.hitTestGlobe === 'function') {
+            const result = window.hitTestGlobe(ll.lat, ll.lon, 1.0);
+            if (result) {
+              inside = result.inside || [];
+              nearby = result.nearby || [];
+              fan    = result.fan    || [];
+            }
+          }
+          // Fallback path — original local hitTest.
+          if (!fan.length) {
+            const hit = hitTest(ll.lat, ll.lon);
+            if (!hit) { _selectedIso = null; return; }
+            _selectedIso = hit.iso;
+            if (typeof window.__openCountryByName === "function") {
+              window.__openCountryByName(hit.name, hit.iso);
+            }
             return;
           }
-          _selectedIso = hit.iso;
-          if (typeof window.__openCountryByName === "function") {
-            window.__openCountryByName(hit.name, hit.iso);
+
+          // Border zone — even when click is inside a polygon, show the
+          // fan if another polygon is within 12 mi of the click point.
+          const BORDER_FAN_MI = 12;
+          if (inside.length) {
+            const closeNeighbour = nearby.some(n =>
+              n.dist_mi != null && n.dist_mi <= BORDER_FAN_MI
+            );
+            if (closeNeighbour && fan.length > 1 && typeof window.__showCountryFan === 'function') {
+              window.__showCountryFan(fan, e.detail.clientX, e.detail.clientY);
+              return;
+            }
+            const target = inside[0];
+            _selectedIso = target.key;
+            if (typeof window.__openCountryByName === "function") {
+              window.__openCountryByName(target.name, target.key);
+            }
+            return;
+          }
+
+          // Off-polygon: single candidate → commit, multiple → fan.
+          if (fan.length === 1) {
+            const target = fan[0];
+            _selectedIso = target.key;
+            if (typeof window.__openCountryByName === "function") {
+              window.__openCountryByName(target.name, target.key);
+            }
+            return;
+          }
+          if (typeof window.__showCountryFan === 'function') {
+            window.__showCountryFan(fan, e.detail.clientX, e.detail.clientY);
           }
         }
 
@@ -24206,7 +24369,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (hit.iso === _lastHoverIso) return;
           _lastHoverIso = hit.iso;
           if (window.__showHoverCard) {
-            window.__showHoverCard({ name: hit.name, country: hit.name, flag: "", population: null }, e.detail.clientX, e.detail.clientY);
+            // Pass the cursor's lat/lon as the anchor — the hover card's
+            // RAF tracker will keep the leader pinned to that geographic
+            // point as the user pans/zooms the 2D map.
+            window.__showHoverCard({
+              name: hit.name, country: hit.name, flag: "", population: null,
+              lat: ll.lat, lon: ll.lon
+            }, e.detail.clientX, e.detail.clientY);
           }
         }
 
@@ -40281,6 +40450,20 @@ body.ticker-active .gTickerLabel {
 
   syncPaletteUI();
 
+  // Hide the Coverage/Sentiment pills when Map This is the active control
+  // tab — those modes only apply to keyword/time-series rendering, not the
+  // QA-driven Map This output. The B&W/Colored palette toggle and color
+  // pickers stay visible because they DO apply (and the picker layout
+  // even adapts to rank/percent/binary). The section label flips between
+  // "Display mode" (pills present) and "Palette" (pills hidden).
+  function syncCoverageSentimentVisibility() {
+    const isMapThis = (state.ctl === 'ask');
+    if (modeRow) modeRow.style.display = isMapThis ? 'none' : '';
+    const labelEl = document.getElementById('semHeatSectionLabel');
+    if (labelEl) labelEl.textContent = isMapThis ? 'Palette' : 'Display mode';
+  }
+  syncCoverageSentimentVisibility();
+
   ctlTabs.addEventListener('click', (e) => {
     const tab = e.target.closest('.semHeatCtlTab');
     if (!tab) return;
@@ -40291,6 +40474,7 @@ body.ticker-active .gTickerLabel {
       p.classList.toggle('active', p.dataset.panel === which);
     });
     state.ctl = which;
+    syncCoverageSentimentVisibility();
     // The Ask AI tab waits for the user to submit a question; no implicit
     // data source, so do NOT call reload() (it would hit the keyword
     // endpoint and clobber any QA paint already on the globe).
@@ -42598,12 +42782,28 @@ body.ticker-active .gTickerLabel {
     }
     if (!result || !result.fan.length) { hideFan(); return; }
 
-    // If the click is literally inside one or more polygons, commit the
-    // first inside candidate directly and skip the disambiguation fan.
-    // This fixes the "United States is hard to click" bug: previously
-    // a nearby Canada/Mexico edge entry would push the fan size > 1 and
-    // the user had to pick from a list to open the US panel.
+    // If the click is literally inside one or more polygons, normally we
+    // commit the first inside candidate directly. EXCEPT when a different
+    // country is also close — that's a border zone, and the user may be
+    // aiming at the neighbour. In that case we show the disambiguation
+    // fan so they can pick.
+    //
+    // BORDER_FAN_MI is much tighter than the zoom-aware threshold used by
+    // hitTestGlobe (which can grow up to 55 mi). Anything within 12 miles
+    // of the click point is genuinely "on or near a border"; further than
+    // that, just commit the inside hit so US-interior clicks (where Canada
+    // is in `nearby` from 800 mi away) still go straight to the US panel.
     if (result.inside && result.inside.length) {
+      const BORDER_FAN_MI = 12;
+      const closeNeighbour = (result.nearby || []).some(n =>
+        n.dist_mi != null && n.dist_mi <= BORDER_FAN_MI
+      );
+      if (closeNeighbour && result.fan && result.fan.length > 1) {
+        e.stopPropagation();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        showFan(result.fan, e.clientX, e.clientY);
+        return;
+      }
       const target = result.inside[0];
       hideFan();
       e.stopPropagation();
@@ -42678,6 +42878,10 @@ body.ticker-active .gTickerLabel {
     if (!fanEl) return;
     fanEl.classList.remove('visible');
   }
+
+  // Bridge for the 2D map (same disambiguation behaviour, separate listener).
+  window.__showCountryFan = showFan;
+  window.__hideCountryFan = hideFan;
 
   // Click outside fan closes it
   document.addEventListener('click', (e) => {
