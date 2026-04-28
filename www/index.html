@@ -48472,42 +48472,79 @@ body.ticker-active .gTickerLabel {
   /**
    * Request permission + register for push. Returns true on success.
    * Posts the resulting APNs token to /api/notifications/register-device.
+   *
+   * Heavy console logging on purpose — this flow is hard to debug
+   * remotely (no console UI on iOS without Safari Web Inspector). Each
+   * step gets a [notif] line so we can pinpoint where it dies.
    */
   window.__registerPushDevice = async function() {
+    console.log('[notif] registerPushDevice: start');
     const PN = _capacitorPush();
-    if (!PN) return false;
+    if (!PN) {
+      console.warn('[notif] no Capacitor PushNotifications plugin (not native iOS?)');
+      return false;
+    }
     if (!window.__authToken) {
-      // Need a logged-in user to attach the token to.
+      console.warn('[notif] no auth token — opening sign-in modal');
       window.__openAuthModal?.();
       return false;
     }
     try {
-      // Request permission. If user previously granted, returns 'granted'.
+      // Request permission. If user previously granted, returns 'granted'
+      // immediately without prompting again.
+      console.log('[notif] requesting permission…');
       let perm = await PN.requestPermissions();
       state.permission = perm?.receive || 'unknown';
-      if (state.permission !== 'granted') return false;
+      console.log(`[notif] permission state: ${state.permission}`);
+      if (state.permission !== 'granted') {
+        console.warn('[notif] permission not granted — aborting');
+        return false;
+      }
 
-      // Wire one-time listeners BEFORE register() — register triggers
-      // the registration event almost immediately on iOS.
+      // Race-fix: AWAIT the listener registration before calling register().
+      // Capacitor's PN.addListener returns a Promise<PluginListenerHandle>;
+      // the listener isn't actually wired until that promise resolves. If
+      // we call register() too early, the registration event can fire and
+      // be lost before the listener is in place — then our 10s timeout
+      // expires and we fail with "registration_timeout" even though APNs
+      // returned a token successfully. The user reported this exact path.
+      let regHandle = null;
+      let errHandle = null;
       const tokenPromise = new Promise((resolve, reject) => {
-        const onReg  = PN.addListener('registration', (t) => {
-          onReg.then(h => h.remove()).catch(() => {});
-          resolve(t.value);
-        });
-        const onErr  = PN.addListener('registrationError', (e) => {
-          onErr.then(h => h.remove()).catch(() => {});
-          reject(new Error(e.error || 'registration_error'));
-        });
-        // Safety timeout — if APNs is silent for 10s, fail soft.
-        setTimeout(() => reject(new Error('registration_timeout')), 10000);
+        Promise.all([
+          PN.addListener('registration', (t) => {
+            console.log(`[notif] APNs returned token (${(t.value || '').slice(0, 12)}…)`);
+            try { regHandle && regHandle.remove(); } catch (_) {}
+            try { errHandle && errHandle.remove(); } catch (_) {}
+            resolve(t.value);
+          }),
+          PN.addListener('registrationError', (e) => {
+            console.warn('[notif] APNs registrationError:', e.error || JSON.stringify(e));
+            try { regHandle && regHandle.remove(); } catch (_) {}
+            try { errHandle && errHandle.remove(); } catch (_) {}
+            reject(new Error(e.error || 'registration_error'));
+          }),
+        ]).then(([r, eHandle]) => {
+          regHandle = r; errHandle = eHandle;
+          console.log('[notif] listeners wired, calling PN.register()');
+          PN.register().catch(err => {
+            console.warn('[notif] PN.register() threw:', err.message);
+            reject(err);
+          });
+        }).catch(reject);
+        // Safety timeout — if APNs is silent for 15s, fail soft.
+        setTimeout(() => reject(new Error('registration_timeout')), 15000);
       });
-      await PN.register();
       const token = await tokenPromise;
-      if (!token) return false;
+      if (!token) {
+        console.warn('[notif] no token after register');
+        return false;
+      }
 
       // Post to backend. Stash the device timezone so quiet hours work
       // out of the box.
       const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+      console.log('[notif] POSTing token to backend…');
       const res = await fetch(`${API}/api/notifications/register-device`, {
         method: 'POST', headers: _authHeaders(),
         body: JSON.stringify({
@@ -48515,9 +48552,11 @@ body.ticker-active .gTickerLabel {
         }),
       });
       if (!res.ok) {
-        console.warn('[notif] register-device failed:', res.status);
+        const errText = await res.text().catch(() => '');
+        console.warn(`[notif] register-device failed: HTTP ${res.status} ${errText}`);
         return false;
       }
+      console.log('[notif] register-device POST OK — token saved');
 
       // Wire the deep-link handler exactly once.
       _wireDeepLinkHandler();
