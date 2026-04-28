@@ -48427,6 +48427,12 @@ body.ticker-active .gTickerLabel {
     preferences: null,
     subscriptions: [],
     permission: 'unknown',  // 'granted' | 'denied' | 'prompt' | 'unknown'
+    // Number of active iOS device tokens this account has registered.
+    // Distinct from `permission`: a device with a previously-granted
+    // OS permission can still have 0 backend tokens for a freshly-
+    // signed-in account — that path needs registration even though
+    // the OS won't prompt again.
+    activeDevices: 0,
     countriesIndex: null,    // [{name, iso}] from window.__globeCountries
   };
 
@@ -48570,6 +48576,21 @@ body.ticker-active .gTickerLabel {
     await loadPreferences();
     await checkPermission();
     renderPanel();
+    // Silent auto-register: if iOS already says permission is granted
+    // (often because a previous account on this device granted it),
+    // but THIS account has zero registered devices, capture the token
+    // now without re-prompting the user. Without this, a freshly-signed-
+    // in user on a "granted" device hits a silent dead-end — banner is
+    // hidden because permission is granted, but the backend has no way
+    // to push to them. Discovered when a second account on the same
+    // phone saw no banner and no path to register.
+    if (state.permission === 'granted' && state.activeDevices === 0 && _isCapacitorIOS()) {
+      const ok = await window.__registerPushDevice();
+      if (ok) {
+        state.activeDevices = 1;
+        renderPanel(); // refresh in case the banner changed
+      }
+    }
   };
 
   function closePanel() {
@@ -48585,6 +48606,7 @@ body.ticker-active .gTickerLabel {
       const data = await res.json();
       state.preferences = data.preferences;
       state.subscriptions = data.subscriptions || [];
+      state.activeDevices = data.active_devices || 0;
     } catch (err) {
       console.warn('[notif] loadPreferences:', err.message);
       state.preferences = state.preferences || {
@@ -48592,6 +48614,7 @@ body.ticker-active .gTickerLabel {
         quiet_hours_start: 22, quiet_hours_end: 7, max_per_day: 3,
       };
       state.subscriptions = state.subscriptions || [];
+      state.activeDevices = 0;
     }
   }
 
@@ -48599,8 +48622,23 @@ body.ticker-active .gTickerLabel {
     // Permission banner
     const banner = document.getElementById('npPermBanner');
     if (banner) {
-      if (state.permission === 'granted') {
+      // Healthy state: iOS-permission-granted AND this account has at
+      // least one registered device. No banner needed.
+      if (state.permission === 'granted' && state.activeDevices > 0) {
         banner.style.display = 'none';
+      } else if (state.permission === 'granted' && state.activeDevices === 0) {
+        // Granted at OS level but no token yet for this user. Almost
+        // always means a different account on this device granted
+        // permission previously. We auto-register silently in
+        // __openNotifications; this banner is the visible affordance
+        // while that completes (or a manual retry path if it fails).
+        banner.className = 'npPermBanner warn';
+        banner.style.display = '';
+        banner.innerHTML = `Finishing setup… <button id="npGrantBtn">Try now</button>`;
+        banner.querySelector('#npGrantBtn')?.addEventListener('click', async () => {
+          const ok = await window.__registerPushDevice();
+          if (ok) { state.activeDevices = 1; renderPanel(); }
+        });
       } else if (state.permission === 'denied') {
         banner.className = 'npPermBanner deny';
         banner.style.display = '';
@@ -48610,12 +48648,17 @@ body.ticker-active .gTickerLabel {
         banner.style.display = '';
         banner.innerHTML = `Push notifications are iOS-only right now. Get the iOS app to enable.`;
       } else {
+        // 'prompt' / 'unknown' — never asked yet.
         banner.className = 'npPermBanner warn';
         banner.style.display = '';
         banner.innerHTML = `Tap below to allow notifications.<br><button id="npGrantBtn">Enable notifications</button>`;
         banner.querySelector('#npGrantBtn')?.addEventListener('click', async () => {
           const ok = await window.__registerPushDevice();
-          if (ok) { state.permission = 'granted'; renderPanel(); }
+          if (ok) {
+            state.permission = 'granted';
+            state.activeDevices = 1;
+            renderPanel();
+          }
         });
       }
     }
@@ -48710,11 +48753,20 @@ body.ticker-active .gTickerLabel {
       if (!res.ok) return;
       state.subscriptions.push({ target_type: 'country', target_value: value });
       renderChips();
-      // Adding a country implies the user wants pushes — request permission
-      // if we haven't already. Their explicit subscription IS the commit.
-      if (state.permission !== 'granted') {
+      // Adding a country implies the user wants pushes — register if
+      // we haven't already. Two trigger conditions:
+      //   1. permission isn't granted yet (normal first-time flow), OR
+      //   2. permission IS granted but this account has 0 device tokens
+      //      (a different account on the same device pre-granted)
+      // Either way, __registerPushDevice handles the OS prompt skip when
+      // permission is already granted, so this is safe to call.
+      if (state.permission !== 'granted' || state.activeDevices === 0) {
         const ok = await window.__registerPushDevice();
-        if (ok) { state.permission = 'granted'; renderPanel(); }
+        if (ok) {
+          state.permission = 'granted';
+          state.activeDevices = Math.max(1, state.activeDevices);
+          renderPanel();
+        }
       }
     } catch (err) {
       console.warn('[notif] addCountry:', err.message);
