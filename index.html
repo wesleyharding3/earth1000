@@ -5593,68 +5593,50 @@ button.arcCtxSegDot,
   from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)) scale(0.92); }
   to   { opacity: 1; transform: translate(-50%, calc(-100% - 14px)) scale(1); }
 }
-#countryFan::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -7px;
-  width: 10px; height: 10px;
-  transform: translateX(-50%) rotate(45deg);
-  background: rgba(6, 8, 14, 0.94);
-  border-right: 1px solid rgba(255,190,80,0.35);
-  border-bottom: 1px solid rgba(255,190,80,0.35);
-  box-shadow: 2px 2px 10px rgba(0,0,0,0.4);
-}
+/* Bubble-tail removed — see www/index.html for rationale. */
+#countryFan::after { display: none; }
+/* Country/city fan card — restyled to match .flowNodeLabel
+   (line ~32097 in www/index.html). See www/index.html for full
+   rationale on the visual unification of globe-overlay labels. */
 .countryFanCard {
   pointer-events: all;
-  min-width: 140px;
-  max-width: 240px;
-  background: rgba(6, 8, 14, 0.94);
-  border: 1px solid rgba(255,190,80,0.35);
-  border-radius: 10px;
-  padding: 8px 14px;
-  color: #ffbe50;
-  /* Match the ambient-headline font (.ahHeadlineEl): same body stack,
-     12.5px / 600 / normal case. Was previously 13px which was a touch
-     larger than the ambient headlines and the hover card. */
+  background: rgba(6,10,20,0.82);
+  border: 1px solid rgba(255,180,80,0.28);
+  border-radius: 8px;
+  padding: 5px 9px;
   font-family: inherit;
-  font-size: 12.5px;
+  color: rgba(255,255,255,0.94);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-shadow: 0 0 8px rgba(255,180,60,0.4);
+  letter-spacing: 0.02em;
+  line-height: 1.35;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  transition: background 0.13s, border-color 0.13s, box-shadow 0.13s, transform 0.1s;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45),
-              inset 0 1px 0 rgba(255,200,100,0.08);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  gap: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 200px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 18px rgba(255,180,80,0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  transition: background 0.13s, border-color 0.13s, transform 0.1s;
 }
 .countryFanCard:hover {
-  background: rgba(255,190,80,0.14);
-  border-color: rgba(255,210,120,0.70);
-  box-shadow: 0 8px 22px rgba(0,0,0,0.55),
-              0 0 18px rgba(255,180,60,0.22),
-              inset 0 1px 0 rgba(255,220,140,0.16);
+  background: rgba(255,180,80,0.14);
+  border-color: rgba(255,210,120,0.55);
 }
 .countryFanCard:active { transform: scale(0.97); }
-.countryFanCard.primary {
-  border-color: rgba(255,210,120,0.70);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45),
-              0 0 14px rgba(255,180,60,0.25),
-              inset 0 1px 0 rgba(255,220,140,0.14);
-}
+.countryFanCard.primary { border-color: rgba(255,210,120,0.50); }
 .countryFanCardDist {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 500;
-  color: rgba(255,190,80,0.50);
-  margin-left: 6px;
+  color: rgba(255,200,140,0.60);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   flex-shrink: 0;
 }
 
@@ -8968,6 +8950,76 @@ button.arcCtxSegDot,
       z-index: 100005 !important;
     }
 
+    /* ── Briefing label restyle — match the flow-arc node label look
+       (.flowNodeLabel) so labels during a briefing read like the
+       small ORIGIN/DEST cards on thread/line flow arcs rather than
+       the bigger desktop hover-card. See www/index.html for the full
+       rationale + leader-line tracking note. */
+    body.briefing-active #hoverCard.briefing-forced {
+      max-width: 180px;
+      min-width: 0;
+      padding: 5px 9px;
+      background: rgba(6,10,20,0.82);
+      border: 1px solid rgba(255,180,80,0.28);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 18px rgba(255,180,80,0.06);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardName {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: none;
+      color: rgba(255,255,255,0.94);
+      line-height: 1.35;
+      margin-bottom: 0;
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardDot {
+      width: 4px; height: 4px;
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardCountry {
+      font-size: 9px;
+      color: rgba(255,200,140,0.85);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 2px;
+      margin-bottom: 0;
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardPop {
+      font-size: 10px;
+      color: rgba(255,255,255,0.55);
+      margin-top: 1px;
+    }
+
+    /* Briefing leader — dashed warm-amber + anchor dot at node end. */
+    body.briefing-active #hoverLineEl.briefing-forced {
+      background: repeating-linear-gradient(
+        to right,
+        rgba(255,200,120,0.85) 0,
+        rgba(255,200,120,0.85) 4px,
+        transparent 4px,
+        transparent 7px
+      );
+      box-shadow: none;
+      height: 1.2px;
+      overflow: visible;
+    }
+    body.briefing-active #hoverLineEl.briefing-forced::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      margin-left: -4px;
+      margin-top: -4px;
+      border-radius: 50%;
+      background: rgba(255,200,120,0.9);
+      border: 1px solid rgba(255,255,255,0.9);
+      box-shadow: 0 0 6px rgba(255,200,120,0.5);
+    }
+
     /* ── Vertical View Sidebar ── */
     #viewSidebar {
       position: fixed;
@@ -9285,6 +9337,14 @@ button.arcCtxSegDot,
       .nfCardSource,
       .nfCardOrigin,
       .adpMeta             { font-size: var(--t-xs); }
+
+      /* Briefing intro X — keep circular on mobile. See www/index.html
+         for full rationale. */
+      .bIntroOverlay .bIntroClose {
+        width: 44px; height: 44px;
+        min-width: 44px; min-height: 44px;
+        font-size: 16px;
+      }
 
       /* Briefing control buttons — sized for mobile.
          Scoped under .bControls so these beat the later default rules via
@@ -12609,14 +12669,12 @@ window.__arcCtxSegmented = (function() {
                min="0.2" max="4" step="0.1" value="1" />
       </div>
 
-      <!-- Node labels toggle -->
-      <div class="flowPanelRow" style="align-items:center;gap:6px;">
-        <span class="flowLabel">Labels</span>
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1;">
-          <input type="checkbox" id="flowLabelsToggle"
-                 style="width:15px;height:15px;accent-color:rgba(80,255,160,1);cursor:pointer;" />
-          <span style="font-size:10px;color:rgba(255,255,255,0.6);">Show origin &amp; destination</span>
-        </label>
+      <!-- Node labels toggle — HIDDEN in News Flows by request. The
+           element stays in DOM so thread/line/article flow paths can
+           still resolve #flowLabelsToggle for the ctx-card checkbox
+           sync. See www/index.html for full rationale. -->
+      <div class="flowPanelRow" style="display:none;" aria-hidden="true">
+        <input type="checkbox" id="flowLabelsToggle" />
       </div>
 
       <!-- Playback (individual mode only) -->
@@ -25235,6 +25293,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
                    y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
         }
 
+        // Tunables for the rewritten layer (draw-in + comet trail).
+        // See www/index.html for the long-form rationale on each.
+        const DRAW_IN_DUR = 1.0;
+        const SAMPLE_N    = 32;
+        const TAIL_FRAC   = 0.20;
+        const TAIL_SEGS   = 16;
+
+        function sampleBezRange(p0, p1, p2, count, tStart, tEnd) {
+          const out = [];
+          for (let i = 0; i <= count; i++) {
+            const t = tStart + (tEnd - tStart) * (i / count);
+            out.push(bez(p0, p1, p2, t));
+          }
+          return out;
+        }
+        function withAlpha(rgba, alpha) {
+          return rgba.replace(/,\s*[\d.]+\)$/, `,${alpha.toFixed(3)})`);
+        }
+
         Map2D.addLayer((api, ctx) => {
           const arcs = (typeof window.__flowGetArcObjects === "function")
             ? window.__flowGetArcObjects() : null;
@@ -25242,7 +25319,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const W = api.state.width;
           const wW = api.worldW(), wH = api.worldH();
           const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          // CRITICAL: arc endpoints anchor to map-Y via -scrollY so they
+          // stay glued to their cities under vertical pan / zoom. See
+          // www/index.html.
           const yTop  = -api.state.scrollY;
+          const now   = performance.now();
 
           for (const arc of arcs) {
             const flow = arc && arc.flow;
@@ -25265,27 +25346,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const lx = dx - sx, ly = dy - sy;
             const len = Math.hypot(lx, ly);
             if (len < 1) continue;
-            // Perpendicular unit vector (90° CCW from the chord).
             let px = -ly / len, py = lx / len;
-            // BIAS THE APEX UPWARD. Without this, an east-pointing chord
-            // (e.g. London → Tokyo) gets perpendicular (0, +1), so its
-            // apex sits BELOW the chord on the canvas and the arc looks
-            // like it's leaving from the wrong side of each country —
-            // exactly the "dislodged" look reported under zoom. Flipping
-            // when py > 0 forces every chord to bow toward the top edge
-            // of the screen, matching the globe's "arc lifts off the
-            // surface" aesthetic.
             if (py > 0) { px = -px; py = -py; }
 
             const heightMult = (flow._tier === "primary") ? 0.75 : (flow._tier === "secondary" ? 1.15 : 1.0);
-            // Apex is in WORLD pixels and scales linearly with chord
-            // length, so the apex/chord ratio (the visible arc shape)
-            // stays invariant under zoom. Lane offset spreads parallel
-            // arcs (same src+dst) so they fan out instead of stacking.
             const apex      = len * ARC_HEIGHT_FRAC * heightMult;
             const laneShift = (flow.__laneOffset || 0) * len * 0.18;
             const cx = mx + px * (apex + laneShift);
             const cy = my + py * (apex + laneShift);
+
+            // Per-arc draw-in progress.
+            if (arc._mapDrawStartMs == null) arc._mapDrawStartMs = now;
+            const drawAge = (now - arc._mapDrawStartMs) / 1000;
+            const drawT   = Math.min(1, drawAge / DRAW_IN_DUR);
 
             const dur  = Math.max(0.001, arc.travelDuration || 4);
             const age  = arc.age || arc._elapsed || 0;
@@ -25294,35 +25367,68 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const colors = colorFor(flow);
             const w = widthFor(flow, api.state.dpr);
 
+            const p0 = { x: sx, y: sy };
+            const p1 = { x: cx, y: cy };
+            const p2 = { x: dx, y: dy };
+
             ctx.save();
             for (let tile = -1; tile <= 1; tile++) {
               const xOff = baseX + tile * wW;
               if (xOff + Math.max(sx, cx, dx) < 0 - wW) continue;
               if (xOff + Math.min(sx, cx, dx) > W + wW) continue;
+
+              const samples = sampleBezRange(p0, p1, p2, SAMPLE_N, 0, drawT);
+              if (samples.length < 2) continue;
+
               ctx.lineWidth   = w * 3.5;
               ctx.strokeStyle = colors.glow;
               ctx.lineCap     = "round";
+              ctx.lineJoin    = "round";
               ctx.beginPath();
-              ctx.moveTo(xOff + sx, sy);
-              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.moveTo(xOff + samples[0].x, yTop + samples[0].y);
+              for (let i = 1; i < samples.length; i++) {
+                ctx.lineTo(xOff + samples[i].x, yTop + samples[i].y);
+              }
               ctx.stroke();
+
               ctx.lineWidth   = w;
               ctx.strokeStyle = colors.stroke;
               ctx.beginPath();
-              ctx.moveTo(xOff + sx, sy);
-              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.moveTo(xOff + samples[0].x, yTop + samples[0].y);
+              for (let i = 1; i < samples.length; i++) {
+                ctx.lineTo(xOff + samples[i].x, yTop + samples[i].y);
+              }
               ctx.stroke();
-              const p = bez({x: sx, y: sy}, {x: cx, y: cy}, {x: dx, y: dy}, t);
-              const orbR = w * 2.5;
-              const grad = ctx.createRadialGradient(xOff + p.x, p.y, 0, xOff + p.x, p.y, orbR);
-              grad.addColorStop(0, colors.orb);
-              // Fade to transparent green (or blue for secondary) instead of
-              // white so the orb halo blends with the arc color cleanly.
-              grad.addColorStop(1, colors.glow.replace(/,\s*[\d.]+\)$/, ',0)'));
-              ctx.fillStyle = grad;
-              ctx.beginPath();
-              ctx.arc(xOff + p.x, p.y, orbR, 0, Math.PI * 2);
-              ctx.fill();
+
+              if (drawT >= 1) {
+                const tHead = t;
+                const tTail = Math.max(0, tHead - TAIL_FRAC);
+                if (tHead > tTail) {
+                  const trail = sampleBezRange(p0, p1, p2, TAIL_SEGS, tTail, tHead);
+                  for (let i = 0; i < trail.length - 1; i++) {
+                    const segMid = (i + 0.5) / trail.length;
+                    const alpha  = Math.max(0, Math.min(1, segMid)) * 0.95;
+                    ctx.lineWidth   = w * 2.0;
+                    ctx.strokeStyle = withAlpha(colors.orb, alpha);
+                    ctx.beginPath();
+                    ctx.moveTo(xOff + trail[i].x,     yTop + trail[i].y);
+                    ctx.lineTo(xOff + trail[i+1].x,   yTop + trail[i+1].y);
+                    ctx.stroke();
+                  }
+                  const head = trail[trail.length - 1];
+                  const tipR = w * 1.8;
+                  const grad = ctx.createRadialGradient(
+                    xOff + head.x, yTop + head.y, 0,
+                    xOff + head.x, yTop + head.y, tipR
+                  );
+                  grad.addColorStop(0, colors.orb);
+                  grad.addColorStop(1, withAlpha(colors.orb, 0));
+                  ctx.fillStyle = grad;
+                  ctx.beginPath();
+                  ctx.arc(xOff + head.x, yTop + head.y, tipR, 0, Math.PI * 2);
+                  ctx.fill();
+                }
+              }
             }
             ctx.restore();
           }
@@ -35382,9 +35488,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   text-transform: uppercase;
   color: rgba(255, 224, 180, 0.94);
   text-shadow: 0 0 14px rgba(255, 184, 92, 0.32);
-  white-space: nowrap;
+  /* Wrap to a second line instead of ellipsis-truncating — see
+     www/index.html for rationale. Cap at 2 lines so long titles
+     don't blow up vertically. */
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.25;
   text-align: center;
   opacity: 0;
   transform: translate(-50%, -14px);
@@ -35640,6 +35753,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transform: translate(-50%, -50%) !important;
   width: min(80vw, 1100px) !important;
   max-width: none !important;
+  max-height: 80vh !important;
   z-index: 100011 !important;
   opacity: 0;
   transition: opacity 0.6s ease, transform 0.6s ease;
@@ -35648,12 +35762,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .bFocalVideo.focal-in {
   opacity: 1;
 }
-.bFocalVideo iframe, .bFocalVideo .bTwitterEmbed {
+/* YouTube iframe — keep 16:9. */
+.bFocalVideo iframe {
   width: 100% !important;
   aspect-ratio: 16/9 !important;
   min-height: 200px !important;
   border-radius: 12px;
   box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 120px rgba(96,200,255,0.08);
+}
+/* Twitter focal — text card, narrower, intrinsic height. See www/index.html. */
+.bFocalVideo.bAPTwitterCard {
+  width: min(480px, 92vw) !important;
+}
+.bFocalVideo .bTwitterEmbed {
+  width: 100% !important;
+  max-height: 70vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 120px rgba(96,200,255,0.08);
+  background: rgba(8,12,24,0.96);
 }
 .bFocalVideo .bAPCardBody { display: none; }
 /* Dim the background during focal video — sits BEHIND the video card */
@@ -36304,7 +36431,14 @@ body.ticker-active .gTickerLabel {
 
 /* ── Briefing Launcher ── */
 .bLauncher {
-  position: fixed; inset: 0; z-index: 100001;
+  position: fixed;
+  /* The ENTIRE panel — including the dim/backdrop — sits inside the
+     iOS safe-area. See www/index.html for the full rationale. */
+  top: env(safe-area-inset-top, 0px);
+  bottom: calc(var(--page-nav-height, 0px) + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  z-index: 100001;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,0.75); backdrop-filter: blur(10px);
   opacity: 0; pointer-events: none;
@@ -36312,7 +36446,7 @@ body.ticker-active .gTickerLabel {
 }
 .bLauncher.open { opacity: 1; pointer-events: all; }
 .bLauncherInner {
-  width: min(480px, 94vw); max-height: 90vh; overflow-y: auto;
+  width: min(480px, 94vw); max-height: 90%; overflow-y: auto;
   background: rgba(8,12,24,0.96);
   border: 1px solid rgba(255,255,255,0.10);
   border-radius: 18px; padding: 24px;
@@ -36622,7 +36756,10 @@ body.ticker-active .gTickerLabel {
   const API           = 'https://earth-wjr6.onrender.com';
   const WORDS_PER_MIN = 148;
   const VIDEO_PAUSE_SECS = 18;
-  const SEGMENT_BUFFER_MS = 900;  // pause between non-video segments (ms)
+  // Reduced from 900ms to 200ms so the narrator's transition flows
+  // into the next segment without a long perceived silence. See
+  // www/index.html for the full rationale.
+  const SEGMENT_BUFFER_MS = 200;  // pause between non-video segments (ms)
 
   let episode       = null;
   let segIdx        = 0;
@@ -37561,10 +37698,13 @@ body.ticker-active .gTickerLabel {
                 // YouTube featured-video: loadArticlePanel suppressed
                 // the pending placeholder so two article cards filled
                 // the side panel until now. Mount the card just-in-time
-                // so startFocalVideo has its anchor element.
-                if (mediaType === 'youtube' && ytId
-                    && !document.getElementById('bVideoCard')) {
-                  _mountPendingVideoCard(seg, ytId, fStart, fEnd);
+                // for the appropriate media type — see www/index.html.
+                if (!document.getElementById('bVideoCard')) {
+                  if (mediaType === 'youtube' && ytId) {
+                    _mountPendingVideoCard(seg, ytId, fStart, fEnd);
+                  } else if ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && tweetUrl) {
+                    _mountPendingTwitterCard(seg, tweetUrl, mediaType);
+                  }
                 }
                 startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
               }
@@ -38326,6 +38466,41 @@ body.ticker-active .gTickerLabel {
     else panel.appendChild(card);
   }
 
+  // Twitter analogue of _mountPendingVideoCard — see www/index.html for
+  // long-form rationale.
+  function _mountPendingTwitterCard(seg, twitterUrl, mediaType) {
+    if (document.getElementById('bVideoCard')) return;
+    const panel = document.getElementById('bArticlePanel');
+    if (!panel) return;
+    const vidDate = seg?.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
+    const tweetIdMatch = String(twitterUrl || '').match(/status\/(\d+)/);
+    const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
+    const isVideo = mediaType === 'twitter_video';
+    const card = document.createElement('div');
+    card.className = 'bAPCard bAPVideoCard bAPTwitterCard';
+    card.id = 'bVideoCard';
+    card.dataset.tweetId   = tweetId;
+    card.dataset.tweetUrl  = twitterUrl;
+    card.dataset.mediaType = mediaType;
+    card.style.visibility  = 'hidden';
+    card.innerHTML = `
+      <div id="bTwitterEmbed" class="bTwitterEmbed">
+        <div class="bTwitterLoading">Loading ${isVideo ? 'video' : 'post'}...</div>
+      </div>
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource" id="bVideoSource">X / Twitter</span>
+          <span class="bAPCardDate">${vidDate}</span>
+        </div>
+      </div>`;
+    const firstChild = panel.firstElementChild;
+    if (firstChild) panel.insertBefore(card, firstChild);
+    else panel.appendChild(card);
+    if (twitterUrl && typeof loadTwitterEmbed === 'function') {
+      loadTwitterEmbed(twitterUrl, 'bTwitterEmbed');
+    }
+  }
+
   function startFocalVideo(startSec, endSec, enableCaptions, volumeLevel) {
     const card = document.getElementById('bVideoCard');
     const scrim = document.getElementById('bFocalScrim');
@@ -38532,17 +38707,22 @@ body.ticker-active .gTickerLabel {
       // article cards until the focal trigger fires; _mountPendingVideoCard
       // creates the card just-in-time at that moment.
       const fmCheck = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
-      const willTriggerFeaturedVideo = !!(fmCheck?.enabled && videoId
-        && (seg?.media_type || 'youtube') === 'youtube');
+      const segMediaType = seg?.media_type || 'youtube';
+      // willTriggerFeaturedMedia covers YouTube + Twitter — see
+      // www/index.html for the full rationale.
+      const willTriggerFeaturedMedia = !!(fmCheck?.enabled && (
+        (videoId && segMediaType === 'youtube') ||
+        (twitterUrl && (segMediaType === 'twitter_post' || segMediaType === 'twitter_video'))
+      ));
       let sideContent = null;
       let sideVideoId = null;
       let sideArticleVideo = null;
-      if (videoId && !willTriggerFeaturedVideo) {
+      if (videoId && !willTriggerFeaturedMedia) {
         sideContent = 'featured-video';
         sideVideoId = videoId;
-      } else if (twitterUrl && !willTriggerFeaturedVideo) {
+      } else if (twitterUrl && !willTriggerFeaturedMedia) {
         sideContent = 'twitter';
-      } else if (!willTriggerFeaturedVideo) {
+      } else if (!willTriggerFeaturedMedia) {
         const av = articles.find(a => a && a.video_id);
         if (av) {
           sideContent = 'article-video';

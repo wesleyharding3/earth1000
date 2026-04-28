@@ -2323,18 +2323,32 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       voiceover_text:      voiceoverText,
       voiceover_before_video: voiceoverBeforeVideo,
       voiceover_after_video:  voiceoverAfterVideo,
-      video_focal:         thread._featuredVideo?.enabled ? {
-        enabled:              true,
-        start_sec:            0,
-        end_sec:              thread._featuredVideo?.duration_sec || 15,
-        // Trigger the video handoff at the point in the voiceover where the split occurs
-        trigger_pct:          voiceoverBeforeVideo
-          ? Math.round((voiceoverBeforeVideo.split(/\s+/).length / voiceoverText.split(/\s+/).length) * 100)
-          : 35,
-        captions:             true,
-        volume:               'medium',
-        narrator_transition:  thread._featuredVideo?.narrator_transition || '',
-      } : null,
+      video_focal:         thread._featuredVideo?.enabled ? (() => {
+        const fv = thread._featuredVideo;
+        // Honor the editor-supplied clip window. The previous version
+        // hardcoded start_sec=0 and end_sec=duration_sec, which silently
+        // ignored the user's explicit boundaries — videos always
+        // started at 0:00 and ran for the legacy default duration
+        // regardless of what the manifest said. duration_sec stays as a
+        // last-resort fallback when neither start_sec nor end_sec is
+        // provided (older episode shapes).
+        const start = Number.isFinite(fv.start_sec) ? Number(fv.start_sec) : 0;
+        const end = Number.isFinite(fv.end_sec)
+          ? Number(fv.end_sec)
+          : start + (Number.isFinite(fv.duration_sec) ? Number(fv.duration_sec) : 15);
+        return {
+          enabled:              true,
+          start_sec:            start,
+          end_sec:              end,
+          // Trigger the video handoff at the point in the voiceover where the split occurs
+          trigger_pct:          voiceoverBeforeVideo
+            ? Math.round((voiceoverBeforeVideo.split(/\s+/).length / voiceoverText.split(/\s+/).length) * 100)
+            : 35,
+          captions:             fv.captions !== false,
+          volume:               fv.volume || 'medium',
+          narrator_transition:  fv.narrator_transition || '',
+        };
+      })() : null,
       transition:          ns.transition || null,
       globe_focus:         thread.globeFocus
                              ? { lat: thread.globeFocus.lat, lng: thread.globeFocus.lng, zoom: 2.5 }

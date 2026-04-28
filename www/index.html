@@ -6024,18 +6024,10 @@ button.arcCtxSegDot,
   from { opacity: 0; transform: translate(-50%, calc(-100% - 6px)) scale(0.92); }
   to   { opacity: 1; transform: translate(-50%, calc(-100% - 14px)) scale(1); }
 }
-#countryFan::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  bottom: -7px;
-  width: 10px; height: 10px;
-  transform: translateX(-50%) rotate(45deg);
-  background: rgba(6, 8, 14, 0.94);
-  border-right: 1px solid rgba(255,190,80,0.35);
-  border-bottom: 1px solid rgba(255,190,80,0.35);
-  box-shadow: 2px 2px 10px rgba(0,0,0,0.4);
-}
+/* Bubble-tail arrow removed — the fan no longer needs one because
+   the leader-line + anchor-dot already point at the click. The old
+   amber-glass arrow no longer fits the slimmer .flowNodeLabel look. */
+#countryFan::after { display: none; }
 /* Flipped placement — fan opens BELOW the tap point when there isn't
    enough room above (e.g. tap near the top of the viewport). JS adds
    .cfBelow when it detects the clip; mirror the transform + arrow. */
@@ -6047,118 +6039,83 @@ button.arcCtxSegDot,
   from { opacity: 0; transform: translate(-50%, 6px) scale(0.92); }
   to   { opacity: 1; transform: translate(-50%, 14px) scale(1); }
 }
-#countryFan.cfBelow::after {
-  bottom: auto;
-  top: -7px;
-  border-right: none;
-  border-bottom: none;
-  border-left: 1px solid rgba(255,190,80,0.35);
-  border-top:  1px solid rgba(255,190,80,0.35);
-  box-shadow: -2px -2px 10px rgba(0,0,0,0.4);
-}
+#countryFan.cfBelow::after { display: none; }
 
-/* Leader lines from each fan card to its city's screen position. */
+/* ── City fan — labels styled to match the flow-arc node labels
+   (.flowNodeLabel at line ~32097). The earlier dedicated styling was
+   bigger and more decorative (140px min-width + amber-glass card +
+   bubble-tail arrow) — visually inconsistent with the rest of the
+   globe-overlay label family. Now they share the small, tight
+   .flowNodeLabel aesthetic so every label-on-globe family reads the
+   same. The leader line + anchor dot also follow the flow-arc
+   leader pattern. */
 #cityFanLineSvg .cfLeader {
   fill: none;
-  stroke: rgba(255,190,80,0.40);
-  stroke-width: 1.4;
+  stroke: rgba(255,200,120,0.75);
+  stroke-width: 1.2;
   stroke-linecap: round;
-  stroke-dasharray: 3 4;
-  filter: drop-shadow(0 0 4px rgba(255,180,60,0.30));
-  animation: cfLeaderDash 1.4s linear infinite;
+  stroke-dasharray: 4 3;
 }
 #cityFanLineSvg .cfLeader.is-primary {
-  stroke: rgba(255,210,120,0.75);
-  stroke-width: 1.7;
-  stroke-dasharray: none;
-  filter: drop-shadow(0 0 6px rgba(255,200,100,0.55));
-  animation: none;
+  stroke: rgba(255,220,140,0.95);
+  stroke-width: 1.4;
 }
 #cityFanLineSvg .cfLeader.is-hover {
-  stroke: rgba(255,235,170,0.95);
-  stroke-width: 2.0;
+  stroke: rgba(255,235,170,1);
+  stroke-width: 1.8;
   stroke-dasharray: none;
-  filter: drop-shadow(0 0 10px rgba(255,210,120,0.85));
 }
-@keyframes cfLeaderDash {
-  to { stroke-dashoffset: -14; }
-}
-#cityFanLineSvg .cfLeaderDot {
-  fill: none;
-  stroke: rgba(255,190,80,0.55);
-  stroke-width: 1.4;
-  filter: drop-shadow(0 0 5px rgba(255,180,60,0.45));
-  animation: cfLeaderDotPulse 1.3s ease-in-out infinite;
-}
-#cityFanLineSvg .cfLeaderDot.is-primary {
-  stroke: rgba(255,220,140,0.95);
-  stroke-width: 1.7;
-  filter: drop-shadow(0 0 8px rgba(255,200,100,0.80));
-}
-#cityFanLineSvg .cfLeaderDot.is-hover {
-  stroke: rgba(255,240,180,1);
-  stroke-width: 2.1;
-  filter: drop-shadow(0 0 12px rgba(255,225,140,1));
-  animation: none;
-}
-@keyframes cfLeaderDotPulse {
-  0%,100% { transform: scale(1);    opacity: 0.55; }
-  50%     { transform: scale(1.18); opacity: 0.95; }
-}
-#cityFanLineSvg .cfLeaderDot {
-  transform-origin: center;
-  transform-box: fill-box;
+/* The anchor dot is now ONE per fan (rendered at the click point) so
+   the dot styling is simpler — no per-city pulse, just a clean
+   warm-amber circle with white rim matching the flow-arc leader dot. */
+#cityFanLineSvg .cfAnchorDot {
+  fill: rgba(255,200,120,0.9);
+  stroke: rgba(255,255,255,0.9);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 6px rgba(255,200,120,0.5));
 }
 .countryFanCard {
   pointer-events: all;
-  min-width: 140px;
-  max-width: 240px;
-  background: rgba(6, 8, 14, 0.94);
-  border: 1px solid rgba(255,190,80,0.35);
-  border-radius: 10px;
-  padding: 8px 14px;
-  color: #ffbe50;
-  /* Match the ambient-headline font (.ahHeadlineEl): same body stack,
-     12.5px / 600 / normal case. Was previously 13px which was a touch
-     larger than the ambient headlines and the hover card. */
+  /* Mirrors .flowNodeLabel — see line ~32097. */
+  background: rgba(6,10,20,0.82);
+  border: 1px solid rgba(255,180,80,0.28);
+  border-radius: 8px;
+  padding: 5px 9px;
   font-family: inherit;
-  font-size: 12.5px;
+  color: rgba(255,255,255,0.94);
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.03em;
-  text-shadow: 0 0 8px rgba(255,180,60,0.4);
+  letter-spacing: 0.02em;
+  line-height: 1.35;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  transition: background 0.13s, border-color 0.13s, box-shadow 0.13s, transform 0.1s;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45),
-              inset 0 1px 0 rgba(255,200,100,0.08);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  gap: 8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 200px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 18px rgba(255,180,80,0.06);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  transition: background 0.13s, border-color 0.13s, transform 0.1s;
 }
 .countryFanCard:hover {
-  background: rgba(255,190,80,0.14);
-  border-color: rgba(255,210,120,0.70);
-  box-shadow: 0 8px 22px rgba(0,0,0,0.55),
-              0 0 18px rgba(255,180,60,0.22),
-              inset 0 1px 0 rgba(255,220,140,0.16);
+  background: rgba(255,180,80,0.14);
+  border-color: rgba(255,210,120,0.55);
 }
 .countryFanCard:active { transform: scale(0.97); }
 .countryFanCard.primary {
-  border-color: rgba(255,210,120,0.70);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45),
-              0 0 14px rgba(255,180,60,0.25),
-              inset 0 1px 0 rgba(255,220,140,0.14);
+  border-color: rgba(255,210,120,0.50);
 }
 .countryFanCardDist {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 500;
-  color: rgba(255,190,80,0.50);
-  margin-left: 6px;
+  color: rgba(255,200,140,0.60);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   flex-shrink: 0;
 }
 
@@ -9533,6 +9490,97 @@ button.arcCtxSegDot,
       z-index: 100005 !important;
     }
 
+    /* ── Briefing label restyle — match the flow-arc node label look
+       (.flowNodeLabel at line ~32097) so the labels that appear during
+       a briefing read like the small ORIGIN/DEST cards on the thread &
+       line flow arcs, rather than the bigger desktop hover-card. The
+       card structure (name dot + name + optional country + population)
+       is reused; only sizing / palette / shadow change.
+       Specificity: body.briefing-active #hoverCard.briefing-forced
+       (0,2,1) beats the bare .hoverCard rule (0,1,0). */
+    body.briefing-active #hoverCard.briefing-forced {
+      max-width: 180px;
+      min-width: 0;
+      padding: 5px 9px;
+      background: rgba(6,10,20,0.82);
+      border: 1px solid rgba(255,180,80,0.28);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 18px rgba(255,180,80,0.06);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+    /* Tighter, smaller title row — matches .flowNodeLabel .fnlName palette
+       (12px / 600 / leading 1.35) with the existing dot kept as an
+       eyebrow accent. */
+    body.briefing-active #hoverCard.briefing-forced .hoverCardName {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: none;
+      color: rgba(255,255,255,0.94);
+      line-height: 1.35;
+      margin-bottom: 0;
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardDot {
+      width: 4px; height: 4px;
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardCountry {
+      font-size: 9px;
+      color: rgba(255,200,140,0.85);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-top: 2px;
+      margin-bottom: 0;
+    }
+    body.briefing-active #hoverCard.briefing-forced .hoverCardPop {
+      font-size: 10px;
+      color: rgba(255,255,255,0.55);
+      margin-top: 1px;
+    }
+
+    /* ── Briefing leader line — match flow-arc leader palette: dashed
+       warm-amber stroke + anchor dot at the node end. The base
+       .hoverLine is a CSS-rotated div with transform-origin: left
+       center (so the "left" end is glued to the node, the "right" end
+       to the card edge). The card-end is repositioned every frame by
+       _briefingTrackHoverCard, and the rotation/length math in
+       positionHoverCard already keeps both ends accurately connected
+       — no JS changes needed for flexibility.
+       The dashed look is achieved via a repeating-linear-gradient
+       (browsers don't support stroke-dasharray on background images
+       directly, but a 4px dash + 3px gap pattern reads identically).
+       The ::before pseudo paints the small anchor circle exactly at
+       the node end. */
+    body.briefing-active #hoverLineEl.briefing-forced {
+      background: repeating-linear-gradient(
+        to right,
+        rgba(255,200,120,0.85) 0,
+        rgba(255,200,120,0.85) 4px,
+        transparent 4px,
+        transparent 7px
+      );
+      box-shadow: none;
+      height: 1.2px;
+      overflow: visible; /* let the anchor dot extend past the line edge */
+    }
+    body.briefing-active #hoverLineEl.briefing-forced::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      margin-left: -4px;
+      margin-top: -4px;
+      border-radius: 50%;
+      background: rgba(255,200,120,0.9);
+      border: 1px solid rgba(255,255,255,0.9);
+      box-shadow: 0 0 6px rgba(255,200,120,0.5);
+      /* Counter-rotate the dot so it stays a clean circle even when the
+         parent line is rotated to the angle between node and card. */
+      transform: none;
+    }
+
     /* ── Vertical View Sidebar ── */
     #viewSidebar {
       position: fixed;
@@ -9850,6 +9898,20 @@ button.arcCtxSegDot,
       .nfCardSource,
       .nfCardOrigin,
       .adpMeta             { font-size: var(--t-xs); }
+
+      /* Briefing intro X — keep circular on mobile. The shared
+         `button { min-height: var(--tap-min) }` rule at line 9794
+         forces 44px height, but the .bIntroClose default width is
+         36px — so it renders as a 36×44 vertical ellipse. Override
+         with two-class specificity (.bIntroOverlay .bIntroClose ⇒
+         0,2,0 beats the bare `button` rule's 0,0,1) and clamp BOTH
+         width and min-width to match the height. Bumped to 44px to
+         meet the tap-target floor at the same time. */
+      .bIntroOverlay .bIntroClose {
+        width: 44px; height: 44px;
+        min-width: 44px; min-height: 44px;
+        font-size: 16px;
+      }
 
       /* Briefing control buttons — sized for mobile.
          Scoped under .bControls so these beat the later default rules
@@ -13413,14 +13475,20 @@ window.__arcCtxSegmented = (function() {
                min="0.2" max="4" step="0.1" value="1" />
       </div>
 
-      <!-- Node labels toggle -->
-      <div class="flowPanelRow" style="align-items:center;gap:6px;">
-        <span class="flowLabel">Labels</span>
-        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex:1;">
-          <input type="checkbox" id="flowLabelsToggle"
-                 style="width:15px;height:15px;accent-color:rgba(80,255,160,1);cursor:pointer;" />
-          <span style="font-size:10px;color:rgba(255,255,255,0.6);">Show origin &amp; destination</span>
-        </label>
+      <!-- Node labels toggle — HIDDEN in the News Flows panel by request.
+           Earlier work made __flowNotifyCurrentFlows a no-op for the
+           news-flows arc set (which produces hundreds of labels and
+           freezes the browser), so the toggle was already inert here.
+           Now we hide it entirely so the user can't even attempt to
+           use it from this surface.
+           The element stays in the DOM (display:none) so the thread /
+           article / line flow paths can still resolve
+           #flowLabelsToggle from JS — they need it for the ctx-card
+           checkbox (#flowCtxLabelsToggle) bidirectional sync. The
+           ctx-card checkbox is the user-facing toggle for those flow
+           types, and it still works exactly as before. -->
+      <div class="flowPanelRow" style="display:none;" aria-hidden="true">
+        <input type="checkbox" id="flowLabelsToggle" />
       </div>
 
       <!-- Playback (individual mode only) -->
@@ -17929,6 +17997,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const fanEl = document.getElementById('countryFan');
         if (!fanEl) return;
         fanEl.innerHTML = '';
+        // Pause ambient rotation while the fan is up. Without this,
+        // the globe keeps rotating underneath the fan and the cities
+        // the user is choosing between drift away from the click
+        // point — the fan ends up describing a stale snapshot. Resume
+        // is wired into both the pick path (commitCityHit / pointerup
+        // on a card) and the dismiss paths (hideFan / outside-click /
+        // touchstart-elsewhere).
+        try {
+          if (typeof pauseAmbientRotation === 'function') pauseAmbientRotation();
+        } catch (_) {}
         const visible = hits.slice(0, 6);
         const cardEls = [];
         visible.forEach((h, i) => {
@@ -17948,13 +18026,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             ev.preventDefault();
             fanEl.classList.remove('visible');
             hideCityFanLines();
+            // Resume ambient — the user has chosen, so the fan is done.
+            try {
+              if (typeof scheduleAmbientResume === 'function') scheduleAmbientResume();
+            } catch (_) {}
             commitCityHit(h);
           };
           card.addEventListener('click', onPick);
           card.addEventListener('pointerup', onPick);
           // Hover/touch-active highlights the corresponding leader line
-          // and its city dot ring so the user gets visual confirmation
-          // of which dot the card refers to.
+          // so the user gets visual confirmation of which dot the card
+          // refers to.
           card.addEventListener('pointerenter', () => highlightCityFanLine(i));
           card.addEventListener('pointerleave', () => highlightCityFanLine(-1));
           fanEl.appendChild(card);
@@ -17968,9 +18050,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         fanEl.style.left = x + 'px';
         fanEl.style.top  = y + 'px';
         fanEl.classList.add('visible');
-        // Render leader lines after the fan is visible so we can measure
-        // each card's actual on-screen rect.
-        requestAnimationFrame(() => drawCityFanLines(cardEls, visible));
+        // Render leader lines anchored at the click point (x, y) — see
+        // drawCityFanLines for why we anchor at the click rather than
+        // at each city's projected dot.
+        requestAnimationFrame(() => drawCityFanLines(cardEls, visible, x, y));
       }
 
       // ── Leader-line overlay ─────────────────────────────────────────
@@ -17993,38 +18076,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
           while (_cityFanLineSvg.firstChild) _cityFanLineSvg.removeChild(_cityFanLineSvg.firstChild);
         }
       }
-      function drawCityFanLines(cardEls, hits) {
+      // Exposed so the polygon-layer's hideFan() (in a different IIFE)
+      // can tear down the leader-line SVG when the city/country fan
+      // dismisses without picking.
+      window.hideCityFanLines = hideCityFanLines;
+      function drawCityFanLines(cardEls, hits, anchorX, anchorY) {
+        // Single shared anchor at the CLICK POINT (anchorX, anchorY).
+        // The previous version drew per-line anchors at each city's
+        // projected screen position, which (a) drifted with ambient
+        // rotation and (b) didn't match the user's mental model — the
+        // user clicked a single spot, so the lines should all
+        // originate from that spot. Pausing ambient rotation in
+        // showCityFanUI keeps the cities the user is choosing between
+        // visually fixed too, so the lines stay accurate without
+        // per-frame re-projection.
         const svg = ensureCityFanLineSvg();
         while (svg.firstChild) svg.removeChild(svg.firstChild);
         svg.setAttribute('viewBox', `0 0 ${window.innerWidth} ${window.innerHeight}`);
+        const cax = Number(anchorX);
+        const cay = Number(anchorY);
+        const haveAnchor = Number.isFinite(cax) && Number.isFinite(cay);
         for (let i = 0; i < cardEls.length; i++) {
           const card = cardEls[i];
-          const h = hits[i];
-          if (!card || !h || !Number.isFinite(h.sx) || !Number.isFinite(h.sy)) continue;
+          if (!card) continue;
           const r = card.getBoundingClientRect();
-          // Anchor the line on whichever card edge is nearest the dot
-          // — produces a clean leader that doesn't cross the card.
-          const anchorX = h.sx <= r.left + r.width / 2 ? r.left : r.right;
-          const anchorY = r.top + r.height / 2;
-          // Quadratic curve so the line gently bends toward the dot
-          // rather than lying flat on the screen.
-          const dx = h.sx - anchorX;
-          const dy = h.sy - anchorY;
-          const cx = anchorX + dx * 0.35 + (dx >= 0 ? 12 : -12);
-          const cy = anchorY + dy * 0.65;
+          // Pick whichever card edge is nearest the click point — gives
+          // a clean leader that doesn't cross the card.
+          if (!haveAnchor) continue;
+          const cardEdgeX = cax <= r.left + r.width / 2 ? r.left : r.right;
+          const cardEdgeY = r.top + r.height / 2;
+          // Gentle quadratic bend from anchor → card edge.
+          const dx = cardEdgeX - cax;
+          const dy = cardEdgeY - cay;
+          const cx = cax + dx * 0.65 + (dx >= 0 ? 8 : -8);
+          const cy = cay + dy * 0.35;
           const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          path.setAttribute('d', `M ${anchorX.toFixed(1)} ${anchorY.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${h.sx.toFixed(1)} ${h.sy.toFixed(1)}`);
+          path.setAttribute('d', `M ${cax.toFixed(1)} ${cay.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${cardEdgeX.toFixed(1)} ${cardEdgeY.toFixed(1)}`);
           path.setAttribute('class', 'cfLeader' + (i === 0 ? ' is-primary' : ''));
           path.setAttribute('data-card-idx', String(i));
-          // Target dot ring at the city node — pulses to draw the eye.
-          const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          dot.setAttribute('cx', h.sx.toFixed(1));
-          dot.setAttribute('cy', h.sy.toFixed(1));
-          dot.setAttribute('r', i === 0 ? '6' : '5');
-          dot.setAttribute('class', 'cfLeaderDot' + (i === 0 ? ' is-primary' : ''));
-          dot.setAttribute('data-card-idx', String(i));
           svg.appendChild(path);
-          svg.appendChild(dot);
+        }
+        // Single anchor dot at the click point.
+        if (haveAnchor) {
+          const anchorDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          anchorDot.setAttribute('cx', cax.toFixed(1));
+          anchorDot.setAttribute('cy', cay.toFixed(1));
+          anchorDot.setAttribute('r', '5');
+          anchorDot.setAttribute('class', 'cfAnchorDot');
+          svg.appendChild(anchorDot);
         }
         svg.style.display = 'block';
       }
@@ -26681,6 +26780,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
                    y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
         }
 
+        // Tunables for the rewritten layer (draw-in + comet-trail).
+        const DRAW_IN_DUR = 1.0;   // seconds — matches setupFlowAnimation's
+                                   // INDIVIDUAL_TRAVEL_MIN so 2D map arcs
+                                   // reveal at the same pace as globe arcs.
+        const SAMPLE_N    = 32;    // bezier polyline samples for partial draw
+        const TAIL_FRAC   = 0.20;  // gradient comet length, fraction of curve
+        const TAIL_SEGS   = 16;    // segments composing the comet trail
+
+        // Sample N+1 points along a quadratic bezier from tStart to tEnd.
+        function sampleBezRange(p0, p1, p2, count, tStart, tEnd) {
+          const out = [];
+          for (let i = 0; i <= count; i++) {
+            const t = tStart + (tEnd - tStart) * (i / count);
+            out.push(bez(p0, p1, p2, t));
+          }
+          return out;
+        }
+
+        // Mutate the trailing alpha component of an "rgba(...)" string.
+        // Keeps the leading rgb channels intact so the gradient hue
+        // matches the arc stroke color exactly.
+        function withAlpha(rgba, alpha) {
+          return rgba.replace(/,\s*[\d.]+\)$/, `,${alpha.toFixed(3)})`);
+        }
+
         Map2D.addLayer((api, ctx) => {
           const arcs = (typeof window.__flowGetArcObjects === "function")
             ? window.__flowGetArcObjects() : null;
@@ -26688,7 +26812,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const W = api.state.width;
           const wW = api.worldW(), wH = api.worldH();
           const baseX = -(((api.state.scrollX % wW) + wW) % wW);
+          // CRITICAL: yTop is the per-frame vertical offset that anchors
+          // arcs to map-space. The previous version omitted this — only
+          // `xOff` (scrollX) was applied, so when the user vertical-
+          // scrolled or zoomed the arcs stayed pinned to canvas-Y while
+          // the cities moved with the map. yTop matches the cities'
+          // projection (line ~21000) so arc endpoints + city dots stay
+          // glued under any pan/zoom.
           const yTop  = -api.state.scrollY;
+          const now   = performance.now();
 
           for (const arc of arcs) {
             const flow = arc && arc.flow;
@@ -26702,7 +26834,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (dlon >  180) dstLon -= 360;
             if (dlon < -180) dstLon += 360;
 
-            // Map to world canvas coords.
+            // World-canvas coords (raw — yTop applied at draw time).
             const sx = ((srcLon + 180) / 360) * wW;
             const sy = ((90 - src.lat) / 180) * wH;
             const dx = ((dstLon + 180) / 360) * wW;
@@ -26714,33 +26846,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const lx = dx - sx, ly = dy - sy;
             const len = Math.hypot(lx, ly);
             if (len < 1) continue;
-            // Perpendicular unit vector (90° CCW from the chord).
+            // Perpendicular unit vector, biased upward (see prior comment).
             let px = -ly / len, py = lx / len;
-            // BIAS THE APEX UPWARD. Without this, an east-pointing chord
-            // (e.g. London → Tokyo) gets perpendicular (0, +1), so its
-            // apex sits BELOW the chord on the canvas and the arc looks
-            // like it's leaving from the wrong side of each country —
-            // exactly the "dislodged" look reported under zoom. Flipping
-            // when py > 0 forces every chord to bow toward the top edge
-            // of the screen, matching the globe's "arc lifts off the
-            // surface" aesthetic.
             if (py > 0) { px = -px; py = -py; }
 
             const heightMult = (flow._tier === "primary") ? 0.75 : (flow._tier === "secondary" ? 1.15 : 1.0);
-            // Apex is in WORLD pixels and scales linearly with chord
-            // length, so the apex/chord ratio (the visible arc shape)
-            // stays invariant under zoom. Lane offset spreads parallel
-            // arcs (same src+dst) so they fan out instead of stacking —
-            // the globe does this in 3D via the same field. Treat
-            // __laneOffset as a fraction-of-chord perpendicular shift to
-            // keep the spread consistent at all zoom levels.
             const apex      = len * ARC_HEIGHT_FRAC * heightMult;
             const laneShift = (flow.__laneOffset || 0) * len * 0.18;
             const cx = mx + px * (apex + laneShift);
             const cy = my + py * (apex + laneShift);
 
-            // Particle progress along the curve. Static (aggregate) arcs
-            // loop continuously; transient arcs use their own progression.
+            // ── Draw-in progress (per-arc reveal animation) ─────────────
+            // First render of a given arc stamps _mapDrawStartMs; the
+            // reveal extends from that timestamp over DRAW_IN_DUR. Once
+            // drawT reaches 1, the comet trail takes over. Reset on
+            // arc reset (clearArcs) is implicit — fresh arcs get a fresh
+            // _mapDrawStartMs because the property doesn't exist yet.
+            if (arc._mapDrawStartMs == null) arc._mapDrawStartMs = now;
+            const drawAge = (now - arc._mapDrawStartMs) / 1000;
+            const drawT   = Math.min(1, drawAge / DRAW_IN_DUR);
+
+            // Particle progress along the curve (only meaningful after
+            // draw-in completes, at which point we render the trail).
             const dur  = Math.max(0.001, arc.travelDuration || 4);
             const age  = arc.age || arc._elapsed || 0;
             const t    = (age % dur) / dur;
@@ -26748,39 +26875,84 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const colors = colorFor(flow);
             const w = widthFor(flow, api.state.dpr);
 
+            const p0 = { x: sx, y: sy };
+            const p1 = { x: cx, y: cy };
+            const p2 = { x: dx, y: dy };
+
             ctx.save();
             for (let tile = -1; tile <= 1; tile++) {
               const xOff = baseX + tile * wW;
-              // Skip far off-screen tiles.
               if (xOff + Math.max(sx, cx, dx) < 0 - wW) continue;
               if (xOff + Math.min(sx, cx, dx) > W + wW) continue;
-              // Glow halo behind the line.
+
+              // Sample the bezier polyline up to the current draw-in
+              // progress. This gives a "stroke into existence" effect
+              // matching the globe's arc reveal — instead of the arc
+              // popping in fully formed.
+              const samples = sampleBezRange(p0, p1, p2, SAMPLE_N, 0, drawT);
+              if (samples.length < 2) continue;
+
+              // Glow halo (slightly wider, behind the stroke).
               ctx.lineWidth   = w * 3.5;
               ctx.strokeStyle = colors.glow;
               ctx.lineCap     = "round";
+              ctx.lineJoin    = "round";
               ctx.beginPath();
-              ctx.moveTo(xOff + sx, sy);
-              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.moveTo(xOff + samples[0].x, yTop + samples[0].y);
+              for (let i = 1; i < samples.length; i++) {
+                ctx.lineTo(xOff + samples[i].x, yTop + samples[i].y);
+              }
               ctx.stroke();
-              // Stroke
+
+              // Solid stroke on top.
               ctx.lineWidth   = w;
               ctx.strokeStyle = colors.stroke;
               ctx.beginPath();
-              ctx.moveTo(xOff + sx, sy);
-              ctx.quadraticCurveTo(xOff + cx, cy, xOff + dx, dy);
+              ctx.moveTo(xOff + samples[0].x, yTop + samples[0].y);
+              for (let i = 1; i < samples.length; i++) {
+                ctx.lineTo(xOff + samples[i].x, yTop + samples[i].y);
+              }
               ctx.stroke();
-              // Particle orb
-              const p = bez({x: sx, y: sy}, {x: cx, y: cy}, {x: dx, y: dy}, t);
-              const orbR = w * 2.5;
-              const grad = ctx.createRadialGradient(xOff + p.x, p.y, 0, xOff + p.x, p.y, orbR);
-              grad.addColorStop(0, colors.orb);
-              // Fade to transparent green (or blue for secondary) instead of
-              // white so the orb halo blends with the arc color cleanly.
-              grad.addColorStop(1, colors.glow.replace(/,\s*[\d.]+\)$/, ',0)'));
-              ctx.fillStyle = grad;
-              ctx.beginPath();
-              ctx.arc(xOff + p.x, p.y, orbR, 0, Math.PI * 2);
-              ctx.fill();
+
+              // ── Comet trail ─────────────────────────────────────────
+              // Once the arc has fully drawn in, replace the static
+              // single-point particle with a multi-segment trail whose
+              // alpha rises from tail (transparent) to head (full). The
+              // segments are quadratic-bezier samples between t-tail
+              // and t, so the trail bends along the arc's curvature.
+              // Cleaner than a moving radial dot — reads as "energy
+              // flowing along the arc" rather than "ball rolling along".
+              if (drawT >= 1) {
+                const tHead = t;
+                const tTail = Math.max(0, tHead - TAIL_FRAC);
+                if (tHead > tTail) {
+                  const trail = sampleBezRange(p0, p1, p2, TAIL_SEGS, tTail, tHead);
+                  for (let i = 0; i < trail.length - 1; i++) {
+                    // Linear ease from 0 (tail end) to 1 (head end).
+                    const segMid = (i + 0.5) / trail.length;
+                    const alpha  = Math.max(0, Math.min(1, segMid)) * 0.95;
+                    ctx.lineWidth   = w * 2.0;
+                    ctx.strokeStyle = withAlpha(colors.orb, alpha);
+                    ctx.beginPath();
+                    ctx.moveTo(xOff + trail[i].x,     yTop + trail[i].y);
+                    ctx.lineTo(xOff + trail[i+1].x,   yTop + trail[i+1].y);
+                    ctx.stroke();
+                  }
+                  // Bright tip at the head — small dot to anchor the eye.
+                  const head = trail[trail.length - 1];
+                  const tipR = w * 1.8;
+                  const grad = ctx.createRadialGradient(
+                    xOff + head.x, yTop + head.y, 0,
+                    xOff + head.x, yTop + head.y, tipR
+                  );
+                  grad.addColorStop(0, colors.orb);
+                  grad.addColorStop(1, withAlpha(colors.orb, 0));
+                  ctx.fillStyle = grad;
+                  ctx.beginPath();
+                  ctx.arc(xOff + head.x, yTop + head.y, tipR, 0, Math.PI * 2);
+                  ctx.fill();
+                }
+              }
             }
             ctx.restore();
           }
@@ -37347,9 +37519,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
   text-transform: uppercase;
   color: rgba(255, 224, 180, 0.94);
   text-shadow: 0 0 14px rgba(255, 184, 92, 0.32);
-  white-space: nowrap;
+  /* Allow the title to wrap onto a second line instead of cutting off
+     with an ellipsis. The previous nowrap+ellipsis approach was
+     hiding meaningful trailing words on long thread titles
+     ("Chinese-Russian Coordination on Iran Sanctions Pushback"
+     was getting clipped to "Chinese-Russian Coordina…"). Cap at 2
+     lines so very long titles still don't blow up vertically and
+     overlap the segment dots. line-height tightened slightly so two
+     lines fit comfortably under the safe-area cap. */
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.25;
   text-align: center;
   opacity: 0;
   transform: translate(-50%, -14px);
@@ -37736,8 +37920,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
   position: fixed !important;
   left: 50% !important; top: 50% !important;
   transform: translate(-50%, -50%) !important;
+  /* Different intrinsic content shape per media type:
+     - YouTube iframe   = horizontal 16:9 video → wide
+     - Twitter card     = vertical text card    → narrow + tall
+     The width is overridden in the .bAPTwitterCard variant below so
+     each gets the size that fits its content without distortion. */
   width: min(80vw, 1100px) !important;
   max-width: none !important;
+  /* Cap the card height so it never pushes off screen on short
+     viewports (mobile landscape, especially). 80vh leaves breathing
+     room above the briefing controls and below the segment title. */
+  max-height: 80vh !important;
   z-index: 100011 !important;
   opacity: 0;
   transition: opacity 0.6s ease, transform 0.6s ease;
@@ -37746,12 +37939,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .bFocalVideo.focal-in {
   opacity: 1;
 }
-.bFocalVideo iframe, .bFocalVideo .bTwitterEmbed {
+/* YouTube iframe — keep the 16:9 video shape. */
+.bFocalVideo iframe {
   width: 100% !important;
   aspect-ratio: 16/9 !important;
   min-height: 200px !important;
   border-radius: 12px;
   box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 120px rgba(96,200,255,0.08);
+}
+/* Twitter focal — twitter cards are vertical text/media cards, not
+   16:9 video. Forcing aspect-ratio: 16/9 (the previous rule) made
+   them squashed and unreadable. Now: max width 480px (matches the
+   widget's natural max), let height be intrinsic, scroll if too tall. */
+.bFocalVideo.bAPTwitterCard {
+  width: min(480px, 92vw) !important;
+}
+.bFocalVideo .bTwitterEmbed {
+  width: 100% !important;
+  /* No forced aspect ratio — let the embedded twitter widget render
+     at its native height. max-height keeps things bounded if the
+     tweet has unusually tall media. */
+  max-height: 70vh;
+  overflow-y: auto;
+  border-radius: 12px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.8), 0 0 120px rgba(96,200,255,0.08);
+  background: rgba(8,12,24,0.96);
 }
 .bFocalVideo .bAPCardBody { display: none; }
 /* Dim the background during focal video — sits BEHIND the video card */
@@ -38410,7 +38622,23 @@ body.ticker-active .gTickerLabel {
 
 /* ── Briefing Launcher ── */
 .bLauncher {
-  position: fixed; inset: 0; z-index: 100001;
+  position: fixed;
+  /* The ENTIRE panel — including its dim/backdrop — sits inside the
+     iOS safe-area. inset:0 was covering the notch / Dynamic Island
+     and the bottom tab bar with the dimmer; on a notched iPhone that
+     read like the panel was extending behind the system UI. Now the
+     overlay's bounding box is bounded by the safe-area insets on top
+     and the page-nav + safe-area-inset-bottom on bottom, so the dim
+     doesn't reach into system-occluded regions and the panel feels
+     properly contained.
+     left/right kept at 0 because horizontal safe-area insets are
+     usually 0 on portrait iOS and dimming the full width matches the
+     visual expectation for an overlay. */
+  top: env(safe-area-inset-top, 0px);
+  bottom: calc(var(--page-nav-height, 0px) + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  z-index: 100001;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,0.75); backdrop-filter: blur(10px);
   opacity: 0; pointer-events: none;
@@ -38418,7 +38646,12 @@ body.ticker-active .gTickerLabel {
 }
 .bLauncher.open { opacity: 1; pointer-events: all; }
 .bLauncherInner {
-  width: min(480px, 94vw); max-height: 90vh; overflow-y: auto;
+  width: min(480px, 94vw);
+  /* The parent .bLauncher already sized itself to the safe-area
+     region, so 90vh would over-shoot. 90% of the parent's available
+     height keeps the card comfortably within. */
+  max-height: 90%;
+  overflow-y: auto;
   background: rgba(8,12,24,0.96);
   border: 1px solid rgba(255,255,255,0.10);
   border-radius: 18px; padding: 24px;
@@ -38736,7 +38969,18 @@ body.ticker-active .gTickerLabel {
   const API           = 'https://earth-wjr6.onrender.com';
   const WORDS_PER_MIN = 148;
   const VIDEO_PAUSE_SECS = 18;
-  const SEGMENT_BUFFER_MS = 900;  // pause between non-video segments (ms)
+  // Pause between non-video segments. Each per-segment MP3 already
+  // contains the segment's voiceover AND its trailing transition
+  // sentence ("Now, to Beijing..."), so audio.ended fires AFTER the
+  // transition completes. The buffer is purely a breath-gap between
+  // narrator beats. The previous 900ms felt unpredictably long: a
+  // transition like "Now, to Beijing..." cues the listener for an
+  // immediate continuation, but a near-second of silence followed
+  // before the next segment's voiceover began — breaking the flow
+  // of her speech. 200ms gives a natural breath without breaking
+  // continuity. Keep VIDEO_PAUSE_SECS at 18s — that's the focal-
+  // video playback budget, not a transition pause.
+  const SEGMENT_BUFFER_MS = 200;  // pause between non-video segments (ms)
 
   let episode       = null;
   let segIdx        = 0;
@@ -39742,15 +39986,18 @@ body.ticker-active .gTickerLabel {
                 // overwrites the heat sphere.
                 startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), hmResolved);
               } else {
-                // YouTube featured-video moments: loadArticlePanel
-                // suppressed the pending placeholder so two article
-                // cards filled the side panel until now. Mount the
-                // card just-in-time so startFocalVideo has its anchor
-                // element. No-op for non-YouTube paths (Twitter card
-                // is already mounted via makeVideoCard).
-                if (mediaType === 'youtube' && ytId
-                    && !document.getElementById('bVideoCard')) {
-                  _mountPendingVideoCard(seg, ytId, fStart, fEnd);
+                // Featured-media moments: loadArticlePanel now suppresses
+                // the pending placeholder for both YouTube AND Twitter
+                // (so two article cards fill the side panel until now).
+                // Mount the appropriate card just-in-time so
+                // startFocalVideo has its anchor element. Heatmap
+                // returns earlier in this branch and never reaches here.
+                if (!document.getElementById('bVideoCard')) {
+                  if (mediaType === 'youtube' && ytId) {
+                    _mountPendingVideoCard(seg, ytId, fStart, fEnd);
+                  } else if ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && tweetUrl) {
+                    _mountPendingTwitterCard(seg, tweetUrl, mediaType);
+                  }
                 }
                 // YouTube + Twitter both flow through startFocalVideo; it
                 // dispatches on the card's data-media-type attribute.
@@ -40692,6 +40939,51 @@ body.ticker-active .gTickerLabel {
     else panel.appendChild(card);
   }
 
+  // Twitter analogue of _mountPendingVideoCard. Mounts a placeholder
+  // twitter card (with the loading state) just-in-time before the
+  // focal trigger fires, so loadArticlePanel could suppress the side
+  // panel pre-mount entirely. Same anchor/restoration contract as the
+  // YouTube version: the focal sequence reparents the card to <body>,
+  // and endFocalVideo restores it to origParent → it lands back inside
+  // the article panel after the focal pass (briefly visible there
+  // before the next segment overwrites it). visibility:hidden during
+  // the insertion-to-takeover gap matches the YouTube pattern.
+  function _mountPendingTwitterCard(seg, twitterUrl, mediaType) {
+    if (document.getElementById('bVideoCard')) return; // idempotent
+    const panel = document.getElementById('bArticlePanel');
+    if (!panel) return;
+    const vidDate = seg?.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
+    const tweetIdMatch = String(twitterUrl || '').match(/status\/(\d+)/);
+    const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
+    const isVideo = mediaType === 'twitter_video';
+    const card = document.createElement('div');
+    card.className = 'bAPCard bAPVideoCard bAPTwitterCard';
+    card.id = 'bVideoCard';
+    card.dataset.tweetId   = tweetId;
+    card.dataset.tweetUrl  = twitterUrl;
+    card.dataset.mediaType = mediaType;
+    card.style.visibility  = 'hidden';
+    card.innerHTML = `
+      <div id="bTwitterEmbed" class="bTwitterEmbed">
+        <div class="bTwitterLoading">Loading ${isVideo ? 'video' : 'post'}...</div>
+      </div>
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource" id="bVideoSource">X / Twitter</span>
+          <span class="bAPCardDate">${vidDate}</span>
+        </div>
+      </div>`;
+    const firstChild = panel.firstElementChild;
+    if (firstChild) panel.insertBefore(card, firstChild);
+    else panel.appendChild(card);
+    // Kick off the actual Twitter widget render. loadTwitterEmbed is
+    // safe-to-call regardless of whether the widget script has loaded
+    // yet; it lazily appends the script and renders into #bTwitterEmbed.
+    if (twitterUrl && typeof loadTwitterEmbed === 'function') {
+      loadTwitterEmbed(twitterUrl, 'bTwitterEmbed');
+    }
+  }
+
   function startFocalVideo(startSec, endSec, enableCaptions, volumeLevel) {
     const card = document.getElementById('bVideoCard');
     const scrim = document.getElementById('bFocalScrim');
@@ -40938,18 +41230,34 @@ body.ticker-active .gTickerLabel {
       //                    fill with rotating article cards until the
       //                    takeover happens.
       const fmCheck = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
-      const willTriggerFeaturedVideo = !!(fmCheck?.enabled && videoId
-        && (seg?.media_type || 'youtube') === 'youtube');
+      const segMediaType = seg?.media_type || 'youtube';
+      // willTriggerFeaturedMedia is true for ANY featured-moment media
+      // type (YouTube, twitter_post, twitter_video). Previously this
+      // was YouTube-only, so a featured Twitter media segment still
+      // pre-mounted a small twitter card in the side panel — when the
+      // focal trigger fired, that small card got enlarged in-place,
+      // which both: (a) showed the user a tiny twitter card for the
+      // first ~35% of the segment that they weren't supposed to see
+      // until the handoff, and (b) made the focal "takeover" feel
+      // like a stretch instead of a takeover.
+      // Now: side panel suppresses ALL featured media types until the
+      // trigger fires, then the appropriate _mountPending* helper
+      // creates the card just-in-time. Heatmap was already excluded
+      // (its makeVideoCard returns '').
+      const willTriggerFeaturedMedia = !!(fmCheck?.enabled && (
+        (videoId && segMediaType === 'youtube') ||
+        (twitterUrl && (segMediaType === 'twitter_post' || segMediaType === 'twitter_video'))
+      ));
       let sideContent = null;
       let sideVideoId = null;
       let sideArticleVideo = null;
-      if (videoId && !willTriggerFeaturedVideo) {
+      if (videoId && !willTriggerFeaturedMedia) {
         // Non-featured-moment YouTube — show the embed inline as before.
         sideContent = 'featured-video';
         sideVideoId = videoId;
-      } else if (twitterUrl && !willTriggerFeaturedVideo) {
+      } else if (twitterUrl && !willTriggerFeaturedMedia) {
         sideContent = 'twitter';
-      } else if (!willTriggerFeaturedVideo) {
+      } else if (!willTriggerFeaturedMedia) {
         const av = articles.find(a => a && a.video_id);
         if (av) {
           sideContent = 'article-video';
@@ -40957,7 +41265,7 @@ body.ticker-active .gTickerLabel {
           sideArticleVideo = av;
         }
       }
-      // willTriggerFeaturedVideo === true falls through with sideContent
+      // willTriggerFeaturedMedia === true falls through with sideContent
       // null, so two article slots fill the panel until the trigger.
 
       // Pool that feeds the rotating article slot(s). Drop the article
@@ -46965,7 +47273,20 @@ body.ticker-active .gTickerLabel {
 
   function hideFan() {
     if (!fanEl) return;
+    const wasVisible = fanEl.classList.contains('visible');
     fanEl.classList.remove('visible');
+    // Tear down the leader-line SVG so its dashed paths don't linger
+    // when the fan is dismissed without picking. (The pick path
+    // already does this in showCityFanUI's onPick.)
+    if (wasVisible && typeof window.hideCityFanLines === 'function') {
+      try { window.hideCityFanLines(); } catch (_) {}
+    }
+    // Resume ambient rotation — symmetric to the pause in showCityFanUI.
+    if (wasVisible) {
+      try {
+        if (typeof scheduleAmbientResume === 'function') scheduleAmbientResume();
+      } catch (_) {}
+    }
   }
 
   // Bridge for the 2D map (same disambiguation behaviour, separate listener).
