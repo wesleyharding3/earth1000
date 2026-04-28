@@ -20333,10 +20333,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // each multiplier directly drives perceived glow intensity.
               vec3 col = uColor * (1.05 + core * 0.85)
                        + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0);
-              // Alpha controls how much of `col` is added per pixel. With
+              // Alpha controls how much of col is added per pixel. With
               // additive we want this generous on the body of the arc
               // (so the line itself glows strongly) and even higher near
               // the leading edge (so the head pops).
+              // (Avoid backticks in comments — outer JS template literal.)
               float alpha = clamp(0.96 * radial + leadGlow * 0.55, 0.0, 1.0);
               gl_FragColor = vec4(col, alpha);
             }`
