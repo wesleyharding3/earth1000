@@ -10259,21 +10259,31 @@ button.arcCtxSegDot,
    it the row gets squeezed under flex pressure when ctx + graph are
    both open and the ctx text overlays the next row. */
 .kwi-trending-row {
-  /* See www/index.html for the long-form rationale. flex column +
-     flex-shrink:0 + min-height:0 + height:auto + overflow:visible
-     bullet-proofs the row's content-fit calc against parent flex
-     pressure, finally fixing the ctx-text-overlays-next-row bug. */
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  min-height: 0;
-  height: auto;
-  overflow: visible;
+  /* CRITICAL — see www/index.html for full rationale. !important
+     guards against stale cached stylesheets in production. */
+  display: flex !important;
+  flex-direction: column !important;
+  flex-shrink: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow: visible !important;
 }
-/* Safe-area gaps below the open context blurb and the expanded graph
-   panel — literal pixel separation from the next row. */
-.kwi-row-ctx.open { margin-bottom: 10px; }
-.kwi-trending-row .kwi-ref-interpanel { margin-bottom: 8px; }
+/* Combined wrapper — when the user has BOTH the graph AND the ctx
+   blurb open on the same keyword, both children live inside this
+   single flex column container. Built in JS at kwiTrendingClick. */
+.kwi-row-expansion {
+  display: flex !important;
+  flex-direction: column !important;
+  flex-shrink: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow: visible !important;
+  margin-bottom: 10px;
+}
+.kwi-row-expansion > .kwi-ref-interpanel { margin-bottom: 6px; }
+.kwi-row-expansion > .kwi-row-ctx.open  { margin-bottom: 0; }
+.kwi-row-ctx.open                       { margin-bottom: 10px; }
+.kwi-trending-row > .kwi-ref-interpanel { margin-bottom: 8px; }
 .kwi-row-ctx-btn {
   margin-left: 6px; width: 22px; height: 22px; flex-shrink: 0;
   border-radius: 6px; border: 1px solid rgba(139,92,246,0.35);

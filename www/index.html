@@ -10871,35 +10871,43 @@ button.arcCtxSegDot,
    overlay the next row. With shrink locked off the parent simply
    scrolls instead. */
 .kwi-trending-row {
-  /* CRITICAL — see comment at top of this block. The earlier
-     display:block + flex-shrink:0 was the right idea but not
-     bullet-proof: in a flex column parent, a block child's intrinsic
-     height calculation can still get bullied by flex-grow on
-     sibling rows pushing for more space. By making the row itself
-     a flex column with explicit content-fit, we GUARANTEE it grows
-     to contain item + interpanel + ctx, no matter the parent's
-     pressure.
-       - display: flex; flex-direction: column → strict child stacking
-       - flex-shrink: 0 → never compress this row
-       - min-height: 0 → don't let a stray min-content rule clamp us
-       - height: auto → grow to whatever the children need
-       - overflow: visible → no clipping under any circumstance
-     This finally fixes the "ctx text overlays next row when both
-     graph and ctx are open" bug. */
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  min-height: 0;
-  height: auto;
-  overflow: visible;
+  /* CRITICAL — flex column with explicit content-fit GUARANTEES the
+     row grows to contain its children. !important guards against
+     stale stylesheets in cached production builds: the user reported
+     the ctx text overlapping the rows below twice in a row, and the
+     prior CSS-only fix wasn't sticking. !important + the new
+     .kwi-row-expansion wrapper (built in JS at kwiTrendingClick) is
+     belt-and-suspenders. */
+  display: flex !important;
+  flex-direction: column !important;
+  flex-shrink: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow: visible !important;
 }
-/* Safe-area gap below the AI context blurb AND below the expanded
-   graph panel. Without these, a row with both open could still feel
-   like it bleeds into the next row visually even after the height
-   calc is correct. The margin-bottom is the literal "safe area"
-   the user asked for — pushes the next row down by a clear gap. */
-.kwi-row-ctx.open { margin-bottom: 10px; }
-.kwi-trending-row .kwi-ref-interpanel { margin-bottom: 8px; }
+/* Combined wrapper — when the user has both the graph AND the ctx
+   blurb open on the same keyword, both children live inside this
+   single flex column container. Cannot overlay each other (siblings
+   in a flex column stack vertically, period) and cannot overlay
+   the next row (the wrapper is inside the row, which is also a flex
+   column, which itself can't shrink past its content). */
+.kwi-row-expansion {
+  display: flex !important;
+  flex-direction: column !important;
+  flex-shrink: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  overflow: visible !important;
+  /* Safe-area gap below the entire expansion block — pushes the
+     next keyword row down with a clear visual margin. */
+  margin-bottom: 10px;
+}
+.kwi-row-expansion > .kwi-ref-interpanel { margin-bottom: 6px; }
+.kwi-row-expansion > .kwi-row-ctx.open  { margin-bottom: 0; }
+/* Legacy safe-area gaps for the direct-child case (when only one
+   of the two is open and it's a direct child of the row). */
+.kwi-row-ctx.open                     { margin-bottom: 10px; }
+.kwi-trending-row > .kwi-ref-interpanel { margin-bottom: 8px; }
 .kwi-row-ctx-btn {
   margin-left: 6px;
   width: 22px; height: 22px;
@@ -32997,32 +33005,67 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     _kwiCloseExpand();
 
-    // Toggle off if same keyword
+    // Helper: tear down a wrapper or legacy interpanel, but if it
+    // contains an open ctx blurb, move it back to the row so it stays
+    // visible when only the graph is being closed.
+    const _tearDownExpansion = (el) => {
+      if (!el) return;
+      const ctx = el.querySelector('.kwi-row-ctx.open');
+      if (ctx) {
+        // Restore as direct child of the row, after the .kwi-trending-item.
+        const trendingRow = el.parentElement;
+        if (trendingRow) trendingRow.appendChild(ctx);
+      }
+      el.remove();
+    };
+
+    // Toggle off if same keyword. Handle BOTH the new wrapper class
+    // (.kwi-row-expansion) and the legacy direct .kwi-ref-interpanel
+    // sibling so older cached pages keep working.
     const existing = row.nextElementSibling;
-    if (existing && existing.classList.contains('kwi-ref-interpanel')) {
-      existing.remove();
+    if (existing && (existing.classList.contains('kwi-row-expansion') || existing.classList.contains('kwi-ref-interpanel'))) {
+      _tearDownExpansion(existing);
       _kwiOpenRefKeyword = null;
       row.classList.remove('kwi-trending-item-active');
       return;
     }
-    // Close any other open interpanel
+    // Close any other open interpanel — at the parent (.kwi-trending-row)
+    // OR list level so opening a new keyword's expansion implicitly
+    // closes any previously-open one across rows.
     const container = row.parentElement;
-    if (container) {
-      container.querySelectorAll('.kwi-ref-interpanel').forEach(el => el.remove());
-      container.querySelectorAll('.kwi-trending-item-active').forEach(el => el.classList.remove('kwi-trending-item-active'));
-    }
+    const list = container?.parentElement;  // .kwi-trending-list
+    [container, list].forEach(scope => {
+      if (!scope) return;
+      scope.querySelectorAll(':scope .kwi-row-expansion, :scope .kwi-ref-interpanel:not(.kwi-row-expansion *)').forEach(el => _tearDownExpansion(el));
+      scope.querySelectorAll('.kwi-trending-item-active').forEach(el => el.classList.remove('kwi-trending-item-active'));
+    });
     row.classList.add('kwi-trending-item-active');
     _kwiOpenRefKeyword = keyword;
 
+    // Build the panel inside a SINGLE combined wrapper that ALSO holds
+    // the AI context blurb when it's open. This guarantees the two
+    // expansions share one flex-column container with explicit
+    // content-fit, so they cannot end up overlaying each other or the
+    // bars below — regardless of any CSS specificity issues with
+    // `.kwi-row-ctx` / `.kwi-ref-interpanel` from older stylesheets.
+    //
+    // The wrapper is inside `.kwi-trending-row` (after `.kwi-trending-item`),
+    // so the row's natural content-fit math is straightforward: item +
+    // wrapper. The wrapper handles the [bars, ctx] vertical stack.
     const panel = document.createElement('div');
     panel.className = 'kwi-ref-interpanel';
-    row.insertAdjacentElement('afterend', panel);
-    // If the AI context blurb is open in this row, move it after the
-    // newly-inserted bars so the layout is: item → bars → blurb. Otherwise
-    // it ends up sandwiched between item and bars and the visible order
-    // looks like the blurb is overlaying the bars below it.
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'kwi-row-expansion';
+    wrapper.appendChild(panel);
+
+    // If the ctx blurb is open, move it INTO the wrapper so both share
+    // one parent. (.kwi-row-ctx.open is a direct child of the row;
+    // we move it under wrapper.appendChild — the DOM moves it cleanly.)
     const ctxEl = container?.querySelector(':scope > .kwi-row-ctx.open');
-    if (ctxEl) panel.insertAdjacentElement('afterend', ctxEl);
+    if (ctxEl) wrapper.appendChild(ctxEl);
+
+    row.insertAdjacentElement('afterend', wrapper);
 
     const API = window.__API || 'https://earth-wjr6.onrender.com';
     const enc = encodeURIComponent(keyword);
