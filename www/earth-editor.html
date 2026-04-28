@@ -145,13 +145,34 @@
     .enrich-card { background: #111827; border: 1px solid #1e293b; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
     .enrich-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; gap: 12px; }
     .enrich-header:hover { background: rgba(255,255,255,0.02); }
-    .enrich-order { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+    .enrich-order { display: flex; flex-direction: column; gap: 3px; flex-shrink: 0; }
     .enrich-order button {
-      background: #1e293b; border: none; color: #94a3b8;
-      width: 24px; height: 20px; border-radius: 4px; cursor: pointer;
-      font-size: 0.7rem; display: flex; align-items: center; justify-content: center;
+      background: #1e293b; border: 1px solid #334155; color: #cbd5e1;
+      width: 30px; height: 26px; border-radius: 5px; cursor: pointer;
+      font-size: 0.85rem; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.12s, color 0.12s, transform 0.08s;
     }
-    .enrich-order button:hover { background: #334155; color: #e2e8f0; }
+    .enrich-order button:hover { background: #2d3f56; color: #fff; }
+    .enrich-order button:active { transform: scale(0.92); }
+    .enrich-order button:disabled { opacity: 0.30; cursor: not-allowed; }
+    /* Drag-handle column. Both reorder methods coexist — arrows work on
+       both desktop and mobile; the drag handle is a power-user shortcut
+       on desktop. */
+    .enrich-drag-handle {
+      flex-shrink: 0;
+      width: 18px;
+      color: #475569;
+      font-size: 1.2rem; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      cursor: grab;
+      user-select: none;
+      transition: color 0.12s;
+    }
+    .enrich-drag-handle:hover { color: #94a3b8; }
+    .enrich-card.dragging { opacity: 0.4; }
+    .enrich-card.drop-target-above { box-shadow: 0 -3px 0 0 #00d4ff; }
+    .enrich-card.drop-target-below { box-shadow: 0 3px 0 0 #00d4ff; }
     .enrich-title { flex: 1; font-weight: 600; font-size: 0.9rem; }
     .enrich-toggle { color: #94a3b8; font-size: 0.8rem; flex-shrink: 0; }
     .enrich-body { padding: 0 16px 16px; display: none; }
@@ -819,7 +840,7 @@
 
       <!-- Step 2: Enrich -->
       <div id="b-step-2" class="hidden">
-        <p style="color:#94a3b8; font-size:0.85rem; margin-bottom:16px;">Add optional YouTube videos and steering hints. Drag to reorder.</p>
+        <p style="color:#94a3b8; font-size:0.85rem; margin-bottom:16px;">Add optional YouTube videos and steering hints. Reorder with the ▲▼ arrows on each card, or drag a card by its handle.</p>
         <div id="enrich-list"></div>
         <div class="nav-buttons">
           <button class="btn-secondary" onclick="bGoToStep(1)">&larr; Back</button>
@@ -1686,14 +1707,23 @@
           </div>`;
         const card = document.createElement('div');
         card.className = 'enrich-card'; card.dataset.id = id; card.id = `enrich-${id}`;
+        card.draggable = true;
+        const isFirst = idx === 0;
+        const isLast  = idx === orderedIds.length - 1;
+        // Header row: drag handle + up/down arrows are NOT click-to-toggle
+        // (event.stopPropagation on each), only the title + chevron expand
+        // the card. Earlier the entire header was clickable, which made
+        // the small up/down arrows fight a parent click that toggled the
+        // card open — common reason the reorder felt like it didn't work.
         card.innerHTML = `
-          <div class="enrich-header" onclick="toggleEnrich(${id})">
+          <div class="enrich-header">
+            <div class="enrich-drag-handle" title="Drag to reorder">&#8942;&#8942;</div>
             <div class="enrich-order">
-              <button onclick="event.stopPropagation(); moveThread(${id}, -1)" title="Move up">&#9650;</button>
-              <button onclick="event.stopPropagation(); moveThread(${id}, 1)" title="Move down">&#9660;</button>
+              <button onclick="event.stopPropagation(); moveThread(${id}, -1)" title="Move up" ${isFirst ? 'disabled' : ''}>&#9650;</button>
+              <button onclick="event.stopPropagation(); moveThread(${id}, 1)" title="Move down" ${isLast ? 'disabled' : ''}>&#9660;</button>
             </div>
-            <div class="enrich-title">${idx + 1}. ${escHtml(thread.title)}</div>
-            <div class="enrich-toggle" id="etog-${id}">&#9654;</div>
+            <div class="enrich-title" onclick="toggleEnrich(${id})" style="cursor:pointer;">${idx + 1}. ${escHtml(thread.title)}</div>
+            <div class="enrich-toggle" id="etog-${id}" onclick="toggleEnrich(${id})" style="cursor:pointer;">&#9654;</div>
           </div>
           <div class="enrich-body">
             <label>YouTube URL</label>
@@ -1710,7 +1740,64 @@
           </div>`;
         list.appendChild(card);
       });
+      // Wire drag-and-drop reordering for the just-appended cards. Each
+      // card carries draggable="true" + dataset.id; we resolve the
+      // target's id at drop time and splice orderedIds accordingly.
+      // Browser-native HTML5 DnD works on desktop; mobile users have the
+      // up/down arrows (which now have a 30×26px tap target).
+      list.querySelectorAll('.enrich-card').forEach(card => {
+        card.addEventListener('dragstart', (e) => {
+          card.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', String(card.dataset.id));
+        });
+        card.addEventListener('dragend', () => {
+          card.classList.remove('dragging');
+          list.querySelectorAll('.enrich-card').forEach(c => {
+            c.classList.remove('drop-target-above', 'drop-target-below');
+          });
+        });
+        card.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          // Highlight whether we'd drop ABOVE or BELOW this card based
+          // on the cursor's vertical position relative to the card's
+          // midpoint. Visual cue is the corresponding cyan edge bar.
+          const r = card.getBoundingClientRect();
+          const above = (e.clientY - r.top) < r.height / 2;
+          card.classList.toggle('drop-target-above', above);
+          card.classList.toggle('drop-target-below', !above);
+        });
+        card.addEventListener('dragleave', () => {
+          card.classList.remove('drop-target-above', 'drop-target-below');
+        });
+        card.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const draggedId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+          const targetId  = parseInt(card.dataset.id, 10);
+          if (!draggedId || !targetId || draggedId === targetId) return;
+          const fromIdx = orderedIds.indexOf(draggedId);
+          let toIdx     = orderedIds.indexOf(targetId);
+          if (fromIdx < 0 || toIdx < 0) return;
+          const r = card.getBoundingClientRect();
+          const dropAbove = (e.clientY - r.top) < r.height / 2;
+          // Splice draggedId out, then insert before/after target.
+          const [moved] = orderedIds.splice(fromIdx, 1);
+          // After splicing, the target's index may have shifted by 1
+          // when fromIdx < original toIdx. Recompute.
+          toIdx = orderedIds.indexOf(targetId);
+          orderedIds.splice(dropAbove ? toIdx : toIdx + 1, 0, moved);
+          buildEnrichList();
+        });
+      });
     }
+    // Expose to window so inline onclick handlers (declared in the card
+    // markup above) can resolve moveThread regardless of how the
+    // surrounding script's scope is structured. Earlier the function
+    // was a top-level declaration which works in plain scripts but is
+    // fragile — putting it on window makes the reorder action reliable.
+    window.moveThread   = moveThread;
+    window.toggleEnrich = toggleEnrich;
 
     // Toggle the featured-video block per thread. Creates the config object
     // lazily — only written to when the user actually enables featured, so

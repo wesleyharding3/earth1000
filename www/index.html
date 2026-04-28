@@ -26780,15 +26780,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
                    y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
         }
 
-        // Tunables for the rewritten layer (draw-in + comet-trail).
-        const DRAW_IN_DUR = 1.0;   // seconds — matches setupFlowAnimation's
-                                   // INDIVIDUAL_TRAVEL_MIN so 2D map arcs
-                                   // reveal at the same pace as globe arcs.
+        // Tunables for the phase-aware layer.
         const SAMPLE_N    = 32;    // bezier polyline samples for partial draw
         const TAIL_FRAC   = 0.20;  // gradient comet length, fraction of curve
         const TAIL_SEGS   = 16;    // segments composing the comet trail
+        const FALLBACK_TRAVEL = 1.0; // when arc has no travelDuration set
 
-        // Sample N+1 points along a quadratic bezier from tStart to tEnd.
         function sampleBezRange(p0, p1, p2, count, tStart, tEnd) {
           const out = [];
           for (let i = 0; i <= count; i++) {
@@ -26797,12 +26794,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
           return out;
         }
-
-        // Mutate the trailing alpha component of an "rgba(...)" string.
-        // Keeps the leading rgb channels intact so the gradient hue
-        // matches the arc stroke color exactly.
         function withAlpha(rgba, alpha) {
           return rgba.replace(/,\s*[\d.]+\)$/, `,${alpha.toFixed(3)})`);
+        }
+
+        // Read the visible-range uniforms the globe's animation loop
+        // (tickArcs in setupFlowAnimation) sets every frame on each
+        // arc's tubeMat. Mirroring those means the 2D map draws
+        // EXACTLY what the globe draws — no separate phase machine to
+        // keep in sync with the four arc modes (news individual, news
+        // aggregate static, articleCard, thread). uPulsePos is what
+        // every mode uses to position the moving streak/comet head.
+        //
+        //   uVisibleStart  : [0..1] curve param where stroke begins
+        //   uVisibleEnd    : [0..1] curve param where stroke ends
+        //   uOpacity       : per-arc opacity (0 means hidden)
+        //   uPulsePos      : [-2..1]; -2 = no pulse, otherwise comet at t
+        //
+        // For news flows individual mode, the globe's tickArcs walks
+        // travel → hold → erase by sliding uVisibleStart from 0 to 1
+        // during the erase phase — exactly the "leave origin, terminate
+        // in destination" behavior the user asked for. We get that for
+        // free by mirroring.
+        //
+        // Fallback (FALLBACK_TRAVEL): if a fresh arc record has no
+        // shader uniforms yet (e.g. the very first frame after push),
+        // we draw it fully so the user doesn't see a blank flash.
+        function computePhase(arc) {
+          const u = arc && arc.tubeMat && arc.tubeMat.uniforms;
+          if (u && u.uVisibleEnd && u.uOpacity) {
+            const tStart  = (u.uVisibleStart && u.uVisibleStart.value != null) ? u.uVisibleStart.value : 0;
+            const tEnd    = u.uVisibleEnd.value;
+            const opacity = u.uOpacity.value;
+            const pulse   = (u.uPulsePos && u.uPulsePos.value != null) ? u.uPulsePos.value : -2;
+            return { tStart, tEnd, opacity, pulse };
+          }
+          return { tStart: 0, tEnd: 1, opacity: 1, pulse: -2 };
         }
 
         Map2D.addLayer((api, ctx) => {
@@ -26812,15 +26839,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const W = api.state.width;
           const wW = api.worldW(), wH = api.worldH();
           const baseX = -(((api.state.scrollX % wW) + wW) % wW);
-          // CRITICAL: yTop is the per-frame vertical offset that anchors
-          // arcs to map-space. The previous version omitted this — only
-          // `xOff` (scrollX) was applied, so when the user vertical-
-          // scrolled or zoomed the arcs stayed pinned to canvas-Y while
-          // the cities moved with the map. yTop matches the cities'
-          // projection (line ~21000) so arc endpoints + city dots stay
-          // glued under any pan/zoom.
           const yTop  = -api.state.scrollY;
-          const now   = performance.now();
 
           for (const arc of arcs) {
             const flow = arc && arc.flow;
@@ -26828,25 +26847,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const dst  = flow && flow.dst;
             if (!src || !dst || src.lat == null || dst.lat == null) continue;
 
+            const phase = computePhase(arc);
+            // Hidden — arc is in gap/recycle/wait phase per the globe's
+            // animation. Skip rendering entirely.
+            if (phase.opacity <= 0.02) continue;
+            if (phase.tEnd <= phase.tStart + 0.001) continue;
+
             // Adjust dst.lon to take the shorter (chord) path.
             let srcLon = src.lon, dstLon = dst.lon;
             const dlon = dstLon - srcLon;
             if (dlon >  180) dstLon -= 360;
             if (dlon < -180) dstLon += 360;
 
-            // World-canvas coords (raw — yTop applied at draw time).
             const sx = ((srcLon + 180) / 360) * wW;
             const sy = ((90 - src.lat) / 180) * wH;
             const dx = ((dstLon + 180) / 360) * wW;
             const dy = ((90 - dst.lat) / 180) * wH;
 
-            // Chord midpoint and perpendicular apex.
             const mx = (sx + dx) / 2;
             const my = (sy + dy) / 2;
             const lx = dx - sx, ly = dy - sy;
             const len = Math.hypot(lx, ly);
             if (len < 1) continue;
-            // Perpendicular unit vector, biased upward (see prior comment).
             let px = -ly / len, py = lx / len;
             if (py > 0) { px = -px; py = -py; }
 
@@ -26856,22 +26878,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const cx = mx + px * (apex + laneShift);
             const cy = my + py * (apex + laneShift);
 
-            // ── Draw-in progress (per-arc reveal animation) ─────────────
-            // First render of a given arc stamps _mapDrawStartMs; the
-            // reveal extends from that timestamp over DRAW_IN_DUR. Once
-            // drawT reaches 1, the comet trail takes over. Reset on
-            // arc reset (clearArcs) is implicit — fresh arcs get a fresh
-            // _mapDrawStartMs because the property doesn't exist yet.
-            if (arc._mapDrawStartMs == null) arc._mapDrawStartMs = now;
-            const drawAge = (now - arc._mapDrawStartMs) / 1000;
-            const drawT   = Math.min(1, drawAge / DRAW_IN_DUR);
-
-            // Particle progress along the curve (only meaningful after
-            // draw-in completes, at which point we render the trail).
-            const dur  = Math.max(0.001, arc.travelDuration || 4);
-            const age  = arc.age || arc._elapsed || 0;
-            const t    = (age % dur) / dur;
-
             const colors = colorFor(flow);
             const w = widthFor(flow, api.state.dpr);
 
@@ -26880,19 +26886,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const p2 = { x: dx, y: dy };
 
             ctx.save();
+            // Apply the per-arc opacity globally so the entire arc
+            // (glow + stroke + comet) fades in / out together. The
+            // globe's tickArcs varies opacity during travel-in fade,
+            // erase fade-out, thread-mode wave fade-in/out, and other
+            // transitions — mirroring it here keeps the 2D map's
+            // visual rhythm identical to the globe's.
+            ctx.globalAlpha = Math.max(0, Math.min(1, phase.opacity));
             for (let tile = -1; tile <= 1; tile++) {
               const xOff = baseX + tile * wW;
               if (xOff + Math.max(sx, cx, dx) < 0 - wW) continue;
               if (xOff + Math.min(sx, cx, dx) > W + wW) continue;
 
-              // Sample the bezier polyline up to the current draw-in
-              // progress. This gives a "stroke into existence" effect
-              // matching the globe's arc reveal — instead of the arc
-              // popping in fully formed.
-              const samples = sampleBezRange(p0, p1, p2, SAMPLE_N, 0, drawT);
+              // Sample the visible portion of the bezier. tStart and
+              // tEnd come from the globe's uVisibleStart / uVisibleEnd
+              // uniforms — TRAVEL grows the visible range from origin;
+              // ERASE shrinks it from origin (origin retracts toward
+              // destination); HOLD renders the full curve. Polyline
+              // samples produce the same partial-draw effect as the
+              // globe's shader.
+              const samples = sampleBezRange(p0, p1, p2, SAMPLE_N, phase.tStart, phase.tEnd);
               if (samples.length < 2) continue;
 
-              // Glow halo (slightly wider, behind the stroke).
               ctx.lineWidth   = w * 3.5;
               ctx.strokeStyle = colors.glow;
               ctx.lineCap     = "round";
@@ -26904,7 +26919,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
               }
               ctx.stroke();
 
-              // Solid stroke on top.
               ctx.lineWidth   = w;
               ctx.strokeStyle = colors.stroke;
               ctx.beginPath();
@@ -26915,22 +26929,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
               ctx.stroke();
 
               // ── Comet trail ─────────────────────────────────────────
-              // Once the arc has fully drawn in, replace the static
-              // single-point particle with a multi-segment trail whose
-              // alpha rises from tail (transparent) to head (full). The
-              // segments are quadratic-bezier samples between t-tail
-              // and t, so the trail bends along the arc's curvature.
-              // Cleaner than a moving radial dot — reads as "energy
-              // flowing along the arc" rather than "ball rolling along".
-              if (drawT >= 1) {
-                const tHead = t;
-                const tTail = Math.max(0, tHead - TAIL_FRAC);
+              // Position from the globe's uPulsePos uniform. Every arc
+              // mode (news individual draw / hold / erase, news static
+              // looping pulse, articleCard, thread) sets uPulsePos
+              // itself per its own lifecycle, so the 2D map just reads
+              // and renders. uPulsePos = -2 means "no pulse this
+              // frame" (e.g. erase phase, gap, draw-in not started).
+              // We also clamp the trail to [tStart, tEnd] so the comet
+              // doesn't render outside the currently-visible arc range.
+              const cometHead = (phase.pulse >= 0 && phase.pulse <= 1) ? phase.pulse : -1;
+              if (cometHead >= phase.tStart && cometHead <= phase.tEnd) {
+                // Apply per-arc opacity to the trail too — keeps the
+                // comet from over-glowing during fade-in/fade-out.
+                const trailAlphaScale = Math.max(0, Math.min(1, phase.opacity));
+                const tHead = cometHead;
+                const tTail = Math.max(phase.tStart, tHead - TAIL_FRAC);
                 if (tHead > tTail) {
                   const trail = sampleBezRange(p0, p1, p2, TAIL_SEGS, tTail, tHead);
                   for (let i = 0; i < trail.length - 1; i++) {
-                    // Linear ease from 0 (tail end) to 1 (head end).
                     const segMid = (i + 0.5) / trail.length;
-                    const alpha  = Math.max(0, Math.min(1, segMid)) * 0.95;
+                    const alpha  = Math.max(0, Math.min(1, segMid)) * 0.95 * trailAlphaScale;
                     ctx.lineWidth   = w * 2.0;
                     ctx.strokeStyle = withAlpha(colors.orb, alpha);
                     ctx.beginPath();
@@ -26938,7 +26956,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
                     ctx.lineTo(xOff + trail[i+1].x,   yTop + trail[i+1].y);
                     ctx.stroke();
                   }
-                  // Bright tip at the head — small dot to anchor the eye.
                   const head = trail[trail.length - 1];
                   const tipR = w * 1.8;
                   const grad = ctx.createRadialGradient(

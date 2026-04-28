@@ -25293,9 +25293,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                    y: u * u * p0.y + 2 * u * t * p1.y + t * t * p2.y };
         }
 
-        // Tunables for the rewritten layer (draw-in + comet trail).
-        // See www/index.html for the long-form rationale on each.
-        const DRAW_IN_DUR = 1.0;
+        // Phase-aware layer that mirrors the globe's per-arc shader
+        // uniforms — see www/index.html for the long-form rationale.
         const SAMPLE_N    = 32;
         const TAIL_FRAC   = 0.20;
         const TAIL_SEGS   = 16;
@@ -25312,6 +25311,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
           return rgba.replace(/,\s*[\d.]+\)$/, `,${alpha.toFixed(3)})`);
         }
 
+        function computePhase(arc) {
+          const u = arc && arc.tubeMat && arc.tubeMat.uniforms;
+          if (u && u.uVisibleEnd && u.uOpacity) {
+            const tStart  = (u.uVisibleStart && u.uVisibleStart.value != null) ? u.uVisibleStart.value : 0;
+            const tEnd    = u.uVisibleEnd.value;
+            const opacity = u.uOpacity.value;
+            const pulse   = (u.uPulsePos && u.uPulsePos.value != null) ? u.uPulsePos.value : -2;
+            return { tStart, tEnd, opacity, pulse };
+          }
+          return { tStart: 0, tEnd: 1, opacity: 1, pulse: -2 };
+        }
+
         Map2D.addLayer((api, ctx) => {
           const arcs = (typeof window.__flowGetArcObjects === "function")
             ? window.__flowGetArcObjects() : null;
@@ -25319,17 +25330,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const W = api.state.width;
           const wW = api.worldW(), wH = api.worldH();
           const baseX = -(((api.state.scrollX % wW) + wW) % wW);
-          // CRITICAL: arc endpoints anchor to map-Y via -scrollY so they
-          // stay glued to their cities under vertical pan / zoom. See
-          // www/index.html.
           const yTop  = -api.state.scrollY;
-          const now   = performance.now();
 
           for (const arc of arcs) {
             const flow = arc && arc.flow;
             const src  = flow && flow.src;
             const dst  = flow && flow.dst;
             if (!src || !dst || src.lat == null || dst.lat == null) continue;
+
+            const phase = computePhase(arc);
+            if (phase.opacity <= 0.02) continue;
+            if (phase.tEnd <= phase.tStart + 0.001) continue;
 
             let srcLon = src.lon, dstLon = dst.lon;
             const dlon = dstLon - srcLon;
@@ -25355,15 +25366,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const cx = mx + px * (apex + laneShift);
             const cy = my + py * (apex + laneShift);
 
-            // Per-arc draw-in progress.
-            if (arc._mapDrawStartMs == null) arc._mapDrawStartMs = now;
-            const drawAge = (now - arc._mapDrawStartMs) / 1000;
-            const drawT   = Math.min(1, drawAge / DRAW_IN_DUR);
-
-            const dur  = Math.max(0.001, arc.travelDuration || 4);
-            const age  = arc.age || arc._elapsed || 0;
-            const t    = (age % dur) / dur;
-
             const colors = colorFor(flow);
             const w = widthFor(flow, api.state.dpr);
 
@@ -25372,12 +25374,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const p2 = { x: dx, y: dy };
 
             ctx.save();
+            ctx.globalAlpha = Math.max(0, Math.min(1, phase.opacity));
             for (let tile = -1; tile <= 1; tile++) {
               const xOff = baseX + tile * wW;
               if (xOff + Math.max(sx, cx, dx) < 0 - wW) continue;
               if (xOff + Math.min(sx, cx, dx) > W + wW) continue;
 
-              const samples = sampleBezRange(p0, p1, p2, SAMPLE_N, 0, drawT);
+              const samples = sampleBezRange(p0, p1, p2, SAMPLE_N, phase.tStart, phase.tEnd);
               if (samples.length < 2) continue;
 
               ctx.lineWidth   = w * 3.5;
@@ -25400,14 +25403,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
               }
               ctx.stroke();
 
-              if (drawT >= 1) {
-                const tHead = t;
-                const tTail = Math.max(0, tHead - TAIL_FRAC);
+              const cometHead = (phase.pulse >= 0 && phase.pulse <= 1) ? phase.pulse : -1;
+              if (cometHead >= phase.tStart && cometHead <= phase.tEnd) {
+                const trailAlphaScale = Math.max(0, Math.min(1, phase.opacity));
+                const tHead = cometHead;
+                const tTail = Math.max(phase.tStart, tHead - TAIL_FRAC);
                 if (tHead > tTail) {
                   const trail = sampleBezRange(p0, p1, p2, TAIL_SEGS, tTail, tHead);
                   for (let i = 0; i < trail.length - 1; i++) {
                     const segMid = (i + 0.5) / trail.length;
-                    const alpha  = Math.max(0, Math.min(1, segMid)) * 0.95;
+                    const alpha  = Math.max(0, Math.min(1, segMid)) * 0.95 * trailAlphaScale;
                     ctx.lineWidth   = w * 2.0;
                     ctx.strokeStyle = withAlpha(colors.orb, alpha);
                     ctx.beginPath();
