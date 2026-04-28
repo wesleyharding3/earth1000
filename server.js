@@ -359,9 +359,13 @@ const _ttlInflight = new Map();     // key → Promise
 // before any user request can arrive, and rewrite the file on every
 // successful default-feed compute.
 const _FEED_SNAPSHOT_FILE = require('path').join(__dirname, '.feed-snapshot.json');
+// Boot-time pre-warm keys. Bumped from v8 → v9 in the cache rewrite that
+// added per-country dispersion to _finalizeSearchResults — see the long
+// comment in that function. Keep these in lock-step with the cacheKey
+// template used by /api/news/search default-query path.
 const _SNAPSHOT_KEYS = new Set([
-  'news/search:default:v8:25:0',
-  'news/search:default:v8:24:0',
+  'news/search:default:v9:25:0',
+  'news/search:default:v9:24:0',
 ]);
 try {
   const raw = require('fs').readFileSync(_FEED_SNAPSHOT_FILE, 'utf8');
@@ -1718,43 +1722,62 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
   // priority-ordered list.
   scored.sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
 
-  // Per-source cap with graceful relaxation.
+  // Per-source AND per-country cap with graceful relaxation.
   //
-  // First attempt allows 2 per source (the tight Apr 14 feel — no
-  // publisher can land 3 articles in a 25-slot feed). If the pool
-  // genuinely lacks source diversity — e.g. 10 sources × 2 = 20 articles
-  // for a 25-slot feed — the cap is bumped to 3, re-applied against the
-  // full pool in priority order, and checked again. Keeps relaxing until
-  // effectiveLimit is reached or the cap is so high it doesn't bind.
+  // History: the per-source cap alone (max 2 articles per publisher)
+  // gave good dispersion in the FIRST page (offset=0), but pages 2+
+  // (offset≥25) were dominated by a single high-boost country —
+  // typically Russia trending across 10-15 publishers. The cap-2-per-
+  // source let through 20-30 Russian articles in a 100-row pool, all
+  // higher priority than the trickle of non-RU articles ranked below
+  // them, so the page sliced at top-25 and returned an all-RU page.
   //
-  // Why iterate-and-relax instead of append overflow:
-  //  - Append put 6 consecutive Free Malaysia Today articles at slots
-  //    20-25 (out of priority order: their base=0.76 landed *after*
-  //    Cumhuriyet at base=0.40). Visually tacky and breaks ranking.
-  //  - Relaxation re-ranks the whole pool under each cap, so the
-  //    returned slice stays in strict priority order regardless of
-  //    how tight or loose the final cap has to be.
-  const keyOf = (r) => r.source_id
+  // The fix adds a per-COUNTRY cap proportional to the slice size
+  // (~32% — strong but not monoculture). Cap 8 in a 25-slot page
+  // means at most 8 Russian articles per page; the remaining 17 slots
+  // come from other countries even if those articles rank lower in
+  // raw priority. Source cap stays at 2 inside that.
+  //
+  // Why iterate-and-relax: keeps the slice in strict priority order
+  // (no ugly "tail" of demoted articles tacked onto the end) while
+  // adapting to genuinely thin pools. Both caps relax together if the
+  // pool can't fill the slice.
+  const sourceKeyOf = (r) => r.source_id
     ? `s:${r.source_id}`
     : r.youtube_source_id
       ? `y:${r.youtube_source_id}`
       : `n:${r.source_name || "unknown"}`;
+  const countryKeyOf = (r) => (r.iso_code || 'unknown').toLowerCase();
 
-  const MAX_CAP = 10; // hard ceiling — stop relaxing above this
+  // ~32% — visible trend without monoculture. floor at 4 so smaller
+  // page sizes (e.g. 12) still allow some country presence.
+  const COUNTRY_CAP_BASE = Math.max(4, Math.ceil(effectiveLimit * 0.32));
+
+  const MAX_CAP = 10; // hard ceiling on the per-source relax
+  const MAX_COUNTRY_CAP = effectiveLimit; // ultimate fallback = no country cap
   let chosen = [];
-  for (let cap = 2; cap <= MAX_CAP; cap += 1) {
-    const counts = new Map();
-    chosen = [];
-    for (const r of scored) {
-      const k = keyOf(r);
-      const n = counts.get(k) || 0;
-      if (n < cap) {
-        chosen.push(r);
-        counts.set(k, n + 1);
-        if (chosen.length >= effectiveLimit) break;
+  // Two-axis relax: try strict (source=2, country=base), then walk both
+  // up together. Stops at the first combination that fills the slice.
+  let filled = false;
+  for (let cap = 2; cap <= MAX_CAP && !filled; cap += 1) {
+    for (let countryCap = COUNTRY_CAP_BASE; countryCap <= MAX_COUNTRY_CAP && !filled; countryCap += 2) {
+      const sourceCounts = new Map();
+      const countryCounts = new Map();
+      chosen = [];
+      for (const r of scored) {
+        const sk = sourceKeyOf(r);
+        const ck = countryKeyOf(r);
+        const sc = sourceCounts.get(sk) || 0;
+        const cc = countryCounts.get(ck) || 0;
+        if (sc < cap && cc < countryCap) {
+          chosen.push(r);
+          sourceCounts.set(sk, sc + 1);
+          countryCounts.set(ck, cc + 1);
+          if (chosen.length >= effectiveLimit) break;
+        }
       }
+      if (chosen.length >= effectiveLimit) filled = true;
     }
-    if (chosen.length >= effectiveLimit) break;
   }
 
   // Guaranteed video slot(s).
@@ -1800,8 +1823,43 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
     chosen.sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
   }
 
-  // Fallback — if even cap=10 doesn't reach effectiveLimit, pool is
-  // genuinely thin. Return what we have rather than padding.
+  // Country-spread interleave — even with a country cap of 8 in a 25-slot
+  // page, a strict priority sort can still produce "8 Russia in a row,
+  // then 17 others" because the high-boost country naturally ranks first
+  // throughout the cap-filtered pool. Reorder so no more than 2
+  // consecutive articles share a country, while staying as close to
+  // priority order as possible.
+  //
+  // Algorithm: greedy. Walk the priority-ordered list; for each slot,
+  // pick the highest-priority remaining article that doesn't violate the
+  // "no 3-in-a-row same country" rule. If no such article exists (the
+  // pool is genuinely country-thin at this point), take the next anyway
+  // — better to render than to deadlock.
+  //
+  // Cost: O(n²) worst case on n=25, ~625 ops. Sub-millisecond. No async,
+  // no shared state — purely a reorder of the chosen array.
+  if (chosen.length > 3) {
+    const remaining = chosen.slice();
+    const reordered = [];
+    while (remaining.length) {
+      let pickIdx = 0;
+      for (let i = 0; i < remaining.length; i++) {
+        const ck = countryKeyOf(remaining[i]);
+        const last = reordered.length;
+        const wouldBeThirdInARow = last >= 2
+          && countryKeyOf(reordered[last - 1]) === ck
+          && countryKeyOf(reordered[last - 2]) === ck;
+        if (!wouldBeThirdInARow) { pickIdx = i; break; }
+        // else keep scanning; pickIdx stays 0 as the fallback
+      }
+      reordered.push(remaining[pickIdx]);
+      remaining.splice(pickIdx, 1);
+    }
+    chosen = reordered;
+  }
+
+  // Fallback — if even MAX_CAP relax doesn't reach effectiveLimit, pool
+  // is genuinely thin. Return what we have rather than padding.
   const articles = chosen.slice(0, effectiveLimit);
   const hasMore = scored.length > articles.length;
 
@@ -1842,7 +1900,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const isDefaultQuery = !fromIds && !aboutIds && !keyword && !fromDate && !toDate && !req.query.tag;
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
-      const cacheKey = `news/search:default:v8:${effectiveLimit}:${offset}`;
+      const cacheKey = `news/search:default:v9:${effectiveLimit}:${offset}`;
       let cached = await ttlCached(cacheKey, 60_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset });
       });
@@ -2099,7 +2157,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const fromKey  = fromIds  ? fromIds.slice().sort((a,b)=>a-b).join(',') : '';
     const aboutKey = aboutIds ? aboutIds.slice().sort((a,b)=>a-b).join(',') : '';
     const filterCacheKey =
-      `news/search:filtered:v1:${effectiveLimit}:${offset}` +
+      `news/search:filtered:v2:${effectiveLimit}:${offset}` +
       `:from=${fromKey}:about=${aboutKey}:kw=${keyword || ''}` +
       `:fd=${fromDate || ''}:td=${toDate || ''}:tag=${tagQ}`;
 

@@ -2226,6 +2226,34 @@
       return editableSegments.map((seg, idx) => {
         const clone = JSON.parse(JSON.stringify(seg));
         const segType = clone.segment_type || clone.type || 'story';
+        // CRITICAL — drop pre-computed ISO arrays on every save.
+        //
+        // briefingGenerator.js stamps four convenience arrays at build
+        // time (`primary_country_iso`, `primary_city_country_iso`,
+        // `secondary_country_isos`, `flow_arc_isos`) so the player can
+        // highlight countries on the globe without re-resolving names
+        // at playback. The player reads them at line ~40094 in
+        // index.html and ONLY falls back to live computation when the
+        // arrays are absent (`if (!isoSet.size) { ... }`).
+        //
+        // The editor edits `flow_arcs` / `secondary_locations` /
+        // `primary_country` / `primary_city` but NEVER touches the ISO
+        // arrays. Bug surface: remove an arc whose `from_name` was
+        // "Iran" → flow_arcs shrinks but `flow_arc_isos` still includes
+        // "IR" → Iran stays highlighted in the final cut, contradicting
+        // the editor view.
+        //
+        // Fix: drop the stale arrays whenever the user saves edits. The
+        // player's live fallback (which walks the current flow_arcs +
+        // primary/secondary location data and resolves ISOs via the
+        // window.__globeCountries name/lat-lon table) takes over and
+        // produces a highlight set that exactly matches the editor's
+        // saved state. Cost: a handful of name lookups per segment at
+        // playback time, well under a millisecond.
+        delete clone.primary_country_iso;
+        delete clone.primary_city_country_iso;
+        delete clone.secondary_country_isos;
+        delete clone.flow_arc_isos;
         const voEl = document.querySelector(`textarea[data-seg="${idx}"][data-field="voiceover"]`);
         if (voEl) clone.voiceover = voEl.value;
         if (segType === 'intro' || segType === 'outro') {

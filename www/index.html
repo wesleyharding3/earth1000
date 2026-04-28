@@ -1667,14 +1667,49 @@
   visibility: hidden;
   pointer-events: none;
   transform: translateX(-50%) translateY(6px);
-  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0.3s;
+  /* Per-property timings — `top`/`bottom` snap (auto isn't interpolatable
+     in CSS, so we let those swap instantly when .minimized toggles), but
+     `left`, `transform`, `min-width`, `max-width` all interpolate
+     smoothly. The eye reads the horizontal-slide + width-shrink as the
+     main motion; the vertical-anchor flip happens during the same
+     window and is masked by the size animation. */
+  transition: opacity 0.3s ease,
+              transform 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              left 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              visibility 0s linear 0.3s;
 }
 #flowControls.visible {
   opacity: 1;
   visibility: visible;
   pointer-events: all;
   transform: translateX(-50%) translateY(0);
-  transition: opacity 0.3s ease, transform 0.3s ease, visibility 0s linear 0s;
+  transition: opacity 0.3s ease,
+              transform 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              left 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+              visibility 0s linear 0s;
+}
+/* Minimized state — slide to the top-left and shrink to the pill's
+   intrinsic size. Earlier the container kept its 416px min/max-width
+   even when only the slim flowMinBar was rendered, leaving a chunky
+   empty container around a small pill. Now:
+     - bottom anchor releases, top anchor takes over (instant swap)
+     - left:50% → left:12px and the centering translate is dropped,
+       so the box slides smoothly across the screen as the .minimized
+       class toggles
+     - min-width drops to 0; max-width clamps to 320px so the pill
+       width is content-driven but capped (long stat strings can't
+       blow it up) */
+#flowControls.visible.minimized {
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  bottom: auto;
+  left: 12px;
+  transform: translateY(0);
+  min-width: 0;
+  max-width: 320px;
 }
 /* When flow arcs are triggered from a thread / timeline / article CARD,
    the floating flowCtxCard already surfaces all arc navigation inline
@@ -9409,6 +9444,27 @@ button.arcCtxSegDot,
     .nfCardFooterLeft { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; overflow: hidden; }
     .nfCardFooterRight { display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: 6px; }
     .nfCardTranslateBtn { position: static !important; margin: 0 !important; }
+
+    /* Lock the translate button square on mobile.
+       Base `.articleTranslateBtn` is 20×20, but the global mobile rule
+       `@media (pointer: coarse), (max-width: 600px) button { min-height: 44px }`
+       (~line 9919) stretches it into a 20×44 vertical rectangle. The ADP
+       variant (.adpTranslateBtn) handles itself separately by going inline
+       with `width: auto`. For card-context variants, we want a fixed
+       square — so explicitly clamp width AND height (with min/max) and
+       neutralize the tap-target floor. */
+    @media (pointer: coarse), (max-width: 600px) {
+      .articleTranslateBtn:not(.adpTranslateBtn) {
+        width: 24px !important;
+        height: 24px !important;
+        min-width: 24px !important;
+        min-height: 24px !important;
+        max-width: 24px !important;
+        max-height: 24px !important;
+        font-size: 9px !important;
+        padding: 0 !important;
+      }
+    }
 
     /* Video card overlay */
     .nfCardImgWrap {
@@ -20228,10 +20284,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const mat = new THREE.ShaderMaterial({
           transparent: true, depthWrite: false,
-          blending: THREE.NormalBlending,   // darker, opaque-feeling fill
+          // Additive blending — much brighter glow against the dark globe.
+          // The previous NormalBlending produced a darker, opaque-feeling
+          // fill that read as a tan stripe rather than a glowing arc. The
+          // user asked for "much brighter glow" — additive is the standard
+          // way to get that without painting the geometry pure white.
+          blending: THREE.AdditiveBlending,
           uniforms: {
-            // Deeper, richer amber — darker than the prior 0xff9940
-            uColor:      { value: new THREE.Color(0xb35414) },
+            // Brighter, more saturated amber. Was 0xb35414 (deep brown-
+            // amber) which read muddy. 0xffb04a is a warm, vivid orange
+            // that pops against the blue ocean / dark globe.
+            uColor:      { value: new THREE.Color(0xffb04a) },
             uRevealEnd:  { value: 0.0 },
             uRevealRate: { value: 1.0 / (revealSecs || 2.5) },
             uTime:       { value: 0.0 },
@@ -20256,17 +20319,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
               float r       = abs(vUv.y - 0.5) * 2.0;          // 0 center → 1 edge
               float radial  = 1.0 - smoothstep(0.55, 1.0, r);
               float core    = 1.0 - smoothstep(0.0,  0.55, r); // brighter core stripe
-              // Leading edge highlight
+              // Leading edge highlight (slightly tighter exp falloff so the
+              // bright head reads as a comet head instead of a long fade).
               float headDist = max(0.0, uRevealEnd - vT);
               float settled  = clamp((uRevealEnd - 0.85) / 0.15, 0.0, 1.0);
-              float leadGlow = exp(-headDist * 18.0) * (1.0 - settled * 0.5);
+              float leadGlow = exp(-headDist * 14.0) * (1.0 - settled * 0.35);
               // Steady pulse once arc is fully drawn
-              float ph = mod(uTime * 0.38, 1.0);
+              float ph = mod(uTime * 0.42, 1.0);
               float d  = abs(vT - ph); d = min(d, 1.0 - d);
-              float pulse = smoothstep(0.10, 0.0, d) * settled;
-              vec3 col = uColor * (0.85 + core * 0.5)
-                       + vec3(0.45, 0.22, 0.05) * (leadGlow * 0.9 + pulse * 0.55);
-              float alpha = clamp(0.92 * radial + leadGlow * 0.15, 0.0, 0.96);
+              float pulse = smoothstep(0.12, 0.0, d) * settled;
+              // Brighter base + stronger highlight contribution. With
+              // AdditiveBlending the values stack onto the framebuffer, so
+              // each multiplier directly drives perceived glow intensity.
+              vec3 col = uColor * (1.05 + core * 0.85)
+                       + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0);
+              // Alpha controls how much of `col` is added per pixel. With
+              // additive we want this generous on the body of the arc
+              // (so the line itself glows strongly) and even higher near
+              // the leading edge (so the head pops).
+              float alpha = clamp(0.96 * radial + leadGlow * 0.55, 0.0, 1.0);
               gl_FragColor = vec4(col, alpha);
             }`
         });
@@ -28349,7 +28420,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const date = a.published_at ? fmtDate(a.published_at) : "";
       const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
       const _isSaved = window.__libraryIsSaved && window.__libraryIsSaved(a.id);
-      const bookmarkBtn = `<button class="nfBookmarkBtn${_isSaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_isSaved ? 'Remove bookmark' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
+      // .nfBookmarkBtn (footer-right next to translate) was removed —
+      // .cardSaveBtn (top-right corner overlay, sibling of cardFlowArcBtn)
+      // already provides the same toggleBookmark action. Two save buttons
+      // on the same card was redundant clutter.
       const cardSaveBtnFeed = `<button class="cardSaveBtn${_isSaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_isSaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_isSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
       return `
       <div style="position:relative">
@@ -28362,7 +28436,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="nfCardTitle" data-aid="${a.id}">${title}</div>
               <div class="nfCardSummary" data-aid="${a.id}">${summary}</div>
             </div>
-            <div class="nfCardFooter"><div class="nfCardFooterLeft">${origin}${date ? `<div class="nfCardDate">${date}</div>` : ""}</div><div class="nfCardFooterRight">${bookmarkBtn}${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
+            <div class="nfCardFooter"><div class="nfCardFooterLeft">${origin}${date ? `<div class="nfCardDate">${date}</div>` : ""}</div><div class="nfCardFooterRight">${!a.translated_title && a.title ? `<button class="articleTranslateBtn nfCardTranslateBtn" data-id="${a.id}" data-title="${(a.title||'').replace(/"/g,'&quot;')}" data-summary="${(a.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}</div></div>
           </div>
         </div>
       </div>`;
@@ -39928,7 +40002,23 @@ body.ticker-active .gTickerLabel {
       return out;
     })();
     const camFocusOffsetMs   = _scriptTimes?.camera_focus_ms ?? ms(0.06);
-    const arcDrawOffsetMs    = _scriptTimes?.arc_draw_ms     ?? ms(0.20);
+    // Flow arcs should appear EARLY — the user wants them up while the
+    // narrator is still introducing the story, not 20% in. Hard-cap at
+    // 8% of segment AND clamp to no more than 1.4s after camera focus,
+    // so arcs feel like part of the segment's establishing shot rather
+    // than a delayed reveal. The script's `arc_draw` event is allowed
+    // to come even earlier than the cap, but never later. Default
+    // fallback drops from 20% → 5% for legacy episodes without script.
+    const ARC_DRAW_HARD_CAP_FRAC = 0.08;
+    const ARC_DRAW_AFTER_CAM_MS  = 1400;
+    const arcDrawScriptMs        = _scriptTimes?.arc_draw_ms;
+    const arcDrawCapMs           = Math.min(
+      ms(ARC_DRAW_HARD_CAP_FRAC),
+      camFocusOffsetMs + ARC_DRAW_AFTER_CAM_MS
+    );
+    const arcDrawOffsetMs    = arcDrawScriptMs != null
+      ? Math.min(arcDrawScriptMs, arcDrawCapMs)
+      : Math.min(ms(0.05), arcDrawCapMs);
     const dataPanelsOffsetMs = _scriptTimes?.data_panels_ms  ?? ms(0.50);
 
     // City view only when every arc endpoint and secondary location is a real
@@ -39989,54 +40079,66 @@ body.ticker-active .gTickerLabel {
 
       // Illuminate country polygons for primary + arc + secondary countries.
       //
-      // Prefer the pre-computed ISO fields the generator now emits
-      // (primary_country_iso, primary_city_country_iso,
-      // secondary_country_isos, flow_arc_isos). Fall back to the older
-      // name/lat-lon lookup for briefings produced before the generator
-      // change. ALWAYS call __flowHighlightCountries — even with an empty
-      // set — so leftover highlights from the previous segment clear
-      // (previously we only called when isoSet had entries, which let
-      // stale highlights persist into non-matching segments).
+      // Algorithm changed: we now ALWAYS compute the highlight set from
+      // the LIVE editable fields (flow_arcs, primary_country, primary_city,
+      // secondary_locations), and treat the pre-computed ISO arrays
+      // (primary_country_iso, flow_arc_isos, etc.) as a SUPPLEMENT only.
+      //
+      // Why: the briefing editor edits flow_arcs / secondary_locations /
+      // primary_* but doesn't recompute the pre-computed ISO arrays. If
+      // we PREFERRED those arrays, a removed arc still highlighted its
+      // country (the ISO stayed in flow_arc_isos). The editor's
+      // collectEditedSegments now drops those arrays on save, but the
+      // live-recompute below makes the player robust against any future
+      // editor surface that forgets the same dance.
+      //
+      // ALWAYS call __flowHighlightCountries — even with an empty set —
+      // so leftover highlights from the previous segment clear (previously
+      // we only called when isoSet had entries, which let stale highlights
+      // persist into non-matching segments).
       {
         const isoSet = new Set();
         const addIso = (iso) => { if (iso) isoSet.add(String(iso).toUpperCase()); };
 
-        // Pre-computed fields (new briefings)
-        addIso(seg.primary_country_iso);
-        addIso(seg.primary_city_country_iso);
-        (seg.secondary_country_isos || []).forEach(addIso);
-        (seg.flow_arc_isos || []).forEach(addIso);
+        // 1. Live computation from current editable fields. This is the
+        //    source of truth — matches whatever the editor saved.
+        const globeC = window.__globeCountries || [];
+        const _nearestIso = (lat, lon) => {
+          if (lat == null || lon == null) return null;
+          let best = null, bestD = Infinity;
+          for (const c of globeC) {
+            if (c.lat == null) continue;
+            const d = Math.abs(c.lat - lat) + Math.abs((c.lon ?? c.lng ?? 0) - lon);
+            if (d < bestD) { bestD = d; best = c; }
+          }
+          return best ? (best.iso_code || best.key || '').toUpperCase() : null;
+        };
+        const _findIso = (name) => {
+          if (!name) return null;
+          const n = name.trim().toLowerCase();
+          const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
+          return c ? (c.iso_code || c.key || '').toUpperCase() : null;
+        };
+        if (seg.primary_country) addIso(_findIso(seg.primary_country.name) || _nearestIso(seg.primary_country.lat, seg.primary_country.lon));
+        if (seg.primary_city)    addIso(_nearestIso(seg.primary_city.lat, seg.primary_city.lon));
+        for (const arc of (seg.flow_arcs || [])) {
+          addIso(_findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon));
+          addIso(_findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon));
+        }
+        for (const loc of secondary) {
+          addIso(_findIso(loc.name) || _nearestIso(loc.lat, loc.lon));
+        }
 
-        // Legacy fallback (old briefings without ISO fields): do the fuzzy
-        // match the way we used to. Scoped inside this block so we don't
-        // run it when pre-computed ISOs are already present.
+        // 2. ONLY consult the pre-computed arrays as a fallback when the
+        //    live computation produced nothing — covers very old briefings
+        //    that lack flow_arcs entirely (everything was in arc_isos).
+        //    For modern briefings with editable arcs, step 1 already
+        //    captured every country we want highlighted.
         if (!isoSet.size) {
-          const globeC = window.__globeCountries || [];
-          const _nearestIso = (lat, lon) => {
-            if (lat == null || lon == null) return null;
-            let best = null, bestD = Infinity;
-            for (const c of globeC) {
-              if (c.lat == null) continue;
-              const d = Math.abs(c.lat - lat) + Math.abs((c.lon ?? c.lng ?? 0) - lon);
-              if (d < bestD) { bestD = d; best = c; }
-            }
-            return best ? (best.iso_code || best.key || '').toUpperCase() : null;
-          };
-          const _findIso = (name) => {
-            if (!name) return null;
-            const n = name.trim().toLowerCase();
-            const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
-            return c ? (c.iso_code || c.key || '').toUpperCase() : null;
-          };
-          if (seg.primary_country) addIso(_findIso(seg.primary_country.name) || _nearestIso(seg.primary_country.lat, seg.primary_country.lon));
-          if (seg.primary_city)    addIso(_nearestIso(seg.primary_city.lat, seg.primary_city.lon));
-          for (const arc of (seg.flow_arcs || [])) {
-            addIso(_findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon));
-            addIso(_findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon));
-          }
-          for (const loc of secondary) {
-            addIso(_findIso(loc.name) || _nearestIso(loc.lat, loc.lon));
-          }
+          addIso(seg.primary_country_iso);
+          addIso(seg.primary_city_country_iso);
+          (seg.secondary_country_isos || []).forEach(addIso);
+          (seg.flow_arc_isos || []).forEach(addIso);
         }
 
         if (window.__flowHighlightCountries) {
@@ -40186,13 +40288,32 @@ body.ticker-active .gTickerLabel {
           ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && tweetUrl) ||
           (mediaType === 'heatmap' && (hmQ || (hmResolved && Array.isArray(hmResolved.values) && hmResolved.values.length)));
 
-        if (fm?.enabled && hasMedia) {
-          const fStart      = fm.start_sec ?? 0;
-          const fEnd        = fm.end_sec   ?? (fStart + (fm.duration_sec || 15));
-          const triggerPct  = (fm.trigger_pct ?? 35) / 100;
-          const enableCC    = fm.captions !== false;
-          const volumeLevel = fm.volume || 'medium';
-          const transition  = fm.narrator_transition || '';
+        // Heatmap is a PASSIVE OVERLAY — paints over the globe while the
+        // narrator keeps speaking. Video/Twitter are TAKEOVERS — they
+        // pause the narrator and enlarge a media card. Different concept,
+        // different gate:
+        //   - Takeover requires fm.enabled (the editor's "yes, do the
+        //     handoff" flag) plus media data.
+        //   - Heatmap fires whenever the segment carries heatmap data,
+        //     regardless of fm.enabled. The previous unified gate
+        //     (fm?.enabled && hasMedia) silently dropped heatmap
+        //     segments whose manifest had media_type:'heatmap' but
+        //     didn't set featured_video.enabled — narrator still
+        //     mentioned the heatmap ("as you can see…"), but the
+        //     overlay never appeared. User-reported bug.
+        const isHeatmap        = mediaType === 'heatmap';
+        const fireTakeover     = !isHeatmap && fm?.enabled && hasMedia;
+        const fireHeatmap      = isHeatmap && hasMedia;
+
+        if (fireTakeover || fireHeatmap) {
+          // For heatmap segments, fm may legitimately be null (no
+          // video_focal block built) — fall through to safe defaults.
+          const fStart      = fm?.start_sec ?? 0;
+          const fEnd        = fm?.end_sec   ?? (fStart + (fm?.duration_sec || 15));
+          const triggerPct  = (fm?.trigger_pct ?? 35) / 100;
+          const enableCC    = fm?.captions !== false;
+          const volumeLevel = fm?.volume || 'medium';
+          const transition  = fm?.narrator_transition || '';
 
           // Prefer the precise focal_trigger_ms stamped by the audio
           // generator (it points at the exact end of the "before video"
@@ -40204,10 +40325,14 @@ body.ticker-active .gTickerLabel {
             : null;
           const triggerDelayMs = (focalOffsetMs != null) ? focalOffsetMs : ms(triggerPct);
 
+          if (isHeatmap) {
+            console.log(`[briefing/heatmap] seg ${idx} firing in ${triggerDelayMs}ms — q="${hmQ || '(none)'}" mode=${hmMode} resolved=${!!hmResolved} fm.enabled=${fm?.enabled ?? '(no fm)'}`);
+          }
+
           addBTimer(setTimeout(() => {
             if (segIdx !== idx) return;
             const fire = () => {
-              if (mediaType === 'heatmap') {
+              if (isHeatmap) {
                 // hmResolved is the pre-baked per-country values from
                 // briefingGenerator's pre-resolve pass; null falls
                 // through to a live /api/heatmap/ask call (legacy
@@ -40220,8 +40345,7 @@ body.ticker-active .gTickerLabel {
                 // the pending placeholder for both YouTube AND Twitter
                 // (so two article cards fill the side panel until now).
                 // Mount the appropriate card just-in-time so
-                // startFocalVideo has its anchor element. Heatmap
-                // returns earlier in this branch and never reaches here.
+                // startFocalVideo has its anchor element.
                 if (!document.getElementById('bVideoCard')) {
                   if (mediaType === 'youtube' && ytId) {
                     _mountPendingVideoCard(seg, ytId, fStart, fEnd);
@@ -40240,6 +40364,10 @@ body.ticker-active .gTickerLabel {
               fire();
             }
           }, triggerDelayMs));
+        } else if (mediaType === 'heatmap') {
+          // Diagnostic — heatmap segment that didn't fire. Helps debug
+          // future editor/manifest issues without silently swallowing.
+          console.warn(`[briefing/heatmap] seg ${idx} NOT firing — hasMedia=${hasMedia} hmQ="${hmQ}" hmResolved=${!!hmResolved}`);
         }
       }
 
@@ -41314,6 +41442,7 @@ body.ticker-active .gTickerLabel {
     const card = document.getElementById('bVideoCard');
     const scrim = document.getElementById('bFocalScrim');
     const mediaType = card?.dataset?.mediaType || 'youtube';
+    const isTwitter = mediaType === 'twitter_post' || mediaType === 'twitter_video';
 
     if (mediaType === 'youtube') {
       const iframe = document.getElementById('bVideoIframe');
@@ -41335,9 +41464,20 @@ body.ticker-active .gTickerLabel {
       card.classList.remove('focal-in');
       setTimeout(() => {
         card.classList.remove('bFocalVideo');
-        // Return the card to its original slot inside #bArticlePanel (or
-        // wherever it was before we hoisted it to <body> in startFocalVideo).
-        if (_focalOrigParent && card.parentNode === document.body) {
+        if (isTwitter) {
+          // Twitter focal is a one-shot — DO NOT restore the card back
+          // into the side panel after the takeover ends. The user asked
+          // for Twitter to be hidden from the side both BEFORE and AFTER
+          // the focal trigger; loadArticlePanel already handles the
+          // "before" suppression (via willTriggerFeaturedMedia=true). The
+          // "after" suppression lives here: just remove the card so the
+          // article slot the focal hijacked stays empty / fills with the
+          // next segment's content.
+          try { card.remove(); } catch (_) {}
+        } else if (_focalOrigParent && card.parentNode === document.body) {
+          // YouTube + heatmap: return the card to its original slot
+          // inside #bArticlePanel (or wherever it was before we hoisted
+          // it to <body> in startFocalVideo).
           try {
             if (_focalOrigNextSibling && _focalOrigNextSibling.parentNode === _focalOrigParent) {
               _focalOrigParent.insertBefore(card, _focalOrigNextSibling);
@@ -41368,19 +41508,25 @@ body.ticker-active .gTickerLabel {
   // endpoint the live "Map This" panel uses, with server-side cache so
   // repeated plays of the same briefing are free.
   async function startFocalHeatmap(question, mode, durationSec, prebaked) {
-    if (!question && !(prebaked && Array.isArray(prebaked.values) && prebaked.values.length)) return;
+    if (!question && !(prebaked && Array.isArray(prebaked.values) && prebaked.values.length)) {
+      console.warn('[briefing/heatmap] no question and no prebaked values — skipping render');
+      return;
+    }
     try {
       // Pre-resolved path: briefingGenerator baked the heatmap into the
       // segment payload at generation time. Use it directly — no API
       // call, no auth, no Claude latency, deterministic across viewers.
       if (prebaked && Array.isArray(prebaked.values) && prebaked.values.length && !prebaked.refusal) {
         if (typeof window.__semHeatRenderQA === 'function') {
+          console.log(`[briefing/heatmap] rendering prebaked: ${prebaked.values.length} countries · "${prebaked.legend || question}"`);
           window.__semHeatRenderQA({
             values:      prebaked.values,
             mode:        mode || 'binary',
             legend:      prebaked.legend || question,
             source_note: prebaked.source_note || '',
           });
+        } else {
+          console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
         }
         void durationSec;
         return;
@@ -41390,6 +41536,7 @@ body.ticker-active .gTickerLabel {
       // resolution, or when the generator's resolver failed. Calls the
       // public /api/heatmap/ask endpoint which goes through the same
       // resolver internally; cache hits are free.
+      console.log(`[briefing/heatmap] no prebaked — falling back to /api/heatmap/ask for "${question}"`);
       const apiBase = window.__API || window.__API_BASE || 'https://earth-wjr6.onrender.com';
       const headers = { 'Content-Type': 'application/json' };
       const tok = window.__authToken;
@@ -41400,7 +41547,7 @@ body.ticker-active .gTickerLabel {
         body:    JSON.stringify({ question, mode: mode || 'binary' }),
       });
       if (!res.ok) {
-        console.warn('[briefing/heatmap] request failed:', res.status);
+        console.warn(`[briefing/heatmap] /api/heatmap/ask failed: ${res.status}${res.status === 401 ? ' (auth required — sign in to enable live heatmap fallback)' : ''}`);
         return;
       }
       const data = await res.json();
@@ -41409,12 +41556,15 @@ body.ticker-active .gTickerLabel {
         return;
       }
       if (typeof window.__semHeatRenderQA === 'function') {
+        console.log(`[briefing/heatmap] rendering live response: ${data.values.length} countries`);
         window.__semHeatRenderQA({
           values:      data.values,
           mode:        data.mode || mode || 'binary',
           legend:      data.legend || question,
           source_note: data.source_note || '',
         });
+      } else {
+        console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
       }
       void durationSec;
     } catch (e) {
