@@ -1,3 +1,16 @@
+// Cap DB pool BEFORE anything requires ./db. Same convention as
+// keywordNormalizerCron.js / worker.js: a translator pass needs at
+// most 1 client at a time (single GROUP BY query, then DeepL HTTP
+// calls), so capping at 2 leaves a generous headroom buffer while
+// keeping the web server's pool unstarved on Render.
+//
+// Critical that this comes before the require('./db') below: db.js
+// reads DB_POOL_MAX at module-load time and the value is sticky for
+// the rest of the process. If keywordIntelligenceTranslateCron.js
+// imports this file, it sets the same cap first, so the second write
+// here is a no-op — no conflict.
+process.env.DB_POOL_MAX = process.env.DB_POOL_MAX || '2';
+
 // keywordIntelligenceTranslator.js
 //
 // TACTICAL DeepL backfill for the keyword-intelligence surface (the

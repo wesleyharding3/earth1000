@@ -3,6 +3,12 @@
 // This is a one-shot cleanup — future Claude runs are gated by the
 // updated prompt + REJECTED_CATEGORIES + JUNK_TITLE_PATTERNS so new
 // off-topic threads won't be created.
+//
+// Cap DB_POOL_MAX before requiring ./db — single-connection script
+// run by humans for debugging; cap=2 leaves the web server's pool
+// untouched even if invoked during peak traffic.
+process.env.DB_POOL_MAX = process.env.DB_POOL_MAX || '2';
+
 require('dotenv').config({ path: __dirname + '/../.env' });
 const pool = require('../db');
 

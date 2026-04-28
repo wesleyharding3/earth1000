@@ -1,5 +1,11 @@
 // Read-only sweep. Mirror the *exact* JUNK_TITLE_PATTERNS additions
 // in storyThreadBuilder.js so the impact preview matches the runtime.
+//
+// Cap DB_POOL_MAX before requiring ./db — single-connection script
+// run by humans for debugging; cap=2 leaves the web server's pool
+// untouched even if invoked during peak traffic.
+process.env.DB_POOL_MAX = process.env.DB_POOL_MAX || '2';
+
 require('dotenv').config({ path: __dirname + '/../.env' });
 const pool = require('../db');
 
