@@ -38635,7 +38635,14 @@ body.ticker-active .gTickerLabel {
      usually 0 on portrait iOS and dimming the full width matches the
      visual expectation for an overlay. */
   top: env(safe-area-inset-top, 0px);
-  bottom: calc(var(--page-nav-height, 0px) + env(safe-area-inset-bottom, 0px));
+  /* Sit above the ENTIRE bottom-bar stack: page-nav (tab bar) +
+     global-ticker (live news feed strip) + global-ticker-gap (spacing
+     between them) + app-bottom-inset + iOS safe-area-inset-bottom.
+     Earlier this only accounted for page-nav, so on builds with the
+     ticker active the launcher's lower edge sat behind the ticker.
+     Mirrors the same calc used by #flowControls (line ~6125),
+     #accountDropdown (line ~9940), and the article-detail panel. */
+  bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom, 0px));
   left: 0;
   right: 0;
   z-index: 100001;

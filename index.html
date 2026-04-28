@@ -36435,7 +36435,8 @@ body.ticker-active .gTickerLabel {
   /* The ENTIRE panel — including the dim/backdrop — sits inside the
      iOS safe-area. See www/index.html for the full rationale. */
   top: env(safe-area-inset-top, 0px);
-  bottom: calc(var(--page-nav-height, 0px) + env(safe-area-inset-bottom, 0px));
+  /* Above the ENTIRE bottom-bar stack — see www/index.html for rationale. */
+  bottom: calc(var(--page-nav-height, 0px) + var(--global-ticker-height, 0px) + var(--global-ticker-gap, 0px) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom, 0px));
   left: 0;
   right: 0;
   z-index: 100001;
