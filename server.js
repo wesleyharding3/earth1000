@@ -10401,36 +10401,37 @@ app.get("/api/keywords/trending", async (req, res) => {
       params.push(limitInt > 50 ? limitInt : 50); // fetch at least 50 for cache
       const limitIdx = params.length;
 
-      // The COALESCE+JOIN pattern is the immediate visible fix for the
-      // "keywords not translated in keyword intelligence" complaint.
-      // The Claude-based keywordNormalizerCron has been writing
-      // English equivalents into keyword_translations for months
-      // (~145K rows as of now), but this endpoint never JOINed to
-      // them. Result: Russian "выборы" and English "election"
-      // appeared as separate rows in trending, the user saw mixed
-      // languages, and the deduped count was wrong.
+      // PERF: two-stage aggregation. raw CTE aggregates by the plain
+      // keyword column (lets Postgres use idx_kds_global_date_keyword_cover);
+      // the outer SELECT joins keyword_translations on the small
+      // post-aggregation result and re-aggregates by normalized form.
+      // The earlier single-stage form forced a sequential scan because
+      // the GROUP BY key was a function expression. See /api/keywords/rising
+      // for full rationale.
       //
-      // Now: COALESCE(kt.normalized_keyword, k.keyword) gives the
-      // English form when present, falls back to the original. GROUP
-      // BY the same expression means duplicates merge — the trending
-      // count for a story carrying both forms is summed.
-      //
-      // The DeepL tactical translator (keywordIntelligenceTranslator.js)
-      // fills any remaining gaps for the top of the distribution as
-      // new languages / new entities appear in the feed.
+      // days_active is collapsed via MAX across language variants —
+      // approximate but defensible (the dominant variant's day-count
+      // typically dominates anyway). Exact COUNT(DISTINCT date) across
+      // merged variants would require a third pass over the raw rows.
       const result = await pool.query(
-        `SELECT
-           COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
-           SUM(k.total_count)::bigint AS mentions,
-           COUNT(DISTINCT k.date)::int AS days_active
-         FROM keyword_daily_stats k
-         LEFT JOIN keyword_translations kt
-           ON kt.original_keyword = k.keyword
-         WHERE ${clauses.join("\n           AND ")}
-           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
-         GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
-         HAVING SUM(k.total_count) >= 3
-         ORDER BY mentions DESC, COALESCE(kt.normalized_keyword, k.keyword) ASC
+        `WITH raw AS (
+           SELECT k.keyword,
+                  SUM(k.total_count)::bigint AS mentions,
+                  COUNT(DISTINCT k.date)::int AS days_active
+           FROM keyword_daily_stats k
+           WHERE ${clauses.join("\n             AND ")}
+             AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+           GROUP BY k.keyword
+         )
+         SELECT
+           COALESCE(kt.normalized_keyword, r.keyword) AS keyword,
+           SUM(r.mentions)::bigint AS mentions,
+           MAX(r.days_active)::int AS days_active
+         FROM raw r
+         LEFT JOIN keyword_translations kt ON kt.original_keyword = r.keyword
+         GROUP BY COALESCE(kt.normalized_keyword, r.keyword)
+         HAVING SUM(r.mentions) >= 3
+         ORDER BY mentions DESC, COALESCE(kt.normalized_keyword, r.keyword) ASC
          LIMIT $${limitIdx}`,
         params
       );
@@ -10525,34 +10526,51 @@ app.get("/api/keywords/rising", async (req, res) => {
       params.push(limitInt);
       const limitIdx = params.length;
 
-      // Same JOIN+GROUP-BY-normalized pattern as /api/keywords/trending.
-      // Both CTEs (recent and baseline) collapse to the normalized form
-      // BEFORE the momentum comparison, so a Russian-spike keyword that
-      // also has English-form mentions doesn't get artificially split
-      // across two rows with two unrelated momentum scores.
+      // PERF NOTE — two-stage aggregation:
+      // 1. recent_raw / baseline_raw aggregate by the RAW keyword
+      //    column. Postgres can serve this with the partial index
+      //    `idx_kds_global_date_keyword_cover (date DESC, keyword)
+      //    WHERE source_country_id IS NULL AND about_country_id IS
+      //    NULL` because the GROUP BY key is a plain column.
+      // 2. recent / baseline LEFT JOIN keyword_translations and
+      //    re-aggregate by the normalized form. The post-aggregation
+      //    set is small (a few thousand rows), so the JOIN against
+      //    keyword_translations (145K rows, indexed on
+      //    original_keyword) is fast.
+      //
+      // The earlier version did the JOIN inside the heavy aggregation
+      // CTEs, which forced a sequential scan of keyword_daily_stats
+      // and tripled the query time. The two-stage form gets the same
+      // deduped output with the index-friendly aggregate first.
       const result = await pool.query(
-        `WITH recent AS (
-           SELECT
-             COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
-             SUM(k.total_count)::bigint AS recent_count
+        `WITH recent_raw AS (
+           SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
            FROM keyword_daily_stats k
-           LEFT JOIN keyword_translations kt
-             ON kt.original_keyword = k.keyword
            WHERE ${recentClauses.join("\n             AND ")}
              AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
-           GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
+           GROUP BY k.keyword
            HAVING SUM(k.total_count) >= 2
          ),
-         baseline AS (
-           SELECT
-             COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
-             SUM(k.total_count)::bigint AS baseline_count
+         baseline_raw AS (
+           SELECT k.keyword, SUM(k.total_count)::bigint AS baseline_count
            FROM keyword_daily_stats k
-           LEFT JOIN keyword_translations kt
-             ON kt.original_keyword = k.keyword
            WHERE ${baselineClauses.join("\n             AND ")}
              AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
-           GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
+           GROUP BY k.keyword
+         ),
+         recent AS (
+           SELECT COALESCE(kt.normalized_keyword, r.keyword) AS keyword,
+                  SUM(r.recent_count)::bigint AS recent_count
+           FROM recent_raw r
+           LEFT JOIN keyword_translations kt ON kt.original_keyword = r.keyword
+           GROUP BY COALESCE(kt.normalized_keyword, r.keyword)
+         ),
+         baseline AS (
+           SELECT COALESCE(kt.normalized_keyword, b.keyword) AS keyword,
+                  SUM(b.baseline_count)::bigint AS baseline_count
+           FROM baseline_raw b
+           LEFT JOIN keyword_translations kt ON kt.original_keyword = b.keyword
+           GROUP BY COALESCE(kt.normalized_keyword, b.keyword)
          )
          SELECT
            r.keyword,

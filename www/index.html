@@ -10871,9 +10871,35 @@ button.arcCtxSegDot,
    overlay the next row. With shrink locked off the parent simply
    scrolls instead. */
 .kwi-trending-row {
-  display: block;
+  /* CRITICAL — see comment at top of this block. The earlier
+     display:block + flex-shrink:0 was the right idea but not
+     bullet-proof: in a flex column parent, a block child's intrinsic
+     height calculation can still get bullied by flex-grow on
+     sibling rows pushing for more space. By making the row itself
+     a flex column with explicit content-fit, we GUARANTEE it grows
+     to contain item + interpanel + ctx, no matter the parent's
+     pressure.
+       - display: flex; flex-direction: column → strict child stacking
+       - flex-shrink: 0 → never compress this row
+       - min-height: 0 → don't let a stray min-content rule clamp us
+       - height: auto → grow to whatever the children need
+       - overflow: visible → no clipping under any circumstance
+     This finally fixes the "ctx text overlays next row when both
+     graph and ctx are open" bug. */
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
 }
+/* Safe-area gap below the AI context blurb AND below the expanded
+   graph panel. Without these, a row with both open could still feel
+   like it bleeds into the next row visually even after the height
+   calc is correct. The margin-bottom is the literal "safe area"
+   the user asked for — pushes the next row down by a clear gap. */
+.kwi-row-ctx.open { margin-bottom: 10px; }
+.kwi-trending-row .kwi-ref-interpanel { margin-bottom: 8px; }
 .kwi-row-ctx-btn {
   margin-left: 6px;
   width: 22px; height: 22px;

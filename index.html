@@ -10259,9 +10259,21 @@ button.arcCtxSegDot,
    it the row gets squeezed under flex pressure when ctx + graph are
    both open and the ctx text overlays the next row. */
 .kwi-trending-row {
-  display: block;
+  /* See www/index.html for the long-form rationale. flex column +
+     flex-shrink:0 + min-height:0 + height:auto + overflow:visible
+     bullet-proofs the row's content-fit calc against parent flex
+     pressure, finally fixing the ctx-text-overlays-next-row bug. */
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
 }
+/* Safe-area gaps below the open context blurb and the expanded graph
+   panel — literal pixel separation from the next row. */
+.kwi-row-ctx.open { margin-bottom: 10px; }
+.kwi-trending-row .kwi-ref-interpanel { margin-bottom: 8px; }
 .kwi-row-ctx-btn {
   margin-left: 6px; width: 22px; height: 22px; flex-shrink: 0;
   border-radius: 6px; border: 1px solid rgba(139,92,246,0.35);
