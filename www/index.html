@@ -48756,10 +48756,31 @@ body.ticker-active .gTickerLabel {
 
   // ─── Wire DOM events ────────────────────────────────────────
   function _wireEvents() {
-    document.getElementById('npCloseBtn')?.addEventListener('click', closePanel);
-    document.getElementById('notifPanelBackdrop')?.addEventListener('click', e => {
-      if (e.target.id === 'notifPanelBackdrop') closePanel();
+    // ── Pointer event isolation ────────────────────────────────
+    // The globe's Three.js picker runs on touchstart/pointerdown +
+    // click. Without stopPropagation here, taps on panel buttons
+    // bubble through to the globe handlers, which both:
+    //   (a) prevented the registration handler from firing (user
+    //       hit "Enable notifications", got selected on globe instead)
+    //   (b) closed the notif panel (the globe picker triggers panel
+    //       changes that override our z-index).
+    // Same pattern the briefing launcher uses (line ~42563).
+    const _backdrop = document.getElementById('notifPanelBackdrop');
+    const _panel    = document.getElementById('notifPanel');
+    ['click','mousedown','mouseup','pointerdown','pointerup','touchstart','touchend','wheel','contextmenu'].forEach(ev => {
+      _backdrop?.addEventListener(ev, e => {
+        // Click on backdrop (not panel) closes — match the briefing
+        // launcher's UX. All other events get swallowed so the globe
+        // never sees them.
+        if (ev === 'click' && e.target === _backdrop) closePanel();
+        e.stopPropagation();
+      });
+      _panel?.addEventListener(ev, e => {
+        e.stopPropagation();
+      });
     });
+
+    document.getElementById('npCloseBtn')?.addEventListener('click', closePanel);
 
     document.getElementById('npTogDaily')?.addEventListener('click', () => {
       const on = !document.getElementById('npTogDaily').classList.contains('on');
