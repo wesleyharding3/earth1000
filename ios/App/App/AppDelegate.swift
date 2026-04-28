@@ -46,4 +46,30 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 
+    // MARK: - Push Notifications
+    //
+    // Capacitor's PushNotifications plugin listens for these two
+    // NotificationCenter notifications. Without forwarding here, iOS
+    // receives the APNs device token but has nowhere to deliver it —
+    // the plugin never fires the `registration` JS event and our
+    // `__registerPushDevice` times out at 15s waiting for it. This
+    // is the canonical Capacitor PN setup step that's missing from
+    // the default Capacitor iOS template.
+
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        NotificationCenter.default.post(
+            name: .capacitorDidRegisterForRemoteNotifications,
+            object: deviceToken
+        )
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        NotificationCenter.default.post(
+            name: .capacitorDidFailToRegisterForRemoteNotifications,
+            object: error
+        )
+    }
+
 }
