@@ -39,6 +39,39 @@ const CREDIT_COSTS = Object.freeze({
   // + curated rows are FREE — credits only charged when we actually
   // invoke Claude. (~$0.025-0.030)
   heatmap_qa:       30,
+  // /api/briefing/custom — most expensive feature in the app. Cost is
+  // dominated by ElevenLabs TTS, which is OPT-IN (the `voiceover` flag).
+  // We track two tiers because the cost spread is ~10×:
+  //
+  //   custom_briefing_text (NO voiceover):
+  //     • Sonnet narrative (5K in + 3K out)            ≈ $0.06
+  //     • 3 Haiku data panels (~3K each in/out)        ≈ $0.02
+  //     • optional heatmap pre-resolution              ≈ $0.05
+  //     • storage I/O                                  ≈ $0.01
+  //     Sum: ~$0.10–0.15. 200 credits = ~$0.20 with ~30% headroom.
+  //
+  //   custom_briefing_voice (WITH voiceover):
+  //     • Everything in custom_briefing_text           ≈ $0.15
+  //     • ElevenLabs eleven_multilingual_v2:
+  //         ~750 words × 5.5 chars = ~4,500 chars typical, up to
+  //         ~8,000 chars on a verbose briefing. At Pro-plan pricing
+  //         (~$0.000198/char) that's $0.89–1.58.
+  //     Sum: ~$1.05–1.75. 1500 credits = ~$1.50 budget — undercharges
+  //     by ~$0.25 on the worst-case verbose run, profitable at the
+  //     median (~$1.20). Bump to 1800 if cost monitoring shows the
+  //     average climbing past $1.40.
+  //
+  // Enterprise weekly base = 2500 credits, so a user can run:
+  //   • ~1 voiceover briefing per week + ~5 text-only, or
+  //   • ~12 text-only briefings per week.
+  // Plus add-on packs for heavier use. Free/Pro can't afford either
+  // tier even once and the endpoint gates on tier === 'enterprise'
+  // before the credit check anyway.
+  //
+  // Endpoint code at /api/briefing/custom picks the right key based
+  // on req.body.voiceover.
+  custom_briefing_text:  200,
+  custom_briefing_voice: 1500,
 });
 
 // ─── Weekly base allowance by tier ──────────────────────────────────────────
@@ -309,11 +342,82 @@ async function grantAddonCredits(userId, credits, reason, referenceId = null) {
   }
 }
 
+/**
+ * Refund credits previously consumed by a feature call. Used when a
+ * call is debited atomically up front but then fails mid-flight (e.g.
+ * the briefing generator throws after we already deducted the cost).
+ *
+ * Reverses the consumeCredits draining order: refunds to base_credits_used
+ * first (up to whatever was consumed this week), then to addon_credits.
+ * That keeps the user whole if the same week's allowance was where the
+ * debit came from. Best-effort — silent no-op for admin (they paid 0
+ * credits in the first place) or unknown user.
+ *
+ * @param {string} userId   Supabase user id
+ * @param {number} amount   Credits to refund (must match the original cost)
+ * @param {string} feature  Key of CREDIT_COSTS or 'custom' label for ledger
+ * @param {object} [opts]
+ * @param {string} [opts.reason]        e.g. 'generation_failed'
+ * @param {string} [opts.errorMessage]  Stamped into the ledger row for audit
+ * @returns {Promise<{ok: bool, refunded: number}>}
+ */
+async function refundCredits(userId, amount, feature, opts = {}) {
+  if (!userId || !Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, refunded: 0 };
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Lock the balance row.
+    const { rows } = await client.query(`
+      SELECT base_credits_used, addon_credits
+        FROM user_credit_balance
+       WHERE user_id = $1
+       FOR UPDATE
+    `, [userId]);
+    if (!rows.length) {
+      // Nothing was ever consumed (admin or untouched user) — no-op.
+      await client.query('COMMIT');
+      return { ok: true, refunded: 0 };
+    }
+    const baseUsed = Number(rows[0].base_credits_used) || 0;
+    // Refund order: base first (uncharge what was charged), then addon.
+    const toBase  = Math.min(amount, baseUsed);
+    const toAddon = amount - toBase;
+    await client.query(`
+      UPDATE user_credit_balance
+         SET base_credits_used = GREATEST(0, base_credits_used - $2),
+             addon_credits     = addon_credits + $3,
+             total_consumed    = GREATEST(0, total_consumed - $4),
+             updated_at        = NOW()
+       WHERE user_id = $1
+    `, [userId, toBase, toAddon, amount]);
+    await client.query(`
+      INSERT INTO credit_ledger (user_id, delta, reason, reference_id, balance_after)
+      SELECT $1, $2, $3, $4,
+             (SELECT (base_credits_used * -1) + addon_credits FROM user_credit_balance WHERE user_id = $1)
+    `, [
+      userId,
+      amount,
+      `refund.${feature || 'unknown'}${opts.reason ? '.' + opts.reason : ''}`,
+      opts.errorMessage ? String(opts.errorMessage).slice(0, 240) : null,
+    ]);
+    await client.query('COMMIT');
+    return { ok: true, refunded: amount };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    return { ok: false, refunded: 0, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   CREDIT_COSTS,
   WEEKLY_BASE,
   ADDON_PACKS,
   consumeCredits,
+  refundCredits,
   getBalance,
   grantAddonCredits,
   currentWeekStart,

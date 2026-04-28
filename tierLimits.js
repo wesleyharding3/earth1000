@@ -3,29 +3,55 @@
 const pool = require('./db');
 
 // ─── Tier limit definitions ────────────────────────────────────────────────
+//
+// Re-tuned 2026 launch pass. Three rules drove the rewrite:
+//   1. Higher tier must beat lower tier on EVERY measurable axis.
+//      The old matrix had Enterprise translations capped at 20/month while
+//      Free got 5/day = ~150/month. A user on the comparison page saw
+//      "pay $24.99/mo, get fewer translations" and lost trust in the
+//      whole pricing scheme. Fixed below.
+//   2. Translation is the Enterprise hero feature. DeepL/Claude cost is
+//      ~$0.0005-0.0075 per call AND the cache-first /api/translate path
+//      makes repeats free, so unlimited is supportable at $24.99/mo.
+//      Pro gets a 5× bump (5/day → 25/day) so the upgrade narrative is
+//      "casual reader → power reader → professional reader, unlimited."
+//   3. Custom briefings are no longer hard-gated to Enterprise. The
+//      endpoint debits the credit ledger (200 credits text-only, 1500 with
+//      voiceover). Pro users can afford 2 text briefings/week from base
+//      allowance, or buy add-on packs for voiceover. Enterprise still has
+//      the legacy monthly cap (10) as a belt-and-suspenders ceiling on
+//      top of credits.
 const LIMITS = {
   free: {
     briefingsPerWeek:        2,
     translationsPerDay:      5,
     translationsPerMonth:    null,   // daily cap applies
     explanationsPerDay:      1,      // small daily taste of AI context
-    customBriefingsPerMonth: 0,      // pay-per-use at $2.50
+    customBriefingsPerMonth: 0,      // credit-gated only; 20 credits/wk is below the 200 floor anyway
     kwExplanationsPerDay:    0,      // enterprise-only feature
   },
   pro: {
     briefingsPerWeek:        Infinity,
-    translationsPerDay:      5,
+    translationsPerDay:      25,     // 5× the free tier — clear "Pro = power user" upgrade
     translationsPerMonth:    null,   // daily cap applies
     explanationsPerDay:      5,
-    customBriefingsPerMonth: 0,      // pay-per-use at $2.50
+    // No monthly cap on custom briefings — credit ledger is the gate.
+    // 400 credits/week base allowance covers ~2 text briefings; voice
+    // requires add-on packs ($2.00 for 500 / $6.00 for 2000 credits).
+    customBriefingsPerMonth: null,
     kwExplanationsPerDay:    0,      // enterprise-only feature
   },
   enterprise: {
     briefingsPerWeek:        Infinity,
-    translationsPerDay:      null,   // monthly cap applies instead
-    translationsPerMonth:    20,
+    // Unlimited translation — the Enterprise hero feature. Cache-first
+    // backend means real cost is dominated by NEW translations, which a
+    // single org rarely produces in volume. At $24.99/mo even a heavy
+    // user (~1000 marginal translations/month × $0.0075) costs ~$7.50,
+    // well within margin.
+    translationsPerDay:      Infinity,
+    translationsPerMonth:    null,
     explanationsPerDay:      20,
-    customBriefingsPerMonth: 10,
+    customBriefingsPerMonth: 10,     // safety cap on top of credit ledger
     kwExplanationsPerDay:    25,     // AI keyword context explanations
   },
 };
@@ -181,17 +207,33 @@ async function checkBriefingAccess(userId, episodeId, tier) {
 }
 
 /**
- * Check whether a user can generate a custom briefing.
- * - Free/Pro: pay-per-use ($2.50). Returns { allowed: false, payPerUse: true }
- * - Enterprise: monthly cap.
+ * Check the legacy monthly cap on custom briefings. The PRIMARY gate for
+ * this feature is now the credit ledger (creditLedger.js custom_briefing_*
+ * keys, debited inside /api/briefing/custom). This function exists ONLY
+ * as a safety ceiling for Enterprise users who buy enough add-on credit
+ * packs to exceed a reasonable monthly count.
+ *
+ * Tier behavior:
+ *   - customBriefingsPerMonth = 0    → not allowed (handled at endpoint)
+ *   - customBriefingsPerMonth = null → no monthly cap (credit-only gate)
+ *   - customBriefingsPerMonth = N    → cap at N, regardless of credits
  */
 async function checkCustomBriefing(userId, tier) {
   const lim = limitsFor(tier);
 
+  // Hard-block: tier doesn't have access at all (rare — would only be a
+  // future tier added with explicit 0).
   if (lim.customBriefingsPerMonth === 0) {
-    return { allowed: false, payPerUse: true, priceUsd: 2.50 };
+    return { allowed: false, used: 0, limit: 0 };
   }
 
+  // No monthly cap (Pro tier as of the 2026 launch pass) — defer entirely
+  // to the credit ledger. Caller already debited credits before us.
+  if (lim.customBriefingsPerMonth == null) {
+    return { allowed: true, used: 0, limit: Infinity };
+  }
+
+  // Enterprise tier: monthly cap as a belt-and-suspenders ceiling.
   const month = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
   const { rows } = await pool.query(`
     INSERT INTO custom_briefing_usage (user_id, usage_month, count)

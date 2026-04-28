@@ -9428,17 +9428,17 @@ button.arcCtxSegDot,
         font-size: 16px;
       }
 
-      /* Briefing control buttons — sized for mobile.
-         Scoped under .bControls so these beat the later default rules via
-         specificity (0,2,0 > 0,1,0). Compact (40 / 50 px) by request to
-         free vertical real estate for the article panel above.
-         min-height: 40 explicit so the shared min-height: var(--tap-min)
-         doesn't force a vertical ellipse. */
-      .bControls .bControlBtn         { width: 40px; height: 40px; min-height: 40px; font-size: 15px; }
-      .bControls .bControlBtn.primary { width: 50px; height: 50px; min-height: 50px; font-size: 18px; }
+      /* Briefing control buttons — shrunk for mobile per request.
+         Regular 32×32 (was 40×40), primary 40×40 (was 50×50), speed/cc
+         28px tall (was 40). Wrapper padding/gap tightened so the pill
+         reads visibly shorter. Tap-target floor explicitly overridden
+         here since the controls live in a fixed pill where each button
+         is visually distinct. See www/index.html for full rationale. */
+      .bControls .bControlBtn         { width: 32px; height: 32px; min-height: 32px; font-size: 12px; }
+      .bControls .bControlBtn.primary { width: 40px; height: 40px; min-height: 40px; font-size: 14px; }
       .bControls .bControlBtn.speed,
-      .bControls .bControlBtn.cc      { width: auto; height: 40px; min-height: 40px; padding: 0 12px; font-size: 11px; }
-      .bControlsWrap .bControls       { padding: 4px 10px; gap: 8px; }
+      .bControls .bControlBtn.cc      { width: auto; height: 28px; min-height: 28px; padding: 0 9px; font-size: 10px; }
+      .bControlsWrap .bControls       { padding: 3px 8px; gap: 6px; }
       .bDot                           { width: 8px; height: 8px; min-height: 0; }
 
       /* ── Account dropdown — anchor to bottom of screen on narrow ── */
@@ -12230,6 +12230,13 @@ window.__arcCtxSegmented = (function() {
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
           </svg>
           Preferences
+        </div>
+        <div class="acctDpBtn" id="acctDpNotifications" onclick="window.__openNotifications?.()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          Notifications
         </div>
         <div class="acctDpBtn" id="acctDpSettingsOpen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -17032,7 +17039,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
       function positionHoverCard(card, lineEl, sx, sy) {
-        const CW = 200, CH = 72, OFF = 28;
+        // Use the card's REAL rendered dimensions, not hardcoded 200×72.
+        // See www/index.html for full rationale — briefing-forced cards
+        // have variable width based on label text, so a hardcoded CW
+        // produces a leader line that doesn't reach (or overshoots) the
+        // card edge.
+        const CW  = card.offsetWidth  || 200;
+        const CH  = card.offsetHeight || 72;
+        const OFF = 28;
         let cx = sx + OFF, cy = sy - CH / 2;
         if (cx + CW > window.innerWidth - 12)  cx = sx - OFF - CW;
         if (cy < 70)                            cy = sy + 14;
@@ -35682,7 +35696,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transform: translate(-50%, 0);
 }
 @media (max-width: 700px) {
-  .bSegmentTitle { top: calc(env(safe-area-inset-top, 0px) + 10px); font-size: 13px; letter-spacing: 0.08em; max-width: 86vw; }
+  /* Title spans the safe-area horizontally with no truncation —
+     overrides line-clamp + clip behavior from the desktop rule so a
+     long title wraps freely. See www/index.html for full rationale. */
+  .bSegmentTitle {
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    max-width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px);
+    width: calc(100vw - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px) - 16px);
+    overflow: visible;
+    text-overflow: clip;
+    -webkit-line-clamp: unset;
+    display: block;
+    -webkit-box-orient: unset;
+  }
 }
 
 /* ── Dots meta label (Earth Briefing + date above dots) ── */
@@ -36933,7 +36961,10 @@ body.ticker-active .gTickerLabel {
   // Reduced from 900ms to 200ms so the narrator's transition flows
   // into the next segment without a long perceived silence. See
   // www/index.html for the full rationale.
-  const SEGMENT_BUFFER_MS = 200;  // pause between non-video segments (ms)
+  // See www/index.html for full rationale on these tunings.
+  const SEGMENT_BUFFER_MS = 750;
+  const FOCAL_PRE_PAUSE_MS  = 350;
+  const FOCAL_POST_PAUSE_MS = 500;
 
   let episode       = null;
   let segIdx        = 0;
@@ -37173,6 +37204,20 @@ body.ticker-active .gTickerLabel {
   // ── Intro overlay control ────────────────────────────────────────────
   // Visible during type:'intro' segments. The grey dim + brand entrance
   // + date label run via CSS transitions; this only toggles the classes.
+  // Parse episode.target_date as LOCAL Y/M/D so toLocaleDateString
+  // doesn't shift to the previous day in timezones west of UTC.
+  // See www/index.html for full rationale.
+  function _parseEpisodeDate(raw) {
+    if (!raw) return new Date();
+    const s = raw instanceof Date ? raw.toISOString() : String(raw);
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+    }
+    const d = new Date(s);
+    return isNaN(d) ? new Date() : d;
+  }
+
   function showIntroOverlay() {
     const overlay = document.getElementById('bIntroOverlay');
     if (!overlay) return;
@@ -37181,7 +37226,7 @@ body.ticker-active .gTickerLabel {
     overlay.style.display = '';
     const dateEl = document.getElementById('bIntroDate');
     if (dateEl) {
-      const d = episode?.target_date ? new Date(episode.target_date) : new Date();
+      const d = _parseEpisodeDate(episode?.target_date);
       dateEl.textContent = d.toLocaleDateString('en-US', {
         weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
       });
@@ -37210,7 +37255,7 @@ body.ticker-active .gTickerLabel {
     if (seg?.type === 'story') {
       text = seg.thread_title || seg.thread_name || '';
     } else if (seg?.type === 'intro') {
-      const d = episode?.target_date ? new Date(episode.target_date) : new Date();
+      const d = _parseEpisodeDate(episode?.target_date);
       const dateStr = d.toLocaleDateString('en-US', {
         weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
       });
@@ -37884,6 +37929,12 @@ body.ticker-active .gTickerLabel {
 
           addBTimer(setTimeout(() => {
             if (segIdx !== idx) return;
+            // Pause narrator NOW for video/twitter takeovers — see
+            // www/index.html for full rationale. Heatmap is a passive
+            // overlay; narrator continues over it.
+            if (!isHeatmap && audio) {
+              try { audio.pause(); } catch (_) {}
+            }
             const fire = () => {
               if (isHeatmap) {
                 startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), hmResolved);
@@ -38727,7 +38778,9 @@ body.ticker-active .gTickerLabel {
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
 
-    if (audio) { try { audio.pause(); } catch (_) {} }
+    // Audio was already paused at trigger time so it doesn't bleed into
+    // the 3s transition overlay. Defensive re-pause here just in case.
+    if (audio && !audio.paused) { try { audio.pause(); } catch (_) {} }
     bgMusicVideoStart();
 
     if (card.parentNode !== document.body) {
@@ -38746,13 +38799,26 @@ body.ticker-active .gTickerLabel {
     if (isTwitter) {
       // Twitter embeds: just show enlarged
     } else {
+      // YouTube — wait for iframe load before sending seek/unMute commands.
+      // See www/index.html for full rationale on the load-then-cmd dance.
       const iframe = document.getElementById('bVideoIframe');
       if (iframe) {
-        _postYTCommand(iframe, 'seekTo', [startSec, true]);
-        _postYTCommand(iframe, 'unMute');
         const vol = _volumeLevels[volumeLevel] || 50;
-        _postYTCommand(iframe, 'setVolume', [vol]);
-        _postYTCommand(iframe, 'playVideo');
+        const sendCmds = () => {
+          _postYTCommand(iframe, 'seekTo', [startSec, true]);
+          _postYTCommand(iframe, 'unMute');
+          _postYTCommand(iframe, 'setVolume', [vol]);
+          _postYTCommand(iframe, 'playVideo');
+        };
+        sendCmds();
+        const onIframeLoad = () => { setTimeout(sendCmds, 250); };
+        try {
+          const doc = iframe.contentDocument || iframe.contentWindow?.document;
+          if (doc && doc.readyState === 'complete') onIframeLoad();
+          else iframe.addEventListener('load', onIframeLoad, { once: true });
+        } catch (_) {
+          iframe.addEventListener('load', onIframeLoad, { once: true });
+        }
         if (enableCaptions) {
           _focalCaptionsWereOff = !document.querySelector('.bCaptionsActive');
           _postYTCommand(iframe, 'setOption', ['captions', 'track', { languageCode: 'en' }]);
@@ -38812,10 +38878,14 @@ body.ticker-active .gTickerLabel {
     }
     if (scrim) scrim.classList.remove('visible');
 
+    // Resume narrator after a breath beat — see www/index.html for rationale.
     bgMusicVideoEnd();
     if (audio && playing) {
-      bgMusicNarratorStart();
-      try { audio.play().catch(() => {}); } catch (_) {}
+      setTimeout(() => {
+        if (!playing || _focalActive) return;
+        bgMusicNarratorStart();
+        try { audio.play().catch(() => {}); } catch (_) {}
+      }, FOCAL_POST_PAUSE_MS);
     }
   }
 
@@ -39658,13 +39728,33 @@ body.ticker-active .gTickerLabel {
         hideLauncherLoading();
         if (data.insufficient) {
           showLauncherInsuff(data);
+        } else if (res.status === 429 && data.limitReached) {
+          // Credit-gated — server returns suggestedAction / suggestedTier.
+          if (data.suggestedTier && typeof window.__openPricing === 'function') {
+            window.__openPricing(data.suggestedAction || data.error);
+          } else {
+            const lines = [
+              `Custom Briefing needs ${data.cost} credits — you have ${data.remaining} left this week.`,
+              data.suggestedAction || data.resetNote || '',
+            ].filter(Boolean);
+            alert(lines.join('\n\n'));
+          }
+        } else if (res.status === 401) {
+          if (typeof window.__openAuthModal === 'function') {
+            window.__openAuthModal();
+          } else {
+            alert(data.error || 'Sign in to generate Custom Briefings.');
+          }
         } else {
           alert(data.error || 'Something went wrong. Please try again.');
         }
         return;
       }
 
-      // Success — swap episode, close launcher, open briefing
+      // Success — update credit meter, swap episode, open briefing.
+      if (data.credits && typeof window.__updateCreditMeterFromResponse === 'function') {
+        window.__updateCreditMeterFromResponse(data.credits);
+      }
       episode = data;
       closeBriefingLauncher();
       openBriefing();
@@ -39735,6 +39825,8 @@ body.ticker-active .gTickerLabel {
     const voiceId = (custVoiceoverOn && document.getElementById('bCustLangSelect')?.value)
       ? document.getElementById('bCustLangSelect').value : null;
     if (!from && !about && !customTags.size) return;
+    // No pre-flight tier gate — credit ledger handles access. See
+    // www/index.html for full rationale.
     submitCustomBriefing(from, about, customTags, false, { voiceover: custVoiceoverOn, voiceId });
   });
 
@@ -44997,6 +45089,84 @@ body.ticker-active .gTickerLabel {
     </div>
   </div>
 </div>
+
+<!-- Notifications panel — see www/index.html for full rationale.
+     iOS-first launch; on the desktop build the panel renders a banner
+     telling the user push notifications are iOS-only right now and
+     pointing them at the iOS app. Same code, the `web_unsupported`
+     branch in renderPanel() handles the desktop case. -->
+<style>
+  #notifPanelBackdrop {
+    position: fixed; inset: 0; z-index: 100200;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px; opacity: 0; transition: opacity 0.22s ease;
+  }
+  #notifPanelBackdrop.open { display: flex; opacity: 1; }
+  #notifPanel {
+    width: min(440px, 100%);
+    max-height: calc(100vh - 40px); overflow-y: auto;
+    background: rgba(8, 12, 22, 0.96);
+    border: 1px solid rgba(255, 200, 130, 0.22);
+    border-radius: 16px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    color: rgba(255, 255, 255, 0.92);
+    font-family: inherit;
+  }
+  #notifPanel header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  #notifPanel header h2 {
+    flex: 1; margin: 0;
+    font-size: 14px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: rgba(255, 200, 130, 0.92);
+  }
+  #notifPanel header .npClose {
+    background: none; border: none; color: rgba(255,255,255,0.55);
+    font-size: 22px; cursor: pointer; padding: 4px 8px; line-height: 1;
+  }
+  #notifPanel header .npClose:hover { color: #fff; }
+  #notifPanel .npBody { padding: 14px 20px 20px; display: flex; flex-direction: column; gap: 16px; }
+  .npPermBanner {
+    padding: 10px 14px; border-radius: 10px;
+    font-size: 12px; line-height: 1.45;
+    background: rgba(255, 180, 80, 0.10);
+    border: 1px solid rgba(255, 180, 80, 0.30);
+    color: rgba(255, 210, 140, 0.95);
+  }
+</style>
+<div id="notifPanelBackdrop">
+  <div id="notifPanel">
+    <header>
+      <h2>Notifications</h2>
+      <button class="npClose" id="npCloseBtn" aria-label="Close">×</button>
+    </header>
+    <div class="npBody">
+      <div class="npPermBanner" id="npPermBanner">Push notifications are iOS-only right now. Get the iOS app to enable.</div>
+    </div>
+  </div>
+</div>
+<script>
+(function() {
+  // Minimal desktop stub. Web Push lands in a future phase.
+  window.__openNotifications = function() {
+    document.getElementById('notifPanelBackdrop')?.classList.add('open');
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('npCloseBtn')?.addEventListener('click', () => {
+      document.getElementById('notifPanelBackdrop')?.classList.remove('open');
+    });
+    document.getElementById('notifPanelBackdrop')?.addEventListener('click', e => {
+      if (e.target.id === 'notifPanelBackdrop') {
+        document.getElementById('notifPanelBackdrop').classList.remove('open');
+      }
+    });
+  });
+})();
+</script>
 
 </body>
 </html>

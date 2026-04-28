@@ -9407,6 +9407,254 @@ app.get("/api/credits/me", async (req, res) => {
   }
 });
 
+/* =============================================================
+   Push notifications — Phase 1 endpoints
+
+   Schema lives in migrations/20260428_push_notifications.sql.
+   Sender lives in apnsClient.js. Cron worker lives in
+   notificationDispatcher.js (run every 5 min via the platform
+   scheduler — no in-process timer here).
+============================================================== */
+
+// POST /api/notifications/register-device
+// Save (or refresh) the user's APNs device token. Idempotent — same
+// (user, platform, token) just bumps last_seen_at.
+app.post("/api/notifications/register-device", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const { platform, token, p256dh, auth, app_id, timezone } = req.body || {};
+    if (!platform || !token) {
+      return res.status(400).json({ error: "platform and token are required" });
+    }
+    if (!['ios', 'web'].includes(platform)) {
+      return res.status(400).json({ error: "platform must be 'ios' or 'web'" });
+    }
+    // Phase 1 ships iOS-first. Web Push is wired in the schema but not
+    // dispatched yet; reject for now so we don't accept tokens we can't honor.
+    if (platform === 'web') {
+      return res.status(501).json({ error: "Web Push not yet enabled" });
+    }
+    await pool.query(
+      `INSERT INTO push_subscriptions
+         (user_id, platform, token, p256dh, auth, app_id, active, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, TRUE, NOW())
+       ON CONFLICT (user_id, platform, token) DO UPDATE
+         SET active       = TRUE,
+             last_seen_at = NOW(),
+             p256dh       = EXCLUDED.p256dh,
+             auth         = EXCLUDED.auth,
+             app_id       = EXCLUDED.app_id`,
+      [user.id, platform, token, p256dh || null, auth || null, app_id || null]
+    );
+    // First-touch: stamp a preferences row with the device timezone so
+    // quiet hours work out of the box. ON CONFLICT keeps any user edits.
+    if (timezone) {
+      await pool.query(
+        `INSERT INTO notification_preferences (user_id, timezone)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [user.id, String(timezone).slice(0, 64)]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO notification_preferences (user_id)
+         VALUES ($1)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [user.id]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[notif/register-device]', err.message);
+    res.status(500).json({ error: 'Failed to register device' });
+  }
+});
+
+// POST /api/notifications/unregister-device
+// Soft-delete on logout / opt-out. Keeps the row for audit but stops sends.
+app.post("/api/notifications/unregister-device", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const { token, platform } = req.body || {};
+    if (!token) return res.status(400).json({ error: "token required" });
+    await pool.query(
+      `UPDATE push_subscriptions SET active = FALSE
+         WHERE user_id = $1 AND token = $2 AND platform = $3`,
+      [user.id, token, platform || 'ios']
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[notif/unregister-device]', err.message);
+    res.status(500).json({ error: 'Failed to unregister device' });
+  }
+});
+
+// GET /api/notifications/preferences
+// Returns prefs + subscription list. Falls back to schema defaults when
+// no row exists, matching what the dispatcher assumes.
+app.get("/api/notifications/preferences", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const [{ rows: prefRows }, { rows: subRows }, { rows: deviceRows }] = await Promise.all([
+      pool.query(`SELECT * FROM notification_preferences WHERE user_id = $1`, [user.id]),
+      pool.query(
+        `SELECT id, target_type, target_value, created_at
+           FROM notification_subscriptions
+          WHERE user_id = $1
+          ORDER BY created_at ASC`,
+        [user.id]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS active_devices
+           FROM push_subscriptions
+          WHERE user_id = $1 AND active = TRUE`,
+        [user.id]
+      ),
+    ]);
+    const prefs = prefRows[0] || {
+      enabled:               true,
+      daily_briefing_on:     true,
+      thread_alerts_on:      true,
+      quiet_hours_start:     22,
+      quiet_hours_end:       7,
+      timezone:              'UTC',
+      max_per_day:           3,
+      thread_importance_min: 7.0,
+    };
+    res.json({
+      preferences:    prefs,
+      subscriptions:  subRows,
+      active_devices: deviceRows[0]?.active_devices || 0,
+    });
+  } catch (err) {
+    console.error('[notif/preferences GET]', err.message);
+    res.status(500).json({ error: 'Failed to load preferences' });
+  }
+});
+
+// PUT /api/notifications/preferences
+// Patch update — only fields present in the body get written.
+app.put("/api/notifications/preferences", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const allowed = [
+      'enabled', 'daily_briefing_on', 'thread_alerts_on',
+      'quiet_hours_start', 'quiet_hours_end', 'timezone',
+      'max_per_day', 'thread_importance_min',
+    ];
+    const sets = [];
+    const params = [user.id];
+    for (const key of allowed) {
+      if (req.body && Object.prototype.hasOwnProperty.call(req.body, key)) {
+        params.push(req.body[key]);
+        sets.push(`${key} = $${params.length}`);
+      }
+    }
+    if (!sets.length) return res.status(400).json({ error: 'No valid fields to update' });
+    // Upsert so we don't 404 on first-time write before any other endpoint
+    // created the row.
+    await pool.query(
+      `INSERT INTO notification_preferences (user_id) VALUES ($1)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [user.id]
+    );
+    await pool.query(
+      `UPDATE notification_preferences SET ${sets.join(', ')} WHERE user_id = $1`,
+      params
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[notif/preferences PUT]', err.message);
+    res.status(500).json({ error: 'Failed to save preferences' });
+  }
+});
+
+// POST /api/notifications/subscriptions
+// Add a country (and later: entity, keyword) subscription.
+app.post("/api/notifications/subscriptions", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const { target_type, target_value } = req.body || {};
+    if (!target_type || !target_value) {
+      return res.status(400).json({ error: 'target_type and target_value are required' });
+    }
+    if (!['country', 'entity', 'keyword'].includes(target_type)) {
+      return res.status(400).json({ error: "target_type must be 'country', 'entity', or 'keyword'" });
+    }
+    // Phase 1 ships countries. Reject other types so we don't accept
+    // subscriptions we won't honor in the dispatcher.
+    if (target_type !== 'country') {
+      return res.status(501).json({ error: `${target_type} subscriptions not yet enabled` });
+    }
+    // Country values are ISO 3166-1 alpha-2, uppercased + length-gated.
+    const value = String(target_value).trim().toUpperCase();
+    if (!/^[A-Z]{2,3}$/.test(value)) {
+      return res.status(400).json({ error: 'country must be a 2-3 letter ISO code' });
+    }
+    await pool.query(
+      `INSERT INTO notification_subscriptions (user_id, target_type, target_value)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, target_type, target_value) DO NOTHING`,
+      [user.id, target_type, value]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[notif/subscriptions POST]', err.message);
+    res.status(500).json({ error: 'Failed to add subscription' });
+  }
+});
+
+// DELETE /api/notifications/subscriptions
+// Remove a subscription. Body: { target_type, target_value }.
+app.delete("/api/notifications/subscriptions", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const { target_type, target_value } = req.body || {};
+    if (!target_type || !target_value) {
+      return res.status(400).json({ error: 'target_type and target_value are required' });
+    }
+    const value = String(target_value).trim().toUpperCase();
+    await pool.query(
+      `DELETE FROM notification_subscriptions
+         WHERE user_id = $1 AND target_type = $2 AND target_value = $3`,
+      [user.id, target_type, value]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[notif/subscriptions DELETE]', err.message);
+    res.status(500).json({ error: 'Failed to remove subscription' });
+  }
+});
+
+// POST /api/notifications/opened
+// Stamp opened_at on a delivery row when the user taps the notification.
+// Body: { dedup_key } from the deep-link payload.
+app.post("/api/notifications/opened", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  try {
+    const { dedup_key } = req.body || {};
+    if (!dedup_key) return res.status(400).json({ error: 'dedup_key required' });
+    await pool.query(
+      `UPDATE notification_log SET opened_at = NOW()
+         WHERE dedup_key = $1 AND user_id = $2 AND opened_at IS NULL`,
+      [dedup_key, user.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    // Non-fatal — open-tracking isn't critical path.
+    console.warn('[notif/opened]', err.message);
+    res.json({ ok: true });
+  }
+});
+
+
 // GET /api/threads/:threadId/panels — returns cached panels + a computed
 // "Coverage by source country" pie prepended. The pie is computed live on
 // the thread's article set each request (cheap GROUP BY) so it's always
@@ -9615,31 +9863,91 @@ app.post("/api/briefing/location", async (req, res) => {
 });
 
 // POST /api/briefing/custom — custom briefing with from/about/keyword filters.
-// Returns 422 { insufficient, count, message, suggestions } if < 8 articles found
-// and skipCheck is not true. Otherwise generates and returns an episode.
+// Available to all paid tiers, gated by the credit ledger (debits 200
+// credits text-only / 1500 credits with voiceover). The credit cost
+// reflects the real Claude+ElevenLabs spend (~$0.10 / ~$1.50). Free users
+// get a 401 (must sign in); they technically pass the tier gate but their
+// 20-credit/week base allowance is below the 200-credit floor for even the
+// cheapest path, so they'll bounce off the credit check with a clear
+// "upgrade or buy a credit pack" response. Pro users have 400 credits/week
+// → ~2 text briefings/week from base, voiceover via add-on packs.
+// Enterprise has 2500 credits/week + a 10/month safety cap.
+//
+// Returns 422 { insufficient, count, message, suggestions } if < 8 articles
+// found and skipCheck is not true. Otherwise generates and returns an episode.
 app.post("/api/briefing/custom", async (req, res) => {
-  // Tier gate: free/pro pay per use ($2.50); enterprise has monthly cap
-  if (req.user?.id) {
-    const tier = req.user.tier || "free";
-    const cbAccess = await checkCustomBriefing(req.user.id, tier).catch(() => ({ allowed: true }));
-    if (!cbAccess.allowed && !cbAccess.payPerUse) {
-      return res.status(403).json({
-        error:       cbAccess.resetNote || "Monthly custom briefing limit reached",
-        limitReached: true,
-        used:        cbAccess.used,
-        limit:       cbAccess.limit,
-      });
+  // ── Auth ──────────────────────────────────────────────────────────────
+  // Anonymous users don't have a credit balance to debit, and we don't
+  // want to spawn pay-per-use billing infrastructure right now — the
+  // credit ledger IS the pay-per-use system (buy a pack, spend the
+  // credits). So unauthenticated → 401, point them at sign-up.
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const tier = user.tier || "free";
+  const isAdmin = !!user.is_admin;
+  // ── Credit ledger debit ───────────────────────────────────────────────
+  // Cost depends on whether voiceover is requested — TTS is the dominant
+  // expense (~$1.20 of ElevenLabs vs ~$0.10 for everything else). Picking
+  // the right key BEFORE generation runs means an undercharge can't
+  // happen if the user toggles voiceover at the last second on the client.
+  // Atomic: if the user doesn't have enough credits, the call is rejected
+  // BEFORE any Claude/ElevenLabs work runs. Refunded on failure further
+  // down (best effort) so a midstream error doesn't burn the budget.
+  const wantsVoiceover = !!req.body?.voiceover;
+  const cbFeatureKey = wantsVoiceover ? 'custom_briefing_voice' : 'custom_briefing_text';
+  const cbCredits = await credits.consumeCredits(user.id, tier, cbFeatureKey, { isAdmin })
+    .catch(() => ({ allowed: false, reason: 'credit_check_error' }));
+  if (!cbCredits.allowed) {
+    // Suggest the right next step based on tier:
+    //   - Free: upgrade to Pro (cheapest path that has any meaningful credit budget).
+    //   - Pro voiceover-blocked: hint at credit packs OR Enterprise.
+    //   - Pro text-blocked: weekly reset OR credit packs.
+    //   - Enterprise blocked: must be a heavy week — credit packs OR wait.
+    let suggestedAction;
+    if (tier === 'free') {
+      suggestedAction = wantsVoiceover
+        ? 'Upgrade to Pro for weekly credits or to Enterprise for higher allowance.'
+        : 'Upgrade to Pro for weekly credits, or buy a credit pack.';
+    } else if (tier === 'pro') {
+      suggestedAction = wantsVoiceover
+        ? 'Voiceover briefings need 1500 credits — buy an add-on pack ($2 / 500 credits or $6 / 2000) or upgrade to Enterprise.'
+        : 'Buy a credit pack or wait for next week\'s allowance (resets Monday 00:00 UTC).';
+    } else {
+      suggestedAction = 'Buy a credit pack or wait for next week\'s allowance.';
     }
-    if (cbAccess.payPerUse) {
-      // Allow if they've confirmed payment intent, otherwise surface the price
-      if (!req.body?.confirmedPayPerUse) {
-        return res.status(402).json({
-          error:      "Custom briefings cost $2.50",
-          payPerUse:  true,
-          priceUsd:   2.50,
-          message:    "Add confirmedPayPerUse: true to proceed (billing handled separately)",
-        });
-      }
+    return res.status(429).json({
+      error:        'Not enough credits for a Custom Briefing',
+      limitReached: true,
+      cost:         cbCredits.cost,
+      remaining:    cbCredits.remaining,
+      weekly_limit: cbCredits.weekly_limit,
+      currentTier:  tier,
+      // Recommend Pro to free users (entry tier) and Enterprise to Pro
+      // users blocked on voiceover. Null for tiers that just need a pack.
+      suggestedTier: tier === 'free' ? 'pro' : (tier === 'pro' && wantsVoiceover ? 'enterprise' : null),
+      suggestedAction,
+      withVoiceover: wantsVoiceover,
+      resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
+    });
+  }
+  // Belt-and-suspenders: still respect the legacy monthly cap (10/mo for
+  // enterprise) so a single user can't exhaust their entire weekly credit
+  // pool on one feature. Skip for admins. If the cap is hit, refund the
+  // credit debit so the user isn't double-charged.
+  if (!isAdmin) {
+    const cbAccess = await checkCustomBriefing(user.id, tier).catch(() => ({ allowed: true }));
+    if (!cbAccess.allowed) {
+      // Refund the credits we just consumed.
+      try { await credits.refundCredits(user.id, cbCredits.cost, cbFeatureKey, { reason: 'monthly_cap_exceeded' }); } catch (_) {}
+      return res.status(403).json({
+        error:        cbAccess.resetNote || "Monthly custom briefing limit reached",
+        limitReached: true,
+        used:         cbAccess.used,
+        limit:        cbAccess.limit,
+        creditsRefunded: cbCredits.cost,
+      });
     }
   }
 
@@ -9719,16 +10027,28 @@ Return ONLY valid JSON: { "message": "one sentence explaining why coverage is li
     // ── Sufficient content — generate briefing via location generator ─────────
     // Use `about` or keywords as the location "name"; type=country is fine for prompting
     const locName = about || keywords.join(', ') || from || 'Custom';
-    const ep = await generateLocationBriefing({
-      type: 'country',
-      id: null,
-      name: locName,
-      voiceover: !!voiceover,
-      sourceFilter: 'mix',
-      voiceId: voiceId || null,
-      customFilter: { from, about, keywords, sqlWhere: where, sqlParams: params },
-    });
-    res.json(ep);
+    let ep;
+    try {
+      ep = await generateLocationBriefing({
+        type: 'country',
+        id: null,
+        name: locName,
+        voiceover: !!voiceover,
+        sourceFilter: 'mix',
+        voiceId: voiceId || null,
+        customFilter: { from, about, keywords, sqlWhere: where, sqlParams: params },
+      });
+    } catch (genErr) {
+      // Refund credits on generation failure — the user shouldn't pay for
+      // a briefing they can't watch. Non-fatal if refund itself errors;
+      // the failure is already logged.
+      try { await credits.refundCredits(user.id, cbCredits.cost, cbFeatureKey, { reason: 'generation_failed', errorMessage: genErr.message }); } catch (_) {}
+      throw genErr;
+    }
+    // Pass credit balance back to client so the meter updates without
+    // a separate /api/credits/me round-trip — same pattern as analyze /
+    // explain endpoints.
+    res.json({ ...ep, credits: cbCredits });
   } catch (err) {
     console.error("[briefing/custom]", err.message);
     res.status(500).json({ error: err.message || "Failed to generate custom briefing" });
