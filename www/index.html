@@ -947,7 +947,16 @@
        section). On desktop the corner widgets stay visible — there's
        enough horizontal space. */
     body.briefing-active #topLeftCluster {
-      transform: translateY(-140%);
+      /* translateY by FULL height (-100%) + the cluster's own top:20px
+         offset + the iOS safe-area-inset-top (notch). The previous
+         -140% used a percentage of the cluster's own height which
+         left a slim visible band on iPhone — the cluster sits at
+         top:20px (no safe-area baked in), so on a notched device
+         translateY(-100%) only just clears the cluster's top edge
+         and leaves the bottom row of pixels under the notch visible.
+         This calc moves the bottom edge to (top - height) - 20 -
+         safe-area-inset-top, guaranteeing it's fully off-screen. */
+      transform: translateY(calc(-100% - 20px - env(safe-area-inset-top, 0px)));
       pointer-events: none;
     }
     /* Mobile horizontal real estate is too tight for the segment
@@ -19954,6 +19963,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const briefingRevealList = [];
       window.briefingRevealList = briefingRevealList;
 
+      // revealSecs default lowered from 2.5 → 1.0 to match the speed of
+      // the thread/line flow arcs (INDIVIDUAL_TRAVEL_MIN/MAX = 0.85/1.15s
+      // in setupFlowAnimation). The briefing arc reveal was visibly
+      // slower than the rest of the flow visualisations — distracting
+      // when a segment cuts to the next while the prior arc is still
+      // crawling toward its destination. 1.0s feels native.
       window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs) {
         const R = radius + 0.006;
         const STEPS = 96;
@@ -28288,11 +28303,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // quiet for 3 days but hasn't had its row updated yet.
       //
       // Sort priority (matches /api/threads/latest ORDER BY):
-      //   1. importance DESC          — primary, "rank by importance first"
-      //   2. status (active < cooling < dormant)
+      //   1. status — active → dormant → cooling (note dormant before
+      //      cooling per spec: established stories with depth read
+      //      better than transition-state ones)
+      //   2. importance DESC
       //   3. category tier
       //   4. recency
-      const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
+      const STATUS_RANK = { active: 0, dormant: 1, cooling: 2 };
       function applyRecencyStatus(data) {
         const now = Date.now();
         const H48     = 48 * 60 * 60 * 1000;
@@ -28306,16 +28323,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
         data.sort((a, b) => {
-          // Importance first — server emits this on every thread/timeline.
-          // NULL/undefined falls to the bottom of its bucket.
+          // Status first.
+          const ra = STATUS_RANK[a.status] ?? 1;
+          const rb = STATUS_RANK[b.status] ?? 1;
+          if (ra !== rb) return ra - rb;
+          // Importance second within status bucket. NULL/undefined falls
+          // to the bottom.
           const ia = Number(a.importance);
           const ib = Number(b.importance);
           const naI = Number.isFinite(ia) ? ia : -Infinity;
           const nbI = Number.isFinite(ib) ? ib : -Infinity;
           if (naI !== nbI) return nbI - naI;
-          const ra = STATUS_RANK[a.status] ?? 1;
-          const rb = STATUS_RANK[b.status] ?? 1;
-          if (ra !== rb) return ra - rb;
           // Category tier: conflict/politics on top, environment/economy/climate on bottom
           const _catTier = c => { const lc = (c || '').toLowerCase(); if (lc === 'conflict' || lc === 'politics' || lc === 'military') return 0; if (lc === 'environment' || lc === 'climate' || lc === 'economy') return 2; return 1; };
           const ea = _catTier(a.primary_category);
@@ -37197,6 +37215,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
   pointer-events: none;
   display: flex; align-items: center; justify-content: center;
 }
+/* Skip-intro X. The intro overlay disables pointer events globally so
+   the underlying globe stays interactive; this button re-enables them
+   locally and floats top-right inside the iOS safe-area inset. */
+.bIntroOverlay .bIntroClose {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  right: calc(env(safe-area-inset-right, 0px) + 14px);
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 50%;
+  color: rgba(255,255,255,0.78);
+  font-size: 14px;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 0.5s ease 0.25s, background 0.18s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.bIntroOverlay.visible .bIntroClose { opacity: 1; }
+.bIntroOverlay.exiting .bIntroClose { opacity: 0; transition: opacity 0.18s ease; }
+.bIntroOverlay .bIntroClose:hover { background: rgba(255,80,80,0.22); border-color: rgba(255,80,80,0.4); color: #fff; }
 .bIntroOverlay .bIntroDim {
   position: absolute; inset: 0;
   background:
@@ -37289,7 +37331,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
    intro segment, then the title takes over starting with segment 1. */
 .bSegmentTitle {
   position: fixed;
-  top: 22px;
+  /* Respect iOS top safe-area (notch / Dynamic Island). Without this,
+     the title rendered behind the system status bar on iPhone — the
+     literal top:22px is ~30-50px above the safe-area boundary on
+     notched devices. The +14px keeps the title just below the bottom
+     of the safe-area inset so it never collides with the system UI. */
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
   left: 50%;
   z-index: 100018;
   max-width: 80vw;
@@ -37314,7 +37361,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transform: translate(-50%, 0);
 }
 @media (max-width: 700px) {
-  .bSegmentTitle { top: 16px; font-size: 13px; letter-spacing: 0.08em; max-width: 86vw; }
+  /* Same calc — slightly tighter +10px breathing under the safe-area
+     since mobile horizontal real estate is already constrained. */
+  .bSegmentTitle { top: calc(env(safe-area-inset-top, 0px) + 10px); font-size: 13px; letter-spacing: 0.08em; max-width: 86vw; }
 }
 
 /* ── Dots meta label (Earth Briefing + date above dots) ── */
@@ -38567,6 +38616,13 @@ body.ticker-active .gTickerLabel {
        orbit kicks in for free. -->
   <div id="bIntroOverlay" class="bIntroOverlay" style="display:none">
     <div class="bIntroDim"></div>
+    <!-- Skip / close button — early-exits the briefing during the intro
+         sequence (logo + date animation, ~3-4s). The intro overlay sets
+         pointer-events:none on itself so clicks pass through to the
+         globe; the button re-enables them locally with
+         pointer-events:auto. Wired in JS to call closeBriefing() — same
+         teardown path as #bClose in the control bar. -->
+    <button class="bIntroClose" id="bIntroClose" aria-label="Close briefing" title="Close">&#10005;</button>
     <div class="bIntroBrand">
       <div class="el-globe-wrap bIntroGlobe">
         <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
@@ -39354,7 +39410,7 @@ body.ticker-active .gTickerLabel {
       }
       try {
         if (window.buildBriefingArc) {
-          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 2.5);
+          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 1.0);
           arcMeshes.push(mesh);
           if (window.briefingRevealList) window.briefingRevealList.push(mesh);
         }
@@ -39575,7 +39631,7 @@ body.ticker-active .gTickerLabel {
             }
             try {
               if (window.buildBriefingArc) {
-                const mesh = window.buildBriefingArc(rFrom.lat, rFrom.lng, rTo.lat, rTo.lng, 0.13, 2.5);
+                const mesh = window.buildBriefingArc(rFrom.lat, rFrom.lng, rTo.lat, rTo.lng, 0.13, 1.0);
                 arcMeshes.push(mesh);
                 if (window.briefingRevealList) window.briefingRevealList.push(mesh);
               }
@@ -41753,6 +41809,11 @@ body.ticker-active .gTickerLabel {
   // ── Event wiring ──────────────────────────────────────────────────────────
   document.getElementById('briefingBtn')?.addEventListener('click', openBriefingLauncher);
   document.getElementById('bClose')?.addEventListener('click', closeBriefing);
+  // Skip-intro: same teardown path as the in-control-bar X. Useful
+  // during the ~3-4s intro logo+date animation so users who've seen
+  // the intro before can dismiss the briefing immediately without
+  // waiting for the first segment to mount and reveal #bClose.
+  document.getElementById('bIntroClose')?.addEventListener('click', closeBriefing);
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
   document.getElementById('bNext')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(segIdx + 1, true); });
   document.getElementById('bPrev')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(Math.max(0, segIdx - 1), true); });

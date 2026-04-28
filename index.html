@@ -924,7 +924,11 @@
        upper-right corner and there's enough horizontal space for the
        title to coexist with them. */
     body.briefing-active #topLeftCluster {
-      transform: translateY(-140%);
+      /* Full-height + top-offset + safe-area translation so the cluster
+         clears the screen completely instead of leaving a visible band
+         where its bottom row of pixels lands at the original top:20px.
+         See www/index.html for the full rationale. */
+      transform: translateY(calc(-100% - 20px - env(safe-area-inset-top, 0px)));
       pointer-events: none;
     }
 
@@ -18737,6 +18741,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const briefingRevealList = [];
       window.briefingRevealList = briefingRevealList;
 
+      // Default revealSecs lowered from 2.5 → 1.0 to match thread/line
+      // flow arcs (INDIVIDUAL_TRAVEL_MIN/MAX = 0.85/1.15s in setupFlowAnimation).
       window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs) {
         const R = radius + 0.006;
         const STEPS = 96;
@@ -26644,11 +26650,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // quiet for 3 days but hasn't had its row updated yet.
       //
       // Sort priority (matches /api/threads/latest ORDER BY):
-      //   1. importance DESC          — primary, "rank by importance first"
-      //   2. status (active < cooling < dormant)
+      //   1. status — active → dormant → cooling
+      //   2. importance DESC
       //   3. category tier
       //   4. recency
-      const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
+      const STATUS_RANK = { active: 0, dormant: 1, cooling: 2 };
       function applyRecencyStatus(data) {
         const now = Date.now();
         const H48     = 48 * 60 * 60 * 1000;
@@ -26662,16 +26668,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
         data.sort((a, b) => {
-          // Importance first — server emits this on every thread/timeline.
-          // NULL/undefined falls to the bottom of its bucket.
+          // Status first.
+          const ra = STATUS_RANK[a.status] ?? 1;
+          const rb = STATUS_RANK[b.status] ?? 1;
+          if (ra !== rb) return ra - rb;
+          // Importance second within status bucket. NULL/undefined falls
+          // to the bottom.
           const ia = Number(a.importance);
           const ib = Number(b.importance);
           const naI = Number.isFinite(ia) ? ia : -Infinity;
           const nbI = Number.isFinite(ib) ? ib : -Infinity;
           if (naI !== nbI) return nbI - naI;
-          const ra = STATUS_RANK[a.status] ?? 1;
-          const rb = STATUS_RANK[b.status] ?? 1;
-          if (ra !== rb) return ra - rb;
           // Category tier: conflict/politics on top, environment/economy/climate on bottom
           const _catTier = c => { const lc = (c || '').toLowerCase(); if (lc === 'conflict' || lc === 'politics' || lc === 'military') return 0; if (lc === 'environment' || lc === 'climate' || lc === 'economy') return 2; return 1; };
           const ea = _catTier(a.primary_category);
@@ -35259,6 +35266,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
   pointer-events: none;
   display: flex; align-items: center; justify-content: center;
 }
+/* Skip-intro X — see www/index.html for rationale. */
+.bIntroOverlay .bIntroClose {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  right: calc(env(safe-area-inset-right, 0px) + 14px);
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 50%;
+  color: rgba(255,255,255,0.78);
+  font-size: 14px;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 0.5s ease 0.25s, background 0.18s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.bIntroOverlay.visible .bIntroClose { opacity: 1; }
+.bIntroOverlay.exiting .bIntroClose { opacity: 0; transition: opacity 0.18s ease; }
+.bIntroOverlay .bIntroClose:hover { background: rgba(255,80,80,0.22); border-color: rgba(255,80,80,0.4); color: #fff; }
 .bIntroOverlay .bIntroDim {
   position: absolute; inset: 0;
   background:
@@ -35340,7 +35369,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
    intro segment, then the title takes over starting with segment 1. */
 .bSegmentTitle {
   position: fixed;
-  top: 22px;
+  /* Respect iOS top safe-area (notch / Dynamic Island) — see
+     www/index.html for the full rationale. */
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
   left: 50%;
   z-index: 100018;
   max-width: 80vw;
@@ -35365,7 +35396,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transform: translate(-50%, 0);
 }
 @media (max-width: 700px) {
-  .bSegmentTitle { top: 16px; font-size: 13px; letter-spacing: 0.08em; max-width: 86vw; }
+  .bSegmentTitle { top: calc(env(safe-area-inset-top, 0px) + 10px); font-size: 13px; letter-spacing: 0.08em; max-width: 86vw; }
 }
 
 /* ── Dots meta label (Earth Briefing + date above dots) ── */
@@ -36477,6 +36508,8 @@ body.ticker-active .gTickerLabel {
        MutationObserver, so the orbit animation runs for free. -->
   <div id="bIntroOverlay" class="bIntroOverlay" style="display:none">
     <div class="bIntroDim"></div>
+    <!-- Skip-intro X — see www/index.html for rationale. -->
+    <button class="bIntroClose" id="bIntroClose" aria-label="Close briefing" title="Close">&#10005;</button>
     <div class="bIntroBrand">
       <div class="el-globe-wrap bIntroGlobe">
         <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
@@ -37217,7 +37250,7 @@ body.ticker-active .gTickerLabel {
       }
       try {
         if (window.buildBriefingArc) {
-          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 2.5);
+          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 1.0);
           arcMeshes.push(mesh);
           if (window.briefingRevealList) window.briefingRevealList.push(mesh);
         }
@@ -37417,7 +37450,7 @@ body.ticker-active .gTickerLabel {
             }
             try {
               if (window.buildBriefingArc) {
-                const mesh = window.buildBriefingArc(rFrom.lat, rFrom.lng, rTo.lat, rTo.lng, 0.13, 2.5);
+                const mesh = window.buildBriefingArc(rFrom.lat, rFrom.lng, rTo.lat, rTo.lng, 0.13, 1.0);
                 arcMeshes.push(mesh);
                 if (window.briefingRevealList) window.briefingRevealList.push(mesh);
               }
@@ -39341,6 +39374,7 @@ body.ticker-active .gTickerLabel {
   // ── Event wiring ──────────────────────────────────────────────────────────
   document.getElementById('briefingBtn')?.addEventListener('click', openBriefingLauncher);
   document.getElementById('bClose')?.addEventListener('click', closeBriefing);
+  document.getElementById('bIntroClose')?.addEventListener('click', closeBriefing);
   document.getElementById('bPlayPause')?.addEventListener('click', () => setPlaying(!playing));
   document.getElementById('bNext')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(segIdx + 1, true); });
   document.getElementById('bPrev')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(Math.max(0, segIdx - 1), true); });

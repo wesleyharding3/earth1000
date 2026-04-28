@@ -6920,9 +6920,10 @@ app.get("/api/timelines/latest", async (req, res) => {
         WHERE t.status IN ('active','cooling','dormant')
           AND (t.article_count >= 2 OR COALESCE(t.is_manual, FALSE) = TRUE)
         ORDER BY
-          -- Importance first, foremost — see /api/threads/latest comment.
+          -- Status first: active → dormant → cooling. Importance second.
+          -- See /api/threads/latest for full rationale.
+          CASE t.status WHEN 'active' THEN 0 WHEN 'dormant' THEN 1 WHEN 'cooling' THEN 2 ELSE 3 END,
           t.importance DESC NULLS LAST,
-          CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
           CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
                WHEN t.primary_category IN ('environment','climate') THEN 2
                ELSE 1 END,
@@ -7964,16 +7965,17 @@ app.get("/api/threads/latest", async (req, res) => {
         AND COALESCE(st.scope, 'global') = 'global'
         ${dateWhere}
       ORDER BY
-        -- Importance first, foremost — a high-stakes story should sit
-        -- above an active-but-trivial one. status / category / count /
-        -- recency are tie-breakers, in that priority order.
-        st.importance DESC NULLS LAST,
+        -- Status first: active → dormant → cooling → other (per request).
+        -- Importance second within each status bucket. Note dormant
+        -- ranks BEFORE cooling intentionally — established stories with
+        -- depth read better than transition-state ones.
         CASE st.status
           WHEN 'active'  THEN 0
-          WHEN 'cooling' THEN 1
-          WHEN 'dormant' THEN 2
+          WHEN 'dormant' THEN 1
+          WHEN 'cooling' THEN 2
           ELSE 3
         END,
+        st.importance DESC NULLS LAST,
         CASE WHEN st.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
              WHEN st.primary_category IN ('environment','climate') THEN 2
              ELSE 1 END,
