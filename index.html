@@ -40738,18 +40738,22 @@ body.ticker-active .gTickerLabel {
         const features = gj.features || [];
         const pickIso = (v) => {
           const s = (v == null ? '' : String(v)).trim().toUpperCase();
-          // Natural Earth encodes "disputed / no-ISO" as "-99". Treat that
-          // as "missing" so the next candidate field wins. This was the
-          // France bug: France's iso_a2 is "-99" but iso_a2_eh is "FR".
-          return (s && s !== '-99') ? s : '';
+          // Length must be exactly 2 — fixes the Taiwan bug where
+          // iso_a2 is "CN-TW" (Natural Earth's claimed-by-China
+          // annotation). See www/index.html for full diagnosis.
+          return (s && s !== '-99' && s.length === 2) ? s : '';
         };
         for (const f of features) {
           const props = f.properties || {};
+          // ONLY use real ISO 3166-1 alpha-2 fields. Earlier fallback
+          // chain extended into wb_a2 / postal — those aren't ISO and
+          // produced the China bug: Northern Cyprus has postal="CN"
+          // (Cyprus North), which overwrote China in byIso. See
+          // www/index.html for the full diagnosis.
           const iso =
             pickIso(props.iso_a2)    || pickIso(props.ISO_A2) ||
             pickIso(props.iso_a2_eh) || pickIso(props.ISO_A2_EH) ||
-            pickIso(props.wb_a2)     || pickIso(props.WB_A2) ||
-            pickIso(props.postal)    || '';
+            '';
           const name =
             (props.admin || props.ADMIN ||
              props.name  || props.NAME  ||
@@ -40763,8 +40767,9 @@ body.ticker-active .gTickerLabel {
             for (const poly of geom.coordinates) rings.push(poly);
           }
           const entry = { iso, name, rings };
-          if (iso && iso !== '-99') byIso.set(iso, entry);
-          if (name)                 byName.set(name, entry);
+          // First-claim-wins on byIso to defend against future collisions.
+          if (iso && iso !== '-99' && !byIso.has(iso)) byIso.set(iso, entry);
+          if (name)                                    byName.set(name, entry);
         }
         _countryGeoIdx = { byIso, byName };
         return _countryGeoIdx;

@@ -10486,10 +10486,15 @@ app.get("/api/keywords/rising", async (req, res) => {
       aboutCountryId ?? "global",
     ]);
 
-    // Check DB pre-computed cache for global requests (populated by keywordCron.js)
-    // Accept up to 12h old cache — stale rising data is better than nothing
+    // Check DB pre-computed cache for global requests (populated by
+    // keywordCron.js). Aggressive 48h TTL: the live fallback aggregates
+    // ~2.2M rows/day × 17 days and takes 30s+ end-to-end, so even
+    // day-old cache is dramatically better than rebuilding live. The
+    // rising signal itself ("what's surging in the last 3 days vs
+    // 14-day baseline") doesn't shift meaningfully from minute to
+    // minute; a 24-48h refresh is more than enough.
     if (!sourceCountryId && !aboutCountryId) {
-      const dbCached = await getDbKeywordCache("rising", "global", 720); // 12h max staleness
+      const dbCached = await getDbKeywordCache("rising", "global", 2880); // 48h max staleness
       if (dbCached) {
         setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.rising);
         const cachedArr = (dbCached.keywords && Array.isArray(dbCached.keywords))
@@ -10526,22 +10531,27 @@ app.get("/api/keywords/rising", async (req, res) => {
       params.push(limitInt);
       const limitIdx = params.length;
 
-      // PERF NOTE — two-stage aggregation:
-      // 1. recent_raw / baseline_raw aggregate by the RAW keyword
-      //    column. Postgres can serve this with the partial index
-      //    `idx_kds_global_date_keyword_cover (date DESC, keyword)
-      //    WHERE source_country_id IS NULL AND about_country_id IS
-      //    NULL` because the GROUP BY key is a plain column.
-      // 2. recent / baseline LEFT JOIN keyword_translations and
-      //    re-aggregate by the normalized form. The post-aggregation
-      //    set is small (a few thousand rows), so the JOIN against
-      //    keyword_translations (145K rows, indexed on
-      //    original_keyword) is fast.
+      // PERF NOTE — three optimizations stack:
       //
-      // The earlier version did the JOIN inside the heavy aggregation
-      // CTEs, which forced a sequential scan of keyword_daily_stats
-      // and tripled the query time. The two-stage form gets the same
-      // deduped output with the index-friendly aggregate first.
+      // 1. Two-stage aggregation. recent_raw / baseline_raw aggregate
+      //    by the plain keyword column so the partial index
+      //    `idx_kds_global_date_kw_count` can serve the heavy GROUP BY.
+      //    The translation JOIN happens AFTER on the small post-
+      //    aggregation result. (The single-stage form forced a seq
+      //    scan because the GROUP BY key was a function expression.)
+      //
+      // 2. Candidate pruning on baseline_raw. We only USE baseline
+      //    counts for keywords that survived recent_raw's HAVING
+      //    (i.e. that have ≥2 mentions in the recent window). So we
+      //    constrain baseline_raw to ONLY those keywords via an
+      //    IN-subquery against recent_raw. On a 14-day baseline
+      //    window with ~30M rows, this typically prunes 99%+ of
+      //    keyword groups — the difference between 30s and ~1s for
+      //    country-filtered queries that bypass the cache.
+      //
+      // 3. The result then re-aggregates by COALESCE-normalized form
+      //    so Russian "выборы" and English "election" don't appear
+      //    as two rows.
       const result = await pool.query(
         `WITH recent_raw AS (
            SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
@@ -10555,7 +10565,7 @@ app.get("/api/keywords/rising", async (req, res) => {
            SELECT k.keyword, SUM(k.total_count)::bigint AS baseline_count
            FROM keyword_daily_stats k
            WHERE ${baselineClauses.join("\n             AND ")}
-             AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+             AND k.keyword IN (SELECT keyword FROM recent_raw)
            GROUP BY k.keyword
          ),
          recent AS (

@@ -43447,18 +43447,35 @@ body.ticker-active .gTickerLabel {
         const features = gj.features || [];
         const pickIso = (v) => {
           const s = (v == null ? '' : String(v)).trim().toUpperCase();
-          // Natural Earth encodes "disputed / no-ISO" as "-99". Treat that
-          // as "missing" so the next candidate field wins. This was the
-          // France bug: France's iso_a2 is "-99" but iso_a2_eh is "FR".
-          return (s && s !== '-99') ? s : '';
+          // Natural Earth encodes "disputed / no-ISO" as "-99". Treat
+          // that as "missing" so the next candidate field wins. France
+          // bug: iso_a2 is "-99" but iso_a2_eh is "FR".
+          // Length must be exactly 2 — ISO 3166-1 alpha-2. Taiwan bug:
+          // iso_a2 is "CN-TW" (5 chars, Natural Earth's "claimed-by-
+          // China" annotation) but iso_a2_eh is "TW". Without the
+          // length gate we'd register Taiwan under "CN-TW" and the
+          // heatmap painter (which looks up by "TW") would miss it.
+          return (s && s !== '-99' && s.length === 2) ? s : '';
         };
         for (const f of features) {
           const props = f.properties || {};
+          // ONLY use real ISO 3166-1 alpha-2 fields. Earlier the
+          // fallback chain extended into `wb_a2` (World Bank codes —
+          // sometimes non-standard) and `postal` (postal abbreviations
+          // — NOT ISO codes). That created a CN collision: Northern
+          // Cyprus has iso_a2 = "-99" but postal = "CN" (Cyprus
+          // North), which overwrote China's entry in byIso. The
+          // resulting heatmap painted Northern Cyprus when the data
+          // said "CN" but left mainland China empty.
+          //
+          // iso_a2_eh is the de-facto extension Natural Earth uses
+          // when iso_a2 is "-99" but a recognized code exists (e.g.
+          // France was getting "-99" before iso_a2_eh fallback). Both
+          // are real ISO codes, so they're safe.
           const iso =
             pickIso(props.iso_a2)    || pickIso(props.ISO_A2) ||
             pickIso(props.iso_a2_eh) || pickIso(props.ISO_A2_EH) ||
-            pickIso(props.wb_a2)     || pickIso(props.WB_A2) ||
-            pickIso(props.postal)    || '';
+            '';
           const name =
             (props.admin || props.ADMIN ||
              props.name  || props.NAME  ||
@@ -43472,8 +43489,15 @@ body.ticker-active .gTickerLabel {
             for (const poly of geom.coordinates) rings.push(poly);
           }
           const entry = { iso, name, rings };
-          if (iso && iso !== '-99') byIso.set(iso, entry);
-          if (name)                 byName.set(name, entry);
+          // First-claim-wins on byIso. Even with the tightened fallback
+          // above, defending against any future collision is cheap
+          // insurance — a single misclassified feature can swallow a
+          // major country's heatmap rendering and the failure mode is
+          // silent (the feature renders as Northern Cyprus, the user
+          // sees "China is empty"). The polygon file is alphabetized
+          // by admin name, so the canonical claim usually comes first.
+          if (iso && iso !== '-99' && !byIso.has(iso)) byIso.set(iso, entry);
+          if (name)                                    byName.set(name, entry);
         }
         _countryGeoIdx = { byIso, byName };
         return _countryGeoIdx;
