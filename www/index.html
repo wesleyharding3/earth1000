@@ -9842,20 +9842,25 @@ button.arcCtxSegDot,
       .nfCardOrigin,
       .adpMeta             { font-size: var(--t-xs); }
 
-      /* Briefing control buttons — bigger on mobile.
-         Scoped under .bControls so these beat the later default rules at
-         line ~37916 via specificity (0,2,0 > 0,1,0). Without this scope,
-         source order wins and mobile bumps are clobbered:
-         - bPrev/bNext rendered as 38×44 vertical ellipses (desktop width,
-           min-height floor) instead of 48×48 circles.
-         - bPlayPause stayed 46×46 desktop instead of 58×58 mobile bump.
+      /* Briefing control buttons — sized for mobile.
+         Scoped under .bControls so these beat the later default rules
+         at line ~37916 via specificity (0,2,0 > 0,1,0). Without this
+         scope, source order wins and mobile sizes are clobbered.
          The pill buttons (.speed/.cc) need width:auto preserved while
-         taking the bumped 48px height — explicit height override below. */
-      .bControls .bControlBtn         { width: 48px; height: 48px; font-size: 18px; }
-      .bControls .bControlBtn.primary { width: 58px; height: 58px; font-size: 22px; }
+         taking the same height — explicit height override below.
+         Compact (40 / 50 px) by request to free vertical real estate
+         for the article panel above. min-height: 40 explicit so the
+         shared min-height: var(--tap-min) (44) above doesn't force a
+         vertical ellipse. The wrapper's vertical padding is also
+         shrunk via .bControlsWrap .bControls below. */
+      .bControls .bControlBtn         { width: 40px; height: 40px; min-height: 40px; font-size: 15px; }
+      .bControls .bControlBtn.primary { width: 50px; height: 50px; min-height: 50px; font-size: 18px; }
       .bControls .bControlBtn.speed,
-      .bControls .bControlBtn.cc      { width: auto; height: 48px; min-height: 48px; padding: 0 14px; font-size: 12px; }
-      .bDot                           { width: 9px; height: 9px; min-height: 0; }
+      .bControls .bControlBtn.cc      { width: auto; height: 40px; min-height: 40px; padding: 0 12px; font-size: 11px; }
+      /* Tighter wrapper padding (was 8px 12px from the desktop rule).
+         Two-class specificity (0,2,0) beats the single-class default. */
+      .bControlsWrap .bControls       { padding: 4px 10px; gap: 8px; }
+      .bDot                           { width: 8px; height: 8px; min-height: 0; }
 
       /* ── Account dropdown — anchor to bottom of screen on narrow ── */
       #accountDropdown {
@@ -37607,7 +37612,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 @media (max-width: 720px) {
   .bArticlePanel {
     top: auto;
-    bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
+    /* Sit above the briefing control bar with a clear gap. The
+       previous +80px overlapped the controls; the controls were also
+       shrunk on mobile (see bControls / bControlBtn rules below) so
+       +110px gives a comfortable visual margin without taking too
+       much additional vertical real estate. */
+    bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 110px);
     left: env(safe-area-inset-left, 8px);
     right: auto;
     transform: none;
@@ -45244,7 +45254,13 @@ body.ticker-active .gTickerLabel {
       _inspectorCtx = null;
       _inspectorBackFn = null;
       const qMode = state.qaMode;
-      const qText = state.qaQuestion || '';
+      // Sentence-case the user's typed question for display. The user
+      // types lowercase ("what % is muslim by country") but the panel
+      // showed it back verbatim — looked unpolished. Capitalize first
+      // letter only; rest preserved so multi-word terms like "GDP" /
+      // proper nouns aren't mangled by an over-aggressive title-case.
+      const _qSent = (s) => s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s;
+      const qText = _qSent(state.qaQuestion || '');
       const totalInSet = (state.countryPoints || []).length;
       _setInspectorTitle('Map This', false, qText || 'Click a country for the answer');
 

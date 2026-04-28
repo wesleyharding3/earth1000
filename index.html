@@ -9282,16 +9282,18 @@ button.arcCtxSegDot,
       .nfCardOrigin,
       .adpMeta             { font-size: var(--t-xs); }
 
-      /* Briefing control buttons — bigger on mobile.
+      /* Briefing control buttons — sized for mobile.
          Scoped under .bControls so these beat the later default rules via
-         specificity (0,2,0 > 0,1,0). Without this scope, source order wins
-         and mobile bumps are clobbered. Pill buttons (.speed/.cc) need
-         width:auto preserved while taking the bumped 48px height. */
-      .bControls .bControlBtn         { width: 48px; height: 48px; font-size: 18px; }
-      .bControls .bControlBtn.primary { width: 58px; height: 58px; font-size: 22px; }
+         specificity (0,2,0 > 0,1,0). Compact (40 / 50 px) by request to
+         free vertical real estate for the article panel above.
+         min-height: 40 explicit so the shared min-height: var(--tap-min)
+         doesn't force a vertical ellipse. */
+      .bControls .bControlBtn         { width: 40px; height: 40px; min-height: 40px; font-size: 15px; }
+      .bControls .bControlBtn.primary { width: 50px; height: 50px; min-height: 50px; font-size: 18px; }
       .bControls .bControlBtn.speed,
-      .bControls .bControlBtn.cc      { width: auto; height: 48px; min-height: 48px; padding: 0 14px; font-size: 12px; }
-      .bDot                           { width: 9px; height: 9px; min-height: 0; }
+      .bControls .bControlBtn.cc      { width: auto; height: 40px; min-height: 40px; padding: 0 12px; font-size: 11px; }
+      .bControlsWrap .bControls       { padding: 4px 10px; gap: 8px; }
+      .bDot                           { width: 8px; height: 8px; min-height: 0; }
 
       /* ── Account dropdown — anchor to bottom of screen on narrow ── */
       #accountDropdown {
@@ -35530,7 +35532,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 @media (max-width: 720px) {
   .bArticlePanel {
     top: auto;
-    bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
+    /* Sit above the briefing control bar with a clear gap. The
+       previous +80px overlapped the controls; the controls were also
+       shrunk on mobile (see bControls / bControlBtn rules below) so
+       +110px gives the same visual margin without taking too much
+       additional vertical space. */
+    bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 110px);
     left: env(safe-area-inset-left, 8px);
     right: auto;
     transform: none;
@@ -42683,7 +42690,10 @@ body.ticker-active .gTickerLabel {
       _inspectorCtx = null;
       _inspectorBackFn = null;
       const qMode = state.qaMode;
-      const qText = state.qaQuestion || '';
+      // Sentence-case the user's typed question for display. See
+      // www/index.html for rationale.
+      const _qSent = (s) => s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s;
+      const qText = _qSent(state.qaQuestion || '');
       const totalInSet = (state.countryPoints || []).length;
       _setInspectorTitle('Map This', false, qText || 'Click a country for the answer');
 
