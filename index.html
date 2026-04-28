@@ -1069,7 +1069,10 @@
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       z-index: 50;
-      font-family: 'Chakra Petch', -apple-system, BlinkMacSystemFont, sans-serif;
+      /* Inherit body font stack so the suggestion list matches the
+         ambient-headline cards, hover label, and country/flow-node fan
+         labels — was 'Chakra Petch' which felt like a different register. */
+      font-family: inherit;
       scrollbar-width: thin;
       scrollbar-color: rgba(255,190,80,0.35) transparent;
     }
@@ -2709,7 +2712,17 @@ body.flow-maximized #flowArcList {
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
-.arcCtxBody.arcCtxStateLoading { overflow: hidden; }
+.arcCtxBody.arcCtxStateLoading {
+  overflow: hidden;
+  /* Loading-only flex column so the shell stretches to fill the body
+     instead of sizing to its content. Stops the visual "grow" pop when
+     streamed text arrives and the surface fills the rest of the panel. */
+  display: flex;
+  flex-direction: column;
+}
+.arcCtxBody.arcCtxStateLoading > .arcCtxShell {
+  flex: 1 1 auto;
+}
 /* Active block min-height in segmented mode so the visible slot
    reaches near the seg nav instead of leaving an awkward floating
    gap when content is short. */
@@ -5910,6 +5923,21 @@ button.arcCtxSegDot,
 }
 
 .adpTranslateBtn {
+  /* NEUTRALIZE `.articleTranslateBtn` base — that class is designed for
+     card-corner overlay use (position: absolute; 20×20 square pinned to
+     bottom-right). In the article-detail panel the button lives INLINE
+     at the right end of the .adpSource flex row, not as a corner badge.
+     Without these resets the button got pinned to the bottom-right of
+     .adpContent and was effectively invisible. The mobile global
+     `button { min-height: 44px }` tap-target floor also has to be
+     overridden — the inline ADP button gets its height from padding+font,
+     not the touch floor. */
+  position: static;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  bottom: auto;
+  right: auto;
   flex-shrink: 0;
   margin-left: auto;
   padding: 5px 10px;
@@ -6809,6 +6837,21 @@ button.arcCtxSegDot,
       transition: background 0.12s, color 0.12s; line-height: 1;
     }
     .cdClose:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    /* Countries flag-chip row — sits below title/image, above .cdMeta.
+       Reuses .nfNationChip styling so chips match the threads/lines feed. */
+    .cdCountriesRow {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 10px; flex-wrap: wrap;
+    }
+    .cdCountriesLabel {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.18em;
+      text-transform: uppercase; color: rgba(255,255,255,0.35);
+      flex-shrink: 0;
+    }
+    .cdCountriesChips {
+      display: flex; flex-wrap: wrap; gap: 4px;
+      flex: 1; min-width: 0;
+    }
     .cdMeta { display: flex; gap: 14px; margin-top: 8px; }
     .cdMetaItem { display: flex; flex-direction: column; }
     .cdMetaNum {
@@ -6980,7 +7023,10 @@ button.arcCtxSegDot,
       background: rgba(6,10,18,0.55);
       border: 1px solid rgba(255,200,140,0.18);
       border-radius: 6px;
-      min-height: 50%;
+      /* `min-height: 50%` was here — it resolved against the row/wrapper's
+         height, which itself depends on this panel's height, creating a
+         circular sizing dependency that caused the ctx blurb below to
+         overflow into the next keyword row. Removed. */
       max-height: 320px;
       overflow-y: auto;
       animation: kwiRefSlideIn 0.18s ease-out;
@@ -9951,8 +9997,19 @@ button.arcCtxSegDot,
     font-size: 13px;
   }
 
-  /* Tag filter dropdown rows */
-  .tagOption { padding: 14px 18px; font-size: 14px; }
+  /* Tag filter dropdown rows — tightened for mobile.
+     The shared `min-height: var(--tap-min)` (44px) earlier in this media
+     query was making each row look like a chunky button stack. For
+     closely-grouped dropdown items the iOS tap floor is overkill — they're
+     stacked, not isolated targets — so override down for a compact picker. */
+  .tagOption {
+    padding: 7px 12px !important;
+    font-size: 12px !important;
+    min-height: 0 !important;
+    line-height: 1.25 !important;
+    gap: 7px !important;
+  }
+  .tagOptionDot { width: 5px !important; height: 5px !important; }
 
   /* KWI mode tabs & range buttons */
   .kwi-mode-tab  { padding: 11px 14px; font-size: 13px; }
@@ -10259,24 +10316,22 @@ button.arcCtxSegDot,
    it the row gets squeezed under flex pressure when ctx + graph are
    both open and the ctx text overlays the next row. */
 .kwi-trending-row {
-  /* CRITICAL — see www/index.html for full rationale. !important
-     guards against stale cached stylesheets in production. */
-  display: flex !important;
-  flex-direction: column !important;
-  flex-shrink: 0 !important;
-  min-height: 0 !important;
-  height: auto !important;
+  /* CRITICAL — BLOCK layout, NOT flex column. See www/index.html for
+     full rationale. Flex column with auto-height children + percentage
+     descendants creates a circular sizing dependency that caused the
+     ctx blurb to overflow into the next keyword row. Block layout
+     unconditionally grows to its content. */
+  display: block !important;
   overflow: visible !important;
-}
-/* Combined wrapper — when the user has BOTH the graph AND the ctx
-   blurb open on the same keyword, both children live inside this
-   single flex column container. Built in JS at kwiTrendingClick. */
-.kwi-row-expansion {
-  display: flex !important;
-  flex-direction: column !important;
+  /* Row IS itself a flex item of `.kwi-trending-list`; lock shrink so
+     the list scrolls instead of clipping the row. */
   flex-shrink: 0 !important;
-  min-height: 0 !important;
-  height: auto !important;
+}
+/* Combined wrapper — built in JS at kwiTrendingClick when BOTH the graph
+   AND the ctx blurb are open on the same keyword. Block layout = wrapper
+   height = sum of children's heights, no flex math, no surprises. */
+.kwi-row-expansion {
+  display: block !important;
   overflow: visible !important;
   margin-bottom: 10px;
 }
@@ -11525,7 +11580,14 @@ window.__arcCtxSegmented = (function() {
     const blocks = Array.from(body.querySelectorAll('.arcCtxBlock'));
     const total  = _segTotalFor(body, blocks);
     if (!total) return;
-    const clamped = Math.max(0, Math.min(total - 1, idx));
+    // CRITICAL: clamp to the LAST STREAMED block, not the last DECLARED
+    // segment. Total ≥ blocks.length while streaming. Clamping to total-1
+    // used to set manualIdx beyond blocks.length, and pickActiveIndex's
+    // `manualIdx < blocks.length` guard then ignored it and re-picked the
+    // currently-typing block — Next clicks looked like no-ops until the
+    // stream caught up. (User reported having to click 2-3 times.)
+    const maxIdx  = blocks.length ? blocks.length - 1 : 0;
+    const clamped = Math.max(0, Math.min(maxIdx, idx));
     body.dataset.segManualIdx = String(clamped);
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === clamped));
     const nav = body.querySelector('.arcCtxSegNav');
@@ -11537,8 +11599,9 @@ window.__arcCtxSegmented = (function() {
     });
     const prev = nav.querySelector('.arcCtxSegPrev');
     const next = nav.querySelector('.arcCtxSegNext');
+    const morePending = body.dataset.segManual === '1' && !!body._segAdvanceResolve;
     if (prev) prev.toggleAttribute('disabled', clamped <= 0);
-    if (next) next.toggleAttribute('disabled', clamped >= total - 1);
+    if (next) next.toggleAttribute('disabled', clamped >= maxIdx && !morePending);
   }
   // Compute responsive dot diameter + gap so the nav row never
   // overflows the panel width even at large segment counts. Both
@@ -11571,6 +11634,8 @@ window.__arcCtxSegmented = (function() {
       const dotEl  = e.target.closest('.arcCtxSegDot');
       if (!nextEl && !prevEl && !dotEl) return;
       e.stopPropagation();
+      if (nextEl && nextEl.hasAttribute('disabled')) return;
+      if (prevEl && prevEl.hasAttribute('disabled')) return;
       if (nextEl && body.dataset.segManual === '1' && body._segAdvanceResolve) {
         body.classList.remove('arcCtxSegAwaitingAdvance');
         body._segAdvanceResolve();
@@ -11582,7 +11647,14 @@ window.__arcCtxSegmented = (function() {
         : pickActiveIndex(blocksNow, null);
       if (nextEl) setActive(body, cur + 1);
       else if (prevEl) setActive(body, cur - 1);
-      else if (dotEl) setActive(body, Number(dotEl.dataset.seg));
+      else if (dotEl) {
+        // Ignore clicks on is-pending dots (block hasn't streamed yet).
+        // Without this, clicking a future dot fell into setActive's clamp
+        // and silently snapped back to the last streamed block.
+        const seg = Number(dotEl.dataset.seg);
+        if (seg >= blocksNow.length) return;
+        setActive(body, seg);
+      }
     });
   }
 
@@ -11615,6 +11687,9 @@ window.__arcCtxSegmented = (function() {
     blocks.forEach((b, i) => b.classList.toggle('arcCtxBlock--active', i === activeIdx));
     let nav = body.querySelector('.arcCtxSegNav');
     const needsRebuild = !nav || nav.querySelectorAll('.arcCtxSegDot').length !== total;
+    // Last existing block — Next disables here (NOT at last declared
+    // segment) since we can't move to a block that hasn't streamed yet.
+    const lastStreamedIdx = blocks.length ? blocks.length - 1 : 0;
     if (needsRebuild) {
       if (nav) nav.remove();
       nav = document.createElement('div');
@@ -11630,7 +11705,7 @@ window.__arcCtxSegmented = (function() {
         if (isPending) cls.push('is-pending');
         return `<button class="${cls.join(' ')}" data-seg="${i}" aria-label="Section ${i + 1}"></button>`;
       }).join('');
-      const nextDisabled = (activeIdx >= total - 1) && !morePending;
+      const nextDisabled = (activeIdx >= lastStreamedIdx) && !morePending;
       nav.innerHTML =
         `<button class="arcCtxSegArrow arcCtxSegPrev" aria-label="Previous"${activeIdx <= 0 ? ' disabled' : ''}>&lsaquo;</button>` +
         `<div class="arcCtxSegDots">${dotHtml}</div>` +
@@ -11647,7 +11722,7 @@ window.__arcCtxSegmented = (function() {
       const prev = nav.querySelector('.arcCtxSegPrev');
       const next = nav.querySelector('.arcCtxSegNext');
       if (prev) prev.toggleAttribute('disabled', activeIdx <= 0);
-      if (next) next.toggleAttribute('disabled', (activeIdx >= total - 1) && !morePending);
+      if (next) next.toggleAttribute('disabled', (activeIdx >= lastStreamedIdx) && !morePending);
     }
     // Apply responsive dot/gap sizing AFTER the nav is mounted so we
     // can measure its width. Shrinks dot+gap proportionally when N is
@@ -12102,18 +12177,16 @@ window.__arcCtxSegmented = (function() {
           </svg>
           Upgrade Plan
         </div>
-        <div class="acctDpBtn" id="acctDpSaved">
+        <!-- Library: combined entry point for Saved + History. The
+             #libraryPanel itself has Saved/History tabs internally so a
+             single dropdown row is all that's needed. (Was two rows.) -->
+        <div class="acctDpBtn" id="acctDpLibrary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
           </svg>
-          Saved
-          <span class="acctDpCount" id="acctDpSavedCount" style="display:none">0</span>
-        </div>
-        <div class="acctDpBtn" id="acctDpHistory">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-          </svg>
-          History
+          Library
+          <span class="acctDpCount" id="acctDpLibraryCount" style="display:none">0</span>
         </div>
         <!-- Onboarding questionnaire temporarily hidden; code intact. -->
         <div class="acctDpBtn" id="acctDpPreferences" style="display:none" onclick="window.__openPreferences?.()">
@@ -17897,7 +17970,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               (a.source_name || "").toLowerCase().includes(filterQuery)
             );
           });
-          const filteredThreads = (localThreads || []).filter(t => {
+          // Local threads only belong in LOCAL + ARTICLE view of the country
+          // panel — they're domestic article clusters, not videos, not global
+          // news. Without this guard they leaked into every view.
+          const threadsAllowed = currentSort === "local" && mediaFilter.article;
+          const sourceThreads = threadsAllowed ? (localThreads || []) : [];
+          const filteredThreads = sourceThreads.filter(t => {
             if (!filterQuery) return true;
             return (
               (t.title || "").toLowerCase().includes(filterQuery) ||
@@ -26648,7 +26726,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         diplomacy: "#3de87a", environment: "#40e8b0", technology: "#aa66ff",
         society: "#e870d0", sports: "#ff66cc", culture: "#ffe040", default: "#6ab4ff"
       };
-      // ISO code → country name resolver for thread/timeline cards
+      // ISO code → country name resolver for thread/timeline cards.
+      // Exposed on window so the cluster-detail panel header (separate
+      // IIFE) can render the same chip labels.
       function _isoToName(iso) {
         if (!iso) return '';
         const gc = Array.isArray(window.__globeCountries) ? window.__globeCountries : [];
@@ -26659,6 +26739,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         return iso;
       }
+      if (!window._isoToName) window._isoToName = _isoToName;
       function _resolveGeoScope(scope) {
         if (!scope) return [];
         const arr = Array.isArray(scope) ? scope : [scope];
@@ -27033,6 +27114,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           language_count: t.language_count || 0,
           source_country_count: t.source_country_count || 0,
           feature_keywords: t.keywords || [],
+          // Subject countries (the few the story is FUNDAMENTALLY about,
+          // distinct from source_country_count which counts every country
+          // that *published* about it). Passed through so the cluster panel
+          // header can render a "Countries" flag-chip row.
+          primary_nations: Array.isArray(t.primary_nations) ? t.primary_nations : [],
+          secondary_nations: Array.isArray(t.secondary_nations) ? t.secondary_nations : [],
           top_article_ids: [],
           article_ids: [],
           hero_image_url: t.hero_image_url || '',
@@ -32449,14 +32536,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (article.country_name) locationTags.push(article.country_name);
     else if (article.iso_code) locationTags.push(article.iso_code.toUpperCase());
     
-    // Sentiment tag
+    // Sentiment tag — emoji removed; the colored pill background already
+    // signals positive/negative without needing a face icon.
     let sentimentTag = '';
     if (article.sentiment_score !== undefined && article.sentiment_score !== null) {
       const score = parseFloat(article.sentiment_score);
       if (score > 0.2) {
-        sentimentTag = `<span class="adpMetaTag sentiment-positive">😊 Positive (${(score * 100).toFixed(0)}%)</span>`;
+        sentimentTag = `<span class="adpMetaTag sentiment-positive">Positive (${(score * 100).toFixed(0)}%)</span>`;
       } else if (score < -0.2) {
-        sentimentTag = `<span class="adpMetaTag sentiment-negative">😟 Negative (${(Math.abs(score) * 100).toFixed(0)}%)</span>`;
+        sentimentTag = `<span class="adpMetaTag sentiment-negative">Negative (${(Math.abs(score) * 100).toFixed(0)}%)</span>`;
       }
     }
     
@@ -34167,7 +34255,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function _persistHistory() { localStorage.setItem('earth00_history', JSON.stringify(_historyItems)); }
 
   function _updateSavedCount() {
-    const el = document.getElementById('acctDpSavedCount');
+    // Renamed: dropdown row is now a single "Library" button. Count badge
+    // still shows saved-items count (the actionable number); the panel's
+    // own Saved/History tabs split the view inside. Tolerates the old
+    // `acctDpSavedCount` id for stale cached pages.
+    const el = document.getElementById('acctDpLibraryCount')
+            || document.getElementById('acctDpSavedCount');
+    if (!el) return;
     if (_savedItems.length) { el.textContent = _savedItems.length; el.style.display = ''; }
     else { el.style.display = 'none'; }
   }
@@ -34244,8 +34338,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       t.addEventListener('click', () => { _libTab = t.dataset.lib; lp.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
     });
   });
-  document.getElementById('acctDpSaved').addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
-  document.getElementById('acctDpHistory').addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
+  // Single "Library" entry point — opens the panel with the Saved tab
+  // active by default; user can flip to History via the libTab switcher
+  // inside the panel. Tolerates the old `acctDpSaved` / `acctDpHistory`
+  // ids on stale cached pages so a partial deploy stays functional.
+  const _acctDpLibraryEl =
+    document.getElementById('acctDpLibrary')
+    || document.getElementById('acctDpSaved');
+  if (_acctDpLibraryEl) {
+    _acctDpLibraryEl.addEventListener('click', e => { e.stopPropagation(); openLibrary('saved'); });
+  }
+  const _acctDpHistoryLegacy = document.getElementById('acctDpHistory');
+  if (_acctDpHistoryLegacy) {
+    _acctDpHistoryLegacy.addEventListener('click', e => { e.stopPropagation(); openLibrary('history'); });
+  }
 
   // Public API for other parts of the app to save/track items.
   // Items now carry `type` ('article' | 'thread' | 'timeline') so a
@@ -40292,6 +40398,29 @@ body.ticker-active .gTickerLabel {
           </div>
           <div class="cdClose" id="cdCloseBtn">\u2715</div>
         </div>
+        ${(() => {
+          // Labeled flag-chip row for the primary subject countries.
+          // See www/index.html for full rationale. Reuses .nfNationChip
+          // styling — same chip vocabulary as the threads/lines feed.
+          const _nations = Array.isArray(node.primary_nations) ? node.primary_nations : [];
+          const _seen = new Set();
+          const _isos = _nations
+            .map(n => String(n || '').trim().toUpperCase())
+            .filter(n => n && /^[A-Z]{2,3}$/.test(n) && !_seen.has(n) && (_seen.add(n), true));
+          if (!_isos.length) return '';
+          const _resolveName = window._isoToName || ((iso) => iso);
+          const _chips = _isos.map(iso => {
+            const code = iso.toLowerCase();
+            const up = iso;
+            const name = esc(_resolveName(iso) || up);
+            const flagUrl = `https://flagcdn.com/w40/${code}.png`;
+            return `<span class="nfNationChip" tabindex="0" aria-label="${name}"><img class="nfNationFlag" src="${flagUrl}" alt="" loading="lazy" onerror="this.closest('.nfNationChip').classList.add('nfNationChip--text');this.onerror=null;"><span class="nfNationCode">${up}</span><span class="nfNationLabel">${name}</span></span>`;
+          }).join('');
+          return `<div class="cdCountriesRow">
+            <span class="cdCountriesLabel">Countries</span>
+            <div class="cdCountriesChips">${_chips}</div>
+          </div>`;
+        })()}
         <div class="cdMeta">
           <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.article_count)}</span><span class="cdMetaLabel">Articles</span></div>
           <div class="cdMetaItem"><span class="cdMetaNum">${fmtNum(node.language_count || 0)}</span><span class="cdMetaLabel">Languages</span></div>

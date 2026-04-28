@@ -2320,17 +2320,53 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       conditions.push(`al.city_id = $${params.length}`);
     }
 
-    // Keyword filter — use indexed article_keywords lookup (no ILIKE on text columns)
+    // Keyword filter.
+    //
+    // The previous version used `EXISTS (... WHERE ak.article_id = a.id
+    // AND ak.keyword ILIKE 'trump%')`. Two problems:
+    //
+    //   1. EXISTS was correlated to the outer row (`= a.id`), so the
+    //      subquery fired once per candidate flow row. With a top-2
+    //      keyword like "trump" matching ~150K articles, this blew the
+    //      6s statement_timeout (set on line ~2517 below) and the route
+    //      returned `{error:"Failed to fetch flows"}`. User reported
+    //      "no response" — that was the timeout, not an empty result.
+    //   2. `ILIKE 'trump%'` cannot use the `idx_ak_keyword` btree (default
+    //      collation) so it sequentially scanned article_keywords (~M rows)
+    //      every time the EXISTS fired.
+    //
+    // Fix: rewrite as an UNCORRELATED `IN (subquery)`. Postgres materializes
+    // the article_id set once via hash semi-join. The subquery itself uses:
+    //   - idx_ak_normalized btree for the exact `normalized_keyword = $`
+    //   - idx_ak_keyword_gin (gin tsvector) for prefix match via
+    //     `to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', 'trump:*')`
+    //     which IS index-backed and supports lexeme-prefix (`:*`) — the
+    //     fast equivalent of `ILIKE 'trump%'` without the seqscan.
+    //
+    // Multi-word inputs (e.g. "donald trump") get joined with `&` so all
+    // tokens must appear; non-word chars are stripped to prevent users
+    // injecting tsquery syntax (`! | ( )` etc.).
     if (keyword) {
-      params.push(keyword.toLowerCase().trim());
-      const kwExact = params.length;
-      params.push(`${keyword.toLowerCase().trim()}%`);
-      const kwPrefix = params.length;
-      conditions.push(`EXISTS (
-        SELECT 1 FROM article_keywords ak
-        WHERE ak.article_id = a.id
-        AND (ak.normalized_keyword = $${kwExact} OR ak.keyword ILIKE $${kwPrefix})
-      )`);
+      const kwLower = keyword.toLowerCase().trim();
+      params.push(kwLower);
+      const exactParam = params.length;
+      const tsTokens = kwLower.replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+      if (tsTokens.length) {
+        const tsQuery = tsTokens.map(w => w + ':*').join(' & ');
+        params.push(tsQuery);
+        const tsParam = params.length;
+        conditions.push(`a.id IN (
+          SELECT ak.article_id FROM article_keywords ak
+          WHERE ak.normalized_keyword = $${exactParam}
+             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', $${tsParam})
+        )`);
+      } else {
+        // Pure non-word input — only the exact normalized lookup is meaningful.
+        conditions.push(`a.id IN (
+          SELECT ak.article_id FROM article_keywords ak
+          WHERE ak.normalized_keyword = $${exactParam}
+        )`);
+      }
     }
 
     // View-mode specific filtering
