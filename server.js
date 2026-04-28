@@ -6898,24 +6898,36 @@ app.get("/api/timelines/latest", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const _cacheKey = `timelines/latest:${limit}`;
     const _cached = await ttlCached(_cacheKey, 60_000, async () => {
+      // Use article-derived recency (not last_updated_at) — see the
+      // long comment in /api/threads/latest for the rationale.
+      // Timelines have the same skew problem: cosmetic operations bump
+      // last_updated_at without any new article actually being added.
       const { rows: timelines } = await pool.query(`
         SELECT
           t.id AS timeline_id, t.title, t.description, t.scope,
           t.primary_category, t.geographic_scope, t.importance, t.keywords,
           t.primary_nations, t.secondary_nations, t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
           t.historical_anchors, t.status, t.last_updated_at,
+          COALESCE(lp.latest_pub, t.last_updated_at) AS true_latest_published_at,
           COALESCE(t.is_manual, FALSE) AS is_manual
         FROM story_timelines t
+        LEFT JOIN LATERAL (
+          SELECT MAX(na.published_at) AS latest_pub
+          FROM story_timeline_articles sta
+          JOIN news_articles na ON na.id = sta.article_id
+          WHERE sta.timeline_id = t.id
+        ) lp ON true
         WHERE t.status IN ('active','cooling','dormant')
           AND (t.article_count >= 2 OR COALESCE(t.is_manual, FALSE) = TRUE)
         ORDER BY
+          -- Importance first, foremost — see /api/threads/latest comment.
+          t.importance DESC NULLS LAST,
           CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
           CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
                WHEN t.primary_category IN ('environment','climate') THEN 2
                ELSE 1 END,
-          t.importance DESC,
           t.parabolic_weight_sum DESC,
-          t.last_updated_at DESC NULLS LAST
+          true_latest_published_at DESC NULLS LAST
         LIMIT $1
       `, [limit]);
 
@@ -7004,7 +7016,8 @@ app.get("/api/timelines/latest", async (req, res) => {
           // requests with literal "undefined" in the URL.
           id: t.timeline_id,
           thread_id: t.timeline_id,
-          latest_published_at: t.last_updated_at,
+          // article-derived recency (see threads/latest comment)
+          latest_published_at: t.true_latest_published_at || t.last_updated_at,
           hero_image_url: h?.hero_image_url || null,
           hero_catalog_image_url: null,
           hero_source_name: h?.hero_source_name || null,
@@ -7799,6 +7812,8 @@ app.get("/api/threads/id/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
+    // Use article-derived recency (not last_updated_at) — see the long
+    // comment in /api/threads/latest for the rationale.
     const { rows } = await pool.query(`
       SELECT
         st.id AS thread_id,
@@ -7812,8 +7827,15 @@ app.get("/api/threads/id/:id", async (req, res) => {
         st.status,
         st.last_updated_at,
         st.distinct_source_count,
-        st.breaking_signal_score
+        st.breaking_signal_score,
+        COALESCE(lp.latest_pub, st.last_updated_at) AS true_latest_published_at
       FROM story_threads st
+      LEFT JOIN LATERAL (
+        SELECT MAX(na.published_at) AS latest_pub
+        FROM story_thread_articles sta
+        JOIN news_articles na ON na.id = sta.article_id
+        WHERE sta.thread_id = st.id
+      ) lp ON true
       WHERE st.id = $1
         AND st.article_count >= 1
       LIMIT 1
@@ -7853,7 +7875,7 @@ app.get("/api/threads/id/:id", async (req, res) => {
     }
     const payload = {
       ...thread,
-      latest_published_at: thread.last_updated_at,
+      latest_published_at: thread.true_latest_published_at || thread.last_updated_at,
       hero_image_url: hero.hero_image_url || bucketUrl || null,
       hero_catalog_image_url: null,
       hero_source_name: null,
@@ -7905,17 +7927,47 @@ app.get("/api/threads/latest", async (req, res) => {
     // The main feed is global threads only — that's the project's focus
     // surface and locals were burying it. COALESCE handles legacy rows
     // created before the `scope` column existed (default = 'global').
+    // ── true article-derived recency ───────────────────────────────────
+    // story_threads.last_updated_at gets bumped by non-article events too:
+    //   - refreshStaleThreadContexts re-titles via Claude (storyThreadBuilder.js)
+    //   - article ejects (storyThreadBuilder.js eject path)
+    // So a thread that's been quiet for a week can have last_updated_at
+    // = 2 hours ago and look "active" to the client.
+    //
+    // The truth is MAX(news_articles.published_at) joined through
+    // story_thread_articles. We surface that as `latest_published_at`
+    // and use it for ordering. Falls back to last_updated_at only when
+    // the thread has zero articles (shouldn't happen given article_count
+    // >= 2 below, but kept as a safety net).
+    //
+    // Production diagnosis that motivated this fix: thread #8509
+    // "Antisemitic Hate Crimes Surge Across Western Nations" had
+    // status=dormant (correct) and last_updated_at=11h (a stale Claude
+    // re-title bump) but its true latest article was 107h ago — a 96h
+    // skew. The client mapped last_updated_at → latest_published_at and
+    // re-classified it as 'active' on the basis of the bumped value.
     const { rows: threads } = await pool.query(`
       SELECT
         st.id AS thread_id, st.title, st.description, st.primary_category,
         st.geographic_scope, st.importance, st.keywords, st.primary_nations,
-        st.article_count, st.status, st.last_updated_at
+        st.article_count, st.status, st.last_updated_at,
+        COALESCE(lp.latest_pub, st.last_updated_at) AS true_latest_published_at
       FROM story_threads st
+      LEFT JOIN LATERAL (
+        SELECT MAX(na.published_at) AS latest_pub
+        FROM story_thread_articles sta
+        JOIN news_articles na ON na.id = sta.article_id
+        WHERE sta.thread_id = st.id
+      ) lp ON true
       WHERE st.article_count >= 2
         AND st.status IN ('active', 'cooling', 'dormant')
         AND COALESCE(st.scope, 'global') = 'global'
         ${dateWhere}
       ORDER BY
+        -- Importance first, foremost — a high-stakes story should sit
+        -- above an active-but-trivial one. status / category / count /
+        -- recency are tie-breakers, in that priority order.
+        st.importance DESC NULLS LAST,
         CASE st.status
           WHEN 'active'  THEN 0
           WHEN 'cooling' THEN 1
@@ -7925,9 +7977,8 @@ app.get("/api/threads/latest", async (req, res) => {
         CASE WHEN st.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
              WHEN st.primary_category IN ('environment','climate') THEN 2
              ELSE 1 END,
-        st.importance DESC,
         st.article_count DESC,
-        st.last_updated_at DESC NULLS LAST
+        true_latest_published_at DESC NULLS LAST
       LIMIT ($1 * 3)
     `, params);
 
@@ -8107,7 +8158,10 @@ app.get("/api/threads/latest", async (req, res) => {
       const counts = countsMap.get(t.thread_id) || { source_country_count: 0, language_count: 0 };
       return {
         ...t,
-        latest_published_at: t.last_updated_at,
+        // Use the true article-derived recency, not the spurious-bump-prone
+        // last_updated_at. See the LATERAL join above for the long-form
+        // rationale. The client's applyRecencyStatus reads this field.
+        latest_published_at: t.true_latest_published_at || t.last_updated_at,
         hero_image_url: h?.hero_image_url || null,
         hero_catalog_image_url: null,
         hero_source_name: null,
@@ -10345,17 +10399,36 @@ app.get("/api/keywords/trending", async (req, res) => {
       params.push(limitInt > 50 ? limitInt : 50); // fetch at least 50 for cache
       const limitIdx = params.length;
 
+      // The COALESCE+JOIN pattern is the immediate visible fix for the
+      // "keywords not translated in keyword intelligence" complaint.
+      // The Claude-based keywordNormalizerCron has been writing
+      // English equivalents into keyword_translations for months
+      // (~145K rows as of now), but this endpoint never JOINed to
+      // them. Result: Russian "выборы" and English "election"
+      // appeared as separate rows in trending, the user saw mixed
+      // languages, and the deduped count was wrong.
+      //
+      // Now: COALESCE(kt.normalized_keyword, k.keyword) gives the
+      // English form when present, falls back to the original. GROUP
+      // BY the same expression means duplicates merge — the trending
+      // count for a story carrying both forms is summed.
+      //
+      // The DeepL tactical translator (keywordIntelligenceTranslator.js)
+      // fills any remaining gaps for the top of the distribution as
+      // new languages / new entities appear in the feed.
       const result = await pool.query(
         `SELECT
-           k.keyword,
+           COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
            SUM(k.total_count)::bigint AS mentions,
            COUNT(DISTINCT k.date)::int AS days_active
          FROM keyword_daily_stats k
+         LEFT JOIN keyword_translations kt
+           ON kt.original_keyword = k.keyword
          WHERE ${clauses.join("\n           AND ")}
            AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
-         GROUP BY k.keyword
+         GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
          HAVING SUM(k.total_count) >= 3
-         ORDER BY mentions DESC, k.keyword ASC
+         ORDER BY mentions DESC, COALESCE(kt.normalized_keyword, k.keyword) ASC
          LIMIT $${limitIdx}`,
         params
       );
@@ -10450,21 +10523,34 @@ app.get("/api/keywords/rising", async (req, res) => {
       params.push(limitInt);
       const limitIdx = params.length;
 
+      // Same JOIN+GROUP-BY-normalized pattern as /api/keywords/trending.
+      // Both CTEs (recent and baseline) collapse to the normalized form
+      // BEFORE the momentum comparison, so a Russian-spike keyword that
+      // also has English-form mentions doesn't get artificially split
+      // across two rows with two unrelated momentum scores.
       const result = await pool.query(
         `WITH recent AS (
-           SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
+           SELECT
+             COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
+             SUM(k.total_count)::bigint AS recent_count
            FROM keyword_daily_stats k
+           LEFT JOIN keyword_translations kt
+             ON kt.original_keyword = k.keyword
            WHERE ${recentClauses.join("\n             AND ")}
              AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
-           GROUP BY k.keyword
+           GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
            HAVING SUM(k.total_count) >= 2
          ),
          baseline AS (
-           SELECT k.keyword, SUM(k.total_count)::bigint AS baseline_count
+           SELECT
+             COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
+             SUM(k.total_count)::bigint AS baseline_count
            FROM keyword_daily_stats k
+           LEFT JOIN keyword_translations kt
+             ON kt.original_keyword = k.keyword
            WHERE ${baselineClauses.join("\n             AND ")}
              AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
-           GROUP BY k.keyword
+           GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
          )
          SELECT
            r.keyword,
@@ -10610,8 +10696,14 @@ app.get("/api/keywords/top", async (req, res) => {
     setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.top);
     const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.top, async () => {
       const params = [normalizedKeyword, daysInt];
+      // Match keyword OR its normalized form so a click on the deduped
+      // English label from /api/keywords/trending pulls every source-
+      // language variant. The trending list now emits the normalized
+      // form (e.g. "election"), and the user expects /top?keyword=election
+      // to sum Russian "выборы" + Spanish "elección" + English
+      // "election" together — not just the literal English row.
       const clauses = [
-        "k.keyword = $1",
+        "(k.keyword = $1 OR EXISTS (SELECT 1 FROM keyword_translations kt2 WHERE kt2.original_keyword = k.keyword AND kt2.normalized_keyword = $1))",
         "k.date >= CURRENT_DATE - $2::int",
       ];
       appendKeywordCountryClauses(clauses, params, {
@@ -10625,14 +10717,16 @@ app.get("/api/keywords/top", async (req, res) => {
 
       const result = await pool.query(
         `SELECT
-           k.keyword,
+           COALESCE(kt.normalized_keyword, k.keyword) AS keyword,
            SUM(k.total_count)::bigint AS total_mentions,
            SUM(k.language_group_count)::bigint AS language_groups,
            MIN(k.date) AS first_seen,
            MAX(k.date) AS last_seen
          FROM keyword_daily_stats k
+         LEFT JOIN keyword_translations kt
+           ON kt.original_keyword = k.keyword
          WHERE ${clauses.join("\n           AND ")}
-         GROUP BY k.keyword
+         GROUP BY COALESCE(kt.normalized_keyword, k.keyword)
          ORDER BY total_mentions DESC
          LIMIT $${limitIdx}`,
         params

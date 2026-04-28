@@ -174,6 +174,13 @@ For RANK mode specifically: "rank by X" means EVERY country with a non-trivial v
 
 For BINARY mode: be more inclusive than your gut suggests. If you can think of three obvious countries that match, there are probably twenty more. Walk continents.
 
+CONFIDENCE FLOOR — 85% rule (read carefully):
+- Default behaviour for PERCENT and RANK modes: every country in the catalog should appear in your output. Coverage matters — a heatmap that paints 140 of 190 countries leaves the user asking "why is China grey?" and the answer feels broken.
+- If, after web_search, you have ≥85% confidence in a value for a country, INCLUDE IT — even if the value is an estimate, an interpolation from regional averages, or a published figure with mild uncertainty. This is the bar most published demographic / economic / geographic data already meets.
+- ONLY OMIT a country when your confidence is below 85% AND no authoritative source exists for it. Omission is the explicit signal "insufficient data" — the client surfaces those countries with the message "insufficient data to provide accurate response".
+- Concretely, for a query like "Muslim population %": you should have ≥85% confidence for nearly every sovereign country (Pew, World Bank, CIA Factbook all publish this). It is a failure to omit China, Brazil, Bolivia, etc. — those values are well-documented. Search if you're unsure.
+- A blank country is NEVER preferable to a well-sourced estimate. Lazy omission is the failure mode this rule prevents.
+
 Most users will be wronger than you think when checking — but for the cases where they are right and you're missing obvious entries, your answer becomes useless. Aim for high recall on clear positives and strict exclusion of vague matches.`;
 }
 
@@ -275,9 +282,25 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
   return { payload, seen: new Set() };
 }
 
-// ── Second-pass fill-in (rank/binary modes that truncated) ──────────────
+// ── Second-pass fill-in (covers all three modes) ────────────────────────
+// For percent and rank we expect near-complete coverage of all ~190
+// sovereign countries — the heatmap looks broken when major countries
+// (China, Brazil, etc.) are blank because the model lazily skipped them.
+// Binary stays opt-in around a smaller threshold since "many countries
+// match" is uncommon for binary questions.
+//
+// The 85%-confidence rule established in the system prompt is restated
+// in the fill-in user message: estimate where you'd publish, omit
+// where you would not. Omitted countries surface as "Insufficient data
+// to provide accurate response" on the client.
 async function _fillInPass({ payload, seen, mode, rawQuestion, countryRows, isoSet, isoCatalog, tools }) {
-  const FILL_IN_THRESHOLDS = { rank: 50, binary: 15 };
+  // Per-mode thresholds: trigger fill-in if value count is below this.
+  // percent: aim for ~140 covered (out of ~190 sovereigns) before we
+  // stop — most demographic / economic / geographic queries should
+  // easily clear this.
+  // rank: aim for 100 — half-coverage is the floor for a usable rank map.
+  // binary: 15 stays as before; binary is naturally sparse.
+  const FILL_IN_THRESHOLDS = { percent: 140, rank: 100, binary: 15 };
   const fillInTarget = FILL_IN_THRESHOLDS[mode];
   if (!fillInTarget || payload.values.length === 0 || payload.values.length >= fillInTarget) return;
   if (process.env.HEATMAP_FILL_IN === 'false') return;
@@ -292,18 +315,30 @@ async function _fillInPass({ payload, seen, mode, rawQuestion, countryRows, isoS
       .map(v => `${v.iso} (${isoToName.get(v.iso) || v.iso})=${v.value}`)
       .join(', ');
     const lastRank = (mode === 'rank') ? Math.max(...payload.values.map(v => v.value || 0)) : null;
+
+    // Mode-specific guidance for the additional countries.
+    const continueGuidance = mode === 'rank'
+      ? `Continue the rank sequence — your last rank was ${lastRank}, so new entries should be ranked starting at ${lastRank + 1} and continuing until you've ranked every country with a meaningful value. DO NOT REPEAT countries already in the previous answer above.`
+      : mode === 'binary'
+      ? 'Include ONLY countries where the answer is 1 (yes / true). DO NOT REPEAT countries already in the previous answer above.'
+      : /* percent */ `Provide a percent value (0–100) for each missing country where you have ≥85% confidence in the figure. For demographic / economic / geographic questions, established sources (World Bank, Pew, CIA Factbook, IMF) cover essentially every sovereign country — search them if your unaided recall is uncertain. DO NOT REPEAT countries already in the previous answer above.`;
+
     const userMsg = `Your previous answer to "${rawQuestion}" (mode: ${mode}) returned only ${payload.values.length} countries:
 
 ${existingSummary}
 
-The world has 190+ sovereign countries. Your answer is incomplete. Walk through the following countries that were NOT in your previous answer, and identify which of them have a non-trivial value for the question. Use web_search if needed.
+The world has 190+ sovereign countries. Your answer is incomplete. Walk through the following countries that were NOT in your previous answer.
 
 Missing from previous answer (${missing.length} countries):
 ${missing.map(iso => `${iso} ${isoToName.get(iso) || ''}`.trim()).join('\n')}
 
-${mode === 'rank'
-  ? `Continue the rank sequence — your last rank was ${lastRank}, so new entries should be ranked starting at ${lastRank + 1} and continuing until you've ranked every country with a meaningful value. DO NOT REPEAT countries already in the previous answer above.`
-  : 'Include ONLY countries where the answer is 1 (yes / true). DO NOT REPEAT countries already in the previous answer above.'}
+CONFIDENCE RULE — 85% floor:
+For each missing country, decide: do I have at least 85% confidence in a value? An estimate from a reputable source, an interpolation from a regional aggregate, or a published figure with mild uncertainty all clear that bar. INCLUDE those.
+OMIT only countries where you cannot reach 85% confidence even after a web_search. Those will appear as "insufficient data to provide accurate response" on the client — that is the explicit signal a user expects when data genuinely doesn't exist, NOT a substitute for laziness.
+
+A blank country is NEVER preferable to a well-sourced estimate. If you can find a value via web_search, include it.
+
+${continueGuidance}
 
 Call set_country_values with ONLY the additional countries.`;
 

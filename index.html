@@ -916,6 +916,16 @@
       align-items: center;
       gap: 8px;
       z-index: 40;
+      transition: transform 0.55s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    /* During a briefing, slide the top nav buttons up off-screen so the
+       segment title (#bSegmentTitle, top-center) has the marquee position.
+       Desktop keeps the compass + scale widgets visible — they sit in the
+       upper-right corner and there's enough horizontal space for the
+       title to coexist with them. */
+    body.briefing-active #topLeftCluster {
+      transform: translateY(-140%);
+      pointer-events: none;
     }
 
     .iconBtn {
@@ -5047,11 +5057,15 @@ button.arcCtxSegDot,
 
 #semHeatPanel {
   position: fixed;
-  bottom: 96px;
+  /* Bumped up from 96px so the panel clears the page-nav + global ticker
+     with a bit more breathing room — the previous offset put the panel's
+     bottom edge directly against the bar. */
+  bottom: 120px;
   left: 16px;
   z-index: 995;
   width: 320px;
-  max-height: calc(100vh - 220px);
+  /* Account for the new bottom offset so max-height still fits. */
+  max-height: calc(100vh - 244px);
   background: rgba(6, 10, 20, 0.30);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -5077,10 +5091,11 @@ button.arcCtxSegDot,
   padding: 0; border: none; background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
   box-shadow: none; width: auto;
   left: 50%; transform: translateX(-50%);
-  /* Sit just above the page-nav, matching where the minimized news-flows
-     bar lives. The previous +34px lifted it visibly higher than the flows
-     bar; aligning them makes the two bottom-bars feel like one row. */
-  bottom: calc(var(--page-nav-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 8px);
+  /* Sit just above the page-nav. Bumped from +8px to +32px so the
+     minimized pill has a clear gap from the nav row instead of kissing
+     it. Still well below the maximized panel's 120px so the two states
+     read as distinct positions. */
+  bottom: calc(var(--page-nav-height) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 32px);
 }
 .semHeatMinPlayBtn.hidden-mode { display: none; }
 #semHeatPanel.minimized .semHeatBody { display: none; }
@@ -9267,10 +9282,16 @@ button.arcCtxSegDot,
       .nfCardOrigin,
       .adpMeta             { font-size: var(--t-xs); }
 
-      /* Briefing control buttons — bigger on mobile */
-      .bControlBtn         { width: 48px; height: 48px; font-size: 18px; }
-      .bControlBtn.primary { width: 58px; height: 58px; font-size: 22px; }
-      .bDot                { width: 9px; height: 9px; min-height: 0; }
+      /* Briefing control buttons — bigger on mobile.
+         Scoped under .bControls so these beat the later default rules via
+         specificity (0,2,0 > 0,1,0). Without this scope, source order wins
+         and mobile bumps are clobbered. Pill buttons (.speed/.cc) need
+         width:auto preserved while taking the bumped 48px height. */
+      .bControls .bControlBtn         { width: 48px; height: 48px; font-size: 18px; }
+      .bControls .bControlBtn.primary { width: 58px; height: 58px; font-size: 22px; }
+      .bControls .bControlBtn.speed,
+      .bControls .bControlBtn.cc      { width: auto; height: 48px; min-height: 48px; padding: 0 14px; font-size: 12px; }
+      .bDot                           { width: 9px; height: 9px; min-height: 0; }
 
       /* ── Account dropdown — anchor to bottom of screen on narrow ── */
       #accountDropdown {
@@ -15205,6 +15226,15 @@ function computeCityTiers(cities) {
 
       window.addEventListener("touchmove", e => {
         if (!touchDragging || e.touches.length !== 1) return;
+        // Hard gate: same rationale as the mousemove gate above. If the
+        // country/city panel opened during the gesture (e.g. node tap
+        // landing fired focusPendingPanel), tear the drag down and bail.
+        if (isPanelActive()) {
+          touchDragging = false;
+          _dragVelYaw = 0; _dragVelTilt = 0;
+          yawVelocity = 0; tiltVelocity = 0;
+          return;
+        }
 
         // Record ANY pixel of motion so touchend can stamp the cooloff
         // even when the drag never crossed TOUCH_DRAG_THRESHOLD or when
@@ -15291,6 +15321,18 @@ function computeCityTiers(cities) {
 
       window.addEventListener("mousemove", e => {
         if (!dragging) return;
+        // Hard gate: if the country/city panel opened mid-drag (e.g. a
+        // node-pick landed during the same gesture), kill the drag and
+        // bail. The mousedown gate already prevents NEW drags from
+        // starting once the panel is open, but a drag in flight when
+        // the panel opens needs this stop or rotation continues
+        // underneath the open panel.
+        if (isPanelActive()) {
+          dragging = false;
+          _dragVelYaw = 0; _dragVelTilt = 0;
+          yawVelocity = 0; tiltVelocity = 0;
+          return;
+        }
 
         // Record ANY pixel of motion so the mouseup handler can tell the
         // difference between a pure click (no movement) and a drag that
@@ -17314,6 +17356,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         panel.classList.add("active");
         document.body.classList.add("panel-open");
+        // Kill any in-flight rotation the moment the panel becomes
+        // active. The mousemove/touchmove gates also stop fresh deltas,
+        // but inertia (yawVelocity / tiltVelocity) is decayed in the
+        // animation loop and would keep coasting for a few hundred ms
+        // underneath the panel without this. Belt + suspenders.
+        try {
+          dragging = false;
+          touchDragging = false;
+          _dragVelYaw = 0; _dragVelTilt = 0;
+          yawVelocity = 0; tiltVelocity = 0;
+        } catch (_) { /* state vars are IIFE-scoped — set what's reachable */ }
         applySnapHeight("default", true);
         attachPanelResizeHandle();
         triggerNodePanelWhoosh(panel);
@@ -17982,7 +18035,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__currentPage !== 1) return;
         pauseAmbientRotation();
         const panel = document.getElementById("infoPanel");
-        if (panel.classList.contains("active") && panel.contains(e.target)) return;
+        // Whenever the country/city panel is open, a wheel/two-finger-
+        // swipe must NEVER rotate the globe — regardless of where the
+        // cursor lives. The previous rule only bailed when the wheel
+        // target was inside the panel, which left the visible globe
+        // strip above the panel rotatable. Match the touch / mouse
+        // gate: panel open → no rotation, period.
+        if (panel.classList.contains("active")) {
+          if (panel.contains(e.target)) return; // let the panel scroll
+          return; // wheel landed on canvas above panel — block rotation
+        }
         // Same exclusion for #clusterDetail (city/country panels and the
         // local thread panel). A wheel scroll inside that panel must
         // scroll the panel, not rotate the globe.
@@ -18985,6 +19047,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         panel.classList.add("active");
         document.body.classList.add("panel-open");
+        // Kill any in-flight rotation the moment the panel becomes
+        // active. The mousemove/touchmove gates also stop fresh deltas,
+        // but inertia (yawVelocity / tiltVelocity) is decayed in the
+        // animation loop and would keep coasting for a few hundred ms
+        // underneath the panel without this. Belt + suspenders.
+        try {
+          dragging = false;
+          touchDragging = false;
+          _dragVelYaw = 0; _dragVelTilt = 0;
+          yawVelocity = 0; tiltVelocity = 0;
+        } catch (_) { /* state vars are IIFE-scoped — set what's reachable */ }
         applySnapHeight("default", true);
         attachPanelResizeHandle();
         triggerNodePanelWhoosh(panel);
@@ -22779,25 +22852,53 @@ const settingsToggle     = document.getElementById("settingsToggle");
       list.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: false });
     });
 
-    // Expose validation check for loadFlows / heatmap go
-    window.__kwIsValid = function(inputEl) {
-      if (!inputEl.value.trim()) return true; // empty is fine
-      if (inputEl._kwValid) return true;
-      // Accept if typed value matches any cached suggestion exactly (case-insensitive)
-      const typed = inputEl.value.trim().toLowerCase();
-      if (_kwLastResults.some(it => it.name.toLowerCase() === typed)) {
+    // Expose validation check for loadFlows / heatmap go.
+    //
+    // History: this used to require either (a) the user clicking an
+    // autocomplete suggestion or (b) the typed value being an exact
+    // case-insensitive match against the last 15 fetched suggestions.
+    // That rejected every keyword whenever the autocomplete fetch
+    // failed silently, the user clicked Load before the 200ms debounce
+    // fired, or the term wasn't in the rolling top-15 trending list
+    // (autocomplete is sourced from keyword_daily_stats over the last
+    // 30 days — narrower than the implied "preset list" the box
+    // claims to be).
+    //
+    // The intent of this gate is to keep junk off the flows endpoint,
+    // NOT to hand-pick approved nouns. The /api/flows query already
+    // returns an empty result for keywords with no matches; an empty
+    // visualization is a fine "nothing here" signal. So the gate now
+    // only rejects clearly-junk inputs: too short, all-symbols, or a
+    // single super-common stopword. Anything else flows through.
+    const _KW_JUNK_STOPWORDS = new Set([
+      'a','an','the','and','or','but','of','in','on','at','to','for','with',
+      'is','it','as','by','be','was','were','are','this','that','these','those',
+      'i','we','you','he','she','they','its','his','her','our','my','your','their',
+    ]);
+    window.__kwRejectReason = function(inputEl) {
+      const raw = (inputEl.value || '').trim();
+      if (!raw) return null;
+      if (inputEl._kwValid) return null;
+      const lower = raw.toLowerCase();
+      if (_kwLastResults.some(it => it.name && it.name.toLowerCase() === lower)) {
         inputEl._kwValid = true;
-        return true;
+        return null;
       }
-      return false;
+      if (raw.length < 2) return 'Too short — try a longer keyword.';
+      if (!/[a-zA-Z0-9]/.test(raw)) return 'Use letters or numbers.';
+      if (_KW_JUNK_STOPWORDS.has(lower)) return 'Too common — try a more specific keyword.';
+      return null;
+    };
+    window.__kwIsValid = function(inputEl) {
+      return window.__kwRejectReason(inputEl) === null;
     };
     window.__kwShowReject = function(inputEl) {
       const list = inputEl.closest('.kwAutoWrap')?.querySelector('.kwAutoList');
-      if (list) {
-        list.innerHTML = '<div class="kwAutoNone">That keyword isn\'t in our index — pick from suggestions above or try a shorter term</div>';
-        list.classList.add('visible');
-        setTimeout(() => list.classList.remove('visible'), 3000);
-      }
+      if (!list) return;
+      const reason = window.__kwRejectReason(inputEl) || 'That keyword can\'t be searched.';
+      list.innerHTML = `<div class="kwAutoNone">${reason}</div>`;
+      list.classList.add('visible');
+      setTimeout(() => list.classList.remove('visible'), 3000);
     };
   })();
 
@@ -26530,20 +26631,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
       };
 
       // ── Recency-based status & ranking ────────────────────────────
+      // Mirrors the server-side coolDownInactiveThreads policy in
+      // storyThreadBuilder.js:
+      //   ≤ 48h since latest article  → active
+      //   ≤  7d since latest article  → cooling
+      //   >  7d                       → dormant
+      // The server transitions are eventual (cron), so the client
+      // re-derives status from latest_published_at every render to
+      // avoid showing a stale "active" badge on a thread that's been
+      // quiet for 3 days but hasn't had its row updated yet.
+      //
+      // Sort priority (matches /api/threads/latest ORDER BY):
+      //   1. importance DESC          — primary, "rank by importance first"
+      //   2. status (active < cooling < dormant)
+      //   3. category tier
+      //   4. recency
       const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
       function applyRecencyStatus(data) {
         const now = Date.now();
-        const H24 = 24 * 60 * 60 * 1000;
-        const H48 = 48 * 60 * 60 * 1000;
+        const H48     = 48 * 60 * 60 * 1000;
+        const D7      =  7 * 24 * 60 * 60 * 1000;
         for (const t of data) {
           if (t.latest_published_at) {
             const age = now - new Date(t.latest_published_at).getTime();
-            if (age <= H24)      t.status = 'active';
-            else if (age <= H48) t.status = 'cooling';
+            if (age <= H48)      t.status = 'active';
+            else if (age <= D7)  t.status = 'cooling';
             else                 t.status = 'dormant';
           }
         }
         data.sort((a, b) => {
+          // Importance first — server emits this on every thread/timeline.
+          // NULL/undefined falls to the bottom of its bucket.
+          const ia = Number(a.importance);
+          const ib = Number(b.importance);
+          const naI = Number.isFinite(ia) ? ia : -Infinity;
+          const nbI = Number.isFinite(ib) ? ib : -Infinity;
+          if (naI !== nbI) return nbI - naI;
           const ra = STATUS_RANK[a.status] ?? 1;
           const rb = STATUS_RANK[b.status] ?? 1;
           if (ra !== rb) return ra - rb;
@@ -30150,17 +30273,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
   })();
 
-  // Called by the News Flows loader whenever flowData changes. Keeps
-  // the cached flow set aligned and re-renders if the box is checked.
-  window.__flowNotifyCurrentFlows = function(flows) {
-    _flowLabelFlows = (Array.isArray(flows) && flows.length) ? flows : null;
-    const chk = document.getElementById("flowLabelsToggle");
-    if (!chk) return;
-    if (chk.checked && _flowLabelFlows) {
-      showFlowNodeLabels(_flowLabelFlows);
-    } else if (!_flowLabelFlows) {
-      _clearFlowNodeLabelsImpl();
-    }
+  // Called by the News Flows loader whenever flowData changes. News
+  // Flows produces hundreds of arcs at once, and rendering a label per
+  // origin/destination across all of them freezes the browser — the
+  // per-frame projection update has to walk every label and reposition
+  // it. The Labels toggle in the News Flows panel is intentionally
+  // inert in this path: it stays clickable for visual consistency but
+  // cannot summon a label set.
+  //
+  // Thread / Line / Article flow paths use __flowShowLabelsForCardTrigger
+  // instead, which renders labels for their bounded flow sets. Those
+  // remain unchanged.
+  window.__flowNotifyCurrentFlows = function(_flows) {
+    _flowLabelFlows = null;
+    _clearFlowNodeLabelsImpl();
   };
 
   // Helper: check the labels box and show labels for a set of flows.
@@ -35121,6 +35247,125 @@ const settingsToggle     = document.getElementById("settingsToggle");
   background: transparent;
 }
 
+/* ── Intro overlay — full-screen sequence shown during the type:'intro'
+   segment. Grey atmospheric dim + the loader-style globe + the
+   briefing's date. Exits as segment 1 begins. The orbiting star inside
+   .el-globe is auto-driven by initLoaderAnim's MutationObserver. */
+.bIntroOverlay {
+  position: absolute; inset: 0;
+  z-index: 100020;
+  pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.bIntroOverlay .bIntroDim {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(120% 100% at 50% 35%, rgba(60,80,110,0.25), transparent 65%),
+    linear-gradient(180deg, rgba(18,24,38,0.92), rgba(8,12,22,0.94));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+.bIntroOverlay.visible .bIntroDim { opacity: 1; }
+.bIntroOverlay.exiting .bIntroDim { opacity: 0; }
+
+.bIntroOverlay .bIntroBrand {
+  position: relative;
+  z-index: 1;
+  opacity: 0;
+  transform: translate(-44px, -44px) scale(0.92);
+  text-align: center;
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.bIntroOverlay.visible .bIntroBrand {
+  opacity: 1;
+  transform: translate(0, 0) scale(1);
+  transition-delay: 0.25s;
+}
+.bIntroOverlay.exiting .bIntroBrand {
+  opacity: 0;
+  transform: translate(34px, 34px) scale(1.04);
+}
+
+.bIntroOverlay .bIntroGlobe .el-globe {
+  width: 260px;
+  height: 260px;
+  filter: drop-shadow(0 0 28px rgba(255, 184, 92, 0.35))
+          drop-shadow(0 0 60px rgba(120, 160, 255, 0.16));
+  animation: siShimmer 3.6s ease-in-out 1.1s infinite;
+}
+.bIntroOverlay .bIntroGlobe .el-e {
+  font-size: 72px !important;
+  bottom: 14px !important;
+  left: 10px !important;
+}
+
+.bIntroOverlay .bIntroDate {
+  margin-top: 22px;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 224, 180, 0.92);
+  text-shadow: 0 0 14px rgba(255, 184, 92, 0.30);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.32, 0.72, 0, 1);
+  transition-delay: 0.85s;
+}
+.bIntroOverlay.visible .bIntroDate {
+  opacity: 1;
+  transform: translateY(0);
+}
+.bIntroOverlay.exiting .bIntroDate {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition-delay: 0s;
+}
+
+@media (max-width: 700px) {
+  .bIntroOverlay .bIntroGlobe .el-globe { width: 200px; height: 200px; }
+  .bIntroOverlay .bIntroGlobe .el-e { font-size: 56px !important; }
+  .bIntroOverlay .bIntroDate { font-size: 12px; letter-spacing: 0.16em; }
+}
+
+/* ── Segment title — fixed at top-center, slides into the space
+   vacated by the top nav buttons during a briefing. Updated per
+   segment by goToSegment(). z-index sits BELOW the intro overlay
+   (100020) so the intro's grey dim covers the title during the
+   intro segment, then the title takes over starting with segment 1. */
+.bSegmentTitle {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  z-index: 100018;
+  max-width: 80vw;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255, 224, 180, 0.94);
+  text-shadow: 0 0 14px rgba(255, 184, 92, 0.32);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, -14px);
+  pointer-events: none;
+  transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.bSegmentTitle.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+@media (max-width: 700px) {
+  .bSegmentTitle { top: 16px; font-size: 13px; letter-spacing: 0.08em; max-width: 86vw; }
+}
+
 /* ── Dots meta label (Earth Briefing + date above dots) ── */
 .bDotsMeta {
   text-align: center;
@@ -36219,6 +36464,47 @@ body.ticker-active .gTickerLabel {
 
 <!-- Briefing overlay HTML -->
 <div id="briefingOverlay">
+  <!-- Intro overlay — covers the screen during type:'intro' segment.
+       Grey dim + animated brand (centered logo + orbiting star) + date.
+       The .el-globe SVG is auto-initialized by the loader-anim
+       MutationObserver, so the orbit animation runs for free. -->
+  <div id="bIntroOverlay" class="bIntroOverlay" style="display:none">
+    <div class="bIntroDim"></div>
+    <div class="bIntroBrand">
+      <div class="el-globe-wrap bIntroGlobe">
+        <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+          <g class="el-grid">
+            <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+            <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+            <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+            <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+            <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+            <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+            <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+            <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+            <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+            <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+            <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
+            <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
+            <path d="M0,-100 Q8,-60 0,100"/>
+            <path d="M0,-100 Q-8,-60 0,100"/>
+          </g>
+          <g transform="rotate(-32)">
+            <path class="el-trail-blur" d=""/>
+            <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
+            <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
+          </g>
+        </svg>
+        <div class="el-e">e</div>
+      </div>
+      <div class="bIntroDate" id="bIntroDate"></div>
+    </div>
+  </div>
+  <!-- Segment title — fixed at top-center, replaces the slid-out top
+       nav buttons. Updated per segment in goToSegment(): story segments
+       show seg.thread_title; the intro segment shows "Daily Briefing ·
+       [date]". Outro/keywords/summary hide it. -->
+  <div class="bSegmentTitle" id="bSegmentTitle"></div>
   <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
@@ -36533,12 +36819,74 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
+  // ── Intro overlay control ────────────────────────────────────────────
+  // Visible during type:'intro' segments. The grey dim + brand entrance
+  // + date label run via CSS transitions; this only toggles the classes.
+  function showIntroOverlay() {
+    const overlay = document.getElementById('bIntroOverlay');
+    if (!overlay) return;
+    if (overlay.classList.contains('visible') && !overlay.classList.contains('exiting')) return;
+    overlay.classList.remove('exiting');
+    overlay.style.display = '';
+    const dateEl = document.getElementById('bIntroDate');
+    if (dateEl) {
+      const d = episode?.target_date ? new Date(episode.target_date) : new Date();
+      dateEl.textContent = d.toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      });
+    }
+    void overlay.offsetWidth;
+    overlay.classList.add('visible');
+  }
+  function hideIntroOverlay() {
+    const overlay = document.getElementById('bIntroOverlay');
+    if (!overlay) return;
+    if (!overlay.classList.contains('visible')) return;
+    overlay.classList.add('exiting');
+    setTimeout(() => {
+      overlay.classList.remove('visible', 'exiting');
+      overlay.style.display = 'none';
+    }, 720);
+  }
+
+  // ── Segment title control ────────────────────────────────────────────
+  // Top-center marquee that replaces the slid-out top nav buttons during
+  // the briefing. Hidden for outro/keywords/summary (recap card takes over).
+  function setSegmentTitle(seg) {
+    const el = document.getElementById('bSegmentTitle');
+    if (!el) return;
+    let text = '';
+    if (seg?.type === 'story') {
+      text = seg.thread_title || seg.thread_name || '';
+    } else if (seg?.type === 'intro') {
+      const d = episode?.target_date ? new Date(episode.target_date) : new Date();
+      const dateStr = d.toLocaleDateString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+      });
+      text = `Daily Briefing · ${dateStr}`;
+    }
+    if (text) {
+      el.textContent = text;
+      el.classList.add('visible');
+    } else {
+      el.classList.remove('visible');
+    }
+  }
+
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
     playing = false;
     clearTimeout(segTimer);
     clearBTimers();
+    hideIntroOverlay();
+    // Clear the top-center segment title — fade-out via CSS transition,
+    // text cleared once the transition completes.
+    const _stitle = document.getElementById('bSegmentTitle');
+    if (_stitle) {
+      _stitle.classList.remove('visible');
+      setTimeout(() => { _stitle.textContent = ''; }, 480);
+    }
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
@@ -36875,6 +37223,29 @@ body.ticker-active .gTickerLabel {
   function startGlobeTimers(idx, seg, dur) {
     const ms = f => Math.round(dur * f * 1000);
 
+    // Phase 2B — script-driven timing override.
+    // When the segment has seg.script (built by briefingGenerator and
+    // stamped with actual ElevenLabs ms durations), compute the exact
+    // ms offset for each visual event from the script's text+event
+    // sequence. These offsets replace the legacy percentages.
+    const _scriptTimes = (() => {
+      if (!Array.isArray(seg.script) || !seg.script.length) return null;
+      let t = 0;
+      const out = { camera_focus_ms: null, arc_draw_ms: null, data_panels_ms: null };
+      for (const line of seg.script) {
+        if (line.type === 'event') {
+          if (line.kind === 'camera_focus' && out.camera_focus_ms === null) out.camera_focus_ms = t;
+          if (line.kind === 'arc_draw'     && out.arc_draw_ms     === null) out.arc_draw_ms     = t;
+          if (line.kind === 'data_panels'  && out.data_panels_ms  === null) out.data_panels_ms  = t;
+        }
+        t += (line.ms ?? line.est_ms ?? 0);
+      }
+      return out;
+    })();
+    const camFocusOffsetMs   = _scriptTimes?.camera_focus_ms ?? ms(0.06);
+    const arcDrawOffsetMs    = _scriptTimes?.arc_draw_ms     ?? ms(0.20);
+    const dataPanelsOffsetMs = _scriptTimes?.data_panels_ms  ?? ms(0.50);
+
     // City view only when every arc endpoint and secondary location is a real
     // city node — not a country centroid.  If any endpoint resolves to a country
     // (Russia → Moscow, Mexico → Mexico City) we stay in country view so the
@@ -36978,7 +37349,9 @@ body.ticker-active .gTickerLabel {
         }
       }
 
-      // 6 %: focus camera on primary location + hover label after globe settles
+      // Camera focus on primary location + hover label after globe settles.
+      // Offset is from seg.script when available (deterministic ms tied to
+      // narrator's actual audio durations), legacy 6% otherwise.
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
         if (seg.primary_city && window.focusCity) {
@@ -36997,10 +37370,11 @@ body.ticker-active .gTickerLabel {
         } else if (seg.globe_focus && window.startFocus) {
           window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
         }
-      }, ms(0.06)));
+      }, camFocusOffsetMs));
 
-      // 20 %: draw flow arcs + pulse secondary nodes; hide hover label so arcs
-      //        have full visual attention
+      // Draw flow arcs + pulse secondary nodes; hide hover label so arcs
+      // have full visual attention. Offset from seg.script when available,
+      // legacy 20% otherwise.
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
         if (window.briefingHideLabel) window.briefingHideLabel();
@@ -37051,7 +37425,7 @@ body.ticker-active .gTickerLabel {
             if (window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon, loc.name);
           }, i * 350));
         });
-      }, ms(0.20)));
+      }, arcDrawOffsetMs));
 
       // 40 %+ every 12 %: camera tours all story nodes in cycle
       // Stop scheduling once we'd exceed the audio duration (frac >= 0.95)
@@ -37085,19 +37459,36 @@ body.ticker-active .gTickerLabel {
       // a fallback to the legacy `video_focal` / `video.focal` shape.
       {
         const fm = seg.featured_video || seg.video?.focal || seg.video_focal || null;
-        const mediaType = fm?.media_type || 'youtube';
+        // mediaType resolution chain: featured_video.media_type (legacy
+        // editor shape) → seg.media_type (current persisted shape from
+        // briefingGenerator) → fallback. Heatmap segments only carry
+        // media_type at the top level today, so the seg.media_type
+        // fallback is essential — without it heatmap segments resolved
+        // as "youtube", the focal trigger required a video_id, and the
+        // heatmap moment silently never fired.
+        const mediaType = fm?.media_type || seg.media_type || 'youtube';
 
         const ytId      = mediaType === 'youtube' ? seg.video_id : null;
         const tweetUrl  = (mediaType === 'twitter_post' || mediaType === 'twitter_video')
           ? (fm?.twitter_url || seg.twitter_url || seg.video?.twitter_url || null)
           : null;
-        const hmQ       = mediaType === 'heatmap' ? (fm?.heatmap_question || null) : null;
-        const hmMode    = mediaType === 'heatmap' ? (fm?.heatmap_mode || 'binary') : null;
+        // Heatmap fields live at the top level of the persisted segment.
+        // Keep fm-fallback for any future editor/legacy shape where they
+        // might land nested under featured_video instead.
+        const hmQ       = mediaType === 'heatmap'
+          ? (fm?.heatmap_question || seg.heatmap_question || null)
+          : null;
+        const hmMode    = mediaType === 'heatmap'
+          ? (fm?.heatmap_mode || seg.heatmap_mode || 'binary')
+          : null;
+        const hmResolved = mediaType === 'heatmap'
+          ? (fm?.heatmap_resolved || seg.heatmap_resolved || null)
+          : null;
 
         const hasMedia =
           (mediaType === 'youtube' && ytId) ||
           ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && tweetUrl) ||
-          (mediaType === 'heatmap' && hmQ);
+          (mediaType === 'heatmap' && (hmQ || (hmResolved && Array.isArray(hmResolved.values) && hmResolved.values.length)));
 
         if (fm?.enabled && hasMedia) {
           const fStart      = fm.start_sec ?? 0;
@@ -37121,12 +37512,20 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx) return;
             const fire = () => {
               if (mediaType === 'heatmap') {
-                // Prefer the pre-resolved heatmap baked in at briefing-
-                // generation time. Falls through to a live API call if
-                // the briefing predates pre-resolution or the resolver
-                // failed at generation time (legacy + safety net).
-                startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), fm?.heatmap_resolved || null);
+                // hmResolved is the pre-baked per-country values from
+                // briefingGenerator's pre-resolve pass; null falls
+                // through to a live /api/heatmap/ask call (legacy
+                // briefings or generator-time resolver failure).
+                startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), hmResolved);
               } else {
+                // YouTube featured-video: loadArticlePanel suppressed
+                // the pending placeholder so two article cards filled
+                // the side panel until now. Mount the card just-in-time
+                // so startFocalVideo has its anchor element.
+                if (mediaType === 'youtube' && ytId
+                    && !document.getElementById('bVideoCard')) {
+                  _mountPendingVideoCard(seg, ytId, fStart, fEnd);
+                }
                 startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
               }
             };
@@ -37139,7 +37538,9 @@ body.ticker-active .gTickerLabel {
         }
       }
 
-      // 50 %: swap article cards → data panels
+      // Swap article cards → data panels. Offset from seg.script when
+      // available (deterministic ms tied to narrator audio), legacy 50%
+      // otherwise.
       addBTimer(setTimeout(() => {
         if (segIdx !== idx) return;
         // Don't swap if focal video is still playing
@@ -37156,7 +37557,7 @@ body.ticker-active .gTickerLabel {
         const ap = document.getElementById('bArticlePanel');
         if (ap) ap.classList.remove('visible');
         renderDataPanelsForSegment(idx);
-      }, ms(0.50)));
+      }, dataPanelsOffsetMs));
 
       // 95 %: clear pulses, return to country view, hide all hover cards;
       //        arcs stay until next segment starts
@@ -37190,17 +37591,35 @@ body.ticker-active .gTickerLabel {
     // End of briefing → show recap
     if (!episode || idx >= episode.segments.length) {
       _resumeSingle = false;
+      hideIntroOverlay();
       showRecap();
       return;
     }
     // "Resume from here" plays one segment then returns to recap
     if (_resumeSingle && !seek && idx !== segIdx) {
       _resumeSingle = false;
+      hideIntroOverlay();
       showRecap();
       return;
     }
     segIdx = idx;
     const seg = episode.segments[idx];
+
+    // Intro overlay — show during type:'intro' segments, hide otherwise.
+    // The narrator's voiceover (date + preview) plays underneath the
+    // animated logo + grey dim. As soon as we advance to segment 1 the
+    // overlay fades out (handled by hideIntroOverlay's exit transition).
+    if (seg?.type === 'intro') {
+      showIntroOverlay();
+    } else {
+      hideIntroOverlay();
+    }
+
+    // Segment title — top-center marquee that replaces the slid-out
+    // top nav buttons during the briefing. Story segments show their
+    // thread_title; the intro segment shows "Daily Briefing · [date]";
+    // outro/keywords/summary hide it.
+    setSegmentTitle(seg);
 
     // Reset globe state — always return to country view so city-view never sticks
     if (_focalActive) endFocalVideo();
@@ -37247,20 +37666,16 @@ body.ticker-active .gTickerLabel {
         bgMusicNarratorStart();
         sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
 
-        // Advance to the next segment AFTER the audio finishes plus a short
-        // buffer pause. The buffer gives the listener a beat to absorb the
-        // story before the next one begins, and lets the globe finish its
-        // rotation to the next focal point. Video segments use their own
-        // longer pause (VIDEO_PAUSE_SECS).
-        if (!seg.video_id) {
-          clearTimeout(segTimer);
-          const bufferMs = SEGMENT_BUFFER_MS / playbackRate;
-          const advanceInMs = Math.round((realDur * 1000) / playbackRate) + bufferMs;
-          segTimer = setTimeout(() => {
-            if (segIdx !== curIdx || !playing) return;
-            goToSegment(curIdx + 1);
-          }, advanceInMs);
-        }
+        // Segment advance is driven by `audio.ended` (line below) — the
+        // ONLY reliable signal that the narrator has actually finished
+        // speaking. The previous metadata-based primary timer
+        // (`realDur + buffer`) was unreliable because the per-segment
+        // MP3 byte-range slice often reported a slightly-short duration
+        // when its trailing edge didn't fall on a frame boundary,
+        // firing the advance ~50-300ms before the audio actually ended
+        // and cutting the narrator mid-sentence on roughly half the
+        // segments. The fallback timer set outside onReady (estDur +
+        // 6s) still catches genuinely-stuck audio.
       };
 
       // Error handler: retry once on transient failures (502, network),
@@ -37696,11 +38111,18 @@ body.ticker-active .gTickerLabel {
 
   // ── Article panel + ticker loader ─────────────────────────────────────────
   function makeVideoCard(videoId, seg) {
-    const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
+    // Location is intentionally NOT shown on video cards. A YouTube clip's
+    // geographic provenance is the channel, not the segment's primary_city
+    // (which is computed from constituent article datelines). When the two
+    // disagreed — e.g., an Antara News video about Syria in a segment whose
+    // primary_city resolved to Pittsburgh — the card claimed the wrong
+    // location. Channel name only.
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
     const fm = seg.featured_video || seg.video?.focal || seg.video_focal || null;
     const mediaType = fm?.media_type || seg.video?.media_type || seg.media_type || 'youtube';
     const twitterUrl = fm?.twitter_url || seg.video?.twitter_url || seg.twitter_url || '';
+    // Channel name resolved server-side (briefingGenerator: video_source_name).
+    const vidSrc = (seg.video_source_name || '').trim();
 
     // Twitter/X embed
     if ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && twitterUrl) {
@@ -37722,13 +38144,10 @@ body.ticker-active .gTickerLabel {
       return `<div class="bAPCard bAPVideoCard bAPVideoPending" id="bVideoCard"
             data-video-id="${videoId}" data-media-type="youtube"
             data-pending-iframe="1" data-start-sec="${startSec}" data-end-sec="${endSec}">
-        <div class="bAPVideoThumb" style="background-image:url('https://img.youtube.com/vi/${videoId}/hqdefault.jpg');">
-          <div class="bAPVideoCue">▶ Cued · plays when narrator hands off</div>
-        </div>
+        <div class="bAPVideoThumb" style="background-image:url('https://img.youtube.com/vi/${videoId}/hqdefault.jpg');"></div>
         <div class="bAPCardBody">
           <div class="bAPCardMeta">
-            <span class="bAPCardSource" id="bVideoSource">—</span>
-            ${vidLoc ? `<span class="bAPCardLocation">${vidLoc}</span>` : ''}
+            <span class="bAPCardSource" id="bVideoSource">${vidSrc || '—'}</span>
             <span class="bAPCardDate">${vidDate}</span>
           </div>
         </div>
@@ -37743,8 +38162,7 @@ body.ticker-active .gTickerLabel {
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
-          <span class="bAPCardSource" id="bVideoSource">—</span>
-          ${vidLoc ? `<span class="bAPCardLocation">${vidLoc}</span>` : ''}
+          <span class="bAPCardSource" id="bVideoSource">${vidSrc || '—'}</span>
           <span class="bAPCardDate">${vidDate}</span>
         </div>
       </div>
@@ -37753,7 +38171,9 @@ body.ticker-active .gTickerLabel {
 
   // ── Twitter/X Embed Card ────────────────────────────────────────────────
   function makeTwitterCard(tweetUrl, mediaType, seg) {
-    const vidLoc = seg.primary_city?.name || seg.primary_country?.name || '';
+    // Twitter cards: source is the platform name, no location (same
+    // rationale as YouTube cards — segment-level location can disagree
+    // with the post's actual provenance).
     const vidDate = seg.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
     const tweetIdMatch = tweetUrl.match(/status\/(\d+)/);
     const tweetId = tweetIdMatch ? tweetIdMatch[1] : '';
@@ -37765,7 +38185,6 @@ body.ticker-active .gTickerLabel {
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
           <span class="bAPCardSource" id="bVideoSource">X / Twitter</span>
-          ${vidLoc ? `<span class="bAPCardLocation">${vidLoc}</span>` : ''}
           <span class="bAPCardDate">${vidDate}</span>
         </div>
       </div>
@@ -37836,10 +38255,43 @@ body.ticker-active .gTickerLabel {
 
   const _volumeLevels = { low: 25, medium: 50, high: 75 };
 
+  // Mount a fresh #bVideoCard inside #bArticlePanel just-in-time, right
+  // before startFocalVideo's takeover. See www/index.html for the long-
+  // form comment. Idempotent + visibility:hidden until takeover.
+  function _mountPendingVideoCard(seg, videoId, fStart, fEnd) {
+    if (document.getElementById('bVideoCard')) return;
+    const panel = document.getElementById('bArticlePanel');
+    if (!panel) return;
+    // No location on video cards — channel name (resolved server-side) only.
+    const vidDate = seg?.published_at ? fmtDate(seg.published_at) : fmtDate(new Date());
+    const vidSrc  = (seg?.video_source_name || '').trim() || '—';
+    const card = document.createElement('div');
+    card.className = 'bAPCard bAPVideoCard bAPVideoPending';
+    card.id = 'bVideoCard';
+    card.dataset.videoId       = videoId;
+    card.dataset.mediaType     = 'youtube';
+    card.dataset.pendingIframe = '1';
+    card.dataset.startSec      = String(fStart);
+    card.dataset.endSec        = String(fEnd);
+    card.style.visibility      = 'hidden';
+    card.innerHTML = `<div class="bAPVideoThumb" style="background-image:url('https://img.youtube.com/vi/${videoId}/hqdefault.jpg');"></div>
+      <div class="bAPCardBody">
+        <div class="bAPCardMeta">
+          <span class="bAPCardSource" id="bVideoSource">${vidSrc}</span>
+          <span class="bAPCardDate">${vidDate}</span>
+        </div>
+      </div>`;
+    const firstChild = panel.firstElementChild;
+    if (firstChild) panel.insertBefore(card, firstChild);
+    else panel.appendChild(card);
+  }
+
   function startFocalVideo(startSec, endSec, enableCaptions, volumeLevel) {
     const card = document.getElementById('bVideoCard');
     const scrim = document.getElementById('bFocalScrim');
     if (!card) return;
+    // Clear the just-mounted hidden flag set by _mountPendingVideoCard.
+    if (card.style.visibility === 'hidden') card.style.visibility = '';
 
     const mediaType = card.dataset.mediaType || 'youtube';
     const isTwitter = mediaType === 'twitter_post' || mediaType === 'twitter_video';
@@ -38034,18 +38486,23 @@ body.ticker-active .gTickerLabel {
       if (segIdx !== snapIdx) return;
 
       // Side-video slot logic — see www/index.html for the long-form
-      // comment. Briefly: featured-video / twitter / article-video /
-      // null. article-video covers the heatmap-takeover case where a
-      // constituent article still has its own video.
+      // comment. Briefly: featured-video (non-moment) / twitter /
+      // article-video / null. The willTriggerFeaturedVideo branch
+      // suppresses the pending placeholder so the side fills with two
+      // article cards until the focal trigger fires; _mountPendingVideoCard
+      // creates the card just-in-time at that moment.
+      const fmCheck = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
+      const willTriggerFeaturedVideo = !!(fmCheck?.enabled && videoId
+        && (seg?.media_type || 'youtube') === 'youtube');
       let sideContent = null;
       let sideVideoId = null;
       let sideArticleVideo = null;
-      if (videoId) {
+      if (videoId && !willTriggerFeaturedVideo) {
         sideContent = 'featured-video';
         sideVideoId = videoId;
-      } else if (twitterUrl) {
+      } else if (twitterUrl && !willTriggerFeaturedVideo) {
         sideContent = 'twitter';
-      } else {
+      } else if (!willTriggerFeaturedVideo) {
         const av = articles.find(a => a && a.video_id);
         if (av) {
           sideContent = 'article-video';
@@ -38076,8 +38533,16 @@ body.ticker-active .gTickerLabel {
       if (tweetCard?.dataset?.tweetUrl) {
         loadTwitterEmbed(tweetCard.dataset.tweetUrl, 'bTwitterEmbed');
       }
+      // Source name for the side video / twitter card. Prefer the
+      // server-resolved channel name (seg.video_source_name) — see
+      // www/index.html for the long-form comment on the "Pittsburgh leak"
+      // bug this fixes. Twitter cards keep their hard-coded label.
       const srcEl = document.getElementById('bVideoSource');
-      if (srcEl && articles.length) srcEl.textContent = articles[0].source_name || '—';
+      if (srcEl && !srcEl.closest('.bAPTwitterCard')) {
+        const channel = (seg.video_source_name || '').trim();
+        if (channel) srcEl.textContent = channel;
+        else if (srcEl.textContent.trim() === '—') srcEl.textContent = 'Video';
+      }
 
       // Mid-segment article rotation. Same pattern as www/index.html.
       if (articlePool.length > rotatingSlotCount) {
@@ -42249,9 +42714,15 @@ body.ticker-active .gTickerLabel {
       // "No matched country at this point or within 100 km" for EVERY click.
       // That's why Map This appeared to be wired but did nothing.
       const _qaGeoIdx = _countryGeoIdx;
-      const isoSetForQA = qMode === 'binary'
-        ? new Set([...(_qaGeoIdx?.byIso?.keys() || [])])  // binary: surface 'No' too
-        : new Set(isoToQA.keys());                        // rank/percent: only matched
+      // For ALL modes (not just binary) we surface every country the
+      // click hits, even ones the model didn't return a value for. The
+      // model is instructed to omit only when its confidence is < 85%
+      // (heatmapResolver.js system prompt + fill-in pass enforce this).
+      // So an absent country is the explicit signal "insufficient data
+      // to provide accurate response" — which is exactly what the user
+      // should see, instead of a silent gap or an unrelated nearby
+      // country bubbling to the top of the row list.
+      const isoSetForQA = new Set([...(_qaGeoIdx?.byIso?.keys() || [])]);
       const canPolyHit  = typeof window.__pointInCountry === 'function' && _qaGeoIdx?.byIso;
       const canEdgeDist = typeof window.__minDistanceMiToCountry === 'function' && _qaGeoIdx?.byIso;
 
@@ -42259,7 +42730,6 @@ body.ticker-active .gTickerLabel {
         const entry = _qaGeoIdx?.byIso?.get(iso);
         if (!entry) continue;
         const qa = isoToQA.get(iso) || null;
-        if (!qa && qMode !== 'binary') continue;
 
         let d = Infinity;
         if (canPolyHit && window.__pointInCountry(lon, lat, entry)) {
@@ -42280,7 +42750,13 @@ body.ticker-active .gTickerLabel {
         body.innerHTML = `<div style="opacity:0.55;padding:8px 2px;text-align:center;">No matched country at this point or within 100 km.</div>`;
       } else {
         function fmtAnswer(qa) {
-          if (!qa) return '<span style="opacity:0.5;">No</span>';
+          // No value present → "insufficient data" for every mode
+          // except binary, where absence is a meaningful "No" answer.
+          if (!qa) {
+            return qMode === 'binary'
+              ? '<span style="opacity:0.5;">No</span>'
+              : '<span style="opacity:0.55;color:rgba(255,255,255,0.55);font-style:italic;font-size:11px;">Insufficient data to provide accurate response</span>';
+          }
           const v = qa.value;
           if (qMode === 'binary') return '<span style="color:rgba(255,200,120,0.95);">Yes</span>';
           if (qMode === 'rank')   return `<span style="color:rgba(255,200,120,0.95);">#${v} / ${totalInSet}</span>`;
@@ -42293,7 +42769,7 @@ body.ticker-active .gTickerLabel {
         const html = rows.map(r => `
           <div class="semHeatInspRow static">
             <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${escapeHtml(r.name)}</span>
-            <span style="font-variant-numeric:tabular-nums;font-weight:600;">${fmtAnswer(r.qa)}</span>
+            <span style="font-variant-numeric:tabular-nums;font-weight:600;text-align:right;max-width:60%;">${fmtAnswer(r.qa)}</span>
           </div>`).join('');
         body.innerHTML = html;
       }

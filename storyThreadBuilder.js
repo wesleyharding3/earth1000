@@ -488,7 +488,7 @@ A thread should name a PLACE, an ACTOR, or a concrete EVENT — not an abstract 
 - Lifestyle, tourism, recreation, food, fashion, dating, wellness
 - Domestic education trends, student loans, university policy debates, "AI in classrooms"
 - Cultural events, festivals, religious holidays, art shows, museum openings, awards
-- Entertainment: movies, TV, music, celebrity news, streaming
+- Entertainment: movies, TV, music, celebrity news, streaming, opera, ballet, symphony, theatre productions
 - Sports — UNLESS the story is about state boycotts, doping scandals tied to governments, or athletes being used as political instruments
 - Technology product launches, consumer apps, startup funding
 - Personal finance, real estate trends, retail/shopping
@@ -496,6 +496,9 @@ A thread should name a PLACE, an ACTOR, or a concrete EVENT — not an abstract 
 - Vague abstractions like "social hardship", "youth trends", "community coverage"
 - Op-eds, opinion pieces, editorials, "explainer" pieces with no news event
 - ROUTINE GOVERNMENT ACTIVITY without a specific event or decision: "Nepal Government Administrative Announcements", "Cyprus Legal System and Governance Challenges", "Country X Policy Developments", "Country Y Regulatory Updates", "Road Safety and Infrastructure Issues", "Health Crisis and Economic Inequality". These are TOPIC LABELS, not stories. If a routine government article is relevant to an existing thread (a named conflict, election, sanctions regime, etc.), ATTACH it to that thread via existing_thread_id. Otherwise OMIT it. Do not create a new thread that just pairs a country name with abstract governance/legal/administrative/infrastructure nouns.
+
+═══ CATEGORY HONESTY ═══
+The primary_category enum includes "sports", "entertainment", "culture", and "other" specifically so you can tag off-topic articles HONESTLY. If an article is about an opera house firing a music director, the primary_category is "culture" — NOT "politics". If it's about a football match, the category is "sports" — NOT "politics". The pipeline rejects threads with these tags downstream, but it CAN ONLY do that if you label them honestly. Misclassifying an opera story as "politics" so it slips through is a failure — opera stories should not become threads at all, but if you do produce one, tag it correctly so the filter catches it. Never use "politics" / "economy" / "military" / "diplomacy" / "environment" / "technology" as a junk drawer for things that don't fit those exact domains.
 
 ═══ THE SINGLE-COUNTRY-SUMMARY TEST (CRITICAL) ═══
 The most common failure mode is creating a thread that is just "a summary of developments from one country without a clear story arc." Examples of titles that MUST be rejected:
@@ -577,7 +580,7 @@ Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and
     "description": "Two sentences describing the ongoing story and its geopolitical significance.",
     "article_ids": [array of article ids that belong to this thread],
     "anchor_article_id": id of the most representative article,
-    "primary_category": "politics|economy|military|diplomacy|environment|technology",
+    "primary_category": "politics|economy|military|diplomacy|environment|technology|sports|entertainment|culture|other",
     "geographic_scope": "global|regional|local",
     "importance": 7,
     "keywords": ["array", "of", "5-10", "core", "keywords"],
@@ -704,8 +707,18 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
 
   // Hard reject categories that don't belong on a geopolitical platform.
   // Acts as a server-side safety net in case Claude ignores the prompt rules.
+  // The prompt enum includes 'sports'/'entertainment'/'culture'/'other' so
+  // Claude can self-tag off-topic articles honestly; we hard-reject those
+  // tags here. If the prompt enum tightens, drop them from this set too.
   const ALLOWED_CATEGORIES = new Set([
     'politics','economy','military','diplomacy','environment','technology'
+  ]);
+  // Off-topic categories — Claude is encouraged to use these for articles
+  // that don't fit the geopolitical surface. Threads with these tags are
+  // ALWAYS rejected. Better to have Claude tag honestly and us reject than
+  // to have Claude misclassify as 'politics' so it slips through.
+  const REJECTED_CATEGORIES = new Set([
+    'sports','entertainment','culture','other','lifestyle','arts','religion'
   ]);
   // Title-level junk filter — catches the abstract/lifestyle/fluff titles
   // the prompt is supposed to reject. Lower-cased substring match.
@@ -800,6 +813,61 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     // Routine maritime / inspection
     /\b(maritime|port|harbor|airport|border)\s+(authority|agency)\s+(inspection|inspections|operations|activities)\b/i,
     /\b(boat|vessel|ship|vehicle|customs)\s+inspections?\b/i,
+    // ── Performing arts / classical music / theatre ──────────────────
+    // The "Venice's La Fenice Opera Ousts Incoming Music Director"
+    // class — concrete verb + opera house was slipping through every
+    // gate. These reject the domain regardless of verb. Tightened
+    // through a real-DB false-positive sweep: dropped overly-broad
+    // tokens like "ceremony"/"gala"/"single"/"finals" that were
+    // catching government inauguration ceremonies, "Single Window"
+    // trade reforms, and electoral "final registry update" headlines.
+    /\b(opera|symphony|philharmonic|orchestra|ballet|chamber\s+(orchestra|music)|conservatory)\b/i,
+    /\b(music\s+director|conductor|maestro|soprano|tenor|baritone|mezzo[-\s]?soprano|virtuoso)\b/i,
+    /\b(la\s+scala|met\s+opera|metropolitan\s+opera|covent\s+garden|royal\s+opera|paris\s+opera|vienna\s+state\s+opera|bolshoi|mariinsky|glyndebourne|salzburg\s+festival|bayreuth)\b/i,
+    /\b(broadway|west\s+end|playhouse)\b/i,
+    /\btheatre?\s+(production|company|festival)\b/i,
+    // ── Sports — leagues, tournaments, named competitions ────────────
+    // FIFA/UEFA/World Cup/Olympics removed: those frequently appear in
+    // GEOPOLITICAL stories (Trump pressuring FIFA over Iran, host-state
+    // boycotts, doping scandals tied to states). The prompt rule says
+    // "sports UNLESS state-level political angle" — when geopolitics
+    // is the lens, the thread should stand. The narrower league set
+    // below catches club-level sports stories that are rarely
+    // geopolitical.
+    /\b(nfl|nba|nhl|mlb|wnba|mls|epl|premier\s+league|la\s+liga|bundesliga|serie\s+a|ligue\s+1)\b/i,
+    /\b(wimbledon|french\s+open|australian\s+open|the\s+masters|ryder\s+cup|tour\s+de\s+france|giro\s+d'italia|formula\s*1|formula\s*one|nascar|indycar|moto\s*gp)\b/i,
+    /\b(boxing\s+match|boxing\s+title|wrestling\s+match|mma\s+(fight|bout)|ufc\s+\d+)\b/i,
+    /\b(athletes?|sportsmen|sportswomen|football|soccer|basketball|baseball|cricket|tennis|rugby|hockey|golf)\s+(stars?|legend|legends|icon|icons)\b/i,
+    /\b(coach|head\s+coach|striker|goalkeeper|quarterback|pitcher|midfielder|defender)\s+(fired|hired|signed|signs|sacks?|sacked|resigns?|resigned|retires?|retired|traded)\b/i,
+    /\b(transfer\s+window|free\s+agent|draft\s+pick|player\s+(transfer|trade|signing))\b/i,
+    // Unambiguous sports team names. Bare city-named clubs (Manchester,
+    // Liverpool, Chelsea, Arsenal, Barcelona, Tottenham) were dropped
+    // because they triggered on (a) city stories — economy / planning /
+    // weather — and (b) "arsenal" the noun (e.g. "US weapons arsenal",
+    // "Iran arsenal depleted"). Keeps unambiguous compound names only.
+    /\b(real\s+madrid|fc\s+barcelona|manchester\s+(united|city)|paris\s+saint[-\s]?germain|borussia\s+dortmund|atletico\s+madrid|bayern\s+munich|76ers|los\s+angeles\s+lakers|boston\s+celtics|new\s+york\s+yankees|new\s+england\s+patriots|dallas\s+cowboys|golden\s+state\s+warriors|los\s+angeles\s+dodgers)\b/i,
+    /\b(greek\s+cup|fa\s+cup|copa\s+del\s+rey|coppa\s+italia|dfb[-\s]?pokal|euroleague|el\s+clasico|el\s+clásico)\b/i,
+    // ── Film / TV / streaming / music industry ───────────────────────
+    /\b(box\s+office|opening\s+weekend|streaming\s+(release|premiere|debut)|tv\s+(premiere|finale|series\s+finale)|season\s+(premiere|finale))\b/i,
+    // Awards. Bare "Oscar"/"Tony"/"Emmy"/"Grammy" are common first names
+    // (Tony Elumelu, Oscar-winning Russian dissident filmmaker, etc.) so
+    // require unambiguous award context: plural ("Oscars"), suffixed
+    // ("oscar-winning"), or the literal phrase ("Tony Award").
+    // Awards. Bare *-winning forms (oscar-winning, emmy-winning) were
+    // dropped — they appear as descriptive adjectives in legitimate
+    // geopolitical stories ("Russia Labels Oscar-Winning Documentary
+    // Filmmaker Foreign Agent" is a censorship story, not an
+    // entertainment story). Now requires unambiguous award context:
+    // plural ("Oscars", "Tonys"), or "X Award" / "X Ceremony" /
+    // "X Nominations" / explicit festival name.
+    /\b(grammys?\s+award|grammys\b|oscars\b|oscar\s+(award|nominee|nomination|ceremony)|tonys\b|tony[-\s]?award|tony\s+(award|nomination|ceremony)|emmys\b|emmy\s+award|baftas?\s+award|baftas\b|golden\s+globes?|cannes\s+(film\s+)?festival|venice\s+film\s+festival|berlin\s+film\s+festival|sundance\s+film|toronto\s+international\s+film)\b/i,
+    // "billboard 100" / "billboard hot 100" — but not "billboard ad campaign"
+    /\b(billboard\s+(hot\s+)?(100|200)|chart[-\s]?topping\s+(hit|single|album)|debut\s+album|number[-\s]?one\s+(hit|single))\b/i,
+    /\b(biopic|netflix\s+(series|show|original)|hbo\s+(series|show)|disney\+\s+series|amazon\s+prime\s+(series|show)|apple\s+tv\+)\b/i,
+    /\b(actor|actress)\s+(stars?\s+in|cast\s+(in|as)|starring\s+as|debut\s+role|signs\s+on)\b/i,
+    /\bred\s+carpet|premiere\s+night\b/i,
+    /\b(celebrity|paparazzi|fan[-\s]?meet)\b/i,
+    /\b(reality\s+(tv|show)|talent\s+show|game\s+show|sitcom)\b/i,
   ];
   // Structural "topic bucket" detector — catches single-country summary
   // titles with no concrete event, like "Brazil Political Accountability
@@ -875,6 +943,12 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   }
   function isJunkThreadDef(def) {
     const cat = String(def.primary_category || '').toLowerCase();
+    // Off-topic categories: Claude tagged this honestly as sports /
+    // entertainment / culture / other — reject. The prompt explicitly
+    // tells Claude these tags will be filtered, and that misclassifying
+    // such articles as "politics" so they slip through is a worse
+    // failure mode than honest tagging.
+    if (cat && REJECTED_CATEGORIES.has(cat)) return `off-topic-category=${cat}`;
     if (cat && !ALLOWED_CATEGORIES.has(cat)) return `category=${cat}`;
     const title = String(def.title || '');
     for (const re of JUNK_TITLE_PATTERNS) {
@@ -904,12 +978,15 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
            WHERE thread_id = $1 AND article_id = ANY($2::int[])
         `, [threadId, ejectIds]);
         if (result.rowCount > 0) {
+          // Eject = remove article(s) from a thread. NOT an article-add,
+          // so we don't bump last_updated_at (which would falsely keep
+          // the thread "fresh"). article_count is recomputed from the
+          // junction table because ejection invalidates the stored count.
           await pool.query(`
             UPDATE story_threads
                SET article_count = GREATEST(0, (
                      SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1
-                   )),
-                   last_updated_at = NOW()
+                   ))
              WHERE id = $1
           `, [threadId]);
           await recomputeBreakingSignal(threadId).catch(() => {});
@@ -1153,6 +1230,14 @@ async function refreshStaleThreadContexts(threadIds) {
       const next = await reevaluateThreadContext(context);
       if (!next) continue;
 
+      // NOTE: this is a COSMETIC re-titling pass — Claude re-evaluates
+      // the thread's framing based on the existing article set. NO new
+      // article was added. Therefore we do NOT bump last_updated_at,
+      // because that column drives the API's `latest_published_at` and
+      // the cooldown job (until both got migrated to MAX(article date)
+      // — keeping last_updated_at honest is the second line of defense).
+      // Bumping it here was the source of the "thread is dormant in DB
+      // but UI shows active" symptom on thread #8509.
       await pool.query(`
         UPDATE story_threads
         SET title            = $1,
@@ -1160,8 +1245,7 @@ async function refreshStaleThreadContexts(threadIds) {
             primary_category = $3,
             geographic_scope = $4,
             importance       = GREATEST(importance, $5),
-            keywords         = $6,
-            last_updated_at  = NOW()
+            keywords         = $6
         WHERE id = $7
       `, [
         next.title || context.title,
@@ -1474,29 +1558,79 @@ async function dedupSimilarThreads() {
 // ─── Maintenance ─────────────────────────────────────────────────────────────
 
 async function coolDownInactiveThreads() {
-  // Lifecycle (relaxed to give threads more breathing room):
-  //   active   → cooling   after 14 days of no new articles
-  //   cooling  → dormant   after another 14 days (28 total)
-  //   dormant  → kept forever, indexed by date so we can later
-  //              tie old story arcs to new ones for continuity.
+  // Lifecycle (matches the client-side recency reclassifier in
+  // www/index.html and index.html, applyRecencyStatus):
+  //   active   → cooling   after 48 hours of no new articles
+  //   cooling  → dormant   after a week (7 days) of no new articles
+  //   dormant  → kept forever, indexed by date so we can later tie
+  //              old story arcs to new ones for continuity.
+  //
+  // CRITICAL: this used to filter on story_threads.last_updated_at,
+  // but that column gets bumped by non-article events too —
+  // refreshStaleThreadContexts (Claude re-titling), article ejects,
+  // breaking-signal recomputes, etc. Result: a thread that hadn't
+  // received a new article in 5 days could still be classified
+  // 'active' because some cosmetic operation bumped its row at hour
+  // 47 and reset the cooldown timer.
+  //
+  // The truth is MAX(news_articles.published_at) joined through
+  // story_thread_articles. We compute it once per UPDATE pass via a
+  // CTE — fast on the existing indexes (idx_articles_published_at on
+  // news_articles, primary key on story_thread_articles). All three
+  // transition queries reuse the same CTE.
 
-  // active → cooling
+  // active → cooling: latest article > 48h old.
   const a = await pool.query(`
-    UPDATE story_threads
+    WITH article_recency AS (
+      SELECT sta.thread_id, MAX(na.published_at) AS latest_pub
+      FROM story_thread_articles sta
+      JOIN news_articles na ON na.id = sta.article_id
+      GROUP BY sta.thread_id
+    )
+    UPDATE story_threads st
     SET status = 'cooling'
-    WHERE status = 'active'
-      AND last_updated_at < NOW() - INTERVAL '14 days'
+    FROM article_recency ar
+    WHERE ar.thread_id = st.id
+      AND st.status = 'active'
+      AND ar.latest_pub < NOW() - INTERVAL '48 hours'
   `);
 
-  // cooling → dormant
+  // cooling → dormant: latest article > 7d old.
   const c = await pool.query(`
-    UPDATE story_threads
+    WITH article_recency AS (
+      SELECT sta.thread_id, MAX(na.published_at) AS latest_pub
+      FROM story_thread_articles sta
+      JOIN news_articles na ON na.id = sta.article_id
+      GROUP BY sta.thread_id
+    )
+    UPDATE story_threads st
     SET status = 'dormant'
-    WHERE status = 'cooling'
-      AND last_updated_at < NOW() - INTERVAL '14 days'
+    FROM article_recency ar
+    WHERE ar.thread_id = st.id
+      AND st.status = 'cooling'
+      AND ar.latest_pub < NOW() - INTERVAL '7 days'
   `);
 
-  // Backfill: anything previously archived under the old policy
+  // Catch-up: any thread STILL marked active despite > 7 days of
+  // silence (skipped the cooling phase because the cron missed a
+  // window, or under the old policy that gave threads 14d before
+  // even the first transition) should land directly in dormant.
+  const aDirect = await pool.query(`
+    WITH article_recency AS (
+      SELECT sta.thread_id, MAX(na.published_at) AS latest_pub
+      FROM story_thread_articles sta
+      JOIN news_articles na ON na.id = sta.article_id
+      GROUP BY sta.thread_id
+    )
+    UPDATE story_threads st
+    SET status = 'dormant'
+    FROM article_recency ar
+    WHERE ar.thread_id = st.id
+      AND st.status = 'active'
+      AND ar.latest_pub < NOW() - INTERVAL '7 days'
+  `);
+
+  // Backfill: anything previously archived under an older policy
   // becomes dormant so the historical arc is preserved.
   const b = await pool.query(`
     UPDATE story_threads
@@ -1504,7 +1638,7 @@ async function coolDownInactiveThreads() {
     WHERE status = 'archived'
   `);
 
-  console.log(`   active→cooling: ${a.rowCount} | cooling→dormant: ${c.rowCount} | archived→dormant: ${b.rowCount}`);
+  console.log(`   active→cooling: ${a.rowCount} | cooling→dormant: ${c.rowCount} | active→dormant (catch-up): ${aDirect.rowCount} | archived→dormant: ${b.rowCount}`);
 }
 
 // ─── DB Queries ───────────────────────────────────────────────────────────────

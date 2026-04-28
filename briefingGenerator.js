@@ -35,6 +35,173 @@ const { spawnSync } = require('child_process');
 const Anthropic = require('@anthropic-ai/sdk');
 const { resolveStoryContexts, saveSegmentLinks } = require('./storyTracker');
 const dataPanels = require('./dataPanelGenerator');
+
+// ────────────────────────────────────────────────────────────────────────
+// Segment-script builder (Phase 2A)
+// ────────────────────────────────────────────────────────────────────────
+// Replaces the legacy hard-coded percentage scheduler in the briefing
+// player (camera at 6%, arcs at 20%, panels at 50%) with an explicit
+// ordered sequence of typed lines. The player walks the array in order:
+//
+//   - 'text'  lines are voiceover audio pieces (one ElevenLabs synth
+//             each). Their `ms` is stamped by the audio pipeline after
+//             ElevenLabs returns the actual duration.
+//   - 'event' lines are visual cues that fire AT the boundary between
+//             text lines (or at segment start/end). Most events are
+//             "fire-and-continue" — narrator keeps talking through
+//             them. Pausing events (featured_video / featured_twitter)
+//             split the audio into separate pieces and pause playback
+//             for the event's duration.
+//
+// First-cut layout for any segment:
+//
+//   [camera_focus]            -- at start (3s budget)
+//   [text₁]                   -- voiceover_before_video OR full voiceover_text
+//   [arc_draw, arc_draw, …]   -- one event per flow arc (2.5s budget each)
+//   [featured_X?]             -- only when seg.video_focal.enabled
+//   [text₂?]                  -- only when there's a featured event (voiceover_after_video)
+//   [data_panels]             -- at end (2.5s budget)
+//
+// est_ms is set NOW (word-count for text, static rubric for events).
+// ms is null on text lines and gets filled in by the audio pipeline
+// after ElevenLabs synthesis. Event lines have est_ms === ms (they
+// have fixed user-facing durations, no audio).
+//
+// Pausing events: featured_video and featured_twitter pause the
+// narrator audio for their full duration. Their `ms` is the video
+// clip length (end_sec - start_sec) * 1000.
+const _SCRIPT_WORDS_PER_MIN = 148;
+const _SCRIPT_BUDGETS = {
+  camera_focus:     3000,  // camera flight to primary location
+  arc_draw:         2500,  // one flow arc draw + pulse
+  data_panels:      2500,  // data panels render
+  featured_heatmap: 0,     // narrator continues; heatmap is overlay
+};
+const _SCRIPT_PAUSING_KINDS = new Set(['featured_video', 'featured_twitter']);
+
+function _scriptWordsToMs(text) {
+  const words = String(text || '').split(/\s+/).filter(Boolean).length;
+  return Math.round((words / _SCRIPT_WORDS_PER_MIN) * 60000);
+}
+
+function _buildSegmentScript(seg) {
+  const lines = [];
+  const arcs = Array.isArray(seg.flow_arcs) ? seg.flow_arcs : [];
+  const hasFocal = !!seg.video_focal?.enabled;
+  const isHeatmap = seg.media_type === 'heatmap';
+  const isTwitter = seg.media_type === 'twitter_post' || seg.media_type === 'twitter_video';
+  const beforeText = seg.voiceover_before_video || '';
+  const afterText  = seg.voiceover_after_video  || '';
+  const fullText   = seg.voiceover_text || '';
+  const isSplit    = !!(beforeText && afterText);
+
+  // 1. Camera focus at the start — if there's a primary location.
+  if (seg.primary_city || seg.primary_country) {
+    lines.push({
+      type: 'event',
+      kind: 'camera_focus',
+      payload: { target: seg.primary_city ? 'primary_city' : 'primary_country' },
+      est_ms: _SCRIPT_BUDGETS.camera_focus,
+      ms:     _SCRIPT_BUDGETS.camera_focus,
+    });
+  }
+
+  // 2. First text line — voiceover_before_video if a focal event will
+  //    pause the narrator mid-segment, otherwise the full voiceover_text.
+  const firstText = isSplit ? beforeText : fullText;
+  if (firstText) {
+    lines.push({
+      type:     'text',
+      voiceover: firstText,
+      est_ms:    _scriptWordsToMs(firstText),
+      ms:        null,    // stamped by audio pipeline
+      audio_idx: null,    // filled in by audio pipeline
+    });
+  }
+
+  // 3. Arc-draw events — one per flow arc. Fire after the first text
+  //    completes (so the camera has settled before arcs animate). Most
+  //    segments have 1-3 arcs; visually they fire with a small stagger
+  //    handled by the player.
+  arcs.forEach((_, ai) => {
+    lines.push({
+      type: 'event',
+      kind: 'arc_draw',
+      payload: { arc_idx: ai },
+      est_ms: _SCRIPT_BUDGETS.arc_draw,
+      ms:     _SCRIPT_BUDGETS.arc_draw,
+    });
+  });
+
+  // 4. Featured-media event — fires AFTER the first text line for
+  //    segments with a focal moment. This is the "audio handoff" point.
+  if (hasFocal) {
+    if (isHeatmap) {
+      // Heatmap overlay — narrator continues. Pre-resolved values are
+      // stamped on seg.heatmap_resolved by the resolver pass.
+      lines.push({
+        type: 'event',
+        kind: 'featured_heatmap',
+        payload: {
+          question: seg.heatmap_question || '',
+          mode:     seg.heatmap_mode || 'binary',
+        },
+        est_ms: _SCRIPT_BUDGETS.featured_heatmap,
+        ms:     _SCRIPT_BUDGETS.featured_heatmap,
+      });
+    } else if (isTwitter) {
+      const dur = (seg.video_focal.end_sec - seg.video_focal.start_sec) * 1000;
+      lines.push({
+        type: 'event',
+        kind: 'featured_twitter',
+        payload: {
+          url:        seg.twitter_url || '',
+          media_type: seg.media_type,
+          start_sec:  seg.video_focal.start_sec,
+          end_sec:    seg.video_focal.end_sec,
+        },
+        est_ms: dur,
+        ms:     dur,
+      });
+    } else {
+      const dur = (seg.video_focal.end_sec - seg.video_focal.start_sec) * 1000;
+      lines.push({
+        type: 'event',
+        kind: 'featured_video',
+        payload: {
+          video_id:  seg.video_id,
+          start_sec: seg.video_focal.start_sec,
+          end_sec:   seg.video_focal.end_sec,
+        },
+        est_ms: dur,
+        ms:     dur,
+      });
+    }
+  }
+
+  // 5. Second text line — voiceover_after_video, only when split.
+  if (isSplit) {
+    lines.push({
+      type:      'text',
+      voiceover: afterText,
+      est_ms:    _scriptWordsToMs(afterText),
+      ms:        null,
+      audio_idx: null,
+    });
+  }
+
+  // 6. Data panels at the very end. Renders the panels associated with
+  //    the segment. Narrator can still be talking through them.
+  lines.push({
+    type: 'event',
+    kind: 'data_panels',
+    payload: {},
+    est_ms: _SCRIPT_BUDGETS.data_panels,
+    ms:     _SCRIPT_BUDGETS.data_panels,
+  });
+
+  return lines;
+}
 // Consolidated deep enrichment — replaces the old per-thread
 // _deepEnrichThread that re-scraped and re-Claude'd at briefing time.
 // Data now lives in article_deep_context (populated by the thread
@@ -866,10 +1033,36 @@ async function run() {
         // Featured-media segments: convert the within-piece split offset
         // into an absolute trigger time so the player fires focal at the
         // exact sentence boundary, no triggerPct guessing.
-        if (segments[si]._focalSplitMs != null) {
-          segments[si].focal_trigger_ms = cumMs + segments[si]._focalSplitMs;
-          delete segments[si]._focalSplitMs;
+        const _focalSplitMs = segments[si]._focalSplitMs;
+        if (_focalSplitMs != null) {
+          segments[si].focal_trigger_ms = cumMs + _focalSplitMs;
         }
+
+        // Phase 2C: stamp ms on each text line of seg.script using the
+        // synthesis durations we just measured. The script's text lines
+        // are produced in the same order as the audio pieces:
+        //   - split case: text₀ = beforePiece, text₁ = afterPiece
+        //   - non-split:   text₀ = full voiceover
+        // Event lines already have est_ms === ms set at generation time
+        // (static budget for non-pausing events, clip duration for
+        // pausing events) — no audio attached, so nothing to stamp here.
+        if (Array.isArray(segments[si].script)) {
+          let textIdx = 0;
+          for (const line of segments[si].script) {
+            if (line.type !== 'text') continue;
+            if (_focalSplitMs != null) {
+              if (textIdx === 0)      line.ms = _focalSplitMs;
+              else if (textIdx === 1) line.ms = Math.max(0, vms - _focalSplitMs);
+              else                    line.ms = 0;
+            } else {
+              line.ms = (textIdx === 0) ? vms : 0;
+            }
+            line.audio_idx = voiceIdx;
+            textIdx++;
+          }
+        }
+
+        if (segments[si]._focalSplitMs != null) delete segments[si]._focalSplitMs;
         cumMs += vms + tms;
       }
 
@@ -905,12 +1098,17 @@ async function run() {
       const { resolveHeatmap } = require('./heatmapResolver');
       let resolvedCount = 0;
       for (const seg of segments) {
-        const fv = seg.featured_video;
-        if (!fv || fv.media_type !== 'heatmap' || !fv.heatmap_question) continue;
+        // Heatmap fields live at the top level of the segment (see the
+        // segment-shape build above). Skip non-heatmap segments and
+        // any heatmap segment whose question is empty (editor didn't
+        // supply one — the player will gracefully no-op).
+        if (seg.media_type !== 'heatmap' || !seg.heatmap_question) continue;
         try {
           const tHeat = Date.now();
-          const result = await resolveHeatmap(fv.heatmap_question, fv.heatmap_mode || 'binary');
-          fv.heatmap_resolved = {
+          const result = await resolveHeatmap(seg.heatmap_question, seg.heatmap_mode || 'binary');
+          // Persist the resolved values at the top level too, alongside
+          // heatmap_question / heatmap_mode. Player reads seg.heatmap_resolved.
+          seg.heatmap_resolved = {
             legend:      result.legend,
             unit:        result.unit,
             source_note: result.source_note,
@@ -923,11 +1121,11 @@ async function run() {
           console.log(
             `   [${elapsed(t0)}] Heatmap pre-resolved (${result.cache}, ` +
             `${(result.values || []).length} countries, ${((Date.now() - tHeat) / 1000).toFixed(1)}s): ` +
-            `"${fv.heatmap_question}"`
+            `"${seg.heatmap_question}"`
           );
         } catch (err) {
           console.warn(
-            `   ⚠ Heatmap pre-resolve failed for "${fv.heatmap_question}" — ` +
+            `   ⚠ Heatmap pre-resolve failed for "${seg.heatmap_question}" — ` +
             `client will fall back to live resolution. ${err.message}`
           );
         }
@@ -1209,14 +1407,37 @@ async function selectThreads(profile = null) {
   return selected.slice(0, MAX_THREADS);
 }
 
-// ─── YouTube Playability Check ─────────────────────────────────────────────
-async function isVideoPlayable(videoId) {
+// ─── YouTube oEmbed Metadata ───────────────────────────────────────────────
+// One round-trip serves both jobs we need from oEmbed: confirming the video
+// is playable AND retrieving the channel name (oEmbed returns it as
+// `author_name`). Cached so we don't double-fetch when both signals are
+// needed. Returns { playable, authorName } or { playable: false } on failure.
+const _ytOembedCache = new Map();
+async function _ytOembed(videoId) {
+  if (!videoId) return { playable: false };
+  if (_ytOembedCache.has(videoId)) return _ytOembedCache.get(videoId);
+  let result = { playable: false, authorName: null };
   try {
     const res = await fetch(
       `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
       { signal: AbortSignal.timeout(4000) }
     );
-    return res.ok;
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      result = {
+        playable:   true,
+        authorName: json?.author_name || null,
+      };
+    }
+  } catch (_) { /* network/timeout — treat as not playable */ }
+  _ytOembedCache.set(videoId, result);
+  return result;
+}
+
+async function isVideoPlayable(videoId) {
+  try {
+    const res = await _ytOembed(videoId);
+    return res.playable;
   } catch (_) {
     return false;
   }
@@ -1304,6 +1525,14 @@ async function enrichThread(thread) {
     ...thread,
     articles,
     videoId:        videoArticle?.video_id || null,
+    // YouTube channel name for the side video card. The query at the top of
+    // this function COALESCEs ns.name (news source) and ys.name (youtube
+    // source), so for a video pulled from a YouTube article this is the
+    // channel name (e.g. "Antara News"). Without this, the client falls back
+    // to articles[0].source_name — which is the article rotating *below* the
+    // video — producing the "Pittsburgh leak" bug where an Antara/Syria
+    // video was attributed to the Pittsburgh article underneath it.
+    videoSourceName: videoArticle?.source_name || null,
     globeFocus,
     primaryCity:    primaryCityArticle ? {
       name: primaryCityArticle.city_name,
@@ -1671,7 +1900,11 @@ STORIES:
 ${JSON.stringify(storySummaries, null, 2)}
 
 REQUIREMENTS:
-- Intro: 2-3 natural, engaging sentences setting the global scene. 40-50 words. Open with a compelling present-tense hook (e.g. "Tensions are escalating...", "A seismic shift is underway..."). NEVER use time-of-day greetings (no "Good morning", "Good evening", "Good afternoon", "Welcome") — this briefing plays at all hours worldwide.
+- Intro: 4-6 natural, engaging sentences. 55-75 words. The intro plays under a visual sequence (logo + grey overlay + orbiting star), so the narration carries the viewer through a beat: date, hook, preview.
+    1. The FIRST sentence MUST state the date in this exact format: "${today}." — i.e. "${today}." Use that phrasing verbatim as a complete opening sentence (do not abbreviate, do not skip the year, do not add the year again).
+    2. The SECOND sentence is a compelling present-tense hook for the day's most consequential story (e.g. "Tensions are escalating across...", "A seismic shift is underway in...").
+    3. The remaining 2-4 sentences PREVIEW the day's coverage — name the 2-3 biggest threads by topic / region so the viewer knows what's coming. Do NOT enumerate every story; pick the headline-worthy ones.
+    4. NEVER use time-of-day greetings (no "Good morning", "Good evening", "Good afternoon", "Welcome") — this briefing plays at all hours worldwide.
 - Each story segment: 55-75 words. Factual, clear, global perspective. No jargon.
 - Transitions: 1 sentence naturally bridging stories. Vary them — never reuse phrases.
 - Outro: 1-2 warm closing sentences. 20-30 words.
@@ -2047,14 +2280,46 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       voiceoverText = voiceoverBeforeVideo + ' ' + voiceoverAfterVideo;
     }
 
+    const _isHeatmap = thread._featuredVideo?.media_type === 'heatmap';
+
+    // Resolve the YouTube channel name for the side video card.
+    // Priority: (1) manifest override carries an explicit author, (2) the
+    // enriched thread already has source_name from youtube_sources, (3) for
+    // override-only video_ids we hit oEmbed which returns author_name.
+    // Falls back to null — the client renders nothing rather than leaking
+    // the article underneath.
+    const _resolvedVideoId = thread._youtubeOverride?.video_id || thread.videoId;
+    let videoSourceName = thread._youtubeOverride?.channel_name
+                       || thread._youtubeOverride?.source_name
+                       || thread.videoSourceName
+                       || null;
+    if (!videoSourceName && _resolvedVideoId && thread._youtubeOverride?.video_id) {
+      try {
+        const meta = await _ytOembed(_resolvedVideoId);
+        if (meta.authorName) videoSourceName = meta.authorName;
+      } catch (_) { /* keep null on lookup failure */ }
+    }
+
     const storySeg = {
       type:                'story',
       thread_id:           thread.id,
       thread_title:        thread.title,
       article_ids:         uniqueIds,
-      video_id:            thread._youtubeOverride?.video_id || thread.videoId,
+      video_id:            _resolvedVideoId,
+      // Channel name shown in the video card meta row. Replaces the
+      // articles[0].source_name backfill that caused the "Pittsburgh leak"
+      // bug (video attributed to whichever article was rotating below it).
+      video_source_name:   videoSourceName,
       media_type:          thread._featuredVideo?.media_type || 'youtube',
       twitter_url:         thread._featuredVideo?.media_type?.startsWith('twitter') ? (thread._featuredVideo?.twitter_url || null) : null,
+      // Heatmap-specific config — only populated when media_type === 'heatmap'.
+      // These were previously only emitted into the prompt input to Claude
+      // (storySummaries) and never persisted onto the segment, so the
+      // briefing player saw media_type:'heatmap' with no question and the
+      // focal trigger silently never fired. Pre-resolution (further down
+      // in this file) writes seg.heatmap_resolved alongside these.
+      heatmap_question:    _isHeatmap ? (thread._featuredVideo?.heatmap_question || '') : null,
+      heatmap_mode:        _isHeatmap ? (thread._featuredVideo?.heatmap_mode || 'binary') : null,
       voiceover_text:      voiceoverText,
       voiceover_before_video: voiceoverBeforeVideo,
       voiceover_after_video:  voiceoverAfterVideo,
@@ -2100,6 +2365,15 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
         ]).filter(Boolean)
       )),
     };
+
+    // ── seg.script (Phase 2A) ─────────────────────────────────────────
+    // Ordered sequence of typed lines that the new player walks through
+    // in order. Replaces the legacy hard-coded percentage scheduler
+    // (camera at 6%, arcs at 20%, panels at 50%) with deterministic
+    // boundaries between text + events. Legacy fields (voiceover_text,
+    // voiceover_before_video, etc.) stay on the segment for the old
+    // player's fallback path.
+    storySeg.script = _buildSegmentScript(storySeg);
 
     console.log(`\n── SEGMENT ${i+1} BUILD: "${thread.title}" ──────────────────`);
     console.log(`   thread_id        : ${storySeg.thread_id}`);
