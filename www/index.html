@@ -13951,6 +13951,17 @@ window.__arcCtxSegmented = (function() {
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
+    <!-- Share button — captures the live globe (arcs visible at the
+         current playback time / aggregate composite) and dispatches
+         via __shareSnapshot. The image is the actual view + Earth00
+         brand chrome; no link URL since news-flows views don't have
+         a stable shareable URL beyond the live state. -->
+    <button class="flowShareBtn" id="flowShareBtn" title="Share these flows" onclick="window.__shareNewsFlowsSnapshot?.()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+      </svg>
+    </button>
     <button class="flowCloseBtn" id="flowCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
 
     <!-- Minimized bar (shown when minimized) -->
@@ -14522,7 +14533,12 @@ window.__arcCtxSegmented = (function() {
     const _isMobileView = window.matchMedia('(pointer: coarse)').matches || window.innerWidth <= 600;
     camera.position.z = _isMobileView ? 3.6 : 3;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // preserveDrawingBuffer: true is required for the snapshot share
+    // feature — without it, the WebGL canvas is cleared right after each
+    // render so toDataURL() returns a blank image. The perf cost is
+    // small (≤2-3% on mobile) and only matters at every frame; for the
+    // brand-image use case the reliability is worth it.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     window.__renderer = renderer;
     document.getElementById("pageGlobe").appendChild(renderer.domElement);
     renderer.domElement.style.position = "absolute";
@@ -49789,6 +49805,42 @@ body.ticker-active .gTickerLabel {
     return { title: 'Earth00', text: 'Shared from Earth00' };
   }
 
+  // For thread/line shares: pre-fetch the server-rendered OG card PNG
+  // so we can attach it to the share alongside the link. iMessage/
+  // Twitter receivers see both a rich preview card AND the image
+  // attachment; Instagram (which strips URLs) keeps the image. Returns
+  // a Capacitor Filesystem URI on success, null on any failure (caller
+  // falls back to link-only share — graceful degradation).
+  async function _fetchOgImageFile(entity) {
+    if (entity.kind !== 'thread' && entity.kind !== 'line') return null;
+    const Filesystem = window.Capacitor?.Plugins?.Filesystem;
+    if (!Filesystem || !_isCapacitorIOS()) return null;
+    try {
+      const imgUrl = `${SHARE_HOST}/share/${entity.kind}/${entity.id}.png`;
+      const res = await fetch(imgUrl);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      const base64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onloadend = () => {
+          const result = r.result || '';
+          const idx = result.indexOf(',');
+          resolve(idx >= 0 ? result.slice(idx + 1) : result);
+        };
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+      const filename = `earth00-${entity.kind}-${entity.id}-${Date.now()}.png`;
+      const out = await Filesystem.writeFile({ path: filename, data: base64, directory: 'CACHE' });
+      // Best-effort cleanup ~30s later (the cache dir is auto-purged anyway).
+      setTimeout(() => { try { Filesystem.deleteFile({ path: filename, directory: 'CACHE' }); } catch (_) {} }, 30_000);
+      return out.uri;
+    } catch (err) {
+      console.warn('[share] OG image fetch failed, falling back to link-only:', err.message);
+      return null;
+    }
+  }
+
   // Public API. Call from share buttons:
   //   __shareEntity({ kind: 'thread', id, title })
   //   __shareEntity({ kind: 'line',   id, title })
@@ -49799,8 +49851,13 @@ body.ticker-active .gTickerLabel {
     // Capacitor on iOS: native share sheet via @capacitor/share plugin.
     const SH = _capacitorShare();
     if (SH && _isCapacitorIOS()) {
+      // Show prep toast since fetch+save adds ~500ms-1s before the share
+      // sheet appears (no native progress UI for that interval).
+      const fileUri = await _fetchOgImageFile(entity);
       try {
-        await SH.share({ title: copy.title, text: copy.text, url, dialogTitle: 'Share' });
+        const opts = { title: copy.title, text: copy.text, url, dialogTitle: 'Share' };
+        if (fileUri) opts.files = [fileUri];
+        await SH.share(opts);
         return;
       } catch (err) {
         // User canceled or plugin error — silent unless really fatal.
@@ -49864,6 +49921,11 @@ body.ticker-active .gTickerLabel {
     close.parentElement.insertBefore(btn, close);
   }
   // Heatmap panel: small share button next to the panel close.
+  // Captures the live globe (or 2D map, depending on user's projection)
+  // with the heatmap painted on, brands it with the question + mode,
+  // dispatches via __shareSnapshot. Optionally attaches the /share/heatmap
+  // URL too — iMessage/Twitter receivers see both image + link card,
+  // Instagram strips the URL but still gets the rendered image.
   function _attachHeatmapShareBtn() {
     const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
     if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtn')) return;
@@ -49881,40 +49943,48 @@ body.ticker-active .gTickerLabel {
       const panel = document.getElementById('semHeatPanel');
       const question = panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim();
       const mode = panel?.dataset?.qaMode || 'percent';
-      if (!question) {
-        showToast('Ask a question first');
-        return;
-      }
-      window.__shareEntity({ kind: 'heatmap', question, mode });
+      if (!question) { showToast('Ask a question first'); return; }
+      // Build the OG-card URL too so iMessage / Twitter recipients get
+      // both the rendered snapshot AND a link card preview.
+      const qs = new URLSearchParams({ q: question });
+      if (mode && mode !== 'percent') qs.set('mode', mode);
+      const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+      window.__shareSnapshot({
+        title:    question,
+        subtitle: `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
+        badge:    'HEATMAP',
+        url:      `${SHARE_HOST}/share/heatmap?${qs}`,
+        shareTitle: 'Earth00 · Map This',
+        shareText:  `${question} — Map This view on Earth00`,
+      });
     });
     closeBtn.parentElement.insertBefore(btn, closeBtn);
   }
-  // Re-attach on every DOM change inside the cluster panel container
-  // (cluster panel re-renders its header on each open). The
-  // MutationObserver is cheap; the attach function is idempotent.
-  // Heatmap + News-Flows share buttons are intentionally NOT wired —
-  // those surfaces will get an image-snapshot share (capture the actual
-  // rendered view + brand overlay) in a follow-up pass, since a bare
-  // URL share for those entities renders as nothing on Instagram /
-  // TikTok and conveys no context to the recipient on platforms that
-  // don't render OG previews.
-  const _watchTargets = ['clusterDetailPanel'];
+  // Re-attach on every DOM change inside the cluster + heatmap panel
+  // containers (each re-renders parts of its header on open). The
+  // MutationObserver is cheap; the attach functions are idempotent.
+  const _watchTargets = ['clusterDetailPanel', 'semHeatPanel'];
   _watchTargets.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
       _attachClusterShareBtn();
+      _attachHeatmapShareBtn();
     }).observe(el, { childList: true, subtree: true });
   });
-  // Initial attach in case the cluster panel is already open.
-  setTimeout(() => { _attachClusterShareBtn(); }, 200);
+  // Initial attach in case panels are already open.
+  setTimeout(() => { _attachClusterShareBtn(); _attachHeatmapShareBtn(); }, 200);
 
-  // Flow-context card share button — kind/id/title are stamped onto the
-  // card's dataset by __arcAiSetSession when a thread/timeline flow
-  // opens. Article-flow sessions never set them, and the button is
-  // hidden by an attribute-selector CSS rule in that case. Use capture-
-  // phase so the click reaches us before the pill-bar's view-switch
-  // handler can swallow it.
+  // Flow-context card share button — kind/id/title are stamped onto
+  // the card's dataset by __arcAiSetSession when a thread/timeline
+  // flow opens. Article-flow sessions never set them; the button is
+  // hidden by an attribute-selector CSS rule in that case.
+  //
+  // Dispatches via __shareSnapshot so the recipient gets the LIVE
+  // globe with the arcs visible — that's the whole point of sharing
+  // from this surface. Also passes the /share/{kind}/{id} URL so
+  // iMessage / Twitter etc. render the link card preview alongside
+  // the image, and Universal Links can route a tap back into the app.
   document.addEventListener('click', (e) => {
     const btn = e.target?.closest?.('#flowCtxShareBtn');
     if (!btn) return;
@@ -49929,45 +49999,456 @@ body.ticker-active .gTickerLabel {
       showToast('Nothing to share');
       return;
     }
-    window.__shareEntity({ kind, id, title });
+    const badge = (kind === 'line') ? 'STORY LINE · FLOW ARCS' : 'STORY THREAD · FLOW ARCS';
+    const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+    window.__shareSnapshot({
+      title,
+      subtitle: `${kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`,
+      badge,
+      url:      `${SHARE_HOST}/share/${kind}/${id}`,
+      shareTitle: title || (kind === 'line' ? 'Story line on Earth00' : 'Story thread on Earth00'),
+      shareText:  title ? `${title} — flow arcs on Earth00` : 'Flow arcs on Earth00',
+    });
   }, true);
 
-  // News Flows panel share — read filter state directly from the
-  // #flowControls inputs so the shared URL matches the user's view
-  // exactly. Mode: 'aggregate' if the Aggregate pill is active, else
-  // 'timeseries' (server treats the individual playback view as
-  // timeseries for share purposes — backend auto-picks the peak day).
-  window.__shareNewsFlows = function() {
+  // News Flows panel snapshot share — captures the live globe (or 2D
+  // map) view as the user sees it RIGHT NOW: arcs in motion at the
+  // current playback time for time-series mode, or the full aggregate
+  // composite for aggregate mode. Brands the image with the keyword/
+  // theme + mode badge + date range.
+  window.__shareNewsFlowsSnapshot = function() {
     try {
       const panel = document.getElementById('flowControls');
       if (!panel) { showToast('Open News Flows first'); return; }
       const activePill = panel.querySelector('.flowModePill.active');
       const fmode = activePill?.dataset?.fmode || 'individual';
-      const mode = fmode === 'aggregate' ? 'aggregate' : 'timeseries';
+      const modeLabel = fmode === 'aggregate' ? 'AGGREGATE' : 'TIME-SERIES';
       const keyword = (document.getElementById('flowKeyword')?.value || '').trim();
       const fromDate = (document.getElementById('flowFrom')?.value || '').trim();
-      const toDate = (document.getElementById('flowTo')?.value || '').trim();
-      const viewMode = window.__currentViewMode || 'country';
-      // Filter chip ids (set by the panel's autocomplete) live on the
-      // page-scoped filterFromCountry / filterAboutCountry vars; expose
-      // them via a fallback read so we don't need a closure escape hatch.
-      const fromCountryId = window.__flowFilterFromCountryId || null;
-      const aboutCountryId = window.__flowFilterAboutCountryId || null;
-      const entity = {
-        kind: 'flows',
-        mode,
-        theme: keyword,        // user's keyword doubles as the displayed theme
-        keyword,
-        view_mode: viewMode,
+      const toDate   = (document.getElementById('flowTo')?.value || '').trim();
+      const fmtDate = (s) => {
+        if (!s) return '';
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
       };
-      if (fromDate)  entity.from_date = fromDate;
-      if (toDate)    entity.to_date   = toDate;
-      if (fromCountryId)  entity.from_country  = fromCountryId;
-      if (aboutCountryId) entity.about_country = aboutCountryId;
-      window.__shareEntity(entity);
+      const f = fmtDate(fromDate);
+      const t = fmtDate(toDate);
+      const dateRange = (f && t) ? `${f} – ${t}` : (t ? `THROUGH ${t}` : (f ? `FROM ${f}` : 'PAST 7 DAYS'));
+      window.__shareSnapshot({
+        title:    keyword || 'Global Story Flows',
+        subtitle: `FLOWS · ${modeLabel} · ${dateRange}`,
+        badge:    'NEWS FLOWS',
+        shareTitle: 'Earth00 · News Flows',
+        shareText:  keyword
+          ? `${keyword} — ${modeLabel.toLowerCase()} story flows on Earth00`
+          : `${modeLabel.toLowerCase()} story flows on Earth00`,
+      });
     } catch (err) {
-      console.warn('[shareNewsFlows]', err.message);
+      console.warn('[shareNewsFlowsSnapshot]', err.message);
       showToast('Share failed');
+    }
+  };
+
+  // ─── Snapshot share — capture the live view + brand overlay ──
+  // For surfaces where what the user sees IS the value (heatmap on the
+  // globe, news-flows arcs, thread/line flow arcs in motion), the
+  // shareable artifact is an actual image of the rendered state, not
+  // just a link. The image is composited onto a 1080×1080 canvas with
+  // Earth00 chrome (logo + wordmark up top, title + subtitle + flag
+  // chips + watermark down bottom) and dispatched via Capacitor Share's
+  // `files` array — so iMessage / WhatsApp / Twitter render the image
+  // attachment directly, AND Instagram/TikTok (which strip URLs) still
+  // get a posable visual.
+  //
+  // Layout (1080×1080):
+  //   y=  0 …  130   top chrome (logo + wordmark + type badge)
+  //   y=130            gold accent line
+  //   y=140 …  790   captured globe image (fitted, contain)
+  //   y=800            gold accent line
+  //   y=820 …  900   title (theme / question / keyword)
+  //   y=910 …  945   subtitle (mode + date / country count)
+  //   y=970 … 1010   country flag chips
+  //   y=1040           EARTH00.COM watermark
+  const SNAPSHOT_W = 1080;
+  const SNAPSHOT_H = 1080;
+  const SNAPSHOT_BRAND = {
+    bgTop:    '#060a14',
+    bgBot:    '#0d1525',
+    gold:     '#d4a843',
+    goldSoft: 'rgba(212,168,67,0.55)',
+    cream:    '#f4ead2',
+    ink:      '#ffffff',
+    inkMute:  'rgba(255,255,255,0.62)',
+    important:'#ff9b3a',
+  };
+  const FLAG_CDN_BASE = 'https://flagcdn.com/w80/';
+
+  function _snapEsc(s) { return String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+
+  // Draw the Earth00 logo (globe glyph + wordmark) at (x,y).
+  // Mirrors the SVG chrome used by the server's OG card so the two
+  // brand artifacts stay visually consistent across surfaces.
+  function _snapDrawLogo(ctx, x, y) {
+    ctx.save();
+    ctx.strokeStyle = SNAPSHOT_BRAND.gold;
+    ctx.lineWidth = 1.6;
+    ctx.globalAlpha = 0.92;
+    // Globe wireframe — outer + horizontal-squashed + vertical-squashed + equator line
+    const cx = x + 22, cy = y + 22;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + 2, cy); ctx.lineTo(x + 42, cy); ctx.stroke();
+    ctx.globalAlpha = 1;
+    // Italic "e" + "arth00"
+    ctx.fillStyle = SNAPSHOT_BRAND.cream;
+    ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('e', x + 56, y + 34);
+    ctx.fillStyle = SNAPSHOT_BRAND.ink;
+    ctx.font = '700 22px -apple-system, system-ui, "Segoe UI", sans-serif';
+    ctx.fillText('arth00', x + 76, y + 34);
+    ctx.restore();
+  }
+
+  // Draw a horizontal gold sweep line — same accent as the OG card.
+  function _snapDrawAccent(ctx, x, y, w) {
+    const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+    grad.addColorStop(0,    'rgba(212,168,67,0)');
+    grad.addColorStop(0.5,  'rgba(212,168,67,0.55)');
+    grad.addColorStop(1,    'rgba(212,168,67,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, w, 1.4);
+  }
+
+  // Draw a single rounded-rect filled with stroke (used for chips, badges).
+  function _snapRoundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+  }
+
+  async function _snapLoadImage(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  // Pre-fetch flag PNGs from flagcdn so they decode synchronously when
+  // we draw — running fetch sequentially is fine since we cap at 6 chips.
+  async function _snapFlagImages(isos) {
+    const list = (Array.isArray(isos) ? isos : [])
+      .map(s => String(s || '').trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 6);
+    const out = [];
+    for (const code of list) {
+      try { out.push({ iso: code.toUpperCase(), img: await _snapLoadImage(`${FLAG_CDN_BASE}${code}.png`) }); }
+      catch (_) { out.push({ iso: code.toUpperCase(), img: null }); }
+    }
+    return out;
+  }
+
+  function _snapDrawFlagChips(ctx, chips, x, y) {
+    let cx = x;
+    for (const { iso, img } of chips) {
+      const chipW = 90, chipH = 38;
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = 1;
+      _snapRoundRect(ctx, cx, y, chipW, chipH, chipH / 2);
+      ctx.fill(); ctx.stroke();
+      if (img) {
+        try { ctx.drawImage(img, cx + 12, y + 9, 30, 20); } catch (_) {}
+      }
+      ctx.fillStyle = SNAPSHOT_BRAND.cream;
+      ctx.font = '700 14px -apple-system, system-ui, "Segoe UI", sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(iso, cx + 50, y + chipH / 2 + 1);
+      cx += chipW + 10;
+    }
+  }
+
+  // Draw the captured WebGL canvas (or any HTMLImageElement) inside a
+  // target rect, "contain"-fit so nothing is cropped — important since
+  // the globe content the user wants to share might extend to the
+  // canvas edges (long arcs, polar heatmap, etc.).
+  function _snapDrawGlobeImage(ctx, img, x, y, w, h) {
+    if (!img || !img.width || !img.height) return;
+    const srcAspect = img.width / img.height;
+    const dstAspect = w / h;
+    let drawW, drawH, dx, dy;
+    if (srcAspect > dstAspect) {
+      drawW = w; drawH = w / srcAspect;
+      dx = x;   dy = y + (h - drawH) / 2;
+    } else {
+      drawH = h; drawW = h * srcAspect;
+      dx = x + (w - drawW) / 2; dy = y;
+    }
+    ctx.drawImage(img, dx, dy, drawW, drawH);
+  }
+
+  // Wrap a long string into N lines that fit a max-pixel width.
+  // canvas2d doesn't have a CSS-style line-break helper, so we walk word
+  // boundaries with measureText. Adds ellipsis on overflow.
+  function _snapWrapText(ctx, text, maxWidth, maxLines) {
+    const words = String(text || '').trim().split(/\s+/);
+    const lines = [];
+    let cur = '';
+    for (const w of words) {
+      if (lines.length >= maxLines) break;
+      const trial = cur ? cur + ' ' + w : w;
+      if (ctx.measureText(trial).width <= maxWidth) cur = trial;
+      else {
+        if (cur) lines.push(cur);
+        cur = w;
+        if (lines.length >= maxLines) break;
+      }
+    }
+    if (cur && lines.length < maxLines) lines.push(cur);
+    // Ellipsize last line if more text exists
+    const rendered = lines.join(' ').length;
+    const total = words.join(' ').length;
+    if (rendered < total && lines.length) {
+      let last = lines[lines.length - 1];
+      while (last.length > 1 && ctx.measureText(last + '…').width > maxWidth) {
+        last = last.slice(0, -1);
+      }
+      lines[lines.length - 1] = last + '…';
+    }
+    return lines;
+  }
+
+  // Capture whichever projection the user is currently viewing —
+  // 3D globe (THREE.js WebGLRenderer canvas) or 2D map (Map2D's own
+  // 2D canvas). The active projection is window.__projection
+  // ("globe" | "map"); each path force-renders before snapping so
+  // the buffer reflects the live state. Force-render is required for
+  // 3D (preserveDrawingBuffer is true but a render is still safer
+  // since timeline advances etc. could be mid-frame), and harmless
+  // for 2D (Map2D's render() is idempotent).
+  async function _snapCaptureView() {
+    const projection = (window.__projection === 'map') ? 'map' : 'globe';
+    if (projection === 'map' && window.__map2d?.state?.canvas) {
+      try { window.__map2d.render?.(); } catch (_) {}
+      const url = window.__map2d.state.canvas.toDataURL('image/png');
+      return { img: await _snapLoadImage(url), projection };
+    }
+    const renderer = window.__renderer;
+    if (!renderer) throw new Error('renderer not ready');
+    try {
+      if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
+    } catch (_) {}
+    const url = renderer.domElement.toDataURL('image/png');
+    return { img: await _snapLoadImage(url), projection };
+  }
+
+  // Composite everything onto a 1080×1080 brand-frame canvas. Returns
+  // a Blob (PNG) ready for share dispatch.
+  async function _snapComposite({ globeImg, title, subtitle, badge, isos }) {
+    const canvas = document.createElement('canvas');
+    canvas.width = SNAPSHOT_W;
+    canvas.height = SNAPSHOT_H;
+    const ctx = canvas.getContext('2d');
+
+    // Background gradient + subtle gold radial glow (matches OG card)
+    const bg = ctx.createLinearGradient(0, 0, 0, SNAPSHOT_H);
+    bg.addColorStop(0, SNAPSHOT_BRAND.bgTop);
+    bg.addColorStop(1, SNAPSHOT_BRAND.bgBot);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, SNAPSHOT_W, SNAPSHOT_H);
+    const glow = ctx.createRadialGradient(SNAPSHOT_W * 0.85, SNAPSHOT_H * 0.15, 50, SNAPSHOT_W * 0.85, SNAPSHOT_H * 0.15, 600);
+    glow.addColorStop(0, 'rgba(212,168,67,0.18)');
+    glow.addColorStop(1, 'rgba(212,168,67,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, SNAPSHOT_W, SNAPSHOT_H);
+
+    // Top chrome
+    _snapDrawLogo(ctx, 56, 54);
+
+    // Optional badge in the top-right (e.g. HEATMAP, NEWS FLOWS)
+    if (badge) {
+      ctx.font = '800 13px -apple-system, system-ui, "Segoe UI", sans-serif';
+      ctx.textBaseline = 'middle';
+      const bw = Math.max(160, ctx.measureText(badge).width + 36);
+      const bh = 36;
+      const bx = SNAPSHOT_W - 56 - bw;
+      const by = 60;
+      ctx.fillStyle = 'rgba(212,168,67,0.10)';
+      ctx.strokeStyle = SNAPSHOT_BRAND.gold;
+      ctx.lineWidth = 1.4;
+      _snapRoundRect(ctx, bx, by, bw, bh, bh / 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = SNAPSHOT_BRAND.gold;
+      ctx.textAlign = 'center';
+      ctx.fillText(badge, bx + bw / 2, by + bh / 2 + 1);
+      ctx.textAlign = 'start';
+    }
+
+    // Top accent line
+    _snapDrawAccent(ctx, 56, 130, SNAPSHOT_W - 112);
+
+    // Globe image area — 56 inset, ~640px tall
+    _snapDrawGlobeImage(ctx, globeImg, 56, 150, SNAPSHOT_W - 112, 640);
+
+    // Bottom accent line
+    _snapDrawAccent(ctx, 56, 805, SNAPSHOT_W - 112);
+
+    // Title (theme / question / keyword)
+    if (title) {
+      ctx.fillStyle = SNAPSHOT_BRAND.cream;
+      ctx.font = '800 38px -apple-system, system-ui, "Segoe UI", sans-serif';
+      ctx.textBaseline = 'alphabetic';
+      const titleLines = _snapWrapText(ctx, title, SNAPSHOT_W - 112, 2);
+      titleLines.forEach((line, i) => ctx.fillText(line, 56, 858 + i * 46));
+    }
+
+    // Subtitle (mode badge text, date range, etc.)
+    if (subtitle) {
+      ctx.fillStyle = SNAPSHOT_BRAND.gold;
+      ctx.font = '700 14px -apple-system, system-ui, "Segoe UI", sans-serif';
+      ctx.fillText(subtitle, 56, 935);
+    }
+
+    // Country flag chips
+    if (Array.isArray(isos) && isos.length) {
+      const chips = await _snapFlagImages(isos);
+      _snapDrawFlagChips(ctx, chips, 56, 970);
+    }
+
+    // Watermark
+    ctx.fillStyle = SNAPSHOT_BRAND.goldSoft;
+    ctx.font = '700 16px -apple-system, system-ui, "Segoe UI", sans-serif';
+    ctx.fillText('EARTH00.COM', 56, 1040);
+
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+  }
+
+  // Convert a Blob to a base64 string (no data: prefix).
+  function _snapBlobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result || '';
+        const idx = result.indexOf(',');
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Dispatch the rendered Blob via Capacitor Share (preferred) or web
+  // fallback. The url is OPTIONAL — when present, iMessage etc. show
+  // both the image attachment AND a link card preview; on Instagram
+  // the URL is silently dropped so only the image goes through.
+  async function _snapDispatch(blob, { url, shareTitle, shareText }) {
+    const Filesystem = window.Capacitor?.Plugins?.Filesystem;
+    const Share = window.Capacitor?.Plugins?.Share;
+    const isCapIos = !!(window.Capacitor?.isNativePlatform?.() && window.Capacitor.getPlatform?.() === 'ios');
+
+    if (Filesystem && Share && isCapIos) {
+      try {
+        const base64 = await _snapBlobToBase64(blob);
+        const filename = `earth00-${Date.now()}.png`;
+        const result = await Filesystem.writeFile({
+          path: filename,
+          data: base64,
+          directory: 'CACHE',
+        });
+        const fileUri = result.uri;
+        await Share.share({
+          title: shareTitle || 'Earth00',
+          text:  shareText  || '',
+          url:   url || undefined,
+          files: [fileUri],
+          dialogTitle: 'Share',
+        });
+        // Best-effort cleanup; ignore failures (the cache dir is auto-purged anyway).
+        try { setTimeout(() => Filesystem.deleteFile({ path: filename, directory: 'CACHE' }), 30_000); } catch (_) {}
+        return;
+      } catch (err) {
+        if (err && /cancel/i.test(err.message || '')) return;
+        console.warn('[snapshotShare] Capacitor failed:', err.message);
+        // fall through to web path
+      }
+    }
+
+    // Web path: navigator.share with files (iOS Safari, Android Chrome)
+    try {
+      const file = new File([blob], `earth00-${Date.now()}.png`, { type: 'image/png' });
+      if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          title: shareTitle || 'Earth00',
+          text:  shareText  || '',
+          url:   url || undefined,
+          files: [file],
+        });
+        return;
+      }
+    } catch (err) {
+      if (err && /cancel/i.test(err.name || err.message || '')) return;
+    }
+
+    // Final fallback: trigger a download so the user can manually attach
+    // the image to whatever they want to share.
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = `earth00-snapshot-${Date.now()}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+    showToast('Image saved');
+  }
+
+  // Public API. Call from share buttons:
+  //   await window.__shareSnapshot({
+  //     title:    'Climate change projections by 2030',
+  //     subtitle: 'MAP THIS · PERCENT',
+  //     badge:    'HEATMAP',
+  //     isos:     ['US','CN','RU','BR','IN'],
+  //     url:      'https://earth00.com/share/heatmap?...', // optional
+  //     shareTitle: 'Earth00',
+  //     shareText:  'Climate projections — Map This',
+  //   });
+  window.__shareSnapshot = async function(opts = {}) {
+    try {
+      showToast('Capturing…', 1500);
+      const { img: globeImg, projection } = await _snapCaptureView();
+      // Mode label that respects the user's current view. Caller can
+      // override by passing opts.subtitle explicitly; otherwise we
+      // tag the snapshot so recipients can tell at a glance whether
+      // it's the globe or 2D-map projection.
+      const projectionLabel = projection === 'map' ? '2D MAP' : 'GLOBE';
+      const subtitle = opts.subtitle != null
+        ? opts.subtitle
+        : projectionLabel;
+      const blob = await _snapComposite({
+        globeImg,
+        title:    opts.title || '',
+        subtitle,
+        badge:    opts.badge || '',
+        isos:     opts.isos  || [],
+      });
+      await _snapDispatch(blob, {
+        url:        opts.url || undefined,
+        shareTitle: opts.shareTitle,
+        shareText:  opts.shareText,
+      });
+    } catch (err) {
+      console.warn('[__shareSnapshot]', err.message || err);
+      showToast('Snapshot failed');
     }
   };
 
