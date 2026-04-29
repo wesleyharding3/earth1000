@@ -9508,7 +9508,14 @@ ${process.env.APPLE_APP_APPLE_ID ? `<!-- Apple smart app banner (lets iOS Safari
 }
 
 // ── Thread share ─────────────────────────────────────────────────────
-app.get('/share/thread/:id', async (req, res) => {
+// IMPORTANT: this route is registered BEFORE /share/thread/:id.png, so a
+// request for /share/thread/8735.png lands here with id = "8735.png".
+// `parseInt("8735.png")` returns 8735, and without this guard the HTML
+// route would happily render and return text/html — silently shadowing
+// the PNG route that OG scrapers / image fetchers actually need.
+// Bail out so Express falls through to the .png route below.
+app.get('/share/thread/:id', async (req, res, next) => {
+  if (req.params.id && req.params.id.endsWith('.png')) return next();
   try {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).send('Invalid id');
@@ -9566,7 +9573,10 @@ app.get('/share/thread/:id.png', async (req, res) => {
 });
 
 // ── Line / Timeline share ────────────────────────────────────────────
-app.get('/share/line/:id', async (req, res) => {
+// Same shadowing guard as /share/thread/:id — see comment above. Without
+// this, /share/line/123.png would render the HTML route's response.
+app.get('/share/line/:id', async (req, res, next) => {
+  if (req.params.id && req.params.id.endsWith('.png')) return next();
   try {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).send('Invalid id');

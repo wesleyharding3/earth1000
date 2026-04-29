@@ -13089,16 +13089,6 @@ window.__arcCtxSegmented = (function() {
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
-    <!-- Share button — surfaces the current view's flows as a Universal
-         Link with a peak-frame poster (timeseries) or aggregate composite.
-         Click reads filter state from #flowControls inputs and dispatches
-         to __shareEntity({kind:'flows', ...}). -->
-    <button class="flowShareBtn" id="flowShareBtn" title="Share these flows" onclick="window.__shareNewsFlows?.()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-      </svg>
-    </button>
     <button class="flowCloseBtn" id="flowCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
 
     <!-- Minimized bar (shown when minimized) -->
@@ -35962,46 +35952,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   // ── View on Globe handlers ─────────────────────────────────────
-  // Closes the originating detail panel and dispatches to the matching
-  // flow function (thread / timeline / article). Same overall pattern
-  // for cluster-detail (thread or line) and article-detail panels:
-  //   1. stopPropagation so the click doesn't bubble to globe handlers
-  //   2. close panel via its canonical closer (preserves cleanup logic)
-  //   3. small rAF/microtask delay so the close animation kicks off
-  //      before the globe starts resolving + animating arcs
+  // Mirror the card-level flow-arc button EXACTLY: forward the original
+  // event into showThreadFlows / showTimelineFlows / showArticleFlows
+  // and let those functions own all the side effects (panel close,
+  // globe navigation, arc animation, flow-context card mount). No
+  // manual panel-close + setTimeout dance — the canonical flow
+  // entry points already handle that, and adding our own version
+  // de-syncs the View-on-Globe path from the card path.
   window.__viewOnGlobeFromCluster = function (btn, evt) {
-    if (evt) { try { evt.stopPropagation(); } catch (_) {} }
     if (!btn) return;
     const threadId = btn.dataset?.threadId;
     const isTimeline = btn.dataset?.isTimeline === '1';
     if (!threadId) return;
-    try { window.__clusterCloseNodePanel?.(); } catch (_) {}
-    setTimeout(() => {
-      try {
-        if (isTimeline) {
-          window.showTimelineFlows?.(threadId);
-        } else {
-          window.showThreadFlows?.(threadId);
-        }
-      } catch (e) {
-        console.warn('[viewOnGlobe:cluster] dispatch failed:', e?.message || e);
-      }
-    }, 80);
+    const id = parseInt(threadId, 10);
+    if (!Number.isFinite(id)) return;
+    if (isTimeline) {
+      window.showTimelineFlows?.(id, evt);
+    } else {
+      window.showThreadFlows?.(id, evt);
+    }
   };
 
   window.__viewOnGlobeFromArticle = function (btn, evt) {
-    if (evt) { try { evt.stopPropagation(); } catch (_) {} }
     if (!btn) return;
     const articleId = btn.dataset?.articleId;
     if (!articleId) return;
-    try { window.closeArticleDetail?.(); } catch (_) {}
-    setTimeout(() => {
-      try {
-        window.showArticleFlows?.(articleId);
-      } catch (e) {
-        console.warn('[viewOnGlobe:article] dispatch failed:', e?.message || e);
-      }
-    }, 80);
+    const id = parseInt(articleId, 10);
+    if (!Number.isFinite(id)) return;
+    window.showArticleFlows?.(id, evt);
   };
 
   // ── AI Explain handler ──────────────────────────────────────────
@@ -45933,15 +45911,17 @@ body.ticker-active .gTickerLabel {
     });
     closeBtn.parentElement.insertBefore(btn, closeBtn);
   }
-  ['clusterDetailPanel', 'semHeatPanel'].forEach(id => {
+  // Heatmap + News-Flows share buttons intentionally NOT wired — those
+  // surfaces get an image-snapshot share (capture the actual rendered
+  // view + brand overlay) in a follow-up pass.
+  ['clusterDetailPanel'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     new MutationObserver(() => {
       _attachClusterShareBtn();
-      _attachHeatmapShareBtn();
     }).observe(el, { childList: true, subtree: true });
   });
-  setTimeout(() => { _attachClusterShareBtn(); _attachHeatmapShareBtn(); }, 200);
+  setTimeout(() => { _attachClusterShareBtn(); }, 200);
 
   // Flow-context card share button — same pattern as the iOS file.
   document.addEventListener('click', (e) => {
