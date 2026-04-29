@@ -9559,39 +9559,75 @@ app.get('/share/thread/:id.png', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).end();
-    // article_count is denormalized on story_threads. language_count
-    // and source_country_count are computed here via aggregates over
-    // the thread's articles — once per CDN refresh (24h s-maxage) so
-    // the cost is amortized to almost nothing.
+    // Coverage counts are usually passed in the URL by the client
+    // (?l=51&c=107&a=1338) since the panel/card already has them from
+    // /api/threads/latest — no reason to re-aggregate news_articles
+    // server-side. We accept them when present and only fall back to a
+    // budgeted DB query for cold link-preview scrapes that arrive
+    // without params (e.g. a Twitter bot fetching the URL nobody has
+    // shared in-app yet). The fallback is wrapped in try/catch with a
+    // 3s statement_timeout so a slow aggregation degrades the OG card
+    // to "no coverage line" instead of erroring the whole render.
+    const qLang     = parseInt(req.query.l, 10);
+    const qCountry  = parseInt(req.query.c, 10);
+    const qArticles = parseInt(req.query.a, 10);
+    const haveQueryCounts = Number.isFinite(qLang) && Number.isFinite(qCountry);
+
     const { rows } = await pool.query(
       `SELECT t.id, t.title, t.primary_category, t.primary_nations,
               t.last_updated_at, t.article_count,
-              t.hero_image_url, t.hero_catalog_image_url,
-              (SELECT COUNT(DISTINCT a.language)::int
-                 FROM story_thread_articles sta
-                 JOIN news_articles a ON a.id = sta.article_id
-                WHERE sta.thread_id = t.id) AS language_count,
-              (SELECT COUNT(DISTINCT a.country_id)::int
-                 FROM story_thread_articles sta
-                 JOIN news_articles a ON a.id = sta.article_id
-                WHERE sta.thread_id = t.id) AS source_country_count
+              t.hero_image_url, t.hero_catalog_image_url
          FROM story_threads t
         WHERE t.id = $1`,
       [id]
     );
     if (!rows.length) return res.status(404).end();
     const t = rows[0];
+
+    let languageCount = haveQueryCounts ? qLang    : null;
+    let countryCount  = haveQueryCounts ? qCountry : null;
+    if (!haveQueryCounts) {
+      try {
+        const countsClient = await pool.connect();
+        try {
+          await countsClient.query(`SET LOCAL statement_timeout='3s'`);
+          const { rows: countsRows } = await countsClient.query(
+            `SELECT
+               (SELECT COUNT(DISTINCT a.language)::int
+                  FROM story_thread_articles sta
+                  JOIN news_articles a ON a.id = sta.article_id
+                 WHERE sta.thread_id = $1) AS language_count,
+               (SELECT COUNT(DISTINCT a.country_id)::int
+                  FROM story_thread_articles sta
+                  JOIN news_articles a ON a.id = sta.article_id
+                 WHERE sta.thread_id = $1) AS source_country_count`,
+            [id]
+          );
+          languageCount = countsRows[0]?.language_count ?? null;
+          countryCount  = countsRows[0]?.source_country_count ?? null;
+        } finally {
+          countsClient.release();
+        }
+      } catch (e) {
+        console.warn(`[share/thread.png] coverage counts skipped for ${id}: ${e.message}`);
+      }
+    }
+    // Article count: prefer client-passed value, fall back to the
+    // denormalized story_threads.article_count which is always present.
+    const articleCount = Number.isFinite(qArticles) ? qArticles : (t.article_count || 0);
     const png = await shareImg.generate({
       kind: 'thread',
-      // Cache key includes last_updated_at + article_count + a hash of
-      // the hero URL so swapping the hero image busts the OG-card cache.
-      cacheKey: `thread:${id}:${new Date(t.last_updated_at || 0).getTime()}:${t.article_count || 0}:${(t.hero_image_url || '').slice(-40)}`,
+      // Cache key includes last_updated_at + counts + a hash of the
+      // hero URL so swapping the hero or the underlying counts busts
+      // the OG-card cache. Passed-in counts join the key so two
+      // different views of the same thread don't collide.
+      cacheKey: `thread:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}:${(t.hero_image_url || '').slice(-40)}`,
       title:                t.title,
       isos:                 (t.primary_nations || []).slice(0, 6),
       category:             t.primary_category,
-      articleCount:         t.article_count || 0,
-      languageCount:        t.language_count || 0,
-      countryCount:         t.source_country_count || 0,
+      articleCount,
+      languageCount,
+      countryCount,
       heroImageUrl:         t.hero_image_url || null,
       heroCatalogImageUrl:  t.hero_catalog_image_url || null,
     });
@@ -9640,9 +9676,14 @@ app.get('/share/line/:id.png', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).end();
-    // For lines the coverage stats are aggregated across all threads
-    // that belong to this timeline. Same CDN-cached pattern as
-    // thread.png so the multi-subquery cost is paid once per refresh.
+    // See /share/thread/:id.png for the full rationale on query-string
+    // passthrough. Same shape: client embeds counts in the URL when it
+    // has them, server uses them and skips the heavy aggregation.
+    const qLang     = parseInt(req.query.l, 10);
+    const qCountry  = parseInt(req.query.c, 10);
+    const qArticles = parseInt(req.query.a, 10);
+    const haveQueryCounts = Number.isFinite(qLang) && Number.isFinite(qCountry);
+
     const { rows } = await pool.query(
       `SELECT t.id, t.title, t.primary_category, t.primary_nations,
               t.last_updated_at,
@@ -9662,32 +9703,54 @@ app.get('/share/line/:id.png', async (req, res) => {
                 (SELECT SUM(article_count)::int
                    FROM story_threads st WHERE st.timeline_id = t.id),
                 0
-              ) AS article_count,
-              (SELECT COUNT(DISTINCT a.language)::int
-                 FROM story_thread_articles sta
-                 JOIN news_articles a ON a.id = sta.article_id
-                 JOIN story_threads st ON st.id = sta.thread_id
-                WHERE st.timeline_id = t.id) AS language_count,
-              (SELECT COUNT(DISTINCT a.country_id)::int
-                 FROM story_thread_articles sta
-                 JOIN news_articles a ON a.id = sta.article_id
-                 JOIN story_threads st ON st.id = sta.thread_id
-                WHERE st.timeline_id = t.id) AS source_country_count
+              ) AS article_count
          FROM story_timelines t
         WHERE t.id = $1`,
       [id]
     );
     if (!rows.length) return res.status(404).end();
     const t = rows[0];
+
+    let languageCount = haveQueryCounts ? qLang    : null;
+    let countryCount  = haveQueryCounts ? qCountry : null;
+    if (!haveQueryCounts) {
+      try {
+        const countsClient = await pool.connect();
+        try {
+          await countsClient.query(`SET LOCAL statement_timeout='3s'`);
+          const { rows: countsRows } = await countsClient.query(
+            `SELECT
+               (SELECT COUNT(DISTINCT a.language)::int
+                  FROM story_thread_articles sta
+                  JOIN news_articles a ON a.id = sta.article_id
+                  JOIN story_threads st ON st.id = sta.thread_id
+                 WHERE st.timeline_id = $1) AS language_count,
+               (SELECT COUNT(DISTINCT a.country_id)::int
+                  FROM story_thread_articles sta
+                  JOIN news_articles a ON a.id = sta.article_id
+                  JOIN story_threads st ON st.id = sta.thread_id
+                 WHERE st.timeline_id = $1) AS source_country_count`,
+            [id]
+          );
+          languageCount = countsRows[0]?.language_count ?? null;
+          countryCount  = countsRows[0]?.source_country_count ?? null;
+        } finally {
+          countsClient.release();
+        }
+      } catch (e) {
+        console.warn(`[share/line.png] coverage counts skipped for ${id}: ${e.message}`);
+      }
+    }
+    const articleCount = Number.isFinite(qArticles) ? qArticles : (t.article_count || 0);
     const png = await shareImg.generate({
       kind: 'line',
-      cacheKey: `line:${id}:${new Date(t.last_updated_at || 0).getTime()}:${t.article_count || 0}:${(t.hero_image_url || '').slice(-40)}`,
+      cacheKey: `line:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}:${(t.hero_image_url || '').slice(-40)}`,
       title:                t.title,
       isos:                 (t.primary_nations || []).slice(0, 6),
       category:             t.primary_category,
-      articleCount:         t.article_count || 0,
-      languageCount:        t.language_count || 0,
-      countryCount:         t.source_country_count || 0,
+      articleCount,
+      languageCount,
+      countryCount,
       heroImageUrl:         t.hero_image_url || null,
       heroCatalogImageUrl:  t.hero_catalog_image_url || null,
     });

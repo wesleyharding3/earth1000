@@ -4220,25 +4220,28 @@ button.arcCtxSegDot,
     }
     .ptr-indicator.pulling { opacity: 1; transition: transform 0.05s linear, opacity 0.15s; }
     .ptr-indicator.armed {
-      background: rgba(30, 90, 40, 0.92);
-      border-color: rgba(80, 255, 160, 0.6);
+      background: rgba(60, 40, 12, 0.92);
+      border-color: rgba(255, 190, 80, 0.55);
     }
+    /* See www/index.html for rationale: 3/4-circle arc + amber palette
+       to match the .nfPageTitle, replacing the prior arrow-rotating-in-
+       circles glyph that didn't read as "loading." */
     .ptr-indicator svg {
       width: 18px; height: 18px;
-      stroke: rgba(255, 255, 255, 0.85);
-      stroke-width: 2; fill: none;
+      stroke: rgba(255, 190, 80, 0.95);
+      stroke-width: 2.4; fill: none;
       stroke-linecap: round; stroke-linejoin: round;
-      transition: transform 0.15s;
+      transition: transform 0.15s, stroke 0.15s;
     }
-    .ptr-indicator.armed svg { stroke: rgba(80, 255, 160, 1); transform: rotate(180deg); }
+    .ptr-indicator.armed svg { stroke: rgba(255, 215, 130, 1); }
     .ptr-indicator.refreshing {
       opacity: 1;
       background: rgba(12, 18, 32, 0.92);
-      border-color: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 190, 80, 0.4);
     }
     .ptr-indicator.refreshing svg {
       animation: ptr-spin 0.9s linear infinite;
-      stroke: rgba(80, 255, 160, 1);
+      stroke: rgba(255, 190, 80, 1);
     }
     @keyframes ptr-spin { to { transform: rotate(360deg); } }
     @media (prefers-reduced-motion: reduce) {
@@ -26515,7 +26518,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
       const indicator = document.createElement('div');
       indicator.className = 'ptr-indicator';
-      indicator.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5 v14 M6 13 l6 6 6-6"/></svg>';
+      // 3/4-circle arc — reads as a loading spinner from the moment it
+      // appears, no matter what state we're in. CSS animates rotation
+      // during `.refreshing`. See .ptr-indicator svg comment for rationale.
+      indicator.innerHTML = '<svg viewBox="0 0 24 24"><path d="M21 12 a9 9 0 1 1 -2.64 -6.36"/></svg>';
       parent.appendChild(indicator);
       let startY = null, pulling = false, armed = false, refreshing = false;
       const setIndicator = (pullDist) => {
@@ -26537,13 +26543,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
         indicator.classList.add('refreshing');
         indicator.style.transform = 'translateY(' + threshold + 'px)';
         const start = Date.now();
-        try { await Promise.resolve(onRefresh(scrollEl)); }
-        catch (err) { console.warn('[ptr] refresh handler threw:', err); }
-        const elapsed = Date.now() - start;
-        if (elapsed < minSpin) await new Promise(r => setTimeout(r, minSpin - elapsed));
-        refreshing = false;
-        indicator.classList.remove('refreshing');
-        resetIndicator();
+        // Hard 15s cap. If onRefresh hangs (e.g. fetch pending forever, or
+        // a deduped in-flight cachedFetch promise that never resolves), the
+        // indicator would otherwise stay stuck on screen until the user
+        // navigated away. Race the handler against a timeout, and use
+        // try/finally so the cleanup ALWAYS runs — the previous shape
+        // could leave `refreshing = true` if anything threw past the catch.
+        const TIMEOUT_MS = 15000;
+        try {
+          await Promise.race([
+            Promise.resolve(onRefresh(scrollEl)),
+            new Promise((_, reject) => setTimeout(
+              () => reject(new Error('ptr_timeout')),
+              TIMEOUT_MS
+            )),
+          ]);
+        } catch (err) {
+          if (err && err.message === 'ptr_timeout') {
+            console.warn('[ptr] refresh exceeded ' + TIMEOUT_MS + 'ms — clearing indicator');
+          } else {
+            console.warn('[ptr] refresh handler threw:', err);
+          }
+        } finally {
+          const elapsed = Date.now() - start;
+          if (elapsed < minSpin) await new Promise(r => setTimeout(r, minSpin - elapsed));
+          refreshing = false;
+          indicator.classList.remove('refreshing');
+          resetIndicator();
+        }
       };
       const onTouchStart = (e) => {
         if (refreshing) return;
@@ -27515,7 +27542,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // apps render this above the link preview).
         const shareKind = isTimeline ? 'line' : 'thread';
         const shareTitleAttr = (t.title || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
-        const threadShareBtn = `<button class="cardShareBtn" data-share-kind="${shareKind}" data-share-id="${entityId}" data-share-title="${shareTitleAttr}" onclick="(function(e){e.stopPropagation();var b=e.currentTarget;window.__shareEntity({kind:b.dataset.shareKind,id:parseInt(b.dataset.shareId,10),title:b.dataset.shareTitle});})(event)" title="Share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>`;
+        // article/language/country counts are stamped on the button so
+        // the share path can forward them to /share/*.png as ?l=&c=&a=
+        // — server uses them verbatim and skips a DB aggregation that
+        // would otherwise scan news_articles per request.
+        const shareArticleCount  = Number(t.article_count) || 0;
+        const shareLanguageCount = Number(t.language_count) || 0;
+        const shareCountryCount  = Number(t.source_country_count) || 0;
+        const threadShareBtn = `<button class="cardShareBtn" data-share-kind="${shareKind}" data-share-id="${entityId}" data-share-title="${shareTitleAttr}" data-share-articles="${shareArticleCount}" data-share-languages="${shareLanguageCount}" data-share-countries="${shareCountryCount}" onclick="(function(e){e.stopPropagation();var b=e.currentTarget;window.__shareEntity({kind:b.dataset.shareKind,id:parseInt(b.dataset.shareId,10),title:b.dataset.shareTitle,articleCount:parseInt(b.dataset.shareArticles,10),languageCount:parseInt(b.dataset.shareLanguages,10),countryCount:parseInt(b.dataset.shareCountries,10)});})(event)" title="Share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>`;
         return `<div style="position:relative">${threadFlowBtn}${threadSaveBtn}${threadShareBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
@@ -28616,6 +28650,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // Track where we came from so we can navigate back
   let _flowArcOrigin = null; // { type: 'article'|'thread', page: number, label: string }
+
+  // ── Flow request session token ─────────────────────────────────────
+  // See www/index.html for full rationale: monotonic counter that
+  // show*Flows captures at entry. Each post-await write site re-checks
+  // it and bails silently on mismatch so a slow / stale fetch can't
+  // bleed into the next pass and superimpose its arcs.
+  let _flowSession = 0;
+  function _newFlowSession() { return ++_flowSession; }
+  function _isFlowSessionStale(token) { return token !== _flowSession; }
   // Thread macro state snapshot — populated at the end of showThreadFlows
   // so the article micro-view (eye-click) can restore the full thread view
   // instantly on exit without a re-fetch. Cleared on back / panel close /
@@ -29084,6 +29127,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!_flowArcOrigin) return;
     const origin = _flowArcOrigin;
 
+    // Bump the flow session so any in-flight show*Flows promise that's
+    // still waiting on its fetch will fail its post-await stale check
+    // and bail silently instead of writing arcs onto the globe after
+    // the user has navigated away.
+    _newFlowSession();
+
     // Reset drill-down state
     window.__flowCtxDrillDown = false;
 
@@ -29121,6 +29170,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.showArticleFlows = async function(articleId, evt) {
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
+
+    // Stale-session guard — see showThreadFlows for full rationale.
+    const _mySession = _newFlowSession();
 
     // Ensure the pauseable flow clock is running — article-card arcs
     // drive their draw-in off _flowClockAccumSec just like thread arcs.
@@ -29199,6 +29251,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 4. Fetch flows for this article
       const res = await fetch(`${API}/api/flows/article/${articleId}`);
       const data = await res.json();
+      // Stale-session guard — bail before any arc draw / camera focus
+      // / highlight write if the user has navigated away or fired a
+      // different flow during the await.
+      if (_isFlowSessionStale(_mySession)) return;
       if (!data.flows || !data.flows.length) {
         // No flow arcs — the source country is the only entity. Highlight
         // it, rotate the camera, and surface a label card so the user can
@@ -29506,6 +29562,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
 
+    // Stale-session guard — see www/index.html for full rationale.
+    const _mySession = _newFlowSession();
+
     // Thread arcs drive their draw-in through the pauseable flow clock
     // (nowFlowSec → _flowClockAccumSec). If the user previously paused it
     // via a News-Flows bar-selection (selectArc → pauseFlowAnimation) and
@@ -29602,6 +29661,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       const res = await fetch(`${API}/api/flows/thread/${threadId}`);
       const data = await res.json();
+      // Stale-session guard: user backed out (or fired a different
+      // thread's flow) while this fetch was in flight. Bail before
+      // any arc draw / camera focus / highlight write so we don't
+      // overlay a previous thread's arcs on the current view.
+      if (_isFlowSessionStale(_mySession)) return;
       if (!data.flows || !data.flows.length) {
         // Priority 1: tier info present on the response — illuminate
         // every tier country on the globe and focus on the first primary.
@@ -29707,6 +29771,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         try {
           const artRes = await fetch(`${API}/api/threads/${threadId}/articles`);
           const artData = await artRes.json();
+          // Same stale-session guard as the outer fetch — if the user
+          // backed out before this articles fetch resolved, don't
+          // overwrite the next pass's __threadArticleFlows.
+          if (_isFlowSessionStale(_mySession)) return;
           const items = Array.isArray(artData?.articles) ? artData.articles : [];
           const articleFlows = items.map(a => {
             // src = article's home country (publisher / origin).
@@ -30584,6 +30652,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (evt) { evt.stopPropagation(); evt.preventDefault(); }
     const API = window.__API || "https://earth-wjr6.onrender.com";
 
+    // Stale-session guard — see www/index.html for full rationale.
+    const _mySession = _newFlowSession();
+
     // Ensure the pauseable flow clock is running — timeline arcs use
     // the thread pipeline which is driven off _flowClockAccumSec.
     try { window.resumeFlowAnimation?.(); } catch (_) {}
@@ -30672,6 +30743,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       } catch (e) {
         console.warn('Timeline endpoint failed, falling back to flat flows:', e);
       }
+      // Stale-session guard — bail before either the segmented or flat
+      // path writes anything to the globe / timeline bar.
+      if (_isFlowSessionStale(_mySession)) return;
 
       const backLabel = originPage === 2 ? "Back to Lines" : originPage === 0 ? "Back to Briefing" : "Back";
 
@@ -30722,6 +30796,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 2. Fallback: flat /api/flows/timeline/:id endpoint (legacy path).
       const res = await fetch(`${API}/api/flows/timeline/${timelineId}`);
       const data = await res.json();
+      // Stale-session guard — same as the segmented path above.
+      if (_isFlowSessionStale(_mySession)) return;
       if (!data.flows || !data.flows.length) {
         // Priority 1: tier-aware highlight. Single-primary-no-secondary
         // Lines get their primary country lit up without synthetic arcs.
@@ -41243,6 +41319,17 @@ body.ticker-active .gTickerLabel {
     const threadId = node.thread_id || node.id;
     const isTimeline = node.__kind === 'timeline';
 
+    // Stamp identity + coverage counts on the panel so the floating
+    // share button (#cdCloseBtn sibling) can read them without a re-
+    // query. Forwarded to /share/*.png as ?l=&c=&a= so the server
+    // skips its DB aggregation.
+    detailEl.dataset.kind             = isTimeline ? 'line' : 'thread';
+    detailEl.dataset.entityId         = String(threadId || '');
+    detailEl.dataset.entityTitle      = node.title || '';
+    detailEl.dataset.entityArticles   = String(Number(node.article_count) || 0);
+    detailEl.dataset.entityLanguages  = String(Number(node.language_count) || 0);
+    detailEl.dataset.entityCountries  = String(Number(node.source_country_count) || 0);
+
     detailEl.innerHTML = `
       <button id="cdResizeHandle" aria-label="Resize panel">
         <div id="cdResizeArrow">
@@ -46139,7 +46226,17 @@ body.ticker-active .gTickerLabel {
       const id    = dataset.entityId;
       const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
       if (!id) { console.warn('[share] no entity id on cluster panel'); return; }
-      window.__shareEntity({ kind, id: parseInt(id, 10), title });
+      // Forward the panel's already-known counts so the server skips
+      // its DB aggregation. parseInt → NaN if missing; __shareEntity →
+      // _fetchOgImageFile filters NaN with Number.isFinite.
+      window.__shareEntity({
+        kind,
+        id: parseInt(id, 10),
+        title,
+        articleCount:  parseInt(dataset.entityArticles,  10),
+        languageCount: parseInt(dataset.entityLanguages, 10),
+        countryCount:  parseInt(dataset.entityCountries, 10),
+      });
     });
     close.parentElement.insertBefore(btn, close);
   }
