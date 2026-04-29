@@ -9573,10 +9573,18 @@ app.get('/share/thread/:id.png', async (req, res) => {
     const qArticles = parseInt(req.query.a, 10);
     const haveQueryCounts = Number.isFinite(qLang) && Number.isFinite(qCountry);
 
+    // Hero image is intentionally NOT fetched here. story_threads doesn't
+    // store it as a column — it's computed by /api/threads/latest via a
+    // JOIN through story_thread_articles → news_articles → image_assets.
+    // Replicating that JOIN per share request to populate a single image
+    // panel was the root cause of the production 500 (column missing on
+    // first attempt, multi-second JOIN on the workaround). The OG card
+    // ships title + chrome + chips + footer without the right-panel hero
+    // image — clean dark layout, brand-consistent, no third-party CDN
+    // dependency on the render path.
     const { rows } = await pool.query(
       `SELECT t.id, t.title, t.primary_category, t.primary_nations,
-              t.last_updated_at, t.article_count,
-              t.hero_image_url, t.hero_catalog_image_url
+              t.last_updated_at, t.article_count
          FROM story_threads t
         WHERE t.id = $1`,
       [id]
@@ -9617,19 +9625,15 @@ app.get('/share/thread/:id.png', async (req, res) => {
     const articleCount = Number.isFinite(qArticles) ? qArticles : (t.article_count || 0);
     const png = await shareImg.generate({
       kind: 'thread',
-      // Cache key includes last_updated_at + counts + a hash of the
-      // hero URL so swapping the hero or the underlying counts busts
-      // the OG-card cache. Passed-in counts join the key so two
-      // different views of the same thread don't collide.
-      cacheKey: `thread:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}:${(t.hero_image_url || '').slice(-40)}`,
+      // Cache key: last_updated_at + counts. Hero is no longer in the
+      // mix (see SELECT comment above) so it drops out of the key too.
+      cacheKey: `thread:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}`,
       title:                t.title,
       isos:                 (t.primary_nations || []).slice(0, 6),
       category:             t.primary_category,
       articleCount,
       languageCount,
       countryCount,
-      heroImageUrl:         t.hero_image_url || null,
-      heroCatalogImageUrl:  t.hero_catalog_image_url || null,
     });
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
@@ -9689,21 +9693,13 @@ app.get('/share/line/:id.png', async (req, res) => {
     const qArticles = parseInt(req.query.a, 10);
     const haveQueryCounts = Number.isFinite(qLang) && Number.isFinite(qCountry);
 
+    // Hero image is intentionally NOT fetched here — see thread.png for
+    // full rationale. Lines additionally never had hero columns of their
+    // own; the prior code tried to pull a hero from the most-recent
+    // child thread, but story_threads doesn't have those columns either.
     const { rows } = await pool.query(
       `SELECT t.id, t.title, t.primary_category, t.primary_nations,
               t.last_updated_at,
-              -- Lines don't have their own hero image — pull the
-              -- most-recently-updated child thread's hero as a
-              -- visual stand-in. Same fallback chain as the OG
-              -- thread route (hero_image_url → hero_catalog_image_url).
-              (SELECT st.hero_image_url
-                 FROM story_threads st
-                WHERE st.timeline_id = t.id AND st.hero_image_url IS NOT NULL
-                ORDER BY st.last_updated_at DESC NULLS LAST LIMIT 1) AS hero_image_url,
-              (SELECT st.hero_catalog_image_url
-                 FROM story_threads st
-                WHERE st.timeline_id = t.id AND st.hero_catalog_image_url IS NOT NULL
-                ORDER BY st.last_updated_at DESC NULLS LAST LIMIT 1) AS hero_catalog_image_url,
               COALESCE(
                 (SELECT SUM(article_count)::int
                    FROM story_threads st WHERE st.timeline_id = t.id),
@@ -9749,15 +9745,13 @@ app.get('/share/line/:id.png', async (req, res) => {
     const articleCount = Number.isFinite(qArticles) ? qArticles : (t.article_count || 0);
     const png = await shareImg.generate({
       kind: 'line',
-      cacheKey: `line:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}:${(t.hero_image_url || '').slice(-40)}`,
+      cacheKey: `line:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}`,
       title:                t.title,
       isos:                 (t.primary_nations || []).slice(0, 6),
       category:             t.primary_category,
       articleCount,
       languageCount,
       countryCount,
-      heroImageUrl:         t.hero_image_url || null,
-      heroCatalogImageUrl:  t.hero_catalog_image_url || null,
     });
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
