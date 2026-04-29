@@ -1647,6 +1647,27 @@
   box-shadow: 0 0 14px rgba(0,200,120,0.25);
 }
 
+/* ── Heatmap ⇄ News-Flows mutex visual disable ────────────────────
+   The two top-nav toggle buttons (heatmap, news-flows) can't have
+   their panels open simultaneously — the JS click handlers gate the
+   active button so the inactive panel can't be reached. These CSS
+   rules surface the gated state visually so users see the button
+   is "not available right now" rather than discovering it via a
+   silent no-op or only-on-tap toast. */
+body.sem-heatmap-active #flowModeBtn,
+body.news-flows-active #semHeatToggleBtn {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: saturate(0.4);
+}
+body.sem-heatmap-active #flowModeBtn:hover,
+body.news-flows-active #semHeatToggleBtn:hover {
+  /* Suppress hover ramp-up so the dim state stays consistent under
+     pointer move / focus. The click handler's toast is the only
+     indication something happened. */
+  transform: none;
+}
+
 /* ── Flow Controls Panel ── */
 #flowControls {
   position: fixed;
@@ -2307,23 +2328,25 @@ body.ticker-active #flowControls {
   right: calc(70px * var(--mobile-control-scale));
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
-  border-radius: calc(12px * var(--mobile-control-scale));
-  background: rgba(255,200,130,0.08);
-  border: 1px solid rgba(255,200,130,0.25);
+  /* No pill — icon-only on this surface (per UX request). bg/border
+     removed so the share glyph reads as a bare control alongside
+     the minimize/close buttons. The hit area stays at 24×24 via
+     the explicit width/height + flex centering. */
+  background: transparent;
+  border: none;
   color: rgba(255,220,180,0.86);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  transition: all 0.15s;
+  transition: color 0.15s, transform 0.15s;
   z-index: 10;
 }
 .flowShareBtn svg { width: 12px; height: 12px; }
 .flowShareBtn:hover {
-  background: rgba(255,200,130,0.20);
-  border-color: rgba(255,200,130,0.55);
   color: #fff;
+  transform: scale(1.08);
 }
 #flowControls.minimized .flowShareBtn { display: none; }
 
@@ -4978,9 +5001,18 @@ button.arcCtxSegDot,
   background: rgba(255,255,255,0.12);
   color: #fff;
 }
-#flowCtxCard .flowCtxShare:hover {
-  background: rgba(255,200,130,0.24);
+/* Share button on the flow-context card: icon-only — no hover/active
+   pill fill (the gold glow on tap looked heavy alongside its sibling
+   chevron buttons). Suppress iOS Safari's default tap highlight too. */
+#flowCtxCard .flowCtxShare {
+  -webkit-tap-highlight-color: transparent;
+}
+#flowCtxCard .flowCtxShare:hover,
+#flowCtxCard .flowCtxShare:active,
+#flowCtxCard .flowCtxShare:focus {
+  background: transparent;
   color: rgba(255,220,180,1);
+  outline: none;
 }
 /* Hide the share button when the card has no shareable entity (e.g.
    article-flow sessions). Toggled by __arcAiSetSession via dataset.kind
@@ -13594,8 +13626,11 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
     </div>
-    <!-- Heatmap toggle button — closes the panel if it's already open. -->
-    <div class="iconBtn" id="semHeatToggleBtn" onclick="(window.__semHeatActive ? window.__semHeatClose : window.__semHeatOpen)?.()" style="display:none;">
+    <!-- Heatmap toggle button — closes the panel if it's already open.
+         Mutex'd against #flowModeBtn: when news-flows is active this
+         button is dimmed via CSS and a tap surfaces a toast hint
+         (see __semHeatToggleBtnClick). -->
+    <div class="iconBtn" id="semHeatToggleBtn" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="9"/>
         <path d="M3 12h18"/>
@@ -23966,8 +24001,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxUpdateButtonVisibility();
       // Stamp the active flow's entity onto #flowCtxCard so the share
       // button in the pill bar can read kind/id/title without holding
-      // its own state. Mirrors the dataset pattern used by
-      // #clusterDetailPanel for the cluster-panel share button.
+      // its own state. Also stamps coverage stats (article count,
+      // language count, country count) when the caller supplies them
+      // — these power the snapshot scope line ("COVERAGE IN N
+      // LANGUAGES · N COUNTRIES · N ARTICLES") on the share image.
       try {
         const card = document.getElementById('flowCtxCard');
         if (card) {
@@ -23975,10 +24012,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
             card.dataset.kind = session.mode === 'timeline' ? 'line' : 'thread';
             card.dataset.entityId = String(session.id);
             card.dataset.entityTitle = String(session.theme || session.title || '');
+            // Coverage stats — only set when the caller has them, so
+            // the share handler can detect availability and skip the
+            // scope line entirely if any are missing.
+            if (session.articleCount != null)  card.dataset.articleCount  = String(session.articleCount);
+            else delete card.dataset.articleCount;
+            if (session.languageCount != null) card.dataset.languageCount = String(session.languageCount);
+            else delete card.dataset.languageCount;
+            if (session.countryCount != null)  card.dataset.countryCount  = String(session.countryCount);
+            else delete card.dataset.countryCount;
           } else {
             delete card.dataset.kind;
             delete card.dataset.entityId;
             delete card.dataset.entityTitle;
+            delete card.dataset.articleCount;
+            delete card.dataset.languageCount;
+            delete card.dataset.countryCount;
           }
         }
       } catch (_) {}
@@ -24717,6 +24766,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Close flow panel helper ── */
   function closeFlowPanel() {
     flowModeOpen = false;
+    // Clear the body mutex class so the heatmap toggle re-enables.
+    // Set in flowModeBtn's click handler when the panel opens; cleared
+    // here so every close path (X button, ESC, programmatic close)
+    // releases the gate.
+    document.body.classList.remove("news-flows-active");
     renderer.domElement.style.cursor = '';
     document.getElementById("flowModeBtn").classList.remove("active");
     const flowControls = document.getElementById("flowControls");
@@ -25119,10 +25173,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   flowModeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
+    // Mutex: heatmap and news-flows can't coexist on screen. If heatmap
+    // is active, this button is functionally disabled — surface a toast
+    // hint instead of silently doing nothing. The CSS dim further
+    // signals "not available right now".
+    if (window.__semHeatActive && !flowModeOpen) {
+      window.__showToast?.('Close heatmap first');
+      return;
+    }
     flowModeOpen = !flowModeOpen;
     flowModeBtn.classList.toggle("active", flowModeOpen);
     flowControls.classList.toggle("visible", flowModeOpen);
-    
+    document.body.classList.toggle("news-flows-active", flowModeOpen);
+
     if (!flowModeOpen) {
       clearArcs();
       flowPlaying = false;
@@ -31310,6 +31373,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           id: threadId,
           theme: _ctxThread?.title || _ctxThread?.translated_title || null,
           articleIds: Array.isArray(_ctxThread?.article_ids) ? _ctxThread.article_ids : [],
+          articleCount:  _ctxThread?.article_count ?? null,
+          languageCount: _ctxThread?.language_count ?? null,
+          countryCount:  _ctxThread?.source_country_count ?? null,
         });
       } catch (_) {}
 
@@ -31493,6 +31559,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           articleIds: Array.isArray(_t?.article_ids) ? _t.article_ids
                       : Array.isArray(data.article_ids) ? data.article_ids
                       : [],
+          articleCount:  _t?.article_count ?? data?.thread?.article_count ?? null,
+          languageCount: _t?.language_count ?? data?.thread?.language_count ?? null,
+          countryCount:  _t?.source_country_count ?? data?.thread?.source_country_count ?? null,
         });
       } catch (_) {}
 
@@ -32375,6 +32444,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           id: timelineId,
           theme: _ctxTimeline?.title || _ctxTimeline?.translated_title || null,
           articleIds: Array.isArray(_ctxTimeline?.article_ids) ? _ctxTimeline.article_ids : [],
+          articleCount:  _ctxTimeline?.article_count ?? null,
+          languageCount: _ctxTimeline?.language_count ?? null,
+          countryCount:  _ctxTimeline?.source_country_count ?? null,
         });
       } catch (_) {}
 
@@ -32433,6 +32505,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             id: timelineId,
             theme: _ctxTimeline?.title || _ctxTimeline?.translated_title || null,
             articleIds: Array.isArray(tlData?.article_ids) ? tlData.article_ids : [],
+            articleCount:  _ctxTimeline?.article_count ?? tlData?.article_count ?? null,
+            languageCount: _ctxTimeline?.language_count ?? tlData?.language_count ?? null,
+            countryCount:  _ctxTimeline?.source_country_count ?? tlData?.source_country_count ?? null,
           });
         } catch (_) {}
 
@@ -47539,6 +47614,23 @@ body.ticker-active .gTickerLabel {
     return openInspectorAt(lat, lon, localPoint || null);
   };
 
+  // Toggle handler for the top-nav heatmap button. Gated against
+  // news-flows (the two surfaces are mutex'd) — when the news-flows
+  // panel is open, this no-ops with a toast hint instead of opening
+  // the heatmap on top of it. CSS additionally dims the button via
+  // body.news-flows-active so the disabled state reads visually.
+  window.__semHeatToggleBtnClick = function () {
+    if (window.__semHeatActive) {
+      window.__semHeatClose?.();
+      return;
+    }
+    if (document.body.classList.contains('news-flows-active')) {
+      window.__showToast?.('Close news flows first');
+      return;
+    }
+    window.__semHeatOpen?.();
+  };
+
   window.__semHeatOpen = function (opts) {
     // Mutual exclusion: flow arcs must never coexist with the heatmap.
     try {
@@ -49697,6 +49789,106 @@ body.ticker-active .gTickerLabel {
   }
   .shareBtn:active { transform: scale(0.96); }
   .shareBtn svg { width: 14px; height: 14px; display: block; }
+  /* Heatmap panel variant — strip the pill (bg + border) so the share
+     glyph reads as a bare control next to the close button. Cluster
+     panel keeps the pill since its header style accommodates it. */
+  #semHeatPanel .shareBtn {
+    background: transparent;
+    border: none;
+  }
+  #semHeatPanel .shareBtn:hover {
+    background: transparent;
+    border: none;
+    color: #fff;
+    transform: scale(1.08);
+  }
+  /* Snapshot share picker — bottom-sheet modal with Story / Post /
+     Other-apps options. Shown when the user taps a snapshot share
+     button so we can render the right aspect ratio for their target
+     destination (Story = 9:16 vertical, Post = 1:1 square, Other = 1:1). */
+  .snapPickerOverlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    z-index: 100400;
+    display: flex; align-items: flex-end; justify-content: center;
+    animation: snapPickerFadeIn 0.18s ease-out;
+  }
+  @keyframes snapPickerFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes snapPickerSlideUp { from { transform: translateY(24px); opacity: 0.6 } to { transform: translateY(0); opacity: 1 } }
+  .snapPickerCard {
+    background: rgba(8, 12, 22, 0.97);
+    border: 1px solid rgba(212, 168, 67, 0.42);
+    border-radius: 18px 18px 0 0;
+    padding: 22px 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
+    width: 100%; max-width: 480px;
+    display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.6);
+    animation: snapPickerSlideUp 0.22s ease-out;
+  }
+  .snapPickerTitle {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(212, 168, 67, 0.88);
+    text-align: center;
+    padding-bottom: 4px;
+  }
+  .snapPickerOption {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.12s;
+    -webkit-tap-highlight-color: transparent;
+    text-align: left;
+    -webkit-appearance: none; appearance: none;
+  }
+  .snapPickerOption:hover, .snapPickerOption:active {
+    background: rgba(212, 168, 67, 0.12);
+    border-color: rgba(212, 168, 67, 0.55);
+  }
+  .snapPickerOption:active { transform: scale(0.98); }
+  .snapPickerIcon {
+    width: 38px; height: 38px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(212, 168, 67, 0.85);
+  }
+  .snapPickerIcon .frame {
+    border: 2px solid rgba(212, 168, 67, 0.7);
+    border-radius: 4px;
+    display: block;
+  }
+  /* 9:16 vertical proxy (Story) */
+  .snapPickerIcon.story .frame { width: 18px; height: 32px; }
+  /* 1:1 square proxy (Post) */
+  .snapPickerIcon.post  .frame { width: 26px; height: 26px; }
+  /* Generic share arrow (Other) */
+  .snapPickerIcon.other svg { width: 22px; height: 22px; color: rgba(212, 168, 67, 0.85); }
+  .snapPickerLabel { flex: 1; min-width: 0; }
+  .snapPickerName {
+    font-size: 15px; font-weight: 700;
+    color: rgba(255, 230, 190, 0.96);
+  }
+  .snapPickerHint {
+    font-size: 11.5px; opacity: 0.55;
+    margin-top: 2px;
+  }
+  .snapPickerCancel {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 12px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    margin-top: 4px;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none; appearance: none;
+  }
+  .snapPickerCancel:hover, .snapPickerCancel:active { color: #fff; }
   /* Toast — surfaces share success / fallback (e.g. "link copied"). */
   #shareToast {
     position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
@@ -49949,8 +50141,13 @@ body.ticker-active .gTickerLabel {
       const qs = new URLSearchParams({ q: question });
       if (mode && mode !== 'percent') qs.set('mode', mode);
       const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+      // Normalize user-typed question to title case so the poster
+      // doesn't render "what is climate change" — gets "What Is
+      // Climate Change" instead. The original question is preserved
+      // for the share-sheet text and the canonical URL.
+      const titleQuestion = window.__snapTitleCase?.(question) || question;
       window.__shareSnapshot({
-        title:    question,
+        title:    titleQuestion,
         subtitle: `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
         badge:    'HEATMAP',
         url:      `${SHARE_HOST}/share/heatmap?${qs}`,
@@ -50001,10 +50198,23 @@ body.ticker-active .gTickerLabel {
     }
     const badge = (kind === 'line') ? 'STORY LINE · FLOW ARCS' : 'STORY THREAD · FLOW ARCS';
     const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+    // Build the scope line (e.g. "COVERAGE IN 51 LANGUAGES · 107
+    // COUNTRIES · 1,338 ARTICLES") from the stats __arcAiSetSession
+    // stamped on flowCtxCard.dataset. If any of the three are missing,
+    // skip the line entirely — half-data looks worse than no data.
+    const _fmtNum = (n) => Number(n).toLocaleString('en-US');
+    const _ac = parseInt(ds.articleCount  || '', 10);
+    const _lc = parseInt(ds.languageCount || '', 10);
+    const _cc = parseInt(ds.countryCount  || '', 10);
+    let scopeLine = '';
+    if (Number.isFinite(_ac) && Number.isFinite(_lc) && Number.isFinite(_cc) && _ac > 0) {
+      scopeLine = `COVERAGE IN ${_fmtNum(_lc)} LANGUAGE${_lc === 1 ? '' : 'S'} · ${_fmtNum(_cc)} COUNTR${_cc === 1 ? 'Y' : 'IES'} · ${_fmtNum(_ac)} ARTICLE${_ac === 1 ? '' : 'S'}`;
+    }
     window.__shareSnapshot({
       title,
       subtitle: `${kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`,
       badge,
+      scopeLine,
       url:      `${SHARE_HOST}/share/${kind}/${id}`,
       shareTitle: title || (kind === 'line' ? 'Story line on Earth00' : 'Story thread on Earth00'),
       shareText:  title ? `${title} — flow arcs on Earth00` : 'Flow arcs on Earth00',
@@ -50070,6 +50280,48 @@ body.ticker-active .gTickerLabel {
   //   y=910 …  945   subtitle (mode + date / country count)
   //   y=970 … 1010   country flag chips
   //   y=1040           EARTH00.COM watermark
+  // Layout per aspect — picker dispatches one of these. Square is the
+  // default (best for cross-platform reposting). Story is 9:16 vertical
+  // for Instagram Stories, with content positioned in the safe area
+  // (top ~17%, bottom ~13% are obscured by Instagram UI overlays).
+  function _snapLayoutFor(aspect) {
+    if (aspect === 'story') {
+      return {
+        aspect: 'story',
+        W: 1080, H: 1920,
+        // Top chrome — kept inside Instagram's safe area (above y≈320
+        // is obscured by the user avatar / story name / time).
+        logoX: 56, logoY: 320,
+        badgeY: 326,
+        accentTopY: 400,
+        // Captured view — bigger absolute size since Story has more
+        // vertical real estate. Width unchanged (1080-2*56=968).
+        viewX: 56, viewY: 420, viewW: 968, viewH: 800,
+        accentBotY: 1245,
+        titleY: 1305,
+        titleSize: 44,
+        titleLineH: 52,
+        subtitleY: 1395,
+        chipsY: 1445,
+        footerY: 1620,
+      };
+    }
+    return {
+      aspect: 'square',
+      W: 1080, H: 1080,
+      logoX: 56, logoY: 54,
+      badgeY: 60,
+      accentTopY: 130,
+      viewX: 56, viewY: 150, viewW: 968, viewH: 640,
+      accentBotY: 805,
+      titleY: 858,
+      titleSize: 38,
+      titleLineH: 46,
+      subtitleY: 935,
+      chipsY: 970,
+      footerY: 1040,
+    };
+  }
   const SNAPSHOT_W = 1080;
   const SNAPSHOT_H = 1080;
   const SNAPSHOT_BRAND = {
@@ -50086,30 +50338,88 @@ body.ticker-active .gTickerLabel {
 
   function _snapEsc(s) { return String(s ?? '').replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
 
-  // Draw the Earth00 logo (globe glyph + wordmark) at (x,y).
-  // Mirrors the SVG chrome used by the server's OG card so the two
-  // brand artifacts stay visually consistent across surfaces.
+  // Top-left logo MARK — globe glyph + italic Georgia "e", no
+  // "arth00" wordmark. The mark is the recognizable brand element;
+  // the full text "earth00.com" lives in the bottom-left footer so
+  // there's no redundancy. Drawn at 1.4× scale of the watermark
+  // version so it reads as the primary chrome anchor.
   function _snapDrawLogo(ctx, x, y) {
     ctx.save();
+    ctx.translate(x, y);
+    const scale = 1.4;
+    ctx.scale(scale, scale);
+    // Globe wireframe — outer + horizontal-squashed + vertical-squashed + equator
     ctx.strokeStyle = SNAPSHOT_BRAND.gold;
     ctx.lineWidth = 1.6;
-    ctx.globalAlpha = 0.92;
-    // Globe wireframe — outer + horizontal-squashed + vertical-squashed + equator line
-    const cx = x + 22, cy = y + 22;
+    ctx.globalAlpha = 0.96;
+    const cx = 22, cy = 22;
     ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x + 2, cy); ctx.lineTo(x + 42, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2, cy); ctx.lineTo(42, cy); ctx.stroke();
     ctx.globalAlpha = 1;
+    // Italic Georgia "e" — the stylized brand letter that sits inside
+    // the wireframe glyph. No "arth00" wordmark — keeping the mark
+    // pure and letting the bottom-left earth00.com footer carry the
+    // full text identity.
+    ctx.fillStyle = SNAPSHOT_BRAND.cream;
+    ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('e', 56, 34);
+    ctx.restore();
+  }
+
+  // Full logo (globe glyph + italic Georgia "e" + "arth00") used as a
+  // watermark anchored to the captured view. Drawn at lower opacity
+  // and scaled down so it reads as a brand stamp without competing
+  // with the underlying map/globe content. The opts.scale lets the
+  // caller tune the size for different surfaces.
+  function _snapDrawFullLogo(ctx, x, y, opts = {}) {
+    const scale = Number(opts.scale) || 1;
+    const alpha = Number(opts.alpha) || 0.55;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+    // Globe wireframe — outer + horizontal-squashed + vertical-squashed + equator line
+    ctx.strokeStyle = SNAPSHOT_BRAND.gold;
+    ctx.lineWidth = 1.6;
+    const cx = 22, cy = 22;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2, cy); ctx.lineTo(42, cy); ctx.stroke();
     // Italic "e" + "arth00"
     ctx.fillStyle = SNAPSHOT_BRAND.cream;
     ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('e', x + 56, y + 34);
+    ctx.fillText('e', 56, 34);
     ctx.fillStyle = SNAPSHOT_BRAND.ink;
     ctx.font = '700 22px -apple-system, system-ui, "Segoe UI", sans-serif';
-    ctx.fillText('arth00', x + 76, y + 34);
+    ctx.fillText('arth00', 76, 34);
     ctx.restore();
+  }
+
+  // Title-case normalization — used for the heatmap question title so
+  // user input like "what is happening in ukraine" renders as
+  // "What Is Happening in Ukraine" on the poster. Acronyms and all-caps
+  // words are preserved as-is. Common short articles/prepositions stay
+  // lowercase except when they're the first word.
+  const _SNAP_LOWERCASE = new Set([
+    'a','an','and','as','at','but','by','for','from','in','of','on','or','the','to','with','vs','via'
+  ]);
+  function _snapTitleCase(s) {
+    const str = String(s ?? '').trim();
+    if (!str) return str;
+    return str.split(/(\s+)/).map((word, i, arr) => {
+      if (/^\s+$/.test(word)) return word;
+      // Preserve acronyms / all-caps tokens (length >= 2, all uppercase).
+      if (word.length >= 2 && word === word.toUpperCase() && /[A-Z]/.test(word)) return word;
+      const lower = word.toLowerCase();
+      const isFirst = arr.slice(0, i).every(w => /^\s*$/.test(w));
+      if (!isFirst && _SNAP_LOWERCASE.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    }).join('');
   }
 
   // Draw a horizontal gold sweep line — same accent as the OG card.
@@ -50182,8 +50492,12 @@ body.ticker-active .gTickerLabel {
   // target rect, "contain"-fit so nothing is cropped — important since
   // the globe content the user wants to share might extend to the
   // canvas edges (long arcs, polar heatmap, etc.).
+  // Returns the actual rect the image was drawn at so callers can
+  // anchor overlays (watermark, labels, badges) to the visible content
+  // instead of the larger destination rect — important when the source
+  // is letterboxed because of contain-fit aspect mismatch.
   function _snapDrawGlobeImage(ctx, img, x, y, w, h) {
-    if (!img || !img.width || !img.height) return;
+    if (!img || !img.width || !img.height) return { dx: x, dy: y, drawW: w, drawH: h };
     const srcAspect = img.width / img.height;
     const dstAspect = w / h;
     let drawW, drawH, dx, dy;
@@ -50195,6 +50509,7 @@ body.ticker-active .gTickerLabel {
       dx = x + (w - drawW) / 2; dy = y;
     }
     ctx.drawImage(img, dx, dy, drawW, drawH);
+    return { dx, dy, drawW, drawH };
   }
 
   // Wrap a long string into N lines that fit a max-pixel width.
@@ -50230,50 +50545,182 @@ body.ticker-active .gTickerLabel {
 
   // Capture whichever projection the user is currently viewing —
   // 3D globe (THREE.js WebGLRenderer canvas) or 2D map (Map2D's own
-  // 2D canvas). The active projection is window.__projection
-  // ("globe" | "map"); each path force-renders before snapping so
-  // the buffer reflects the live state. Force-render is required for
-  // 3D (preserveDrawingBuffer is true but a render is still safer
-  // since timeline advances etc. could be mid-frame), and harmless
-  // for 2D (Map2D's render() is idempotent).
+  // 2D canvas). Returns captureRect (the canvas's viewport CSS-pixel
+  // bounds) so DOM overlays — flow node label cards — can be
+  // re-projected onto the composite by the caller.
   async function _snapCaptureView() {
     const projection = (window.__projection === 'map') ? 'map' : 'globe';
+    let canvasEl;
     if (projection === 'map' && window.__map2d?.state?.canvas) {
       try { window.__map2d.render?.(); } catch (_) {}
-      const url = window.__map2d.state.canvas.toDataURL('image/png');
-      return { img: await _snapLoadImage(url), projection };
+      canvasEl = window.__map2d.state.canvas;
+    } else {
+      const renderer = window.__renderer;
+      if (!renderer) throw new Error('renderer not ready');
+      try {
+        if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
+      } catch (_) {}
+      canvasEl = renderer.domElement;
     }
-    const renderer = window.__renderer;
-    if (!renderer) throw new Error('renderer not ready');
-    try {
-      if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
-    } catch (_) {}
-    const url = renderer.domElement.toDataURL('image/png');
-    return { img: await _snapLoadImage(url), projection };
+    const captureRect = canvasEl.getBoundingClientRect();
+    const url = canvasEl.toDataURL('image/png');
+    return { img: await _snapLoadImage(url), projection, captureRect };
   }
 
-  // Composite everything onto a 1080×1080 brand-frame canvas. Returns
-  // a Blob (PNG) ready for share dispatch.
-  async function _snapComposite({ globeImg, title, subtitle, badge, isos }) {
+  // Re-draw the live flow-arc node label cards onto the composite at
+  // their projected positions. Called only when labels are toggled on
+  // (the #flowNodeLabels container has opacity > 0) — if labels are
+  // hidden via the user's checkbox, this is a no-op so the snapshot
+  // matches the on-screen state. Reads the .flowNodeLabel DOM
+  // (.fnlType eyebrow + .fnlName + .fnlFlag), translates each
+  // viewport-CSS-pixel position into the composite's coordinate
+  // space using the captured canvas's bounding rect, fetches flag
+  // PNGs in parallel, then redraws each card with the same eyebrow /
+  // name / flag layout (and tier-aware color palette) the user sees
+  // live on the globe.
+  async function _snapDrawNodeLabels(ctx, drawn, captureRect) {
+    const container = document.getElementById('flowNodeLabels');
+    if (!container || !captureRect) return;
+    // Container-level visibility — toggled to opacity:0 when the user
+    // unchecks the Labels checkbox in the flow-context card.
+    const cs = window.getComputedStyle(container);
+    if (cs.display === 'none') return;
+    if (parseFloat(cs.opacity || '1') < 0.05) return;
+    if (!captureRect.width || !captureRect.height) return;
+
+    const scaleX = drawn.drawW / captureRect.width;
+    const scaleY = drawn.drawH / captureRect.height;
+
+    // Pass 1 — collect visible labels with their positions + content.
+    const visible = [];
+    container.querySelectorAll('.flowNodeLabel').forEach(label => {
+      const ls = window.getComputedStyle(label);
+      if (ls.display === 'none') return;
+      const op = parseFloat(ls.opacity || '1');
+      if (op < 0.05) return;
+      const r = label.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
+      const lx = r.left - captureRect.left;
+      const ly = r.top  - captureRect.top;
+      // Skip labels that fall outside the captured canvas (e.g. while
+      // the camera is animating and a label briefly overshoots).
+      if (lx + r.width  < 0 || lx > captureRect.width)  return;
+      if (ly + r.height < 0 || ly > captureRect.height) return;
+
+      const typeTxt = label.querySelector('.fnlType')?.textContent?.trim() || '';
+      const nameTxt = label.querySelector('.fnlName')?.textContent?.trim() || '';
+      const flagEl  = label.querySelector('.fnlFlag');
+      let iso = null;
+      if (flagEl?.src) {
+        const m = flagEl.src.match(/\/(?:w\d+\/)?([a-z]{2})\.png/i);
+        if (m) iso = m[1].toLowerCase();
+      }
+      let typeColor   = 'rgba(255,200,140,0.92)';
+      let borderColor = 'rgba(255,180,80,0.42)';
+      if (label.classList.contains('fnl-tier-primary')) {
+        typeColor   = 'rgba(100,240,160,0.95)';
+        borderColor = 'rgba(80,220,140,0.55)';
+      } else if (label.classList.contains('fnl-tier-secondary')) {
+        typeColor   = 'rgba(120,200,250,0.95)';
+        borderColor = 'rgba(100,180,240,0.5)';
+      }
+      visible.push({ lx, ly, w: r.width, h: r.height, opacity: op,
+                     typeTxt, nameTxt, iso, typeColor, borderColor });
+    });
+    if (!visible.length) return;
+
+    // Pass 2 — pre-fetch flag PNGs in parallel so the per-label draw
+    // loop is fully synchronous and ordering is deterministic.
+    const isoSet = new Set(visible.map(L => L.iso).filter(Boolean));
+    const flagMap = new Map();
+    await Promise.all([...isoSet].map(async iso => {
+      try { flagMap.set(iso, await _snapLoadImage(`${FLAG_CDN_BASE}${iso}.png`)); }
+      catch (_) { /* missing flag — text fallback */ }
+    }));
+
+    // Pass 3 — draw each card. Sizes scale with the source-to-composite
+    // ratio so labels render at the same VISUAL size in the captured
+    // image as they do on the live globe.
+    const k = Math.max(scaleX, 0.001);   // shorthand for size scaling
+    for (const L of visible) {
+      const cx = drawn.dx + L.lx * scaleX;
+      const cy = drawn.dy + L.ly * scaleY;
+      const cw = L.w * scaleX;
+      const ch = L.h * scaleY;
+
+      ctx.save();
+      ctx.globalAlpha = L.opacity;
+
+      // Card chrome — matches .flowNodeLabel CSS (dark glass + warm border).
+      ctx.fillStyle   = 'rgba(6,10,20,0.82)';
+      ctx.strokeStyle = L.borderColor;
+      ctx.lineWidth   = Math.max(1, 1.2 * k);
+      const radius    = Math.max(4, 8 * k);
+      _snapRoundRect(ctx, cx, cy, cw, ch, radius);
+      ctx.fill();
+      ctx.stroke();
+
+      const padX = 9 * k;
+      const padY = 5 * k;
+
+      // Eyebrow (ORIGIN / DEST / PRIMARY / SECONDARY)
+      let cursorY = cy + padY;
+      if (L.typeTxt) {
+        const fs = Math.max(7, 9 * k);
+        ctx.fillStyle = L.typeColor;
+        ctx.font = `700 ${fs}px -apple-system, system-ui, "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'top';
+        ctx.fillText(L.typeTxt, cx + padX, cursorY);
+        cursorY += fs * 1.25;
+      }
+
+      // Name row (flag + place)
+      if (L.nameTxt) {
+        const fs = Math.max(8, 12 * k);
+        ctx.font = `600 ${fs}px -apple-system, system-ui, "Segoe UI", sans-serif`;
+        ctx.fillStyle = 'rgba(255,255,255,0.94)';
+        ctx.textBaseline = 'top';
+        let nx = cx + padX;
+        if (L.iso && flagMap.has(L.iso)) {
+          const flag = flagMap.get(L.iso);
+          const flagW = 14 * k;
+          const flagH = 10 * k;
+          // vertically center the flag against the name baseline
+          const flagY = cursorY + (fs - flagH) / 2 + 1;
+          try { ctx.drawImage(flag, nx, flagY, flagW, flagH); } catch (_) {}
+          nx += flagW + 3 * k;
+        }
+        ctx.fillText(L.nameTxt, nx, cursorY);
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // Composite everything onto a brand-frame canvas. Aspect ('square' |
+  // 'story') drives all positions via _snapLayoutFor. Returns a Blob
+  // (PNG) ready for share dispatch.
+  async function _snapComposite({ globeImg, title, subtitle, badge, isos, projection, aspect, captureRect, scopeLine }) {
+    const L = _snapLayoutFor(aspect);
     const canvas = document.createElement('canvas');
-    canvas.width = SNAPSHOT_W;
-    canvas.height = SNAPSHOT_H;
+    canvas.width = L.W;
+    canvas.height = L.H;
     const ctx = canvas.getContext('2d');
 
     // Background gradient + subtle gold radial glow (matches OG card)
-    const bg = ctx.createLinearGradient(0, 0, 0, SNAPSHOT_H);
+    const bg = ctx.createLinearGradient(0, 0, 0, L.H);
     bg.addColorStop(0, SNAPSHOT_BRAND.bgTop);
     bg.addColorStop(1, SNAPSHOT_BRAND.bgBot);
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, SNAPSHOT_W, SNAPSHOT_H);
-    const glow = ctx.createRadialGradient(SNAPSHOT_W * 0.85, SNAPSHOT_H * 0.15, 50, SNAPSHOT_W * 0.85, SNAPSHOT_H * 0.15, 600);
+    ctx.fillRect(0, 0, L.W, L.H);
+    const glow = ctx.createRadialGradient(L.W * 0.85, L.H * 0.15, 50, L.W * 0.85, L.H * 0.15, 600);
     glow.addColorStop(0, 'rgba(212,168,67,0.18)');
     glow.addColorStop(1, 'rgba(212,168,67,0)');
     ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, SNAPSHOT_W, SNAPSHOT_H);
+    ctx.fillRect(0, 0, L.W, L.H);
 
-    // Top chrome
-    _snapDrawLogo(ctx, 56, 54);
+    // Top chrome — plain "earth00" wordmark only.
+    _snapDrawLogo(ctx, L.logoX, L.logoY);
 
     // Optional badge in the top-right (e.g. HEATMAP, NEWS FLOWS)
     if (badge) {
@@ -50281,8 +50728,8 @@ body.ticker-active .gTickerLabel {
       ctx.textBaseline = 'middle';
       const bw = Math.max(160, ctx.measureText(badge).width + 36);
       const bh = 36;
-      const bx = SNAPSHOT_W - 56 - bw;
-      const by = 60;
+      const bx = L.W - 56 - bw;
+      const by = L.badgeY;
       ctx.fillStyle = 'rgba(212,168,67,0.10)';
       ctx.strokeStyle = SNAPSHOT_BRAND.gold;
       ctx.lineWidth = 1.4;
@@ -50295,42 +50742,150 @@ body.ticker-active .gTickerLabel {
     }
 
     // Top accent line
-    _snapDrawAccent(ctx, 56, 130, SNAPSHOT_W - 112);
+    _snapDrawAccent(ctx, 56, L.accentTopY, L.W - 112);
 
-    // Globe image area — 56 inset, ~640px tall
-    _snapDrawGlobeImage(ctx, globeImg, 56, 150, SNAPSHOT_W - 112, 640);
+    // Captured view — _snapDrawGlobeImage returns the actual rect the
+    // image landed in (after contain-fit letterboxing) so we can anchor
+    // overlays (watermark, label cards) to the visible content.
+    const drawn = _snapDrawGlobeImage(ctx, globeImg, L.viewX, L.viewY, L.viewW, L.viewH);
 
-    // Bottom accent line
-    _snapDrawAccent(ctx, 56, 805, SNAPSHOT_W - 112);
+    // Re-draw flow-arc node label cards from the live DOM, but only
+    // when they're toggled on. The function bails out early if the
+    // #flowNodeLabels container is hidden (opacity 0 / display none),
+    // so a snapshot taken with labels OFF stays clean.
+    await _snapDrawNodeLabels(ctx, drawn, captureRect);
 
-    // Title (theme / question / keyword)
-    if (title) {
-      ctx.fillStyle = SNAPSHOT_BRAND.cream;
-      ctx.font = '800 38px -apple-system, system-ui, "Segoe UI", sans-serif';
-      ctx.textBaseline = 'alphabetic';
-      const titleLines = _snapWrapText(ctx, title, SNAPSHOT_W - 112, 2);
-      titleLines.forEach((line, i) => ctx.fillText(line, 56, 858 + i * 46));
+    // Watermark anchored to the captured view: south-pacific area for
+    // 2D map, bottom-left dark space for 3D globe.
+    {
+      const isMap = (projection === 'map');
+      const watermarkScale = isMap ? 0.85 : 1.0;
+      const watermarkAlpha = isMap ? 0.55 : 0.72;
+      const wx = isMap
+        ? drawn.dx + drawn.drawW * 0.04
+        : drawn.dx + 18;
+      const wy = isMap
+        ? drawn.dy + drawn.drawH * 0.62
+        : drawn.dy + drawn.drawH - 56;
+      _snapDrawFullLogo(ctx, wx, wy, { scale: watermarkScale, alpha: watermarkAlpha });
     }
 
-    // Subtitle (mode badge text, date range, etc.)
+    // Bottom accent line
+    _snapDrawAccent(ctx, 56, L.accentBotY, L.W - 112);
+
+    // Title (theme / question / keyword) — matches .cdTitle weight
+    // (700) and tightish letter-spacing (-0.01em). canvas2d doesn't
+    // honor letter-spacing in font-shorthand on every browser; we
+    // emulate the tightening by setting the experimental
+    // CanvasRenderingContext2D.letterSpacing attribute (Safari + recent
+    // Chrome; older browsers ignore it harmlessly).
+    if (title) {
+      ctx.fillStyle = SNAPSHOT_BRAND.cream;
+      ctx.font = `700 ${L.titleSize}px -apple-system, system-ui, "Segoe UI", sans-serif`;
+      ctx.textBaseline = 'alphabetic';
+      try { ctx.letterSpacing = '-0.01em'; } catch (_) {}
+      const titleLines = _snapWrapText(ctx, title, L.W - 112, 2);
+      titleLines.forEach((line, i) => ctx.fillText(line, 56, L.titleY + i * L.titleLineH));
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
+    }
+
+    // Subtitle (mode badge text, date range, etc.) — matches .cdType
+    // eyebrow aesthetic: small caps, weight 700, wide letter-spacing.
     if (subtitle) {
       ctx.fillStyle = SNAPSHOT_BRAND.gold;
-      ctx.font = '700 14px -apple-system, system-ui, "Segoe UI", sans-serif';
-      ctx.fillText(subtitle, 56, 935);
+      ctx.font = '700 13px -apple-system, system-ui, "Segoe UI", sans-serif';
+      try { ctx.letterSpacing = '0.16em'; } catch (_) {}
+      ctx.fillText(subtitle, 56, L.subtitleY);
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
+    }
+
+    // Scope line — "COVERAGE IN 51 LANGUAGES · 107 COUNTRIES · 1,338
+    // ARTICLES" style summary that captures the entire concept of a
+    // thread or timeline. Rendered with the .cdMetaLabel aesthetic
+    // (weight 600, wide letter-spacing 0.14em, low-key opacity) so it
+    // reads as supporting metadata, not competing with the title.
+    if (scopeLine) {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '600 12px -apple-system, system-ui, "Segoe UI", sans-serif';
+      try { ctx.letterSpacing = '0.14em'; } catch (_) {}
+      // Sits ~28px above the chips row
+      ctx.fillText(scopeLine, 56, L.chipsY - 18);
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
     }
 
     // Country flag chips
     if (Array.isArray(isos) && isos.length) {
       const chips = await _snapFlagImages(isos);
-      _snapDrawFlagChips(ctx, chips, 56, 970);
+      _snapDrawFlagChips(ctx, chips, 56, L.chipsY);
     }
 
-    // Watermark
+    // EARTH00.COM footer text
     ctx.fillStyle = SNAPSHOT_BRAND.goldSoft;
     ctx.font = '700 16px -apple-system, system-ui, "Segoe UI", sans-serif';
-    ctx.fillText('EARTH00.COM', 56, 1040);
+    ctx.fillText('EARTH00.COM', 56, L.footerY);
 
     return new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+  }
+
+  // Bottom-sheet picker — resolves to one of {'story','post','other'}
+  // or null if user dismissed. Self-cleaning: removes its DOM node on
+  // any resolution path. Backdrop tap closes; explicit Cancel button
+  // closes; Esc closes (desktop / web).
+  function _snapShowPicker() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'snapPickerOverlay';
+      overlay.innerHTML = `
+        <div class="snapPickerCard" role="dialog" aria-label="Share snapshot">
+          <div class="snapPickerTitle">Share snapshot</div>
+          <button class="snapPickerOption" data-pick="story" type="button">
+            <div class="snapPickerIcon story"><span class="frame"></span></div>
+            <div class="snapPickerLabel">
+              <div class="snapPickerName">Story</div>
+              <div class="snapPickerHint">9:16 vertical · best for Instagram / Snapchat Story</div>
+            </div>
+          </button>
+          <button class="snapPickerOption" data-pick="post" type="button">
+            <div class="snapPickerIcon post"><span class="frame"></span></div>
+            <div class="snapPickerLabel">
+              <div class="snapPickerName">Post</div>
+              <div class="snapPickerHint">1:1 square · best for Instagram / X feed</div>
+            </div>
+          </button>
+          <button class="snapPickerOption" data-pick="other" type="button">
+            <div class="snapPickerIcon other">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+              </svg>
+            </div>
+            <div class="snapPickerLabel">
+              <div class="snapPickerName">Other apps</div>
+              <div class="snapPickerHint">1:1 square · iMessage, Twitter, AirDrop, Save Photos…</div>
+            </div>
+          </button>
+          <button class="snapPickerCancel" type="button">Cancel</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      let settled = false;
+      function close(result) {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(result);
+      }
+      function onKey(e) { if (e.key === 'Escape') close(null); }
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) return close(null);
+        const opt = e.target.closest?.('.snapPickerOption');
+        if (opt) return close(opt.dataset.pick);
+        const cancel = e.target.closest?.('.snapPickerCancel');
+        if (cancel) return close(null);
+      });
+    });
   }
 
   // Convert a Blob to a base64 string (no data: prefix).
@@ -50424,22 +50979,32 @@ body.ticker-active .gTickerLabel {
   //   });
   window.__shareSnapshot = async function(opts = {}) {
     try {
+      // Picker FIRST so the user picks the aspect ratio before we
+      // capture/composite. Different destinations want different
+      // aspects: Story = 9:16 vertical, Post = 1:1, Other = 1:1.
+      // Caller can skip the picker by passing { skipPicker: true,
+      // aspect: 'square' | 'story' } — useful for callers that want
+      // a fixed format (none today, but cheap optionality).
+      let pick = opts.aspect || null;
+      if (!opts.skipPicker) {
+        pick = await _snapShowPicker();
+        if (!pick) return; // user dismissed
+      }
+      const aspect = (pick === 'story') ? 'story' : 'square';
       showToast('Capturing…', 1500);
-      const { img: globeImg, projection } = await _snapCaptureView();
-      // Mode label that respects the user's current view. Caller can
-      // override by passing opts.subtitle explicitly; otherwise we
-      // tag the snapshot so recipients can tell at a glance whether
-      // it's the globe or 2D-map projection.
+      const { img: globeImg, projection, captureRect } = await _snapCaptureView();
       const projectionLabel = projection === 'map' ? '2D MAP' : 'GLOBE';
-      const subtitle = opts.subtitle != null
-        ? opts.subtitle
-        : projectionLabel;
+      const subtitle = opts.subtitle != null ? opts.subtitle : projectionLabel;
       const blob = await _snapComposite({
         globeImg,
         title:    opts.title || '',
         subtitle,
         badge:    opts.badge || '',
         isos:     opts.isos  || [],
+        projection,
+        aspect,                              // 'square' | 'story'
+        captureRect,                         // for re-projecting DOM label cards
+        scopeLine: opts.scopeLine || '',     // "X LANGUAGES · Y COUNTRIES · Z ARTICLES"
       });
       await _snapDispatch(blob, {
         url:        opts.url || undefined,
@@ -50451,6 +51016,10 @@ body.ticker-active .gTickerLabel {
       showToast('Snapshot failed');
     }
   };
+
+  // Expose the title-case helper so callers (e.g. heatmap share) can
+  // normalize user-typed questions before passing them in as a title.
+  window.__snapTitleCase = _snapTitleCase;
 
   // ─── Phase 3: Universal Links — deep link router ──────────────
   // When the OS hands the app a URL like https://earth00.com/share/thread/123,

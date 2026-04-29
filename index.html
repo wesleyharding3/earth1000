@@ -1606,6 +1606,18 @@
   box-shadow: 0 0 14px rgba(0,200,120,0.25);
 }
 
+/* ── Heatmap ⇄ News-Flows mutex visual disable ──────────────────── */
+body.sem-heatmap-active #flowModeBtn,
+body.news-flows-active #semHeatToggleBtn {
+  opacity: 0.35;
+  cursor: not-allowed;
+  filter: saturate(0.4);
+}
+body.sem-heatmap-active #flowModeBtn:hover,
+body.news-flows-active #semHeatToggleBtn:hover {
+  transform: none;
+}
+
 /* ── Flow Controls Panel ── */
 #flowControls {
   position: fixed;
@@ -2293,23 +2305,22 @@ body.ticker-active #flowControls {
   right: calc(70px * var(--mobile-control-scale));
   width: calc(24px * var(--mobile-control-scale));
   height: calc(24px * var(--mobile-control-scale));
-  border-radius: calc(12px * var(--mobile-control-scale));
-  background: rgba(255,200,130,0.08);
-  border: 1px solid rgba(255,200,130,0.25);
+  /* No pill — icon-only on this surface (per UX request). */
+  background: transparent;
+  border: none;
   color: rgba(255,220,180,0.86);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  transition: all 0.15s;
+  transition: color 0.15s, transform 0.15s;
   z-index: 10;
 }
 .flowShareBtn svg { width: 12px; height: 12px; }
 .flowShareBtn:hover {
-  background: rgba(255,200,130,0.20);
-  border-color: rgba(255,200,130,0.55);
   color: #fff;
+  transform: scale(1.08);
 }
 #flowControls.minimized .flowShareBtn { display: none; }
 
@@ -4674,9 +4685,18 @@ button.arcCtxSegDot,
   background: rgba(255,255,255,0.12);
   color: #fff;
 }
-#flowCtxCard .flowCtxShare:hover {
-  background: rgba(255,200,130,0.24);
+/* Share button on the flow-context card: icon-only — no hover/active
+   pill fill (the gold glow on tap looked heavy alongside its sibling
+   chevron buttons). Suppress iOS Safari's default tap highlight too. */
+#flowCtxCard .flowCtxShare {
+  -webkit-tap-highlight-color: transparent;
+}
+#flowCtxCard .flowCtxShare:hover,
+#flowCtxCard .flowCtxShare:active,
+#flowCtxCard .flowCtxShare:focus {
+  background: transparent;
   color: rgba(255,220,180,1);
+  outline: none;
 }
 /* Hide the share button when the card has no shareable entity (e.g.
    article-flow sessions). Toggled by __arcAiSetSession via dataset.kind
@@ -12724,8 +12744,8 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
     </div>
-    <!-- Heatmap toggle button -->
-    <div class="iconBtn" id="semHeatToggleBtn" title="Toggle Heatmap" onclick="(window.__semHeatActive ? window.__semHeatClose : window.__semHeatOpen)?.()" style="display:none;">
+    <!-- Heatmap toggle button — mutex'd against #flowModeBtn. -->
+    <div class="iconBtn" id="semHeatToggleBtn" title="Toggle Heatmap" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="9"/>
         <path d="M3 12h18"/>
@@ -22555,10 +22575,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxScope = 'entities';
       _arcCtxCurrentKey = null;
       _arcCtxUpdateButtonVisibility();
-      // Stamp the active flow's entity onto #flowCtxCard so the share
-      // button in the pill bar can read kind/id/title without holding
-      // its own state. Mirrors the dataset pattern used by
-      // #clusterDetailPanel for the cluster-panel share button.
+      // Stamp entity + coverage stats onto #flowCtxCard so the share
+      // button in the pill bar can read kind/id/title and the article/
+      // language/country counts that drive the snapshot scope line.
       try {
         const card = document.getElementById('flowCtxCard');
         if (card) {
@@ -22566,10 +22585,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
             card.dataset.kind = session.mode === 'timeline' ? 'line' : 'thread';
             card.dataset.entityId = String(session.id);
             card.dataset.entityTitle = String(session.theme || session.title || '');
+            if (session.articleCount != null)  card.dataset.articleCount  = String(session.articleCount);
+            else delete card.dataset.articleCount;
+            if (session.languageCount != null) card.dataset.languageCount = String(session.languageCount);
+            else delete card.dataset.languageCount;
+            if (session.countryCount != null)  card.dataset.countryCount  = String(session.countryCount);
+            else delete card.dataset.countryCount;
           } else {
             delete card.dataset.kind;
             delete card.dataset.entityId;
             delete card.dataset.entityTitle;
+            delete card.dataset.articleCount;
+            delete card.dataset.languageCount;
+            delete card.dataset.countryCount;
           }
         }
       } catch (_) {}
@@ -23302,6 +23330,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Close flow panel helper ── */
   function closeFlowPanel() {
     flowModeOpen = false;
+    // Clear the body mutex class so the heatmap toggle re-enables.
+    document.body.classList.remove("news-flows-active");
     renderer.domElement.style.cursor = '';
     document.getElementById("flowModeBtn").classList.remove("active");
     const flowControls = document.getElementById("flowControls");
@@ -23691,10 +23721,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   flowModeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
+    // Mutex: heatmap and news-flows can't coexist on screen.
+    if (window.__semHeatActive && !flowModeOpen) {
+      window.__showToast?.('Close heatmap first');
+      return;
+    }
     flowModeOpen = !flowModeOpen;
     flowModeBtn.classList.toggle("active", flowModeOpen);
     flowControls.classList.toggle("visible", flowModeOpen);
-    
+    document.body.classList.toggle("news-flows-active", flowModeOpen);
+
     if (!flowModeOpen) {
       clearArcs();
       flowPlaying = false;
@@ -29542,6 +29578,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           id: threadId,
           theme: _ctxThread?.title || _ctxThread?.translated_title || null,
           articleIds: Array.isArray(_ctxThread?.article_ids) ? _ctxThread.article_ids : [],
+          articleCount:  _ctxThread?.article_count ?? null,
+          languageCount: _ctxThread?.language_count ?? null,
+          countryCount:  _ctxThread?.source_country_count ?? null,
         });
       } catch (_) {}
 
@@ -29720,6 +29759,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           articleIds: Array.isArray(_t?.article_ids) ? _t.article_ids
                       : Array.isArray(data.article_ids) ? data.article_ids
                       : [],
+          articleCount:  _t?.article_count ?? data?.thread?.article_count ?? null,
+          languageCount: _t?.language_count ?? data?.thread?.language_count ?? null,
+          countryCount:  _t?.source_country_count ?? data?.thread?.source_country_count ?? null,
         });
       } catch (_) {}
 
@@ -30585,6 +30627,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           id: timelineId,
           theme: _ctxTimeline?.title || _ctxTimeline?.translated_title || null,
           articleIds: Array.isArray(_ctxTimeline?.article_ids) ? _ctxTimeline.article_ids : [],
+          articleCount:  _ctxTimeline?.article_count ?? null,
+          languageCount: _ctxTimeline?.language_count ?? null,
+          countryCount:  _ctxTimeline?.source_country_count ?? null,
         });
       } catch (_) {}
 
@@ -30643,6 +30688,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             id: timelineId,
             theme: _ctxTimeline?.title || _ctxTimeline?.translated_title || null,
             articleIds: Array.isArray(tlData?.article_ids) ? tlData.article_ids : [],
+            articleCount:  _ctxTimeline?.article_count ?? tlData?.article_count ?? null,
+            languageCount: _ctxTimeline?.language_count ?? tlData?.language_count ?? null,
+            countryCount:  _ctxTimeline?.source_country_count ?? tlData?.source_country_count ?? null,
           });
         } catch (_) {}
 
@@ -44500,6 +44548,20 @@ body.ticker-active .gTickerLabel {
     return openInspectorAt(lat, lon, localPoint || null);
   };
 
+  // Toggle handler for the top-nav heatmap button. Gated against
+  // news-flows (the two surfaces are mutex'd).
+  window.__semHeatToggleBtnClick = function () {
+    if (window.__semHeatActive) {
+      window.__semHeatClose?.();
+      return;
+    }
+    if (document.body.classList.contains('news-flows-active')) {
+      window.__showToast?.('Close news flows first');
+      return;
+    }
+    window.__semHeatOpen?.();
+  };
+
   window.__semHeatOpen = function (opts) {
     // Mutual exclusion: flow arcs must never coexist with the heatmap.
     try {
@@ -45789,6 +45851,99 @@ body.ticker-active .gTickerLabel {
   }
   .shareBtn:active { transform: scale(0.96); }
   .shareBtn svg { width: 14px; height: 14px; display: block; }
+  /* Heatmap panel variant — strip the pill (bg + border) so the share
+     glyph reads as a bare control next to the close button. */
+  #semHeatPanel .shareBtn {
+    background: transparent;
+    border: none;
+  }
+  #semHeatPanel .shareBtn:hover {
+    background: transparent;
+    border: none;
+    color: #fff;
+    transform: scale(1.08);
+  }
+  /* Snapshot share picker — see comments in www/index.html. */
+  .snapPickerOverlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    z-index: 100400;
+    display: flex; align-items: flex-end; justify-content: center;
+    animation: snapPickerFadeIn 0.18s ease-out;
+  }
+  @keyframes snapPickerFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes snapPickerSlideUp { from { transform: translateY(24px); opacity: 0.6 } to { transform: translateY(0); opacity: 1 } }
+  .snapPickerCard {
+    background: rgba(8, 12, 22, 0.97);
+    border: 1px solid rgba(212, 168, 67, 0.42);
+    border-radius: 18px 18px 0 0;
+    padding: 22px 16px calc(env(safe-area-inset-bottom, 0px) + 18px);
+    width: 100%; max-width: 480px;
+    display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.6);
+    animation: snapPickerSlideUp 0.22s ease-out;
+  }
+  .snapPickerTitle {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: rgba(212, 168, 67, 0.88);
+    text-align: center;
+    padding-bottom: 4px;
+  }
+  .snapPickerOption {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.12s;
+    -webkit-tap-highlight-color: transparent;
+    text-align: left;
+    -webkit-appearance: none; appearance: none;
+  }
+  .snapPickerOption:hover, .snapPickerOption:active {
+    background: rgba(212, 168, 67, 0.12);
+    border-color: rgba(212, 168, 67, 0.55);
+  }
+  .snapPickerOption:active { transform: scale(0.98); }
+  .snapPickerIcon {
+    width: 38px; height: 38px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(212, 168, 67, 0.85);
+  }
+  .snapPickerIcon .frame {
+    border: 2px solid rgba(212, 168, 67, 0.7);
+    border-radius: 4px;
+    display: block;
+  }
+  .snapPickerIcon.story .frame { width: 18px; height: 32px; }
+  .snapPickerIcon.post  .frame { width: 26px; height: 26px; }
+  .snapPickerIcon.other svg { width: 22px; height: 22px; color: rgba(212, 168, 67, 0.85); }
+  .snapPickerLabel { flex: 1; min-width: 0; }
+  .snapPickerName {
+    font-size: 15px; font-weight: 700;
+    color: rgba(255, 230, 190, 0.96);
+  }
+  .snapPickerHint {
+    font-size: 11.5px; opacity: 0.55;
+    margin-top: 2px;
+  }
+  .snapPickerCancel {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.55);
+    padding: 12px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    margin-top: 4px;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-appearance: none; appearance: none;
+  }
+  .snapPickerCancel:hover, .snapPickerCancel:active { color: #fff; }
   #shareToast {
     position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
     transform: translateX(-50%) translateY(8px);
@@ -45926,8 +46081,10 @@ body.ticker-active .gTickerLabel {
       const qs = new URLSearchParams({ q: question });
       if (mode && mode !== 'percent') qs.set('mode', mode);
       const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+      // Normalize the user-typed question to title case for the poster.
+      const titleQuestion = window.__snapTitleCase?.(question) || question;
       window.__shareSnapshot({
-        title:    question,
+        title:    titleQuestion,
         subtitle: `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
         badge:    'HEATMAP',
         url:      `${SHARE_HOST}/share/heatmap?${qs}`,
@@ -45967,10 +46124,21 @@ body.ticker-active .gTickerLabel {
     }
     const badge = (kind === 'line') ? 'STORY LINE · FLOW ARCS' : 'STORY THREAD · FLOW ARCS';
     const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+    // Build the scope line from coverage stats stamped on flowCtxCard
+    // by __arcAiSetSession. Skip the line entirely if any are missing.
+    const _fmtNum = (n) => Number(n).toLocaleString('en-US');
+    const _ac = parseInt(ds.articleCount  || '', 10);
+    const _lc = parseInt(ds.languageCount || '', 10);
+    const _cc = parseInt(ds.countryCount  || '', 10);
+    let scopeLine = '';
+    if (Number.isFinite(_ac) && Number.isFinite(_lc) && Number.isFinite(_cc) && _ac > 0) {
+      scopeLine = `COVERAGE IN ${_fmtNum(_lc)} LANGUAGE${_lc === 1 ? '' : 'S'} · ${_fmtNum(_cc)} COUNTR${_cc === 1 ? 'Y' : 'IES'} · ${_fmtNum(_ac)} ARTICLE${_ac === 1 ? '' : 'S'}`;
+    }
     window.__shareSnapshot({
       title,
       subtitle: `${kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`,
       badge,
+      scopeLine,
       url:      `${SHARE_HOST}/share/${kind}/${id}`,
       shareTitle: title || (kind === 'line' ? 'Story line on Earth00' : 'Story thread on Earth00'),
       shareText:  title ? `${title} — flow arcs on Earth00` : 'Flow arcs on Earth00',
@@ -46014,6 +46182,28 @@ body.ticker-active .gTickerLabel {
 
   // ─── Snapshot share — capture the live view + brand overlay ──
   // Same module as iOS — see comments in www/index.html for full doc.
+  // Layout per aspect — picker dispatches one of these. Story uses
+  // 9:16 vertical with content placed in Instagram's safe area.
+  function _snapLayoutFor(aspect) {
+    if (aspect === 'story') {
+      return {
+        aspect: 'story', W: 1080, H: 1920,
+        logoX: 56, logoY: 320, badgeY: 326, accentTopY: 400,
+        viewX: 56, viewY: 420, viewW: 968, viewH: 800,
+        accentBotY: 1245,
+        titleY: 1305, titleSize: 44, titleLineH: 52,
+        subtitleY: 1395, chipsY: 1445, footerY: 1620,
+      };
+    }
+    return {
+      aspect: 'square', W: 1080, H: 1080,
+      logoX: 56, logoY: 54, badgeY: 60, accentTopY: 130,
+      viewX: 56, viewY: 150, viewW: 968, viewH: 640,
+      accentBotY: 805,
+      titleY: 858, titleSize: 38, titleLineH: 46,
+      subtitleY: 935, chipsY: 970, footerY: 1040,
+    };
+  }
   const SNAPSHOT_W = 1080;
   const SNAPSHOT_H = 1080;
   const SNAPSHOT_BRAND = {
@@ -46023,25 +46213,71 @@ body.ticker-active .gTickerLabel {
   };
   const FLAG_CDN_BASE = 'https://flagcdn.com/w80/';
 
+  // Top-left logo MARK — globe glyph + italic Georgia "e", no
+  // "arth00" wordmark. The mark is the recognizable brand element;
+  // earth00.com lives in the bottom-left footer for full text identity.
   function _snapDrawLogo(ctx, x, y) {
     ctx.save();
+    ctx.translate(x, y);
+    const scale = 1.4;
+    ctx.scale(scale, scale);
     ctx.strokeStyle = SNAPSHOT_BRAND.gold;
     ctx.lineWidth = 1.6;
-    ctx.globalAlpha = 0.92;
-    const cx = x + 22, cy = y + 22;
+    ctx.globalAlpha = 0.96;
+    const cx = 22, cy = 22;
     ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x + 2, cy); ctx.lineTo(x + 42, cy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2, cy); ctx.lineTo(42, cy); ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.fillStyle = SNAPSHOT_BRAND.cream;
     ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillText('e', x + 56, y + 34);
+    ctx.fillText('e', 56, 34);
+    ctx.restore();
+  }
+
+  // Full logo (globe glyph + italic Georgia "e" + "arth00") used as a
+  // watermark anchored to the captured view.
+  function _snapDrawFullLogo(ctx, x, y, opts = {}) {
+    const scale = Number(opts.scale) || 1;
+    const alpha = Number(opts.alpha) || 0.55;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = SNAPSHOT_BRAND.gold;
+    ctx.lineWidth = 1.6;
+    const cx = 22, cy = 22;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(2, cy); ctx.lineTo(42, cy); ctx.stroke();
+    ctx.fillStyle = SNAPSHOT_BRAND.cream;
+    ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('e', 56, 34);
     ctx.fillStyle = SNAPSHOT_BRAND.ink;
     ctx.font = '700 22px -apple-system, system-ui, "Segoe UI", sans-serif';
-    ctx.fillText('arth00', x + 76, y + 34);
+    ctx.fillText('arth00', 76, 34);
     ctx.restore();
+  }
+
+  // Title-case normalization for poster titles.
+  const _SNAP_LOWERCASE = new Set([
+    'a','an','and','as','at','but','by','for','from','in','of','on','or','the','to','with','vs','via'
+  ]);
+  function _snapTitleCase(s) {
+    const str = String(s ?? '').trim();
+    if (!str) return str;
+    return str.split(/(\s+)/).map((word, i, arr) => {
+      if (/^\s+$/.test(word)) return word;
+      if (word.length >= 2 && word === word.toUpperCase() && /[A-Z]/.test(word)) return word;
+      const lower = word.toLowerCase();
+      const isFirst = arr.slice(0, i).every(w => /^\s*$/.test(w));
+      if (!isFirst && _SNAP_LOWERCASE.has(lower)) return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    }).join('');
   }
 
   function _snapDrawAccent(ctx, x, y, w) {
@@ -46105,13 +46341,14 @@ body.ticker-active .gTickerLabel {
   }
 
   function _snapDrawGlobeImage(ctx, img, x, y, w, h) {
-    if (!img || !img.width || !img.height) return;
+    if (!img || !img.width || !img.height) return { dx: x, dy: y, drawW: w, drawH: h };
     const srcAspect = img.width / img.height;
     const dstAspect = w / h;
     let drawW, drawH, dx, dy;
     if (srcAspect > dstAspect) { drawW = w; drawH = w / srcAspect; dx = x; dy = y + (h - drawH) / 2; }
     else                       { drawH = h; drawW = h * srcAspect; dx = x + (w - drawW) / 2; dy = y; }
     ctx.drawImage(img, dx, dy, drawW, drawH);
+    return { dx, dy, drawW, drawH };
   }
 
   function _snapWrapText(ctx, text, maxWidth, maxLines) {
@@ -46139,50 +46376,156 @@ body.ticker-active .gTickerLabel {
     return lines;
   }
 
-  // Capture whichever projection the user is currently viewing —
-  // 3D globe (THREE.js WebGLRenderer canvas) or 2D map (Map2D's own
-  // 2D canvas). Active projection is window.__projection.
+  // Capture whichever projection the user is currently viewing.
+  // Returns captureRect (canvas viewport CSS-pixel bounds) so DOM
+  // overlays can be re-projected onto the composite.
   async function _snapCaptureView() {
     const projection = (window.__projection === 'map') ? 'map' : 'globe';
+    let canvasEl;
     if (projection === 'map' && window.__map2d?.state?.canvas) {
       try { window.__map2d.render?.(); } catch (_) {}
-      const url = window.__map2d.state.canvas.toDataURL('image/png');
-      return { img: await _snapLoadImage(url), projection };
+      canvasEl = window.__map2d.state.canvas;
+    } else {
+      const renderer = window.__renderer;
+      if (!renderer) throw new Error('renderer not ready');
+      try {
+        if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
+      } catch (_) {}
+      canvasEl = renderer.domElement;
     }
-    const renderer = window.__renderer;
-    if (!renderer) throw new Error('renderer not ready');
-    try {
-      if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
-    } catch (_) {}
-    const url = renderer.domElement.toDataURL('image/png');
-    return { img: await _snapLoadImage(url), projection };
+    const captureRect = canvasEl.getBoundingClientRect();
+    const url = canvasEl.toDataURL('image/png');
+    return { img: await _snapLoadImage(url), projection, captureRect };
   }
 
-  async function _snapComposite({ globeImg, title, subtitle, badge, isos }) {
+  // Re-draw the live flow-arc node label cards onto the composite at
+  // their projected positions. No-op when labels are toggled off.
+  async function _snapDrawNodeLabels(ctx, drawn, captureRect) {
+    const container = document.getElementById('flowNodeLabels');
+    if (!container || !captureRect) return;
+    const cs = window.getComputedStyle(container);
+    if (cs.display === 'none') return;
+    if (parseFloat(cs.opacity || '1') < 0.05) return;
+    if (!captureRect.width || !captureRect.height) return;
+
+    const scaleX = drawn.drawW / captureRect.width;
+    const scaleY = drawn.drawH / captureRect.height;
+
+    const visible = [];
+    container.querySelectorAll('.flowNodeLabel').forEach(label => {
+      const ls = window.getComputedStyle(label);
+      if (ls.display === 'none') return;
+      const op = parseFloat(ls.opacity || '1');
+      if (op < 0.05) return;
+      const r = label.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
+      const lx = r.left - captureRect.left;
+      const ly = r.top  - captureRect.top;
+      if (lx + r.width  < 0 || lx > captureRect.width)  return;
+      if (ly + r.height < 0 || ly > captureRect.height) return;
+
+      const typeTxt = label.querySelector('.fnlType')?.textContent?.trim() || '';
+      const nameTxt = label.querySelector('.fnlName')?.textContent?.trim() || '';
+      const flagEl  = label.querySelector('.fnlFlag');
+      let iso = null;
+      if (flagEl?.src) {
+        const m = flagEl.src.match(/\/(?:w\d+\/)?([a-z]{2})\.png/i);
+        if (m) iso = m[1].toLowerCase();
+      }
+      let typeColor   = 'rgba(255,200,140,0.92)';
+      let borderColor = 'rgba(255,180,80,0.42)';
+      if (label.classList.contains('fnl-tier-primary')) {
+        typeColor   = 'rgba(100,240,160,0.95)';
+        borderColor = 'rgba(80,220,140,0.55)';
+      } else if (label.classList.contains('fnl-tier-secondary')) {
+        typeColor   = 'rgba(120,200,250,0.95)';
+        borderColor = 'rgba(100,180,240,0.5)';
+      }
+      visible.push({ lx, ly, w: r.width, h: r.height, opacity: op,
+                     typeTxt, nameTxt, iso, typeColor, borderColor });
+    });
+    if (!visible.length) return;
+
+    const isoSet = new Set(visible.map(L => L.iso).filter(Boolean));
+    const flagMap = new Map();
+    await Promise.all([...isoSet].map(async iso => {
+      try { flagMap.set(iso, await _snapLoadImage(`${FLAG_CDN_BASE}${iso}.png`)); }
+      catch (_) {}
+    }));
+
+    const k = Math.max(scaleX, 0.001);
+    for (const L of visible) {
+      const cx = drawn.dx + L.lx * scaleX;
+      const cy = drawn.dy + L.ly * scaleY;
+      const cw = L.w * scaleX;
+      const ch = L.h * scaleY;
+
+      ctx.save();
+      ctx.globalAlpha = L.opacity;
+      ctx.fillStyle   = 'rgba(6,10,20,0.82)';
+      ctx.strokeStyle = L.borderColor;
+      ctx.lineWidth   = Math.max(1, 1.2 * k);
+      const radius    = Math.max(4, 8 * k);
+      _snapRoundRect(ctx, cx, cy, cw, ch, radius);
+      ctx.fill(); ctx.stroke();
+
+      const padX = 9 * k;
+      const padY = 5 * k;
+      let cursorY = cy + padY;
+      if (L.typeTxt) {
+        const fs = Math.max(7, 9 * k);
+        ctx.fillStyle = L.typeColor;
+        ctx.font = `700 ${fs}px -apple-system, system-ui, "Segoe UI", sans-serif`;
+        ctx.textBaseline = 'top';
+        ctx.fillText(L.typeTxt, cx + padX, cursorY);
+        cursorY += fs * 1.25;
+      }
+      if (L.nameTxt) {
+        const fs = Math.max(8, 12 * k);
+        ctx.font = `600 ${fs}px -apple-system, system-ui, "Segoe UI", sans-serif`;
+        ctx.fillStyle = 'rgba(255,255,255,0.94)';
+        ctx.textBaseline = 'top';
+        let nx = cx + padX;
+        if (L.iso && flagMap.has(L.iso)) {
+          const flag = flagMap.get(L.iso);
+          const flagW = 14 * k;
+          const flagH = 10 * k;
+          const flagY = cursorY + (fs - flagH) / 2 + 1;
+          try { ctx.drawImage(flag, nx, flagY, flagW, flagH); } catch (_) {}
+          nx += flagW + 3 * k;
+        }
+        ctx.fillText(L.nameTxt, nx, cursorY);
+      }
+      ctx.restore();
+    }
+  }
+
+  async function _snapComposite({ globeImg, title, subtitle, badge, isos, projection, aspect, captureRect, scopeLine }) {
+    const L = _snapLayoutFor(aspect);
     const canvas = document.createElement('canvas');
-    canvas.width = SNAPSHOT_W; canvas.height = SNAPSHOT_H;
+    canvas.width = L.W; canvas.height = L.H;
     const ctx = canvas.getContext('2d');
 
-    const bg = ctx.createLinearGradient(0, 0, 0, SNAPSHOT_H);
+    const bg = ctx.createLinearGradient(0, 0, 0, L.H);
     bg.addColorStop(0, SNAPSHOT_BRAND.bgTop);
     bg.addColorStop(1, SNAPSHOT_BRAND.bgBot);
     ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, SNAPSHOT_W, SNAPSHOT_H);
-    const glow = ctx.createRadialGradient(SNAPSHOT_W * 0.85, SNAPSHOT_H * 0.15, 50, SNAPSHOT_W * 0.85, SNAPSHOT_H * 0.15, 600);
+    ctx.fillRect(0, 0, L.W, L.H);
+    const glow = ctx.createRadialGradient(L.W * 0.85, L.H * 0.15, 50, L.W * 0.85, L.H * 0.15, 600);
     glow.addColorStop(0, 'rgba(212,168,67,0.18)');
     glow.addColorStop(1, 'rgba(212,168,67,0)');
     ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, SNAPSHOT_W, SNAPSHOT_H);
+    ctx.fillRect(0, 0, L.W, L.H);
 
-    _snapDrawLogo(ctx, 56, 54);
+    _snapDrawLogo(ctx, L.logoX, L.logoY);
 
     if (badge) {
       ctx.font = '800 13px -apple-system, system-ui, "Segoe UI", sans-serif';
       ctx.textBaseline = 'middle';
       const bw = Math.max(160, ctx.measureText(badge).width + 36);
       const bh = 36;
-      const bx = SNAPSHOT_W - 56 - bw;
-      const by = 60;
+      const bx = L.W - 56 - bw;
+      const by = L.badgeY;
       ctx.fillStyle = 'rgba(212,168,67,0.10)';
       ctx.strokeStyle = SNAPSHOT_BRAND.gold;
       ctx.lineWidth = 1.4;
@@ -46194,34 +46537,122 @@ body.ticker-active .gTickerLabel {
       ctx.textAlign = 'start';
     }
 
-    _snapDrawAccent(ctx, 56, 130, SNAPSHOT_W - 112);
-    _snapDrawGlobeImage(ctx, globeImg, 56, 150, SNAPSHOT_W - 112, 640);
-    _snapDrawAccent(ctx, 56, 805, SNAPSHOT_W - 112);
+    _snapDrawAccent(ctx, 56, L.accentTopY, L.W - 112);
+    const drawn = _snapDrawGlobeImage(ctx, globeImg, L.viewX, L.viewY, L.viewW, L.viewH);
+
+    // Re-draw flow-arc node label cards from the live DOM (no-op when
+    // labels are toggled off).
+    await _snapDrawNodeLabels(ctx, drawn, captureRect);
+
+    {
+      const isMap = (projection === 'map');
+      const watermarkScale = isMap ? 0.85 : 1.0;
+      const watermarkAlpha = isMap ? 0.55 : 0.72;
+      const wx = isMap
+        ? drawn.dx + drawn.drawW * 0.04
+        : drawn.dx + 18;
+      const wy = isMap
+        ? drawn.dy + drawn.drawH * 0.62
+        : drawn.dy + drawn.drawH - 56;
+      _snapDrawFullLogo(ctx, wx, wy, { scale: watermarkScale, alpha: watermarkAlpha });
+    }
+
+    _snapDrawAccent(ctx, 56, L.accentBotY, L.W - 112);
 
     if (title) {
       ctx.fillStyle = SNAPSHOT_BRAND.cream;
-      ctx.font = '800 38px -apple-system, system-ui, "Segoe UI", sans-serif';
+      ctx.font = `700 ${L.titleSize}px -apple-system, system-ui, "Segoe UI", sans-serif`;
       ctx.textBaseline = 'alphabetic';
-      const titleLines = _snapWrapText(ctx, title, SNAPSHOT_W - 112, 2);
-      titleLines.forEach((line, i) => ctx.fillText(line, 56, 858 + i * 46));
+      try { ctx.letterSpacing = '-0.01em'; } catch (_) {}
+      const titleLines = _snapWrapText(ctx, title, L.W - 112, 2);
+      titleLines.forEach((line, i) => ctx.fillText(line, 56, L.titleY + i * L.titleLineH));
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
     }
 
     if (subtitle) {
       ctx.fillStyle = SNAPSHOT_BRAND.gold;
-      ctx.font = '700 14px -apple-system, system-ui, "Segoe UI", sans-serif';
-      ctx.fillText(subtitle, 56, 935);
+      ctx.font = '700 13px -apple-system, system-ui, "Segoe UI", sans-serif';
+      try { ctx.letterSpacing = '0.16em'; } catch (_) {}
+      ctx.fillText(subtitle, 56, L.subtitleY);
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
+    }
+
+    if (scopeLine) {
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '600 12px -apple-system, system-ui, "Segoe UI", sans-serif';
+      try { ctx.letterSpacing = '0.14em'; } catch (_) {}
+      ctx.fillText(scopeLine, 56, L.chipsY - 18);
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
     }
 
     if (Array.isArray(isos) && isos.length) {
       const chips = await _snapFlagImages(isos);
-      _snapDrawFlagChips(ctx, chips, 56, 970);
+      _snapDrawFlagChips(ctx, chips, 56, L.chipsY);
     }
 
     ctx.fillStyle = SNAPSHOT_BRAND.goldSoft;
     ctx.font = '700 16px -apple-system, system-ui, "Segoe UI", sans-serif';
-    ctx.fillText('EARTH00.COM', 56, 1040);
+    ctx.fillText('EARTH00.COM', 56, L.footerY);
 
     return new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+  }
+
+  // Bottom-sheet picker — see comments in www/index.html.
+  function _snapShowPicker() {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'snapPickerOverlay';
+      overlay.innerHTML = `
+        <div class="snapPickerCard" role="dialog" aria-label="Share snapshot">
+          <div class="snapPickerTitle">Share snapshot</div>
+          <button class="snapPickerOption" data-pick="story" type="button">
+            <div class="snapPickerIcon story"><span class="frame"></span></div>
+            <div class="snapPickerLabel">
+              <div class="snapPickerName">Story</div>
+              <div class="snapPickerHint">9:16 vertical · best for Instagram / Snapchat Story</div>
+            </div>
+          </button>
+          <button class="snapPickerOption" data-pick="post" type="button">
+            <div class="snapPickerIcon post"><span class="frame"></span></div>
+            <div class="snapPickerLabel">
+              <div class="snapPickerName">Post</div>
+              <div class="snapPickerHint">1:1 square · best for Instagram / X feed</div>
+            </div>
+          </button>
+          <button class="snapPickerOption" data-pick="other" type="button">
+            <div class="snapPickerIcon other">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+              </svg>
+            </div>
+            <div class="snapPickerLabel">
+              <div class="snapPickerName">Other apps</div>
+              <div class="snapPickerHint">1:1 square · iMessage, Twitter, AirDrop, Save Photos…</div>
+            </div>
+          </button>
+          <button class="snapPickerCancel" type="button">Cancel</button>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      let settled = false;
+      function close(result) {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(result);
+      }
+      function onKey(e) { if (e.key === 'Escape') close(null); }
+      document.addEventListener('keydown', onKey);
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) return close(null);
+        const opt = e.target.closest?.('.snapPickerOption');
+        if (opt) return close(opt.dataset.pick);
+        const cancel = e.target.closest?.('.snapPickerCancel');
+        if (cancel) return close(null);
+      });
+    });
   }
 
   function _snapBlobToBase64(blob) {
@@ -46267,8 +46698,14 @@ body.ticker-active .gTickerLabel {
 
   window.__shareSnapshot = async function(opts = {}) {
     try {
+      let pick = opts.aspect || null;
+      if (!opts.skipPicker) {
+        pick = await _snapShowPicker();
+        if (!pick) return;
+      }
+      const aspect = (pick === 'story') ? 'story' : 'square';
       showToast('Capturing…', 1500);
-      const { img: globeImg, projection } = await _snapCaptureView();
+      const { img: globeImg, projection, captureRect } = await _snapCaptureView();
       const projectionLabel = projection === 'map' ? '2D MAP' : 'GLOBE';
       const subtitle = opts.subtitle != null ? opts.subtitle : projectionLabel;
       const blob = await _snapComposite({
@@ -46277,6 +46714,10 @@ body.ticker-active .gTickerLabel {
         subtitle,
         badge:    opts.badge || '',
         isos:     opts.isos  || [],
+        projection,
+        aspect,
+        captureRect,
+        scopeLine: opts.scopeLine || '',
       });
       await _snapDispatch(blob, {
         url:        opts.url || undefined,
@@ -46288,6 +46729,7 @@ body.ticker-active .gTickerLabel {
       showToast('Snapshot failed');
     }
   };
+  window.__snapTitleCase = _snapTitleCase;
 })();
 </script>
 
