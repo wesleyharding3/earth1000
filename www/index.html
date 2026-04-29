@@ -43398,6 +43398,14 @@ body.ticker-active .gTickerLabel {
     const threadId = node.thread_id || node.id;
     const isTimeline = node.__kind === 'timeline';
 
+    // Stamp the entity id/kind/title on the panel so the floating
+    // share button (wired in the share-system module near </body>)
+    // can read them without re-querying. Cluster panel re-renders on
+    // every open, so the dataset is always fresh.
+    detailEl.dataset.kind         = isTimeline ? 'line' : 'thread';
+    detailEl.dataset.entityId     = String(threadId || '');
+    detailEl.dataset.entityTitle  = node.title || '';
+
     detailEl.innerHTML = `
       <button id="cdResizeHandle" aria-label="Resize panel">
         <div id="cdResizeArrow">
@@ -45559,6 +45567,16 @@ body.ticker-active .gTickerLabel {
       // each country's QA value with the question that produced it.
       state.qaQuestion = q;
       state.qaModeAtSubmit = mode;
+      // Also mirror onto the panel dataset so the share button (wired
+      // separately in the sharing-system module) can read the current
+      // query without crossing IIFE boundaries.
+      try {
+        const _heatPanel = document.getElementById('semHeatPanel');
+        if (_heatPanel) {
+          _heatPanel.dataset.qaQuestion = q;
+          _heatPanel.dataset.qaMode     = mode;
+        }
+      } catch (_) {}
       try {
         const apiBase = window.__API || 'https://earth-wjr6.onrender.com';
         const headers = { 'Content-Type': 'application/json' };
@@ -49035,6 +49053,297 @@ body.ticker-active .gTickerLabel {
     }
   }
   setInterval(_checkAuthLoop, 1500);
+})();
+</script>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     Sharing system — Phase 2 (frontend) + Phase 3 (deep-link router).
+     Backend lives in server.js (/share/*). AASA file at
+     /.well-known/apple-app-site-association. iOS entitlement
+     `applinks:earth00.com` declared in App.entitlements.
+
+     Surfaces a `__shareEntity({ kind, id, ... })` global that
+     pre-built share buttons on the cluster panel + heatmap call.
+     Falls back to navigator.share on the web (or copy-to-clipboard).
+     ───────────────────────────────────────────────────────────────── -->
+<style>
+  /* Generic icon-button used wherever we attach a share affordance.
+     Padding/sizing intentionally compact so it can sit next to the
+     close button on the cluster panel header without crowding it. */
+  .shareBtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 200, 130, 0.28);
+    background: rgba(255, 200, 130, 0.08);
+    color: rgba(255, 220, 180, 0.86);
+    cursor: pointer; padding: 0;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .shareBtn:hover {
+    background: rgba(255, 200, 130, 0.18);
+    border-color: rgba(255, 200, 130, 0.55);
+    color: #fff;
+  }
+  .shareBtn:active { transform: scale(0.96); }
+  .shareBtn svg { width: 14px; height: 14px; display: block; }
+  /* Toast — surfaces share success / fallback (e.g. "link copied"). */
+  #shareToast {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
+    transform: translateX(-50%) translateY(8px);
+    padding: 10px 18px; border-radius: 999px;
+    background: rgba(8, 12, 22, 0.94);
+    border: 1px solid rgba(212, 168, 67, 0.42);
+    color: rgba(255, 230, 190, 0.96);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    z-index: 100300;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.22s ease, transform 0.22s ease;
+  }
+  #shareToast.open { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+<div id="shareToast"></div>
+
+<script>
+(function() {
+  const SHARE_HOST = 'https://earth00.com';
+
+  function _capacitorShare() {
+    return window.Capacitor?.Plugins?.Share || null;
+  }
+  function _capacitorApp() {
+    return window.Capacitor?.Plugins?.App || null;
+  }
+  function _isCapacitorIOS() {
+    return !!(window.Capacitor?.isNativePlatform?.() &&
+              window.Capacitor.getPlatform?.() === 'ios');
+  }
+
+  function showToast(msg, ms) {
+    const el = document.getElementById('shareToast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('open');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => el.classList.remove('open'), ms || 1800);
+  }
+
+  // Build the canonical share URL for an entity. Mirrors the routes
+  // declared in server.js — keep these in lockstep.
+  function _shareUrl(entity) {
+    const base = SHARE_HOST;
+    if (entity.kind === 'thread') return `${base}/share/thread/${entity.id}`;
+    if (entity.kind === 'line')   return `${base}/share/line/${entity.id}`;
+    if (entity.kind === 'heatmap') {
+      const p = new URLSearchParams({ q: entity.question || '' });
+      if (entity.mode && entity.mode !== 'percent') p.set('mode', entity.mode);
+      return `${base}/share/heatmap?${p}`;
+    }
+    return base;
+  }
+
+  // Build share-sheet copy. Title shows in the share sheet header on
+  // some apps (e.g. Mail), text is the body on platforms that accept
+  // both. Universal Link consumers (iMessage, etc.) just use the URL
+  // — title/text are decorative for those flows but still required by
+  // the navigator.share / Capacitor Share schemas.
+  function _shareCopy(entity) {
+    if (entity.kind === 'thread') {
+      return {
+        title: entity.title || 'Story on Earth00',
+        text:  `${entity.title || 'Story'} — tracked on Earth00`,
+      };
+    }
+    if (entity.kind === 'line') {
+      return {
+        title: entity.title || 'Story line on Earth00',
+        text:  `${entity.title || 'Story line'} — Earth00`,
+      };
+    }
+    if (entity.kind === 'heatmap') {
+      return {
+        title: 'Earth00 · Map This',
+        text:  `${entity.question} — Map This view on Earth00`,
+      };
+    }
+    return { title: 'Earth00', text: 'Shared from Earth00' };
+  }
+
+  // Public API. Call from share buttons:
+  //   __shareEntity({ kind: 'thread', id, title })
+  //   __shareEntity({ kind: 'line',   id, title })
+  //   __shareEntity({ kind: 'heatmap', question, mode })
+  window.__shareEntity = async function(entity) {
+    const url = _shareUrl(entity);
+    const copy = _shareCopy(entity);
+    // Capacitor on iOS: native share sheet via @capacitor/share plugin.
+    const SH = _capacitorShare();
+    if (SH && _isCapacitorIOS()) {
+      try {
+        await SH.share({ title: copy.title, text: copy.text, url, dialogTitle: 'Share' });
+        return;
+      } catch (err) {
+        // User canceled or plugin error — silent unless really fatal.
+        if (err && /cancel/i.test(err.message || '')) return;
+        console.warn('[share] Capacitor Share error:', err.message);
+      }
+    }
+    // Web: navigator.share if available (mobile Safari, Chrome on Android).
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title: copy.title, text: copy.text, url });
+        return;
+      } catch (err) {
+        if (err && /cancel/i.test(err.name || err.message || '')) return;
+        console.warn('[share] navigator.share error:', err.message);
+      }
+    }
+    // Final fallback: copy URL to clipboard.
+    try {
+      await navigator.clipboard?.writeText(url);
+      showToast('Link copied');
+    } catch (_) {
+      // No clipboard API — surface the URL in a prompt as last resort.
+      window.prompt('Copy this link:', url);
+    }
+  };
+
+  // ─── Wire share buttons into existing panels ──────────────────
+  // Cluster panel (.cdHeader): inject a share button next to the
+  // existing close button. The cluster panel renders dynamically each
+  // time a thread/line opens, so we observe its container and attach
+  // the button on render. Idempotent — re-runs are safe.
+  function _attachClusterShareBtn() {
+    const close = document.querySelector('#cdCloseBtn');
+    if (!close || close.parentElement.querySelector('.shareBtn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'shareBtn';
+    btn.title = 'Share';
+    btn.setAttribute('aria-label', 'Share');
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+    </svg>`;
+    btn.style.marginRight = '6px';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      // Inspect the panel to figure out kind + id. Detail panel data is
+      // attached via dataset by the cluster-panel renderer (we may need
+      // to extend that to add `data-kind` / `data-id`).
+      const panel = close.closest('#clusterDetailPanel') || document.getElementById('clusterDetailPanel');
+      const dataset = panel?.dataset || {};
+      const kind  = dataset.kind || 'thread';
+      const id    = dataset.entityId;
+      const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
+      if (!id) {
+        console.warn('[share] no entity id on cluster panel');
+        return;
+      }
+      window.__shareEntity({ kind, id: parseInt(id, 10), title });
+    });
+    close.parentElement.insertBefore(btn, close);
+  }
+  // Heatmap panel: small share button next to the panel close.
+  function _attachHeatmapShareBtn() {
+    const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
+    if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'shareBtn';
+    btn.title = 'Share';
+    btn.setAttribute('aria-label', 'Share');
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+    </svg>`;
+    btn.style.marginRight = '6px';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = document.getElementById('semHeatPanel');
+      const question = panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim();
+      const mode = panel?.dataset?.qaMode || 'percent';
+      if (!question) {
+        showToast('Ask a question first');
+        return;
+      }
+      window.__shareEntity({ kind: 'heatmap', question, mode });
+    });
+    closeBtn.parentElement.insertBefore(btn, closeBtn);
+  }
+  // Re-attach on every DOM change inside the panel containers (cluster
+  // panel re-renders its header on each open). The MutationObserver is
+  // cheap; the attach functions are idempotent.
+  const _watchTargets = ['clusterDetailPanel', 'semHeatPanel'];
+  _watchTargets.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    new MutationObserver(() => {
+      _attachClusterShareBtn();
+      _attachHeatmapShareBtn();
+    }).observe(el, { childList: true, subtree: true });
+  });
+  // Initial attach in case panels are already open.
+  setTimeout(() => { _attachClusterShareBtn(); _attachHeatmapShareBtn(); }, 200);
+
+  // ─── Phase 3: Universal Links — deep link router ──────────────
+  // When the OS hands the app a URL like https://earth00.com/share/thread/123,
+  // route to the appropriate panel. Capacitor's @capacitor/app plugin
+  // emits an `appUrlOpen` event for every cold-start AND foreground tap
+  // on a Universal Link.
+  function _routeShareUrl(url) {
+    try {
+      const u = new URL(url);
+      // Defensive: ignore non-share paths (the AASA only claims /share/*
+      // anyway, but a future entitlement bump could broaden this).
+      const m = u.pathname.match(/^\/share\/(thread|line|heatmap)(?:\/(\d+))?\/?$/);
+      if (!m) return;
+      const kind = m[1];
+      const id   = m[2] ? parseInt(m[2], 10) : null;
+      if (kind === 'thread' && id && typeof window.__openThread === 'function') {
+        window.__openThread(id);
+        return;
+      }
+      if (kind === 'line' && id && typeof window.openTimelineInPanel === 'function') {
+        window.openTimelineInPanel(id);
+        return;
+      }
+      if (kind === 'heatmap') {
+        const question = u.searchParams.get('q') || '';
+        const mode = u.searchParams.get('mode') || 'percent';
+        if (typeof window.__semHeatOpen === 'function') {
+          window.__semHeatOpen();
+          // Defer so the panel mounts before submitting the question.
+          setTimeout(() => {
+            const inp = document.getElementById('semHeatAskInput');
+            const sel = document.getElementById('semHeatAskMode');
+            const btn = document.getElementById('semHeatAskGoBtn');
+            if (inp) inp.value = question;
+            if (sel) sel.value = mode;
+            btn?.click();
+          }, 300);
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn('[share] route error:', err.message);
+    }
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    const APP = _capacitorApp();
+    if (APP) {
+      APP.addListener('appUrlOpen', (event) => {
+        const url = event?.url || '';
+        if (url) _routeShareUrl(url);
+      });
+    }
+    // On regular web (browser open of /share/...), the redirect
+    // happens automatically (set timeout in the share HTML wrapper)
+    // but if the user already has the SPA loaded, route locally.
+    if (window.location.pathname.startsWith('/share/')) {
+      _routeShareUrl(window.location.href);
+    }
+  });
 })();
 </script>
 

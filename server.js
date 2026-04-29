@@ -9389,6 +9389,319 @@ app.get("/api/briefing/:episodeId/panels", async (req, res) => {
   }
 });
 
+/* =============================================================
+   Share routes — public, unauthenticated.
+
+   Three entity types:
+     • thread   /share/thread/:id        → HTML preview + deep link
+     • line     /share/line/:id          → HTML preview + deep link
+     • heatmap  /share/heatmap?q=…&mode= → HTML preview + deep link
+
+   Image PNGs at the same paths with `.png` suffix:
+     /share/thread/:id.png, /share/line/:id.png, /share/heatmap.png
+
+   The HTML response carries Open Graph + Twitter Card tags so
+   iMessage / X / Discord / Slack render the watermarked image.
+   For users on iOS with the app installed, the URL opens directly
+   into the right panel via Universal Links (configured separately
+   via /.well-known/apple-app-site-association).
+============================================================== */
+const shareImg = require('./shareImageGenerator');
+
+const SHARE_HOST = process.env.SHARE_HOST || 'https://earth00.com';
+const APP_DEEP_LINK_HOST = SHARE_HOST.replace(/^https?:\/\//, '');
+
+// AASA file — required for iOS Universal Links. Apple fetches this from
+// the apex of the share host and validates app id + paths. Served at
+// `/.well-known/apple-app-site-association` with content-type
+// application/json (NOT application/json with .json extension; Apple is
+// picky about the path).
+app.get('/.well-known/apple-app-site-association', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    applinks: {
+      apps: [],
+      details: [
+        {
+          // {TEAM_ID}.{BUNDLE_ID} — must exactly match the iOS target.
+          appID: '2N4Y8MAZB2.com.earth00.app',
+          // Paths the Universal Link should claim. Wildcards keep the
+          // entitlement scoped to share routes only — leaves the rest of
+          // earth00.com (marketing pages, etc.) unaffected.
+          paths: [
+            '/share/thread/*',
+            '/share/line/*',
+            '/share/heatmap',
+            '/share/heatmap?*',
+          ],
+        },
+      ],
+    },
+  });
+});
+
+// HTML wrapper that serves OG meta tags + a JS redirect into the app
+// (or a graceful fallback to the App Store / web). Used by all three
+// share routes — the data fields differ but the wrapper is shared.
+function _shareHtml({ title, description, imageUrl, canonicalUrl, deepLinkPath }) {
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${esc(title)} · Earth00</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="${esc(description)}">
+<!-- Open Graph -->
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(description)}">
+<meta property="og:image" content="${esc(imageUrl)}">
+<meta property="og:image:width" content="${shareImg.W}">
+<meta property="og:image:height" content="${shareImg.H}">
+<meta property="og:url" content="${esc(canonicalUrl)}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Earth00">
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${esc(title)}">
+<meta name="twitter:description" content="${esc(description)}">
+<meta name="twitter:image" content="${esc(imageUrl)}">
+${process.env.APPLE_APP_APPLE_ID ? `<!-- Apple smart app banner (lets iOS Safari show "Open in App") -->
+<meta name="apple-itunes-app" content="app-id=${process.env.APPLE_APP_APPLE_ID}, app-argument=${esc(deepLinkPath)}">` : ''}
+<style>
+  body { margin: 0; background: #060a14; color: #f4ead2; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+  img.preview { width: 100%; border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); }
+  h1 { font-size: 28px; line-height: 1.25; margin: 24px 0 8px; }
+  p { color: rgba(255,255,255,0.62); line-height: 1.6; }
+  a.cta {
+    display: inline-block; margin-top: 24px;
+    padding: 14px 22px; border-radius: 999px;
+    background: rgba(212,168,67,0.18); color: #f4ead2;
+    border: 1px solid rgba(212,168,67,0.55);
+    text-decoration: none; font-weight: 600; letter-spacing: 0.04em;
+  }
+  a.cta:hover { background: rgba(212,168,67,0.28); }
+  .footer { margin-top: 36px; opacity: 0.4; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <img class="preview" src="${esc(imageUrl)}" alt="${esc(title)}">
+    <h1>${esc(title)}</h1>
+    <p>${esc(description)}</p>
+    <a class="cta" href="${esc(deepLinkPath)}">Open in Earth00</a>
+    <div class="footer">earth00.com</div>
+  </div>
+  <script>
+    // Universal Link attempt — the app intercepts when installed. If
+    // not installed, the app-argument deep link is a no-op and the
+    // user stays on the web page.
+    setTimeout(() => { try { window.location.href = ${JSON.stringify(deepLinkPath)}; } catch (_) {} }, 250);
+  </script>
+</body>
+</html>`;
+}
+
+// ── Thread share ─────────────────────────────────────────────────────
+app.get('/share/thread/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).send('Invalid id');
+    const { rows } = await pool.query(
+      `SELECT id, title, description, primary_category,
+              importance, primary_nations
+         FROM story_threads WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).send('Thread not found');
+    const t = rows[0];
+    const isos = (t.primary_nations || []).slice(0, 6);
+    const title = t.title || 'Untitled story';
+    const description = (t.description || `A story tracked across ${isos.length || 'multiple'} countries on Earth00.`).slice(0, 200);
+    const imageUrl = `${SHARE_HOST}/share/thread/${id}.png`;
+    const canonicalUrl = `${SHARE_HOST}/share/thread/${id}`;
+    const deepLinkPath = `${SHARE_HOST}/share/thread/${id}`;
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(_shareHtml({ title, description, imageUrl, canonicalUrl, deepLinkPath }));
+  } catch (err) {
+    console.error('[share/thread]', err.message);
+    res.status(500).send('Share page error');
+  }
+});
+
+app.get('/share/thread/:id.png', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).end();
+    const { rows } = await pool.query(
+      `SELECT id, title, primary_category, importance, primary_nations,
+              last_updated_at
+         FROM story_threads WHERE id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).end();
+    const t = rows[0];
+    const png = await shareImg.generate({
+      kind: 'thread',
+      // Cache key includes last_updated_at so an admin retitle busts cache.
+      cacheKey: `thread:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
+      title:      t.title,
+      isos:       (t.primary_nations || []).slice(0, 6),
+      importance: t.importance,
+      category:   t.primary_category,
+    });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(png);
+  } catch (err) {
+    console.error('[share/thread.png]', err.message);
+    res.status(500).end();
+  }
+});
+
+// ── Line / Timeline share ────────────────────────────────────────────
+app.get('/share/line/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).send('Invalid id');
+    const { rows } = await pool.query(
+      `SELECT t.id, t.title, t.description, t.primary_category,
+              t.primary_nations,
+              (SELECT COUNT(*)::int FROM story_threads st WHERE st.timeline_id = t.id) AS thread_count
+         FROM story_timelines t
+        WHERE t.id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).send('Line not found');
+    const t = rows[0];
+    const isos = (t.primary_nations || []).slice(0, 6);
+    const title = t.title || 'Untitled timeline';
+    const description = (t.description || `Story line tracked on Earth00 across ${isos.length || 'multiple'} countries with ${t.thread_count} thread${t.thread_count === 1 ? '' : 's'}.`).slice(0, 200);
+    const imageUrl = `${SHARE_HOST}/share/line/${id}.png`;
+    const canonicalUrl = `${SHARE_HOST}/share/line/${id}`;
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(_shareHtml({ title, description, imageUrl, canonicalUrl, deepLinkPath: canonicalUrl }));
+  } catch (err) {
+    console.error('[share/line]', err.message);
+    res.status(500).send('Share page error');
+  }
+});
+
+app.get('/share/line/:id.png', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).end();
+    const { rows } = await pool.query(
+      `SELECT t.id, t.title, t.primary_category, t.primary_nations,
+              t.last_updated_at,
+              (SELECT COUNT(*)::int FROM story_threads st WHERE st.timeline_id = t.id) AS thread_count
+         FROM story_timelines t
+        WHERE t.id = $1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).end();
+    const t = rows[0];
+    const png = await shareImg.generate({
+      kind: 'line',
+      cacheKey: `line:${id}:${new Date(t.last_updated_at || 0).getTime()}:${t.thread_count}`,
+      title:        t.title,
+      isos:         (t.primary_nations || []).slice(0, 6),
+      threadCount:  t.thread_count,
+      category:     t.primary_category,
+    });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(png);
+  } catch (err) {
+    console.error('[share/line.png]', err.message);
+    res.status(500).end();
+  }
+});
+
+// ── Heatmap share ────────────────────────────────────────────────────
+// Heatmaps don't have stable ids — they're a (question, mode) pair plus
+// the cached resolver result. We accept the question as a query param
+// and look up the cache row by its hash; if the hash is missing or the
+// query is malformed we render a generic "Earth00 Map This" card.
+const _crypto = require('crypto');
+function _heatmapHash(question, mode) {
+  const normalized = String(question || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return _crypto.createHash('sha256').update(`${mode}|${normalized}`).digest('hex');
+}
+
+app.get('/share/heatmap', async (req, res) => {
+  try {
+    const question = String(req.query.q || '').trim();
+    const mode = String(req.query.mode || 'percent').toLowerCase();
+    if (!question) return res.status(400).send('Missing q parameter');
+    const hash = _heatmapHash(question, mode);
+    const { rows } = await pool.query(
+      `SELECT mode, legend, values
+         FROM heatmap_qa_cache
+        WHERE question_hash = $1 AND mode = $2 LIMIT 1`,
+      [hash, mode]
+    );
+    const cached = rows[0];
+    const valuesArr = (cached?.values || []).filter(v => v && v.iso);
+    const countriesCount = valuesArr.length;
+    const title = question.slice(0, 200);
+    const description = `${countriesCount} countries · Map This view on Earth00`;
+    const qsParams = new URLSearchParams({ q: question });
+    if (mode && mode !== 'percent') qsParams.set('mode', mode);
+    const imageUrl = `${SHARE_HOST}/share/heatmap.png?${qsParams}`;
+    const canonicalUrl = `${SHARE_HOST}/share/heatmap?${qsParams}`;
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(_shareHtml({ title, description, imageUrl, canonicalUrl, deepLinkPath: canonicalUrl }));
+  } catch (err) {
+    console.error('[share/heatmap]', err.message);
+    res.status(500).send('Share page error');
+  }
+});
+
+app.get('/share/heatmap.png', async (req, res) => {
+  try {
+    const question = String(req.query.q || '').trim();
+    const mode = String(req.query.mode || 'percent').toLowerCase();
+    if (!question) return res.status(400).end();
+    const hash = _heatmapHash(question, mode);
+    const { rows } = await pool.query(
+      `SELECT mode, values
+         FROM heatmap_qa_cache
+        WHERE question_hash = $1 AND mode = $2 LIMIT 1`,
+      [hash, mode]
+    );
+    const valuesArr = (rows[0]?.values || []).filter(v => v && v.iso);
+    // Top 6 ISOs by value, descending. Used as the chip row.
+    const topIsos = valuesArr
+      .slice()
+      .sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0))
+      .slice(0, 6)
+      .map(v => String(v.iso).toUpperCase());
+
+    const png = await shareImg.generate({
+      kind: 'heatmap',
+      cacheKey: `heatmap:${hash}`,
+      question,
+      mode,
+      countriesCount: valuesArr.length,
+      topIsos,
+    });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(png);
+  } catch (err) {
+    console.error('[share/heatmap.png]', err.message);
+    res.status(500).end();
+  }
+});
+
+
 // GET /api/credits/me — current user's credit balance + costs per feature.
 // Used by the frontend to render a "X credits left this week" meter and
 // inline cost hints on each AI button.
