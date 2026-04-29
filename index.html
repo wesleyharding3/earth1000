@@ -10458,6 +10458,167 @@ button.arcCtxSegDot,
   100% { background-position: -20% 0; }
 }
 
+/* ── AI Analysis CTA — Big Badge variant ──────────────────────────
+   Used on flow-context, article-detail, and cluster-detail panels
+   as the click-gate that triggers Deep Analysis generation. Same
+   proportions / shimmer / breath cadence as .viewOnGlobeCta but in
+   the gold/amber palette so the two CTAs read as a sibling pair
+   (one launches analysis, the other propels back to the globe).
+   Gating analysis behind a deliberate click protects credit spend
+   for users who open detail panels without engaging with the
+   AI content. */
+.aiAnalysisCtaBadge {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 14px 16px;
+  border-radius: 15px;
+  border: 1px solid rgba(212,168,67,0.32);
+  background: linear-gradient(180deg, rgba(22,18,8,0.72), rgba(16,14,6,0.58));
+  color: rgba(255,220,140,0.95);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow:
+    0 14px 28px rgba(0,0,0,0.26),
+    0 0 0 1px rgba(212,168,67,0.06),
+    0 0 12px rgba(212,168,67,0.10);
+  transition: transform 0.18s ease, border-color 0.28s ease;
+  animation: aiAnalysisCtaBreath 2.9s ease-in-out infinite;
+}
+.aiAnalysisCtaBadge::before {
+  /* Diagonal shimmer sweep — gold band of light wipes across the
+     gradient bg every 4.5s. Mirrors the green sweep on the View
+     on Globe badge; same mechanic, different palette. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(255,220,140,0.18) 47%,
+    rgba(255,255,255,0.10) 50%,
+    rgba(255,220,140,0.18) 53%,
+    transparent 68%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  animation: aiAnalysisCtaShimmer 4.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.aiAnalysisCtaBadge::after {
+  /* Top hairline accent — matches .arcCtxBlock::after. */
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(212,168,67,0.85), transparent);
+  opacity: 0.72;
+  pointer-events: none;
+  z-index: 1;
+}
+.aiAnalysisCtaBadge:hover {
+  transform: translateY(-1px);
+  border-color: rgba(212,168,67,0.6);
+  color: rgba(255,235,170,1);
+  box-shadow:
+    0 18px 36px rgba(0,0,0,0.36),
+    0 0 0 1px rgba(212,168,67,0.32),
+    0 0 26px rgba(212,168,67,0.32);
+}
+.aiAnalysisCtaBadge:active { transform: translateY(0); }
+.aiAnalysisCtaBadge:disabled { cursor: default; transform: none; }
+.aiAnalysisCtaBadge > * { position: relative; z-index: 2; }
+/* Local dot styling so the badge doesn't depend on .aiAnalysisCta
+   inheritance. Same blink / spin / static states as the small pill. */
+.aiAnalysisCtaBadge .aiAnalysisDot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(255,220,140,1);
+  box-shadow: 0 0 6px rgba(255,220,140,0.85);
+  animation: aiCtaDotBlink 1.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.aiAnalysisCtaBadge.loading {
+  cursor: default;
+  opacity: 0.9;
+  /* Keep breath running so the badge still reads as alive while
+     the request is in flight. Shimmer is paused so the user
+     doesn't perceive an idle "ready" state. */
+}
+.aiAnalysisCtaBadge.loading::before { animation: none; }
+.aiAnalysisCtaBadge.loading .aiAnalysisDot {
+  animation: aiCtaSpin 0.8s linear infinite;
+  background: transparent;
+  border: 2px solid rgba(255,220,140,0.25);
+  border-top-color: rgba(255,220,140,1);
+  box-shadow: none;
+  box-sizing: border-box;
+  width: 12px; height: 12px;
+}
+.aiAnalysisCtaBadge.locked {
+  animation: none;
+  cursor: pointer;
+  opacity: 0.85;
+  border-color: rgba(212,168,67,0.18);
+  color: rgba(255,220,140,0.7);
+  background: linear-gradient(180deg, rgba(22,18,8,0.50), rgba(16,14,6,0.40));
+}
+.aiAnalysisCtaBadge.locked::before { animation: none; }
+.aiAnalysisCtaBadge.locked .aiAnalysisDot {
+  animation: none;
+  background: rgba(255,220,140,0.5);
+  box-shadow: 0 0 4px rgba(255,220,140,0.3);
+}
+.aiAnalysisCtaBadge.error {
+  animation: none;
+  border-color: rgba(220,80,80,0.45);
+  color: rgba(255,170,170,0.95);
+  background: linear-gradient(180deg, rgba(40,12,12,0.72), rgba(28,8,8,0.58));
+  box-shadow:
+    0 14px 28px rgba(0,0,0,0.26),
+    0 0 0 1px rgba(220,80,80,0.20),
+    0 0 16px rgba(220,80,80,0.18);
+}
+.aiAnalysisCtaBadge.error::after {
+  background: linear-gradient(90deg, transparent, rgba(220,80,80,0.85), transparent);
+}
+.aiAnalysisCtaBadge.error .aiAnalysisDot {
+  animation: none;
+  background: rgba(255,130,130,1);
+  box-shadow: 0 0 6px rgba(255,130,130,0.7);
+}
+@keyframes aiAnalysisCtaBreath {
+  0%, 100% {
+    box-shadow:
+      0 14px 28px rgba(0,0,0,0.26),
+      0 0 0 1px rgba(212,168,67,0.06),
+      0 0 12px rgba(212,168,67,0.10);
+  }
+  50% {
+    box-shadow:
+      0 14px 28px rgba(0,0,0,0.26),
+      0 0 0 1px rgba(212,168,67,0.34),
+      0 0 28px rgba(212,168,67,0.34);
+  }
+}
+@keyframes aiAnalysisCtaShimmer {
+  0%   { background-position: 120% 0; }
+  60%  { background-position: -20% 0; }
+  100% { background-position: -20% 0; }
+}
+
 /* KWI header layout */
 .kwi-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 14px 8px; }
 /* KWI enterprise AI button */
@@ -21914,6 +22075,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
 
+    // Click-gate badge for the flow-context Deep Analysis. Mirror of
+    // the article-detail and cluster-detail gates — same big-badge
+    // styling and behavior. Replaces the prior auto-stream-on-tab-open
+    // path so a click is required before any credits are spent.
+    function _arcCtxShowGate(scope) {
+      const body = _arcCtxApplyBodyState('arcCtxStateSettled');
+      if (!body) return;
+      const safeScope = String(scope || _arcCtxScope || '').replace(/[^a-z0-9_:-]/gi, '');
+      body.innerHTML =
+        `<button class="aiAnalysisCtaBadge" data-scope="${safeScope}"` +
+                ` onclick="window.__arcAiContextStartFromGate?.(this)">` +
+          `<span class="aiAnalysisDot"></span>` +
+          `<span>✦ Generate Deep Analysis</span>` +
+        `</button>`;
+      body.scrollTop = 0;
+    }
+    window.__arcCtxKickStreamFromGate = function(scope) {
+      _arcCtxStream(scope || _arcCtxScope);
+    };
+
     function _arcCtxSleep(ms, signal) {
       return new Promise((resolve) => {
         if (signal?.aborted) { resolve(false); return; }
@@ -22236,11 +22417,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxCurrentKey = key;
       const blocks = _arcCtxCache.get(key);
       if (blocks && blocks.length) {
+        // Cached → render instantly (no credit spend, no API call).
         _arcCtxRenderBlocks(key);
       } else {
-        // Stream immediately on tab-open. The tier gate inside _arcCtxStream
-        // falls through to _arcCtxShowLock for free-tier users.
-        _arcCtxStream(_arcCtxScope);
+        // Click-gated: render the badge instead of auto-firing. The
+        // user must explicitly tap to spend credits. Backend cache
+        // means a tap after a previous generation returns instantly
+        // without recharging — this gate is purely about explicit
+        // intent. Free-tier users still see the badge; the tier check
+        // runs on click (yields a locked state) so we don't pre-judge
+        // the user's plan before they engage.
+        _arcCtxShowGate(_arcCtxScope);
       }
     };
 
@@ -22260,6 +22447,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     window.__arcAiContextRefresh = function() {
       if (!_arcCtxSession) return;
+      // Called from user-triggered error-retry clicks. Fire directly —
+      // the click on the error message IS the deliberate action; a
+      // second-stage gate here would force two clicks for one intent.
       _arcCtxStream(_arcCtxScope);
     };
 
@@ -22279,7 +22469,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         _arcCtxCurrentKey = key;
         const blocks = _arcCtxCache.get(key);
         if (blocks && blocks.length) _arcCtxRenderBlocks(key);
-        else _arcCtxStream('flow');
+        // Click-gated for un-cached segments — same intent gate as
+        // __arcAiContextOpen. Segment-flip auto-fire previously could
+        // chain Claude calls as the user tapped through arcs.
+        else _arcCtxShowGate('flow');
       }
     };
     window.__arcAiClearSession = function() {
@@ -22291,6 +22484,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxUpdateButtonVisibility();
     };
     window.__arcAiOnSelectArc = function() { _arcCtxUpdateFlowTabState(); };
+
+    // Click-gate handler for the flow-context Deep Analysis badge.
+    // Auth + tier gates surface immediately on the badge before any
+    // credit work happens. After clicking, dispatches back into
+    // _arcCtxStream via the IIFE-private window.__arcCtxKickStreamFromGate
+    // bridge so the streaming logic stays inside this scope.
+    window.__arcAiContextStartFromGate = function(btn) {
+      if (!btn) return;
+      if (btn.classList.contains('loading')) return;
+      if (!window.__authToken) { window.__openAuthModal?.(); return; }
+      if (window.__checkTier && !window.__checkTier('pro')) {
+        btn.classList.remove('loading', 'error');
+        btn.classList.add('locked');
+        const span = btn.querySelector('span:last-child');
+        if (span) span.textContent = '🔒 Upgrade to unlock';
+        btn.onclick = () => window.__openPricing?.('Deep analysis requires a Pro or Enterprise plan.');
+        return;
+      }
+      btn.classList.add('loading');
+      const span = btn.querySelector('span:last-child');
+      if (span) span.textContent = 'Generating…';
+      const scope = btn.dataset?.scope || _arcCtxScope || 'entities';
+      try { window.__arcCtxKickStreamFromGate?.(scope); } catch (_) {}
+    };
 
     // Backup delegated click handler — the inline onclick="" on
     // #flowCtxAiBtn / #arcListAiBtn can be pre-empted if a parent
@@ -32488,6 +32705,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       `</div>`;
     body.scrollTop = 0;
   }
+  // Click-gate badge for article-detail Deep Analysis. Replaces the
+  // earlier auto-stream-on-open path so the user must deliberately
+  // click before any credits are spent (or even an API request is
+  // made). Same big-badge styling used by cluster-detail and flow-
+  // context analysis triggers — one consistent vocabulary across all
+  // analysis surfaces.
+  function _adpAnalysisShowGate() {
+    const body = document.getElementById('adpAnalysisBody');
+    if (!body) return;
+    body.className = 'arcCtxBody arcCtxStateSettled';
+    body.innerHTML =
+      `<button class="aiAnalysisCtaBadge" onclick="window.__adpAnalysisStartFromGate?.(this)">` +
+        `<span class="aiAnalysisDot"></span>` +
+        `<span>✦ Generate Deep Analysis</span>` +
+      `</button>`;
+    body.scrollTop = 0;
+  }
   function _adpAnalysisShowMessage(cls, html) {
     const body = document.getElementById('adpAnalysisBody');
     if (!body) return;
@@ -32883,9 +33117,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     
     renderArticleDetail(article);
-    // Auto-fire the deep analysis stream. No click gate — the analysis
-    // begins rendering the moment the panel opens.
-    try { _adpAnalysisRender(article); } catch (_) {}
+    // Click-gated Deep Analysis. Render the badge button only — the
+    // user must explicitly tap to spend credits. _adpAnalysisRender is
+    // dispatched from the badge's onclick handler (window.__adpAnalysis-
+    // StartFromGate). Backend cache means a click for an already-
+    // analyzed article still returns instantly without re-charging.
+    try { _adpAnalysisShowGate(); } catch (_) {}
     panel.classList.add('visible');
 
     // Flow-return visual: fade the top-left back arrow in only when
@@ -33027,7 +33264,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
   
   // ── Expose for external use ────────────────────────────────────────────────
   window.closeArticleDetail = closeArticlePanel;
-  
+
+  // Click-gate handler for the article-detail Deep Analysis badge.
+  // Auth + tier gates upfront so users see immediate feedback before
+  // any network/credit work fires. After clicking, the badge transitions
+  // through:  idle → loading shell (via _adpAnalysisShowLoading) →
+  // streamed blocks (via _adpAnalysisRender). The badge's loading state
+  // here is a brief bridge until the shell takes over.
+  window.__adpAnalysisStartFromGate = function(btn) {
+    if (!btn) return;
+    if (btn.classList.contains('loading')) return;
+    if (!window.__authToken) { window.__openAuthModal?.(); return; }
+    if (window.__checkTier && !window.__checkTier('pro')) {
+      btn.classList.remove('loading', 'error');
+      btn.classList.add('locked');
+      const span = btn.querySelector('span:last-child');
+      if (span) span.textContent = '🔒 Upgrade to unlock';
+      btn.onclick = () => window.__openPricing?.('Deep analysis requires a Pro or Enterprise plan.');
+      return;
+    }
+    btn.classList.add('loading');
+    const span = btn.querySelector('span:last-child');
+    if (span) span.textContent = 'Generating…';
+    if (!currentArticle) return;
+    try { _adpAnalysisRender(currentArticle); } catch (_) {}
+  };
+
 })();
 </script>
 
@@ -35545,7 +35807,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const container = document.getElementById('cdSummaryBody');
       if (container) {
         container.innerHTML = `
-          <button class="aiAnalysisCta error"
+          <button class="aiAnalysisCtaBadge error"
                   data-thread-id="${threadId}"
                   data-is-timeline="${isTimeline ? '1' : '0'}"
                   data-entity-label="${entityLabel}"
@@ -35563,14 +35825,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const container = regenBtn.closest('#cdSummaryBody');
     if (!container) return;
     container.innerHTML = `
-      <button class="aiAnalysisCta loading"
+      <button class="aiAnalysisCtaBadge loading"
               data-thread-id="${regenBtn.dataset.threadId}"
               data-is-timeline="${regenBtn.dataset.isTimeline}"
               data-entity-label="${regenBtn.dataset.entityLabel}">
         <span class="aiAnalysisDot"></span>
         <span>Regenerating…</span>
       </button>`;
-    const cta = container.querySelector('.aiAnalysisCta');
+    const cta = container.querySelector('.aiAnalysisCtaBadge');
     window.__triggerClusterAnalysis?.(cta, { force: true });
   };
 
@@ -40796,13 +41058,13 @@ body.ticker-active .gTickerLabel {
             Analysis
           </div>
           <div id="cdSummaryBody">
-            <button class="aiAnalysisCta"
+            <button class="aiAnalysisCtaBadge"
                     data-thread-id="${threadId}"
                     data-is-timeline="${isTimeline ? '1' : '0'}"
                     data-entity-label="${isTimeline ? 'timeline' : 'thread'}"
                     onclick="window.__triggerClusterAnalysis?.(this)">
               <span class="aiAnalysisDot"></span>
-              <span>✦ Analysis</span>
+              <span>✦ Generate Deep Analysis</span>
             </button>
           </div>
         </div>
