@@ -9635,7 +9635,12 @@ app.get('/share/thread/:id.png', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
     res.send(png);
   } catch (err) {
-    console.error('[share/thread.png]', err.message);
+    // Echo the underlying error message back as a custom header (and
+    // log it loudly) so we can diagnose prod 500s without needing
+    // direct access to Render logs. Cloudflare strips most response
+    // bodies on 500 but preserves headers, so `curl -I` surfaces it.
+    console.error('[share/thread.png]', err && (err.stack || err.message || err));
+    try { res.setHeader('X-Share-Error', String(err?.message || err).slice(0, 240)); } catch (_) {}
     res.status(500).end();
   }
 });
@@ -9758,7 +9763,9 @@ app.get('/share/line/:id.png', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
     res.send(png);
   } catch (err) {
-    console.error('[share/line.png]', err.message);
+    // Same diagnostic header as /share/thread/:id.png — see comment there.
+    console.error('[share/line.png]', err && (err.stack || err.message || err));
+    try { res.setHeader('X-Share-Error', String(err?.message || err).slice(0, 240)); } catch (_) {}
     res.status(500).end();
   }
 });

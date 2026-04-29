@@ -273,12 +273,27 @@ function _chrome() {
 // zone. The fade prevents a hard vertical seam between hero and
 // chrome and lets the title bleed slightly into the hero area
 // without losing legibility.
+// Hard cap on embedded hero size. Anything above this is skipped and we
+// fall through to the next candidate (or empty hero). Some publisher
+// CDNs serve 4–8MB JPEGs at full resolution; embedding those as base64
+// pushes the SVG past 10MB, and resvg-js on Render's small-tier
+// container then either OOMs the native binary or hangs the request
+// long enough to trip an upstream timeout — turning every share card
+// for that thread into a 500. 1.5MB is enough for ~2K-wide JPEGs at
+// reasonable quality (the panel only renders at ~660×630 anyway, so
+// extra source resolution is wasted bytes).
+const HERO_MAX_BYTES = 1_500_000;
+
 async function _heroPanel(heroUrl, heroCatalogUrl) {
   const candidates = [heroUrl, heroCatalogUrl].filter(s => typeof s === 'string' && s.trim());
   for (const u of candidates) {
     try {
       const buf = await _fetchImageBufAny(u);
       if (!buf || buf.length < 64) continue;
+      if (buf.length > HERO_MAX_BYTES) {
+        console.warn(`[shareImg] hero image too large (${buf.length} bytes > ${HERO_MAX_BYTES}); skipping ${u.slice(0, 80)}`);
+        continue;
+      }
       const mime = _detectImageMime(buf);
       const dataUri = `data:${mime};base64,${buf.toString('base64')}`;
       // Right ~55% of canvas with a 200px left-edge fade zone.

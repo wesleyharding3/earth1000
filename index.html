@@ -13638,6 +13638,15 @@ window.__arcCtxSegmented = (function() {
         if (!el || el.dataset.fadeObserved === '1') return;
         el.dataset.fadeObserved = '1';
         _io.observe(el);
+        // Fallback timer — see www/index.html for full rationale.
+        // Hard-flips .inView after 1s so a card never stays invisible
+        // past the user's perception even if the IntersectionObserver
+        // is slow on cold-load page transitions.
+        setTimeout(() => {
+          if (el.classList && !el.classList.contains('inView')) {
+            el.classList.add('inView');
+          }
+        }, 1000);
       }
       function _registerAll(root) {
         (root || document).querySelectorAll('.fadeInCard:not([data-fade-observed])').forEach(_register);
