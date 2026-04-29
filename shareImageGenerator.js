@@ -323,6 +323,174 @@ async function _renderLineSvg({ title, isos, threadCount, category }) {
   `;
 }
 
+// ─── Flows template ──────────────────────────────────────────────────
+// Shareable News Flows poster. Two visual modes:
+//   • aggregate  — top arcs over the entire selected window, all rendered
+//   • timeseries — peak-frame: arcs active on/around the day with the
+//                  highest activity in the window, with a "▶ REPLAY"
+//                  badge so the still hints that the link plays motion
+//
+// Map projection is equirectangular cropped to ±60° latitude. Arcs are
+// quadratic Béziers with a control point pulled "outward" so longer
+// flows curve more visibly. No coastline outlines — keeps the brand
+// dependency-free; the gold arcs against the dark background read as a
+// stylized abstraction of global movement, not a literal globe.
+function _projectLonLat(lon, lat, mapBox) {
+  // mapBox = { x, y, w, h } — the rectangle inside the SVG where the
+  // equirectangular map lives. Lat clipped to ±60 to keep poles out of
+  // the frame (arcs near them are rare in news flows anyway).
+  const clampedLat = Math.max(-60, Math.min(60, Number(lat) || 0));
+  const lng = Number(lon) || 0;
+  const x = mapBox.x + ((lng + 180) / 360) * mapBox.w;
+  const y = mapBox.y + ((60 - clampedLat) / 120) * mapBox.h;
+  return { x, y };
+}
+
+function _arcPath(p1, p2) {
+  // Quadratic Bézier with a control point lifted perpendicular to the
+  // chord. Lift = chord-length / 4, capped, sign chosen to bow upward
+  // when both endpoints are in the lower half (otherwise downward).
+  const midX = (p1.x + p2.x) / 2;
+  const midY = (p1.y + p2.y) / 2;
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const chord = Math.sqrt(dx * dx + dy * dy);
+  const lift = Math.min(110, chord / 4);
+  // Bow upward (towards top of canvas, lower y) for visual lift.
+  const cpX = midX;
+  const cpY = midY - lift;
+  return `M${p1.x.toFixed(1)},${p1.y.toFixed(1)} Q${cpX.toFixed(1)},${cpY.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+}
+
+async function _renderFlowsSvg({ title, mode, dateLabel, peakLabel, arcs, topPlaces }) {
+  const isPeak = mode === 'timeseries';
+  // Map area — leaves 130px at top for title strip, ~100px at bottom for
+  // chips/footer.
+  const MAP = { x: 56, y: 150, w: W - 112, h: 360 };
+
+  // Sort arcs by weight (desc) so heavier arcs render on top of lighter
+  // ones, then cap at 40 to avoid muddying the image.
+  const sorted = (Array.isArray(arcs) ? arcs : [])
+    .slice()
+    .sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+    .slice(0, 40);
+
+  const maxWeight = Math.max(1, ...sorted.map(a => Number(a.weight) || 0));
+
+  // Render arcs back-to-front with weight-scaled stroke + opacity. The
+  // chunkiest flows pop, the lighter ones fade toward decorative noise.
+  const arcSvg = sorted.map((a, i) => {
+    const p1 = _projectLonLat(a.srcLon, a.srcLat, MAP);
+    const p2 = _projectLonLat(a.dstLon, a.dstLat, MAP);
+    const w  = Number(a.weight) || 0;
+    const norm = w / maxWeight;
+    const stroke = 1.2 + norm * 2.8;            // 1.2 → 4.0
+    const opacity = 0.25 + norm * 0.65;         // 0.25 → 0.9
+    return `<path d="${_arcPath(p1, p2)}"
+              fill="none" stroke="${BRAND.gold}"
+              stroke-width="${stroke.toFixed(2)}"
+              stroke-linecap="round"
+              opacity="${opacity.toFixed(2)}"/>
+            <circle cx="${p1.x.toFixed(1)}" cy="${p1.y.toFixed(1)}" r="${(1.5 + norm * 1.5).toFixed(1)}"
+                    fill="${BRAND.cream}" opacity="${(0.6 + norm * 0.4).toFixed(2)}"/>
+            <circle cx="${p2.x.toFixed(1)}" cy="${p2.y.toFixed(1)}" r="${(1.5 + norm * 1.5).toFixed(1)}"
+                    fill="${BRAND.gold}" opacity="${(0.7 + norm * 0.3).toFixed(2)}"/>`;
+  }).join('\n');
+
+  // Title (theme/keyword/category) — falls back to "Global Story Flows"
+  // when no theme is supplied (the user shared the default unfiltered view).
+  const titleText = (title || 'Global Story Flows').slice(0, 80);
+  const titleLines = _wrapLines(titleText, 36, 2);
+  const titleSvg = titleLines.map((line, i) => {
+    const y = 90 + i * 46;
+    return `<text x="56" y="${y}"
+              font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
+              font-weight="800" font-size="40" letter-spacing="-0.6"
+              fill="${BRAND.cream}">${_esc(line)}</text>`;
+  }).join('\n');
+
+  // Mode badge (top-right) — "AGGREGATE · 2.4K ROUTES" or
+  // "PEAK · MAR 14, 2026". Carries the most context the recipient
+  // needs to grok the still vs. the link's motion replay.
+  const badgeText = (isPeak ? (peakLabel || 'PEAK FRAME') : 'AGGREGATE').toUpperCase();
+  const badgeColor = isPeak ? BRAND.important : BRAND.gold;
+  const badgeBg = isPeak ? 'rgba(255,155,58,0.10)' : 'rgba(212,168,67,0.10)';
+  const badgeWidth = Math.max(180, badgeText.length * 11 + 36);
+  const badgeSvg = `
+    <g transform="translate(${W - 56 - badgeWidth}, 60)">
+      <rect width="${badgeWidth}" height="36" rx="18"
+            fill="${badgeBg}" stroke="${badgeColor}" stroke-width="1.4"/>
+      <text x="${badgeWidth / 2}" y="24" text-anchor="middle"
+            font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
+            font-weight="800" font-size="13" letter-spacing="0.18em"
+            fill="${badgeColor}">${_esc(badgeText)}</text>
+    </g>
+  `;
+
+  // Date range subtitle below the title (e.g. "MAR 1 – APR 15, 2026 · NEWS FLOWS").
+  const dateRow = (dateLabel || 'NEWS FLOWS').toUpperCase();
+  const dateRowSvg = `
+    <text x="56" y="180"
+          font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
+          font-weight="700" font-size="13" letter-spacing="0.22em"
+          fill="${BRAND.gold}">${_esc(dateRow)}</text>
+  `;
+
+  // Top-place chips at the bottom: 3 origins + 3 destinations (or fewer)
+  // so the recipient can read which places dominate the flow even
+  // before tapping through.
+  const chipsY = H - 100;
+  const chipIsos = (Array.isArray(topPlaces) ? topPlaces : [])
+    .filter(Boolean)
+    .map(p => String(p).toUpperCase())
+    .slice(0, 6);
+  const chipsSvg = await _flagChips(chipIsos, 56, chipsY);
+
+  // Replay badge (timeseries only, bottom-right) — tiny play-glyph pill
+  // that hints "this still has motion behind it; tap to replay".
+  const replaySvg = isPeak ? `
+    <g transform="translate(${W - 220}, ${chipsY + 4})">
+      <rect width="164" height="32" rx="16"
+            fill="rgba(255,155,58,0.10)"
+            stroke="${BRAND.important}" stroke-width="1.4"/>
+      <polygon points="20,11 20,22 30,16.5"
+               fill="${BRAND.important}"/>
+      <text x="40" y="22"
+            font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
+            font-weight="800" font-size="11" letter-spacing="0.18em"
+            fill="${BRAND.important}">REPLAY ON EARTH00</text>
+    </g>
+  ` : '';
+
+  // Subtle equator + prime-meridian guidelines so the projection reads
+  // as a map, not a random scatter. 0.06 opacity keeps them whisper-faint.
+  const eq  = _projectLonLat(0, 0, MAP);
+  const pm  = _projectLonLat(0, 60, MAP);
+  const pmEnd = _projectLonLat(0, -60, MAP);
+  const guidesSvg = `
+    <line x1="${MAP.x}" y1="${eq.y.toFixed(1)}"
+          x2="${MAP.x + MAP.w}" y2="${eq.y.toFixed(1)}"
+          stroke="${BRAND.cardLine}" stroke-width="1" stroke-dasharray="3 5" opacity="0.5"/>
+    <line x1="${pm.x.toFixed(1)}" y1="${pm.y.toFixed(1)}"
+          x2="${pmEnd.x.toFixed(1)}" y2="${pmEnd.y.toFixed(1)}"
+          stroke="${BRAND.cardLine}" stroke-width="1" stroke-dasharray="3 5" opacity="0.5"/>
+  `;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+    <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+      ${_background()}
+      ${_chrome()}
+      ${dateRowSvg}
+      ${titleSvg}
+      ${badgeSvg}
+      ${guidesSvg}
+      ${arcSvg}
+      ${chipsSvg}
+      ${replaySvg}
+    </svg>
+  `;
+}
+
 async function _renderHeatmapSvg({ question, mode, countriesCount, topIsos }) {
   const lines = _wrapLines(question || 'Untitled view', 30, 4);
   const titleSvg = lines.map((line, i) => {
@@ -406,6 +574,7 @@ async function generate(entity) {
     case 'thread':  svg = await _renderThreadSvg(entity);  break;
     case 'line':    svg = await _renderLineSvg(entity);    break;
     case 'heatmap': svg = await _renderHeatmapSvg(entity); break;
+    case 'flows':   svg = await _renderFlowsSvg(entity);   break;
     default:        throw new Error(`unknown share kind: ${entity.kind}`);
   }
   const png = await _toPng(svg);

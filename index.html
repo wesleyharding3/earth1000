@@ -2283,6 +2283,36 @@ body.ticker-active #flowControls {
   color: rgba(255,220,100,0.9);
 }
 
+/* Share button — sits between flowMinBtn and flowCloseBtn in the panel
+   chrome (right-edge). Same shape as siblings; gold-amber accent matches
+   the broader share-system palette. Hidden when the panel is minimized
+   (the minimized bar has its own affordances). */
+.flowShareBtn {
+  position: absolute;
+  top: 2px;
+  right: calc(70px * var(--mobile-control-scale));
+  width: calc(24px * var(--mobile-control-scale));
+  height: calc(24px * var(--mobile-control-scale));
+  border-radius: calc(12px * var(--mobile-control-scale));
+  background: rgba(255,200,130,0.08);
+  border: 1px solid rgba(255,200,130,0.25);
+  color: rgba(255,220,180,0.86);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.15s;
+  z-index: 10;
+}
+.flowShareBtn svg { width: 12px; height: 12px; }
+.flowShareBtn:hover {
+  background: rgba(255,200,130,0.20);
+  border-color: rgba(255,200,130,0.55);
+  color: #fff;
+}
+#flowControls.minimized .flowShareBtn { display: none; }
+
 /* Minimized state — collapse the panel smoothly instead of display:none so
    the live-arc list animates into the freed space. */
 #flowControls.minimized .flowPanel {
@@ -4450,6 +4480,43 @@ button.arcCtxSegDot,
 }
 .cardSaveBtn.saved svg { color: rgba(255,210,140,0.95); fill: currentColor; }
 
+/* ── Share button on thread/line cards — third button in the right-edge
+   stack, below cardSaveBtn. Same circular shape so the three controls
+   read as one unified affordance column. Gold-amber accent (matching
+   the broader share-system palette in #shareToast / .shareBtn) so the
+   action category is consistent across surfaces. Articles intentionally
+   excluded — sharing an article without the original publisher's link
+   in the share image risks a derivative-content claim. */
+.cardShareBtn {
+  position: absolute;
+  top: 84px;
+  right: 8px;
+  z-index: 12;
+  box-sizing: border-box;
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px; max-width: 30px;
+  min-height: 30px; max-height: 30px;
+  background: rgba(0,0,0,0.60);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, transform 0.15s;
+  pointer-events: all;
+  padding: 0;
+}
+.cardShareBtn:hover {
+  background: rgba(255, 200, 130, 0.22);
+  border-color: rgba(255, 200, 130, 0.55);
+  transform: scale(1.12);
+}
+.cardShareBtn:active { transform: scale(0.95); }
+.cardShareBtn svg { width: 14px; height: 14px; color: rgba(255,255,255,0.55); transition: color 0.15s; }
+.cardShareBtn:hover svg { color: rgba(255,220,180,0.95); }
+
 /* ── Flow context card — compact floating card shown on the globe when
    flow arcs are triggered from an article/thread/timeline card. Lets the
    user see which card spawned the visualization without hiding the globe. */
@@ -4578,6 +4645,7 @@ button.arcCtxSegDot,
 }
 #flowCtxCard .flowCtxReturn,
 #flowCtxCard .flowCtxMinimize,
+#flowCtxCard .flowCtxShare,
 #flowCtxCard .flowCtxClose {
   position: static;
   width: 28px;
@@ -4596,6 +4664,7 @@ button.arcCtxSegDot,
   line-height: 1;
 }
 #flowCtxCard .flowCtxReturn svg,
+#flowCtxCard .flowCtxShare svg,
 #flowCtxCard .flowCtxClose svg { width: 11px; height: 11px; }
 #flowCtxCard .flowCtxReturn:hover {
   background: rgba(255,180,80,0.24);
@@ -4604,6 +4673,17 @@ button.arcCtxSegDot,
 #flowCtxCard .flowCtxMinimize:hover {
   background: rgba(255,255,255,0.12);
   color: #fff;
+}
+#flowCtxCard .flowCtxShare:hover {
+  background: rgba(255,200,130,0.24);
+  color: rgba(255,220,180,1);
+}
+/* Hide the share button when the card has no shareable entity (e.g.
+   article-flow sessions). Toggled by __arcAiSetSession via dataset.kind
+   on the card root: an attribute selector keeps the visibility logic
+   declarative — no JS show/hide call needed. */
+#flowCtxCard:not([data-kind="thread"]):not([data-kind="line"]) .flowCtxShare {
+  display: none;
 }
 #flowCtxCard .flowCtxClose:hover {
   background: rgba(255,80,80,0.24);
@@ -13009,6 +13089,16 @@ window.__arcCtxSegmented = (function() {
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
+    <!-- Share button — surfaces the current view's flows as a Universal
+         Link with a peak-frame poster (timeseries) or aggregate composite.
+         Click reads filter state from #flowControls inputs and dispatches
+         to __shareEntity({kind:'flows', ...}). -->
+    <button class="flowShareBtn" id="flowShareBtn" title="Share these flows" onclick="window.__shareNewsFlows?.()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+      </svg>
+    </button>
     <button class="flowCloseBtn" id="flowCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
 
     <!-- Minimized bar (shown when minimized) -->
@@ -22459,6 +22549,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _arcCtxScope = 'entities';
       _arcCtxCurrentKey = null;
       _arcCtxUpdateButtonVisibility();
+      // Stamp the active flow's entity onto #flowCtxCard so the share
+      // button in the pill bar can read kind/id/title without holding
+      // its own state. Mirrors the dataset pattern used by
+      // #clusterDetailPanel for the cluster-panel share button.
+      try {
+        const card = document.getElementById('flowCtxCard');
+        if (card) {
+          if (session && (session.mode === 'thread' || session.mode === 'timeline') && session.id != null) {
+            card.dataset.kind = session.mode === 'timeline' ? 'line' : 'thread';
+            card.dataset.entityId = String(session.id);
+            card.dataset.entityTitle = String(session.theme || session.title || '');
+          } else {
+            delete card.dataset.kind;
+            delete card.dataset.entityId;
+            delete card.dataset.entityTitle;
+          }
+        }
+      } catch (_) {}
     };
     window.__arcAiSetSegment = function(segInfo) {
       _arcCtxSegment = segInfo || null;
@@ -23287,8 +23395,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     if (filterKey === "from") {
       filterFromCountry = country;
+      window.__flowFilterFromCountryId = country.id;
     } else {
       filterAboutCountry = country;
+      window.__flowFilterAboutCountryId = country.id;
     }
 
     // Update UI
@@ -23302,11 +23412,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.clearFlowFilter = function(filterKey) {
     if (filterKey === "from") {
       filterFromCountry = null;
+      delete window.__flowFilterFromCountryId;
       document.getElementById("flowFromLoc").style.display = "";
       document.getElementById("flowFromLoc").value = "";
       document.getElementById("flowFromChip").classList.remove("visible");
     } else {
       filterAboutCountry = null;
+      delete window.__flowFilterAboutCountryId;
       document.getElementById("flowAboutLoc").style.display = "";
       document.getElementById("flowAboutLoc").value = "";
       document.getElementById("flowAboutChip").classList.remove("visible");
@@ -27352,7 +27464,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const isSavedNow = !!(window.__libraryIsSaved && window.__libraryIsSaved(entityId, saveKind));
         const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
         const threadSaveBtn = `<button class="cardSaveBtn${isSavedNow ? ' saved' : ''}" data-save-id="${entityId}" data-save-kind="${saveKind}" title="${isSavedNow ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${isSavedNow ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
-        return `<div style="position:relative">${threadFlowBtn}${threadSaveBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
+        // Share button — kind ('thread' | 'line') routes to the correct
+        // /share/* URL via __shareEntity. Title is forwarded so the
+        // share-sheet header shows the user-visible name (some social
+        // apps render this above the link preview).
+        const shareKind = isTimeline ? 'line' : 'thread';
+        const shareTitleAttr = (t.title || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+        const threadShareBtn = `<button class="cardShareBtn" data-share-kind="${shareKind}" data-share-id="${entityId}" data-share-title="${shareTitleAttr}" onclick="(function(e){e.stopPropagation();var b=e.currentTarget;window.__shareEntity({kind:b.dataset.shareKind,id:parseInt(b.dataset.shareId,10),title:b.dataset.shareTitle});})(event)" title="Share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>`;
+        return `<div style="position:relative">${threadFlowBtn}${threadSaveBtn}${threadShareBtn}<div class="nfThreadCard fadeInCard" data-thread='${dataAttr}'>
           ${src
             ? `<img class="nfThreadCardImg" src="${src}" alt="" loading="lazy" onerror="${onErr}" onload="${onLoad}">`
             : `<div class="nfThreadCardImgPh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="8" r="2.5"/><circle cx="11" cy="5" r="2"/><circle cx="11" cy="11" r="2"/><path d="M7.2 7.2l2.1-1.5M7.2 8.8l2.1 1.5"/></svg></div>`}
@@ -28492,6 +28611,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           <button class="flowCtxTab active" data-view="info" title="Article"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></button>
           <button class="flowCtxTab" data-view="arcs" title="Live Arcs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 18 C 8 6, 16 6, 20 18"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/><circle cx="20" cy="18" r="1.5" fill="currentColor"/></svg></button>
           <button class="flowCtxTab ai" id="flowCtxAiBtn" data-view="ctx" title="AI Context">✦</button>
+          <!-- Share button — only meaningful when the flow card is hosting a
+               thread or timeline (set via __arcAiSetSession). Reads kind/id/
+               title from the card's dataset and dispatches to __shareEntity.
+               Article-flow sessions never set those attributes, so the button
+               no-ops with a toast in that case. -->
+          <button class="flowCtxShare" id="flowCtxShareBtn" title="Share"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg></button>
           <button class="flowCtxMinimize" title="Minimize">&#x2012;</button>
           <button class="flowCtxClose" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
         </div>
@@ -45644,6 +45769,229 @@ body.ticker-active .gTickerLabel {
       }
     });
   });
+})();
+</script>
+
+<!-- ─────────────────────────────────────────────────────────────────
+     Sharing system (desktop mirror).
+     Backend lives in server.js (/share/*). Desktop falls back through
+     navigator.share → clipboard since there's no Capacitor Share plugin.
+     ───────────────────────────────────────────────────────────────── -->
+<style>
+  .shareBtn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 200, 130, 0.28);
+    background: rgba(255, 200, 130, 0.08);
+    color: rgba(255, 220, 180, 0.86);
+    cursor: pointer; padding: 0;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+  }
+  .shareBtn:hover {
+    background: rgba(255, 200, 130, 0.18);
+    border-color: rgba(255, 200, 130, 0.55);
+    color: #fff;
+  }
+  .shareBtn:active { transform: scale(0.96); }
+  .shareBtn svg { width: 14px; height: 14px; display: block; }
+  #shareToast {
+    position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
+    transform: translateX(-50%) translateY(8px);
+    padding: 10px 18px; border-radius: 999px;
+    background: rgba(8, 12, 22, 0.94);
+    border: 1px solid rgba(212, 168, 67, 0.42);
+    color: rgba(255, 230, 190, 0.96);
+    font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    z-index: 100300;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.22s ease, transform 0.22s ease;
+  }
+  #shareToast.open { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+<div id="shareToast"></div>
+
+<script>
+(function() {
+  const SHARE_HOST = 'https://earth00.com';
+
+  function showToast(msg, ms) {
+    const el = document.getElementById('shareToast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.add('open');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => el.classList.remove('open'), ms || 1800);
+  }
+
+  function _shareUrl(entity) {
+    const base = SHARE_HOST;
+    if (entity.kind === 'thread') return `${base}/share/thread/${entity.id}`;
+    if (entity.kind === 'line')   return `${base}/share/line/${entity.id}`;
+    if (entity.kind === 'heatmap') {
+      const p = new URLSearchParams({ q: entity.question || '' });
+      if (entity.mode && entity.mode !== 'percent') p.set('mode', entity.mode);
+      return `${base}/share/heatmap?${p}`;
+    }
+    if (entity.kind === 'flows') {
+      const p = new URLSearchParams();
+      const fields = ['mode', 'theme', 'keyword', 'from_date', 'to_date',
+                      'from_country', 'about_country', 'view_mode'];
+      for (const k of fields) {
+        const v = entity[k];
+        if (v != null && String(v).trim() !== '') p.set(k, String(v));
+      }
+      return `${base}/share/flows?${p}`;
+    }
+    return base;
+  }
+
+  function _shareCopy(entity) {
+    if (entity.kind === 'thread') {
+      return { title: entity.title || 'Story on Earth00', text: `${entity.title || 'Story'} — tracked on Earth00` };
+    }
+    if (entity.kind === 'line') {
+      return { title: entity.title || 'Story line on Earth00', text: `${entity.title || 'Story line'} — Earth00` };
+    }
+    if (entity.kind === 'heatmap') {
+      return { title: 'Earth00 · Map This', text: `${entity.question} — Map This view on Earth00` };
+    }
+    if (entity.kind === 'flows') {
+      const themeLabel = (entity.theme || entity.keyword || '').trim();
+      const modeLabel = entity.mode === 'timeseries' ? 'Peak frame' : 'Aggregate';
+      const titleHead = themeLabel ? `${themeLabel} · Story Flows` : 'Story flows on Earth00';
+      return {
+        title: titleHead,
+        text:  themeLabel
+          ? `${themeLabel} — ${modeLabel.toLowerCase()} story flows on Earth00`
+          : `${modeLabel} story flows on Earth00`,
+      };
+    }
+    return { title: 'Earth00', text: 'Shared from Earth00' };
+  }
+
+  window.__shareEntity = async function(entity) {
+    const url = _shareUrl(entity);
+    const copy = _shareCopy(entity);
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({ title: copy.title, text: copy.text, url });
+        return;
+      } catch (err) {
+        if (err && /cancel/i.test(err.name || err.message || '')) return;
+        console.warn('[share] navigator.share error:', err.message);
+      }
+    }
+    try {
+      await navigator.clipboard?.writeText(url);
+      showToast('Link copied');
+    } catch (_) {
+      window.prompt('Copy this link:', url);
+    }
+  };
+
+  // Cluster panel + heatmap panel attached share buttons.
+  function _attachClusterShareBtn() {
+    const close = document.querySelector('#cdCloseBtn');
+    if (!close || close.parentElement.querySelector('.shareBtn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'shareBtn';
+    btn.title = 'Share';
+    btn.setAttribute('aria-label', 'Share');
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+    btn.style.marginRight = '6px';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = close.closest('#clusterDetailPanel') || document.getElementById('clusterDetailPanel');
+      const dataset = panel?.dataset || {};
+      const kind  = dataset.kind || 'thread';
+      const id    = dataset.entityId;
+      const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
+      if (!id) { console.warn('[share] no entity id on cluster panel'); return; }
+      window.__shareEntity({ kind, id: parseInt(id, 10), title });
+    });
+    close.parentElement.insertBefore(btn, close);
+  }
+  function _attachHeatmapShareBtn() {
+    const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
+    if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'shareBtn';
+    btn.title = 'Share';
+    btn.setAttribute('aria-label', 'Share');
+    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+    btn.style.marginRight = '6px';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = document.getElementById('semHeatPanel');
+      const question = panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim();
+      const mode = panel?.dataset?.qaMode || 'percent';
+      if (!question) { showToast('Ask a question first'); return; }
+      window.__shareEntity({ kind: 'heatmap', question, mode });
+    });
+    closeBtn.parentElement.insertBefore(btn, closeBtn);
+  }
+  ['clusterDetailPanel', 'semHeatPanel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    new MutationObserver(() => {
+      _attachClusterShareBtn();
+      _attachHeatmapShareBtn();
+    }).observe(el, { childList: true, subtree: true });
+  });
+  setTimeout(() => { _attachClusterShareBtn(); _attachHeatmapShareBtn(); }, 200);
+
+  // Flow-context card share button — same pattern as the iOS file.
+  document.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('#flowCtxShareBtn');
+    if (!btn) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const card = document.getElementById('flowCtxCard');
+    const ds = card?.dataset || {};
+    const kind = ds.kind;
+    const id = parseInt(ds.entityId || '', 10);
+    const title = ds.entityTitle || '';
+    if (!kind || !Number.isFinite(id)) {
+      showToast('Nothing to share');
+      return;
+    }
+    window.__shareEntity({ kind, id, title });
+  }, true);
+
+  // News Flows panel share — same pattern as the iOS file.
+  window.__shareNewsFlows = function() {
+    try {
+      const panel = document.getElementById('flowControls');
+      if (!panel) { showToast('Open News Flows first'); return; }
+      const activePill = panel.querySelector('.flowModePill.active');
+      const fmode = activePill?.dataset?.fmode || 'individual';
+      const mode = fmode === 'aggregate' ? 'aggregate' : 'timeseries';
+      const keyword = (document.getElementById('flowKeyword')?.value || '').trim();
+      const fromDate = (document.getElementById('flowFrom')?.value || '').trim();
+      const toDate = (document.getElementById('flowTo')?.value || '').trim();
+      const viewMode = window.__currentViewMode || 'country';
+      const fromCountryId = window.__flowFilterFromCountryId || null;
+      const aboutCountryId = window.__flowFilterAboutCountryId || null;
+      const entity = {
+        kind: 'flows',
+        mode,
+        theme: keyword,
+        keyword,
+        view_mode: viewMode,
+      };
+      if (fromDate)  entity.from_date = fromDate;
+      if (toDate)    entity.to_date   = toDate;
+      if (fromCountryId)  entity.from_country  = fromCountryId;
+      if (aboutCountryId) entity.about_country = aboutCountryId;
+      window.__shareEntity(entity);
+    } catch (err) {
+      console.warn('[shareNewsFlows]', err.message);
+      showToast('Share failed');
+    }
+  };
 })();
 </script>
 

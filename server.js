@@ -9433,6 +9433,8 @@ app.get('/.well-known/apple-app-site-association', (_req, res) => {
             '/share/line/*',
             '/share/heatmap',
             '/share/heatmap?*',
+            '/share/flows',
+            '/share/flows?*',
           ],
         },
       ],
@@ -9697,6 +9699,284 @@ app.get('/share/heatmap.png', async (req, res) => {
     res.send(png);
   } catch (err) {
     console.error('[share/heatmap.png]', err.message);
+    res.status(500).end();
+  }
+});
+
+// ── News Flows share ─────────────────────────────────────────────────
+// Same pattern as heatmap — params describe the view filters; the share
+// endpoint hashes them for cache key. Two visual modes:
+//   • aggregate  — top N flows over the entire date range, all rendered
+//   • timeseries — auto-pick the peak-activity day inside the range,
+//                  render only flows whose article published on that day,
+//                  add a "▶ REPLAY ON EARTH00" badge so the still hints
+//                  at the link's animated payoff
+//
+// Filter params mirror /api/flows for parity:
+//   ?mode=aggregate|timeseries
+//   ?keyword=…                — matches news_articles via article_keywords
+//   ?from_date=YYYY-MM-DD     — window start (default: now-7d)
+//   ?to_date=YYYY-MM-DD       — window end   (default: now)
+//   ?from_country=<id>        — source country filter
+//   ?about_country=<id>       — destination country filter
+//   ?view_mode=country|city|region (default: country)
+//
+// Cache key includes the full normalized param set so unrelated filters
+// don't collide. Cache is stale-tolerant for 24h on the CDN since each
+// filter combination's underlying data only changes when new articles
+// arrive (and the in-process LRU keeps the SVG render off the hot path).
+function _flowsShareHash(params) {
+  const norm = {
+    mode: String(params.mode || 'aggregate').toLowerCase(),
+    keyword: String(params.keyword || '').toLowerCase().trim(),
+    from_date: String(params.from_date || '').trim(),
+    to_date: String(params.to_date || '').trim(),
+    from_country: String(params.from_country || '').trim(),
+    about_country: String(params.about_country || '').trim(),
+    view_mode: String(params.view_mode || 'country').toLowerCase(),
+  };
+  return _crypto.createHash('sha256')
+    .update(JSON.stringify(norm))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+// Given the same filter set the user is viewing, fetch flow rows from
+// PostgreSQL. Returns { rows, meta } where meta.peakDate is the YYYY-MM-DD
+// with the highest article count in the window (only meaningful when
+// mode=timeseries). For aggregate mode we don't compute peak — meta.peakDate
+// stays null.
+async function _flowsShareData({ mode, keyword, from_date, to_date, from_country, about_country, view_mode }) {
+  const conditions = [`al.routing_type IN ('content', 'source')`];
+  const params = [];
+
+  if (from_date) { params.push(from_date); conditions.push(`a.published_at >= $${params.length}::date`); }
+  if (to_date)   { params.push(to_date);   conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`); }
+  if (!from_date && !to_date) {
+    conditions.push(`a.published_at > NOW() - INTERVAL '7 days'`);
+  }
+  if (from_country)  { params.push(parseInt(from_country, 10));  conditions.push(`a.country_id = $${params.length}`); }
+  if (about_country) { params.push(parseInt(about_country, 10)); conditions.push(`al.country_id = $${params.length}`); }
+
+  // Keyword: same pattern as /api/flows — uncorrelated IN(subquery) with
+  // tsvector prefix match for index-backed lookup.
+  if (keyword) {
+    const kwLower = String(keyword).toLowerCase().trim();
+    params.push(kwLower);
+    const exactParam = params.length;
+    const tsTokens = kwLower.replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+    if (tsTokens.length) {
+      const tsQuery = tsTokens.map(w => w + ':*').join(' & ');
+      params.push(tsQuery);
+      const tsParam = params.length;
+      conditions.push(`a.id IN (
+        SELECT ak.article_id FROM article_keywords ak
+        WHERE ak.normalized_keyword = $${exactParam}
+           OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', $${tsParam})
+      )`);
+    } else {
+      conditions.push(`a.id IN (SELECT ak.article_id FROM article_keywords ak WHERE ak.normalized_keyword = $${exactParam})`);
+    }
+  }
+
+  if (view_mode === 'city' || view_mode === 'region') {
+    conditions.push(`a.city_id IS NOT NULL`);
+    conditions.push(`al.city_id IS NOT NULL`);
+    conditions.push(`a.city_id != al.city_id`);
+  } else {
+    conditions.push(`a.country_id != al.country_id`);
+  }
+
+  const whereClause = 'WHERE ' + conditions.join(' AND ');
+
+  // Aggregate-style: group by src/dst, return top 40 with counts. Used
+  // for both modes; for timeseries we additionally narrow the WHERE to
+  // the peak day after a quick bucketing pass.
+  let peakDate = null;
+  if (mode === 'timeseries') {
+    // Quick bucketing query to find the day with the highest flow count.
+    // Indexed on a.published_at; cheap even with the keyword filter.
+    const bucketSql = `
+      SELECT a.published_at::date AS day, COUNT(*) AS c
+      FROM article_locations al
+      JOIN news_articles a ON a.id = al.article_id
+      ${whereClause}
+      GROUP BY a.published_at::date
+      ORDER BY c DESC
+      LIMIT 1
+    `;
+    const client = await pool.connect();
+    try {
+      await client.query(`SET LOCAL statement_timeout = 6000`);
+      const { rows: bRows } = await client.query(bucketSql, params);
+      if (bRows.length && bRows[0].day) {
+        const d = new Date(bRows[0].day);
+        peakDate = d.toISOString().slice(0, 10);
+      }
+    } finally {
+      client.release();
+    }
+
+    if (peakDate) {
+      // Narrow the conditions to the peak day. Push two new params; record
+      // their indices so the next query sees them.
+      params.push(peakDate); conditions.push(`a.published_at >= $${params.length}::date`);
+      params.push(peakDate); conditions.push(`a.published_at < $${params.length}::date + interval '1 day'`);
+    }
+  }
+
+  const finalWhere = 'WHERE ' + conditions.join(' AND ');
+  const aggSql = `
+    SELECT
+      COUNT(*)::int                                    AS weight,
+      AVG(a.sentiment_score)                           AS avg_sentiment,
+      COALESCE(src_city.latitude,  src_co.latitude)    AS src_lat,
+      COALESCE(src_city.longitude, src_co.longitude)   AS src_lon,
+      COALESCE(src_city.name,      src_co.name)        AS src_place,
+      src_co.iso_code                                  AS src_iso,
+      COALESCE(dst_city.latitude,  dst_co.latitude)    AS dst_lat,
+      COALESCE(dst_city.longitude, dst_co.longitude)   AS dst_lon,
+      COALESCE(dst_city.name,      dst_co.name)        AS dst_place,
+      dst_co.iso_code                                  AS dst_iso
+    FROM article_locations al
+    JOIN news_articles a   ON a.id = al.article_id
+    JOIN countries src_co  ON src_co.id = a.country_id
+    JOIN countries dst_co  ON dst_co.id = al.country_id
+    LEFT JOIN cities src_city ON src_city.id = a.city_id
+    LEFT JOIN cities dst_city ON dst_city.id = al.city_id
+    ${finalWhere}
+    GROUP BY
+      COALESCE(src_city.latitude,  src_co.latitude),
+      COALESCE(src_city.longitude, src_co.longitude),
+      COALESCE(src_city.name,      src_co.name),
+      src_co.iso_code,
+      COALESCE(dst_city.latitude,  dst_co.latitude),
+      COALESCE(dst_city.longitude, dst_co.longitude),
+      COALESCE(dst_city.name,      dst_co.name),
+      dst_co.iso_code
+    ORDER BY weight DESC
+    LIMIT 40
+  `;
+
+  const client = await pool.connect();
+  let rows;
+  try {
+    await client.query(`SET LOCAL statement_timeout = 8000`);
+    ({ rows } = await client.query(aggSql, params));
+  } finally {
+    client.release();
+  }
+
+  return { rows: rows || [], peakDate };
+}
+
+function _formatDateLabel(fromDate, toDate) {
+  const fmt = (s) => {
+    if (!s) return null;
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+  };
+  const f = fmt(fromDate);
+  const t = fmt(toDate);
+  if (f && t) return `${f} – ${t}`;
+  if (t) return `THROUGH ${t}`;
+  if (f) return `FROM ${f}`;
+  return 'PAST 7 DAYS';
+}
+
+app.get('/share/flows', async (req, res) => {
+  try {
+    const mode = String(req.query.mode || 'aggregate').toLowerCase();
+    const theme = String(req.query.theme || req.query.keyword || '').trim();
+    const dateLabel = _formatDateLabel(req.query.from_date, req.query.to_date);
+    const titleBase = theme ? `${theme} · Story Flows` : 'Global Story Flows on Earth00';
+    const description = mode === 'timeseries'
+      ? `Peak-activity frame from a time-series of news flows on Earth00. ${dateLabel}.`
+      : `Aggregate global news flows on Earth00. ${dateLabel}.`;
+    const qsParams = new URLSearchParams();
+    Object.entries(req.query).forEach(([k, v]) => { if (v != null && String(v).trim() !== '') qsParams.set(k, v); });
+    const imageUrl = `${SHARE_HOST}/share/flows.png?${qsParams}`;
+    const canonicalUrl = `${SHARE_HOST}/share/flows?${qsParams}`;
+    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(_shareHtml({ title: titleBase, description, imageUrl, canonicalUrl, deepLinkPath: canonicalUrl }));
+  } catch (err) {
+    console.error('[share/flows]', err.message);
+    res.status(500).send('Share page error');
+  }
+});
+
+app.get('/share/flows.png', async (req, res) => {
+  try {
+    const mode = String(req.query.mode || 'aggregate').toLowerCase();
+    const params = {
+      mode,
+      keyword:       req.query.keyword,
+      from_date:     req.query.from_date,
+      to_date:       req.query.to_date,
+      from_country:  req.query.from_country,
+      about_country: req.query.about_country,
+      view_mode:     req.query.view_mode,
+    };
+    const cacheKey = `flows:${_flowsShareHash(params)}`;
+    const { rows, peakDate } = await _flowsShareData(params);
+
+    // Build top-place chip set: 3 dominant origins + 3 dominant destinations
+    // by aggregated weight. Dedupe + uppercase ISO; order = top origin,
+    // top destination, second origin, second destination, etc., so the
+    // chip row reads as alternating src/dst poles.
+    const srcWeight = new Map();
+    const dstWeight = new Map();
+    for (const r of rows) {
+      if (r.src_iso) srcWeight.set(r.src_iso, (srcWeight.get(r.src_iso) || 0) + (Number(r.weight) || 1));
+      if (r.dst_iso) dstWeight.set(r.dst_iso, (dstWeight.get(r.dst_iso) || 0) + (Number(r.weight) || 1));
+    }
+    const topSrc = [...srcWeight.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    const topDst = [...dstWeight.entries()].sort((a, b) => b[1] - a[1]).map(e => e[0]);
+    const interleaved = [];
+    for (let i = 0; i < 3; i++) {
+      if (topSrc[i]) interleaved.push(topSrc[i]);
+      if (topDst[i] && !interleaved.includes(topDst[i])) interleaved.push(topDst[i]);
+    }
+    const topPlaces = interleaved.slice(0, 6);
+
+    const peakLabelParts = [];
+    if (peakDate) {
+      const d = new Date(peakDate + 'T00:00:00Z');
+      const monthDay = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).toUpperCase();
+      peakLabelParts.push(`PEAK · ${monthDay}`);
+    } else if (mode === 'timeseries') {
+      peakLabelParts.push('PEAK FRAME');
+    }
+
+    const arcs = rows.map(r => ({
+      srcLat:   Number(r.src_lat),
+      srcLon:   Number(r.src_lon),
+      dstLat:   Number(r.dst_lat),
+      dstLon:   Number(r.dst_lon),
+      srcPlace: r.src_place,
+      dstPlace: r.dst_place,
+      srcIso:   r.src_iso,
+      dstIso:   r.dst_iso,
+      weight:   Number(r.weight) || 1,
+    })).filter(a => Number.isFinite(a.srcLat) && Number.isFinite(a.dstLat));
+
+    const png = await shareImg.generate({
+      kind: 'flows',
+      cacheKey,
+      title:     String(req.query.theme || req.query.keyword || '').trim(),
+      mode:      mode === 'timeseries' ? 'timeseries' : 'aggregate',
+      dateLabel: _formatDateLabel(req.query.from_date, req.query.to_date),
+      peakLabel: peakLabelParts.join(' '),
+      arcs,
+      topPlaces,
+    });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(png);
+  } catch (err) {
+    console.error('[share/flows.png]', err.message);
     res.status(500).end();
   }
 });
