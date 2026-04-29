@@ -5205,7 +5205,21 @@ button.arcCtxSegDot,
 .semHeatMinCloseBtn:hover { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.12); }
 
 .semHeatHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.semHeatTitle { font-size: 13px; font-weight: 700; color: rgba(255,200,140,0.95); letter-spacing: 0.02em; }
+/* Heatmap title breath — gold-palette mirror of flowTitleBreath (news flows
+   title). Same 2.9s ease-in-out cadence so the two panels feel like part of
+   the same ambient animation system, just with each surface keeping its own
+   brand color. */
+@keyframes semHeatTitleBreath {
+  0%, 100% {
+    color: rgba(255,200,140,0.88);
+    text-shadow: 0 0 6px rgba(255,160,80,0.28), 0 0 14px rgba(255,160,80,0.12);
+  }
+  50% {
+    color: rgba(255,225,170,1.0);
+    text-shadow: 0 0 11px rgba(255,180,100,0.58), 0 0 24px rgba(255,180,100,0.26);
+  }
+}
+.semHeatTitle { font-size: 12px; font-weight: 700; color: rgba(255,200,140,0.95); letter-spacing: 0.08em; text-transform: uppercase; animation: semHeatTitleBreath 2.9s ease-in-out infinite; }
 .semHeatHeaderActions { display: flex; align-items: center; gap: 2px; }
 .semHeatClose, .semHeatMin { background: none; border: none; color: rgba(255,255,255,0.45); font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; }
 .semHeatMin { font-size: 20px; padding-bottom: 6px; }
@@ -10328,6 +10342,120 @@ button.arcCtxSegDot,
 .aiAnalysisRegen svg { display: block; width: 12px; height: 12px; }
 .aiAnalysisRegen.spinning svg {
   animation: aiCtaSpin 0.7s linear infinite;
+}
+
+/* ── View on Globe CTA ─────────────────────────────────────────────
+   Big-badge call-to-action that propels the user from a detail panel
+   (thread, line/timeline, article) back to the globe with the
+   relevant flow arcs already triggered. Styled to mirror the
+   .arcCtxBlock proportions used by the AI analysis renderer so the
+   CTA feels like a sibling to the analysis content rather than a
+   foreign add-on. Three ambient effects:
+     • shimmer sweep (4.5s) — light wipes diagonally across the
+       gradient bg, gives "live & ready" aliveness
+     • breath pulse (2.9s) — outer halo expands/contracts in sync
+       with the news-flows title pulse so both feel like the same
+       ambient system
+     • top accent line — same hairline strip as .arcCtxBlock::after
+   Color: green accent (matches news-flows brand / flow arcs). */
+.viewOnGlobeCta {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 14px 16px;
+  border-radius: 15px;
+  border: 1px solid rgba(80,255,160,0.22);
+  background: linear-gradient(180deg, rgba(8,22,18,0.72), rgba(6,16,14,0.58));
+  color: rgba(200,255,220,0.95);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow:
+    0 14px 28px rgba(0,0,0,0.26),
+    0 0 0 1px rgba(80,255,160,0.06),
+    0 0 12px rgba(80,255,160,0.08);
+  transition: transform 0.18s ease, border-color 0.28s ease;
+  animation: viewOnGlobeBreath 2.9s ease-in-out infinite;
+}
+.viewOnGlobeCta::before {
+  /* Diagonal shimmer sweep — narrow band of light passing across the
+     surface every 4.5s. background-size:220% means the band is wider
+     than the element, so the keyframes can scroll it from outside the
+     right edge to outside the left edge. */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    115deg,
+    transparent 32%,
+    rgba(160,255,210,0.16) 47%,
+    rgba(255,255,255,0.10) 50%,
+    rgba(160,255,210,0.16) 53%,
+    transparent 68%
+  );
+  background-size: 220% 100%;
+  background-position: 120% 0;
+  animation: viewOnGlobeShimmer 4.5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.viewOnGlobeCta::after {
+  /* Top hairline accent — mirrors .arcCtxBlock::after so the badge
+     reads as a sibling to the rendered analysis blocks. */
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(80,255,160,0.85), transparent);
+  opacity: 0.72;
+  pointer-events: none;
+  z-index: 1;
+}
+.viewOnGlobeCta:hover {
+  transform: translateY(-1px);
+  border-color: rgba(80,255,160,0.55);
+  box-shadow:
+    0 18px 36px rgba(0,0,0,0.36),
+    0 0 0 1px rgba(80,255,160,0.24),
+    0 0 24px rgba(80,255,160,0.32);
+}
+.viewOnGlobeCta:active { transform: translateY(0); }
+.viewOnGlobeCta > * { position: relative; z-index: 2; }
+.viewOnGlobeCta svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 0 4px rgba(80,255,160,0.45));
+}
+@keyframes viewOnGlobeBreath {
+  0%, 100% {
+    box-shadow:
+      0 14px 28px rgba(0,0,0,0.26),
+      0 0 0 1px rgba(80,255,160,0.06),
+      0 0 12px rgba(80,255,160,0.08);
+  }
+  50% {
+    box-shadow:
+      0 14px 28px rgba(0,0,0,0.26),
+      0 0 0 1px rgba(80,255,160,0.32),
+      0 0 26px rgba(80,255,160,0.30);
+  }
+}
+@keyframes viewOnGlobeShimmer {
+  0%   { background-position: 120% 0; }
+  60%  { background-position: -20% 0; }
+  100% { background-position: -20% 0; }
 }
 
 /* KWI header layout */
@@ -17937,7 +18065,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           ));
           const title    = esc(thread.title || 'Untitled');
           const desc     = esc(thread.description || '');
-          const cat      = esc(thread.primary_category || 'politics');
+          const _catRawLT = String(thread.primary_category || 'politics').toLowerCase();
+          const cat      = esc(_catRawLT === 'technology' ? 'tech' : _catRawLT);
           const imp      = Number(thread.importance) || 0;
           const count    = Number(thread.in_country_articles || thread.article_count || 0);
           const heroUrl  = thread.hero_image_url || '';
@@ -26985,7 +27114,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const geoNames = _resolveGeoScope(t.geographic_scope);
         const geoLabel = geoNames.length ? geoNames.map(n => esc(n)).join(', ') : '';
         const desc  = esc(t.description || '');
-        const cat   = esc((t.primary_category || 'story').toUpperCase());
+        // Display-only rename: "TECHNOLOGY" pushed the status badge to a
+        // second row on narrow cards. Backend value (primary_category) is
+        // unchanged — this only affects the rendered chip label.
+        const _catRaw = (t.primary_category || 'story').toLowerCase();
+        const _catShort = _catRaw === 'technology' ? 'tech' : _catRaw;
+        const cat   = esc(_catShort.toUpperCase());
         const count = t.article_count || 0;
         const status = (t.status || 'active').toLowerCase();
         const statusBadge = ['active','cooling','dormant'].includes(status)
@@ -32621,6 +32755,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="arcCtxBody" id="adpAnalysisBody"></div>
       </div>
     `;
+
+    // View on Globe banner — placed AFTER the analysis block so the user
+    // reads context first then gets a clear secondary action: trigger
+    // article-flow arcs on the globe. Same big-badge style as cluster-
+    // detail's view-on-globe so the brand vocabulary stays consistent.
+    const viewOnGlobeHTML = `
+      <button class="viewOnGlobeCta"
+              data-article-id="${article.id}"
+              onclick="window.__viewOnGlobeFromArticle?.(this, event)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/>
+          <ellipse cx="12" cy="12" rx="4" ry="9"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+        </svg>
+        <span>View on Globe</span>
+      </button>
+    `;
     
     // Thumbnail (right-side) only for non-video articles that have a real image
     const thumbSrc = !isVideo && article.image_url && article.image_url.trim() ? article.image_url : null;
@@ -32684,6 +32835,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         ${metaBlock}
         ${sourceSummaryHTML}
         ${contextHTML}
+        ${viewOnGlobeHTML}
         <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
           Watch on YouTube <span>↗ ${article.source_name || 'Source'}</span>
         </a>
@@ -32702,6 +32854,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         </div>
         ${sourceSummaryHTML}
         ${contextHTML}
+        ${viewOnGlobeHTML}
         <a class="adpReadOriginal" href="${article.article_url || article.url || '#'}" target="_blank" rel="noopener noreferrer">
           Read Full Article <span>↗ ${article.source_name || 'Source'}</span>
         </a>
@@ -35419,6 +35572,49 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </button>`;
     const cta = container.querySelector('.aiAnalysisCta');
     window.__triggerClusterAnalysis?.(cta, { force: true });
+  };
+
+  // ── View on Globe handlers ─────────────────────────────────────
+  // Closes the originating detail panel and dispatches to the matching
+  // flow function (thread / timeline / article). Same overall pattern
+  // for cluster-detail (thread or line) and article-detail panels:
+  //   1. stopPropagation so the click doesn't bubble to globe handlers
+  //   2. close panel via its canonical closer (preserves cleanup logic)
+  //   3. small rAF/microtask delay so the close animation kicks off
+  //      before the globe starts resolving + animating arcs
+  window.__viewOnGlobeFromCluster = function (btn, evt) {
+    if (evt) { try { evt.stopPropagation(); } catch (_) {} }
+    if (!btn) return;
+    const threadId = btn.dataset?.threadId;
+    const isTimeline = btn.dataset?.isTimeline === '1';
+    if (!threadId) return;
+    try { window.__clusterCloseNodePanel?.(); } catch (_) {}
+    setTimeout(() => {
+      try {
+        if (isTimeline) {
+          window.showTimelineFlows?.(threadId);
+        } else {
+          window.showThreadFlows?.(threadId);
+        }
+      } catch (e) {
+        console.warn('[viewOnGlobe:cluster] dispatch failed:', e?.message || e);
+      }
+    }, 80);
+  };
+
+  window.__viewOnGlobeFromArticle = function (btn, evt) {
+    if (evt) { try { evt.stopPropagation(); } catch (_) {} }
+    if (!btn) return;
+    const articleId = btn.dataset?.articleId;
+    if (!articleId) return;
+    try { window.closeArticleDetail?.(); } catch (_) {}
+    setTimeout(() => {
+      try {
+        window.showArticleFlows?.(articleId);
+      } catch (e) {
+        console.warn('[viewOnGlobe:article] dispatch failed:', e?.message || e);
+      }
+    }, 80);
   };
 
   // ── AI Explain handler ──────────────────────────────────────────
@@ -40451,7 +40647,8 @@ body.ticker-active .gTickerLabel {
       : '';
     const title = esc(t.title || 'Untitled thread');
     const desc  = esc(t.description || '');
-    const cat   = esc(String(t.primary_category || '').toUpperCase());
+    const _catRawRel = String(t.primary_category || '').toLowerCase();
+    const cat   = esc((_catRawRel === 'technology' ? 'tech' : _catRawRel).toUpperCase());
     const count = t.article_count || 0;
     const status = String(t.status || 'active').toLowerCase();
     const statusChip = ['active','cooling','dormant'].includes(status)
@@ -40550,7 +40747,7 @@ body.ticker-active .gTickerLabel {
         <div class="cdHeaderTop">
           ${_imgHTML}
           <div style="flex:1;min-width:0;">
-            <div class="cdType" style="color:${catColor}">${esc(node.primary_category || "Story Thread").toUpperCase()}</div>
+            <div class="cdType" style="color:${catColor}">${esc(((node.primary_category || "Story Thread").toLowerCase() === 'technology' ? 'tech' : (node.primary_category || "Story Thread"))).toUpperCase()}</div>
             <div class="cdTitle">${esc(node.title || "Untitled thread")}</div>
           </div>
           <div class="cdClose" id="cdCloseBtn">\u2715</div>
@@ -40608,6 +40805,26 @@ body.ticker-active .gTickerLabel {
               <span>✦ Analysis</span>
             </button>
           </div>
+        </div>
+        <!-- View on Globe CTA — placed AFTER the Analysis section so users
+             read the context first, then get propelled back to the globe
+             with the relevant flow arcs triggered. Banner-style badge
+             with shimmer + breath pulse to read as the panel's hero
+             secondary action. Shared handler resolves thread vs timeline
+             from data-is-timeline before dispatching to the correct
+             flow function. -->
+        <div class="cdSection" id="cdViewOnGlobeSection">
+          <button class="viewOnGlobeCta"
+                  data-thread-id="${threadId}"
+                  data-is-timeline="${isTimeline ? '1' : '0'}"
+                  onclick="window.__viewOnGlobeFromCluster?.(this, event)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"/>
+              <ellipse cx="12" cy="12" rx="4" ry="9"/>
+              <line x1="3" y1="12" x2="21" y2="12"/>
+            </svg>
+            <span>View on Globe</span>
+          </button>
         </div>
         <div class="cdSection" id="cdDataSection" style="display:none">
           <div class="cdSectionLabel">
