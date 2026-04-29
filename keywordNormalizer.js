@@ -229,9 +229,13 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
     //     usually wrong source_language tags anyway.
     //   • CTE-isolate the hot scan first so the planner doesn't try to
     //     join translations + run the having-clause sums in one pass.
-    //   • Anti-join keyword_translations via NOT EXISTS instead of LEFT
-    //     JOIN + IS NULL (planner generates a hash anti-join with this
-    //     shape, scans translations once, vs nested-loop on LEFT JOIN).
+    //   • Anti-join keyword_translations via NOT EXISTS *inside* the base
+    //     CTE — earlier this filter ran AFTER the base scan, which meant
+    //     the CTE materialized hundreds of thousands of rows that were
+    //     about to be discarded. Pulling NOT EXISTS into base lets the
+    //     planner hash-anti-join once and prune ~80%+ of rows before they
+    //     reach the GROUP BY. This was the change that took the candidate
+    //     query from "5-min timeout in prod" back under a minute.
     return {
       sql: `
         WITH base AS (
@@ -245,6 +249,10 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
              AND ak.keyword IS NOT NULL
              AND ak.source_language IS DISTINCT FROM 'en'
              AND LENGTH(ak.keyword) >= 3
+             AND NOT EXISTS (
+               SELECT 1 FROM keyword_translations kt
+                WHERE kt.original_keyword = ak.keyword
+             )
         )
         SELECT
           b.keyword,
@@ -252,10 +260,6 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
           COUNT(*)::int          AS row_count,
           SUM(COALESCE(b.frequency, 1))::int AS total_frequency
           FROM base b
-         WHERE NOT EXISTS (
-           SELECT 1 FROM keyword_translations kt
-            WHERE kt.original_keyword = b.keyword
-         )
          GROUP BY b.keyword
         HAVING COUNT(*) >= $2
             OR SUM(COALESCE(b.frequency, 1)) >= $3

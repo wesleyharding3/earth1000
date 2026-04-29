@@ -154,6 +154,19 @@ const apiLimiter = rateLimit({ windowMs: 60_000, max: 200 });
 const heavyLimiter = rateLimit({ windowMs: 60_000, max: 80 });
 // Search: 60 req/min per IP
 const searchLimiter = rateLimit({ windowMs: 60_000, max: 60 });
+// AI / external-cost endpoints (Claude, DeepL, etc.). Each call costs real
+// money per request, so the cap is much tighter than the general API limit.
+// 20/min is generous for legitimate use — translating a card cluster, hitting
+// "Explain" a few times, asking the heatmap a couple of questions — without
+// letting a single IP rack up a $$$ bill or DOS the upstream AI provider.
+// Per-user tier quotas (checkTranslation, requireTier) gate by user id; this
+// limiter is a complementary per-IP guard for unauthenticated/anon paths.
+const aiLimiter = rateLimit({ windowMs: 60_000, max: 20 });
+// Account mutations (currently just DELETE /api/account). Destructive and
+// hits Supabase admin API; should never fire more than a handful of times
+// from a single IP in normal use. 10/min gives room for retries while
+// blocking automated abuse if a token leaks.
+const authLimiter = rateLimit({ windowMs: 60_000, max: 10 });
 const _prodOrigins = [
   "https://earth00.com",
   "https://www.earth00.com",
@@ -8328,7 +8341,7 @@ app.get("/api/threads/latest", async (req, res) => {
 // story_timeline_articles + story_timelines. Prompt + length constraint
 // (exactly 200 words, two paragraphs) is identical for both so the
 // Analysis section renders with consistent depth regardless of kind.
-app.post("/api/cluster-node/summary", async (req, res) => {
+app.post("/api/cluster-node/summary", aiLimiter, async (req, res) => {
   const { thread_id, timeline_id, force } = req.body || {};
   const threadId   = parseInt(thread_id,   10);
   const timelineId = parseInt(timeline_id, 10);
@@ -8736,7 +8749,7 @@ function _flowCtxBuildStructuredBlocks(eventSummary, primaryContexts, secondaryC
   return blocks;
 }
 
-app.post("/api/ai/flow-context", requireTier("pro"), async (req, res) => {
+app.post("/api/ai/flow-context", aiLimiter, requireTier("pro"), async (req, res) => {
   const {
     scope,
     mode,
@@ -10713,7 +10726,7 @@ Return ONLY valid JSON: { "message": "one sentence explaining why coverage is li
 /* =========================================
    On-demand Translation
 ========================================= */
-app.post("/api/translate", async (req, res) => {
+app.post("/api/translate", aiLimiter, async (req, res) => {
   const { title, summary, id, targetLang } = req.body || {};
   if (!title && !summary) return res.status(400).json({ error: "No text provided" });
 
@@ -10833,7 +10846,7 @@ app.post("/api/translate", async (req, res) => {
    Generates a ≤250-char contextual writeup for an article or story thread.
    Tier limits: Free = 1/day, Pro = 5/day, Enterprise = 20/day.
 ========================================= */
-app.post("/api/explain", async (req, res) => {
+app.post("/api/explain", aiLimiter, async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
@@ -10947,7 +10960,7 @@ ${originLine}`;
    the client verbatim. Claude only contributes the "about" + "surge"
    natural-language fields.
 ========================================= */
-app.post("/api/keywords/explain", async (req, res) => {
+app.post("/api/keywords/explain", aiLimiter, async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
@@ -12575,7 +12588,7 @@ app.get("/api/globe-stats", async (req, res) => {
    `set_country_values`. We persist the refusal so subsequent identical
    asks return instantly without burning credits a second time.
 ========================================= */
-app.post("/api/heatmap/ask", async (req, res) => {
+app.post("/api/heatmap/ask", aiLimiter, async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
@@ -12973,7 +12986,7 @@ app.get('/api/admin/heatmap/saved/:questionHash/:mode', requireAdmin, async (req
    Subscriptions before deleting. The subscription row is preserved so
    late webhooks (renewal, refund) still have a target to update.
 ========================================= */
-app.delete("/api/account", async (req, res) => {
+app.delete("/api/account", authLimiter, async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 

@@ -67,12 +67,15 @@ const Anthropic = require('@anthropic-ai/sdk');
 const pool = require('./db');
 const { normalizeRecentKeywords } = require('./keywordNormalizer');
 
-// Default 30h — covers a daily cron with 6h overlap (handles a missed
-// run + clock skew) without re-scanning the whole previous day. The
-// candidate query has been hardened for Render but this still cuts work
-// roughly in half vs the old 48h default.
+// Default 8h — at hourly cron cadence this gives 7h of overlap, plenty for
+// missed runs + clock skew. Previous 30h default was scanning hundreds of
+// thousands of article_keyword rows into the base CTE before the NOT
+// EXISTS prune ran, which timed out the 5-min statement_timeout in prod.
+// 8h × hourly cadence still keeps every keyword visible to ~8 retry
+// windows; if backlog accumulates from a longer outage, override with
+// --hours=24 manually.
 const LOOKBACK_HOURS = parseInt(
-  process.argv.find(a => a.startsWith('--hours='))?.split('=')[1] || '30',
+  process.argv.find(a => a.startsWith('--hours='))?.split('=')[1] || '8',
   10
 );
 const KEYWORD_LIMIT  = parseInt(process.env.NORMALIZER_KEYWORD_LIMIT || '5000', 10);

@@ -30913,12 +30913,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // we navigate away. The flow-arc response may or may not include the
     // full article record, so this local copy guarantees the compact
     // floating card has the data it needs.
+    // Two delivery shapes:
+    //   1. Card-flow button — `data-article` lives on a SIBLING card.
+    //   2. View-on-Globe button (article detail panel) — `data-article`
+    //      is stamped on the button itself.
     let _ctxArticle = null;
     try {
       const btnEl = evt?.target?.closest?.("button");
-      const wrapEl = btnEl?.parentElement;
-      const cardEl = wrapEl?.querySelector?.("[data-article]");
-      if (cardEl) _ctxArticle = JSON.parse(cardEl.getAttribute("data-article").replace(/&#39;/g, "'"));
+      const dataSrc = btnEl?.getAttribute?.("data-article")
+        ? btnEl
+        : btnEl?.parentElement?.querySelector?.("[data-article]");
+      if (dataSrc) _ctxArticle = JSON.parse(dataSrc.getAttribute("data-article").replace(/&#39;/g, "'"));
     } catch (_) {}
 
     try {
@@ -31314,12 +31319,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
     // Grab the originating thread card data (if any) so we can show it as
     // a compact floating card on the globe alongside the arcs.
+    // Two delivery shapes:
+    //   1. Card-flow button — `data-thread` lives on a SIBLING card the
+    //      button wrapper contains (the .nfThreadCard).
+    //   2. View-on-Globe button — `data-thread` is stamped on the button
+    //      itself by the cluster panel, since there's no sibling card.
+    // Either shape resolves to the same parsed thread object, which keeps
+    // the View-on-Globe pathway rendering an identical flow ctx card.
     let _ctxThread = null;
     try {
       const btnEl = evt?.target?.closest?.("button");
-      const wrapEl = btnEl?.parentElement;
-      const cardEl = wrapEl?.querySelector?.("[data-thread]");
-      if (cardEl) _ctxThread = JSON.parse(cardEl.getAttribute("data-thread").replace(/&#39;/g, "'"));
+      const dataSrc = btnEl?.getAttribute?.("data-thread")
+        ? btnEl
+        : btnEl?.parentElement?.querySelector?.("[data-thread]");
+      if (dataSrc) _ctxThread = JSON.parse(dataSrc.getAttribute("data-thread").replace(/&#39;/g, "'"));
     } catch (_) {}
 
     try {
@@ -32393,12 +32406,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__flowInArticleMicroView = null;
 
     // Grab the originating timeline card data (if any) for the floating card.
+    // Mirrors showThreadFlows: button-self FIRST (View-on-Globe path),
+    // then sibling-card fallback (card-flow path). See showThreadFlows
+    // ctx extraction comment for the full rationale.
     let _ctxTimeline = null;
     try {
       const btnEl = evt?.target?.closest?.("button");
-      const wrapEl = btnEl?.parentElement;
-      const cardEl = wrapEl?.querySelector?.("[data-thread]");
-      if (cardEl) _ctxTimeline = JSON.parse(cardEl.getAttribute("data-thread").replace(/&#39;/g, "'"));
+      const dataSrc = btnEl?.getAttribute?.("data-thread")
+        ? btnEl
+        : btnEl?.parentElement?.querySelector?.("[data-thread]");
+      if (dataSrc) _ctxTimeline = JSON.parse(dataSrc.getAttribute("data-thread").replace(/&#39;/g, "'"));
     } catch (_) {}
 
     try {
@@ -32708,68 +32725,126 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const container = document.getElementById("flowNodeLabels");
     if (!container) return;
 
+    // Branch on active projection. Globe mode needs camera/renderer/scene;
+    // 2D-map mode needs __map2d. Pass 1 below picks the right projector
+    // and emits the same `visible[]` shape so the collision-resolution and
+    // SVG-leader passes that follow stay shared.
+    const isMap = window.__projection === "map"
+      && window.__map2d
+      && window.__map2d.isEnabled?.();
+
     const camera = window.__camera;
     const renderer = window.__renderer;
     const scene = window.scene;
-    if (!camera || !renderer) {
+    if (!isMap && (!camera || !renderer)) {
       window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
       return;
     }
 
-    const rect = renderer.domElement.getBoundingClientRect();
     const labels = container.querySelectorAll(".flowNodeLabel");
-    const GLOBE_RADIUS = 1.0;
-    // The globe's rotation lives on the scene quaternion — model-space node
-    // positions need this applied before they can be tested against the
-    // camera and projected, otherwise the facing check hides them all once
-    // the user rotates the globe.
-    const sceneQuat = scene?.quaternion;
-    const camDir = new THREE.Vector3();
-    camera.getWorldDirection(camDir).normalize();
 
     // Pass 1 — project each visible label to its "home" position (where it
     // would sit with no siblings around). Records are stored in an array
     // so the collision-resolution pass can nudge them without committing
     // layout mid-loop.
     const visible = [];
-    labels.forEach(label => {
-      const node = label.__flowNode;
-      if (!node) return;
 
-      const lat = node.lat * Math.PI / 180;
-      const lon = -node.lon * Math.PI / 180;
-      const pos = new THREE.Vector3(
-        GLOBE_RADIUS * Math.cos(lat) * Math.cos(lon),
-        GLOBE_RADIUS * Math.sin(lat),
-        GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
-      );
-      if (sceneQuat) pos.applyQuaternion(sceneQuat);
-
-      const dot = -camDir.dot(pos.clone().normalize());
-      if (dot < 0.05) {
-        label.style.opacity = "0";
-        return;
-      }
-
-      const projected = pos.clone().project(camera);
-      const sx = (projected.x + 1) / 2 * rect.width + rect.left;
-      const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
-
-      // Label's CSS `left, top` anchors where the label's invisible pointer
-      // lives — its translate(-50%, -100%) + translateY(-8px) lifts the
-      // visible box up and back-left from there. ax/ay is the node itself
-      // (leader-line tip). hx/hy = home position for the label anchor.
-      const w = label.offsetWidth  || 120;
-      const h = label.offsetHeight || 32;
-      visible.push({
-        el: label,
-        ax: sx, ay: sy,         // node (leader-tip)
-        hx: sx, hy: sy - 20,    // home anchor
-        px: sx, py: sy - 20,    // resolved anchor (will be pushed)
-        w, h,
-        opacity: Math.min(1, (dot - 0.05) * 4),
+    if (isMap) {
+      // 2D-map branch — equirectangular project lat/lon via __map2d, pick
+      // the nearest tile that's actually inside the viewport, then forward
+      // to the same shared visible[] shape the globe branch produces. This
+      // runs every RAF, so zoom + pan continuously re-tether the label
+      // anchor + leader line to the geographic point. No facing test —
+      // every on-screen lat/lon is "facing" the user on a flat map.
+      const m   = window.__map2d;
+      const mst = m.state;
+      const wW  = m.worldW();
+      const wH  = m.worldH();
+      const dpr = mst.dpr || 1;
+      const W   = window.innerWidth;
+      const H   = window.innerHeight;
+      labels.forEach(label => {
+        const node = label.__flowNode;
+        if (!node) return;
+        const lat = node.lat, lon = node.lon;
+        if (lat == null || lon == null) { label.style.opacity = "0"; return; }
+        // Mirror of the headline-picker projection at ~21657: convert to
+        // CSS-px and try every tile (–wW/0/+wW) so labels near the seam
+        // attach to whichever copy is actually visible.
+        const baseX  = -(((mst.scrollX % wW) + wW) % wW);
+        const xWorld = baseX + ((lon + 180) / 360) * wW;
+        const sy     = (-mst.scrollY + ((90 - lat) / 180) * wH) / dpr;
+        let sx = null;
+        for (let tile = -1; tile <= 1; tile++) {
+          const sx0 = (xWorld + tile * wW) / dpr;
+          if (sx0 > -8 && sx0 < W + 8) { sx = sx0; break; }
+        }
+        if (sx == null || sy < -8 || sy > H + 8) {
+          label.style.opacity = "0";
+          return;
+        }
+        const w = label.offsetWidth  || 120;
+        const h = label.offsetHeight || 32;
+        visible.push({
+          el: label,
+          ax: sx, ay: sy,
+          hx: sx, hy: sy - 20,
+          px: sx, py: sy - 20,
+          w, h,
+          opacity: 1.0,
+        });
       });
-    });
+    } else {
+      // Globe branch (original path).
+      const rect = renderer.domElement.getBoundingClientRect();
+      const GLOBE_RADIUS = 1.0;
+      // The globe's rotation lives on the scene quaternion — model-space node
+      // positions need this applied before they can be tested against the
+      // camera and projected, otherwise the facing check hides them all once
+      // the user rotates the globe.
+      const sceneQuat = scene?.quaternion;
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir).normalize();
+
+      labels.forEach(label => {
+        const node = label.__flowNode;
+        if (!node) return;
+
+        const lat = node.lat * Math.PI / 180;
+        const lon = -node.lon * Math.PI / 180;
+        const pos = new THREE.Vector3(
+          GLOBE_RADIUS * Math.cos(lat) * Math.cos(lon),
+          GLOBE_RADIUS * Math.sin(lat),
+          GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
+        );
+        if (sceneQuat) pos.applyQuaternion(sceneQuat);
+
+        const dot = -camDir.dot(pos.clone().normalize());
+        if (dot < 0.05) {
+          label.style.opacity = "0";
+          return;
+        }
+
+        const projected = pos.clone().project(camera);
+        const sx = (projected.x + 1) / 2 * rect.width + rect.left;
+        const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+
+        // Label's CSS `left, top` anchors where the label's invisible pointer
+        // lives — its translate(-50%, -100%) + translateY(-8px) lifts the
+        // visible box up and back-left from there. ax/ay is the node itself
+        // (leader-line tip). hx/hy = home position for the label anchor.
+        const w = label.offsetWidth  || 120;
+        const h = label.offsetHeight || 32;
+        visible.push({
+          el: label,
+          ax: sx, ay: sy,         // node (leader-tip)
+          hx: sx, hy: sy - 20,    // home anchor
+          px: sx, py: sy - 20,    // resolved anchor (will be pushed)
+          w, h,
+          opacity: Math.min(1, (dot - 0.05) * 4),
+        });
+      });
+    }
 
     // Pass 2 — separate overlapping labels along the Y axis. Six iterations
     // converges for typical cluster counts (<15); quadratic scan is fine
@@ -35055,6 +35130,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const viewOnGlobeHTML = `
       <button class="viewOnGlobeCta"
               data-article-id="${article.id}"
+              data-article='${JSON.stringify(article).replace(/'/g, "&#39;")}'
               onclick="window.__viewOnGlobeFromArticle?.(this, event)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="9"/>
@@ -44159,6 +44235,7 @@ body.ticker-active .gTickerLabel {
           <button class="viewOnGlobeCta"
                   data-thread-id="${threadId}"
                   data-is-timeline="${isTimeline ? '1' : '0'}"
+                  data-thread='${JSON.stringify(node).replace(/'/g, "&#39;")}'
                   onclick="window.__viewOnGlobeFromCluster?.(this, event)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="9"/>
